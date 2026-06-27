@@ -1,18 +1,13 @@
-//! Cross-process file lock using ax.lock.
+//! Cross-process file lock using ax.lock (PID stamped, stale recovery).
 
 use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
-use thiserror::Error;
 
 use crate::errors::AxError;
-
-#[derive(Debug, Error)]
-#[error("lock unavailable: {path}")]
-pub struct LockUnavailableError {
-    pub path: PathBuf,
-}
+use crate::process::is_pid_alive;
 
 pub struct FileLock {
     path: PathBuf,
@@ -32,30 +27,70 @@ impl FileLock {
     }
 
     pub fn acquire(&mut self) -> Result<(), AxError> {
+        self.acquire_inner(false)
+    }
+
+    fn acquire_inner(&mut self, retried: bool) -> Result<(), AxError> {
         if self.file.is_some() {
             return Ok(());
         }
+
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AxError::File(crate::errors::FileError::with_path(
+                    e.to_string(),
+                    parent.display().to_string(),
+                ))
+            })?;
+        }
+
         let file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
             .open(&self.path)
-            .map_err(|e| AxError::File(crate::errors::FileError::with_path(e.to_string(), self.path.display().to_string())))?;
+            .map_err(|e| {
+                AxError::File(crate::errors::FileError::with_path(
+                    e.to_string(),
+                    self.path.display().to_string(),
+                ))
+            })?;
 
         match file.try_lock_exclusive() {
             Ok(()) => {
+                stamp_pid(&file)?;
                 self.file = Some(file);
                 Ok(())
             }
-            Err(_) => Err(AxError::LockUnavailable(self.path.display().to_string())),
+            Err(_) => {
+                if !retried && clear_stale_lock(&self.path) {
+                    return self.acquire_inner(true);
+                }
+                let holder = read_lock_pid(&self.path);
+                let hint = match holder {
+                    Some(pid) if is_pid_alive(pid) => {
+                        format!("lock unavailable: {} (held by PID {pid} — run `ax unlock` or stop that process)", self.path.display())
+                    }
+                    Some(pid) => {
+                        format!("lock unavailable: {} (stale PID {pid} — run `ax unlock`)", self.path.display())
+                    }
+                    None => format!("lock unavailable: {} (run `ax unlock`)", self.path.display()),
+                };
+                Err(AxError::LockUnavailable(hint))
+            }
         }
     }
 
     pub fn release(&mut self) -> Result<(), AxError> {
         if let Some(file) = self.file.take() {
-            file.unlock()
-                .map_err(|e| AxError::File(crate::errors::FileError::with_path(e.to_string(), self.path.display().to_string())))?;
+            file.unlock().map_err(|e| {
+                AxError::File(crate::errors::FileError::with_path(
+                    e.to_string(),
+                    self.path.display().to_string(),
+                ))
+            })?;
         }
+        let _ = std::fs::remove_file(&self.path);
         Ok(())
     }
 
@@ -68,4 +103,29 @@ impl Drop for FileLock {
     fn drop(&mut self) {
         let _ = self.release();
     }
+}
+
+/// Remove lock file when the recorded PID is dead (or file has no PID).
+pub fn clear_stale_lock(lock_path: &Path) -> bool {
+    match read_lock_pid(lock_path) {
+        Some(pid) if is_pid_alive(pid) => false,
+        Some(_) | None => {
+            let _ = std::fs::remove_file(lock_path);
+            true
+        }
+    }
+}
+
+fn read_lock_pid(path: &Path) -> Option<u32> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    raw.trim().parse().ok()
+}
+
+fn stamp_pid(file: &File) -> Result<(), AxError> {
+    let pid = std::process::id();
+    file.set_len(0).map_err(|e| AxError::Other(e.to_string()))?;
+    let mut f = file;
+    write!(f, "{pid}").map_err(|e| AxError::Other(e.to_string()))?;
+    f.sync_all().map_err(|e| AxError::Other(e.to_string()))?;
+    Ok(())
 }
