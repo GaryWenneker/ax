@@ -29,7 +29,7 @@ description: >-
 
 ## Reinstall command
 
-**Windows (preferred — stops daemon first):**
+**Windows (preferred — kills all ax.exe processes first):**
 
 ```powershell
 .\scripts\reinstall-cli.ps1
@@ -44,7 +44,9 @@ bash scripts/reinstall-cli.sh
 **Manual (any OS):**
 
 ```bash
-ax daemon stop 2>/dev/null || true
+# Scripts call kill-all first; manual equivalent:
+pkill -x ax 2>/dev/null || true    # Linux/macOS
+# Windows: Get-Process ax | Stop-Process -Force
 cargo install --path crates/ax-cli --force
 ax --version
 which ax   # or: Get-Command ax
@@ -52,11 +54,11 @@ which ax   # or: Get-Command ax
 
 ## Access denied on Windows
 
-If `cargo install` fails with **Access is denied (os error 5)**:
+If `cargo install` still fails with **Access is denied (os error 5)** after the script runs:
 
-1. `ax daemon stop`
-2. Close terminals/processes holding `ax.exe` (MCP, Cursor agent, watch mode)
-3. Retry `.\scripts\reinstall-cli.ps1`
+1. Retry `.\scripts\reinstall-cli.ps1` (it kills all `ax.exe` PIDs twice)
+2. Close Cursor / MCP panel so no new ax MCP child respawns
+3. Retry again
 
 If still locked, report the blocker and give the user the debug path as fallback:
 
