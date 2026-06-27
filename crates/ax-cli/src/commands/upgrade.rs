@@ -1,5 +1,7 @@
 //! `ax upgrade` — self-update via GitHub releases or cargo install.
 
+use crate::ui::{info_line, ok_line, warn_line, SpinnerGuard};
+
 pub fn run(version: Option<String>) -> Result<(), String> {
     let repo = std::env::var("AX_GITHUB_REPO").unwrap_or_else(|_| "GaryWenneker/ax".to_string());
     let parts: Vec<&str> = repo.split('/').collect();
@@ -16,7 +18,7 @@ pub fn run(version: Option<String>) -> Result<(), String> {
         return Ok(());
     }
 
-    println!("Could not auto-upgrade. Options:");
+    println!("{}", warn_line("Could not auto-upgrade. Options:"));
     println!("  cargo install --git https://github.com/{repo} ax-cli");
     if let Some(v) = version {
         println!("  Or publish a GitHub release tag {v} for platform binary 'ax'");
@@ -60,14 +62,17 @@ fn try_github_upgrade(owner: &str, name: &str, version: Option<&str>) -> Result<
     if let Some(v) = version {
         builder.target_version_tag(v);
     }
+    let _spinner = SpinnerGuard::new("Checking for updates...", false);
     let update = builder.build().map_err(|e| e.to_string())?;
     match update.update().map_err(|e| e.to_string())? {
         Status::UpToDate(v) => {
-            println!("Already up to date ({v}).");
+            drop(_spinner);
+            println!("{}", ok_line(format!("Already up to date ({v})")));
             Ok(true)
         }
         Status::Updated(v) => {
-            println!("Updated to {v}. Open a new terminal if the version looks unchanged.");
+            drop(_spinner);
+            println!("{}", ok_line(format!("Updated to {v}. Open a new terminal if the version looks unchanged.")));
             Ok(true)
         }
     }
@@ -83,7 +88,7 @@ fn try_cargo_reinstall(repo: &str) -> bool {
         return false;
     }
     let git_url = format!("https://github.com/{}", repo);
-    println!("Detected cargo install — running cargo install --force...");
+    println!("{}", info_line("Detected cargo install — running cargo install --force..."));
     let status = std::process::Command::new("cargo")
         .arg("install")
         .arg("--force")
@@ -93,7 +98,7 @@ fn try_cargo_reinstall(repo: &str) -> bool {
         .status();
     match status {
         Ok(s) if s.success() => {
-            println!("cargo install completed.");
+            println!("{}", ok_line("cargo install completed"));
             true
         }
         _ => false,

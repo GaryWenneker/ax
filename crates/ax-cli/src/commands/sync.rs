@@ -1,7 +1,7 @@
 use ax_extraction::orchestrator::IndexOptions;
 
 use crate::commands::resolve_path;
-use crate::ui::{info_line, ok_line};
+use crate::ui::{info_line, ok_line, SpinnerGuard};
 
 pub async fn run(path: Option<String>, quiet: bool, watch: bool) -> Result<(), String> {
     let root = resolve_path(path);
@@ -27,7 +27,9 @@ pub async fn run(path: Option<String>, quiet: bool, watch: bool) -> Result<(), S
             }
         }
     } else {
+        let _spinner = SpinnerGuard::new("Syncing changed files...", quiet);
         let result = ax.sync(opts).await.map_err(|e| e.to_string())?;
+        drop(_spinner);
         if !quiet {
             println!(
                 "{}",

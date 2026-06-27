@@ -31,3 +31,11 @@ pub fn bold(msg: impl AsRef<str>) -> String {
 pub fn accent(msg: impl AsRef<str>) -> String {
     msg.as_ref().cyan().bold().to_string()
 }
+
+pub fn kv_line(label: impl AsRef<str>, value: impl AsRef<str>) -> String {
+    format!(
+        "{} {}",
+        format!("{}:", label.as_ref()).dimmed(),
+        value.as_ref().bold()
+    )
+}

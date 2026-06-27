@@ -1,7 +1,9 @@
 use crate::commands::resolve_path;
+use crate::ui::SpinnerGuard;
 
 pub async fn run(files: Vec<String>) -> Result<(), String> {
     let root = resolve_path(None);
+    let _spinner = SpinnerGuard::new("Finding affected tests...", false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let changed: Vec<String> = if files.is_empty() {
         ax.get_pending_files()

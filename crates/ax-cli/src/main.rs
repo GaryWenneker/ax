@@ -9,7 +9,15 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "ax", version, about = "ax code intelligence tool")]
+#[command(
+    name = "ax",
+    version,
+    about = "ax code intelligence tool",
+    long_about = help_text::ROOT_LONG,
+    after_help = help_text::ROOT_AFTER,
+    styles = help_text::styles(),
+    color = clap::ColorChoice::Auto,
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -18,14 +26,19 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Interactive installer
+    #[command(long_about = help_text::INSTALL_LONG)]
     Install,
     /// Remove ax from agent configs
+    #[command(long_about = help_text::UNINSTALL_LONG)]
     Uninstall,
     /// Initialize project and index
+    #[command(long_about = help_text::INIT_LONG)]
     Init { path: Option<String> },
     /// Remove .ax directory
+    #[command(long_about = help_text::UNINIT_LONG)]
     Uninit { path: Option<String> },
     /// Full re-index
+    #[command(long_about = help_text::INDEX_LONG)]
     Index {
         path: Option<String>,
         #[arg(long)]
@@ -36,6 +49,7 @@ enum Commands {
         verbose: bool,
     },
     /// Incremental sync
+    #[command(long_about = help_text::SYNC_LONG)]
     Sync {
         path: Option<String>,
         #[arg(long)]
@@ -44,18 +58,21 @@ enum Commands {
         watch: bool,
     },
     /// Watch for file changes and auto-sync (alias for sync --watch)
+    #[command(long_about = help_text::WATCH_LONG)]
     Watch {
         path: Option<String>,
         #[arg(long)]
         quiet: bool,
     },
     /// Index statistics
+    #[command(long_about = help_text::STATUS_LONG)]
     Status {
         path: Option<String>,
         #[arg(long)]
         json: bool,
     },
     /// FTS symbol search
+    #[command(long_about = help_text::QUERY_LONG)]
     Query {
         text: String,
         #[arg(long)]
@@ -66,10 +83,13 @@ enum Commands {
         json: bool,
     },
     /// Explore (same as ax_explore MCP tool)
+    #[command(long_about = help_text::EXPLORE_LONG)]
     Explore { query: Vec<String>, #[arg(long)] json: bool },
     /// Node details (same as ax_node MCP tool)
+    #[command(long_about = help_text::NODE_LONG)]
     Node { name: Option<String> },
     /// List project files
+    #[command(long_about = help_text::FILES_LONG)]
     Files {
         #[arg(long)]
         format: Option<String>,
@@ -77,36 +97,47 @@ enum Commands {
         json: bool,
     },
     /// Build task context
+    #[command(long_about = help_text::CONTEXT_LONG)]
     Context { task: String },
     /// Find callers
+    #[command(long_about = help_text::CALLERS_LONG)]
     Callers { symbol: String },
     /// Find callees
+    #[command(long_about = help_text::CALLEES_LONG)]
     Callees { symbol: String },
     /// Impact radius
+    #[command(long_about = help_text::IMPACT_LONG)]
     Impact { symbol: String },
     /// Affected tests
+    #[command(long_about = help_text::AFFECTED_LONG)]
     Affected { files: Vec<String> },
     /// Remove stale ax.lock
+    #[command(long_about = help_text::UNLOCK_LONG)]
     Unlock { path: Option<String> },
     /// MCP daemon status/stop
+    #[command(long_about = help_text::DAEMON_LONG)]
     Daemon {
         path: Option<String>,
         #[command(subcommand)]
         action: Option<DaemonCommands>,
     },
     /// Print version
+    #[command(long_about = help_text::VERSION_LONG)]
     Version,
     /// Self-update from GitHub releases or cargo install
+    #[command(long_about = help_text::UPGRADE_LONG)]
     Upgrade {
         #[arg(help = "Optional release tag (e.g. v0.1.0)")]
         version: Option<String>,
     },
     /// Anonymous usage telemetry (on|off|status)
+    #[command(long_about = help_text::TELEMETRY_LONG)]
     Telemetry {
         #[arg(help = "on, off, or status")]
         action: Option<String>,
     },
     /// Explore reasoning offload configuration
+    #[command(long_about = help_text::OFFLOAD_LONG)]
     Offload {
         #[command(subcommand)]
         action: Option<OffloadCommands>,
@@ -155,6 +186,8 @@ enum DaemonCommands {
 
 #[tokio::main]
 async fn main() {
+    ui::init_terminal();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("ax=info".parse().unwrap()))
         .with_writer(std::io::stderr)
@@ -198,7 +231,7 @@ async fn main() {
             Ok(())
         }
         Some(Commands::Version) => {
-            println!("ax {}", env!("CARGO_PKG_VERSION"));
+            println!("{} {}", ui::accent("ax"), env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         Some(Commands::Upgrade { version }) => commands::upgrade::run(version),

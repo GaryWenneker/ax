@@ -3,15 +3,18 @@ use ax_reasoning::maybe_synthesize_explore;
 use ax_types::ExploreOptions;
 
 use crate::commands::resolve_path;
+use crate::ui::SpinnerGuard;
 
 pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
     let query_text = query.join(" ");
     let root = resolve_path(None);
+    let _spinner = SpinnerGuard::new(format!("Exploring \"{}\"...", query_text), json);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let result = ax
         .explore(&query_text, ExploreOptions::default())
         .await
         .map_err(|e| e.to_string())?;
+    drop(_spinner);
     if json {
         println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
     } else {

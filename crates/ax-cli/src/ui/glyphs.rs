@@ -47,6 +47,10 @@ pub fn supports_unicode() -> bool {
     }
     #[cfg(windows)]
     {
+        // Windows Terminal sets WT_SESSION; AX_UNICODE=1 forces Unicode glyphs.
+        if std::env::var("WT_SESSION").is_ok() {
+            return true;
+        }
         return false;
     }
     #[cfg(not(windows))]

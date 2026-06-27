@@ -1,9 +1,12 @@
 use ax_types::SearchOptions;
 
 use crate::commands::resolve_path;
+use crate::ui::SpinnerGuard;
 
 pub async fn run(name: Option<String>) -> Result<(), String> {
     let root = resolve_path(None);
+    let label = name.clone().unwrap_or_else(|| "symbol".into());
+    let _spinner = SpinnerGuard::new(format!("Looking up \"{}\"...", label), false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let q = name.unwrap_or_default();
     let results = ax
