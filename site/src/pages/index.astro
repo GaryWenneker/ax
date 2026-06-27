@@ -4,7 +4,7 @@ import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import '../styles/theme.css';
-import GraphDiagram from '../components/GraphDiagram.astro';
+import LogoMark from '../components/LogoMark.astro';
 import { getStarsLabel } from '../lib/github';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -14,11 +14,11 @@ const install = 'irm https://raw.githubusercontent.com/GaryWenneker/ax/main/inst
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml" />
+		<link rel="icon" href={`${base}/logo.jpg`} type="image/jpeg" />
 		<title>ax — Understand any codebase as a graph</title>
 		<meta
 			name="description"
@@ -27,12 +27,14 @@ const install = 'irm https://raw.githubusercontent.com/GaryWenneker/ax/main/inst
 		<meta property="og:title" content="ax" />
 		<meta property="og:description" content="Understand any codebase as a graph." />
 		<meta property="og:type" content="website" />
-		<meta name="theme-color" content="#f7f6f2" />
+		<meta name="theme-color" content="#121110" />
 	</head>
 	<body>
 		<div class="frame">
 			<header class="nav">
-				<a class="wordmark" href={`${base}/`}>ax</a>
+				<a class="wordmark" href={`${base}/`}>
+					<LogoMark size="md" />
+				</a>
 				<nav class="nav-links">
 					<a href={`${base}/getting-started/introduction`}>Docs</a>
 					<a class="opt" href={`${base}/reference/languages`}>Languages</a>
@@ -66,7 +68,7 @@ const install = 'irm https://raw.githubusercontent.com/GaryWenneker/ax/main/inst
 						</div>
 					</div>
 					<div class="hero-right">
-						<GraphDiagram />
+						<LogoMark size="hero" />
 					</div>
 				</section>
 
@@ -114,7 +116,7 @@ const install = 'irm https://raw.githubusercontent.com/GaryWenneker/ax/main/inst
 			</main>
 
 			<footer class="foot">
-				<span class="foot-mark">ax</span>
+				<span class="foot-mark"><LogoMark size="sm" /></span>
 				<nav class="foot-links">
 					<a href={`${base}/getting-started/introduction`}>Docs</a>
 					<a href={repo}>GitHub</a>
@@ -166,11 +168,10 @@ const install = 'irm https://raw.githubusercontent.com/GaryWenneker/ax/main/inst
 				border-bottom: 1px solid var(--cg-rule);
 			}
 			.wordmark {
-				font-weight: 800;
-				font-size: 1.4rem;
-				letter-spacing: -0.035em;
-				color: var(--cg-ink);
+				display: inline-flex;
+				align-items: center;
 				text-decoration: none;
+				line-height: 0;
 			}
 			.nav-links {
 				display: flex;
@@ -217,7 +218,8 @@ const install = 'irm https://raw.githubusercontent.com/GaryWenneker/ax/main/inst
 				align-items: center;
 				justify-content: center;
 				padding: 2.5rem;
-				min-width: 0; /* let the SVG scale down instead of widening the page */
+				min-width: 0;
+				background: radial-gradient(ellipse at center, var(--cg-glow) 0%, transparent 68%);
 			}
 			h1 {
 				font-size: clamp(2.4rem, 6vw, 4.6rem);
@@ -359,8 +361,9 @@ const install = 'irm https://raw.githubusercontent.com/GaryWenneker/ax/main/inst
 				border-top: 1px solid var(--cg-rule);
 			}
 			.foot-mark {
-				font-weight: 800;
-				letter-spacing: -0.03em;
+				display: inline-flex;
+				align-items: center;
+				opacity: 0.75;
 			}
 			.foot-links {
 				display: flex;

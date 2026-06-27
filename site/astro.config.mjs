@@ -11,14 +11,13 @@ export default defineConfig({
 			title: 'ax',
 			description:
 				'A local-first code-intelligence tool that turns any codebase into a queryable knowledge graph for AI coding agents.',
-			favicon: '/favicon.svg',
+			favicon: '/logo.jpg',
 			head: [
 				{
-					// Default to the light / paper theme on first visit; the toggle still
-					// lets a visitor switch to (and persist) the dark / ink theme.
+					// Default to dark / ink theme on first visit.
 					tag: 'script',
 					content:
-						"if(!localStorage.getItem('starlight-theme')){try{localStorage.setItem('starlight-theme','light')}catch(e){}document.documentElement.dataset.theme='light';document.documentElement.style.colorScheme='light'}",
+						"if(!localStorage.getItem('starlight-theme')){try{localStorage.setItem('starlight-theme','dark')}catch(e){}document.documentElement.dataset.theme='dark';document.documentElement.style.colorScheme='dark'}",
 				},
 			],
 			social: [
@@ -45,7 +44,7 @@ export default defineConfig({
 				themes: ['github-light', 'github-dark'],
 				styleOverrides: {
 					borderRadius: '0px',
-					borderColor: '#cdcabf',
+					borderColor: '#34322a',
 					codeFontFamily: "'IBM Plex Mono', ui-monospace, monospace",
 				},
 			},

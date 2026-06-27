@@ -1,14 +1,21 @@
 ---
-// Starlight 0.39 exposes route data on Astro.locals.starlightRoute (not props).
-// Link the wordmark to the landing page at the site root.
+// Starlight header: AX dot logo + wordmark.
+import LogoMark from './LogoMark.astro';
+
 const { siteTitle } = Astro.locals.starlightRoute;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 
-<a href={`${base}/`} class="cg-site-title" translate="no">{siteTitle}</a>
+<a href={`${base}/`} class="cg-site-title" translate="no">
+	<LogoMark size="sm" class="cg-site-title__logo" />
+	<span class="cg-site-title__text">{siteTitle}</span>
+</a>
 
 <style>
 	.cg-site-title {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.55rem;
 		font-family: var(--sl-font);
 		font-weight: 800;
 		font-size: 1.25rem;
@@ -20,5 +27,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 	}
 	.cg-site-title:hover {
 		color: var(--cg-ink);
+	}
+	.cg-site-title__logo {
+		opacity: 0.78;
+	}
+	.cg-site-title:hover .cg-site-title__logo {
+		opacity: 0.92;
 	}
 </style>
