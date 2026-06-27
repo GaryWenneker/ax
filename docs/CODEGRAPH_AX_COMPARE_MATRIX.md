@@ -583,11 +583,12 @@ Infrastructure and hosting that lives outside the Rust workspace but is required
 | Release workflow (6 targets) | `.github/workflows/release.yml` | Same pattern — `ax-{bundle}.zip/tar.gz` | ✅ |
 | Install scripts | `install.ps1` / `install.sh` | Same — GitHub Releases download | ✅ |
 | `ax upgrade` / self-update | `codegraph upgrade` | `ax upgrade` + `bin_path_in_archive` | ✅ |
-| Telemetry worker | `telemetry.getcodegraph.com` | `telemetry.getax.dev` + `telemetry-worker/` | ✅ code; 🟡 live deploy needs Cloudflare |
+| Telemetry worker | `telemetry.getcodegraph.com` | `telemetry.getax.dev` + `telemetry-worker/` | ✅ code; 🟡 live deploy needs Cloudflare + PostHog secrets |
 | Telemetry GH deploy workflow | Yes | `deploy-telemetry.yml` + `wrangler.workers-dev.jsonc` | ✅ |
-| Docs / marketing site | Vite `site/` + GH Pages | Astro Starlight `site/` + `deploy-site.yml` | ✅ code; 🟡 Pages after first push |
+| Docs / marketing site | Vite `site/` + GH Pages | Astro Starlight `site/` + `deploy-site.yml` | ✅ https://garywenneker.github.io/ax/ |
 | Ops runbook | `TELEMETRY.md`, release docs | `docs/PRODUCTION.md`, `scripts/bootstrap-ops.ps1` | ✅ |
-| First tagged release | Published on CG repo | `v0.1.0` via `scripts/bootstrap-ops.ps1` | 🟡 push + Actions (maintainer) |
+| First tagged release | Published on CG repo | `v0.1.0` on GitHub (4/6 assets live) | ✅ partial — `darwin-x64` + `win32-arm64` pending CI re-run |
+| Docs site live | getcodegraph.com | https://garywenneker.github.io/ax/ | ✅ |
 
 ### Ops checklist (maintainer)
 
