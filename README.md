@@ -153,6 +153,7 @@ Environment:
 | Variable | Effect |
 |----------|--------|
 | `NO_COLOR` | Disable all ANSI colors |
+| `AX_FORCE_COLOR=1` | Force colors (overrides `NO_COLOR` — needed in Cursor/CI shells) |
 | `AX_UNICODE=1` | Force Unicode glyphs (✓, spinner frames) on Windows |
 | `AX_ASCII=1` | Force ASCII glyphs everywhere |
 | `AX_PARSE_WORKERS` | Parallel parse thread count |

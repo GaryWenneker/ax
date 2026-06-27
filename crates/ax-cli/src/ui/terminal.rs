@@ -1,22 +1,56 @@
-//! Terminal setup: ANSI colors on Windows, NO_COLOR support.
+//! Terminal setup: ANSI colors on Windows, NO_COLOR / force-color support.
 
 use std::io::IsTerminal;
 
 /// Enable ANSI colors and VT processing where supported.
 pub fn init() {
-    if std::env::var("NO_COLOR").is_ok() {
-        owo_colors::set_override(false);
-        return;
-    }
-
     #[cfg(windows)]
     {
         enable_windows_vt();
     }
 
-    if std::io::stdout().is_terminal() {
-        owo_colors::set_override(true);
+    let enabled = colors_enabled();
+    console::set_colors_enabled(enabled);
+    owo_colors::set_override(enabled);
+}
+
+/// Whether styled output (clap, owo-colors, indicatif) should use ANSI colors.
+pub fn colors_enabled() -> bool {
+    if force_color() {
+        return true;
     }
+    if std::env::var("NO_COLOR").is_ok() {
+        return false;
+    }
+    if matches!(std::env::var("FORCE_COLOR").as_deref(), Ok("0")) {
+        return false;
+    }
+    std::io::stdout().is_terminal() || std::io::stderr().is_terminal()
+}
+
+pub fn configure_clap(cmd: &mut clap::Command) {
+    let choice = if colors_enabled() {
+        clap::ColorChoice::Always
+    } else {
+        clap::ColorChoice::Never
+    };
+    *cmd = cmd.clone().color(choice);
+}
+
+fn force_color() -> bool {
+    env_is_truthy("AX_FORCE_COLOR")
+        || matches!(std::env::var("CLICOLOR_FORCE").as_deref(), Ok("1"))
+        || matches!(
+            std::env::var("FORCE_COLOR").as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        )
+}
+
+fn env_is_truthy(name: &str) -> bool {
+    matches!(
+        std::env::var(name).as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
 }
 
 #[cfg(windows)]

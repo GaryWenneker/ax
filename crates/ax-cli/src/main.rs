@@ -5,7 +5,7 @@ mod help_text;
 mod installer;
 mod ui;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -193,7 +193,10 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    let cli = Cli::parse();
+    let mut cmd = Cli::command();
+    ui::configure_clap(&mut cmd);
+    let matches = cmd.get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let cmd_name = cli_command_name(&cli.command);
     let result = match cli.command {
         None | Some(Commands::Install) => commands::install::run(),

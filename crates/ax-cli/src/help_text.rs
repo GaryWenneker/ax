@@ -27,9 +27,10 @@ pub const ROOT_AFTER: &str = "Examples:
   ax callers greet         Who calls this symbol?
 
 Environment:
-  AX_UNICODE=1   Force Unicode glyphs (spinners, checkmarks) on Windows
-  AX_ASCII=1     Force ASCII glyphs everywhere
-  NO_COLOR       Disable ANSI colors (also respected by owo-colors)
+  AX_FORCE_COLOR=1   Force colors (overrides NO_COLOR from Cursor/CI shells)
+  AX_UNICODE=1       Force Unicode glyphs (spinners, checkmarks) on Windows
+  AX_ASCII=1         Force ASCII glyphs everywhere
+  NO_COLOR           Disable ANSI colors (also respected by owo-colors)
 
 Docs: https://garywenneker.github.io/ax/";
 
