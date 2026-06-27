@@ -8,7 +8,7 @@ use ax_mcp::daemon_paths::daemon_pid_path;
 use ax_mcp::daemon::{read_daemon_info, remove_daemon_info, try_connect, DAEMON_INFO_FILE};
 
 use crate::commands::resolve_path;
-use crate::glyphs;
+use crate::ui::ok_line;
 
 #[derive(Clone, Copy)]
 pub enum DaemonAction {
@@ -45,7 +45,7 @@ pub async fn run(path: Option<String>, action: DaemonAction) -> Result<(), Strin
                 kill_pid(info.pid);
                                 remove_daemon_info(&root);
                 release_daemon_lock(&daemon_pid_path(&root));
-                println!("{} stopped daemon pid {}", glyphs::ok(), info.pid);
+                println!("{}", ok_line(format!("stopped daemon pid {}", info.pid)));
             } else {
                 println!("no daemon running");
             }

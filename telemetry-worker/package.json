@@ -1,7 +1,7 @@
 {
   "name": "ax-telemetry-worker",
   "private": true,
-  "description": "First-party ingest endpoint for ax's anonymous usage telemetry (telemetry.getax.com)",
+  "description": "First-party ingest endpoint for ax's anonymous usage telemetry (telemetry.getax.wenneker.io)",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

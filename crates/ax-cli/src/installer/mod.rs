@@ -12,12 +12,12 @@ pub fn run_interactive_installer(project_root: &std::path::Path) -> Result<(), S
         }
     }
     targets::install_all_detected(project_root)?;
-    println!("{} ax installed for detected agents", crate::glyphs::ok());
+    println!("{}", crate::ui::ok_line("ax installed for detected agents"));
     Ok(())
 }
 
 pub fn run_uninstall() -> Result<(), String> {
     targets::uninstall_all()?;
-    println!("{} ax removed from agent configs", crate::glyphs::ok());
+    println!("{}", crate::ui::ok_line("ax removed from agent configs"));
     Ok(())
 }

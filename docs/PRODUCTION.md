@@ -80,11 +80,26 @@ bash scripts/package-release.sh win32-x64 x86_64-pc-windows-msvc
 
 ## 2. Telemetry ingest (Cloudflare Worker)
 
-Client default endpoint: `https://telemetry.getax.dev/v1/events` (`ax-telemetry` crate).
+Client default endpoint: `https://getax.wenneker.io/v1/events` (Netlify Function on the docs site).
 
-### One-time Cloudflare setup
+### Netlify (site + telemetry)
 
-1. Add domain zone `getax.dev` (or edit `telemetry-worker/wrangler.jsonc` to your domain).
+The Astro site and telemetry ingest live in `site/`:
+
+```powershell
+cd site
+.\scripts\deploy-netlify.ps1
+```
+
+- **Site:** https://getax.wenneker.io (add custom domain in Netlify + DNS CNAME to your `*.netlify.app` hostname)
+- **Telemetry:** `POST https://getax.wenneker.io/v1/events` (redirect to Netlify Function)
+- **Env vars** (Netlify UI): `POSTHOG_KEY`, optional `POSTHOG_HOST`
+
+### Cloudflare Worker (optional alternate)
+
+Legacy/alternate ingest at `telemetry.getax.wenneker.io` via `telemetry-worker/`:
+
+1. Add domain zone `wenneker.io` (or edit `telemetry-worker/wrangler.jsonc` to your domain).
 2. Install Wrangler: `npm i -g wrangler` and `wrangler login`.
 
 ### Deploy locally

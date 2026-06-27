@@ -7,9 +7,9 @@
   "compatibility_date": "2026-06-12",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Custom domain when getax.dev (or your zone) is on the Cloudflare account.
+  // Custom domain on wenneker.io (telemetry.getax.wenneker.io).
   // For dev without a domain, set workers_dev: true and AX_TELEMETRY_ENDPOINT on clients.
-  "routes": [{ "pattern": "telemetry.getax.dev", "custom_domain": true }],
+  "routes": [{ "pattern": "telemetry.getax.wenneker.io", "custom_domain": true }],
   "workers_dev": false,
 
   "observability": { "enabled": true, "head_sampling_rate": 1 },

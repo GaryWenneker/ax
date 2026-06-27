@@ -583,7 +583,7 @@ Infrastructure and hosting that lives outside the Rust workspace but is required
 | Release workflow (6 targets) | `.github/workflows/release.yml` | Same pattern — `ax-{bundle}.zip/tar.gz` | ✅ |
 | Install scripts | `install.ps1` / `install.sh` | Same — GitHub Releases download | ✅ |
 | `ax upgrade` / self-update | `codegraph upgrade` | `ax upgrade` + `bin_path_in_archive` | ✅ |
-| Telemetry worker | `telemetry.getcodegraph.com` | `telemetry.getax.dev` + `telemetry-worker/` | ✅ code; 🟡 live deploy needs Cloudflare + PostHog secrets |
+| Telemetry worker | `telemetry.getcodegraph.com` | `telemetry.getax.wenneker.io` + `telemetry-worker/` | ✅ code; 🟡 live deploy needs Cloudflare + PostHog secrets |
 | Telemetry GH deploy workflow | Yes | `deploy-telemetry.yml` + `wrangler.workers-dev.jsonc` | ✅ |
 | Docs / marketing site | Vite `site/` + GH Pages | Astro Starlight `site/` + `deploy-site.yml` | ✅ https://garywenneker.github.io/ax/ |
 | Ops runbook | `TELEMETRY.md`, release docs | `docs/PRODUCTION.md`, `scripts/bootstrap-ops.ps1` | ✅ |
@@ -597,7 +597,7 @@ Infrastructure and hosting that lives outside the Rust workspace but is required
 | Bootstrap git + GitHub + tag | `.\scripts\bootstrap-ops.ps1` |
 | Verify release assets | GitHub → Actions → Release → Releases |
 | Windows install smoke | `irm .../install.ps1 \| iex` or `ax upgrade` |
-| Telemetry (custom domain) | Cloudflare zone `getax.dev` + `scripts\deploy-telemetry.ps1` |
+| Telemetry (custom domain) | Cloudflare zone `wenneker.io` + `scripts\deploy-telemetry.ps1` |
 | Telemetry (no domain) | `npx wrangler deploy -c wrangler.workers-dev.jsonc` + `AX_TELEMETRY_ENDPOINT` |
 | Docs site | Enable GitHub Pages (Actions source); URL `https://garywenneker.github.io/ax/` |
 

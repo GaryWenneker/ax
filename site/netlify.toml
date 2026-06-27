@@ -1,0 +1,28 @@
+# getax.wenneker.io — Astro docs site + telemetry ingest (Netlify Function)
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Telemetry ingest — same contract as telemetry-worker (POST /v1/events)
+[[redirects]]
+  from = "/v1/events"
+  to = "/.netlify/functions/telemetry-ingest"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/telemetry"
+  to = "/.netlify/functions/telemetry-ingest"
+  status = 200
+  force = true
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions."telemetry-ingest"]
+  timeout = 10

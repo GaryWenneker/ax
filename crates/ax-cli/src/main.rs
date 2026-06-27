@@ -1,8 +1,9 @@
 //! ax CLI entry point.
 
 mod commands;
-mod glyphs;
+mod help_text;
 mod installer;
+mod ui;
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -230,7 +231,7 @@ async fn main() {
     }
 
     if let Err(e) = result {
-        eprintln!("{} {}", glyphs::err(), e);
+        eprintln!("{}", ui::err_line(e));
         std::process::exit(1);
     }
 }

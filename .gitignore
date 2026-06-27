@@ -34,3 +34,11 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Local Netlify folder
+.netlify
+
+dist-ci/
+dist-ci-new/
+dist-test/
+

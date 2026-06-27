@@ -1,6 +1,6 @@
 # ax telemetry ingest worker
 
-The first-party endpoint behind `telemetry.getax.com`. This directory is in the
+The first-party endpoint behind `telemetry.getax.wenneker.io`. This directory is in the
 public repo **on purpose**: it is the exact code that receives ax's anonymous usage
 telemetry, so anyone can audit what is stored. The schema contract (every event, every
 field, and everything that is never collected) is in
@@ -22,7 +22,7 @@ with the npm package — the engine's `files` allowlist excludes it.
 
 ## Deploy
 
-Prereqs: the `getax.com` zone on the deploying Cloudflare account (the custom
+Prereqs: the `wenneker.io` zone on the deploying Cloudflare account (the custom
 domain route auto-provisions DNS + cert), wrangler ≥ 4.36 (the `ratelimits` binding).
 
 ```bash

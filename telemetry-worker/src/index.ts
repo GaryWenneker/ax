@@ -1,5 +1,5 @@
 /**
- * ax telemetry ingest — telemetry.getax.com
+ * ax telemetry ingest — telemetry.getax.wenneker.io
  *
  * This file is public on purpose: it is the exact code that receives ax's
  * anonymous usage telemetry, so anyone can audit what is (and is not) stored.

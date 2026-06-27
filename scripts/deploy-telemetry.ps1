@@ -30,7 +30,7 @@ try {
         } else {
             wrangler deploy
         }
-        Write-Host "Deployed. Set client AX_TELEMETRY_ENDPOINT if not using telemetry.getax.dev"
+        Write-Host "Deployed. Set client AX_TELEMETRY_ENDPOINT if not using telemetry.getax.wenneker.io"
     }
 } finally {
     Pop-Location

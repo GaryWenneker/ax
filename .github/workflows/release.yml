@@ -21,7 +21,11 @@ jobs:
   build:
     name: build-${{ matrix.bundle }}
     runs-on: ${{ matrix.os }}
-    strategy:
+    concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: true
+
+  strategy:
       fail-fast: false
       matrix:
         include:

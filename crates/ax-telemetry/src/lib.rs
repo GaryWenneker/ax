@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const TELEMETRY_ENDPOINT: &str = "https://telemetry.getax.dev/v1/events";
+pub const TELEMETRY_ENDPOINT: &str = "https://getax.wenneker.io/v1/events";
 pub const TELEMETRY_DOCS: &str = "https://github.com/GaryWenneker/ax/blob/main/docs/TELEMETRY.md";
 
 const SCHEMA_VERSION: i32 = 1;

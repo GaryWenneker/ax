@@ -2,10 +2,10 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
-// Project page on GitHub Pages: https://garywenneker.github.io/ax/
+// https://getax.wenneker.io
 export default defineConfig({
-	site: 'https://garywenneker.github.io',
-	base: '/ax',
+	site: 'https://getax.wenneker.io',
+	base: '/',
 	integrations: [
 		starlight({
 			title: 'ax',

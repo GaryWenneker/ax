@@ -24,6 +24,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 console = { workspace = true }
 indicatif = { workspace = true }
+owo-colors = "4"
 dialoguer = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

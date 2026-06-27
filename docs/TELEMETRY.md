@@ -23,6 +23,8 @@ Endpoint (override): `AX_TELEMETRY_ENDPOINT`
 
 ## Ingest
 
-Public worker source: `telemetry-worker/` (deploy to `telemetry.getax.dev` or your own host).
+Public worker source: `site/netlify/` (primary) or `telemetry-worker/` (Cloudflare alternate).
+
+Primary endpoint: `https://getax.wenneker.io/v1/events` (Netlify Function).
 
 See CodeGraph's telemetry design for the privacy model ax follows: allowlist schema, fail-silent client, off means no network.
