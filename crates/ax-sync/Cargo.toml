@@ -1,0 +1,13 @@
+[package]
+name = "ax-sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ax-types = { workspace = true }
+ax-utils = { workspace = true }
+tokio = { workspace = true }
+notify = { workspace = true }
+walkdir = { workspace = true }
+ignore = { workspace = true }
+serde = { workspace = true }

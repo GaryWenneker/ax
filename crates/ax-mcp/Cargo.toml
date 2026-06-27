@@ -1,0 +1,22 @@
+[package]
+name = "ax-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ax-types = { workspace = true }
+ax-utils = { workspace = true }
+ax-core = { workspace = true }
+ax-extraction = { workspace = true }
+ax-context = { workspace = true }
+ax-telemetry = { workspace = true }
+ax-reasoning = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+sysinfo = "0.33"
+sha2 = "0.10"
+hex = "0.4"
