@@ -68,7 +68,7 @@ impl ExtractionOrchestrator {
         let mut tasks = Vec::new();
         for path in &files {
             let rel = path.strip_prefix(&self.project_root).unwrap_or(path).to_string_lossy().replace('\\', "/");
-            let content = std::fs::read_to_string(path).map_err(|e| ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(e.to_string(), path.display().to_string())))?;
+            let content = ax_utils::read_text_file(path)?;
             if is_generated(&content) { continue; }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let lang = opts.custom_extensions.get(&format!(".{}", ext)).copied().or_else(|| language_for_extension(ext)).unwrap_or(Language::Unknown);
@@ -137,12 +137,7 @@ impl ExtractionOrchestrator {
             if !full_path.is_file() {
                 continue;
             }
-            let content = std::fs::read_to_string(&full_path).map_err(|e| {
-                ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(
-                    e.to_string(),
-                    full_path.display().to_string(),
-                ))
-            })?;
+            let content = ax_utils::read_text_file(&full_path).map_err(|e| ax_utils::errors::AxError::File(e))?;
             if is_generated(&content) {
                 continue;
             }

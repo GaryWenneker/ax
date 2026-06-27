@@ -8,6 +8,7 @@ pub mod memory;
 pub mod mutex;
 pub mod paths;
 pub mod security;
+pub mod text_encoding;
 
 pub use debounce::{debounce, Throttle};
 pub use errors::*;
@@ -17,6 +18,7 @@ pub use memory::MemoryMonitor;
 pub use mutex::AsyncMutex;
 pub use paths::validate_path_within_root;
 pub use security::{is_config_leaf_node, CONFIG_LEAF_LANGUAGES, SENSITIVE_PATHS};
+pub use text_encoding::read_text_file;
 
 /// Process items in batches to avoid OOM on large result sets.
 pub async fn process_in_batches<T, F, Fut>(

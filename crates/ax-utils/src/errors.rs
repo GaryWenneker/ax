@@ -21,7 +21,7 @@ pub enum AxError {
 }
 
 #[derive(Debug, Error)]
-#[error("{message}")]
+#[error("{message}{}", path.as_deref().map(|p| format!(" ({p})")).unwrap_or_default())]
 pub struct FileError {
     pub message: String,
     pub path: Option<String>,
