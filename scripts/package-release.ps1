@@ -11,9 +11,11 @@ $root = Split-Path -Parent $PSScriptRoot
 $dist = Join-Path $root 'dist'
 $stage = Join-Path $dist "ax-$Bundle"
 $bin = Join-Path $root "target\$RustTarget\release\ax.exe"
-
 if (-not (Test-Path $bin)) {
-    throw "Binary not found: $bin — run: cargo build --release -p ax-cli --target $RustTarget"
+    $bin = Join-Path $root 'target\release\ax.exe'
+}
+if (-not (Test-Path $bin)) {
+    throw "Binary not found. Run: cargo build --release -p ax-cli --target $RustTarget"
 }
 
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
