@@ -93,11 +93,10 @@
 	color-scheme: light;
 }
 
-/* Light mode: logo blend mode back to normal */
+/* Light mode: logo unchanged (true alpha PNG) */
 :root[data-theme='light'] .ax-logo {
-	mix-blend-mode: normal;
-	opacity: 0.92;
-	filter: none;
+	opacity: 0.95;
+	filter: drop-shadow(0 0 12px rgba(0, 120, 160, 0.12));
 }
 
 /* ---- Global flat resets ---- */

@@ -11,7 +11,7 @@ export default defineConfig({
 			title: 'ax',
 			description:
 				'A local-first code-intelligence tool that turns any codebase into a queryable knowledge graph for AI coding agents.',
-			favicon: '/logo.jpg',
+			favicon: '/logo.png',
 			head: [
 				{
 					// Default to dark / ink theme on first visit.
