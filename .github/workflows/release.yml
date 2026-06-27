@@ -66,8 +66,14 @@ jobs:
         run: cargo build --release -p ax-cli --target ${{ matrix.target }}
 
       - name: Package archive
+        if: runner.os != 'Windows'
         shell: bash
         run: bash scripts/package-release.sh ${{ matrix.bundle }} ${{ matrix.target }}
+
+      - name: Package archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-release.ps1 -Bundle ${{ matrix.bundle }} -RustTarget ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:

@@ -60,5 +60,6 @@ Write-Host "Next (optional):"
 Write-Host "  Telemetry: set CLOUDFLARE_API_TOKEN + POSTHOG_KEY repo secrets, run Deploy telemetry worker workflow"
 Write-Host "  Or local:    .\scripts\deploy-telemetry.ps1 -Dev"
 Write-Host "  Docs site:   enable GitHub Pages (source: GitHub Actions) after first site workflow run"
+Write-Host "  Pages setup: .\scripts\enable-github-pages.ps1"
 
 Pop-Location
