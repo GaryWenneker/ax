@@ -17,15 +17,15 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: build-${{ matrix.bundle }}
     runs-on: ${{ matrix.os }}
-    concurrency:
-    group: release-${{ github.ref }}
-    cancel-in-progress: true
-
-  strategy:
+    strategy:
       fail-fast: false
       matrix:
         include:
