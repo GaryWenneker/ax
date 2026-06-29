@@ -1,0 +1,47 @@
+---
+description: Cross-check every logic change against CodeGraph and update the compare matrix
+globs: "**/*.rs,docs/**"
+alwaysApply: false
+---
+
+# ax ↔ CodeGraph parity (mandatory)
+
+Every behavior change in ax must be validated against CodeGraph and reflected in the compare matrix.
+
+## Paths
+
+| What | Path |
+|------|------|
+| ax (this repo) | `C:\gary\ax` |
+| CodeGraph (reference, read-only) | `C:\gary\codegraph\src` |
+| Compare matrix (ax copy) | `C:\gary\ax\docs\CODEGRAPH_AX_COMPARE_MATRIX.md` |
+| Compare matrix (Recall copy) | `c:\gary\_recall\docs\CODEGRAPH_AX_COMPARE_MATRIX.md` |
+
+## Before implementing
+
+1. Locate the CodeGraph equivalent (matrix gap table + rename map).
+2. Read CG source — match semantics (edges, resolution order, explore output, framework heuristics).
+3. Port behavior from CG; do not invent alternate semantics without documenting a delta in the matrix.
+
+## After implementing
+
+1. Verify on the same or equivalent fixture as CG smoke tests.
+2. Update **both** matrix copies — status line, table symbols, work-package acceptance, verification command.
+3. Do not mark ✅ without citing the CG file you matched against.
+4. Bump `EXTRACTION_VERSION` when extractor behavior changes.
+
+## Common CG ↔ ax file map
+
+| CodeGraph | ax |
+|-----------|-----|
+| `extraction/refs.ts` | `ax-extraction/src/languages/refs.rs` |
+| `resolution/resolver.ts` | `ax-resolution/src/resolver.rs` |
+| `resolution/frameworks/*.ts` | `ax-resolution/src/frameworks/*.rs` |
+| `graph/traversal.ts` | `ax-graph/src/traversal.rs` |
+| `mcp/tools.ts` (`codegraph_explore`) | `ax-mcp/src/tools.rs` (`ax_explore`) |
+| `context/explore*.ts` | `ax-context/src/explore.rs` |
+| `db/queries.ts` | `ax-db/src/queries.rs` |
+
+## Encoding
+
+On Windows, verify Rust files stay UTF-8 no BOM after edits (see `no-mojibake.mdc`).

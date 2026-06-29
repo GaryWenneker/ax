@@ -1,0 +1,41 @@
+name: Deploy telemetry worker
+
+# Deploy ax telemetry ingest to Cloudflare Workers.
+# Secrets: CLOUDFLARE_API_TOKEN, POSTHOG_KEY (wrangler secret)
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telemetry-worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Set PostHog secret
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
+        run: |
+          if [ -n "$POSTHOG_KEY" ]; then
+            echo "$POSTHOG_KEY" | npx wrangler secret put POSTHOG_KEY
+          fi
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy

@@ -1,0 +1,18 @@
+[package]
+name = "ax-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ax-types = { workspace = true }
+ax-utils = { workspace = true }
+ax-db = { workspace = true }
+ax-extraction = { workspace = true }
+ax-resolution = { workspace = true }
+ax-graph = { workspace = true }
+ax-context = { workspace = true }
+ax-sync = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }

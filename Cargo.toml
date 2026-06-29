@@ -1,0 +1,60 @@
+[workspace]
+members = [
+    "crates/ax-types",
+    "crates/ax-utils",
+    "crates/ax-db",
+    "crates/ax-extraction",
+    "crates/ax-resolution",
+    "crates/ax-graph",
+    "crates/ax-context",
+    "crates/ax-sync",
+    "crates/ax-core",
+    "crates/ax-mcp",
+    "crates/ax-cli",
+    "crates/ax-telemetry",
+    "crates/ax-reasoning",
+    "crates/ax-smoke-tests",
+]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tree-sitter = "0.23"
+petgraph = "0.6"
+blake3 = "1"
+rayon = "1"
+notify = "6"
+walkdir = "2"
+ignore = "0.4"
+clap = { version = "4", features = ["derive"] }
+lru = "0.12"
+regex = "1"
+uuid = { version = "1", features = ["v4"] }
+dialoguer = "0.11"
+console = "0.15"
+indicatif = "0.17"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+fs2 = "0.4"
+dirs = "5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+self_update = { version = "0.41", default-features = false, features = ["rustls"] }
+
+ax-types = { path = "crates/ax-types" }
+ax-utils = { path = "crates/ax-utils" }
+ax-telemetry = { path = "crates/ax-telemetry" }
+ax-reasoning = { path = "crates/ax-reasoning" }
+ax-db = { path = "crates/ax-db" }
+ax-extraction = { path = "crates/ax-extraction" }
+ax-resolution = { path = "crates/ax-resolution" }
+ax-graph = { path = "crates/ax-graph" }
+ax-context = { path = "crates/ax-context" }
+ax-sync = { path = "crates/ax-sync" }
+ax-core = { path = "crates/ax-core" }
+ax-mcp = { path = "crates/ax-mcp" }

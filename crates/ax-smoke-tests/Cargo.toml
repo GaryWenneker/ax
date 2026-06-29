@@ -1,0 +1,11 @@
+[package]
+name = "ax-smoke-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+ax-core = { path = "../ax-core" }
+ax-extraction = { path = "../ax-extraction" }
+ax-types = { path = "../ax-types" }
+tokio = { workspace = true }

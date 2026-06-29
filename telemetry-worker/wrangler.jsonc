@@ -1,0 +1,26 @@
+// ax telemetry ingest — see telemetry-worker/README.md and docs/TELEMETRY.md
+// POSTHOG_KEY: wrangler secret put POSTHOG_KEY
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ax-telemetry",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Custom domain when getax.dev (or your zone) is on the Cloudflare account.
+  // For dev without a domain, set workers_dev: true and AX_TELEMETRY_ENDPOINT on clients.
+  "routes": [{ "pattern": "telemetry.getax.dev", "custom_domain": true }],
+  "workers_dev": false,
+
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
+  "vars": { "POSTHOG_HOST": "https://us.i.posthog.com" },
+
+  "ratelimits": [
+    {
+      "name": "MACHINE_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 6, "period": 60 }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Release packaging
+/dist/
+
+# ax project data (local indexes)
+.ax/
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# Node (site + telemetry-worker)
+node_modules/
+site/dist/
+telemetry-worker/.wrangler/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# TypeScript
+*.tsbuildinfo

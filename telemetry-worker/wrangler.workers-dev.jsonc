@@ -1,0 +1,20 @@
+// Dev / staging deploy without custom domain (workers.dev URL).
+// Usage: npx wrangler deploy -c wrangler.workers-dev.jsonc
+// Then set AX_TELEMETRY_ENDPOINT=https://ax-telemetry.<account>.workers.dev/v1/events
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ax-telemetry",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": { "POSTHOG_HOST": "https://us.i.posthog.com" },
+  "ratelimits": [
+    {
+      "name": "MACHINE_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 6, "period": 60 }
+    }
+  ]
+}

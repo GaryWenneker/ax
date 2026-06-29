@@ -1,0 +1,12 @@
+[package]
+name = "ax-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ax-types = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+fs2 = { workspace = true }

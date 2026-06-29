@@ -1,0 +1,13 @@
+[package]
+name = "ax-context"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ax-types = { workspace = true }
+ax-utils = { workspace = true }
+ax-db = { workspace = true }
+ax-graph = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
