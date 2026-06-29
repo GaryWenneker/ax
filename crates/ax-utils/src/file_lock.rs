@@ -26,7 +26,15 @@ impl FileLock {
         &self.path
     }
 
+    /// Clear a stale lock file before attempting to acquire (safe to call always).
+    pub fn prepare(&self) {
+        if self.file.is_none() {
+            let _ = clear_stale_lock(&self.path);
+        }
+    }
+
     pub fn acquire(&mut self) -> Result<(), AxError> {
+        self.prepare();
         self.acquire_inner(false)
     }
 
@@ -63,16 +71,23 @@ impl FileLock {
                 Ok(())
             }
             Err(_) => {
-                if !retried && clear_stale_lock(&self.path) {
+                if !retried {
+                    clear_stale_lock(&self.path);
                     return self.acquire_inner(true);
                 }
                 let holder = read_lock_pid(&self.path);
                 let hint = match holder {
                     Some(pid) if is_pid_alive(pid) => {
-                        format!("lock unavailable: {} (held by PID {pid} — run `ax unlock` or stop that process)", self.path.display())
+                        format!(
+                            "lock unavailable: {} (held by PID {pid} — run `ax unlock` or stop that process)",
+                            self.path.display()
+                        )
                     }
                     Some(pid) => {
-                        format!("lock unavailable: {} (stale PID {pid} — run `ax unlock`)", self.path.display())
+                        format!(
+                            "lock unavailable: {} (stale PID {pid} — run `ax unlock`)",
+                            self.path.display()
+                        )
                     }
                     None => format!("lock unavailable: {} (run `ax unlock`)", self.path.display()),
                 };
@@ -105,8 +120,11 @@ impl Drop for FileLock {
     }
 }
 
-/// Remove lock file when the recorded PID is dead (or file has no PID).
+/// Remove lock file when the holder PID is dead, missing, or unreadable.
 pub fn clear_stale_lock(lock_path: &Path) -> bool {
+    if !lock_path.exists() {
+        return false;
+    }
     match read_lock_pid(lock_path) {
         Some(pid) if is_pid_alive(pid) => false,
         Some(_) | None => {
@@ -128,4 +146,34 @@ fn stamp_pid(file: &File) -> Result<(), AxError> {
     write!(f, "{pid}").map_err(|e| AxError::Other(e.to_string()))?;
     f.sync_all().map_err(|e| AxError::Other(e.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn clear_stale_lock_removes_dead_pid() {
+        let dir = std::env::temp_dir().join(format!("ax-file-lock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join("ax.lock");
+        fs::write(&lock, "999999999\n").unwrap();
+        assert!(clear_stale_lock(&lock));
+        assert!(!lock.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clear_stale_lock_keeps_live_pid() {
+        let dir = std::env::temp_dir().join(format!("ax-file-lock-live-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join("ax.lock");
+        fs::write(&lock, format!("{}\n", std::process::id())).unwrap();
+        assert!(!clear_stale_lock(&lock));
+        assert!(lock.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

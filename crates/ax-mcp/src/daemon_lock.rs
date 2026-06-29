@@ -34,6 +34,7 @@ pub fn read_lock_info(pid_path: &Path) -> Option<DaemonLockInfo> {
 
 pub fn try_acquire_daemon_lock(project_root: &Path) -> std::io::Result<AcquireResult> {
     let pid_path = daemon_pid_path(project_root);
+    clear_stale_daemon_lock(&pid_path, None);
     if let Some(parent) = pid_path.parent() {
         fs::create_dir_all(parent)?;
     }

@@ -18,7 +18,7 @@ use crate::daemon_lock::{
     clear_stale_daemon_lock, is_pid_alive, release_daemon_lock, rewrite_lock_socket_path,
     try_acquire_daemon_lock, AcquireResult,
 };
-use crate::daemon_paths::daemon_socket_candidates;
+use crate::daemon_paths::{daemon_pid_path, daemon_socket_candidates};
 use crate::engine::McpEngine;
 use crate::liveness_watchdog::install_main_thread_watchdog;
 use crate::server::handle_request;
@@ -243,6 +243,7 @@ fn acquire_daemon_lock_or_exit(project_root: &Path) -> PathBuf {
     const MAX_RETRIES: u32 = 3;
     const RETRY_MS: u64 = 200;
     for attempt in 0..MAX_RETRIES {
+        clear_stale_daemon_lock(&daemon_pid_path(project_root), None);
         match try_acquire_daemon_lock(project_root) {
             Ok(AcquireResult::Acquired { pid_path, .. }) => return pid_path,
             Ok(AcquireResult::Taken { existing, pid_path }) => {

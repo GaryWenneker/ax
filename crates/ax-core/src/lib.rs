@@ -22,7 +22,7 @@ use ax_types::{
     BuildContextOptions, ExploreOptions, ExploreResult, GraphStats, IndexProgress, PendingFile,
     SearchOptions, SearchResult, TaskContext, TaskInput,
 };
-use ax_utils::file_lock::FileLock;
+use ax_utils::file_lock::{clear_stale_lock, FileLock};
 use ax_utils::mutex::AsyncMutex;
 
 pub use project_config::ProjectConfig;
@@ -74,7 +74,9 @@ impl Ax {
     async fn from_db(project_root: PathBuf, db: Database) -> Result<Self, ax_utils::errors::AxError> {
         let root = project_root.clone();
         let config = ProjectConfig::load(&root);
-        let file_lock = FileLock::new(&get_ax_dir(&root));
+        let ax_dir = get_ax_dir(&root);
+        ax_utils::clear_stale_lock(&ax_dir.join("ax.lock"));
+        let file_lock = FileLock::new(&ax_dir);
         let pool = db.pool().clone();
         let mut ax = Self {
             db,
@@ -157,25 +159,32 @@ impl Ax {
         let result = self
             .orchestrator
             .index_all(&self.queries, &index_opts, on_progress)
-            .await?;
-        let resolution = self.resolver.resolve_all(&self.queries).await?;
-        self.queries
-            .set_metadata("resolution_total", &resolution.stats.total.to_string())
-            .await?;
-        self.queries
-            .set_metadata("resolution_resolved", &resolution.stats.resolved.to_string())
-            .await?;
-        self.queries
-            .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
-            .await?;
-        self.db.run_maintenance().await?;
-        self.queries
-            .set_metadata("extraction_version", EXTRACTION_VERSION)
-            .await?;
-        self.queries
-            .set_metadata("package_version", env!("CARGO_PKG_VERSION"))
-            .await?;
-        Ok(result)
+            .await;
+        let result = match result {
+            Ok(result) => {
+                let resolution = self.resolver.resolve_all(&self.queries).await?;
+                self.queries
+                    .set_metadata("resolution_total", &resolution.stats.total.to_string())
+                    .await?;
+                self.queries
+                    .set_metadata("resolution_resolved", &resolution.stats.resolved.to_string())
+                    .await?;
+                self.queries
+                    .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
+                    .await?;
+                self.db.run_maintenance().await?;
+                self.queries
+                    .set_metadata("extraction_version", EXTRACTION_VERSION)
+                    .await?;
+                self.queries
+                    .set_metadata("package_version", env!("CARGO_PKG_VERSION"))
+                    .await?;
+                Ok(result)
+            }
+            Err(e) => Err(e),
+        };
+        let _ = self.file_lock.release();
+        result
     }
 
     pub async fn sync(&mut self, opts: IndexOptions) -> Result<IndexResult, ax_utils::errors::AxError> {
@@ -204,19 +213,26 @@ impl Ax {
         let result = self
             .orchestrator
             .index_files(&self.queries, paths, &index_opts, None)
-            .await?;
-        let resolution = self.resolver.resolve_all(&self.queries).await?;
-        self.queries
-            .set_metadata("resolution_total", &resolution.stats.total.to_string())
-            .await?;
-        self.queries
-            .set_metadata("resolution_resolved", &resolution.stats.resolved.to_string())
-            .await?;
-        self.queries
-            .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
-            .await?;
-        self.db.run_maintenance().await?;
-        Ok(result)
+            .await;
+        let result = match result {
+            Ok(result) => {
+                let resolution = self.resolver.resolve_all(&self.queries).await?;
+                self.queries
+                    .set_metadata("resolution_total", &resolution.stats.total.to_string())
+                    .await?;
+                self.queries
+                    .set_metadata("resolution_resolved", &resolution.stats.resolved.to_string())
+                    .await?;
+                self.queries
+                    .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
+                    .await?;
+                self.db.run_maintenance().await?;
+                Ok(result)
+            }
+            Err(e) => Err(e),
+        };
+        let _ = self.file_lock.release();
+        result
     }
 
     /// Debounced watch loop: re-index files after they stop changing (CG watcher sync).
