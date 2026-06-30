@@ -3,7 +3,7 @@ title: Integrations
 description: Supported agents, and manual MCP setup.
 ---
 
-The interactive installer auto-detects and configures each supported agent — wiring the ax MCP server into each. For the agents that use an instructions file, it also writes a short marker-fenced ax section (`CLAUDE.md`, `AGENTS.md`, or `GEMINI.md`) so subagents and non-MCP harnesses learn the `ax explore` command; `ax uninstall` removes it.
+The interactive installer auto-detects supported agents and wires the ax MCP server. For agents that use an instructions file, it also writes a short marker-fenced ax section so subagents learn the `ax explore` workflow; `ax uninstall` removes it.
 
 ## Supported agents
 
@@ -16,17 +16,11 @@ The interactive installer auto-detects and configures each supported agent — w
 - **Antigravity IDE**
 - **Kiro**
 
-Run `npx @colbymchenry/ax` and pick your agent(s); see [Installation](/ax/getting-started/installation/) for the non-interactive flags.
+Run `npx @garywenneker/ax` or `ax install` — see [Installation](/getting-started/installation/) for non-interactive flags.
 
 ## Manual setup
 
-If you'd rather wire it up yourself, install globally:
-
-```bash
-npm install -g @colbymchenry/ax
-```
-
-Add the MCP server to `~/.claude.json`:
+Install the CLI globally (any method from [Installation](/getting-started/installation/)), then add the MCP server to `~/.claude.json`:
 
 ```json
 {
@@ -40,7 +34,7 @@ Add the MCP server to `~/.claude.json`:
 }
 ```
 
-Optionally auto-allow ax's tools in `~/.claude/settings.json`:
+Optionally auto-allow ax tools in `~/.claude/settings.json`:
 
 ```json
 {
@@ -52,8 +46,6 @@ Optionally auto-allow ax's tools in `~/.claude/settings.json`:
 }
 ```
 
-One wildcard auto-approves every ax tool. The server lists a single tool by default — `ax_explore` — but if you re-enable others via the `ax_MCP_TOOLS` environment variable, they're already permitted with no prompt.
-
 :::tip
-Cursor launches MCP subprocesses with the wrong working directory. The installer handles this for you by injecting a `--path` argument; if you wire Cursor up by hand, pass the project path explicitly.
+Cursor launches MCP subprocesses with the wrong working directory. The installer injects `--path` for you; if you configure Cursor manually, pass the project path explicitly.
 :::

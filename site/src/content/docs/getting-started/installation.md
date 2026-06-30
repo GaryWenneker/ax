@@ -3,26 +3,52 @@ title: Installation
 description: Install ax and configure your AI coding agents.
 ---
 
-## 1. Run the installer
+## 1. Install the CLI
+
+ax is a **native Rust binary** — no Node.js required for normal use.
 
 ```bash
-npx @colbymchenry/ax
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
 ```
 
-The installer will:
-
-- Ask which agent(s) to configure — auto-detecting installed ones from **Claude Code**, **Cursor**, **Codex CLI**, **opencode**, **Hermes Agent**, **Gemini CLI**, **Antigravity IDE**, and **Kiro**.
-- Prompt to install `ax` on your `PATH` (so agents can launch the MCP server).
-- Ask whether configs apply to all your projects or just this one.
-- Write each chosen agent's MCP server config, plus a small marker-fenced ax section in the agent's instructions file (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`). Cursor and Kiro get the MCP config only. Removed cleanly by `ax uninstall`.
-- Set up auto-allow permissions when Claude Code is one of the targets.
-
-The installer **wires up your agents only — it does not index your code.** After it finishes, build each project's graph yourself with `ax init` (step 3 below).
-
-## Non-interactive (scripting / CI)
+**From source** (requires Rust 1.75+):
 
 ```bash
-ax install --yes                              # auto-detect agents, install global
+cargo install --git https://github.com/GaryWenneker/ax ax-cli --force
+```
+
+**Via npm** (optional — downloads the matching release binary for your OS):
+
+```bash
+npx @garywenneker/ax
+# or globally:
+npm install -g @garywenneker/ax
+```
+
+The npm package is a thin launcher: it fetches the prebuilt `ax` binary from [GitHub Releases](https://github.com/GaryWenneker/ax/releases). See [npm README](https://github.com/GaryWenneker/ax/blob/main/docs/npm/README.md) for publish details.
+
+## 2. Wire up your agent(s)
+
+```bash
+ax install
+```
+
+The installer:
+
+- Detects **Claude Code**, **Cursor**, **Codex CLI**, **opencode**, **Hermes Agent**, **Gemini CLI**, **Antigravity IDE**, and **Kiro**.
+- Writes each agent's MCP config (`ax serve --mcp`).
+- Adds a marker-fenced ax section to agent instruction files where applicable (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`). Removed cleanly by `ax uninstall`.
+
+The installer **connects agents only — it does not index your code.** Run `ax init` per project (step 4).
+
+### Non-interactive (scripting / CI)
+
+```bash
+ax install --yes                              # auto-detect agents
 ax install --target=cursor,claude --yes       # explicit target list
 ax install --target=auto --location=local     # detected agents, project-local
 ax install --print-config codex               # print snippet, no file writes
@@ -36,35 +62,32 @@ ax install --print-config codex               # print snippet, no file writes
 | `--no-permissions` | (boolean) skip Claude auto-allow list | permissions on |
 | `--print-config <id>` | dump snippet for one agent and exit | — |
 
-## 2. Restart your agent
+## 3. Restart your agent
 
-Restart your agent (Claude Code / Cursor / Codex CLI / opencode / Hermes Agent / Gemini CLI / Antigravity IDE / Kiro) for the MCP server to load.
+Restart your agent so the MCP server config loads.
 
-## 3. Initialize projects
+## 4. Initialize projects
 
 ```bash
 cd your-project
 ax init
 ```
 
-`ax init` creates the local `.ax/` directory and builds the full graph in the same step — one command. A single global `ax install` covers every project; you run `ax init` once per project.
+`ax init` creates `.ax/` (SQLite index + lock file) and runs a full index in one step.
 
 ## Supported platforms
 
-Every release ships a self-contained build (bundled Node runtime — nothing to compile) for all three desktop OSes, on both x64 and arm64:
+Prebuilt binaries ship for:
 
 | Platform | Architectures | Install |
 |---|---|---|
-| Windows | x64, arm64 | PowerShell installer or npm |
-| macOS | x64, arm64 | shell installer or npm |
-| Linux | x64, arm64 | shell installer or npm |
+| Windows | x64, arm64 | PowerShell installer, npm, or GitHub release |
+| macOS | x64, arm64 | shell installer, npm, or GitHub release |
+| Linux | x64, arm64 | shell installer, npm, or GitHub release |
 
 ## Uninstall
 
-Changed your mind? One command removes ax from every agent it configured:
-
 ```bash
-ax uninstall
+ax uninstall          # remove MCP config from agents
+ax uninit [path]      # remove .ax/ from a project
 ```
-
-This reverses the installer — stripping ax's MCP server config, instructions, and permissions from each configured agent. Your project indexes (`.ax/`) are left untouched; remove those per-project with `ax uninit`. Use `--target` to remove from specific agents, or `--yes` to run non-interactively.

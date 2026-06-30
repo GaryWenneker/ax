@@ -2,7 +2,7 @@
 
 use regex::Regex;
 
-use ax_types::{Language, NodeKind, ReferenceKind, UnresolvedReference};
+use ax_types::{NodeKind, ReferenceKind, UnresolvedReference};
 
 use super::extract::{language_for_path, now_ms, stable_node_id, FrameworkExtractResult};
 

@@ -19,10 +19,10 @@ use ax_graph::traversal::GraphTraverser;
 use ax_resolution::ReferenceResolver;
 use ax_sync::watcher::{FileWatcher, WatcherOptions};
 use ax_types::{
-    BuildContextOptions, ExploreOptions, ExploreResult, GraphStats, IndexProgress, PendingFile,
-    SearchOptions, SearchResult, TaskContext, TaskInput,
+    BuildContextOptions, ExploreOptions, ExploreResult, GraphStats, IndexPhase, IndexProgress,
+    PendingFile, SearchOptions, SearchResult, TaskContext, TaskInput,
 };
-use ax_utils::file_lock::{clear_stale_lock, FileLock};
+use ax_utils::file_lock::FileLock;
 use ax_utils::mutex::AsyncMutex;
 
 pub use project_config::ProjectConfig;
@@ -128,7 +128,7 @@ impl Ax {
         if !self.db.is_replaced_on_disk() {
             return Ok(false);
         }
-        let db_path = self.db.path().clone();
+        let db_path = self.db.path().to_path_buf();
         let fresh = Database::open(&db_path).await?;
         self.db.close().await;
         self.db = fresh;
@@ -147,38 +147,24 @@ impl Ax {
     pub async fn index_all(
         &mut self,
         opts: IndexOptions,
-        on_progress: Option<Box<dyn FnMut(IndexProgress) + Send>>,
+        mut on_progress: Option<Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> Result<IndexResult, ax_utils::errors::AxError> {
         let _guard = self.index_mutex.lock().await;
         self.file_lock.acquire()?;
-        let index_opts = IndexOptions {
-            force: opts.force,
-            quiet: opts.quiet,
-            custom_extensions: self.config.extensions.clone(),
-        };
+        let index_opts = self.merge_index_opts(&opts);
         let result = self
             .orchestrator
-            .index_all(&self.queries, &index_opts, on_progress)
+            .index_all(&self.queries, &index_opts, on_progress.as_mut())
             .await;
         let result = match result {
             Ok(result) => {
-                let resolution = self.resolver.resolve_all(&self.queries).await?;
-                self.queries
-                    .set_metadata("resolution_total", &resolution.stats.total.to_string())
-                    .await?;
-                self.queries
-                    .set_metadata("resolution_resolved", &resolution.stats.resolved.to_string())
-                    .await?;
-                self.queries
-                    .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
-                    .await?;
-                self.db.run_maintenance().await?;
-                self.queries
-                    .set_metadata("extraction_version", EXTRACTION_VERSION)
-                    .await?;
-                self.queries
-                    .set_metadata("package_version", env!("CARGO_PKG_VERSION"))
-                    .await?;
+                finalize_after_extract(
+                    &mut self.resolver,
+                    &self.queries,
+                    &self.db,
+                    &mut on_progress,
+                )
+                .await?;
                 Ok(result)
             }
             Err(e) => Err(e),
@@ -187,8 +173,47 @@ impl Ax {
         result
     }
 
-    pub async fn sync(&mut self, opts: IndexOptions) -> Result<IndexResult, ax_utils::errors::AxError> {
-        self.index_all(opts, None).await
+    pub async fn sync(
+        &mut self,
+        opts: IndexOptions,
+        mut on_progress: Option<Box<dyn FnMut(IndexProgress) + Send>>,
+    ) -> Result<IndexResult, ax_utils::errors::AxError> {
+        let _guard = self.index_mutex.lock().await;
+        self.file_lock.acquire()?;
+        let index_opts = self.merge_index_opts(&opts);
+        let result = self
+            .orchestrator
+            .sync_changed(&self.queries, &index_opts, on_progress.as_mut())
+            .await;
+        let result = match result {
+            Ok(sync) => {
+                if sync.had_changes() {
+                    finalize_after_extract(
+                        &mut self.resolver,
+                        &self.queries,
+                        &self.db,
+                        &mut on_progress,
+                    )
+                    .await?;
+                }
+                Ok(IndexResult {
+                    files_indexed: sync.files_indexed + sync.files_removed,
+                    duration_ms: sync.duration_ms,
+                })
+            }
+            Err(e) => Err(e),
+        };
+        let _ = self.file_lock.release();
+        result
+    }
+
+    fn merge_index_opts(&self, opts: &IndexOptions) -> IndexOptions {
+        IndexOptions {
+            force: opts.force,
+            quiet: opts.quiet,
+            custom_extensions: self.config.extensions.clone(),
+            exclude: self.config.exclude.clone(),
+        }
     }
 
     /// CG: `indexFiles` — incremental re-index for changed paths only.
@@ -196,37 +221,30 @@ impl Ax {
         &mut self,
         paths: &[String],
         opts: IndexOptions,
+        on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> Result<IndexResult, ax_utils::errors::AxError> {
         if paths.is_empty() {
-            return Ok(ax_extraction::orchestrator::IndexResult {
+            return Ok(IndexResult {
                 files_indexed: 0,
                 duration_ms: 0,
             });
         }
         let _guard = self.index_mutex.lock().await;
         self.file_lock.acquire()?;
-        let index_opts = IndexOptions {
-            force: opts.force,
-            quiet: opts.quiet,
-            custom_extensions: self.config.extensions.clone(),
-        };
+        let index_opts = self.merge_index_opts(&opts);
         let result = self
             .orchestrator
-            .index_files(&self.queries, paths, &index_opts, None)
+            .index_files(&self.queries, paths, &index_opts, on_progress.as_mut())
             .await;
         let result = match result {
             Ok(result) => {
-                let resolution = self.resolver.resolve_all(&self.queries).await?;
-                self.queries
-                    .set_metadata("resolution_total", &resolution.stats.total.to_string())
-                    .await?;
-                self.queries
-                    .set_metadata("resolution_resolved", &resolution.stats.resolved.to_string())
-                    .await?;
-                self.queries
-                    .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
-                    .await?;
-                self.db.run_maintenance().await?;
+                finalize_after_extract(
+                    &mut self.resolver,
+                    &self.queries,
+                    &self.db,
+                    on_progress,
+                )
+                .await?;
                 Ok(result)
             }
             Err(e) => Err(e),
@@ -236,7 +254,11 @@ impl Ax {
     }
 
     /// Debounced watch loop: re-index files after they stop changing (CG watcher sync).
-    pub async fn watch_and_sync(&mut self, opts: IndexOptions) -> Result<(), ax_utils::errors::AxError> {
+    pub async fn watch_and_sync(
+        &mut self,
+        opts: IndexOptions,
+        mut on_progress: Option<Box<dyn FnMut(IndexProgress) + Send>>,
+    ) -> Result<(), ax_utils::errors::AxError> {
         if !self.is_watching().await {
             self.watch().await?;
         }
@@ -258,7 +280,7 @@ impl Ax {
             if let Some(w) = &self.watcher {
                 w.mark_indexing(&ready).await;
             }
-            match self.index_files(&ready, opts.clone()).await {
+            match self.index_files(&ready, opts.clone(), &mut on_progress).await {
                 Ok(r) => {
                     if !opts.quiet {
                         tracing::info!("auto-sync: {} file(s) in {}ms", r.files_indexed, r.duration_ms);
@@ -418,4 +440,40 @@ impl Ax {
     pub fn queries(&self) -> &QueryBuilder {
         &self.queries
     }
+}
+
+async fn finalize_after_extract(
+    resolver: &mut ReferenceResolver,
+    queries: &QueryBuilder,
+    db: &Database,
+    on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
+) -> Result<(), ax_utils::errors::AxError> {
+    let resolution = resolver
+        .resolve_all(queries, on_progress.as_mut())
+        .await?;
+    if let Some(cb) = on_progress.as_mut() {
+        cb(IndexProgress {
+            phase: IndexPhase::Optimizing,
+            current: 1,
+            total: 1,
+            file_path: Some("SQLite maintenance".into()),
+        });
+    }
+    queries
+        .set_metadata("resolution_total", &resolution.stats.total.to_string())
+        .await?;
+    queries
+        .set_metadata("resolution_resolved", &resolution.stats.resolved.to_string())
+        .await?;
+    queries
+        .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
+        .await?;
+    db.run_maintenance().await?;
+    queries
+        .set_metadata("extraction_version", EXTRACTION_VERSION)
+        .await?;
+    queries
+        .set_metadata("package_version", env!("CARGO_PKG_VERSION"))
+        .await?;
+    Ok(())
 }

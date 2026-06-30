@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -110,6 +110,14 @@ pub struct Telemetry {
     counts: HashMap<String, CountLine>,
     events: Vec<EventLine>,
     config_cache: Option<Option<ConfigFile>>,
+}
+
+pub fn trigger_background_flush() {
+    std::thread::spawn(|| {
+        if let Ok(mut t) = telemetry().lock() {
+            t.flush_now_sync(DEFAULT_FLUSH_TIMEOUT_MS);
+        }
+    });
 }
 
 impl Telemetry {
@@ -260,7 +268,7 @@ impl Telemetry {
         if self.counts.is_empty() && self.events.is_empty() {
             return;
         }
-        let mut lines: Vec<BufferLine> = self
+        let lines: Vec<BufferLine> = self
             .counts
             .values()
             .cloned()
@@ -274,6 +282,15 @@ impl Telemetry {
 
     pub fn maybe_flush(&mut self) {
         let _ = self.flush_now(DEFAULT_FLUSH_TIMEOUT_MS);
+    }
+
+    pub fn flush_now_sync(&mut self, timeout_ms: u64) {
+        if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            let _ = rt.block_on(self.flush_now(timeout_ms));
+        }
     }
 
     pub async fn flush_now(&mut self, timeout_ms: u64) {
@@ -293,7 +310,8 @@ impl Telemetry {
         for line in lines {
             match &line {
                 BufferLine::Event(_) => sendable.push(line),
-                BufferLine::Count(c) if c.d < today => sendable.push(line),
+                // Include today's rollups on flush so the dashboard is not always one day behind.
+                BufferLine::Count(c) if c.d <= today => sendable.push(line),
                 _ => keep.push(line),
             }
         }
@@ -398,7 +416,7 @@ impl Telemetry {
             if content.trim().is_empty() {
                 continue;
             }
-            let mut file = fs::OpenOptions::new()
+            let file = fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(self.queue_path());
@@ -478,8 +496,9 @@ impl Telemetry {
                 .json(&body)
                 .send()
                 .await;
-            if res.is_err() {
-                return lines[i..].to_vec();
+            match res {
+                Ok(resp) if resp.status().is_success() => {}
+                _ => return lines[i..].to_vec(),
             }
         }
         Vec::new()

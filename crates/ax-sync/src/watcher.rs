@@ -40,7 +40,7 @@ impl FileWatcher {
         }
     }
 
-    pub async fn start(&mut self, opts: WatcherOptions) -> Result<(), ax_utils::errors::AxError> {
+    pub async fn start(&mut self, _opts: WatcherOptions) -> Result<(), ax_utils::errors::AxError> {
         let (tx, mut rx) = mpsc::channel(256);
         let pending = self.pending.clone();
 

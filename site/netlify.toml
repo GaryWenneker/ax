@@ -21,8 +21,26 @@
   status = 200
   force = true
 
+[[redirects]]
+  from = "/v1/admin/login"
+  to = "/.netlify/functions/admin-auth"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/v1/admin/telemetry"
+  to = "/.netlify/functions/admin-telemetry"
+  status = 200
+  force = true
+
 [functions]
   node_bundler = "esbuild"
 
 [functions."telemetry-ingest"]
   timeout = 10
+
+[functions."admin-auth"]
+  timeout = 10
+
+[functions."admin-telemetry"]
+  timeout = 25

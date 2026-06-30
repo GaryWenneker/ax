@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use ax_extraction::orchestrator::IndexOptions;
-use ax_types::IndexProgress;
 
 use crate::commands::{check_unsafe_root, resolve_path};
-use crate::ui::{finish_progress_bar, index_progress_bar, index_progress_callback, ok_line};
+use crate::ui::{finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, ok_line};
 
 pub async fn run(path: Option<String>, force: bool, quiet: bool, _verbose: bool) -> Result<(), String> {
     let root = resolve_path(path);
@@ -16,7 +15,7 @@ pub async fn run(path: Option<String>, force: bool, quiet: bool, _verbose: bool)
     let opts = IndexOptions {
         force,
         quiet,
-        custom_extensions: ax.config().extensions.clone(),
+        ..IndexOptions::default()
     };
 
     let progress = index_progress_bar(quiet);
@@ -32,8 +31,9 @@ pub async fn run(path: Option<String>, force: bool, quiet: bool, _verbose: bool)
         println!(
             "{}",
             ok_line(format!(
-                "Indexed {} files in {}ms",
-                result.files_indexed, result.duration_ms
+                "Indexed {} files in {}",
+                result.files_indexed,
+                format_duration_ms(result.duration_ms)
             ))
         );
     }

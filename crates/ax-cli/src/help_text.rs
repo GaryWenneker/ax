@@ -43,7 +43,9 @@ Does not index a project — run `ax init` inside a repo after install.
 
 Examples:
   ax install               Run the interactive installer
-  ax                       Same (default when no subcommand is given)";
+  ax install --yes         Non-interactive (detected agents)
+  ax install --yes --all   Configure every supported agent
+  ax                       Same as `ax install` (default when no subcommand)";
 
 pub const UNINSTALL_LONG: &str = "Remove ax entries from agent MCP configuration files.
 
@@ -91,13 +93,15 @@ Examples:
 
 pub const SYNC_LONG: &str = "Incremental index update — only changed files since last run.
 
-Fast path for scripts and pre-commit hooks. With --watch, debounces file changes
-and keeps the graph current (same as `ax watch`).
+Compares file size and modification time against the index, re-parses dirty files,
+removes stale entries, then resolves cross-references when anything changed.
+
+Shows the same colored progress bar as `ax index` unless --quiet.
 
 Examples:
   ax sync                  Update index for dirty files
   ax sync --watch          Watch filesystem until Ctrl+C
-  ax sync --quiet          No status lines";
+  ax sync --quiet          No progress bar or summary line";
 
 pub const WATCH_LONG: &str = "Watch for file changes and auto-sync (alias for `ax sync --watch`).
 
@@ -220,7 +224,11 @@ Uses AX_GITHUB_REPO (default GaryWenneker/ax). Matches bundle name to OS/arch.
 
 Examples:
   ax upgrade               Latest release
-  ax upgrade v0.2.0          Specific tag";
+  ax upgrade v0.2.0          Specific tag
+  ax upgrade --check       Check for updates without installing
+
+Background checks: after most commands, ax may print an update notice (cached ~24h).
+Disable with AX_NO_UPDATE_CHECK=1.";
 
 pub const TELEMETRY_LONG: &str = "Anonymous usage telemetry (opt-in/out).
 
@@ -233,6 +241,21 @@ Examples:
   ax telemetry off
 
 Also: DO_NOT_TRACK=1 or AX_TELEMETRY=0 disables sending.";
+
+pub const WEB_LONG: &str = "Start a local web server and open the ax graph viewer in the browser.
+
+Serves a React dashboard at http://localhost:<port> that lets you browse nodes,
+files, and edges of the current project's index without the CLI.
+
+Options:
+  --port <port>   Port to listen on (default 7070)
+  --open          Open the browser automatically after starting
+
+Examples:
+  ax web                   Start the viewer on port 7070
+  ax web --port 8080       Use a different port
+  ax web --open            Start and immediately open in browser
+  ax web ./my-project      Browse a specific project root";
 
 pub const OFFLOAD_LONG: &str = "Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API).
 

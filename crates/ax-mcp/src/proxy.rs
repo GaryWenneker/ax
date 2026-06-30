@@ -53,6 +53,12 @@ pub async fn run_stdio_proxy(project_root: &Path) -> Result<(), Box<dyn std::err
         let mut stdout = tokio::io::stdout();
         let mut line = String::new();
         while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+            // Daemon hello handshake — not JSON-RPC; must not reach Cursor stdout.
+            let trimmed = line.trim();
+            if trimmed.starts_with("{\"type\":\"hello\"") {
+                line.clear();
+                continue;
+            }
             if stdout.write_all(line.as_bytes()).await.is_err() {
                 break;
             }

@@ -14,6 +14,7 @@ members = [
     "crates/ax-telemetry",
     "crates/ax-reasoning",
     "crates/ax-smoke-tests",
+    "crates/ax-web",
 ]
 resolver = "2"
 
@@ -58,3 +59,4 @@ ax-context = { path = "crates/ax-context" }
 ax-sync = { path = "crates/ax-sync" }
 ax-core = { path = "crates/ax-core" }
 ax-mcp = { path = "crates/ax-mcp" }
+ax-web = { path = "crates/ax-web" }

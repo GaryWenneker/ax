@@ -1,69 +1,56 @@
 ---
-title: API
-description: Use ax as a TypeScript library.
+title: Rust API
+description: Embed ax in Rust applications via the ax-core crate.
 ---
 
-ax ships a TypeScript API. The public surface is the `ax` class.
+ax is built in Rust. The primary interfaces are the **CLI** and **MCP server**. For programmatic use from Rust, depend on the `ax-core` crate in this repository.
 
-```typescript
-import ax from '@colbymchenry/ax';
+## Cargo dependency
 
-const cg = await ax.init('/path/to/project');
-// Or open an existing index:
-// const cg = await ax.open('/path/to/project');
-
-await cg.indexAll({
-  onProgress: (p) => console.log(`${p.phase}: ${p.current}/${p.total}`),
-});
-
-const results = cg.searchNodes('UserService');
-const callers = cg.getCallers(results[0].node.id);
-const context = await cg.buildContext('fix login bug', {
-  maxNodes: 20,
-  includeCode: true,
-  format: 'markdown',
-});
-const impact = cg.getImpactRadius(results[0].node.id, 2);
-
-cg.watch();   // auto-sync on file changes
-cg.unwatch(); // stop watching
-cg.close();
+```toml
+[dependencies]
+ax-core = { git = "https://github.com/GaryWenneker/ax", package = "ax-core" }
+tokio = { version = "1", features = ["full"] }
 ```
 
-## Key methods
+When `ax-core` is published to [crates.io](https://crates.io), you can switch to a version pin.
 
-| Method | Purpose |
+## Basic usage
+
+```rust
+use ax_core::Ax;
+use ax_extraction::orchestrator::IndexOptions;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut ax = Ax::open(std::path::Path::new("/path/to/project")).await?;
+
+    ax.index_all(IndexOptions::default(), None).await?;
+
+    let results = ax.search("UserService", Default::default()).await?;
+    let explore = ax
+        .explore("who calls login?", Default::default())
+        .await?;
+
+    ax.close().await?;
+    Ok(())
+}
+```
+
+## Key types
+
+| Type / method | Purpose |
 |---|---|
-| `ax.init(path)` / `ax.open(path)` | Create or open a project index |
-| `indexAll(opts)` | Full index, with progress callback |
-| `sync()` | Incremental update |
-| `searchNodes(query)` | Full-text symbol search |
-| `getCallers(id)` / `getCallees(id)` | Walk the call graph |
-| `getImpactRadius(id, depth)` | Transitive impact of a change |
-| `buildContext(task, opts)` | Markdown / JSON context for AI |
-| `watch()` / `unwatch()` | Start / stop the file watcher |
-| `close()` | Close the database connection |
+| `Ax::init(path)` / `Ax::open(path)` | Create or open a project index |
+| `index_all(opts, progress)` | Full index |
+| `sync(opts)` | Incremental update |
+| `search(query, opts)` | Hybrid symbol search |
+| `explore(prompt, opts)` | Source + call paths for agents |
+| `get_callers` / `get_callees` | Graph traversal |
+| `build_context(task, opts)` | Markdown context for LLMs |
 
-CommonJS works too — `const { ax } = require('@colbymchenry/ax');`.
+## npm package
 
-## Lower-level building blocks
+`@garywenneker/ax` on npm is a **CLI launcher only** — it downloads the native binary from GitHub Releases. It does not expose a JavaScript/TypeScript library. Use MCP or the Rust crate for programmatic access.
 
-The same entry point exports primitives for callers that drive the graph directly rather than through the `ax` facade: `DatabaseConnection`, `QueryBuilder`, `getDatabasePath`, `initGrammars` / `loadGrammarsForLanguages`, and `FileLock`.
-
-```typescript
-import {
-  ax,
-  DatabaseConnection,
-  QueryBuilder,
-  getDatabasePath,
-  initGrammars,
-  loadGrammarsForLanguages,
-  FileLock,
-} from '@colbymchenry/ax';
-```
-
-## Embedding requirements
-
-- **Install from npm** (`npm i @colbymchenry/ax`) so the matching per-platform package — which carries the compiled library — is fetched alongside the shim.
-- The API runs on **your** runtime, so it needs **Node 22.5+** for the built-in `node:sqlite` module (an Electron main process qualifies when its bundled Node is 22.5+). The CLI and MCP server are unaffected — they ship with a self-contained bundled runtime and need no Node at all.
-- TypeScript types ship with the package. Keep `@types/node` available and `skipLibCheck: true` (the common default).
+See [MCP Server](/reference/mcp-server/) for agent integration.

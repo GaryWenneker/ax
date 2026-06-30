@@ -141,12 +141,16 @@ function sanitizeEvent(raw: unknown, machineId: string, common: JsonObject): Pos
   return out;
 }
 
-async function forwardToPostHog(batch: PostHogEvent[]): Promise<void> {
+async function forwardToPostHog(batch: PostHogEvent[]): Promise<boolean> {
   const key = process.env.POSTHOG_KEY;
-  const host = process.env.POSTHOG_HOST || 'https://us.i.posthog.com';
+  const host = (
+    process.env.POSTHOG_INGEST_HOST ||
+    process.env.POSTHOG_HOST ||
+    'https://us.i.posthog.com'
+  ).replace(/\/$/, '');
   if (!key) {
-    console.error('POSTHOG_KEY not configured');
-    return;
+    console.error('POSTHOG_KEY not configured — events dropped');
+    return false;
   }
   try {
     const res = await fetch(`${host}/batch/`, {
@@ -157,9 +161,12 @@ async function forwardToPostHog(batch: PostHogEvent[]): Promise<void> {
     });
     if (!res.ok) {
       console.error(JSON.stringify({ msg: 'posthog forward failed', status: res.status }));
+      return false;
     }
+    return true;
   } catch (err) {
     console.error(JSON.stringify({ msg: 'posthog forward error', err: String(err) }));
+    return false;
   }
 }
 
@@ -240,7 +247,14 @@ export async function handleTelemetryIngest(
   }
 
   if (batch.length > 0) {
-    await forwardToPostHog(batch);
+    const ok = await forwardToPostHog(batch);
+    if (!ok) {
+      return {
+        statusCode: 503,
+        body: 'telemetry backend unavailable\n',
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      };
+    }
   }
 
   return { statusCode: 204 };

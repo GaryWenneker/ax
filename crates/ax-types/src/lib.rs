@@ -829,8 +829,10 @@ pub struct FindRelevantContextOptions {
 #[serde(rename_all = "lowercase")]
 pub enum IndexPhase {
     Scanning,
+    Parsing,
     Extracting,
     Resolving,
+    Optimizing,
 }
 
 /// Progress callback data during indexing.

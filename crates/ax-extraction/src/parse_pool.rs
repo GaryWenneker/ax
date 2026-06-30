@@ -12,7 +12,6 @@ use crate::LanguageExtractor;
 
 const DEFAULT_POOL_CAP: usize = 8;
 const MAX_POOL_SIZE: usize = 16;
-const RECYCLE_INTERVAL: usize = 500;
 
 pub struct ParseTask {
     pub file_path: String,

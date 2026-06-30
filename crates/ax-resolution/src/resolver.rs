@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use ax_db::queries::QueryBuilder;
-use ax_types::{Edge, EdgeKind, Provenance, ReferenceKind, UnresolvedReference};
+use ax_types::{Edge, EdgeKind, IndexPhase, IndexProgress, Provenance, ReferenceKind, UnresolvedReference};
 
 use crate::callback_synthesizer::CallbackSynthesizer;
 use crate::c_fnptr_synthesizer::CFnptrSynthesizer;
@@ -32,12 +32,25 @@ impl ReferenceResolver {
         }
     }
 
-    pub async fn resolve_all(&mut self, queries: &QueryBuilder) -> Result<ResolutionResult, ax_utils::errors::AxError> {
+    pub async fn resolve_all(
+        &mut self,
+        queries: &QueryBuilder,
+        mut on_progress: Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
+    ) -> Result<ResolutionResult, ax_utils::errors::AxError> {
         self.frameworks
             .run_post_extract(self.import_resolver.project_root(), queries)
             .await?;
 
         let refs = queries.get_unresolved_refs().await?;
+        let total = refs.len() as u32;
+        if let Some(ref mut cb) = on_progress {
+            cb(IndexProgress {
+                phase: IndexPhase::Resolving,
+                current: 0,
+                total,
+                file_path: Some(format!("{total} references to resolve")),
+            });
+        }
         let import_map = build_import_map(&refs, &self.import_resolver);
 
         let mut deferred_refs: Vec<UnresolvedReference> = Vec::new();
@@ -48,7 +61,17 @@ impl ReferenceResolver {
             stats: ResolutionStats::default(),
         };
 
-        for db_ref in refs {
+        for (i, db_ref) in refs.into_iter().enumerate() {
+            if i > 0 && i % 500 == 0 {
+                if let Some(ref mut cb) = on_progress {
+                    cb(IndexProgress {
+                        phase: IndexPhase::Resolving,
+                        current: i as u32,
+                        total,
+                        file_path: None,
+                    });
+                }
+            }
             let ref_ = unresolved_from_db(&db_ref);
             result.stats.total += 1;
 
@@ -93,7 +116,18 @@ impl ReferenceResolver {
             }
         }
 
-        for db_ref in deferred_refs {
+        let deferred_count = deferred_refs.len() as u32;
+        for (j, db_ref) in deferred_refs.into_iter().enumerate() {
+            if j > 0 && j % 500 == 0 {
+                if let Some(ref mut cb) = on_progress {
+                    cb(IndexProgress {
+                        phase: IndexPhase::Resolving,
+                        current: total.saturating_sub(deferred_count) + j as u32,
+                        total,
+                        file_path: Some("deferred calls".into()),
+                    });
+                }
+            }
             let ref_ = unresolved_from_db(&db_ref);
             if let Some(r) = self.name_matcher.resolve_deferred_call(queries, &ref_).await {
                 result.stats.resolved += 1;

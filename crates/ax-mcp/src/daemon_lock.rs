@@ -109,7 +109,6 @@ pub fn is_pid_alive(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn acquire_and_release_roundtrip() {

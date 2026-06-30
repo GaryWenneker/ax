@@ -74,7 +74,7 @@ impl ToolHandler {
                 Ok(json!({ "stats": stats, "lastIndexedAt": last, "pendingFiles": pending }))
             }
             "ax_index" => {
-                let result = ax.sync(IndexOptions::default()).await.map_err(|e| e.to_string())?;
+                let result = ax.sync(IndexOptions::default(), None).await.map_err(|e| e.to_string())?;
                 Ok(json!({ "filesIndexed": result.files_indexed, "durationMs": result.duration_ms }))
             }
             "ax_context" => {

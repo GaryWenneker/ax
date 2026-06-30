@@ -2,7 +2,7 @@
 
 use owo_colors::OwoColorize;
 
-use super::glyphs;
+use super::glyphs::glyphs;
 
 pub fn ok_line(msg: impl AsRef<str>) -> String {
     format!("{} {}", glyphs().ok.green().bold(), msg.as_ref())

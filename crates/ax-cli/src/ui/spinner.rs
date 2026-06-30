@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
-use super::glyphs;
+use super::glyphs::glyphs;
 
 /// Spinner shown while an async operation runs; clears on drop.
 pub struct SpinnerGuard {
@@ -33,6 +33,7 @@ impl SpinnerGuard {
         Self { pb: Some(pb) }
     }
 
+    #[allow(dead_code)]
     pub fn set_message(&self, message: impl AsRef<str>) {
         if let Some(pb) = &self.pb {
             pb.set_message(message.as_ref().to_string());

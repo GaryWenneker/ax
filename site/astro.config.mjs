@@ -82,7 +82,7 @@ export default defineConfig({
 						{ label: 'MCP Server', slug: 'reference/mcp-server' },
 						{ label: 'Integrations', slug: 'reference/integrations' },
 						{ label: 'CLI', slug: 'reference/cli' },
-						{ label: 'API', slug: 'reference/api' },
+						{ label: 'Rust API', slug: 'reference/api' },
 						{ label: 'Languages', slug: 'reference/languages' },
 					],
 				},

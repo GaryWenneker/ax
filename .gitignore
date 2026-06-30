@@ -1,9 +1,16 @@
 # Rust
 /target/
+/target-dev/
+/target-ui/
 **/*.rs.bk
 
 # Release packaging
 /dist/
+/release/npm/
+install-out.txt
+
+# Local MCP config (machine-specific paths)
+.mcp.json
 
 # ax project data (local indexes)
 .ax/

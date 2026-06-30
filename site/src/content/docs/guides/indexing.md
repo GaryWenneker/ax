@@ -84,9 +84,7 @@ Almost never. The edge cases:
 - **The watcher is disabled.** Sandboxes that block local fs watchers, or you've set `ax_NO_DAEMON=1` to opt out of the shared daemon. In those cases `ax sync` is the manual fallback.
 - **Pre-flight before a CI run.** If you're scripting against the index outside an agent session, a single `ax sync` at the start of the script guarantees the index reflects the current working tree.
 
-Otherwise: just use it. The watcher + banner + connect-sync covers the AI-assisted workflow end-to-end. If you're seeing files genuinely missed after the debounce window has passed, that's a bug — please file an issue with a reproduction.
-
-> See the v0.9.5 release notes for the [staleness banner (#403)](https://github.com/colbymchenry/ax/releases/tag/v0.9.5) and the connect-time catch-up (#414); both shipped together.
+Otherwise: just use it. The watcher + banner + connect-sync covers the AI-assisted workflow end-to-end. If files are missed after the debounce window, [open an issue](https://github.com/GaryWenneker/ax/issues) with a reproduction.
 
 ## Check status
 

@@ -4,6 +4,7 @@ mod commands;
 mod help_text;
 mod installer;
 mod ui;
+mod version_check;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -27,7 +28,12 @@ struct Cli {
 enum Commands {
     /// Interactive installer
     #[command(long_about = help_text::INSTALL_LONG)]
-    Install,
+    Install {
+        #[arg(long, action = clap::ArgAction::SetTrue, help = "Non-interactive: skip prompts, install detected agents")]
+        yes: bool,
+        #[arg(long, action = clap::ArgAction::SetTrue, help = "Install all agent targets, not only detected ones")]
+        all: bool,
+    },
     /// Remove ax from agent configs
     #[command(long_about = help_text::UNINSTALL_LONG)]
     Uninstall,
@@ -129,6 +135,8 @@ enum Commands {
     Upgrade {
         #[arg(help = "Optional release tag (e.g. v0.1.0)")]
         version: Option<String>,
+        #[arg(long, action = clap::ArgAction::SetTrue, help = "Check for updates without installing")]
+        check: bool,
     },
     /// Anonymous usage telemetry (on|off|status)
     #[command(long_about = help_text::TELEMETRY_LONG)]
@@ -141,6 +149,15 @@ enum Commands {
     Offload {
         #[command(subcommand)]
         action: Option<OffloadCommands>,
+    },
+    /// Browse the local ax code graph in a web UI
+    #[command(long_about = help_text::WEB_LONG)]
+    Web {
+        path: Option<String>,
+        #[arg(long, default_value = "7070", help = "Port to listen on")]
+        port: u16,
+        #[arg(long, help = "Open the browser automatically after starting")]
+        open: bool,
     },
     /// Claude UserPromptSubmit hook (hidden; reads {prompt,cwd} JSON on stdin)
     #[command(hide = true, name = "prompt-hook")]
@@ -198,8 +215,15 @@ async fn main() {
     let matches = cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let cmd_name = cli_command_name(&cli.command);
+    let should_check_update = should_notify_update(&cli.command);
     let result = match cli.command {
-        None | Some(Commands::Install) => commands::install::run(),
+        None | Some(Commands::Install { .. }) => {
+            let (yes, all) = match &cli.command {
+                Some(Commands::Install { yes, all }) => (*yes, *all),
+                _ => (false, false),
+            };
+            commands::install::run(yes, all)
+        }
         Some(Commands::Uninstall) => commands::uninstall::run(),
         Some(Commands::Init { path }) => commands::init::run(path).await,
         Some(Commands::Uninit { path }) => commands::uninit::run(path).await,
@@ -228,6 +252,7 @@ async fn main() {
             };
             commands::daemon::run(path, act).await
         }
+        Some(Commands::Web { path, port, open }) => commands::web::run(path, port, open).await,
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
             ax_mcp::run_watchdog_child(parent_pid, timeout_ms);
@@ -237,8 +262,8 @@ async fn main() {
             println!("{} {}", ui::accent("ax"), env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Some(Commands::Upgrade { version }) => commands::upgrade::run(version),
-        Some(Commands::Telemetry { action }) => commands::telemetry::run(action),
+        Some(Commands::Upgrade { version, check }) => commands::upgrade::run(version, check).await,
+        Some(Commands::Telemetry { action }) => commands::telemetry::run(action).await,
         Some(Commands::Offload { action }) => match action {
             Some(OffloadCommands::Status) => commands::offload::run(Some("status".into()), None, None),
             Some(OffloadCommands::SetEndpoint { url, key_env }) => {
@@ -257,11 +282,16 @@ async fn main() {
         Some(Commands::Serve { .. }) => Err("use ax serve --mcp".to_string()),
     };
 
+    if result.is_ok() && should_check_update {
+        version_check::maybe_notify_update().await;
+    }
+
     if let Some(name) = cmd_name {
-        if name != "telemetry" {
+        if !matches!(name.as_str(), "telemetry" | "serve") {
             if let Ok(mut t) = ax_telemetry::telemetry().lock() {
                 t.record_usage("cli_command", &name, result.is_ok(), None);
                 t.persist_sync();
+                t.flush_now(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
             }
         }
     }
@@ -272,10 +302,24 @@ async fn main() {
     }
 }
 
+fn should_notify_update(cmd: &Option<Commands>) -> bool {
+    match cmd {
+        Some(Commands::Serve { .. })
+        | Some(Commands::PromptHook)
+        | Some(Commands::WatchdogChild { .. })
+        | Some(Commands::Upgrade { .. })
+        | Some(Commands::Version) => false,
+        Some(Commands::Index { quiet: true, .. })
+        | Some(Commands::Sync { quiet: true, .. })
+        | Some(Commands::Watch { quiet: true, .. }) => false,
+        _ => true,
+    }
+}
+
 fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
     match cmd {
         None => Some("install".into()),
-        Some(Commands::Install) => Some("install".into()),
+        Some(Commands::Install { .. }) => Some("install".into()),
         Some(Commands::Uninstall) => Some("uninstall".into()),
         Some(Commands::Init { .. }) => Some("init".into()),
         Some(Commands::Uninit { .. }) => Some("uninit".into()),
@@ -298,6 +342,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Upgrade { .. }) => Some("upgrade".into()),
         Some(Commands::Telemetry { .. }) => Some("telemetry".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
+        Some(Commands::Web { .. }) => Some("web".into()),
         Some(Commands::PromptHook) => None,
         Some(Commands::WatchdogChild { .. }) => None,
         Some(Commands::Serve { .. }) => Some("serve".into()),

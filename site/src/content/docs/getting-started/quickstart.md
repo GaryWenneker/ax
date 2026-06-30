@@ -3,21 +3,19 @@ title: Get Started
 description: Get up and running with ax in seconds.
 ---
 
-Get up and running with ax in seconds.
-
 ## 1. Install the CLI
 
-No Node.js required — one command grabs the right build for your OS:
+No Node.js required — pick one:
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/colbymchenry/ax/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/colbymchenry/ax/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
 ```
 
-Already have Node? `npm i -g @colbymchenry/ax` works on any version. ax bundles its own runtime — nothing to compile, no native build, works the same everywhere. The installer puts `ax` on your `PATH` but doesn't change your current shell — open a new terminal before the next step.
+Have Node? `npx @garywenneker/ax` downloads the native binary for your platform. Open a **new terminal** after install so `PATH` updates.
 
 ## 2. Wire up your agent(s)
 
@@ -25,7 +23,7 @@ Already have Node? `npm i -g @colbymchenry/ax` works on any version. ax bundles 
 ax install
 ```
 
-Auto-detects and configures Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro — wiring the ax MCP server into each. This step connects your agents only; it does **not** index any code. (Shortcut: `npx @colbymchenry/ax` downloads and runs the installer in one go.)
+Configures Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro with the ax MCP server. This step does **not** index code.
 
 ## 3. Initialize each project
 
@@ -34,6 +32,6 @@ cd your-project
 ax init
 ```
 
-`ax init` creates the local `.ax/` directory and builds the full graph in the same step — one command, done. Your agent will use ax tools automatically when a `.ax/` directory exists.
+Creates `.ax/` and builds the knowledge graph. Your agent uses ax tools automatically when `.ax/` exists.
 
-Next: build [Your First Graph](/ax/getting-started/your-first-graph/), or see the full [Installation](/ax/getting-started/installation/) options.
+Next: [Your First Graph](/getting-started/your-first-graph/), or full [Installation](/getting-started/installation/) options.

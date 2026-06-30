@@ -1,9 +1,14 @@
 //! `ax upgrade` — self-update via GitHub releases or cargo install.
 
 use crate::ui::{info_line, ok_line, warn_line, SpinnerGuard};
+use crate::version_check;
 
-pub fn run(version: Option<String>) -> Result<(), String> {
-    let repo = std::env::var("AX_GITHUB_REPO").unwrap_or_else(|_| "GaryWenneker/ax".to_string());
+pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
+    if check {
+        return version_check::run_check(true).await;
+    }
+
+    let repo = version_check::github_repo();
     let parts: Vec<&str> = repo.split('/').collect();
     if parts.len() != 2 {
         return Err(format!("invalid AX_GITHUB_REPO '{repo}' — expected owner/name"));

@@ -22,6 +22,7 @@ pub mod uninstall;
 pub mod daemon;
 pub mod prompt_hook;
 pub mod unlock;
+pub mod web;
 
 use std::path::{Path, PathBuf};
 

@@ -1,6 +1,6 @@
 //! Markdown and JSON context formatters.
 
-use ax_types::{TaskContext, TaskContextStats};
+use ax_types::TaskContext;
 
 pub fn format_context_as_markdown(ctx: &TaskContext) -> String {
     let mut out = String::new();

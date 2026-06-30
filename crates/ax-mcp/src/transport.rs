@@ -8,6 +8,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
+    #[serde(default)]
     pub id: Option<Value>,
     pub method: String,
     pub params: Option<Value>,
@@ -35,6 +36,11 @@ pub const PARSE_ERROR: i32 = -32700;
 pub const METHOD_NOT_FOUND: i32 = -32601;
 pub const INVALID_PARAMS: i32 = -32602;
 pub const INTERNAL_ERROR: i32 = -32603;
+
+/// JSON-RPC notifications omit `id` and must not receive a response (MCP spec).
+pub fn is_notification(id: &Option<Value>) -> bool {
+    id.is_none()
+}
 
 pub struct StdioTransport;
 

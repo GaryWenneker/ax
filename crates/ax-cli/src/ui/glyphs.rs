@@ -38,6 +38,50 @@ const ASCII: Glyphs = Glyphs {
     rail: "|",
 };
 
+/// @clack/prompts tree + note glyphs (install / uninstall UI).
+#[derive(Clone, Copy)]
+pub struct ClackGlyphs {
+    pub bar_start: &'static str,
+    pub bar_end: &'static str,
+    pub bar: &'static str,
+    pub bar_h: &'static str,
+    pub connect_left: &'static str,
+    pub corner_tr: &'static str,
+    pub corner_br: &'static str,
+    pub success: &'static str,
+    pub info: &'static str,
+    pub note_mark: &'static str,
+    pub warn: &'static str,
+}
+
+const CLACK_UNICODE: ClackGlyphs = ClackGlyphs {
+    bar_start: "\u{250C}",
+    bar_end: "\u{2514}",
+    bar: "\u{2502}",
+    bar_h: "\u{2500}",
+    connect_left: "\u{251C}",
+    corner_tr: "\u{256E}",
+    corner_br: "\u{256F}",
+    success: "\u{25C6}",
+    info: "\u{25CF}",
+    note_mark: "\u{25C7}",
+    warn: "\u{25B2}",
+};
+
+const CLACK_ASCII: ClackGlyphs = ClackGlyphs {
+    bar_start: "T",
+    bar_end: "L",
+    bar: "|",
+    bar_h: "-",
+    connect_left: "+",
+    corner_tr: "+",
+    corner_br: "+",
+    success: "*",
+    info: "o",
+    note_mark: "o",
+    warn: "!",
+};
+
 pub fn supports_unicode() -> bool {
     if std::env::var("AX_ASCII").as_deref() == Ok("1") {
         return false;
@@ -61,4 +105,16 @@ pub fn supports_unicode() -> bool {
 
 pub fn glyphs() -> &'static Glyphs {
     CACHE.get_or_init(|| if supports_unicode() { UNICODE } else { ASCII })
+}
+
+static CLACK_CACHE: OnceLock<ClackGlyphs> = OnceLock::new();
+
+pub fn clack_glyphs() -> &'static ClackGlyphs {
+    CLACK_CACHE.get_or_init(|| {
+        if supports_unicode() {
+            CLACK_UNICODE
+        } else {
+            CLACK_ASCII
+        }
+    })
 }

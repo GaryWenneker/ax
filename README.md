@@ -276,4 +276,4 @@ See [docs/PRODUCTION.md](docs/PRODUCTION.md) for GitHub Releases, Netlify docs s
 
 ## License
 
-See repository license file. ax is a Rust port/evolution of the [CodeGraph](https://github.com/colbymchenry/codegraph) architecture — same graph semantics, native performance, MCP-first design.
+See repository license file. ax is an independent Rust code-intelligence tool — MCP-first, native tree-sitter, local SQLite graph.

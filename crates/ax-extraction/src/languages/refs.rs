@@ -93,7 +93,7 @@ fn walk_call_nodes(
 
 fn push_call_ref(
     node: TsNode,
-    source: &[u8],
+    _source: &[u8],
     file_path: &str,
     language: Language,
     file_id: &str,
@@ -263,7 +263,7 @@ fn push_import_name(
     file_path: &str,
     module_path: &str,
     node: TsNode,
-    source: &[u8],
+    _source: &[u8],
     language: Language,
     name: &str,
     result: &mut ax_types::ExtractionResult,
@@ -553,10 +553,10 @@ pub fn emit_same_file_call_edges(result: &mut ax_types::ExtractionResult, file_p
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::languages::common::{extract_symbols, file_node_id, symbol_spans_from_result};
+    use crate::languages::common::{file_node_id, symbol_spans_from_result};
     use crate::languages::typescript::TypescriptExtractor;
     use crate::LanguageExtractor;
-    use ax_types::{NodeKind, ReferenceKind};
+    use ax_types::ReferenceKind;
     use tree_sitter::Parser;
 
     #[test]
@@ -614,7 +614,7 @@ export function setup() {
             .expect("grammar");
         let tree = parser.parse(source, None).expect("parse");
         let extractor = TypescriptExtractor;
-        let mut result = extractor.extract(source.as_bytes(), &tree, "setup.ts");
+        let result = extractor.extract(source.as_bytes(), &tree, "setup.ts");
         let fn_refs = result
             .unresolved_references
             .iter()

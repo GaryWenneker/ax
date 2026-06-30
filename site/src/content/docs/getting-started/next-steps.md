@@ -21,5 +21,5 @@ You've got ax installed and a graph built. Here's where to go next.
 
 - [MCP Server](/ax/reference/mcp-server/) — the tools agents call.
 - [CLI](/ax/reference/cli/) — every command and flag.
-- [API](/ax/reference/api/) — use ax as a TypeScript library.
+- [Rust API](/reference/api/) — embed ax via the `ax-core` crate.
 - [Integrations](/ax/reference/integrations/) — supported agents and manual setup.

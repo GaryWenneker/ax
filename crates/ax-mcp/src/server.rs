@@ -9,7 +9,7 @@ use crate::liveness_watchdog::install_main_thread_watchdog;
 use crate::ppid_watchdog::spawn_ppid_watchdog;
 use crate::proxy::attach_or_spawn;
 use crate::tools::{server_instructions, ToolHandler};
-use crate::transport::{StdioTransport, PARSE_ERROR, METHOD_NOT_FOUND};
+use crate::transport::{is_notification, StdioTransport, PARSE_ERROR, METHOD_NOT_FOUND};
 use ax_telemetry::telemetry;
 
 pub async fn run_stdio_server() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,8 +27,11 @@ pub async fn run_stdio_server() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         match StdioTransport::read_request() {
             Ok(req) => {
-                let id = req.id.clone().unwrap_or(Value::Null);
                 let result = handle_request(&mut engine, &req.method, req.params.unwrap_or(Value::Null)).await;
+                if is_notification(&req.id) {
+                    continue;
+                }
+                let id = req.id.clone().unwrap_or(Value::Null);
                 match result {
                     Ok(value) => StdioTransport::send_result(id, value)?,
                     Err(msg) => StdioTransport::send_error(Some(id), METHOD_NOT_FOUND, &msg)?,
@@ -88,6 +91,7 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
                 t.record_usage("mcp_tool", name, result.is_ok(), None);
                 t.persist_sync();
             }
+            ax_telemetry::trigger_background_flush();
             result
         }
         "notifications/initialized" => Ok(Value::Null),

@@ -15,6 +15,7 @@ ax-extraction = { workspace = true }
 ax-context = { workspace = true }
 ax-sync = { workspace = true }
 ax-mcp = { workspace = true }
+ax-web = { workspace = true }
 ax-graph = { workspace = true }
 ax-telemetry = { workspace = true }
 ax-reasoning = { workspace = true }
@@ -31,3 +32,5 @@ tracing-subscriber = { workspace = true }
 windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
 dirs = { workspace = true }
 self_update = { workspace = true }
+reqwest = { workspace = true }
+regex = { workspace = true }

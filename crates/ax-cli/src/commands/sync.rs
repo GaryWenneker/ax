@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use ax_extraction::orchestrator::IndexOptions;
 
 use crate::commands::resolve_path;
-use crate::ui::{info_line, ok_line, SpinnerGuard};
+use crate::ui::{
+    finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, info_line, ok_line,
+};
 
 pub async fn run(path: Option<String>, quiet: bool, watch: bool) -> Result<(), String> {
     let root = resolve_path(path);
@@ -9,15 +13,20 @@ pub async fn run(path: Option<String>, quiet: bool, watch: bool) -> Result<(), S
     let opts = IndexOptions {
         force: false,
         quiet,
-        custom_extensions: ax.config().extensions.clone(),
+        ..IndexOptions::default()
     };
+
+    let progress = index_progress_bar(quiet);
+    let on_progress = progress
+        .as_ref()
+        .map(|pb| index_progress_callback(Arc::clone(pb)));
 
     if watch {
         if !quiet {
             println!("{}", info_line("Watching for file changes (Ctrl+C to stop)..."));
         }
-        tokio::select! {
-            res = ax.watch_and_sync(opts) => res.map_err(|e| e.to_string()),
+        let result = tokio::select! {
+            res = ax.watch_and_sync(opts, on_progress) => res.map_err(|e| e.to_string()),
             _ = tokio::signal::ctrl_c() => {
                 ax.unwatch().await;
                 if !quiet {
@@ -25,19 +34,23 @@ pub async fn run(path: Option<String>, quiet: bool, watch: bool) -> Result<(), S
                 }
                 Ok(())
             }
-        }
+        };
+        finish_progress_bar(progress);
+        result
     } else {
-        let _spinner = SpinnerGuard::new("Syncing changed files...", quiet);
-        let result = ax.sync(opts).await.map_err(|e| e.to_string())?;
-        drop(_spinner);
+        let result = ax.sync(opts, on_progress).await.map_err(|e| e.to_string())?;
+        finish_progress_bar(progress);
         if !quiet {
-            println!(
-                "{}",
+            let summary = if result.files_indexed == 0 {
+                ok_line("Already up to date")
+            } else {
                 ok_line(format!(
-                    "Synced {} files in {}ms",
-                    result.files_indexed, result.duration_ms
+                    "Synced {} file(s) in {}",
+                    result.files_indexed,
+                    format_duration_ms(result.duration_ms)
                 ))
-            );
+            };
+            println!("{}", summary);
         }
         Ok(())
     }

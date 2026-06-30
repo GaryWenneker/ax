@@ -1,0 +1,3 @@
+[build]
+# Avoid "Access is denied" when Cursor MCP is running ax.exe from target/release/.
+target-dir = "target-dev"

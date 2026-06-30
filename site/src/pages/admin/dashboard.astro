@@ -1,0 +1,496 @@
+---
+import '@fontsource-variable/archivo';
+import '@fontsource/ibm-plex-mono/400.css';
+import '../../styles/theme.css';
+import LogoMark from '../../components/LogoMark.astro';
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/logo.png" type="image/png" />
+    <title>ax — Telemetry Dashboard</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <div class="layout">
+      <header class="top-bar">
+        <div class="top-left">
+          <a class="wordmark" href="/">
+            <LogoMark size="md" />
+          </a>
+          <span class="top-sep">/</span>
+          <span class="top-label">Telemetry</span>
+        </div>
+        <div class="top-right">
+          <select id="days-select" class="days-select" aria-label="Time range">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="60">Last 60 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button id="logout-btn" class="btn-ghost">Sign out</button>
+        </div>
+      </header>
+
+      <main class="main" id="main">
+        <div id="loading" class="loading">
+          <span class="loading-text">Loading telemetry…</span>
+        </div>
+        <div id="content" class="content" hidden>
+          <!-- Overview cards -->
+          <section class="section">
+            <h2 class="section-title">Overview</h2>
+            <div class="cards-row">
+              <div class="stat-card">
+                <div class="stat-label">Installs</div>
+                <div class="stat-value" id="stat-installs">—</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Indexes</div>
+                <div class="stat-value" id="stat-indexes">—</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">MCP tool calls</div>
+                <div class="stat-value" id="stat-tools">—</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">CLI invocations</div>
+                <div class="stat-value" id="stat-cli">—</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Uninstalls</div>
+                <div class="stat-value" id="stat-uninstalls">—</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Timeline -->
+          <section class="section">
+            <h2 class="section-title">Events over time</h2>
+            <div class="chart-wrap">
+              <canvas id="chart-timeline"></canvas>
+            </div>
+          </section>
+
+          <!-- Tools + OS row -->
+          <div class="two-col">
+            <section class="section">
+              <h2 class="section-title">Top MCP tools</h2>
+              <div class="chart-wrap chart-wrap--bar">
+                <canvas id="chart-mcp-tools"></canvas>
+              </div>
+            </section>
+            <section class="section">
+              <h2 class="section-title">Top CLI commands</h2>
+              <div class="chart-wrap chart-wrap--bar">
+                <canvas id="chart-cli-cmds"></canvas>
+              </div>
+            </section>
+          </div>
+
+          <!-- OS breakdown -->
+          <div class="two-col">
+            <section class="section">
+              <h2 class="section-title">OS distribution</h2>
+              <div class="chart-wrap chart-wrap--donut">
+                <canvas id="chart-os"></canvas>
+              </div>
+            </section>
+            <section class="section">
+              <h2 class="section-title">ax versions</h2>
+              <div class="chart-wrap chart-wrap--donut">
+                <canvas id="chart-versions"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div id="load-error" class="auth-error" hidden>
+          <p id="load-error-text">Could not load telemetry data.</p>
+          <p><button type="button" id="retry-btn" class="btn-ghost">Retry</button></p>
+        </div>
+
+        <div id="auth-error" class="auth-error" hidden>
+          <p>Session expired or invalid. <a href="/admin/login">Sign in again</a>.</p>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      // Chart.js is loaded from CDN — declare the global to satisfy TS.
+      declare const Chart: typeof import('chart.js').Chart;
+
+      const PALETTE = ['#f3f1ea', '#b8b5a8', '#87847a', '#57554c', '#34322a', '#23211a', '#a3e4d7', '#85c1e9'];
+      const FETCH_TIMEOUT_MS = 22_000;
+      const chartInstances: Array<InstanceType<typeof Chart>> = [];
+
+      function getToken(): string | null {
+        return sessionStorage.getItem('ax_admin_token');
+      }
+
+      function destroyCharts(): void {
+        for (const chart of chartInstances) {
+          try {
+            chart.destroy();
+          } catch {
+            /* ignore */
+          }
+        }
+        chartInstances.length = 0;
+      }
+
+      async function apiFetch(type: string, days: number, signal: AbortSignal): Promise<unknown> {
+        const token = getToken();
+        if (!token) return null;
+        const res = await fetch(`/v1/admin/telemetry?type=${type}&days=${days}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal,
+        });
+        if (res.status === 401) return null;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }
+
+      function buildLineChart(
+        canvasId: string,
+        labels: string[],
+        datasets: Array<{ label: string; data: number[]; color: string }>,
+      ): void {
+        const ctx = (document.getElementById(canvasId) as HTMLCanvasElement).getContext('2d')!;
+        chartInstances.push(
+          new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: datasets.map((d) => ({
+              label: d.label,
+              data: d.data,
+              borderColor: d.color,
+              backgroundColor: d.color + '22',
+              tension: 0.3,
+              pointRadius: 2,
+              fill: true,
+            })),
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { labels: { color: '#b8b5a8' } } },
+            scales: {
+              x: { ticks: { color: '#87847a', maxTicksLimit: 8 }, grid: { color: '#34322a' } },
+              y: { ticks: { color: '#87847a' }, grid: { color: '#34322a' }, beginAtZero: true },
+            },
+          },
+        }),
+        );
+      }
+
+      function buildBarChart(
+        canvasId: string,
+        items: Array<{ name: string; count: number }>,
+      ): void {
+        const ctx = (document.getElementById(canvasId) as HTMLCanvasElement).getContext('2d')!;
+        chartInstances.push(
+          new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: items.map((i) => i.name),
+            datasets: [{ data: items.map((i) => i.count), backgroundColor: '#f3f1ea33', borderColor: '#f3f1ea', borderWidth: 1 }],
+          },
+          options: {
+            indexAxis: 'y' as const,
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { color: '#87847a' }, grid: { color: '#34322a' }, beginAtZero: true },
+              y: { ticks: { color: '#b8b5a8', font: { family: "'IBM Plex Mono', monospace", size: 11 } }, grid: { display: false } },
+            },
+          },
+        }),
+        );
+      }
+
+      function buildDonutChart(
+        canvasId: string,
+        items: Array<{ name: string; count: number }>,
+      ): void {
+        const ctx = (document.getElementById(canvasId) as HTMLCanvasElement).getContext('2d')!;
+        chartInstances.push(
+          new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: items.map((i) => i.name),
+            datasets: [{ data: items.map((i) => i.count), backgroundColor: PALETTE, borderColor: '#121110', borderWidth: 2 }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: { position: 'right', labels: { color: '#b8b5a8', padding: 12, font: { size: 12 } } },
+            },
+          },
+        }),
+        );
+      }
+
+      async function load(days: number): Promise<void> {
+        const loading = document.getElementById('loading')!;
+        const content = document.getElementById('content')!;
+        const authError = document.getElementById('auth-error')!;
+        const loadError = document.getElementById('load-error')!;
+        const loadErrorText = document.getElementById('load-error-text')!;
+
+        loading.hidden = false;
+        content.hidden = true;
+        authError.hidden = true;
+        loadError.hidden = true;
+
+        destroyCharts();
+
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+        try {
+          const signal = controller.signal;
+          const [overview, timeline, tools, os] = await Promise.all([
+            apiFetch('overview', days, signal),
+            apiFetch('timeline', days, signal),
+            apiFetch('tools', days, signal),
+            apiFetch('os', days, signal),
+          ]);
+
+          if (!overview) {
+            authError.hidden = false;
+            return;
+          }
+
+          const ov = overview as { installs: number; indexes: number; tool_calls: number; cli_calls: number; uninstalls: number };
+          (document.getElementById('stat-installs')!).textContent = ov.installs.toLocaleString();
+          (document.getElementById('stat-indexes')!).textContent = ov.indexes.toLocaleString();
+          (document.getElementById('stat-tools')!).textContent = ov.tool_calls.toLocaleString();
+          (document.getElementById('stat-cli')!).textContent = ov.cli_calls.toLocaleString();
+          (document.getElementById('stat-uninstalls')!).textContent = ov.uninstalls.toLocaleString();
+
+          content.hidden = false;
+
+          try {
+            const tl = timeline as { installs: Array<{ date: string; count: number }>; indexes: Array<{ date: string; count: number }> };
+            buildLineChart('chart-timeline', tl.installs.map((d) => d.date), [
+              { label: 'Installs', data: tl.installs.map((d) => d.count), color: '#f3f1ea' },
+              { label: 'Indexes', data: tl.indexes.map((d) => d.count), color: '#87847a' },
+            ]);
+
+            const t = tools as { mcp_tools: Array<{ name: string; count: number }>; cli_commands: Array<{ name: string; count: number }> };
+            if (t.mcp_tools.length) buildBarChart('chart-mcp-tools', t.mcp_tools.slice(0, 10));
+            if (t.cli_commands.length) buildBarChart('chart-cli-cmds', t.cli_commands.slice(0, 10));
+
+            const o = os as { os: Array<{ name: string; count: number }>; versions: Array<{ name: string; count: number }> };
+            if (o.os.length) buildDonutChart('chart-os', o.os);
+            if (o.versions.length) buildDonutChart('chart-versions', o.versions);
+          } catch (chartErr) {
+            console.error('Chart render error:', chartErr);
+          }
+        } catch (err) {
+          console.error('Dashboard load error:', err);
+          const msg =
+            err instanceof DOMException && err.name === 'AbortError'
+              ? 'Telemetry API timed out. Check Netlify POSTHOG_* env vars and try again.'
+              : err instanceof Error
+                ? err.message
+                : 'Unknown error';
+          loadErrorText.textContent = `Could not load telemetry data (${msg}).`;
+          loadError.hidden = false;
+        } finally {
+          window.clearTimeout(timeoutId);
+          loading.hidden = true;
+        }
+      }
+
+      // Auth guard
+      if (!getToken()) {
+        window.location.href = '/admin/login';
+      } else {
+        const daysSelect = document.getElementById('days-select') as HTMLSelectElement;
+        load(parseInt(daysSelect.value, 10));
+
+        daysSelect.addEventListener('change', () => {
+          load(parseInt(daysSelect.value, 10));
+        });
+
+        document.getElementById('retry-btn')!.addEventListener('click', () => {
+          load(parseInt(daysSelect.value, 10));
+        });
+
+        document.getElementById('logout-btn')!.addEventListener('click', () => {
+          sessionStorage.removeItem('ax_admin_token');
+          window.location.href = '/admin/login';
+        });
+      }
+    </script>
+
+    <style>
+      :global(html) { background: var(--cg-paper); }
+      :global(body) { margin: 0; font-family: var(--sl-font); color: var(--cg-ink); overflow-x: hidden; }
+
+      .layout {
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ---- Top bar ---- */
+      .top-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.85rem 1.5rem;
+        border-bottom: 1px solid var(--cg-rule);
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .top-left {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+      }
+      .wordmark {
+        display: inline-flex;
+        align-items: center;
+        text-decoration: none;
+        line-height: 0;
+      }
+      .top-sep {
+        color: var(--cg-ink-3);
+        font-size: 1.1rem;
+      }
+      .top-label {
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: var(--cg-ink-2);
+      }
+      .top-right {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .days-select {
+        background: var(--cg-paper-2);
+        border: 1px solid var(--cg-rule);
+        color: var(--cg-ink);
+        font-family: var(--sl-font);
+        font-size: 0.875rem;
+        padding: 0.4rem 0.65rem;
+        cursor: pointer;
+        min-height: 44px;
+      }
+
+      .btn-ghost {
+        background: transparent;
+        border: 1px solid var(--cg-rule);
+        color: var(--cg-ink-2);
+        font-family: var(--sl-font);
+        font-size: 0.875rem;
+        padding: 0.4rem 0.85rem;
+        cursor: pointer;
+        min-height: 44px;
+      }
+      .btn-ghost:hover { color: var(--cg-ink); }
+
+      /* ---- Main ---- */
+      .main { flex: 1; padding: 1.5rem; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+
+      .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4rem;
+      }
+      .loading-text { color: var(--cg-ink-2); font-size: 0.95rem; }
+
+      .auth-error {
+        padding: 2rem;
+        text-align: center;
+        color: var(--cg-ink-2);
+      }
+      .auth-error a { color: var(--cg-ink); }
+
+      /* ---- Sections ---- */
+      .section { margin-bottom: 2rem; }
+      .section-title {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--cg-ink-2);
+        margin: 0 0 1rem;
+        border-bottom: 1px solid var(--cg-rule);
+        padding-bottom: 0.5rem;
+      }
+
+      /* ---- Stat cards ---- */
+      .cards-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 1px;
+        background: var(--cg-rule);
+        border: 1px solid var(--cg-rule);
+      }
+      .stat-card {
+        background: var(--cg-paper);
+        padding: 1.25rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .stat-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--cg-ink-2);
+        text-transform: uppercase;
+      }
+      .stat-value {
+        font-size: 2rem;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---- Charts ---- */
+      .chart-wrap {
+        border: 1px solid var(--cg-rule);
+        padding: 1rem;
+        background: var(--cg-paper-2);
+      }
+      .chart-wrap--bar { max-height: 280px; }
+      .chart-wrap--donut { max-height: 240px; }
+
+      /* ---- Two-col layout ---- */
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+      }
+
+      /* ---- Mobile ---- */
+      @media (max-width: 768px) {
+        .top-bar { padding: 0.85rem 1rem; }
+        .main { padding: 1rem; }
+        .two-col { grid-template-columns: 1fr; }
+        .days-select, .btn-ghost { min-height: 44px; }
+      }
+      @media (max-width: 480px) {
+        .stat-value { font-size: 1.5rem; }
+        .cards-row { grid-template-columns: repeat(2, 1fr); }
+      }
+    </style>
+  </body>
+</html>

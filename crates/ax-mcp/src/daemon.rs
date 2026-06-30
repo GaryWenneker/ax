@@ -496,7 +496,6 @@ async fn serve_session(
             }
         };
 
-        let id = req.id.clone().unwrap_or(serde_json::Value::Null);
         let mut eng = engine.lock().await;
         let result = handle_request(
             &mut *eng,
@@ -504,6 +503,11 @@ async fn serve_session(
             req.params.unwrap_or(serde_json::Value::Null),
         )
         .await;
+        if crate::transport::is_notification(&req.id) {
+            line.clear();
+            continue;
+        }
+        let id = req.id.clone().unwrap_or(serde_json::Value::Null);
         let response = match result {
             Ok(value) => JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),

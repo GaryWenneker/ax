@@ -28,7 +28,6 @@ pub fn split_statements(sql: &str) -> Vec<String> {
     let cleaned = strip_line_comments(sql);
     let mut statements = Vec::new();
     let mut current = String::new();
-    let mut depth = 0i32;
 
     for part in cleaned.split(';') {
         if current.is_empty() {
@@ -39,7 +38,7 @@ pub fn split_statements(sql: &str) -> Vec<String> {
         }
 
         let (begins, ends) = count_begin_end(&current);
-        depth = begins - ends;
+        let depth = begins - ends;
 
         if depth <= 0 {
             let trimmed = current.trim();
@@ -47,7 +46,6 @@ pub fn split_statements(sql: &str) -> Vec<String> {
                 statements.push(trimmed.to_string());
             }
             current.clear();
-            depth = 0;
         }
     }
 

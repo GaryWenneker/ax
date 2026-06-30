@@ -1,7 +1,7 @@
 //! Cargo workspace crate map — CG: frameworks/cargo-workspace.ts
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const SKIP_DIRS: &[&str] = &["target", "node_modules", ".git", "dist", "build"];
 const MAX_GLOB_WALK_DEPTH: usize = 5;
@@ -272,6 +272,7 @@ fn extract_quoted_values(value_list: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn glob_pattern_matches_crate_star() {

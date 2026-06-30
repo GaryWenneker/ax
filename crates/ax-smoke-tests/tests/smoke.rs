@@ -20,7 +20,7 @@ async fn smoke_init_index_and_search() {
     };
 
     if ax.get_stats().await.map(|s| s.node_count).unwrap_or(0) == 0 {
-        ax.sync(IndexOptions::default()).await.expect("sync index");
+        ax.sync(IndexOptions::default(), None).await.expect("sync index");
     }
 
     let stats = ax.get_stats().await.expect("stats");
