@@ -1,10 +1,12 @@
-//! ax-web: local HTTP server exposing the ax code graph as a REST API,
-//! with an embedded React dashboard served at the root.
+//! ax-web: local HTTP server exposing the ax code graph + policy editor.
 
+mod policy;
 mod queries;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use ax_policy::PolicyStore;
 use axum::{
     body::Body,
     extract::{Path, Query, State},
@@ -14,20 +16,18 @@ use axum::{
     Router,
 };
 use include_dir::{include_dir, Dir};
+use policy::PolicyApiState;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use tower_http::cors::{Any, CorsLayer};
 
 static WEB_DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/web-ui/dist");
 
-// ---- App state ------------------------------------------------------------
-
 #[derive(Clone)]
 struct AppState {
-    pool: SqlitePool,
+    graph_pool: SqlitePool,
+    policy: PolicyApiState,
 }
-
-// ---- Error helper ---------------------------------------------------------
 
 #[derive(Serialize)]
 struct ApiError {
@@ -38,10 +38,8 @@ fn api_err(msg: impl Into<String>) -> (StatusCode, Json<ApiError>) {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: msg.into() }))
 }
 
-// ---- Routes ---------------------------------------------------------------
-
 async fn handle_stats(State(s): State<AppState>) -> impl IntoResponse {
-    match queries::get_stats(&s.pool).await {
+    match queries::get_stats(&s.graph_pool).await {
         Ok(stats) => (StatusCode::OK, Json(serde_json::to_value(stats).unwrap())).into_response(),
         Err(e) => api_err(e.to_string()).into_response(),
     }
@@ -58,7 +56,9 @@ struct NodesQuery {
     offset: i64,
 }
 
-fn default_limit() -> i64 { 50 }
+fn default_limit() -> i64 {
+    50
+}
 
 async fn handle_nodes(State(s): State<AppState>, Query(p): Query<NodesQuery>) -> impl IntoResponse {
     let filter = queries::NodeFilter {
@@ -68,16 +68,26 @@ async fn handle_nodes(State(s): State<AppState>, Query(p): Query<NodesQuery>) ->
         limit: p.limit.min(200),
         offset: p.offset,
     };
-    match queries::get_nodes(&s.pool, filter).await {
-        Ok(page) => (StatusCode::OK, Json(serde_json::json!({ "nodes": page.nodes, "total": page.total }))).into_response(),
+    match queries::get_nodes(&s.graph_pool, filter).await {
+        Ok(page) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "nodes": page.nodes, "total": page.total })),
+        )
+            .into_response(),
         Err(e) => api_err(e.to_string()).into_response(),
     }
 }
 
 async fn handle_node(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    match queries::get_node_detail(&s.pool, &id).await {
+    match queries::get_node_detail(&s.graph_pool, &id).await {
         Ok(Some(detail)) => (StatusCode::OK, Json(serde_json::to_value(detail).unwrap())).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiError { error: "Not found".into() })).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Not found".into(),
+            }),
+        )
+            .into_response(),
         Err(e) => api_err(e.to_string()).into_response(),
     }
 }
@@ -99,8 +109,12 @@ async fn handle_files(State(s): State<AppState>, Query(p): Query<FilesQuery>) ->
         limit: p.limit.min(200),
         offset: p.offset,
     };
-    match queries::get_files(&s.pool, filter).await {
-        Ok(page) => (StatusCode::OK, Json(serde_json::json!({ "files": page.files, "total": page.total }))).into_response(),
+    match queries::get_files(&s.graph_pool, filter).await {
+        Ok(page) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "files": page.files, "total": page.total })),
+        )
+            .into_response(),
         Err(e) => api_err(e.to_string()).into_response(),
     }
 }
@@ -112,12 +126,18 @@ struct SearchQuery {
     limit: i64,
 }
 
-fn default_search_limit() -> i64 { 20 }
+fn default_search_limit() -> i64 {
+    20
+}
 
 async fn handle_search(State(s): State<AppState>, Query(p): Query<SearchQuery>) -> impl IntoResponse {
     let q = p.q.as_deref().unwrap_or("");
-    match queries::search(&s.pool, q, p.limit.min(100)).await {
-        Ok(results) => (StatusCode::OK, Json(serde_json::json!({ "results": results }))).into_response(),
+    match queries::search(&s.graph_pool, q, p.limit.min(100)).await {
+        Ok(results) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "results": results })),
+        )
+            .into_response(),
         Err(e) => api_err(e.to_string()).into_response(),
     }
 }
@@ -135,7 +155,6 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
             .body(Body::from(file.contents().to_vec()))
             .unwrap()
     } else {
-        // SPA fallback: always serve index.html for unknown paths.
         let index = WEB_DIST
             .get_file("index.html")
             .map(|f| f.contents().to_vec())
@@ -148,9 +167,6 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
     }
 }
 
-// ---- Entry point ----------------------------------------------------------
-
-/// Start the ax web server on `localhost:<port>`. Blocks until Ctrl+C.
 pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
     let db_path = root.join(".ax").join("ax.db");
     if !db_path.exists() {
@@ -160,34 +176,53 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
         ));
     }
 
-    let opts = SqliteConnectOptions::new()
+    let graph_opts = SqliteConnectOptions::new()
         .filename(&db_path)
         .read_only(true)
         .create_if_missing(false);
 
-    let pool = SqlitePool::connect_with(opts)
+    let graph_pool = SqlitePool::connect_with(graph_opts)
         .await
         .map_err(|e| format!("Failed to open ax.db: {e}"))?;
 
-    let state = AppState { pool };
+    let policy_pool = ax_policy::open_rw_pool(&db_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    ax_policy::ensure_scaffold(&root.join(".ax")).map_err(|e| e.to_string())?;
+    let store = PolicyStore::new(policy_pool, root.clone());
+    let _ = store.reindex(false).await;
+
+    let readonly = std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1");
+    let policy_state = PolicyApiState {
+        store: Arc::new(store),
+        readonly,
+    };
+
+    let state = AppState {
+        graph_pool,
+        policy: policy_state.clone(),
+    };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let api = Router::new()
+    let graph_api = Router::new()
         .route("/stats", get(handle_stats))
         .route("/nodes", get(handle_nodes))
         .route("/node/{id}", get(handle_node))
         .route("/files", get(handle_files))
-        .route("/search", get(handle_search));
+        .route("/search", get(handle_search))
+        .with_state(state);
+
+    let policy_api = policy::router(policy_state);
 
     let app = Router::new()
-        .nest("/api", api)
+        .nest("/api", graph_api)
+        .nest("/api/policy", policy_api)
         .fallback(handle_spa)
-        .layer(cors)
-        .with_state(state);
+        .layer(cors);
 
     let addr = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -196,7 +231,7 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
 
     let url = format!("http://localhost:{port}");
     eprintln!("ax web  {url}");
-    eprintln!("  Graph: {}", root.display());
+    eprintln!("  Graph + policy: {}", root.display());
     eprintln!("  Press Ctrl+C to stop.");
 
     if open {
@@ -211,7 +246,9 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
 
 fn open_browser(url: &str) {
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd").args(["/c", "start", url]).spawn();
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", url])
+        .spawn();
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(target_os = "linux")]

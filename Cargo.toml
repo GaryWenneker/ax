@@ -13,6 +13,7 @@ members = [
     "crates/ax-cli",
     "crates/ax-telemetry",
     "crates/ax-reasoning",
+    "crates/ax-policy",
     "crates/ax-smoke-tests",
     "crates/ax-web",
 ]
@@ -44,8 +45,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 fs2 = "0.4"
 dirs = "5"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 self_update = { version = "0.41", default-features = false, features = ["rustls"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
 
 ax-types = { path = "crates/ax-types" }
 ax-utils = { path = "crates/ax-utils" }
@@ -60,3 +64,6 @@ ax-sync = { path = "crates/ax-sync" }
 ax-core = { path = "crates/ax-core" }
 ax-mcp = { path = "crates/ax-mcp" }
 ax-web = { path = "crates/ax-web" }
+ax-policy = { path = "crates/ax-policy" }
+serde_yaml = "0.9"
+globset = "0.4"

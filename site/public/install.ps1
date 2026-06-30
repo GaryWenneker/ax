@@ -1,4 +1,5 @@
-# ax standalone installer for Windows (PowerShell).
+# ax standalone installer for Windows x64 and arm64 (PowerShell).
+# macOS / Linux / WSL2: install.sh
 #
 #   irm https://getax.wenneker.io/install.ps1 | iex
 #

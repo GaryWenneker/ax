@@ -1,9 +1,67 @@
-//! Offload configuration (`~/.ax/config.json` + `AX_OFFLOAD_*` env).
+//! Global configuration (`~/.ax/config.json` + `AX_OFFLOAD_*` env).
+//!
+//! Two sections are supported:
+//!
+//! ```json
+//! {
+//!   "index": {
+//!     "extensions": { ".vue": "typescript" },
+//!     "exclude":    ["**/coverage/**"],
+//!     "includeIgnored": []
+//!   },
+//!   "offload": {
+//!     "url": "https://api.openai.com/v1",
+//!     "model": "gpt-4o",
+//!     "key_env": "OPENAI_API_KEY"
+//!   }
+//! }
+//! ```
+//!
+//! `index` provides global defaults that every project inherits.
+//! Per-project `ax.json` values are merged on top and take precedence.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Index defaults (global)
+// ---------------------------------------------------------------------------
+
+/// Global index defaults stored in `~/.ax/config.json` under `"index"`.
+/// These are applied to every project and can be overridden per-project in `ax.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalIndexConfig {
+    /// Extra file-extension → language mappings applied to every project.
+    #[serde(default)]
+    pub extensions: HashMap<String, String>,
+    /// Glob patterns excluded from indexing in every project (tracked or not).
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// Gitignored directories to index in every project.
+    #[serde(default)]
+    pub include_ignored: Vec<String>,
+}
+
+/// Read the `"index"` section from `~/.ax/config.json`, or return defaults.
+pub fn read_global_index_config() -> GlobalIndexConfig {
+    let Ok(content) = fs::read_to_string(config_path()) else {
+        return GlobalIndexConfig::default();
+    };
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return GlobalIndexConfig::default();
+    };
+    root.get("index")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Offload config
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OffloadConfig {

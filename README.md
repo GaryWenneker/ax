@@ -24,6 +24,8 @@ irm https://getax.wenneker.io/install.ps1 | iex
 cargo install --path crates/ax-cli
 ```
 
+Prebuilt releases ship **six** binaries (Windows x64/arm64, macOS Intel/Apple Silicon, Linux x64/arm64). WSL2 uses the Linux installer inside your WSL shell. See [installation docs](https://getax.wenneker.io/getting-started/installation/).
+
 ```bash
 # Wire MCP into detected agents
 ax install
@@ -265,9 +267,9 @@ cargo test
 # Smoke test on hello-world fixture
 cargo test -p ax-smoke-tests
 
-# Release packaging (maintainer)
-cargo build --release -p ax-cli --target x86_64-pc-windows-msvc
-bash scripts/package-release.sh win32-x64 x86_64-pc-windows-msvc
+# Release packaging (maintainer — all six platforms required)
+bash scripts/verify-release-assets.sh dist/
+bash scripts/publish-getax-releases.sh v2.0.0
 ```
 
 See [docs/PRODUCTION.md](docs/PRODUCTION.md) for GitHub Releases, Netlify docs site, and telemetry worker setup.

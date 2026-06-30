@@ -17,6 +17,8 @@ irm https://getax.wenneker.io/install.ps1 | iex
 
 Have Node? `npx @garywenneker/ax` downloads the native binary for your platform. Open a **new terminal** after install so `PATH` updates.
 
+**WSL2:** run the Linux command above inside WSL (not PowerShell). See [Installation](/getting-started/installation/#supported-platforms).
+
 ## 2. Wire up your agent(s)
 
 ```bash

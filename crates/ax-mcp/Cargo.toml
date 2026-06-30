@@ -1,12 +1,13 @@
 [package]
 name = "ax-mcp"
-version = "0.1.2"
+version = "2.0.0"
 edition = "2021"
 
 [dependencies]
 ax-types = { workspace = true }
 ax-utils = { workspace = true }
 ax-core = { workspace = true }
+ax-policy = { workspace = true }
 ax-extraction = { workspace = true }
 ax-context = { workspace = true }
 ax-telemetry = { workspace = true }

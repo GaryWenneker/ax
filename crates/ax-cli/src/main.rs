@@ -159,6 +159,11 @@ enum Commands {
         #[arg(long, help = "Open the browser automatically after starting")]
         open: bool,
     },
+    /// Policy rules and skills
+    Policy {
+        #[command(subcommand)]
+        action: PolicyCommands,
+    },
     /// Claude UserPromptSubmit hook (hidden; reads {prompt,cwd} JSON on stdin)
     #[command(hide = true, name = "prompt-hook")]
     PromptHook,
@@ -191,6 +196,51 @@ enum OffloadCommands {
     },
     /// Remove offload configuration
     Clear,
+}
+
+#[derive(Subcommand)]
+enum PolicyCommands {
+    /// Index .ax/policy files into SQLite
+    Index {
+        path: Option<String>,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Match rules/skills for a prompt
+    Match {
+        prompt: String,
+        path: Option<String>,
+        #[arg(long)]
+        file: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List indexed rules
+    Rules {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List indexed skills
+    Skills {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one skill body
+    Skill {
+        name: String,
+        path: Option<String>,
+    },
+    /// Pre-write guard check
+    Guard {
+        path: Option<String>,
+        file: String,
+        #[arg(long)]
+        write: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -253,6 +303,18 @@ async fn main() {
             commands::daemon::run(path, act).await
         }
         Some(Commands::Web { path, port, open }) => commands::web::run(path, port, open).await,
+        Some(Commands::Policy { action }) => match action {
+            PolicyCommands::Index { path, force } => commands::policy::run_index(path, force).await,
+            PolicyCommands::Match { prompt, path, file, json } => {
+                commands::policy::run_match(path, prompt, file, json).await
+            }
+            PolicyCommands::Rules { path, json } => commands::policy::run_rules(path, json).await,
+            PolicyCommands::Skills { path, json } => commands::policy::run_skills(path, json).await,
+            PolicyCommands::Skill { name, path } => commands::policy::run_skill(path, name).await,
+            PolicyCommands::Guard { path, file, write, json } => {
+                commands::policy::run_guard(path, file, write, json).await
+            }
+        },
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
             ax_mcp::run_watchdog_child(parent_pid, timeout_ms);
@@ -343,6 +405,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Telemetry { .. }) => Some("telemetry".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),
+        Some(Commands::Policy { .. }) => Some("policy".into()),
         Some(Commands::PromptHook) => None,
         Some(Commands::WatchdogChild { .. }) => None,
         Some(Commands::Serve { .. }) => Some("serve".into()),

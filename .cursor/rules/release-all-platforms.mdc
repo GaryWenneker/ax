@@ -1,0 +1,45 @@
+---
+description: Every ax release must ship all platform binaries and update docs/web together.
+alwaysApply: true
+---
+
+# Release — all platforms + docs (CRITICAL)
+
+> **Never publish a release or bump `latest.txt` unless every required binary is present and docs/web are updated in the same change.**
+
+## Required binaries (6)
+
+Every release on GitHub **and** getax.wenneker.io must include **all** of:
+
+| Asset | OS / environment |
+|---|---|
+| `ax-win32-x64.zip` | Windows x64 |
+| `ax-win32-arm64.zip` | Windows arm64 |
+| `ax-linux-x64.tar.gz` | Linux x64, **WSL2** (default) |
+| `ax-linux-arm64.tar.gz` | Linux arm64, WSL2 on ARM |
+| `ax-darwin-x64.tar.gz` | macOS Intel |
+| `ax-darwin-arm64.tar.gz` | macOS Apple Silicon |
+
+WSL2 uses the **Linux** installers (`install.sh`); do not ship a separate WSL bundle.
+
+Run `bash scripts/verify-release-assets.sh [dist-dir]` before upload or Netlify deploy. **Do not skip** missing platforms.
+
+## Docs and web (same PR / same deploy)
+
+When cutting or mirroring a release, update together:
+
+- `site/src/content/docs/getting-started/installation.md` — platforms, WSL2 note, version if pinned
+- `docs/PRODUCTION.md` — release checklist and asset list
+- `README.md` — install / release section if it references versions or platforms
+- `docs/npm/README.md` and `docs/npm/PUBLISH.md` — download source (getax + GitHub)
+- `install.sh`, `install.ps1` → copy to `site/public/`
+- `site/public/releases/latest.txt` — only after **all six** assets are staged under `site/public/releases/<tag>/`
+
+Partial uploads (e.g. Windows-only) caused Mac install failures — forbidden.
+
+## Maintainer flow
+
+1. Tag → Release CI builds all six matrix targets.
+2. `scripts/verify-release-assets.sh dist/` must pass.
+3. Mirror to getax via CI or `scripts/publish-getax-releases.*`.
+4. Confirm `https://getax.wenneker.io/releases/latest.txt` and each asset URL return 200.

@@ -2,7 +2,7 @@
 
 Native code-intelligence CLI for AI agents — MCP server, call graphs, and structural search.
 
-This npm package is a **thin launcher**: it downloads the matching prebuilt `ax` binary from [GitHub Releases](https://github.com/GaryWenneker/ax/releases) and runs it. No bundled Node runtime; no JavaScript API.
+This npm package is a **thin launcher**: it downloads the matching prebuilt `ax` binary from [getax.wenneker.io/releases](https://getax.wenneker.io/releases/) (GitHub Releases as fallback) and runs it. No bundled Node runtime; no JavaScript API.
 
 ## Install
 
@@ -15,7 +15,8 @@ npx @garywenneker/ax install
 ## Requirements
 
 - Node.js 18+ (launcher only — used to download and exec the native binary)
-- macOS, Linux, or Windows (x64 or arm64)
+- macOS (Intel + Apple Silicon), Linux (x64 + arm64), Windows (x64 + arm64)
+- WSL2: use the Linux binary via `install.sh` inside WSL
 
 ## What you get
 

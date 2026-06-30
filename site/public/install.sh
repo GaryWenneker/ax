@@ -1,6 +1,7 @@
 #!/bin/sh
 #
-# ax standalone installer.
+# ax standalone installer — macOS, Linux, and WSL2 (Linux binary).
+# Windows: install.ps1
 #
 #   curl -fsSL https://getax.wenneker.io/install.sh | sh
 #
@@ -65,8 +66,8 @@ elif curl -fsSL "$github_url" -o "$tmp/ax.tar.gz" 2>/dev/null; then
   :
 else
   echo "ax: download failed." >&2
-  echo "  tried: $getax_url" >&2
-  echo "  tried: $github_url" >&2
+  echo "  tried: https://getax.wenneker.io/releases/${version}/ax-${target}.tar.gz" >&2
+  echo "  tried: https://github.com/${REPO}/releases/download/${version}/ax-${target}.tar.gz" >&2
   echo "  For a dev build: cargo install --git https://github.com/$REPO ax-cli" >&2
   exit 1
 fi

@@ -20,6 +20,7 @@ pub mod sync;
 pub mod uninit;
 pub mod uninstall;
 pub mod daemon;
+pub mod policy;
 pub mod prompt_hook;
 pub mod unlock;
 pub mod web;

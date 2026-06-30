@@ -1,5 +1,5 @@
 /* =====================================================================
-/* ax — flat / paper editorial theme */
+   ax — flat / paper editorial theme
    Monochrome ink-on-paper, hairline rules, square corners. Shared by the
    custom landing page (src/pages/index.astro) and the Starlight docs.
    ===================================================================== */
@@ -52,43 +52,46 @@
 	color-scheme: dark;
 }
 
-/* ---- Starlight colour mapping: light / paper (optional toggle) ---- */
+/* ---- Starlight colour mapping: light / GitHub Primer ---- */
 :root[data-theme='light'] {
-	--sl-color-accent-low: #e2dfd5;
-	--sl-color-accent: #16150f;
-	--sl-color-accent-high: #16150f;
-	--sl-color-white: #16150f;
-	--sl-color-gray-1: #2a281f;
-	--sl-color-gray-2: #56544a;
-	--sl-color-gray-3: #6f6c61;
-	--sl-color-gray-4: #87847a;
-	--sl-color-gray-5: #b4b1a5;
-	--sl-color-gray-6: #d6d3c8;
-	--sl-color-gray-7: #e8e6dd;
-	--sl-color-black: #f7f6f2;
+	/* GitHub Primer accent */
+	--sl-color-accent-low: #ddf4ff;
+	--sl-color-accent: #0969da;
+	--sl-color-accent-high: #0550ae;
+	--sl-color-white: #1f2328;
+	/* GitHub Primer gray scale */
+	--sl-color-gray-1: #1f2328;
+	--sl-color-gray-2: #59636e;
+	--sl-color-gray-3: #818b98;
+	--sl-color-gray-4: #afb8c1;
+	--sl-color-gray-5: #d1d9e0;
+	--sl-color-gray-6: #eff2f5;
+	--sl-color-gray-7: #f6f8fa;
+	--sl-color-black: #ffffff;
 
-	--sl-color-bg: #f7f6f2;
-	--sl-color-bg-nav: #f7f6f2;
-	--sl-color-bg-sidebar: #f7f6f2;
-	--sl-color-bg-inline-code: #e8e6dd;
-	--sl-color-bg-accent: #16150f;
+	--sl-color-bg: #ffffff;
+	--sl-color-bg-nav: #24292f;
+	--sl-color-bg-sidebar: #f6f8fa;
+	--sl-color-bg-inline-code: #eff2f5;
+	--sl-color-bg-accent: #0969da;
 
-	--sl-color-text: #16150f;
-	--sl-color-text-accent: #16150f;
-	--sl-color-text-invert: #f7f6f2;
+	--sl-color-text: #1f2328;
+	--sl-color-text-accent: #0969da;
+	--sl-color-text-invert: #ffffff;
 
-	--sl-color-hairline: #16150f;
-	--sl-color-hairline-light: #d6d3c8;
-	--sl-color-hairline-shade: #d6d3c8;
+	--sl-color-hairline: #d1d9e0;
+	--sl-color-hairline-light: #d1d9e0;
+	--sl-color-hairline-shade: #eff2f5;
 
-	--cg-paper: #f7f6f2;
-	--cg-paper-2: #f1efe8;
-	--cg-paper-press: #e8e6dd;
-	--cg-ink: #16150f;
-	--cg-ink-2: #56544a;
-	--cg-ink-3: #87847a;
-	--cg-rule: #16150f;
-	--cg-rule-soft: #d6d3c8;
+	/* GitHub Primer surface tokens */
+	--cg-paper: #ffffff;
+	--cg-paper-2: #f6f8fa;
+	--cg-paper-press: #eff2f5;
+	--cg-ink: #1f2328;
+	--cg-ink-2: #59636e;
+	--cg-ink-3: #818b98;
+	--cg-rule: #d1d9e0;
+	--cg-rule-soft: #d1d9e0;
 	--cg-glow: transparent;
 	color-scheme: light;
 }
@@ -97,6 +100,17 @@
 :root[data-theme='light'] .ax-logo {
 	opacity: 0.95;
 	filter: drop-shadow(0 0 12px rgba(0, 120, 160, 0.12));
+}
+
+/* Terminal "traffic light" dots — replace monochrome mask with macOS colors */
+.expressive-code .frame.is-terminal .header::before {
+	background-color: transparent !important;
+	opacity: 1 !important;
+	-webkit-mask-image: none !important;
+	mask-image: none !important;
+	background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2060%2016'%3E%3Ccircle%20cx%3D'8'%20cy%3D'8'%20r%3D'8'%20fill%3D'%23ff5f57'%2F%3E%3Ccircle%20cx%3D'30'%20cy%3D'8'%20r%3D'8'%20fill%3D'%23febc2e'%2F%3E%3Ccircle%20cx%3D'52'%20cy%3D'8'%20r%3D'8'%20fill%3D'%2328c840'%2F%3E%3C%2Fsvg%3E") !important;
+	background-repeat: no-repeat !important;
+	background-size: contain !important;
 }
 
 /* ---- Global flat resets ---- */

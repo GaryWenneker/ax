@@ -1,25 +1,81 @@
 ---
 title: Configuration
-description: ax is zero-config by default, with one optional ax.json for custom extensions, excluding tracked directories, and indexing nested git repositories.
+description: ax is zero-config by default. One optional ax.json handles per-project overrides; one optional ~/.ax/config.json sets global defaults across every project.
 ---
 
-Next to none — ax is **zero-config by default**, with nothing to write or keep in sync to get started. Language support is automatic from the file extension; there's nothing to wire up per language. The one optional file, `ax.json`, covers [custom file extensions](#custom-file-extensions), [excluding tracked directories](#excluding-a-tracked-directory), and [indexing nested git repositories](#indexing-nested-git-repositories).
+ax is **zero-config by default** — language support is automatic from the file extension, and there is nothing to wire up per language. Two optional config files let you tune behaviour at different scopes:
 
-## What it skips out of the box
+| File | Scope | Purpose |
+|---|---|---|
+| `~/.ax/config.json` | **Global** — every project on your machine | Index defaults (extensions, exclude, includeIgnored) + LLM offload settings |
+| `<project-root>/ax.json` | **Per-project** | Overrides or additions on top of the global defaults |
 
-- **Dependency, build, and cache directories** — `node_modules`, `vendor`, `dist`, `build`, `target`, `.venv`, `Pods`, `.next`, and the like across every [supported stack](/ax/reference/languages/) — so the graph is your code, not third-party noise. This holds even with no `.gitignore`.
+Per-project values always win. Lists (`exclude`, `includeIgnored`) are **unioned** — global entries plus per-project entries are both applied.
+
+## What ax skips out of the box
+
+- **Dependency, build, and cache directories** — `node_modules`, `vendor`, `dist`, `build`, `target`, `.venv`, `Pods`, `.next`, and the like across every [supported stack](/reference/languages/) — even with no `.gitignore`.
 - **Anything in your `.gitignore`** — honored in git repos via git, and in non-git projects by reading `.gitignore` directly (root and nested).
 - **Files larger than 1 MB** — generated bundles, minified JS, vendored blobs.
 
-## Excluding or including more
+## Global config (`~/.ax/config.json`)
 
-To keep something else out, add it to `.gitignore`. To pull a default-excluded directory back **in** (e.g. you really want a vendored dependency indexed), add a negation — `!vendor/`.
+`ax install` creates this file automatically with an empty scaffold:
 
-The defaults apply uniformly, so committing a dependency or build directory doesn't force it into the graph — the `.gitignore` negation is the explicit opt-in.
+```json
+{
+  "index": {
+    "extensions": {},
+    "exclude": [],
+    "includeIgnored": []
+  }
+}
+```
+
+Edit it to apply defaults to **every project** on your machine. For example, always map `.vue` files and always exclude coverage output:
+
+```json
+{
+  "index": {
+    "extensions": {
+      ".vue": "typescript",
+      ".svelte": "typescript"
+    },
+    "exclude": [
+      "**/coverage/**",
+      "**/__snapshots__/**"
+    ],
+    "includeIgnored": []
+  }
+}
+```
+
+The same file holds [LLM offload settings](#llm-offload-offload) under a separate `"offload"` key — the two sections are independent.
+
+## Per-project config (`ax.json`)
+
+Place `ax.json` at your project root for project-specific overrides. Values here are merged **on top of** the global config:
+
+```json
+{
+  "extensions": {
+    ".dota_lua": "lua",
+    ".tpl": "php"
+  },
+  "exclude": ["static/metronic/**"],
+  "includeIgnored": ["packages/", "services/"]
+}
+```
+
+Commit the file to share settings with your team.
+
+Re-index (`ax index`) after changing either config file.
+
+---
 
 ## Excluding a tracked directory
 
-`.gitignore` only affects files git **doesn't already track** — it can't drop a directory you've committed. So a vendored theme, SDK, or asset bundle that's checked into the repo (say a Metronic admin theme under `static/`, with hundreds of `.js` files) can't be excluded that way. For those, list them under `exclude` in `ax.json`:
+`.gitignore` only affects files git **doesn't already track** — it can't drop a directory you've committed. For a vendored theme, SDK, or asset bundle that is checked into the repo, list it under `exclude` in `ax.json` (or in the global config to exclude it everywhere):
 
 ```json
 {
@@ -27,32 +83,26 @@ The defaults apply uniformly, so committing a dependency or build directory does
 }
 ```
 
-Each entry is a gitignore-style pattern, matched against project-root-relative paths, and honored everywhere ax looks at files — the full index, incremental `sync`, and file-watching. It applies even to tracked files (that's the whole point) and takes precedence over everything else, so it's the right tool for a large committed dependency that bloats the graph but isn't really your code. (This is the opposite of [`includeIgnored`](#indexing-nested-git-repositories), which pulls gitignored directories back *in*.)
-
-Re-index (`ax index`) after adding or changing `exclude`.
+Each entry is a gitignore-style pattern matched against project-root-relative paths. It applies to tracked files too and takes precedence over everything else.
 
 ## Custom file extensions
 
-If your project uses a non-standard extension for a [supported language](/ax/reference/languages/) — say `.dota_lua` for Lua, or `.tpl` for PHP — those files are skipped by default, because the extension isn't one ax recognizes. Map them with an optional `ax.json` at your project root:
+If your project uses a non-standard extension for a [supported language](/reference/languages/) — say `.dota_lua` for Lua — map it in `ax.json` or in the global config:
 
 ```json
 {
   "extensions": {
     ".dota_lua": "lua",
-    ".tpl": "php"
+    ".h": "cpp"
   }
 }
 ```
 
-Each value is a supported language id. The mappings merge on top of the built-in defaults and win on conflict, so you can also re-point a built-in (e.g. `".h": "cpp"`). Commit the file to share the mapping with your team.
-
-A typo'd language or a malformed file is warned about and skipped — it never breaks indexing — and a project with no `ax.json` behaves exactly as before. Re-index (`ax index`) after adding or changing mappings.
+Each value is a supported language id. Project-level mappings win over global ones on conflict.
 
 ## Indexing nested git repositories
 
-ax respects your `.gitignore`, so a directory you've gitignored stays out of the graph — **including any git repositories nested inside it.** If you keep cloned reference projects, vendored copies, or a folder of unrelated repos in a gitignored directory (a `resource/`, `.repos/`, or `examples/` dir), ax leaves it untouched: it won't walk in, discover the embedded repos, or index them.
-
-If instead you run a **"super-repo" of independent clones** — a workspace whose own `.gitignore` lists its child repos to keep `git status` quiet, where you genuinely want every child indexed into one graph — opt those directories back in with `includeIgnored`:
+ax respects `.gitignore`, so a gitignored directory stays out of the graph — including any git repositories nested inside it. To opt a gitignored directory back in (e.g. a super-repo of independent clones), use `includeIgnored`:
 
 ```json
 {
@@ -60,16 +110,39 @@ If instead you run a **"super-repo" of independent clones** — a workspace whos
 }
 ```
 
-Each entry is a gitignore-style pattern naming a gitignored directory whose nested git repositories should be indexed anyway. ax descends into the directories you list and indexes each embedded repo by its own `git ls-files`, so every child repo's own `.gitignore` is still honored. Directories you don't list stay excluded.
+ax descends into the listed directories and indexes each embedded repo by its own `git ls-files`, so every child repo's own `.gitignore` is still honored.
 
 A few things to know:
 
-- **Untracked** nested repositories (ones you haven't gitignored) are indexed automatically — `includeIgnored` is only for the ones your `.gitignore` excludes.
+- **Untracked** nested repos (ones you haven't gitignored) are indexed automatically — `includeIgnored` is only for the ones your `.gitignore` excludes.
 - Built-in skips like `node_modules` are never re-included, even inside an opted-in directory.
-- A project without this layout needs no `ax.json` at all.
 
-Re-index (`ax index`) after adding or changing `includeIgnored`.
+## LLM offload (`"offload"`)
+
+Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate heavy reasoning queries to an OpenAI-compatible API:
+
+```json
+{
+  "offload": {
+    "url": "https://api.openai.com/v1",
+    "model": "gpt-4o",
+    "key_env": "OPENAI_API_KEY",
+    "effort": "low",
+    "style": "plain"
+  }
+}
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `url` | — | OpenAI-compatible base URL (required to enable offload) |
+| `model` | `gpt-oss-120b` | Model name |
+| `key_env` | — | Name of the env var that holds the API key |
+| `effort` | `low` | `low` / `medium` / `high` |
+| `style` | `plain` | Response style hint |
+
+All keys can also be set via environment variables (`AX_OFFLOAD_URL`, `AX_OFFLOAD_MODEL`, `AX_OFFLOAD_KEY`, `AX_OFFLOAD_EFFORT`, `AX_OFFLOAD_STYLE`). Env vars take precedence over the file.
 
 ## Where data lives
 
-Per-project data lives in a `.ax/` directory at your project root, containing the SQLite database (`ax.db`). Nothing leaves your machine.
+Per-project data lives in `.ax/` at your project root (SQLite database `ax.db`). Global config lives in `~/.ax/config.json`. Nothing leaves your machine.

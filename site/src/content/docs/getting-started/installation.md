@@ -29,7 +29,7 @@ npx @garywenneker/ax
 npm install -g @garywenneker/ax
 ```
 
-The npm package is a thin launcher: it fetches the prebuilt `ax` binary from [GitHub Releases](https://github.com/GaryWenneker/ax/releases). See [npm README](https://github.com/GaryWenneker/ax/blob/main/docs/npm/README.md) for publish details.
+The npm package is a thin launcher: it fetches the prebuilt `ax` binary from [getax.wenneker.io](https://getax.wenneker.io/releases/) (public CDN) with GitHub Releases as fallback. See [npm README](https://github.com/GaryWenneker/ax/blob/main/docs/npm/README.md) for publish details.
 
 ## 2. Wire up your agent(s)
 
@@ -42,6 +42,7 @@ The installer:
 - Detects **Claude Code**, **Cursor**, **Codex CLI**, **opencode**, **Hermes Agent**, **Gemini CLI**, **Antigravity IDE**, and **Kiro**.
 - Writes each agent's MCP config (`ax serve --mcp`).
 - Adds a marker-fenced ax section to agent instruction files where applicable (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`). Removed cleanly by `ax uninstall`.
+- Creates `~/.ax/config.json` with an empty scaffold for [global index defaults](/getting-started/configuration/#global-config-axconfigjson) if the file doesn't exist yet.
 
 The installer **connects agents only — it does not index your code.** Run `ax init` per project (step 4).
 
@@ -77,13 +78,20 @@ ax init
 
 ## Supported platforms
 
-Prebuilt binaries ship for:
+Every release ships **six** prebuilt binaries. Install scripts and npm pick the match for your OS and CPU.
 
 | Platform | Architectures | Install |
 |---|---|---|
-| Windows | x64, arm64 | PowerShell installer, npm, or GitHub release |
-| macOS | x64, arm64 | shell installer, npm, or GitHub release |
-| Linux | x64, arm64 | shell installer, npm, or GitHub release |
+| Windows | x64, arm64 | PowerShell installer (`install.ps1`), npm, or [getax CDN](https://getax.wenneker.io/releases/) |
+| macOS | x64 (Intel), arm64 (Apple Silicon) | shell installer (`install.sh`), npm, or getax CDN |
+| Linux | x64, arm64 | shell installer, npm, or getax CDN |
+| WSL2 | x64, arm64 | **Use the Linux installer** inside WSL — `curl -fsSL https://getax.wenneker.io/install.sh \| sh` |
+
+WSL2 notes:
+
+- Run `install.sh` from a WSL shell (Ubuntu, etc.), not from PowerShell on the Windows host.
+- Keep the project and `.ax/` index on the **Linux filesystem** (`~/…`), not under `/mnt/c/…`, for reliable SQLite locking.
+- Windows and WSL should use **separate** `.ax/` directories if you work on the same checkout from both sides.
 
 ## Uninstall
 

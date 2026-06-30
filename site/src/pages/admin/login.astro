@@ -6,7 +6,7 @@ import LogoMark from '../../components/LogoMark.astro';
 ---
 
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -101,7 +101,8 @@ import LogoMark from '../../components/LogoMark.astro';
         align-items: center;
         justify-content: space-between;
         padding: 1rem 1.5rem;
-        border-bottom: 1px solid var(--cg-rule);
+        background: #24292f;
+        border-bottom: 1px solid #30363d;
       }
       .wordmark {
         display: inline-flex;
@@ -114,7 +115,7 @@ import LogoMark from '../../components/LogoMark.astro';
         font-weight: 600;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: var(--cg-ink-3);
+        color: #8b949e;
       }
 
       .main {
@@ -174,12 +175,14 @@ import LogoMark from '../../components/LogoMark.astro';
         transition: border-color 0.1s;
       }
       .field-input:focus {
-        border-color: var(--cg-ink);
+        border-color: #0969da;
+        outline: 2px solid #0969da33;
+        outline-offset: 0;
       }
 
       .error-msg {
         font-size: 0.875rem;
-        color: #e06c75;
+        color: #cf222e;
         min-height: 1.25rem;
       }
 
@@ -192,16 +195,15 @@ import LogoMark from '../../components/LogoMark.astro';
         font-size: 1rem;
         font-weight: 600;
         font-family: var(--sl-font);
-        background: var(--cg-ink);
-        color: var(--cg-paper);
-        border: 1px solid var(--cg-ink);
+        background: #0969da;
+        color: #ffffff;
+        border: 1px solid rgba(31,35,40,0.15);
         cursor: pointer;
-        transition: background 0.12s, color 0.12s;
+        transition: background 0.12s;
         min-height: 44px;
       }
       .btn-primary:hover:not(:disabled) {
-        background: transparent;
-        color: var(--cg-ink);
+        background: #0860ca;
       }
       .btn-primary:disabled {
         opacity: 0.5;

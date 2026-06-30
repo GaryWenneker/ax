@@ -1,0 +1,19 @@
+[package]
+name = "ax-policy"
+version = "2.0.0"
+edition = "2021"
+
+[dependencies]
+ax-utils = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+blake3 = { workspace = true }
+globset = "0.4"
+regex = { workspace = true }
+walkdir = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

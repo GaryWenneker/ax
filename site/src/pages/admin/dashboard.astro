@@ -6,7 +6,7 @@ import LogoMark from '../../components/LogoMark.astro';
 ---
 
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -124,7 +124,7 @@ import LogoMark from '../../components/LogoMark.astro';
       // Chart.js is loaded from CDN — declare the global to satisfy TS.
       declare const Chart: typeof import('chart.js').Chart;
 
-      const PALETTE = ['#f3f1ea', '#b8b5a8', '#87847a', '#57554c', '#34322a', '#23211a', '#a3e4d7', '#85c1e9'];
+      const PALETTE = ['#0969da', '#1a7f37', '#8250df', '#9a6700', '#cf222e', '#bc4c00', '#0969da88', '#1a7f3788'];
       const FETCH_TIMEOUT_MS = 22_000;
       const chartInstances: Array<InstanceType<typeof Chart>> = [];
 
@@ -190,10 +190,10 @@ import LogoMark from '../../components/LogoMark.astro';
           options: {
             responsive: true,
             maintainAspectRatio: true,
-            plugins: { legend: { labels: { color: '#b8b5a8' } } },
+            plugins: { legend: { labels: { color: '#59636e' } } },
             scales: {
-              x: { ticks: { color: '#87847a', maxTicksLimit: 8 }, grid: { color: '#34322a' } },
-              y: { ticks: { color: '#87847a' }, grid: { color: '#34322a' }, beginAtZero: true },
+              x: { ticks: { color: '#818b98', maxTicksLimit: 8 }, grid: { color: '#d1d9e0' } },
+              y: { ticks: { color: '#818b98' }, grid: { color: '#d1d9e0' }, beginAtZero: true },
             },
           },
         }),
@@ -210,7 +210,7 @@ import LogoMark from '../../components/LogoMark.astro';
           type: 'bar',
           data: {
             labels: items.map((i) => i.name),
-            datasets: [{ data: items.map((i) => i.count), backgroundColor: '#f3f1ea33', borderColor: '#f3f1ea', borderWidth: 1 }],
+            datasets: [{ data: items.map((i) => i.count), backgroundColor: '#0969da22', borderColor: '#0969da', borderWidth: 1 }],
           },
           options: {
             indexAxis: 'y' as const,
@@ -218,8 +218,8 @@ import LogoMark from '../../components/LogoMark.astro';
             maintainAspectRatio: true,
             plugins: { legend: { display: false } },
             scales: {
-              x: { ticks: { color: '#87847a' }, grid: { color: '#34322a' }, beginAtZero: true },
-              y: { ticks: { color: '#b8b5a8', font: { family: "'IBM Plex Mono', monospace", size: 11 } }, grid: { display: false } },
+              x: { ticks: { color: '#818b98' }, grid: { color: '#d1d9e0' }, beginAtZero: true },
+              y: { ticks: { color: '#59636e', font: { family: "'IBM Plex Mono', monospace", size: 11 } }, grid: { display: false } },
             },
           },
         }),
@@ -236,13 +236,13 @@ import LogoMark from '../../components/LogoMark.astro';
           type: 'doughnut',
           data: {
             labels: items.map((i) => i.name),
-            datasets: [{ data: items.map((i) => i.count), backgroundColor: PALETTE, borderColor: '#121110', borderWidth: 2 }],
+            datasets: [{ data: items.map((i) => i.count), backgroundColor: PALETTE, borderColor: '#ffffff', borderWidth: 2 }],
           },
           options: {
             responsive: true,
             maintainAspectRatio: true,
             plugins: {
-              legend: { position: 'right', labels: { color: '#b8b5a8', padding: 12, font: { size: 12 } } },
+              legend: { position: 'right', labels: { color: '#59636e', padding: 12, font: { size: 12 } } },
             },
           },
         }),
@@ -360,13 +360,14 @@ import LogoMark from '../../components/LogoMark.astro';
         flex-direction: column;
       }
 
-      /* ---- Top bar ---- */
+      /* ---- Top bar (GitHub dark nav) ---- */
       .top-bar {
         display: flex;
         align-items: center;
         justify-content: space-between;
         padding: 0.85rem 1.5rem;
-        border-bottom: 1px solid var(--cg-rule);
+        background: #24292f;
+        border-bottom: 1px solid #30363d;
         flex-wrap: wrap;
         gap: 0.75rem;
       }
@@ -382,13 +383,13 @@ import LogoMark from '../../components/LogoMark.astro';
         line-height: 0;
       }
       .top-sep {
-        color: var(--cg-ink-3);
+        color: #8b949e;
         font-size: 1.1rem;
       }
       .top-label {
         font-size: 0.9rem;
-        font-weight: 700;
-        color: var(--cg-ink-2);
+        font-weight: 600;
+        color: #e6edf3;
       }
       .top-right {
         display: flex;
@@ -397,9 +398,9 @@ import LogoMark from '../../components/LogoMark.astro';
       }
 
       .days-select {
-        background: var(--cg-paper-2);
-        border: 1px solid var(--cg-rule);
-        color: var(--cg-ink);
+        background: #30363d;
+        border: 1px solid #484f58;
+        color: #e6edf3;
         font-family: var(--sl-font);
         font-size: 0.875rem;
         padding: 0.4rem 0.65rem;
@@ -409,15 +410,15 @@ import LogoMark from '../../components/LogoMark.astro';
 
       .btn-ghost {
         background: transparent;
-        border: 1px solid var(--cg-rule);
-        color: var(--cg-ink-2);
+        border: 1px solid #484f58;
+        color: #8b949e;
         font-family: var(--sl-font);
         font-size: 0.875rem;
         padding: 0.4rem 0.85rem;
         cursor: pointer;
         min-height: 44px;
       }
-      .btn-ghost:hover { color: var(--cg-ink); }
+      .btn-ghost:hover { color: #e6edf3; border-color: #8b949e; }
 
       /* ---- Main ---- */
       .main { flex: 1; padding: 1.5rem; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; }

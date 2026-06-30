@@ -1,6 +1,6 @@
 [package]
 name = "ax-web"
-version = "0.1.2"
+version = "2.0.0"
 edition = "2021"
 
 [dependencies]
@@ -14,3 +14,4 @@ axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 include_dir = "0.7"
 mime_guess = "2"
+ax-policy = { workspace = true }

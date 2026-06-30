@@ -1,4 +1,8 @@
-//! Background and explicit checks for newer ax releases on GitHub.
+//! Background and explicit checks for newer ax releases.
+//!
+//! Primary source: `https://getax.wenneker.io/releases/latest.txt` (plain text, always fresh).
+//! Fallback:       GitHub releases API (`GaryWenneker/ax`) for environments where the CDN
+//!                 is unreachable or a GitHub token is available.
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -7,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ui::{ok_line, warn_line};
 
+const CDN_LATEST_URL: &str = "https://getax.wenneker.io/releases/latest.txt";
 const DEFAULT_REPO: &str = "GaryWenneker/ax";
 const DEFAULT_CACHE_HOURS: u64 = 24;
 const REQUEST_TIMEOUT_SECS: u64 = 8;
@@ -216,12 +221,36 @@ pub fn update_check_disabled() -> bool {
     ) || std::env::var("CI").as_deref() == Ok("true")
 }
 
+/// Fetch latest version from `getax.wenneker.io/releases/latest.txt` (primary CDN source).
+async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, String> {
+    let resp = client
+        .get(CDN_LATEST_URL)
+        .send()
+        .await
+        .map_err(|e| format!("could not reach CDN: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("CDN returned HTTP {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v = text.trim();
+    if v.is_empty() {
+        return Err("CDN returned empty version".to_string());
+    }
+    Ok(normalize_version(v))
+}
+
 pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
     let client = http_client()?;
+
+    // Primary: CDN latest.txt — always up to date, no auth needed.
+    if let Ok(tag) = fetch_latest_from_cdn(&client).await {
+        return Ok(tag);
+    }
+
+    // Fallback: GitHub releases API (works with a token for private repos).
     let token = github_token();
     let token_ref = token.as_deref();
 
-    // Authenticated API first — required for private repos.
     if token_ref.is_some() {
         if let Ok(tag) = fetch_latest_via_api(&client, repo, token_ref).await {
             return Ok(tag);

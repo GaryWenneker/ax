@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 6;
+pub const CURRENT_SCHEMA_VERSION: i32 = 7;
 
 struct Migration {
     version: i32,
@@ -58,6 +58,39 @@ const MIGRATIONS: &[Migration] = &[
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_identity
               ON edges(source, target, kind, IFNULL(line, -1), IFNULL(col, -1));
+        ",
+    },
+    Migration {
+        version: 7,
+        description: "Policy engine tables for rules and skills",
+        sql: "
+            CREATE TABLE IF NOT EXISTS policy_rules (
+                id TEXT PRIMARY KEY,
+                level TEXT NOT NULL,
+                always_apply INTEGER NOT NULL DEFAULT 0,
+                globs TEXT NOT NULL DEFAULT '[]',
+                triggers TEXT NOT NULL DEFAULT '[]',
+                tags TEXT NOT NULL DEFAULT '[]',
+                priority INTEGER NOT NULL DEFAULT 50,
+                body TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS policy_skills (
+                name TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                triggers TEXT NOT NULL DEFAULT '[]',
+                tags TEXT NOT NULL DEFAULT '[]',
+                priority INTEGER NOT NULL DEFAULT 50,
+                context_task TEXT,
+                body TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_policy_rules_level ON policy_rules(level);
+            CREATE INDEX IF NOT EXISTS idx_policy_skills_priority ON policy_skills(priority);
         ",
     },
 ];

@@ -14,6 +14,32 @@ pub struct InstallOptions {
     pub install_all: bool,
 }
 
+/// Ensure `~/.ax/config.json` exists with an `"index"` scaffold.
+/// Never overwrites existing keys — only fills in missing sections.
+fn ensure_global_config() {
+    let Some(home) = dirs::home_dir() else { return };
+    let ax_dir = home.join(".ax");
+    if std::fs::create_dir_all(&ax_dir).is_err() {
+        return;
+    }
+    let path = ax_dir.join("config.json");
+    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    if root.get("index").is_none() {
+        root["index"] = serde_json::json!({
+            "extensions": {},
+            "exclude": [],
+            "includeIgnored": []
+        });
+        if let Ok(json) = serde_json::to_string_pretty(&root) {
+            let _ = std::fs::write(&path, json + "\n");
+        }
+    }
+}
+
 pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), String> {
     if !opts.yes {
         if let Ok(mut t) = telemetry().lock() {
@@ -24,6 +50,8 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
             }
         }
     }
+
+    ensure_global_config();
 
     install_log::intro(env!("CARGO_PKG_VERSION"));
 

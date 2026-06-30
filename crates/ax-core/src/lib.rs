@@ -53,6 +53,12 @@ impl Ax {
             ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(e.to_string(), ax_dir.display().to_string()))
         })?;
         let db_path = ax_dir.join(DB_FILENAME);
+        ax_policy::ensure_scaffold(&ax_dir).map_err(|e| {
+            ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(
+                e.to_string(),
+                ax_dir.display().to_string(),
+            ))
+        })?;
         let db = Database::open(&db_path).await?;
         Self::from_db(root, db).await
     }
@@ -170,6 +176,9 @@ impl Ax {
             Err(e) => Err(e),
         };
         let _ = self.file_lock.release();
+        if result.is_ok() {
+            let _ = ax_policy::index_policy(self.db.pool(), &self.project_root, false).await;
+        }
         result
     }
 
@@ -204,6 +213,9 @@ impl Ax {
             Err(e) => Err(e),
         };
         let _ = self.file_lock.release();
+        if result.is_ok() {
+            let _ = ax_policy::index_policy(self.db.pool(), &self.project_root, false).await;
+        }
         result
     }
 
@@ -439,6 +451,34 @@ impl Ax {
 
     pub fn queries(&self) -> &QueryBuilder {
         &self.queries
+    }
+
+    pub fn db_pool(&self) -> &sqlx::SqlitePool {
+        self.db.pool()
+    }
+
+    pub async fn index_policy(&self, force: bool) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {
+        ax_policy::index_policy(self.db.pool(), &self.project_root, force).await
+    }
+
+    pub async fn match_policy(
+        &self,
+        input: ax_policy::MatchInput,
+    ) -> Result<ax_policy::MatchResult, ax_utils::errors::AxError> {
+        ax_policy::match_policy(self.db.pool(), &input).await
+    }
+
+    pub fn policy_exists(&self) -> bool {
+        ax_policy::policy_exists(&self.project_root)
+    }
+
+    pub async fn guard_operation(
+        &self,
+        path: &Path,
+        op: ax_policy::GuardOp,
+        content: Option<&[u8]>,
+    ) -> Result<ax_policy::GuardResult, ax_utils::errors::AxError> {
+        ax_policy::guard_operation(self.db.pool(), &self.project_root, path, op, content).await
     }
 }
 

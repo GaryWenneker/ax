@@ -46,14 +46,19 @@ pub async fn run_stdio_server() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value) -> Result<Value, String> {
+    let has_policy = engine
+        .project_root()
+        .map(|p| ax_policy::policy_exists(p.as_path()))
+        .unwrap_or(false);
+
     match method {
         "initialize" => Ok(json!({
             "protocolVersion": "2024-11-05",
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "ax", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": server_instructions(),
+            "instructions": server_instructions(has_policy),
         })),
-        "tools/list" => Ok(ToolHandler::list_tools().await),
+        "tools/list" => Ok(ToolHandler::list_tools(has_policy).await),
         "tools/call" => {
             engine.ensure_initialized().await?;
             engine.reopen_if_replaced().await?;

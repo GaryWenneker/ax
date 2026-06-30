@@ -4,9 +4,13 @@ The npm package is a **launcher only** — it downloads the native `ax` binary f
 
 ## Prepare
 
-1. Edit `docs/npm/README.md` if install/docs copy changes.
-2. Tag a GitHub Release with assets `ax-<platform>-<arch>.tar.gz` / `.zip` (same names as `install.sh` / `install.ps1`).
-3. Bump `crates/ax-cli/Cargo.toml` version (npm version follows this).
+1. Edit `docs/npm/README.md` and `site/src/content/docs/getting-started/installation.md` if install/docs copy changes.
+2. Tag a GitHub Release with **all six** assets (same names as `install.sh` / `install.ps1`):
+   - `ax-win32-x64.zip`, `ax-win32-arm64.zip`
+   - `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz` (WSL2)
+   - `ax-darwin-x64.tar.gz`, `ax-darwin-arm64.tar.gz`
+3. Run `bash scripts/verify-release-assets.sh dist/` before upload or getax deploy.
+4. Bump `crates/ax-cli/Cargo.toml` version (npm version follows this).
 
 ## Pack
 

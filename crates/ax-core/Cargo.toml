@@ -1,6 +1,6 @@
 [package]
 name = "ax-core"
-version = "0.1.2"
+version = "2.0.0"
 edition = "2021"
 
 [dependencies]
@@ -12,7 +12,10 @@ ax-resolution = { workspace = true }
 ax-graph = { workspace = true }
 ax-context = { workspace = true }
 ax-sync = { workspace = true }
+ax-policy = { workspace = true }
+sqlx = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+dirs = { workspace = true }

@@ -1,6 +1,7 @@
 name: Release
 
 # Creates GitHub Release binaries for ax upgrade + install.ps1/install.sh.
+# Publishes all six platforms (Windows, macOS, Linux/WSL2) — partial releases fail verify step.
 # Trigger: push tag v* or manual workflow_dispatch.
 on:
   push:
@@ -110,6 +111,9 @@ jobs:
             exit 1
           fi
 
+      - name: Verify all platform assets
+        run: bash scripts/verify-release-assets.sh dist
+
       - name: SHA256SUMS
         run: |
           cd dist
@@ -138,11 +142,15 @@ jobs:
           cp install.sh install.ps1 site/public/
 
       - name: Deploy site + releases to Netlify
-        if: ${{ secrets.NETLIFY_AUTH_TOKEN != '' && secrets.NETLIFY_SITE_ID != '' }}
+        continue-on-error: true
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
         run: |
+          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ] || [ -z "${NETLIFY_SITE_ID:-}" ]; then
+            echo "Skipping Netlify deploy (set NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID repo secrets)."
+            exit 0
+          fi
           cd site
           npm ci
           npm run build

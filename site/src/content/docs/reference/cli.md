@@ -34,6 +34,15 @@ The MCP server (`ax serve --mcp`) is launched automatically by your agent — yo
 
 `ax init` creates the local `.ax/` directory **and** builds the full graph in one step. (The old `-i`/`--index` flag is now a no-op, accepted only so existing scripts don't break.) After that the file watcher keeps the graph current automatically — `index` (a full rebuild from scratch) and `sync` (an incremental update) are only needed when the watcher is disabled or you're scripting against the index outside an agent session.
 
+## Configuration files
+
+| File | Scope | Contents |
+|---|---|---|
+| `~/.ax/config.json` | Global | `"index"` defaults (extensions, exclude, includeIgnored) + `"offload"` LLM settings |
+| `<project-root>/ax.json` | Per-project | Same keys — merged on top of global; per-project wins on conflict |
+
+`ax install` creates `~/.ax/config.json` automatically. See [Configuration](/getting-started/configuration/) for the full reference.
+
 ## Query commands
 
 `query`, `callers`, `callees`, and `impact` all accept `--json` for machine-readable output.

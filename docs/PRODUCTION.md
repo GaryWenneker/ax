@@ -24,6 +24,27 @@ Creates git repo (if needed), pushes to `GaryWenneker/ax`, tags `v0.1.0`, and tr
 
 ## 1. GitHub Releases (`ax upgrade` + install scripts)
 
+### Required assets (all six — no partial releases)
+
+Every tag **must** publish these files to GitHub Releases **and** mirror them to getax.wenneker.io before updating `latest.txt`:
+
+| Asset | Platform |
+|---|---|
+| `ax-win32-x64.zip` | Windows x64 |
+| `ax-win32-arm64.zip` | Windows arm64 |
+| `ax-linux-x64.tar.gz` | Linux x64, **WSL2** (default) |
+| `ax-linux-arm64.tar.gz` | Linux arm64, WSL2 on ARM |
+| `ax-darwin-x64.tar.gz` | macOS Intel |
+| `ax-darwin-arm64.tar.gz` | macOS Apple Silicon |
+
+Verify locally:
+
+```bash
+bash scripts/verify-release-assets.sh dist/
+```
+
+Partial uploads (e.g. Windows-only) break Mac/Linux/WSL installs — **never** bump `site/public/releases/latest.txt` until all six pass verification.
+
 ### Automated (recommended)
 
 1. Push this repo to GitHub as `GaryWenneker/ax` (or update `AX_GITHUB_REPO` everywhere).
@@ -34,10 +55,13 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-3. GitHub Actions workflow `.github/workflows/release.yml` builds six platform bundles and creates the release:
+3. GitHub Actions workflow `.github/workflows/release.yml` builds all six platform bundles, verifies them, creates the GitHub release, and (when Netlify secrets are set) mirrors to getax:
+
    - `ax-win32-x64.zip`, `ax-win32-arm64.zip`
-   - `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz`
+   - `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz` (WSL2 uses these)
    - `ax-darwin-x64.tar.gz`, `ax-darwin-arm64.tar.gz`
+
+4. Update docs in the **same** release: `site/src/content/docs/getting-started/installation.md`, this file, `README.md`, and `docs/npm/*` if install URLs or platform lists changed.
 
 ### Manual trigger
 
@@ -71,9 +95,11 @@ $env:AX_GITHUB_REPO = "your-org/ax"
 
 ### Local packaging (maintainer)
 
+Build and package **all six** targets before manual publish, or use Release CI artifacts:
+
 ```bash
-cargo build --release -p ax-cli --target x86_64-pc-windows-msvc
-bash scripts/package-release.sh win32-x64 x86_64-pc-windows-msvc
+bash scripts/verify-release-assets.sh dist/
+bash scripts/publish-getax-releases.sh v0.1.3   # after dist/ is complete
 ```
 
 ---
@@ -190,8 +216,10 @@ Deploy `site/dist` to Netlify, Cloudflare Pages, or GitHub Pages.
 |------|------------------|
 | Tests green | `cargo test --workspace` |
 | Tag release | `git tag v0.1.0 && git push origin v0.1.0` |
-| Verify GH release assets | GitHub → Releases |
-| Install smoke test | `install.ps1` or `cargo install --path crates/ax-cli` |
+| Verify all 6 assets | `bash scripts/verify-release-assets.sh dist/` |
+| Verify GH + getax URLs | Each `https://getax.wenneker.io/releases/<tag>/ax-*` returns 200 |
+| Docs updated | installation.md, PRODUCTION.md, README, npm docs |
+| Install smoke test | `install.sh` / `install.ps1` on macOS, Linux/WSL2, Windows |
 | Telemetry deploy | `scripts/deploy-telemetry.ps1` or GH workflow |
 | Offload smoke test | `ax offload set-endpoint ...` + `ax explore` |
 
