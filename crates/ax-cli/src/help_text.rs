@@ -228,6 +228,7 @@ Examples:
   ax upgrade --check       Check for updates without installing
 
 Background checks: after most commands, ax may print an update notice (cached ~24h).
+Private GitHub repos need GITHUB_TOKEN, GH_TOKEN, or `gh auth login`.
 Disable with AX_NO_UPDATE_CHECK=1.";
 
 pub const TELEMETRY_LONG: &str = "Anonymous usage telemetry (opt-in/out).

@@ -10,11 +10,24 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $dist = Join-Path $root 'dist'
 $stage = Join-Path $dist "ax-$Bundle"
-$bin = Join-Path $root "target\$RustTarget\release\ax.exe"
-if (-not (Test-Path $bin)) {
-    $bin = Join-Path $root 'target\release\ax.exe'
+
+function Find-AxBinary {
+    param([string]$Root, [string]$RustTarget)
+    $candidates = @(
+        $(if ($env:CARGO_TARGET_DIR) { Join-Path $env:CARGO_TARGET_DIR "$RustTarget\release\ax.exe" })
+        (Join-Path $Root "target-dev\$RustTarget\release\ax.exe")
+        (Join-Path $Root "target\$RustTarget\release\ax.exe")
+        (Join-Path $Root 'target-dev\release\ax.exe')
+        (Join-Path $Root 'target\release\ax.exe')
+    ) | Where-Object { $_ }
+    foreach ($path in $candidates) {
+        if (Test-Path $path) { return $path }
+    }
+    return $null
 }
-if (-not (Test-Path $bin)) {
+
+$bin = Find-AxBinary -Root $root -RustTarget $RustTarget
+if (-not $bin) {
     throw "Binary not found. Run: cargo build --release -p ax-cli --target $RustTarget"
 }
 

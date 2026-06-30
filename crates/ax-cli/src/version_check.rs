@@ -32,6 +32,78 @@ pub fn github_repo() -> String {
     std::env::var("AX_GITHUB_REPO").unwrap_or_else(|_| DEFAULT_REPO.to_string())
 }
 
+/// Token for private repos or higher API rate limits (`AX_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, then `gh auth token`).
+pub fn github_token() -> Option<String> {
+    for key in ["AX_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
+        if let Ok(v) = std::env::var(key) {
+            let t = v.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    github_token_from_gh_cli()
+}
+
+fn github_token_from_gh_cli() -> Option<String> {
+    let output = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let t = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if t.is_empty() { None } else { Some(t) }
+}
+
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .user_agent("ax-version-check")
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+async fn fetch_latest_via_api(
+    client: &reqwest::Client,
+    repo: &str,
+    token: Option<&str>,
+) -> Result<String, String> {
+    let api = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let mut req = client
+        .get(&api)
+        .header("Accept", "application/vnd.github+json");
+    if let Some(t) = token {
+        req = req.header("Authorization", format!("Bearer {t}"));
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("could not reach GitHub API: {e}"))?;
+
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        if token.is_none() {
+            return Err(
+                "releases not visible (private repo?) — set GITHUB_TOKEN or run `gh auth login`"
+                    .to_string(),
+            );
+        }
+        return Err("no published GitHub releases yet".to_string());
+    }
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned HTTP {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    body.get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(normalize_version)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "GitHub did not return a release tag".to_string())
+}
+
 /// Parse release tag from `https://github.com/owner/repo/releases/tag/v1.2.3`.
 pub fn parse_latest_tag_from_url(url: &str) -> Option<String> {
     let m = regex::Regex::new(r"/releases/tag/([^/?#]+)")
@@ -145,12 +217,16 @@ pub fn update_check_disabled() -> bool {
 }
 
 pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .user_agent("ax-version-check")
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = http_client()?;
+    let token = github_token();
+    let token_ref = token.as_deref();
+
+    // Authenticated API first — required for private repos.
+    if token_ref.is_some() {
+        if let Ok(tag) = fetch_latest_via_api(&client, repo, token_ref).await {
+            return Ok(tag);
+        }
+    }
 
     let url = format!("https://github.com/{repo}/releases/latest");
     let resp = client
@@ -165,28 +241,7 @@ pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
         }
     }
 
-    // Fallback: GitHub API (may rate-limit on shared IPs).
-    let api = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let resp = client
-        .get(&api)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| format!("could not reach GitHub API: {e}"))?;
-
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err("no published GitHub releases yet".to_string());
-    }
-    if !resp.status().is_success() {
-        return Err(format!("GitHub API returned HTTP {}", resp.status()));
-    }
-
-    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    body.get("tag_name")
-        .and_then(|v| v.as_str())
-        .map(normalize_version)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "GitHub did not return a release tag".to_string())
+    fetch_latest_via_api(&client, repo, token_ref).await
 }
 
 async fn latest_with_cache(repo: &str) -> Option<String> {
@@ -255,6 +310,11 @@ pub async fn run_check(force_refresh: bool) -> Result<(), String> {
                         strip_v(current)
                     ))
                 );
+                return Ok(());
+            }
+            Err(e) if e.contains("private repo") => {
+                eprintln!("{}", warn_line(e));
+                eprintln!("  Set GITHUB_TOKEN or run `gh auth login`, then retry `ax upgrade --check`.");
                 return Ok(());
             }
             Err(e) => {
