@@ -143,15 +143,26 @@ import LogoMark from '../../components/LogoMark.astro';
         chartInstances.length = 0;
       }
 
-      async function apiFetch(type: string, days: number, signal: AbortSignal): Promise<unknown> {
+      async function apiFetch(days: number, signal: AbortSignal): Promise<unknown> {
         const token = getToken();
         if (!token) return null;
-        const res = await fetch(`/v1/admin/telemetry?type=${type}&days=${days}`, {
+        const res = await fetch(`/v1/admin/telemetry?type=dashboard&days=${days}`, {
           headers: { Authorization: `Bearer ${token}` },
           signal,
         });
         if (res.status === 401) return null;
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const body = (await res.json()) as { error?: string; missing_env?: string[]; hint?: string };
+            if (body.error) detail = body.error;
+            if (body.missing_env?.length) detail += ` (missing: ${body.missing_env.join(', ')})`;
+            if (body.hint) detail += `. ${body.hint}`;
+          } catch {
+            /* ignore */
+          }
+          throw new Error(detail);
+        }
         return res.json();
       }
 
@@ -257,19 +268,21 @@ import LogoMark from '../../components/LogoMark.astro';
 
         try {
           const signal = controller.signal;
-          const [overview, timeline, tools, os] = await Promise.all([
-            apiFetch('overview', days, signal),
-            apiFetch('timeline', days, signal),
-            apiFetch('tools', days, signal),
-            apiFetch('os', days, signal),
-          ]);
+          const data = (await apiFetch(days, signal)) as {
+            overview: { installs: number; indexes: number; tool_calls: number; cli_calls: number; uninstalls: number };
+            timeline: { installs: Array<{ date: string; count: number }>; indexes: Array<{ date: string; count: number }> };
+            tools: { mcp_tools: Array<{ name: string; count: number }>; cli_commands: Array<{ name: string; count: number }> };
+            os: { os: Array<{ name: string; count: number }>; versions: Array<{ name: string; count: number }> };
+            degraded?: boolean;
+            warnings?: string[];
+          } | null;
 
-          if (!overview) {
+          if (!data) {
             authError.hidden = false;
             return;
           }
 
-          const ov = overview as { installs: number; indexes: number; tool_calls: number; cli_calls: number; uninstalls: number };
+          const ov = data.overview;
           (document.getElementById('stat-installs')!).textContent = ov.installs.toLocaleString();
           (document.getElementById('stat-indexes')!).textContent = ov.indexes.toLocaleString();
           (document.getElementById('stat-tools')!).textContent = ov.tool_calls.toLocaleString();
@@ -278,18 +291,22 @@ import LogoMark from '../../components/LogoMark.astro';
 
           content.hidden = false;
 
+          if (data.degraded && data.warnings?.length) {
+            console.warn('Telemetry degraded:', data.warnings.join('; '));
+          }
+
           try {
-            const tl = timeline as { installs: Array<{ date: string; count: number }>; indexes: Array<{ date: string; count: number }> };
+            const tl = data.timeline;
             buildLineChart('chart-timeline', tl.installs.map((d) => d.date), [
               { label: 'Installs', data: tl.installs.map((d) => d.count), color: '#f3f1ea' },
               { label: 'Indexes', data: tl.indexes.map((d) => d.count), color: '#87847a' },
             ]);
 
-            const t = tools as { mcp_tools: Array<{ name: string; count: number }>; cli_commands: Array<{ name: string; count: number }> };
+            const t = data.tools;
             if (t.mcp_tools.length) buildBarChart('chart-mcp-tools', t.mcp_tools.slice(0, 10));
             if (t.cli_commands.length) buildBarChart('chart-cli-cmds', t.cli_commands.slice(0, 10));
 
-            const o = os as { os: Array<{ name: string; count: number }>; versions: Array<{ name: string; count: number }> };
+            const o = data.os;
             if (o.os.length) buildDonutChart('chart-os', o.os);
             if (o.versions.length) buildDonutChart('chart-versions', o.versions);
           } catch (chartErr) {
@@ -299,7 +316,7 @@ import LogoMark from '../../components/LogoMark.astro';
           console.error('Dashboard load error:', err);
           const msg =
             err instanceof DOMException && err.name === 'AbortError'
-              ? 'Telemetry API timed out. Check Netlify POSTHOG_* env vars and try again.'
+              ? 'Telemetry API timed out. Check Netlify POSTHOG_PERSONAL_KEY, POSTHOG_PROJECT_ID, POSTHOG_API_HOST.'
               : err instanceof Error
                 ? err.message
                 : 'Unknown error';
