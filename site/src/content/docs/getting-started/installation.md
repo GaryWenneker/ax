@@ -9,10 +9,10 @@ ax is a **native Rust binary** — no Node.js required for normal use.
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
+curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
+irm https://getax.wenneker.io/install.ps1 | iex
 ```
 
 **From source** (requires Rust 1.75+):

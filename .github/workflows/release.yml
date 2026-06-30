@@ -127,3 +127,23 @@ jobs:
           else
             gh release create "$TAG" dist/ax-* dist/SHA256SUMS --title "$TAG" --notes "$NOTES"
           fi
+
+      - name: Stage public release mirror (getax.wenneker.io)
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          mkdir -p "site/public/releases/${TAG}"
+          cp dist/ax-* "site/public/releases/${TAG}/"
+          cp dist/SHA256SUMS "site/public/releases/${TAG}/" || true
+          echo "${TAG}" > site/public/releases/latest.txt
+          cp install.sh install.ps1 site/public/
+
+      - name: Deploy site + releases to Netlify
+        if: ${{ secrets.NETLIFY_AUTH_TOKEN != '' && secrets.NETLIFY_SITE_ID != '' }}
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          cd site
+          npm ci
+          npm run build
+          npx netlify-cli deploy --prod --dir=dist --site="$NETLIFY_SITE_ID" --message="Release ${{ steps.tag.outputs.tag }}"

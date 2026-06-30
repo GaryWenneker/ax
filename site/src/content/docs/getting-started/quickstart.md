@@ -9,10 +9,10 @@ No Node.js required — pick one:
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
+curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
+irm https://getax.wenneker.io/install.ps1 | iex
 ```
 
 Have Node? `npx @garywenneker/ax` downloads the native binary for your platform. Open a **new terminal** after install so `PATH` updates.

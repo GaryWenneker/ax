@@ -48,13 +48,13 @@ GitHub → Actions → **Release** → Run workflow → set tag `v0.1.0`.
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
+irm https://getax.wenneker.io/install.ps1 | iex
 ```
 
 **Linux / macOS:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
+curl -fsSL https://getax.wenneker.io/install.sh | sh
 ```
 
 **Upgrade:**

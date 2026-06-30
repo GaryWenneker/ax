@@ -31,10 +31,10 @@ The MCP server auto-syncs on save (wait a couple of seconds). Run `ax sync` manu
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
+curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 # Windows
-irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
+irm https://getax.wenneker.io/install.ps1 | iex
 
 # npm
 npm i -g @garywenneker/ax@latest

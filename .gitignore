@@ -45,7 +45,11 @@ Thumbs.db
 # Local Netlify folder
 .netlify
 
-dist-ci/
+# Release binaries mirrored on getax.wenneker.io (CI deploy — do not commit zips)
+site/public/releases/*/ax-*
+site/public/releases/*/*.zip
+site/public/releases/*/*.tar.gz
+site/public/releases/*/SHA256SUMS
 dist-ci-new/
 dist-test/
 

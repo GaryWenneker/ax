@@ -32,10 +32,10 @@ Full docs: [getax.wenneker.io](https://getax.wenneker.io)
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
+curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 # Windows
-irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
+irm https://getax.wenneker.io/install.ps1 | iex
 
 # From source
 cargo install --git https://github.com/GaryWenneker/ax ax-cli --force

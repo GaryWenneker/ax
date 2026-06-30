@@ -155,7 +155,7 @@ function fail(msg) {
   process.stderr.write(
     'ax: ' + msg + '\n' +
     'Install without npm:\n' +
-    '  curl -fsSL https://raw.githubusercontent.com/' + REPO + '/main/install.sh | sh\n'
+    '  curl -fsSL https://getax.wenneker.io/install.sh | sh\n'
   );
   process.exit(1);
 }

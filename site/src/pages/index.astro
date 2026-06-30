@@ -10,7 +10,7 @@ import { getStarsLabel } from '../lib/github';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const repo = 'https://github.com/GaryWenneker/ax';
 const stars = await getStarsLabel();
-const install = 'irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex';
+const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 ---
 
 <!doctype html>
