@@ -134,7 +134,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "ax-cli"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "ax-context",
  "ax-core",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "ax-context"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "ax-db",
  "ax-graph",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "ax-core"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "ax-context",
  "ax-db",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "ax-db"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "ax-extraction"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "anyhow",
  "ax-db",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "ax-graph"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "ax-mcp"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "async-trait",
  "ax-context",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "ax-policy"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "ax-utils",
  "blake3",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "ax-reasoning"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "dirs",
  "reqwest",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "ax-resolution"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "async-trait",
  "ax-db",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "ax-smoke-tests"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -335,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "ax-sync"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "ax-telemetry"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "dirs",
  "reqwest",
@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "ax-types"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "ax-utils"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "ax-web"
-version = "2.0.6"
+version = "2.0.8"
 dependencies = [
  "anyhow",
  "ax-policy",
@@ -1369,9 +1369,9 @@ dependencies = [
 
 [[package]]
 name = "ignore"
-version = "0.4.26"
+version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b915661dd01db3f05050265b2477bcc6527b3792388e2749b41623cc592be67d"
+checksum = "fe112b004901c62c2faa11f4f75e9864e0cc5af8da71c9115d184a3aa888749f"
 dependencies = [
  "crossbeam-deque",
  "globset",
@@ -1534,14 +1534,14 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libredox"
-version = "0.1.17"
+version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f02ab6bace2054fb888a3c16f990117b579d14a3088e472d63c6011fa185c9d3"
+checksum = "c943259e342f1e06ff2da7a83eabdfe7f92ce10262688dbf1895ff0b3e6e4652"
 dependencies = [
  "bitflags 2.13.0",
  "libc",
  "plain",
- "redox_syscall 0.8.1",
+ "redox_syscall 0.9.0",
 ]
 
 [[package]]
@@ -2086,9 +2086,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b44b894f2a6e36457d665d1e08c3866add6ed5e70050c1b4ba8a8ddedb02ce7"
+checksum = "c5102a6aaa05aa011a238e178e6bca86d2cb56fc9f586d37cb80f5bca6e07759"
 dependencies = [
  "bitflags 2.13.0",
 ]
