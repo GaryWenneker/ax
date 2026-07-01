@@ -7,7 +7,7 @@
 #
 # Always installs the latest published release (highest semver with assets).
 # Stops running ax processes and replaces any previous install under ~/.ax.
-# Pin a version: AX_VERSION=v2.0.11 curl -fsSL ... | sh
+# Pin a version: AX_VERSION=v2.0.12 curl -fsSL ... | sh
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: curl -fsSL https://getax.wenneker.io/install.sh | sh -s -- --uninstall
 set -eu
@@ -77,11 +77,12 @@ resolve_version() {
   fi
 
   tmp="$(mktemp)"
-  curl -fsSL "$DOWNLOAD_BASE/latest.txt" 2>/dev/null | tr -d '[:space:]\r' >>"$tmp" || true
+  # GitHub first — getax latest.txt is a site pointer and may lag behind GitHub.
   curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
     | sed -n 's/.*"tag_name": *"\(v[^"]*\)".*/\1/p' >>"$tmp" || true
   curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null \
     | sed -n 's/.*"tag_name": *"\(v[^"]*\)".*/\1/p' >>"$tmp" || true
+  curl -fsSL "$DOWNLOAD_BASE/latest.txt" 2>/dev/null | tr -d '[:space:]\r' >>"$tmp" || true
 
   best=""
   while IFS= read -r cand; do
@@ -102,6 +103,57 @@ EOF
     return 0
   fi
   return 1
+}
+
+ax_install_targets() {
+  printf '%s\n' "$INSTALL_DIR/current/ax" "$BIN_DIR/ax"
+  if [ "${AX_KEEP_CARGO_BIN:-}" != "1" ]; then
+    printf '%s\n' "$HOME/.cargo/bin/ax"
+  fi
+}
+
+sync_local_ax_instances() {
+  src="$1"
+  stop_ax_processes
+  ax_install_targets | while IFS= read -r dest; do
+    [ -n "$dest" ] || continue
+    [ "$dest" = "$src" ] && continue
+    mkdir -p "$(dirname "$dest")"
+    rm -f "$dest"
+    cp -f "$src" "$dest"
+    chmod +x "$dest" 2>/dev/null || true
+  done
+}
+
+confirm_ax_install() {
+  expected="${1#v}"
+  failed=0
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ ! -x "$path" ]; then
+      echo "ax: install incomplete — missing $path" >&2
+      failed=1
+      continue
+    fi
+    ver="$("$path" version 2>/dev/null || true)"
+    case "$ver" in
+      *"$expected"*) ;;
+      *)
+        echo "ax: $path reports '$ver', expected $expected — stop ax MCP/web and re-run install" >&2
+        failed=1
+        ;;
+    esac
+  done <<EOF
+$(ax_install_targets)
+EOF
+  [ "$failed" -eq 0 ] || return 1
+}
+
+update_session_path() {
+  case ":${PATH}:" in
+    *":$BIN_DIR:"*) PATH="$(echo "$PATH" | tr ':' '\n' | grep -vx "$BIN_DIR" | tr '\n' ':' | sed 's/:$//')" ;;
+  esac
+  export PATH="$BIN_DIR:$PATH"
 }
 
 # Kill stale ax and remove previous install before download.
@@ -136,34 +188,12 @@ stop_ax_processes
 dest="$INSTALL_DIR/current"
 mkdir -p "$dest"
 tar -xzf "$tmp/ax.tar.gz" -C "$dest" --strip-components=1
+chmod +x "$dest/ax" 2>/dev/null || true
 
 mkdir -p "$BIN_DIR"
-rm -f "$BIN_DIR/ax"
-ln -sf "$dest/ax" "$BIN_DIR/ax"
-chmod +x "$dest/ax" "$BIN_DIR/ax" 2>/dev/null || true
-
-# Prepend ~/.local/bin on PATH for this shell (pipe installs do not reload profile).
-case ":${PATH}:" in
-  *":$BIN_DIR:"*) PATH="$(echo "$PATH" | tr ':' '\n' | grep -vx "$BIN_DIR" | tr '\n' ':' | sed 's/:$//')" ;;
-esac
-export PATH="$BIN_DIR:$PATH"
-
-cargo_ax="$HOME/.cargo/bin/ax"
-if [ "${AX_KEEP_CARGO_BIN:-}" != "1" ]; then
-  stop_ax_processes
-  old_ver=""
-  if [ -x "$cargo_ax" ]; then
-    old_ver="$("$cargo_ax" version 2>/dev/null || true)"
-  fi
-  mkdir -p "$(dirname "$cargo_ax")"
-  cp -f "$dest/ax" "$cargo_ax"
-  chmod +x "$cargo_ax"
-  if [ -n "$old_ver" ]; then
-    echo "Updated $cargo_ax (was: $old_ver)"
-  elif [ -f "$cargo_ax" ]; then
-    echo "Updated $cargo_ax"
-  fi
-fi
+sync_local_ax_instances "$dest/ax"
+update_session_path
+confirm_ax_install "$version" || exit 1
 
 installed_ver="$("$BIN_DIR/ax" version 2>/dev/null || true)"
 echo "Installed to $dest (replaced previous install)"
@@ -172,3 +202,7 @@ if [ -n "$installed_ver" ]; then
 else
   echo "Run: ax version"
 fi
+echo "Synced local instances:"
+ax_install_targets | while IFS= read -r path; do
+  [ -n "$path" ] && echo "  $path"
+done

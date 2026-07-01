@@ -5,7 +5,7 @@
 #
 # Always installs the latest published release (highest semver with assets).
 # Stops running ax processes and replaces any previous install under %LOCALAPPDATA%\ax.
-# Pin a version: $env:AX_VERSION = 'v2.0.11'; irm ... | iex
+# Pin a version: $env:AX_VERSION = 'v2.0.12'; irm ... | iex
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: remove %LOCALAPPDATA%\ax and its bin entry from user PATH.
 
@@ -104,16 +104,17 @@ function Resolve-AxVersion {
     return $v
   }
 
+  # GitHub first — getax latest.txt is a site pointer and may lag behind GitHub.
   $candidates = [System.Collections.Generic.List[string]]::new()
   foreach ($source in @(
-      { (Invoke-RestMethod "$downloadBase/latest.txt" -TimeoutSec 15).Trim() },
       { (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 15).tag_name },
       {
         $rels = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=30" -TimeoutSec 15
         foreach ($r in $rels) {
           if (-not $r.draft -and -not $r.prerelease) { $r.tag_name }
         }
-      }
+      },
+      { (Invoke-RestMethod "$downloadBase/latest.txt" -TimeoutSec 15).Trim() }
     )) {
     try {
       $value = & $source
@@ -137,6 +138,72 @@ function Resolve-AxVersion {
   }
 
   throw "ax: could not resolve a release with downloadable assets; set AX_VERSION or publish releases to GitHub ($repo)"
+}
+
+function Get-AxInstallTargets {
+  param(
+    [Parameter(Mandatory = $true)][string]$BinDir,
+    [Parameter(Mandatory = $true)][string]$InstallRoot
+  )
+  @(
+    (Join-Path $BinDir 'ax.exe'),
+    (Join-Path $InstallRoot 'ax.exe'),
+    (Join-Path $env:USERPROFILE '.cargo\bin\ax.exe')
+  ) | Select-Object -Unique
+}
+
+function Sync-LocalAxInstances {
+  param(
+    [Parameter(Mandatory = $true)][string]$SourceExe,
+    [Parameter(Mandatory = $true)][string[]]$Targets
+  )
+  foreach ($dest in $Targets) {
+    $srcResolved = (Resolve-Path $SourceExe -ErrorAction SilentlyContinue)
+    $destResolved = (Resolve-Path $dest -ErrorAction SilentlyContinue)
+    if ($srcResolved -and $destResolved -and ($srcResolved.Path -eq $destResolved.Path)) {
+      continue
+    }
+    Copy-AxExeForce -Source $SourceExe -Destination $dest
+  }
+}
+
+function Confirm-AxInstall {
+  param(
+    [Parameter(Mandatory = $true)][string]$ExpectedTag,
+    [Parameter(Mandatory = $true)][string[]]$Targets
+  )
+  $expected = $ExpectedTag.TrimStart('v')
+  foreach ($path in $Targets) {
+    if (-not (Test-Path $path)) {
+      throw "ax: install incomplete — missing $path"
+    }
+    $ver = (& $path version 2>&1 | Out-String).Trim()
+    if ($ver -notmatch [regex]::Escape($expected)) {
+      throw "ax: $path reports '$ver', expected $expected — close ax MCP/web/IDE terminals and re-run install"
+    }
+  }
+}
+
+function Update-SessionPath {
+  param([Parameter(Mandatory = $true)][string]$BinDir)
+  Set-UserPathFirst -entry $BinDir
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+  $merged = @($BinDir) +
+    ($userPath -split ';' | Where-Object { $_ -and ($_ -ne $BinDir) }) +
+    ($machinePath -split ';' | Where-Object { $_ -and ($_ -ne $BinDir) })
+  $env:Path = ($merged | Select-Object -Unique) -join ';'
+}
+
+function Set-UserPathFirst([string]$entry) {
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $parts = @()
+  if ($userPath) {
+    $parts = $userPath -split ';' | Where-Object { $_ -and ($_ -ne $entry) }
+  }
+  $newPath = @($entry) + $parts
+  $joined = ($newPath | Select-Object -Unique) -join ';'
+  [Environment]::SetEnvironmentVariable('Path', $joined, 'User')
 }
 
 # Kill stale ax and wipe previous install before resolving/downloading.
@@ -184,47 +251,26 @@ $binDir = Join-Path $dest 'bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $exe = Join-Path $dest 'ax.exe'
 if (-not (Test-Path $exe)) { throw "ax.exe not found in bundle" }
-Copy-AxExeForce -Source $exe -Destination (Join-Path $binDir 'ax.exe')
 
-function Set-UserPathFirst([string]$entry) {
-  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $parts = @()
-  if ($userPath) {
-    $parts = $userPath -split ';' | Where-Object { $_ -and ($_ -ne $entry) }
-  }
-  $newPath = @($entry) + $parts
-  $joined = ($newPath | Select-Object -Unique) -join ';'
-  [Environment]::SetEnvironmentVariable('Path', $joined, 'User')
+$installTargets = Get-AxInstallTargets -BinDir $binDir -InstallRoot $dest
+if ($env:AX_KEEP_CARGO_BIN -eq '1') {
+  $installTargets = $installTargets | Where-Object { $_ -notlike '*\.cargo\bin\ax.exe' }
 }
-
-Set-UserPathFirst -entry $binDir
-# Apply immediately in this shell (install.ps1 | iex does not reload user PATH).
-$env:Path = ($binDir + ';' + (($env:Path -split ';') | Where-Object { $_ -and ($_ -ne $binDir) }) -join ';')
-
-# Replace stale cargo-installed ax so `ax` resolves correctly even before a new terminal.
-$cargoAx = Join-Path $env:USERPROFILE '.cargo\bin\ax.exe'
-if ($env:AX_KEEP_CARGO_BIN -ne '1') {
-  try {
-    $oldVer = if (Test-Path $cargoAx) { (& $cargoAx version 2>&1 | Out-String).Trim() } else { '(none)' }
-    Copy-AxExeForce -Source $exe -Destination $cargoAx
-    Write-Host "Updated $cargoAx (was: $oldVer)" -ForegroundColor DarkGray
-  } catch {
-    Write-Host "Note: could not update $cargoAx — use a new terminal or run:" -ForegroundColor Yellow
-    Write-Host "  `$env:Path = '$binDir;' + `$env:Path" -ForegroundColor Yellow
-  }
-}
+Sync-LocalAxInstances -SourceExe $exe -Targets $installTargets
+Update-SessionPath -BinDir $binDir
+Confirm-AxInstall -ExpectedTag $version -Targets $installTargets
 
 $installedVer = (& (Join-Path $binDir 'ax.exe') version 2>&1 | Out-String).Trim()
-$expectedVer = $version.TrimStart('v')
-if ($installedVer -notmatch [regex]::Escape($expectedVer)) {
-  Write-Warning "Tag $version was installed but binary reports: $installedVer (release may have been built from wrong Cargo.toml — try again after CI republish)"
-}
 Write-Host "Installed to $dest (replaced previous install)" -ForegroundColor Green
 Write-Host "Active: $installedVer ($binDir\ax.exe)" -ForegroundColor Green
+Write-Host "Synced local instances:" -ForegroundColor DarkGray
+foreach ($path in $installTargets) {
+  Write-Host "  $path" -ForegroundColor DarkGray
+}
 
-$shadow = Get-Command ax -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -ne (Join-Path $binDir 'ax.exe') }
+$shadow = Get-Command ax -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -notin $installTargets }
 if ($shadow) {
-  Write-Host "Other ax on PATH (new terminals use $binDir first):" -ForegroundColor DarkGray
+  Write-Host "Other ax on PATH (install updated canonical paths above; new shells prefer $binDir):" -ForegroundColor Yellow
   foreach ($cmd in $shadow) {
     Write-Host "  $($cmd.Source)" -ForegroundColor DarkGray
   }

@@ -25,6 +25,7 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
 
     let ax_dir = root.join(".ax");
     let seed = ax_policy::seed_default_policy(&ax_dir).ok();
+    let sync = ax_policy::sync_instructions(&ax_dir, true).ok();
     if let Some(ref s) = seed {
         if !s.created.is_empty() {
             println!(
@@ -35,6 +36,21 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
                 ))
             );
             for rel in &s.created {
+                println!("  {}", dim(rel));
+            }
+            println!();
+        }
+    }
+    if let Some(ref s) = sync {
+        if !s.fixed.is_empty() {
+            println!(
+                "{}",
+                ok_line(format!(
+                    "Ensured {} startup protocol file(s)",
+                    s.fixed.len()
+                ))
+            );
+            for rel in &s.fixed {
                 println!("  {}", dim(rel));
             }
             println!();
@@ -61,6 +77,25 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
             format_duration_ms(result.duration_ms)
         ))
     );
+
+    // Database policy mode keeps rules in SQLite — always import seeded .ax/policy/ files on init.
+    match ax.index_policy(true).await {
+        Ok(policy) => {
+            if policy.rules_indexed > 0 || policy.skills_indexed > 0 {
+                println!(
+                    "{}",
+                    ok_line(format!(
+                        "Policy indexed {} rules, {} skills (startup protocol via ax_preflight)",
+                        policy.rules_indexed,
+                        policy.skills_indexed
+                    ))
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", dim(format!("Policy index skipped: {e}")));
+        }
+    }
 
     install_git_sync_hooks(&root).map_err(|e| e.to_string())?;
     if let Ok(mut t) = ax_telemetry::telemetry().lock() {
