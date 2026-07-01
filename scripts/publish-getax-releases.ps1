@@ -6,6 +6,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+$cargoVer = Select-String -Path (Join-Path $root 'crates\ax-cli\Cargo.toml') -Pattern '^version = "(.+)"' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+$expectedTag = "v$cargoVer"
+if ($Tag -ne $expectedTag) {
+    throw "Tag $Tag does not match Cargo.toml version $expectedTag. Pass -Tag $expectedTag or bump Cargo.toml first."
+}
 $dist = Join-Path $root 'dist'
 $site = Join-Path $root 'site'
 $releaseDir = Join-Path $site "public\releases\$Tag"

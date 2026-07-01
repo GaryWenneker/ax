@@ -9,6 +9,12 @@ set -euo pipefail
 
 TAG="${1:?usage: publish-getax-releases.sh v2.0.0}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CARGO_VER="$(grep -E '^version = ' "${ROOT}/crates/ax-cli/Cargo.toml" | head -1 | sed -E 's/version = "(.*)"/\1/')"
+EXPECTED_TAG="v${CARGO_VER}"
+if [ "${TAG}" != "${EXPECTED_TAG}" ]; then
+  echo "Tag ${TAG} does not match Cargo.toml version ${EXPECTED_TAG}. Bump Cargo.toml or pass ${EXPECTED_TAG}." >&2
+  exit 1
+fi
 DIST="${ROOT}/dist"
 SITE="${ROOT}/site"
 RELEASE_DIR="${SITE}/public/releases/${TAG}"

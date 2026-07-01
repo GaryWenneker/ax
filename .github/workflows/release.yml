@@ -1,4 +1,5 @@
 name: Release
+run-name: Release ${{ github.ref_name }}
 
 # Creates GitHub Release binaries for ax upgrade + install.ps1/install.sh.
 # Publishes all six platforms (Windows, macOS, Linux/WSL2) — partial releases fail verify step.
@@ -127,23 +128,45 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          NOTES="ax ${TAG} — native binaries for install.ps1 / install.sh / ax upgrade."
+          NOTES="## ax ${TAG}
+
+          Native binaries for **install.ps1** / **install.sh** / \`ax upgrade\`.
+
+          ### Platforms (all six required)
+          - Windows x64 / arm64 — \`irm https://getax.wenneker.io/install.ps1 | iex\`
+          - macOS Intel / Apple Silicon — \`curl -fsSL https://getax.wenneker.io/install.sh | sh\`
+          - Linux / WSL2 — same \`install.sh\`
+
+          Downloads resolve from GitHub Releases; getax.wenneker.io/releases/* redirects to GitHub.
+
+          ### Policy engine
+          - \`policy.storage: \"database\"\` in ax.json — SQLite source of truth, .mdc export only
+          - \`ax policy import\` / \`ax policy export\`"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/ax-* dist/SHA256SUMS --clobber
+            gh release edit "$TAG" --notes "$NOTES"
           else
             gh release create "$TAG" dist/ax-* dist/SHA256SUMS --title "$TAG" --notes "$NOTES"
           fi
 
-      - name: Stage public release mirror (getax.wenneker.io)
+      - name: Verify GitHub download URL (smoke)
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          mkdir -p "site/public/releases/${TAG}"
-          cp dist/ax-* "site/public/releases/${TAG}/"
-          cp dist/SHA256SUMS "site/public/releases/${TAG}/" || true
+          URL="https://github.com/GaryWenneker/ax/releases/download/${TAG}/ax-linux-x64.tar.gz"
+          code="$(curl -sL -o /dev/null -w '%{http_code}' "$URL")"
+          if [ "$code" != "200" ]; then
+            echo "::error::GitHub asset not reachable: $URL (HTTP $code)"
+            exit 1
+          fi
+          echo "OK: $URL"
+
+      - name: Update site version pointer and install scripts
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
           echo "${TAG}" > site/public/releases/latest.txt
           cp install.sh install.ps1 site/public/
 
-      - name: Deploy site + releases to Netlify
+      - name: Deploy docs site to Netlify
         continue-on-error: true
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
@@ -156,4 +179,4 @@ jobs:
           cd site
           npm ci
           npm run build
-          npx netlify-cli deploy --prod --dir=dist --site="$NETLIFY_SITE_ID" --message="Release ${{ steps.tag.outputs.tag }}"
+          npx netlify-cli deploy --prod --dir=dist --site="$NETLIFY_SITE_ID" --message="Release ${{ steps.tag.outputs.tag }} docs"
