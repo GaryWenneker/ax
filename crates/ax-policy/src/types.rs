@@ -30,6 +30,7 @@ impl PolicyLevel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuleFrontmatter {
     pub id: String,
     pub level: String,
@@ -50,6 +51,7 @@ fn default_priority() -> i32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillFrontmatter {
     pub name: String,
     pub description: String,
@@ -64,6 +66,7 @@ pub struct SkillFrontmatter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PolicyRuleDoc {
     pub frontmatter: RuleFrontmatter,
     pub body: String,
@@ -72,6 +75,7 @@ pub struct PolicyRuleDoc {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PolicySkillDoc {
     pub frontmatter: SkillFrontmatter,
     pub body: String,
@@ -80,6 +84,7 @@ pub struct PolicySkillDoc {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PolicyRuleRow {
     pub id: String,
     pub level: String,
@@ -93,6 +98,7 @@ pub struct PolicyRuleRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PolicySkillRow {
     pub name: String,
     pub description: String,

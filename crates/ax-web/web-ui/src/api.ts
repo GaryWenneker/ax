@@ -67,3 +67,7 @@ export function fetchSearch(q: string, limit = 20): Promise<SearchPage> {
   const sp = new URLSearchParams({ q, limit: String(limit) });
   return get<SearchPage>(`/search?${sp}`);
 }
+
+export function fetchVersion(): Promise<{ version: string }> {
+  return get<{ version: string }>('/version');
+}

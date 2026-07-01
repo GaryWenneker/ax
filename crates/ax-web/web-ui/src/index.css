@@ -66,6 +66,12 @@ html, body {
   text-decoration: none;
 }
 .topbar-brand span { color: var(--ink-3); font-weight: 400; }
+.topbar-version {
+  font-size: 0.8rem;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
 
 /* ---- Body split ---- */
 .body {
@@ -490,6 +496,13 @@ html, body {
 .form-panel input, .form-panel select, .form-panel textarea { font-size: 16px; padding: 0.5rem; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); width: 100%; }
 .form-panel .checkbox { flex-direction: row; align-items: center; }
 .md-panel { display: flex; flex-direction: column; border: 1px solid var(--rule); min-height: 320px; }
+.md-editor-wrap { flex: 1; display: flex; flex-direction: column; min-height: 320px; }
+.md-editor-wrap .w-md-editor { background: var(--paper); color: var(--ink); border: none; box-shadow: none; }
+.md-editor-wrap .w-md-editor-toolbar { background: var(--paper-2); border-bottom: 1px solid var(--rule); padding: 0.25rem; }
+.md-editor-wrap .w-md-editor-toolbar li > button { color: var(--ink-2); min-height: 44px; min-width: 44px; }
+.md-editor-wrap .w-md-editor-content { background: var(--paper); }
+.md-editor-wrap .w-md-editor-text-pre, .md-editor-wrap .w-md-editor-text-input { font-size: 16px !important; line-height: 1.6 !important; }
+.md-editor-wrap .wmde-markdown { background: var(--paper); color: var(--ink); font-size: 15px; }
 .tab-bar { display: flex; border-bottom: 1px solid var(--rule); }
 .tab-bar button { flex: 1; min-height: 44px; border: none; background: var(--paper-2); color: var(--ink-2); cursor: pointer; font-size: 1rem; }
 .tab-bar button.active { background: var(--paper); color: var(--ink); font-weight: 600; }

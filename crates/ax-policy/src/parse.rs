@@ -231,4 +231,37 @@ mod tests {
         assert_eq!(doc.frontmatter.id, "utf8");
         assert!(doc.frontmatter.always_apply);
     }
+
+    #[test]
+    fn api_json_accepts_camel_case_frontmatter() {
+        use crate::types::RuleFrontmatter;
+        #[derive(serde::Deserialize)]
+        struct Payload {
+            frontmatter: RuleFrontmatter,
+            #[allow(dead_code)]
+            body: String,
+        }
+        let json = r#"{"frontmatter":{"id":"hello-world","level":"CRITICAL","alwaysApply":true,"globs":[],"triggers":[],"tags":[],"priority":50},"body":"Hello"}"#;
+        let p: Payload = serde_json::from_str(json).unwrap();
+        assert!(p.frontmatter.always_apply);
+        assert_eq!(p.frontmatter.id, "hello-world");
+    }
+
+    #[test]
+    fn serialize_roundtrip_with_globs() {
+        use crate::types::RuleFrontmatter;
+        let fm = RuleFrontmatter {
+            id: "hello-world".into(),
+            level: "CRITICAL".into(),
+            always_apply: true,
+            globs: vec!["**/*.tsx".into(), "**/*.css".into()],
+            triggers: vec!["mobile".into()],
+            tags: vec!["hello".into()],
+            priority: 50,
+        };
+        let raw = serialize_rule(&fm, "Always say Hello World");
+        let doc = parse_rule_file(Path::new("hello-world.mdc"), &raw).unwrap();
+        assert_eq!(doc.frontmatter.globs.len(), 2);
+        assert!(doc.frontmatter.always_apply);
+    }
 }

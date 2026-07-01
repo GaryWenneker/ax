@@ -10,14 +10,29 @@ import type {
 
 const POLICY = '/api/policy';
 
+interface ApiErrorBody {
+  error?: string;
+  fields?: Record<string, string>;
+}
+
+function formatApiError(body: ApiErrorBody, status: number): string {
+  if (body.fields && Object.keys(body.fields).length > 0) {
+    const details = Object.entries(body.fields)
+      .map(([field, msg]) => `${field}: ${msg}`)
+      .join('; ');
+    return `${body.error ?? 'Request failed'} (${details})`;
+  }
+  return body.error ?? `HTTP ${status}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${POLICY}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    const body = (await res.json().catch(() => ({}))) as ApiErrorBody;
+    throw new Error(formatApiError(body, res.status));
   }
   return res.json() as Promise<T>;
 }

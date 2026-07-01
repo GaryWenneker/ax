@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicyRule, savePolicyRule } from '../policyApi';
+import MarkdownEditor from '../components/MarkdownEditor';
 import type { RuleFrontmatter } from '../policyTypes';
 
 interface Props {
@@ -27,7 +28,6 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
   const [globsText, setGlobsText] = useState('');
   const [triggersText, setTriggersText] = useState('');
   const [tagsText, setTagsText] = useState('');
-  const [tab, setTab] = useState<'edit' | 'preview'>('edit');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -95,15 +95,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
           <label>Tags<input value={tagsText} onChange={(e) => setTagsText(e.target.value)} /></label>
         </section>
         <section className="md-panel">
-          <div className="tab-bar">
-            <button type="button" className={tab === 'edit' ? 'active' : ''} onClick={() => setTab('edit')}>Edit</button>
-            <button type="button" className={tab === 'preview' ? 'active' : ''} onClick={() => setTab('preview')}>Preview</button>
-          </div>
-          {tab === 'edit' ? (
-            <textarea className="md-editor" value={body} onChange={(e) => setBody(e.target.value)} spellCheck={false} />
-          ) : (
-            <pre className="md-preview">{body}</pre>
-          )}
+          <MarkdownEditor value={body} onChange={setBody} />
         </section>
       </div>
     </div>

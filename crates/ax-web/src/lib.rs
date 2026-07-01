@@ -142,6 +142,13 @@ async fn handle_search(State(s): State<AppState>, Query(p): Query<SearchQuery>) 
     }
 }
 
+async fn handle_version() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })),
+    )
+}
+
 async fn handle_spa(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -210,6 +217,7 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
 
     let graph_api = Router::new()
         .route("/stats", get(handle_stats))
+        .route("/version", get(handle_version))
         .route("/nodes", get(handle_nodes))
         .route("/node/{id}", get(handle_node))
         .route("/files", get(handle_files))
