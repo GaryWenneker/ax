@@ -191,8 +191,84 @@ fn windows_install_root() -> PathBuf {
 }
 
 #[cfg(windows)]
-fn ps_single_quoted(path: &Path) -> String {
-    path.to_string_lossy().replace('\'', "''")
+/// Detached child: wait for upgrader exit, swap staged bundle into `%LOCALAPPDATA%\\ax\\current`.
+pub fn run_upgrade_apply(parent_pid: u32, staging: PathBuf, dest: PathBuf) -> Result<(), String> {
+    wait_for_process_exit(parent_pid, std::time::Duration::from_secs(90));
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let _ = stop_other_ax_processes(std::process::id());
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    if dest.exists() {
+        std::fs::remove_dir_all(&dest).map_err(|e| format!("remove old install: {e}"))?;
+    }
+    std::fs::rename(&staging, &dest).map_err(|e| format!("activate new install: {e}"))?;
+
+    let bin_dir = dest.join("bin");
+    std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+    let bin_exe = bin_dir.join("ax.exe");
+    std::fs::copy(dest.join("ax.exe"), &bin_exe).map_err(|e| format!("copy ax.exe to bin: {e}"))?;
+    sync_cargo_shadow(&bin_exe);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_no_window() -> u32 {
+    use std::os::windows::process::CommandExt;
+    0x0800_0000 // CREATE_NO_WINDOW
+}
+
+#[cfg(windows)]
+fn process_running(pid: u32) -> bool {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .creation_flags(windows_no_window())
+        .output();
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()),
+        Err(_) => false,
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline && process_running(pid) {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+#[cfg(windows)]
+fn stop_other_ax_processes(self_pid: u32) -> Result<usize, String> {
+    use std::os::windows::process::CommandExt;
+    let mut killed = 0usize;
+    let procs = std::process::Command::new("wmic")
+        .args(["process", "where", "name='ax.exe'", "get", "ProcessId", "/format:csv"])
+        .creation_flags(windows_no_window())
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&procs.stdout);
+    for line in text.lines() {
+        let pid: u32 = match line.split(',').nth(1).and_then(|s| s.trim().parse().ok()) {
+            Some(p) if p != self_pid => p,
+            _ => continue,
+        };
+        if std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .creation_flags(windows_no_window())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            killed += 1;
+        }
+    }
+    Ok(killed)
+}
+
+#[cfg(not(windows))]
+pub fn run_upgrade_apply(_parent_pid: u32, _staging: PathBuf, _dest: PathBuf) -> Result<(), String> {
+    Err("upgrade-apply is only used on Windows".into())
 }
 
 #[cfg(windows)]
@@ -304,60 +380,20 @@ fn schedule_windows_bundle_upgrade(bytes: &[u8], bundle: &str) -> Result<(), Str
     extract_zip_bundle(bytes, &staging, bundle)?;
 
     let dest = root.join("current");
-    let bin_dir = dest.join("bin");
     let parent_pid = std::process::id();
-    let cargo_ax = dirs::home_dir()
-        .map(|h| h.join(".cargo").join("bin").join("ax.exe"))
-        .unwrap_or_default();
+    let exe = std::env::current_exe().map_err(|e| format!("resolve ax.exe path: {e}"))?;
 
-    let script = format!(
-        "$ErrorActionPreference = 'Stop'\n\
-         $parent = {parent_pid}\n\
-         $deadline = (Get-Date).AddSeconds(90)\n\
-         while ((Get-Process -Id $parent -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {{\n\
-           Start-Sleep -Milliseconds 200\n\
-         }}\n\
-         Start-Sleep -Seconds 1\n\
-         Get-Process -Name 'ax' -ErrorAction SilentlyContinue | ForEach-Object {{\n\
-           Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue\n\
-         }}\n\
-         Start-Sleep -Seconds 1\n\
-         $dest = '{}'\n\
-         $staging = '{}'\n\
-         $binDir = '{}'\n\
-         $cargo = '{}'\n\
-         if (Test-Path $dest) {{ Remove-Item -Recurse -Force $dest }}\n\
-         Move-Item -Force $staging $dest\n\
-         New-Item -ItemType Directory -Force -Path $binDir | Out-Null\n\
-         Copy-Item -Force (Join-Path $dest 'ax.exe') (Join-Path $binDir 'ax.exe')\n\
-         if ((Test-Path $cargo) -and ($env:AX_KEEP_CARGO_BIN -ne '1')) {{\n\
-           Copy-Item -Force (Join-Path $binDir 'ax.exe') $cargo\n\
-         }}\n\
-         Remove-Item -Force $MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue\n",
-        ps_single_quoted(&dest),
-        ps_single_quoted(&staging),
-        ps_single_quoted(&bin_dir),
-        ps_single_quoted(&cargo_ax),
-    );
-
-    let script_path = std::env::temp_dir().join(format!("ax-upgrade-{parent_pid}.ps1"));
-    std::fs::write(&script_path, script).map_err(|e| format!("write upgrade script: {e}"))?;
-
-    std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-WindowStyle",
-            "Hidden",
-            "-File",
-            script_path
-                .to_str()
-                .ok_or("upgrade script path not UTF-8")?,
-        ])
+    std::process::Command::new(&exe)
+        .arg("upgrade-apply")
+        .arg("--parent-pid")
+        .arg(parent_pid.to_string())
+        .arg("--staging")
+        .arg(&staging)
+        .arg("--dest")
+        .arg(&dest)
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
-        .map_err(|e| format!("spawn upgrade helper: {e}"))?;
+        .map_err(|e| format!("spawn upgrade helper ({}): {e}", exe.display()))?;
 
     Ok(())
 }

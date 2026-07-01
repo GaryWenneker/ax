@@ -173,6 +173,16 @@ enum Commands {
         parent_pid: u32,
         timeout_ms: u64,
     },
+    /// Hidden Windows upgrade helper (spawned by ax upgrade; no PowerShell required)
+    #[command(hide = true, name = "upgrade-apply")]
+    UpgradeApply {
+        #[arg(long)]
+        parent_pid: u32,
+        #[arg(long)]
+        staging: std::path::PathBuf,
+        #[arg(long)]
+        dest: std::path::PathBuf,
+    },
     /// Start MCP server (hidden)
     Serve {
         #[arg(long, hide = true)]
@@ -334,6 +344,9 @@ async fn main() {
             ax_mcp::run_watchdog_child(parent_pid, timeout_ms);
             Ok(())
         }
+        Some(Commands::UpgradeApply { parent_pid, staging, dest }) => {
+            commands::upgrade::run_upgrade_apply(parent_pid, staging, dest)
+        }
         Some(Commands::Version) => {
             println!("{} {}", ui::accent("ax"), env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -383,6 +396,7 @@ fn should_notify_update(cmd: &Option<Commands>) -> bool {
         Some(Commands::Serve { .. })
         | Some(Commands::PromptHook)
         | Some(Commands::WatchdogChild { .. })
+        | Some(Commands::UpgradeApply { .. })
         | Some(Commands::Upgrade { .. })
         | Some(Commands::Version) => false,
         Some(Commands::Index { quiet: true, .. })
@@ -422,6 +436,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Policy { .. }) => Some("policy".into()),
         Some(Commands::PromptHook) => None,
         Some(Commands::WatchdogChild { .. }) => None,
+        Some(Commands::UpgradeApply { .. }) => None,
         Some(Commands::Serve { .. }) => Some("serve".into()),
     }
 }
