@@ -225,7 +225,7 @@ Downloads the platform bundle for your OS/arch. On Windows, extracts to %LOCALAP
 PowerShell helper finishes the swap after this process exits. Open a new terminal and run `ax version`.
 
 Examples:
-  ax upgrade               Install latest release
+  ax upgrade               Download and install latest available release (always reinstalls)
   ax upgrade v2.0.0        Install a specific tag
   ax upgrade --check       Check only
 

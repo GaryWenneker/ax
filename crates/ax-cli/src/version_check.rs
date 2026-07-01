@@ -240,34 +240,138 @@ async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, Strin
 
 pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
     let client = http_client()?;
+    collect_latest_candidates(&client, repo).await.into_iter().next().ok_or_else(|| {
+        "could not resolve latest release (no GitHub releases or CDN latest.txt)".to_string()
+    })
+}
+
+/// Highest semver release tag that has a downloadable bundle for this platform (matches install.ps1).
+pub async fn resolve_latest_installable_version(
+    repo: &str,
+    bundle: &str,
+    ext: &str,
+) -> Result<String, String> {
+    let client = http_client()?;
     let token = github_token();
     let token_ref = token.as_deref();
+    let candidates = collect_latest_candidates(&client, repo).await;
 
-    if token_ref.is_some() {
-        if let Ok(tag) = fetch_latest_via_api(&client, repo, token_ref).await {
-            return Ok(tag);
+    for tag in &candidates {
+        if release_asset_exists(&client, repo, tag, bundle, ext, token_ref).await {
+            return Ok(tag.clone());
         }
+    }
+
+    Err(format!(
+        "no release with downloadable ax-{bundle}.{ext}; set AX_VERSION or publish assets to GitHub ({repo})"
+    ))
+}
+
+async fn collect_latest_candidates(client: &reqwest::Client, repo: &str) -> Vec<String> {
+    let token = github_token();
+    let token_ref = token.as_deref();
+    let mut candidates = Vec::new();
+
+    if let Ok(v) = fetch_latest_from_cdn(client).await {
+        candidates.push(v);
     }
 
     let url = format!("https://github.com/{repo}/releases/latest");
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("could not reach GitHub: {e}"))?;
-
-    if resp.status().is_success() {
-        if let Some(tag) = parse_latest_tag_from_url(resp.url().as_str()) {
-            return Ok(tag);
+    if let Ok(resp) = client.get(&url).send().await {
+        if resp.status().is_success() {
+            if let Some(tag) = parse_latest_tag_from_url(resp.url().as_str()) {
+                candidates.push(tag);
+            }
         }
     }
 
-    if let Ok(tag) = fetch_latest_via_api(&client, repo, token_ref).await {
-        return Ok(tag);
+    if let Ok(v) = fetch_latest_via_api(client, repo, token_ref).await {
+        candidates.push(v);
     }
 
-    // Fallback: getax latest.txt (legacy CDN pointer).
-    fetch_latest_from_cdn(&client).await
+    if let Ok(list) = fetch_release_tags(client, repo, token_ref).await {
+        candidates.extend(list);
+    }
+
+    unique_tags_desc(candidates)
+}
+
+async fn fetch_release_tags(
+    client: &reqwest::Client,
+    repo: &str,
+    token: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let api = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
+    let mut req = client
+        .get(&api)
+        .header("Accept", "application/vnd.github+json");
+    if let Some(t) = token {
+        req = req.header("Authorization", format!("Bearer {t}"));
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("could not reach GitHub API: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned HTTP {}", resp.status()));
+    }
+
+    let body: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(body
+        .iter()
+        .filter(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter(|r| !r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter_map(|r| r.get("tag_name").and_then(|v| v.as_str()))
+        .map(normalize_version)
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
+fn unique_tags_desc(tags: Vec<String>) -> Vec<String> {
+    use std::cmp::Ordering;
+
+    let mut out: Vec<String> = Vec::new();
+    for tag in tags {
+        let norm = normalize_version(&tag);
+        if norm.is_empty() || out.iter().any(|t| t == &norm) {
+            continue;
+        }
+        out.push(norm);
+    }
+    out.sort_by(|a, b| match compare_versions(a, b) {
+        Some(c) if c > 0 => Ordering::Less,
+        Some(c) if c < 0 => Ordering::Greater,
+        _ => Ordering::Equal,
+    });
+    out
+}
+
+async fn release_asset_exists(
+    client: &reqwest::Client,
+    repo: &str,
+    version: &str,
+    bundle: &str,
+    ext: &str,
+    token: Option<&str>,
+) -> bool {
+    let name = format!("ax-{bundle}.{ext}");
+    let gh = format!("https://github.com/{repo}/releases/download/{version}/{name}");
+    if head_ok(client, &gh, token).await {
+        return true;
+    }
+    let cdn = format!("https://getax.wenneker.io/releases/{version}/{name}");
+    head_ok(client, &cdn, None).await
+}
+
+async fn head_ok(client: &reqwest::Client, url: &str, token: Option<&str>) -> bool {
+    let mut req = client.head(url);
+    if let Some(t) = token {
+        req = req.header("Authorization", format!("Bearer {t}"));
+    }
+    match req.send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    }
 }
 
 async fn latest_with_cache(repo: &str) -> Option<String> {
@@ -382,5 +486,16 @@ mod tests {
         assert!(!is_update_available("0.2.0", "0.2.0"));
         assert!(!is_update_available("0.3.0", "0.2.0"));
         assert!(is_update_available("v0.1.0", "v0.1.1"));
+    }
+
+    #[test]
+    fn unique_tags_desc_picks_highest_semver() {
+        let sorted = unique_tags_desc(vec![
+            "v2.0.6".into(),
+            "v2.0.7".into(),
+            "v2.0.6".into(),
+            "v2.0.5".into(),
+        ]);
+        assert_eq!(sorted, vec!["v2.0.7", "v2.0.6", "v2.0.5"]);
     }
 }

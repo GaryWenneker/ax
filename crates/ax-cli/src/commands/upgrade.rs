@@ -22,36 +22,53 @@ pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
 
     let current = version_check::current_version();
 
-    let target_version = match version {
-        Some(v) => normalize_version(&v),
-        None => {
-            let _spin = SpinnerGuard::new("Checking for updates…", false);
-            version_check::resolve_latest_version(&version_check::github_repo())
-                .await
-                .map_err(|e| format!("Could not check for updates: {e}"))?
-        }
-    };
-
-    if !is_update_available(current, &target_version) {
-        println!("{}", ok_line(format!("Already up to date ({})", strip_v(current))));
-        return Ok(());
-    }
-
-    println!(
-        "{}",
-        ok_line(format!(
-            "Updating {} → {}…",
-            strip_v(current),
-            strip_v(&target_version)
-        ))
-    );
-
     let bundle = release_bundle_target();
     let ext = if bundle.starts_with("win32") {
         "zip"
     } else {
         "tar.gz"
     };
+
+    let target_version = match version {
+        Some(v) => normalize_version(&v),
+        None => {
+            let _spin = SpinnerGuard::new("Resolving latest release…", false);
+            version_check::resolve_latest_installable_version(
+                &version_check::github_repo(),
+                &bundle,
+                ext,
+            )
+            .await
+            .map_err(|e| format!("Could not resolve latest release: {e}"))?
+        }
+    };
+
+    if is_update_available(current, &target_version) {
+        println!(
+            "{}",
+            ok_line(format!(
+                "Updating {} → {}…",
+                strip_v(current),
+                strip_v(&target_version)
+            ))
+        );
+    } else if normalize_version(current) == normalize_version(&target_version) {
+        println!(
+            "{}",
+            ok_line(format!(
+                "Reinstalling {} (latest available)…",
+                strip_v(&target_version)
+            ))
+        );
+    } else {
+        println!(
+            "{}",
+            ok_line(format!(
+                "Installing {}…",
+                strip_v(&target_version)
+            ))
+        );
+    }
     let archive_name = format!("ax-{bundle}.{ext}");
 
     let _spin = SpinnerGuard::new(&format!("Downloading {archive_name}…"), false);
