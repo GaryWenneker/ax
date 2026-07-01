@@ -206,8 +206,14 @@ pub fn run_upgrade_apply(parent_pid: u32, staging: PathBuf, dest: PathBuf) -> Re
     let bin_dir = dest.join("bin");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
     let bin_exe = bin_dir.join("ax.exe");
-    std::fs::copy(dest.join("ax.exe"), &bin_exe).map_err(|e| format!("copy ax.exe to bin: {e}"))?;
-    sync_cargo_shadow(&bin_exe);
+    let bin_new = bin_dir.join("ax.new.exe");
+    let _ = std::fs::remove_file(&bin_new);
+    std::fs::copy(dest.join("ax.exe"), &bin_new).map_err(|e| format!("stage ax.exe: {e}"))?;
+    if std::fs::rename(&bin_new, &bin_exe).is_err() {
+        // bin/ax.exe may still be locked — apply_pending_upgrade swaps ax.new.exe on next launch.
+        tracing::debug!("bin/ax.exe locked; leaving ax.new.exe for next startup swap");
+    }
+    sync_cargo_shadow(&dest.join("ax.exe"));
     Ok(())
 }
 
@@ -451,8 +457,9 @@ fn spawn_upgrade_cmd_batch(parent_pid: u32, staging: &Path, dest: &Path) -> Resu
          if exist \"%DEST%\" rmdir /s /q \"%DEST%\"\r\n\
          move /Y \"%STAGING%\" \"%DEST%\" >nul\r\n\
          if not exist \"%BINDIR%\" mkdir \"%BINDIR%\" >nul\r\n\
-         copy /Y \"%DEST%\\ax.exe\" \"%BINDIR%\\ax.exe\" >nul\r\n\
-         if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" copy /Y \"%BINDIR%\\ax.exe\" \"%CARGOAX%\" >nul\r\n\
+         copy /Y \"%DEST%\\ax.exe\" \"%BINDIR%\\ax.new.exe\" >nul\r\n\
+         move /Y \"%BINDIR%\\ax.new.exe\" \"%BINDIR%\\ax.exe\" >nul 2>&1\r\n\
+         if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" copy /Y \"%DEST%\\ax.exe\" \"%CARGOAX%\" >nul\r\n\
          del \"%~f0\" >nul 2>&1\r\n",
         staging = staging.display(),
         dest = dest.display(),
