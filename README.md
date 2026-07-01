@@ -3,7 +3,7 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.0.2](https://github.com/GaryWenneker/ax/releases/tag/v2.0.2)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.0.3](https://github.com/GaryWenneker/ax/releases/tag/v2.0.3)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** parses your codebase with [tree-sitter](https://tree-sitter.github.io/), stores symbols and relationships in a local SQLite graph (`.ax/`), and exposes them through a **CLI** and **MCP tools** so coding agents answer structural questions without scanning files.
 
@@ -356,7 +356,7 @@ cargo test -p ax-smoke-tests
 
 # Release packaging (maintainer — all six platforms required)
 bash scripts/verify-release-assets.sh dist/
-bash scripts/publish-getax-releases.sh v2.0.2
+bash scripts/publish-getax-releases.sh v2.0.3
 ```
 
 See [docs/PRODUCTION.md](docs/PRODUCTION.md) for GitHub Releases, Netlify docs site, and telemetry worker setup.

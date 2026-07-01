@@ -1,13 +1,19 @@
 //! `ax upgrade` — non-interactive self-update from getax CDN (GitHub fallback).
 
-use std::io::Read;
-use std::path::Path;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 use crate::ui::{info_line, ok_line, SpinnerGuard};
 use crate::version_check::{self, github_token, is_update_available, normalize_version, strip_v};
 
 const CDN_BASE: &str = "https://getax.wenneker.io/releases";
 const REQUEST_TIMEOUT_SECS: u64 = 120;
+
+/// Complete a staged `ax.new.exe` swap left by an older upgrade, and sync cargo shadow copies.
+pub fn apply_pending_upgrade() {
+    #[cfg(windows)]
+    apply_pending_upgrade_windows();
+}
 
 pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
     if check {
@@ -52,29 +58,41 @@ pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
     let bytes = download_archive(&target_version, &bundle, ext)?;
     drop(_spin);
 
-    let bin_name = if bundle.starts_with("win32") {
-        "ax.exe"
-    } else {
-        "ax"
-    };
-    let inner_path = format!("ax-{bundle}/{bin_name}");
-    let new_binary = if ext == "zip" {
-        extract_from_zip(&bytes, &inner_path)?
-    } else {
-        extract_from_targz(&bytes, &inner_path)?
-    };
+    #[cfg(windows)]
+    {
+        schedule_windows_bundle_upgrade(&bytes, &bundle)?;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        println!(
+            "{}",
+            ok_line(format!(
+                "Updated to {} — install finishes in a few seconds after exit.",
+                strip_v(&target_version)
+            ))
+        );
+        println!(
+            "{}",
+            info_line("Open a new terminal and run `ax version` to verify.")
+        );
+        std::process::exit(0);
+    }
 
-    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    replace_binary(&current_exe, &new_binary)?;
-
-    println!(
-        "{}",
-        ok_line(format!(
-            "Updated to {}. Open a new terminal if `ax version` still shows the old version.",
-            strip_v(&target_version)
-        ))
-    );
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        let bin_name = "ax";
+        let inner_path = format!("ax-{bundle}/{bin_name}");
+        let new_binary = extract_from_targz(&bytes, &inner_path)?;
+        let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        replace_binary_unix(&current_exe, &new_binary)?;
+        println!(
+            "{}",
+            ok_line(format!(
+                "Updated to {}. Open a new terminal if `ax version` still shows the old version.",
+                strip_v(&target_version)
+            ))
+        );
+        Ok(())
+    }
 }
 
 fn release_bundle_target() -> String {
@@ -130,17 +148,6 @@ fn download_bytes(url: &str, token: Option<&str>) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())
 }
 
-fn extract_from_zip(bytes: &[u8], inner_path: &str) -> Result<Vec<u8>, String> {
-    let cursor = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
-    let mut file = archive
-        .by_name(inner_path)
-        .map_err(|_| format!("binary '{inner_path}' not found in archive"))?;
-    let mut out = Vec::new();
-    file.read_to_end(&mut out).map_err(|e| e.to_string())?;
-    Ok(out)
-}
-
 fn extract_from_targz(bytes: &[u8], inner_path: &str) -> Result<Vec<u8>, String> {
     use flate2::read::GzDecoder;
     use tar::Archive;
@@ -159,86 +166,197 @@ fn extract_from_targz(bytes: &[u8], inner_path: &str) -> Result<Vec<u8>, String>
     Err(format!("binary '{inner_path}' not found in archive"))
 }
 
-fn replace_binary(current_exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
-    let dir = current_exe
-        .parent()
-        .ok_or("cannot determine binary directory")?;
-
-    #[cfg(windows)]
-    {
-        return replace_binary_windows(dir, current_exe, new_bytes);
-    }
-
-    #[cfg(not(windows))]
-    {
-        let tmp = dir.join("ax.tmp");
-        std::fs::write(&tmp, new_bytes).map_err(|e| format!("write tmp: {e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&tmp).map_err(|e| e.to_string())?.permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&tmp, perms).map_err(|e| e.to_string())?;
-        }
-        std::fs::rename(&tmp, current_exe).map_err(|e| format!("replace binary: {e}"))?;
-        Ok(())
-    }
+#[cfg(windows)]
+fn windows_install_root() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ax")
 }
 
 #[cfg(windows)]
-fn replace_binary_windows(dir: &Path, current_exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
-    let staged = dir.join("ax.new.exe");
-    std::fs::write(&staged, new_bytes).map_err(|e| format!("write staged binary: {e}"))?;
+fn ps_single_quoted(path: &Path) -> String {
+    path.to_string_lossy().replace('\'', "''")
+}
 
-    let upgrading_self = std::env::current_exe()
-        .ok()
-        .map(|running| same_file(&running, current_exe))
-        .unwrap_or(true);
+#[cfg(windows)]
+fn extract_zip_bundle(bytes: &[u8], dest: &Path, bundle: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let Some(rel) = file.enclosed_name() else {
+            continue;
+        };
+        let out = dest.join(rel);
+        if file.name().ends_with('/') {
+            std::fs::create_dir_all(&out).ok();
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut outfile = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+        std::io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
+    }
 
-    if !upgrading_self {
-        let backup = dir.join("ax.old.exe");
-        let _ = std::fs::remove_file(&backup);
-        if std::fs::rename(current_exe, &backup).is_ok() {
-            if std::fs::rename(&staged, current_exe).is_ok() {
-                let _ = std::fs::remove_file(&backup);
-                return Ok(());
+    let inner = dest.join(format!("ax-{bundle}"));
+    if inner.is_dir() {
+        for entry in std::fs::read_dir(&inner).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let target = dest.join(entry.file_name());
+            if target.exists() {
+                if target.is_dir() {
+                    std::fs::remove_dir_all(&target).ok();
+                } else {
+                    std::fs::remove_file(&target).ok();
+                }
             }
-            let _ = std::fs::rename(&backup, current_exe);
+            std::fs::rename(entry.path(), &target).map_err(|e| e.to_string())?;
         }
+        std::fs::remove_dir(&inner).ok();
     }
 
-    // Running exe cannot be overwritten in-place — defer via a short-lived helper script.
-    let script = std::env::temp_dir().join(format!("ax-upgrade-{}.cmd", std::process::id()));
-    let current = current_exe.to_string_lossy().replace('%', "%%");
-    let staged_s = staged.to_string_lossy().replace('%', "%%");
-    let body = format!(
-        "@echo off\r\n\
-         :wait\r\n\
-         del /f /q \"{current}\" >nul 2>&1\r\n\
-         if exist \"{current}\" (timeout /t 1 /nobreak >nul & goto wait)\r\n\
-         move /y \"{staged_s}\" \"{current}\"\r\n\
-         del /f /q \"%~f0\"\r\n"
-    );
-    std::fs::write(&script, body).map_err(|e| format!("write upgrade script: {e}"))?;
-
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", "/MIN", script.to_str().ok_or("script path")?])
-        .spawn()
-        .map_err(|e| format!("spawn upgrade helper: {e}"))?;
-
-    eprintln!(
-        "{}",
-        info_line("Finishing upgrade in the background — close this terminal and open a new one.")
-    );
-    std::process::exit(0);
+    let exe = dest.join("ax.exe");
+    if !exe.is_file() {
+        return Err("ax.exe not found in release bundle".into());
+    }
+    let bin = dest.join("bin");
+    std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+    std::fs::copy(&exe, bin.join("ax.exe")).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[cfg(windows)]
-fn same_file(a: &Path, b: &Path) -> bool {
+fn sync_cargo_shadow(from_bin: &Path) {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    if std::env::var("AX_KEEP_CARGO_BIN").ok().as_deref() == Some("1") {
+        return;
+    }
+    let cargo_ax = home.join(".cargo").join("bin").join("ax.exe");
+    if cargo_ax.is_file() {
+        let _ = std::fs::copy(from_bin, &cargo_ax);
+    }
+}
+
+#[cfg(windows)]
+fn apply_pending_upgrade_windows() {
+    let root = windows_install_root();
+    let bin_exe = root.join("current").join("bin").join("ax.exe");
+    let staged = bin_exe.with_file_name("ax.new.exe");
+
+    if staged.is_file() {
+        let Ok(running) = std::env::current_exe() else {
+            return;
+        };
+        // Swap stale ax.new.exe left by older upgrades — only when not executing from that path.
+        if bin_exe.is_file() && !same_path(&running, &bin_exe) {
+            let _ = std::fs::remove_file(&bin_exe);
+            if std::fs::rename(&staged, &bin_exe).is_ok() {
+                let _ = std::fs::remove_file(bin_exe.with_file_name("ax.old.exe"));
+                sync_cargo_shadow(&bin_exe);
+            }
+        }
+    }
+
+    if bin_exe.is_file() {
+        sync_cargo_shadow(&bin_exe);
+    }
+}
+
+#[cfg(windows)]
+fn same_path(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     }
+}
+
+#[cfg(windows)]
+fn schedule_windows_bundle_upgrade(bytes: &[u8], bundle: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+
+    let root = windows_install_root();
+    let staging = root.join(format!("upgrade-staging-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&staging);
+    extract_zip_bundle(bytes, &staging, bundle)?;
+
+    let dest = root.join("current");
+    let bin_dir = dest.join("bin");
+    let parent_pid = std::process::id();
+    let cargo_ax = dirs::home_dir()
+        .map(|h| h.join(".cargo").join("bin").join("ax.exe"))
+        .unwrap_or_default();
+
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'\n\
+         $parent = {parent_pid}\n\
+         $deadline = (Get-Date).AddSeconds(90)\n\
+         while ((Get-Process -Id $parent -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {{\n\
+           Start-Sleep -Milliseconds 200\n\
+         }}\n\
+         Start-Sleep -Seconds 1\n\
+         $dest = '{}'\n\
+         $staging = '{}'\n\
+         $binDir = '{}'\n\
+         $cargo = '{}'\n\
+         if (Test-Path $dest) {{ Remove-Item -Recurse -Force $dest }}\n\
+         Move-Item -Force $staging $dest\n\
+         New-Item -ItemType Directory -Force -Path $binDir | Out-Null\n\
+         Copy-Item -Force (Join-Path $dest 'ax.exe') (Join-Path $binDir 'ax.exe')\n\
+         if ((Test-Path $cargo) -and ($env:AX_KEEP_CARGO_BIN -ne '1')) {{\n\
+           Copy-Item -Force (Join-Path $binDir 'ax.exe') $cargo\n\
+         }}\n\
+         Remove-Item -Force $MyInvocation.MyCommand.Path -ErrorAction SilentlyContinue\n",
+        ps_single_quoted(&dest),
+        ps_single_quoted(&staging),
+        ps_single_quoted(&bin_dir),
+        ps_single_quoted(&cargo_ax),
+    );
+
+    let script_path = std::env::temp_dir().join(format!("ax-upgrade-{parent_pid}.ps1"));
+    std::fs::write(&script_path, script).map_err(|e| format!("write upgrade script: {e}"))?;
+
+    std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            script_path
+                .to_str()
+                .ok_or("upgrade script path not UTF-8")?,
+        ])
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn()
+        .map_err(|e| format!("spawn upgrade helper: {e}"))?;
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_binary_unix(current_exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
+    let dir = current_exe
+        .parent()
+        .ok_or("cannot determine binary directory")?;
+    let tmp = dir.join("ax.tmp");
+    std::fs::write(&tmp, new_bytes).map_err(|e| format!("write tmp: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&tmp).map_err(|e| e.to_string())?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&tmp, perms).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&tmp, current_exe).map_err(|e| format!("replace binary: {e}"))?;
+    Ok(())
 }
 
 #[cfg(test)]

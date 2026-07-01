@@ -255,6 +255,8 @@ enum DaemonCommands {
 async fn main() {
     ui::init_terminal();
 
+    commands::upgrade::apply_pending_upgrade();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("ax=info".parse().unwrap()))
         .with_writer(std::io::stderr)
@@ -349,7 +351,7 @@ async fn main() {
     }
 
     if let Some(name) = cmd_name {
-        if !matches!(name.as_str(), "telemetry" | "serve") {
+        if !matches!(name.as_str(), "telemetry" | "serve" | "upgrade") {
             if let Ok(mut t) = ax_telemetry::telemetry().lock() {
                 t.record_usage("cli_command", &name, result.is_ok(), None);
                 t.persist_sync();

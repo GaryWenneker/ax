@@ -220,15 +220,16 @@ Also available as `ax -V` / `ax --version`.";
 
 pub const UPGRADE_LONG: &str = "Self-update from getax.wenneker.io (non-interactive — no confirmation prompt).
 
-Downloads the platform zip/tar.gz for your OS/arch, replaces the running binary, and on Windows
-schedules a background replace when the exe is still in use.
+Downloads the platform bundle for your OS/arch. On Windows, extracts to %LOCALAPPDATA%\\ax\\current
+(matching install.ps1), updates ~/.cargo/bin/ax.exe when present, and exits immediately — a detached
+PowerShell helper finishes the swap after this process exits. Open a new terminal and run `ax version`.
 
 Examples:
   ax upgrade               Install latest release
   ax upgrade v2.0.0        Install a specific tag
   ax upgrade --check       Check only
 
-If you are on ax 0.1.x (cargo install), `ax upgrade` may hang on [Y/n] — use install.ps1 / install.sh instead:
+If you are on ax 0.1.x (cargo install), use install.ps1 / install.sh once, then `ax upgrade` works:
   irm https://getax.wenneker.io/install.ps1 | iex
 
 Background notices after other commands are cached ~24h. Disable with AX_NO_UPDATE_CHECK=1.";
