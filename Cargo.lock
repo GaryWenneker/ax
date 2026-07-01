@@ -134,7 +134,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "ax-cli"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "ax-context",
  "ax-core",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "ax-context"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "ax-db",
  "ax-graph",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "ax-core"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "ax-context",
  "ax-db",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "ax-db"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "ax-extraction"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "anyhow",
  "ax-db",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "ax-graph"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "ax-mcp"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "async-trait",
  "ax-context",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "ax-policy"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "ax-utils",
  "blake3",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "ax-reasoning"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "dirs",
  "reqwest",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "ax-resolution"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "async-trait",
  "ax-db",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "ax-smoke-tests"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -335,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "ax-sync"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "ax-telemetry"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "dirs",
  "reqwest",
@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "ax-types"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "ax-utils"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "ax-web"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "anyhow",
  "ax-policy",
