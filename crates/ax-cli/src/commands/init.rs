@@ -23,6 +23,24 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
     println!("  {}", dim("Large projects take several minutes — progress updates below."));
     println!();
 
+    let ax_dir = root.join(".ax");
+    let seed = ax_policy::seed_default_policy(&ax_dir).ok();
+    if let Some(ref s) = seed {
+        if !s.created.is_empty() {
+            println!(
+                "{}",
+                ok_line(format!(
+                    "Seeded {} default policy file(s) in .ax/policy/",
+                    s.created.len()
+                ))
+            );
+            for rel in &s.created {
+                println!("  {}", dim(rel));
+            }
+            println!();
+        }
+    }
+
     let mut ax = ax_core::Ax::init(&root).await.map_err(|e| e.to_string())?;
 
     let progress = index_progress_bar(false);

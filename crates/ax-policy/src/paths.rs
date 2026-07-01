@@ -28,6 +28,7 @@ pub fn skill_file(skills: &Path, name: &str) -> PathBuf {
 pub fn ensure_scaffold(ax_dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(rules_dir(ax_dir))?;
     std::fs::create_dir_all(skills_dir(ax_dir))?;
+    let _ = crate::seed::seed_default_policy(ax_dir)?;
     Ok(())
 }
 

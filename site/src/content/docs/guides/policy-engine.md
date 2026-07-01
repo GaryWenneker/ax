@@ -10,8 +10,9 @@ Policy files live under `.ax/policy/`, are indexed into SQLite (`ax.db`), and re
 ## Quick start
 
 ```bash
-ax init                    # creates .ax/policy/rules and skills dirs
+ax init                    # creates .ax/policy/ and seeds default preflight rules/skills
 ax policy index            # index policy files into ax.db
+ax policy sync [--fix]     # verify/restore ax_preflight instruction files
 ax policy match "deploy"   # test which rules/skills match
 ax web --open              # edit rules/skills in the browser
 ```
@@ -175,6 +176,7 @@ Call `ax_preflight` at the start of each agent turn when policy is enabled. Call
 
 ```bash
 ax policy index [--force]
+ax policy sync [--fix]     # verify/restore managed preflight instruction files
 ax policy match "prompt text" [--file path] [--json]
 ax policy rules [--json]
 ax policy skills [--json]

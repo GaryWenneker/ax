@@ -1,0 +1,38 @@
+---
+id: agent-workflow
+level: CRITICAL
+alwaysApply: true
+tags: ["workflow", "preflight", "mcp"]
+priority: 110
+---
+# ax Agent Workflow (IDE-agnostic)
+
+> **ABSOLUTE**: Every turn starts with `ax_preflight`. Policy lives in `.ax/policy/` and is delivered via MCP — do not Read policy files on disk when MCP policy tools are available.
+
+## Turn order
+
+```text
+1. ax_preflight          [mandatory — prompt + open/changed files; full bodies in inject]
+2. ax_explore / ax_context / ax_search   [code graph — NOT policy]
+3. ax_guard              [before Write/Delete on project files when CRITICAL rules exist]
+```
+
+> **Run preflight exactly once per turn.** If you already called `ax_preflight` this turn, skip it and continue work. Do not call preflight again after reading the `startup` skill.
+
+If you read the `startup` skill, follow it as the single startup sequence.
+
+## Hard rules
+
+- **All agent responses to the user MUST be in English** — even when the user writes in another language.
+- Never skip step 1 on a new user message when `.ax/policy/` is indexed.
+- MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`, do not proceed silently.
+- For structural code questions (how X works, call paths, blast radius) call `ax_explore` first — not policy tools.
+
+## Skills (load via ax_skill or preflight inject)
+
+| Skill | When |
+|-------|------|
+| `startup` | Session start, preflight sequence, degraded mode |
+| `subagents` | Cursor Task / background subagents must run the same MCP pipeline |
+
+Full guide: [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).

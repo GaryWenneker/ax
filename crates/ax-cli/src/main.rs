@@ -261,6 +261,12 @@ enum PolicyCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Verify ax preflight instruction files (Recall instruction-sync parity)
+    Sync {
+        path: Option<String>,
+        #[arg(long, help = "Restore missing or drifted managed policy files from embedded templates")]
+        fix: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -338,6 +344,7 @@ async fn main() {
             PolicyCommands::Guard { path, file, write, json } => {
                 commands::policy::run_guard(path, file, write, json).await
             }
+            PolicyCommands::Sync { path, fix } => commands::policy::run_sync(path, fix).await,
         },
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {

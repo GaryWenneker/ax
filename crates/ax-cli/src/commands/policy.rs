@@ -158,3 +158,32 @@ pub async fn run_guard(
     }
     Ok(())
 }
+
+pub async fn run_sync(path: Option<String>, fix: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax_dir = root.join(".ax");
+    if !ax_dir.is_dir() {
+        return Err("project not initialized — run ax init first".into());
+    }
+    let result = ax_policy::sync_instructions(&ax_dir, fix).map_err(|e| e.to_string())?;
+    for check in &result.checks {
+        if check.optional && !check.path.exists() {
+            continue;
+        }
+        if check.ok {
+            println!("  OK   {}", check.label);
+        } else {
+            eprintln!("  FAIL {} — {}", check.label, check.issues.join("; "));
+        }
+    }
+    if fix && !result.fixed.is_empty() {
+        println!("Fixed {} file(s):", result.fixed.len());
+        for rel in &result.fixed {
+            println!("  {rel}");
+        }
+    }
+    if result.fail_count > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}

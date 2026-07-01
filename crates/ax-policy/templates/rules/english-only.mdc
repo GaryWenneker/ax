@@ -1,0 +1,24 @@
+---
+id: english-only
+level: CRITICAL
+alwaysApply: true
+tags: ["language", "english"]
+priority: 100
+---
+# English only
+
+All agent-facing and user-facing text MUST be written in **English**.
+
+## Scope
+
+- Agent responses to the user
+- README, docs, website copy, comments meant for humans
+- Policy rules, skills, commit messages you draft
+
+## Rules
+
+1. Write new content in English by default.
+2. Never store Dutch, German, French, or other non-English labels in committed docs or UI strings — translate first.
+3. If the user writes in another language, understand it but **respond in English**.
+
+Non-English input from the user does not change the output language requirement.

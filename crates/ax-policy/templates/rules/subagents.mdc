@@ -1,0 +1,44 @@
+---
+id: subagents
+level: CRITICAL
+alwaysApply: true
+tags: ["subagents", "preflight", "mcp"]
+priority: 105
+triggers: ["Task tool", "subagent", "background agent", "run_in_background"]
+---
+# ax — Task subagents (background agents)
+
+> **ABSOLUTE**: Every agent in this workspace — including **Cursor Task subagents** (`run_in_background`, `explore`, `generalPurpose`, `shell`, `resume`) — must call ax MCP the same way as the parent. Subagents do **not** inherit parent MCP calls.
+
+## Subagent turn order (same as parent)
+
+> **Run preflight exactly once per turn** — same dedup rule as parent startup.
+
+```text
+1. ax_preflight [prompt + files — inject has matched rules/skills]
+2. Work — respect loaded CRITICAL rules; call ax_guard before writes
+3. For code structure: ax_explore (not policy files on disk)
+```
+
+## Parent agent — Task tool
+
+Before **every** `Task` invocation:
+
+1. In the Task `prompt`, include:
+
+   > **Read `.ax/policy/skills/subagents/SKILL.md` via `ax_skill({ name: "subagents" })` and follow it as your very first action. ax MCP is mandatory, not optional.**
+
+2. Include the user's original message verbatim under `## User prompt (verbatim)`.
+
+Never write `ax_* … if available` in Task prompts.
+
+## Subagent — first actions
+
+On session start (you are a subagent if you see this rule and a delegated Task prompt):
+
+1. Call `ax_preflight` with the user prompt and relevant file paths.
+2. Do not treat reading policy files from disk as satisfying preflight — you must **call** the MCP tool.
+
+## MCP failure
+
+Report `ax MCP unreachable`, state `Mode: DEGRADED`, and continue best-effort only.

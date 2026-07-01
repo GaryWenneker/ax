@@ -5,6 +5,7 @@ pub mod index;
 pub mod matcher;
 pub mod parse;
 pub mod paths;
+pub mod seed;
 pub mod store;
 pub mod types;
 
@@ -19,5 +20,6 @@ pub use index::{
 pub use matcher::{match_policy, max_inject_chars};
 pub use parse::{parse_rule_file, parse_skill_file, serialize_rule, serialize_skill};
 pub use paths::{ensure_scaffold, policy_root, rules_dir, skills_dir};
+pub use seed::{seed_default_policy, sync_instructions, verify_content, verify_instructions, InstructionCheck, SeedResult, SyncResult};
 pub use store::{open_rw_pool, PolicyStore};
 pub use types::*;
