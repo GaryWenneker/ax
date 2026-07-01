@@ -81,5 +81,26 @@ mkdir -p "$BIN_DIR"
 ln -sf "$dest/ax" "$BIN_DIR/ax"
 ln -sfn "$dest" "$INSTALL_DIR/current"
 
+# Prepend ~/.local/bin on PATH for this shell (pipe installs do not reload profile).
+case ":${PATH}:" in
+  *":$BIN_DIR:"*) PATH="$(echo "$PATH" | tr ':' '\n' | grep -vx "$BIN_DIR" | tr '\n' ':' | sed 's/:$//')" ;;
+esac
+export PATH="$BIN_DIR:$PATH"
+
+cargo_ax="$HOME/.cargo/bin/ax"
+if [ -x "$cargo_ax" ] && [ "${AX_KEEP_CARGO_BIN:-}" != "1" ]; then
+  old_ver="$("$cargo_ax" version 2>/dev/null || true)"
+  cp -f "$dest/ax" "$cargo_ax"
+  chmod +x "$cargo_ax"
+  if [ -n "$old_ver" ]; then
+    echo "Updated $cargo_ax (was: $old_ver)"
+  fi
+fi
+
+installed_ver="$("$BIN_DIR/ax" version 2>/dev/null || true)"
 echo "Installed ax $version to $dest"
-echo "Run: ax version"
+if [ -n "$installed_ver" ]; then
+  echo "Active: $installed_ver ($BIN_DIR/ax)"
+else
+  echo "Run: ax version"
+fi

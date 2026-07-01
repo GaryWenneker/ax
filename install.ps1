@@ -71,11 +71,42 @@ $exe = Join-Path $dest 'ax.exe'
 if (-not (Test-Path $exe)) { throw "ax.exe not found in bundle" }
 Copy-Item -Force $exe (Join-Path $binDir 'ax.exe')
 
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if (($userPath -split ';') -notcontains $binDir) {
-  [Environment]::SetEnvironmentVariable('Path', "$binDir;$userPath", 'User')
-  Write-Host "Added $binDir to your PATH (restart terminal)."
+function Set-UserPathFirst([string]$entry) {
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $parts = @()
+  if ($userPath) {
+    $parts = $userPath -split ';' | Where-Object { $_ -and ($_ -ne $entry) }
+  }
+  $newPath = @($entry) + $parts
+  $joined = ($newPath | Select-Object -Unique) -join ';'
+  [Environment]::SetEnvironmentVariable('Path', $joined, 'User')
 }
 
+Set-UserPathFirst -entry $binDir
+# Apply immediately in this shell (install.ps1 | iex does not reload user PATH).
+$env:Path = ($binDir + ';' + (($env:Path -split ';') | Where-Object { $_ -and ($_ -ne $binDir) }) -join ';')
+
+# Replace stale cargo-installed ax so `ax` resolves correctly even before a new terminal.
+$cargoAx = Join-Path $env:USERPROFILE '.cargo\bin\ax.exe'
+if ((Test-Path $cargoAx) -and ($env:AX_KEEP_CARGO_BIN -ne '1')) {
+  try {
+    $oldVer = & $cargoAx version 2>&1 | Out-String
+    Copy-Item -Force $exe $cargoAx
+    Write-Host "Updated $cargoAx (was: $($oldVer.Trim()))" -ForegroundColor DarkGray
+  } catch {
+    Write-Host "Note: could not update $cargoAx — use a new terminal or run:" -ForegroundColor Yellow
+    Write-Host "  `$env:Path = '$binDir;' + `$env:Path" -ForegroundColor Yellow
+  }
+}
+
+$installedVer = (& (Join-Path $binDir 'ax.exe') version 2>&1 | Out-String).Trim()
 Write-Host "Installed to $dest"
-Write-Host "Run: ax version"
+Write-Host "Active: $installedVer ($binDir\ax.exe)" -ForegroundColor Green
+
+$shadow = Get-Command ax -All -ErrorAction SilentlyContinue | Select-Object -Skip 1
+if ($shadow) {
+  Write-Host "Other ax on PATH (ignored if $binDir is first in new terminals):" -ForegroundColor DarkGray
+  foreach ($cmd in $shadow) {
+    Write-Host "  $($cmd.Source)" -ForegroundColor DarkGray
+  }
+}
