@@ -128,7 +128,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          NOTES="## ax ${TAG}
+          NOTES="$(cat <<EOF
+          ## ax ${TAG}
 
           Native binaries for **install.ps1** / **install.sh** / \`ax upgrade\`.
 
@@ -140,25 +141,40 @@ jobs:
           Downloads resolve from GitHub Releases; getax.wenneker.io/releases/* redirects to GitHub.
 
           ### Policy engine
-          - \`policy.storage: \"database\"\` in ax.json — SQLite source of truth, .mdc export only
-          - \`ax policy import\` / \`ax policy export\`"
+          - \`policy.storage: "database"\` in ax.json — SQLite source of truth, .mdc export only
+          - \`ax policy import\` / \`ax policy export\`
+          EOF
+          )"
+          cd dist
+          ls -la ax-* SHA256SUMS
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/ax-* dist/SHA256SUMS --clobber
+            gh release upload "$TAG" ax-* SHA256SUMS --clobber
             gh release edit "$TAG" --notes "$NOTES"
           else
-            gh release create "$TAG" dist/ax-* dist/SHA256SUMS --title "$TAG" --notes "$NOTES"
+            gh release create "$TAG" ax-* SHA256SUMS --title "$TAG" --notes "$NOTES"
+          fi
+          asset_count="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+          if [ "$asset_count" -lt 6 ]; then
+            echo "::error::Expected at least 6 release assets, got $asset_count"
+            gh release view "$TAG" --json assets
+            exit 1
           fi
 
       - name: Verify GitHub download URL (smoke)
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           URL="https://github.com/GaryWenneker/ax/releases/download/${TAG}/ax-linux-x64.tar.gz"
-          code="$(curl -sL -o /dev/null -w '%{http_code}' "$URL")"
-          if [ "$code" != "200" ]; then
-            echo "::error::GitHub asset not reachable: $URL (HTTP $code)"
-            exit 1
-          fi
-          echo "OK: $URL"
+          for attempt in $(seq 1 24); do
+            code="$(curl -sL -o /dev/null -w '%{http_code}' "$URL")"
+            if [ "$code" = "200" ]; then
+              echo "OK: $URL (attempt ${attempt})"
+              exit 0
+            fi
+            echo "Waiting for GitHub CDN (HTTP ${code}), attempt ${attempt}/24..."
+            sleep 5
+          done
+          echo "::error::GitHub asset not reachable after 120s: $URL"
+          exit 1
 
       - name: Update site version pointer and install scripts
         run: |

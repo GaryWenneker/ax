@@ -49,24 +49,60 @@ function Remove-AxInstallTree {
 $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $target = "win32-$arch"
 
-$version = $env:AX_VERSION
-if (-not $version) {
+function Test-AxReleaseAsset {
+  param([string]$Tag)
+  $url = "https://github.com/$repo/releases/download/$Tag/ax-$target.zip"
   try {
-    $version = (Invoke-RestMethod "$downloadBase/latest.txt" -TimeoutSec 15).Trim()
+    $resp = Invoke-WebRequest -Uri $url -Method Head -TimeoutSec 15 -UseBasicParsing
+    return $resp.StatusCode -eq 200
   } catch {
-    $version = $null
+    return $false
   }
 }
-if (-not $version) {
-  try {
-    $version = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 15).tag_name
-  } catch {
-    $version = $null
+
+function Resolve-AxVersion {
+  if ($env:AX_VERSION) {
+    $v = $env:AX_VERSION.Trim()
+    if ($v -notmatch '^v') { $v = "v$v" }
+    return $v
   }
+
+  $candidates = [System.Collections.Generic.List[string]]::new()
+  foreach ($source in @(
+      { (Invoke-RestMethod "$downloadBase/latest.txt" -TimeoutSec 15).Trim() },
+      { (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 15).tag_name },
+      {
+        $rels = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=30" -TimeoutSec 15
+        foreach ($r in $rels) {
+          if (-not $r.draft -and -not $r.prerelease) { $r.tag_name }
+        }
+      }
+    )) {
+    try {
+      $value = & $source
+      if ($value -is [array]) {
+        foreach ($item in $value) { if ($item) { $candidates.Add($item.Trim()) } }
+      } elseif ($value) {
+        $candidates.Add($value.Trim())
+      }
+    } catch {
+      # try next source
+    }
+  }
+
+  $sorted = $candidates |
+    Select-Object -Unique |
+    Sort-Object { [version]($_.TrimStart('v')) } -Descending
+
+  foreach ($candidate in $sorted) {
+    $tag = if ($candidate -match '^v') { $candidate } else { "v$candidate" }
+    if (Test-AxReleaseAsset -Tag $tag) { return $tag }
+  }
+
+  throw "ax: could not resolve a release with downloadable assets; set AX_VERSION or publish releases to GitHub ($repo)"
 }
-if (-not $version) {
-  throw "ax: could not resolve latest version; set AX_VERSION or publish releases to $downloadBase"
-}
+
+$version = Resolve-AxVersion
 
 $getaxUrl = "$downloadBase/$version/ax-$target.zip"
 $githubUrl = "https://github.com/$repo/releases/download/$version/ax-$target.zip"
@@ -76,7 +112,7 @@ New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $zip = Join-Path $tmp 'ax.zip'
 
 $downloaded = $false
-foreach ($url in @($getaxUrl, $githubUrl)) {
+foreach ($url in @($githubUrl, $getaxUrl)) {
   try {
     Invoke-WebRequest -Uri $url -OutFile $zip -TimeoutSec 120
     $downloaded = $true

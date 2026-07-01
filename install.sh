@@ -35,23 +35,49 @@ case "$arch" in
 esac
 target="${os}-${arch}"
 
-version="${AX_VERSION:-}"
-if [ -z "$version" ]; then
-  version="$(curl -fsSL "$DOWNLOAD_BASE/latest.txt" 2>/dev/null | tr -d '[:space:]\r')"
-fi
-if [ -z "$version" ]; then
-  version="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" \
-    | sed -n 's#.*/releases/tag/##p')"
-fi
-if [ -z "$version" ]; then
-  version="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
-fi
-[ -n "$version" ] || {
-  echo "ax: could not resolve latest version; set AX_VERSION." >&2
+asset_url_ok() {
+  tag="$1"
+  url="https://github.com/$REPO/releases/download/$tag/ax-${target}.tar.gz"
+  code="$(curl -fsSL -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
+  [ "$code" = "200" ]
+}
+
+resolve_version() {
+  if [ -n "${AX_VERSION:-}" ]; then
+    case "$AX_VERSION" in v*) printf '%s\n' "$AX_VERSION" ;; *) printf 'v%s\n' "$AX_VERSION" ;; esac
+    return 0
+  fi
+
+  tmp="$(mktemp)"
+  curl -fsSL "$DOWNLOAD_BASE/latest.txt" 2>/dev/null | tr -d '[:space:]\r' >>"$tmp" || true
+  curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null \
+    | sed -n 's/.*"tag_name": *"\(v[^"]*\)".*/\1/p' >>"$tmp" || true
+
+  best=""
+  while IFS= read -r cand; do
+    [ -n "$cand" ] || continue
+    case "$cand" in v*) tag="$cand" ;; *) tag="v$cand" ;; esac
+    asset_url_ok "$tag" || continue
+    num="${tag#v}"
+    if [ -z "$best" ] || [ "$(printf '%s\n' "$num" "${best#v}" | sort -V | tail -n1)" = "$num" ]; then
+      best="$tag"
+    fi
+  done <<EOF
+$(sort -u "$tmp")
+EOF
+  rm -f "$tmp"
+
+  if [ -n "$best" ]; then
+    printf '%s\n' "$best"
+    return 0
+  fi
+  return 1
+}
+
+version="$(resolve_version)" || {
+  echo "ax: could not resolve a release with downloadable assets; set AX_VERSION." >&2
   exit 1
 }
-case "$version" in v*) ;; *) version="v$version" ;; esac
 
 getax_url="$DOWNLOAD_BASE/$version/ax-${target}.tar.gz"
 github_url="https://github.com/$REPO/releases/download/$version/ax-${target}.tar.gz"
@@ -60,14 +86,14 @@ echo "Installing ax $version ($target)..."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-if curl -fsSL "$getax_url" -o "$tmp/ax.tar.gz" 2>/dev/null; then
+if curl -fsSL "$github_url" -o "$tmp/ax.tar.gz" 2>/dev/null; then
   :
-elif curl -fsSL "$github_url" -o "$tmp/ax.tar.gz" 2>/dev/null; then
+elif curl -fsSL "$getax_url" -o "$tmp/ax.tar.gz" 2>/dev/null; then
   :
 else
   echo "ax: download failed." >&2
-  echo "  tried: https://getax.wenneker.io/releases/${version}/ax-${target}.tar.gz" >&2
   echo "  tried: https://github.com/${REPO}/releases/download/${version}/ax-${target}.tar.gz" >&2
+  echo "  tried: https://getax.wenneker.io/releases/${version}/ax-${target}.tar.gz" >&2
   echo "  For a dev build: cargo install --git https://github.com/$REPO ax-cli" >&2
   exit 1
 fi
