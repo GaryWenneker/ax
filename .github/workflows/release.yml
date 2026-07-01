@@ -72,6 +72,12 @@ jobs:
         with:
           workspaces: .
 
+      - name: Build ax web UI
+        run: |
+          cd crates/ax-web/web-ui
+          npm ci
+          npm run build
+
       - name: Install Linux cross toolchain (arm64)
         if: matrix.bundle == 'linux-arm64'
         run: |

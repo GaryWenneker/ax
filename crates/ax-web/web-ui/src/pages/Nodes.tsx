@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchNodes } from '../api';
+import { usePageContext } from '../context/UiContext';
 import type { NodeRow } from '../types';
 import NodeDetailPanel from '../components/NodeDetail';
 
@@ -49,6 +50,13 @@ export default function NodesPage() {
 
   const page = Math.floor(offset / LIMIT) + 1;
   const pages = Math.ceil(total / LIMIT) || 1;
+
+  const filterParts: string[] = [];
+  if (q) filterParts.push(`"${q}"`);
+  if (kind) filterParts.push(kind);
+  if (lang) filterParts.push(lang);
+  const detail = `${nodes.length.toLocaleString()} shown · ${total.toLocaleString()} total · p${page}/${pages}${filterParts.length ? ` · ${filterParts.join(' · ')}` : ''}`;
+  usePageContext('Nodes', detail);
 
   return (
     <>

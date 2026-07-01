@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchSearch } from '../api';
+import { usePageContext } from '../context/UiContext';
 import type { SearchResult } from '../types';
 import NodeDetailPanel from '../components/NodeDetail';
 
@@ -26,6 +27,13 @@ export default function SearchPage() {
 
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [q]);
+
+  const searchDetail = q.trim()
+    ? searched
+      ? `${results.length} results · "${q}"`
+      : `searching · "${q}"`
+    : undefined;
+  usePageContext('Search', searchDetail);
 
   return (
     <>

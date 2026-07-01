@@ -1,4 +1,4 @@
-//! `ax upgrade` — non-interactive self-update from getax CDN (GitHub fallback).
+//! `ax upgrade` — non-interactive self-update from GitHub Releases (getax redirect fallback).
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -109,20 +109,20 @@ fn release_bundle_target() -> String {
 
 fn download_archive(version: &str, bundle: &str, ext: &str) -> Result<Vec<u8>, String> {
     let name = format!("ax-{bundle}.{ext}");
-    let cdn = format!("{CDN_BASE}/{version}/{name}");
-    match download_bytes(&cdn, None) {
+    let repo = version_check::github_repo();
+    let gh = format!("https://github.com/{repo}/releases/download/{version}/{name}");
+    match download_bytes(&gh, github_token().as_deref()) {
         Ok(bytes) => return Ok(bytes),
         Err(e) => {
             eprintln!(
                 "{}",
-                info_line(format!("CDN unavailable ({e}); trying GitHub…"))
+                info_line(format!("GitHub download failed ({e}); trying getax redirect…"))
             );
         }
     }
 
-    let repo = version_check::github_repo();
-    let gh = format!("https://github.com/{repo}/releases/download/{version}/{name}");
-    download_bytes(&gh, github_token().as_deref())
+    let cdn = format!("{CDN_BASE}/{version}/{name}");
+    download_bytes(&cdn, None)
 }
 
 fn download_bytes(url: &str, token: Option<&str>) -> Result<Vec<u8>, String> {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicyRule, savePolicyRule } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
+import { usePageContext } from '../context/UiContext';
 import type { RuleFrontmatter } from '../policyTypes';
 
 interface Props {
@@ -43,6 +44,8 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
       })
       .catch((e: Error) => setError(e.message));
   }, [ruleId]);
+
+  usePageContext('Rule editor', ruleId ? ruleId : 'new rule');
 
   async function save() {
     setSaving(true);

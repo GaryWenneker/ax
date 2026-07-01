@@ -2,18 +2,31 @@
 /target/
 /target-dev/
 /target-ui/
+/target-linux/
+/target-macos/
+/target-release/
 **/*.rs.bk
 
 # Release packaging
 /dist/
+/dist-ci/
 /release/npm/
 install-out.txt
+
+# Local project config (machine-specific)
+ax.json
+
+# Local cross-build helpers (machine-specific paths)
+build-macos.sh
+check-macos-error.sh
 
 # Local MCP config (machine-specific paths)
 .mcp.json
 
-# ax project data (local indexes)
+# ax project data (local indexes) — policy rules/skills are committed
 .ax/
+!.ax/policy/
+!.ax/policy/**
 
 # SQLite
 *.db
@@ -52,4 +65,9 @@ site/public/releases/*/*.tar.gz
 site/public/releases/*/SHA256SUMS
 dist-ci-new/
 dist-test/
+
+# Smoke-test local indexes
+test-smoke/.ax/
+test-smoke-go/.ax/
+test-smoke-rust/.ax/
 

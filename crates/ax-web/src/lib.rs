@@ -27,6 +27,20 @@ static WEB_DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/web-ui/dist");
 struct AppState {
     graph_pool: SqlitePool,
     policy: PolicyApiState,
+    project_root: PathBuf,
+    db_path: PathBuf,
+    readonly: bool,
+}
+
+#[derive(Serialize)]
+struct WebStats {
+    #[serde(flatten)]
+    graph: queries::Stats,
+    db_size_bytes: i64,
+    policy_rules_count: i64,
+    policy_skills_count: i64,
+    readonly: bool,
+    project_name: String,
 }
 
 #[derive(Serialize)]
@@ -40,7 +54,26 @@ fn api_err(msg: impl Into<String>) -> (StatusCode, Json<ApiError>) {
 
 async fn handle_stats(State(s): State<AppState>) -> impl IntoResponse {
     match queries::get_stats(&s.graph_pool).await {
-        Ok(stats) => (StatusCode::OK, Json(serde_json::to_value(stats).unwrap())).into_response(),
+        Ok(graph) => {
+            let db_size_bytes = std::fs::metadata(&s.db_path).map(|m| m.len() as i64).unwrap_or(0);
+            let policy_rules_count = s.policy.store.list_rules().await.map(|r| r.len() as i64).unwrap_or(0);
+            let policy_skills_count = s.policy.store.list_skills().await.map(|sk| sk.len() as i64).unwrap_or(0);
+            let project_name = s
+                .project_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project")
+                .to_string();
+            let body = WebStats {
+                graph,
+                db_size_bytes,
+                policy_rules_count,
+                policy_skills_count,
+                readonly: s.readonly,
+                project_name,
+            };
+            (StatusCode::OK, Json(body)).into_response()
+        }
         Err(e) => api_err(e.to_string()).into_response(),
     }
 }
@@ -155,10 +188,15 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
 
     if let Some(file) = WEB_DIST.get_file(path) {
         let mime = mime_guess::from_path(path).first_or_text_plain();
+        let cache = if path == "index.html" {
+            "no-cache"
+        } else {
+            "public, max-age=31536000, immutable"
+        };
         Response::builder()
             .status(200)
             .header("Content-Type", mime.as_ref())
-            .header("Cache-Control", "public, max-age=3600")
+            .header("Cache-Control", cache)
             .body(Body::from(file.contents().to_vec()))
             .unwrap()
     } else {
@@ -169,6 +207,7 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
         Response::builder()
             .status(200)
             .header("Content-Type", "text/html; charset=utf-8")
+            .header("Cache-Control", "no-cache")
             .body(Body::from(index))
             .unwrap()
     }
@@ -208,6 +247,9 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
     let state = AppState {
         graph_pool,
         policy: policy_state.clone(),
+        project_root: root.clone(),
+        db_path: db_path.clone(),
+        readonly,
     };
 
     let cors = CorsLayer::new()

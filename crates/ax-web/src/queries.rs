@@ -11,6 +11,9 @@ pub struct Stats {
     pub edge_count: i64,
     pub file_count: i64,
     pub languages: Vec<LangStat>,
+    pub last_indexed_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unresolved_ref_count: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -31,7 +34,26 @@ pub async fn get_stats(pool: &SqlitePool) -> anyhow::Result<Stats> {
     .await?;
     let languages = rows.into_iter().map(|(language, count)| LangStat { language, count }).collect();
 
-    Ok(Stats { node_count, edge_count, file_count, languages })
+    let last_indexed_at: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(indexed_at) FROM files").fetch_one(pool).await?;
+    let last_indexed_at = last_indexed_at.unwrap_or(0);
+
+    let unresolved_ref_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM unresolved_refs").fetch_one(pool).await.unwrap_or(0);
+    let unresolved_ref_count = if unresolved_ref_count > 0 {
+        Some(unresolved_ref_count)
+    } else {
+        None
+    };
+
+    Ok(Stats {
+        node_count,
+        edge_count,
+        file_count,
+        languages,
+        last_indexed_at,
+        unresolved_ref_count,
+    })
 }
 
 // ---- Nodes ----------------------------------------------------------------

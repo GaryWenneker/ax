@@ -469,7 +469,7 @@ impl Ax {
     }
 
     pub fn policy_exists(&self) -> bool {
-        ax_policy::policy_exists(&self.project_root)
+        ax_policy::policy_tools_enabled(&self.project_root)
     }
 
     pub async fn guard_operation(

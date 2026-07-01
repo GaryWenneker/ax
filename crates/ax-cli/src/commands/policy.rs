@@ -1,14 +1,62 @@
-use ax_policy::{MatchInput, GuardOp};
+use ax_policy::{GuardOp, ImportMode, MatchInput};
 
 use crate::commands::resolve_path;
 
 pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> {
     let root = resolve_path(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let storage = ax_policy::load_policy_config(&root).storage;
     let result = ax.index_policy(force).await.map_err(|e| e.to_string())?;
+    match storage {
+        ax_policy::PolicyStorage::Database if !force => {
+            println!(
+                "Database mode: {} rules, {} skills in ax.db (use --force to import from .ax/policy/ files)",
+                result.rules_indexed, result.skills_indexed
+            );
+        }
+        ax_policy::PolicyStorage::Database if force => {
+            println!(
+                "Imported {} rules, {} skills from .ax/policy/ into database (merge)",
+                result.rules_indexed, result.skills_indexed
+            );
+        }
+        _ => {
+            println!(
+                "Indexed {} rules, {} skills",
+                result.rules_indexed, result.skills_indexed
+            );
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_import(path: Option<String>) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let result = ax_policy::import_policy_from_files(ax.db_pool(), &root, ImportMode::Merge)
+        .await
+        .map_err(|e| e.to_string())?;
     println!(
-        "Indexed {} rules, {} skills",
+        "Imported {} rules, {} skills from .ax/policy/ (merge — DB-only rows kept)",
         result.rules_indexed, result.skills_indexed
+    );
+    Ok(())
+}
+
+pub async fn run_export(path: Option<String>, out: String) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let out_path = if std::path::Path::new(&out).is_absolute() {
+        std::path::PathBuf::from(out)
+    } else {
+        root.join(out)
+    };
+    let result = ax_policy::export_policy_to_files(ax.db_pool(), &root, &out_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!(
+        "Exported {} rules, {} skills to {}",
+        result.rules_exported, result.skills_exported, result.output_dir
     );
     Ok(())
 }

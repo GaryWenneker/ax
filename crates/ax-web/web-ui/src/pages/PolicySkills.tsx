@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { deletePolicySkill, fetchPolicySkills } from '../policyApi';
+import { usePageContext } from '../context/UiContext';
 import type { PolicySkillRow } from '../policyTypes';
 
 interface Props {
@@ -18,6 +19,8 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  usePageContext('Skills', !loading && !error ? `${skills.length} skills` : undefined);
 
   async function remove(name: string) {
     if (!confirm(`Delete skill "${name}"?`)) return;

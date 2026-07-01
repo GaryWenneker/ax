@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { deletePolicyRule, fetchPolicyRules } from '../policyApi';
+import { usePageContext } from '../context/UiContext';
 import type { PolicyRuleRow } from '../policyTypes';
 
 interface Props {
@@ -18,6 +19,8 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  usePageContext('Rules', !loading && !error ? `${rules.length} rules` : undefined);
 
   async function remove(id: string) {
     if (!confirm(`Delete rule "${id}"?`)) return;

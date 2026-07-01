@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
+import { usePageContext } from '../context/UiContext';
 import type { SkillFrontmatter } from '../policyTypes';
 
 interface Props {
@@ -39,6 +40,8 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
       })
       .catch((e: Error) => setError(e.message));
   }, [skillName]);
+
+  usePageContext('Skill editor', skillName ?? 'new skill');
 
   async function save() {
     setSaving(true);

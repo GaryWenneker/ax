@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { matchPolicy } from '../policyApi';
+import { usePageContext } from '../context/UiContext';
 
 interface Props {
   onClose: () => void;
@@ -10,6 +11,8 @@ export default function PolicyMatchPage({ onClose }: Props) {
   const [result, setResult] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  usePageContext('Match test', prompt.trim() ? 'prompt ready' : undefined);
 
   async function run() {
     setLoading(true);

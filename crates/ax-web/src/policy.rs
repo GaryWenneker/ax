@@ -52,6 +52,7 @@ pub fn router(state: PolicyApiState) -> Router {
         .route("/skills/{name}", get(get_skill).put(update_skill).delete(delete_skill))
         .route("/match", post(match_prompt))
         .route("/reindex", post(reindex))
+        .route("/export", post(export_policy))
         .with_state(state)
 }
 
@@ -182,6 +183,30 @@ async fn match_prompt(
     };
     match ax_policy::match_policy(s.store.pool(), &input).await {
         Ok(result) => (StatusCode::OK, Json(serde_json::to_value(result).unwrap())).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ExportPayload {
+    #[serde(default = "default_export_dir")]
+    pub out_dir: String,
+}
+
+fn default_export_dir() -> String {
+    ".ax/policy/export".into()
+}
+
+async fn export_policy(
+    State(s): State<PolicyApiState>,
+    Json(payload): Json<ExportPayload>,
+) -> impl IntoResponse {
+    if s.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let out = s.store.project_root().join(&payload.out_dir);
+    match s.store.export_to_files(&out).await {
+        Ok(r) => (StatusCode::OK, Json(serde_json::to_value(r).unwrap())).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }

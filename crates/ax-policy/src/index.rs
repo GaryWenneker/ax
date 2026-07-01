@@ -1,15 +1,54 @@
 use sqlx::SqlitePool;
+use std::path::Path;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-use crate::parse::{parse_rule_file, parse_skill_file};
-use crate::paths::{ensure_scaffold, rules_dir, skill_file, skills_dir, ax_dir_from_project};
-use crate::types::{PolicyIndexResult, PolicyRuleRow, PolicySkillRow};
+use crate::config::{load_policy_config, PolicyStorage};
+use crate::parse::{parse_rule_file, parse_skill_file, serialize_rule, serialize_skill};
+use crate::paths::{ensure_scaffold, rule_file, rules_dir, skill_file, skills_dir, ax_dir_from_project};
+use crate::types::{
+    PolicyIndexResult, PolicyRuleDoc, PolicyRuleRow, PolicySkillDoc, PolicySkillRow,
+    RuleFrontmatter, SkillFrontmatter,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportMode {
+    /// Upsert from disk; delete DB rows with no matching file (filesystem is source of truth).
+    Replace,
+    /// Upsert from disk; keep DB-only rows.
+    Merge,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportResult {
+    pub rules_exported: u32,
+    pub skills_exported: u32,
+    pub output_dir: String,
+}
 
 pub async fn index_policy(
     pool: &SqlitePool,
-    project_root: &std::path::Path,
-    _force: bool,
+    project_root: &Path,
+    force: bool,
+) -> Result<PolicyIndexResult, AxError> {
+    let config = load_policy_config(project_root);
+    match config.storage {
+        PolicyStorage::Database => {
+            if force {
+                import_policy_from_files(pool, project_root, ImportMode::Merge).await
+            } else {
+                db_counts(pool).await
+            }
+        }
+        PolicyStorage::Files => import_policy_from_files(pool, project_root, ImportMode::Replace).await,
+    }
+}
+
+pub async fn import_policy_from_files(
+    pool: &SqlitePool,
+    project_root: &Path,
+    mode: ImportMode,
 ) -> Result<PolicyIndexResult, AxError> {
     let ax_dir = ax_dir_from_project(project_root);
     ensure_scaffold(&ax_dir).map_err(|e| AxError::Other(e.to_string()))?;
@@ -34,12 +73,10 @@ pub async fn index_policy(
             if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
                 continue;
             }
-            let raw = std::fs::read_to_string(path)
-                .map_err(|e| AxError::Other(e.to_string()))?;
+            let raw = std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
             let doc = parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
             let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
-            let now = now_ms();
-            upsert_rule(pool, &doc, &hash, now).await?;
+            upsert_rule(pool, &doc, &hash, now_ms()).await?;
             seen_rules.push(doc.frontmatter.id.clone());
             rules_indexed += 1;
         }
@@ -62,19 +99,19 @@ pub async fn index_policy(
             if !skill_path.is_file() {
                 continue;
             }
-            let raw = std::fs::read_to_string(&skill_path)
-                .map_err(|e| AxError::Other(e.to_string()))?;
+            let raw = std::fs::read_to_string(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
             let doc = parse_skill_file(&skill_path, &raw).map_err(|e| AxError::Other(e.error))?;
             let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
-            let now = now_ms();
-            upsert_skill(pool, &doc, &hash, now).await?;
+            upsert_skill(pool, &doc, &hash, now_ms()).await?;
             seen_skills.push(doc.frontmatter.name.clone());
             skills_indexed += 1;
         }
     }
 
-    prune_rules(pool, &seen_rules).await?;
-    prune_skills(pool, &seen_skills).await?;
+    if mode == ImportMode::Replace {
+        prune_rules(pool, &seen_rules).await?;
+        prune_skills(pool, &seen_skills).await?;
+    }
 
     Ok(PolicyIndexResult {
         rules_indexed,
@@ -82,9 +119,86 @@ pub async fn index_policy(
     })
 }
 
+pub async fn export_policy_to_files(
+    pool: &SqlitePool,
+    project_root: &Path,
+    out_dir: &Path,
+) -> Result<ExportResult, AxError> {
+    let rules_out = out_dir.join("rules");
+    let skills_out = out_dir.join("skills");
+    std::fs::create_dir_all(&rules_out).map_err(|e| AxError::Other(e.to_string()))?;
+    std::fs::create_dir_all(&skills_out).map_err(|e| AxError::Other(e.to_string()))?;
+
+    let rules = list_rules(pool).await?;
+    let skills = list_skills(pool).await?;
+
+    for row in &rules {
+        let doc = rule_row_to_doc(row, project_root);
+        let path = rule_file(&rules_out, &doc.frontmatter.id);
+        write_utf8(&path, &doc.raw)?;
+    }
+
+    for row in &skills {
+        let doc = skill_row_to_doc(row, project_root);
+        let dir = skills_out.join(&doc.frontmatter.name);
+        std::fs::create_dir_all(&dir).map_err(|e| AxError::Other(e.to_string()))?;
+        let path = skill_file(&skills_out, &doc.frontmatter.name);
+        write_utf8(&path, &doc.raw)?;
+    }
+
+    Ok(ExportResult {
+        rules_exported: rules.len() as u32,
+        skills_exported: skills.len() as u32,
+        output_dir: out_dir.to_string_lossy().to_string(),
+    })
+}
+
+pub async fn upsert_rule_doc(pool: &SqlitePool, doc: &PolicyRuleDoc) -> Result<(), AxError> {
+    let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
+    upsert_rule(pool, doc, &hash, now_ms()).await
+}
+
+pub async fn upsert_skill_doc(pool: &SqlitePool, doc: &PolicySkillDoc) -> Result<(), AxError> {
+    let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
+    upsert_skill(pool, doc, &hash, now_ms()).await
+}
+
+pub async fn delete_rule_by_id(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {
+    let result = sqlx::query("DELETE FROM policy_rules WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn delete_skill_by_name(pool: &SqlitePool, name: &str) -> Result<bool, AxError> {
+    let result = sqlx::query("DELETE FROM policy_skills WHERE name = ?")
+        .bind(name)
+        .execute(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    Ok(result.rows_affected() > 0)
+}
+
+async fn db_counts(pool: &SqlitePool) -> Result<PolicyIndexResult, AxError> {
+    let rules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM policy_rules")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let skills: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM policy_skills")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    Ok(PolicyIndexResult {
+        rules_indexed: rules as u32,
+        skills_indexed: skills as u32,
+    })
+}
+
 async fn upsert_rule(
     pool: &SqlitePool,
-    doc: &crate::types::PolicyRuleDoc,
+    doc: &PolicyRuleDoc,
     hash: &str,
     now: i64,
 ) -> Result<(), AxError> {
@@ -117,7 +231,7 @@ async fn upsert_rule(
 
 async fn upsert_skill(
     pool: &SqlitePool,
-    doc: &crate::types::PolicySkillDoc,
+    doc: &PolicySkillDoc,
     hash: &str,
     now: i64,
 ) -> Result<(), AxError> {
@@ -228,9 +342,86 @@ pub async fn get_skill(pool: &SqlitePool, name: &str) -> Result<Option<PolicySki
     Ok(row.map(SkillDbRow::into_row))
 }
 
-pub fn policy_exists(project_root: &std::path::Path) -> bool {
+/// Whether policy MCP tools should be listed for this project.
+pub fn policy_tools_enabled(project_root: &Path) -> bool {
+    let config = load_policy_config(project_root);
+    match config.storage {
+        PolicyStorage::Database => true,
+        PolicyStorage::Files => policy_exists_filesystem(project_root),
+    }
+}
+
+/// Legacy sync check — filesystem dirs only (files mode).
+pub fn policy_exists(project_root: &Path) -> bool {
+    policy_tools_enabled(project_root)
+}
+
+pub fn policy_exists_filesystem(project_root: &Path) -> bool {
     let ax_dir = ax_dir_from_project(project_root);
     rules_dir(&ax_dir).exists() || skills_dir(&ax_dir).exists()
+}
+
+pub async fn policy_has_content(pool: &SqlitePool) -> Result<bool, AxError> {
+    let counts = db_counts(pool).await?;
+    Ok(counts.rules_indexed > 0 || counts.skills_indexed > 0)
+}
+
+pub fn rule_row_to_doc(row: &PolicyRuleRow, project_root: &Path) -> PolicyRuleDoc {
+    let fm = RuleFrontmatter {
+        id: row.id.clone(),
+        level: row.level.clone(),
+        always_apply: row.always_apply,
+        globs: row.globs.clone(),
+        triggers: row.triggers.clone(),
+        tags: row.tags.clone(),
+        priority: row.priority,
+    };
+    let raw = serialize_rule(&fm, &row.body);
+    let source = if row.source_path.is_empty() {
+        rule_file(&rules_dir(&ax_dir_from_project(project_root)), &row.id)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        row.source_path.clone()
+    };
+    PolicyRuleDoc {
+        frontmatter: fm,
+        body: row.body.clone(),
+        raw,
+        source_path: source,
+    }
+}
+
+pub fn skill_row_to_doc(row: &PolicySkillRow, project_root: &Path) -> PolicySkillDoc {
+    let fm = SkillFrontmatter {
+        name: row.name.clone(),
+        description: row.description.clone(),
+        triggers: row.triggers.clone(),
+        tags: row.tags.clone(),
+        priority: row.priority,
+        context_task: row.context_task.clone(),
+    };
+    let raw = serialize_skill(&fm, &row.body);
+    let source = if row.source_path.is_empty() {
+        skill_file(&skills_dir(&ax_dir_from_project(project_root)), &row.name)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        row.source_path.clone()
+    };
+    PolicySkillDoc {
+        frontmatter: fm,
+        body: row.body.clone(),
+        raw,
+        source_path: source,
+    }
+}
+
+fn write_utf8(path: &Path, content: &str) -> Result<(), AxError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AxError::Other(e.to_string()))?;
+    }
+    std::fs::write(path, content.as_bytes()).map_err(|e| AxError::Other(e.to_string()))
 }
 
 fn now_ms() -> i64 {
@@ -298,4 +489,81 @@ impl SkillDbRow {
 
 fn parse_json_array(s: &str) -> Vec<String> {
     serde_json::from_str(s).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::RuleFrontmatter;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (TempDir, SqlitePool) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let opts = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS policy_rules (
+                id TEXT PRIMARY KEY, level TEXT NOT NULL, always_apply INTEGER NOT NULL DEFAULT 0,
+                globs TEXT NOT NULL DEFAULT '[]', triggers TEXT NOT NULL DEFAULT '[]',
+                tags TEXT NOT NULL DEFAULT '[]', priority INTEGER NOT NULL DEFAULT 50,
+                body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS policy_skills (
+                name TEXT PRIMARY KEY, description TEXT NOT NULL,
+                triggers TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]',
+                priority INTEGER NOT NULL DEFAULT 50, context_task TEXT,
+                body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        (dir, pool)
+    }
+
+    #[tokio::test]
+    async fn database_mode_save_without_files() {
+        let (_dir, pool) = test_pool().await;
+        let root = _dir.path();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"policy":{"storage":"database"}}"#,
+        )
+        .unwrap();
+
+        let fm = RuleFrontmatter {
+            id: "test-rule".into(),
+            level: "CRITICAL".into(),
+            always_apply: true,
+            globs: vec![],
+            triggers: vec![],
+            tags: vec![],
+            priority: 50,
+        };
+        let raw = serialize_rule(&fm, "body text");
+        let doc = parse_rule_file(Path::new("test-rule.mdc"), &raw).unwrap();
+        upsert_rule_doc(&pool, &doc).await.unwrap();
+
+        let rules = list_rules(&pool).await.unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "test-rule");
+
+        // index without force should not wipe DB-only rows
+        let result = index_policy(&pool, root, false).await.unwrap();
+        assert_eq!(result.rules_indexed, 1);
+    }
 }

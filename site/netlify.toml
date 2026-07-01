@@ -44,3 +44,10 @@
 
 [functions."admin-telemetry"]
   timeout = 26
+
+# Legacy /releases/* CDN URLs redirect to GitHub Releases (binaries no longer mirrored on Netlify).
+[[redirects]]
+  from = "/releases/:version/*"
+  to = "https://github.com/GaryWenneker/ax/releases/download/:version/:splat"
+  status = 302
+  force = true

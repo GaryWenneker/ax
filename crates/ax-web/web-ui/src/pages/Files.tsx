@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchFiles } from '../api';
+import { usePageContext } from '../context/UiContext';
 import type { FileRow } from '../types';
 
 const LIMIT = 50;
@@ -47,6 +48,9 @@ export default function FilesPage() {
 
   const page = Math.floor(offset / LIMIT) + 1;
   const pages = Math.ceil(total / LIMIT) || 1;
+
+  const fileDetail = `${files.length} shown · ${total.toLocaleString()} total · p${page}/${pages}${q ? ` · "${q}"` : ''}${lang ? ` · ${lang}` : ''}`;
+  usePageContext('Files', fileDetail);
 
   return (
     <>

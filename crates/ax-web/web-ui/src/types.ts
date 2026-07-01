@@ -8,6 +8,13 @@ export interface Stats {
   edge_count: number;
   file_count: number;
   languages: LangStat[];
+  last_indexed_at: number;
+  unresolved_ref_count?: number | null;
+  db_size_bytes: number;
+  policy_rules_count: number;
+  policy_skills_count: number;
+  readonly: boolean;
+  project_name: string;
 }
 
 export interface NodeRow {

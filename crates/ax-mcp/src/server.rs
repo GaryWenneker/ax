@@ -46,9 +46,17 @@ pub async fn run_stdio_server() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value) -> Result<Value, String> {
-    let has_policy = engine
+    let project_root = engine
         .project_root()
-        .map(|p| ax_policy::policy_exists(p.as_path()))
+        .cloned()
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|cwd| find_nearest_ax_root(&cwd))
+        });
+    let has_policy = project_root
+        .as_ref()
+        .map(|p| ax_policy::policy_tools_enabled(p.as_path()))
         .unwrap_or(false);
 
     match method {

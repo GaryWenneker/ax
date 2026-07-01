@@ -28,12 +28,22 @@ fn ensure_global_config() {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| serde_json::json!({}));
 
+    let mut changed = false;
     if root.get("index").is_none() {
         root["index"] = serde_json::json!({
             "extensions": {},
             "exclude": [],
             "includeIgnored": []
         });
+        changed = true;
+    }
+    if root.get("policy").is_none() {
+        root["policy"] = serde_json::json!({
+            "storage": "files"
+        });
+        changed = true;
+    }
+    if changed {
         if let Ok(json) = serde_json::to_string_pretty(&root) {
             let _ = std::fs::write(&path, json + "\n");
         }

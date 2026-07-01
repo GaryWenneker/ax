@@ -1,8 +1,7 @@
 //! Background and explicit checks for newer ax releases.
 //!
-//! Primary source: `https://getax.wenneker.io/releases/latest.txt` (plain text, always fresh).
-//! Fallback:       GitHub releases API (`GaryWenneker/ax`) for environments where the CDN
-//!                 is unreachable or a GitHub token is available.
+//! Primary source: GitHub Releases API / redirect (`GaryWenneker/ax`).
+//! Fallback:       `getax.wenneker.io/releases/latest.txt` and legacy CDN redirects.
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -221,7 +220,7 @@ pub fn update_check_disabled() -> bool {
     ) || std::env::var("CI").as_deref() == Ok("true")
 }
 
-/// Fetch latest version from `getax.wenneker.io/releases/latest.txt` (primary CDN source).
+/// Fetch latest version from getax latest.txt (legacy fallback when GitHub is unreachable).
 async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, String> {
     let resp = client
         .get(CDN_LATEST_URL)
@@ -241,13 +240,6 @@ async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, Strin
 
 pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
     let client = http_client()?;
-
-    // Primary: CDN latest.txt — always up to date, no auth needed.
-    if let Ok(tag) = fetch_latest_from_cdn(&client).await {
-        return Ok(tag);
-    }
-
-    // Fallback: GitHub releases API (works with a token for private repos).
     let token = github_token();
     let token_ref = token.as_deref();
 
@@ -270,7 +262,12 @@ pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
         }
     }
 
-    fetch_latest_via_api(&client, repo, token_ref).await
+    if let Ok(tag) = fetch_latest_via_api(&client, repo, token_ref).await {
+        return Ok(tag);
+    }
+
+    // Fallback: getax latest.txt (legacy CDN pointer).
+    fetch_latest_from_cdn(&client).await
 }
 
 async fn latest_with_cache(repo: &str) -> Option<String> {

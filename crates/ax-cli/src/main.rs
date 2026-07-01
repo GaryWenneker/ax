@@ -200,11 +200,21 @@ enum OffloadCommands {
 
 #[derive(Subcommand)]
 enum PolicyCommands {
-    /// Index .ax/policy files into SQLite
+    /// Index .ax/policy files into SQLite (files mode) or show DB counts (database mode)
     Index {
         path: Option<String>,
         #[arg(long)]
         force: bool,
+    },
+    /// Import .mdc / SKILL.md from disk into database (merge; keeps DB-only rows)
+    Import {
+        path: Option<String>,
+    },
+    /// Export database policy to .mdc / SKILL.md files
+    Export {
+        path: Option<String>,
+        #[arg(long, default_value = ".ax/policy/export")]
+        out: String,
     },
     /// Match rules/skills for a prompt
     Match {
@@ -307,6 +317,8 @@ async fn main() {
         Some(Commands::Web { path, port, open }) => commands::web::run(path, port, open).await,
         Some(Commands::Policy { action }) => match action {
             PolicyCommands::Index { path, force } => commands::policy::run_index(path, force).await,
+            PolicyCommands::Import { path } => commands::policy::run_import(path).await,
+            PolicyCommands::Export { path, out } => commands::policy::run_export(path, out).await,
             PolicyCommands::Match { prompt, path, file, json } => {
                 commands::policy::run_match(path, prompt, file, json).await
             }
