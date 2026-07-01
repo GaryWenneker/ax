@@ -368,12 +368,117 @@ fn same_path(a: &Path, b: &Path) -> bool {
 }
 
 #[cfg(windows)]
-fn schedule_windows_bundle_upgrade(bytes: &[u8], bundle: &str) -> Result<(), String> {
+fn resolve_comspec() -> PathBuf {
+    std::env::var_os("ComSpec")
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\cmd.exe"))
+}
+
+#[cfg(windows)]
+fn staging_helper_exe(staging: &Path) -> PathBuf {
+    let bin = staging.join("bin").join("ax.exe");
+    if bin.is_file() {
+        return bin;
+    }
+    staging.join("ax.exe")
+}
+
+#[cfg(windows)]
+fn spawn_upgrade_apply_helper(helper: &Path, parent_pid: u32, staging: &Path, dest: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+    let flags = CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    let args = [
+        "upgrade-apply",
+        "--parent-pid",
+        &parent_pid.to_string(),
+        "--staging",
+        &staging.to_string_lossy(),
+        "--dest",
+        &dest.to_string_lossy(),
+    ];
+
+    if helper.is_file() {
+        match std::process::Command::new(helper)
+            .args(args)
+            .creation_flags(flags)
+            .spawn()
+        {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                tracing::debug!("spawn {} failed: {e}", helper.display());
+            }
+        }
+    }
+
+    spawn_upgrade_cmd_batch(parent_pid, staging, dest)
+}
+
+#[cfg(windows)]
+fn spawn_upgrade_cmd_batch(parent_pid: u32, staging: &Path, dest: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
 
+    let bin_dir = dest.join("bin");
+    let cargo_ax = dirs::home_dir()
+        .map(|h| h.join(".cargo").join("bin").join("ax.exe"))
+        .unwrap_or_default();
+    let batch_path = std::env::temp_dir().join(format!("ax-upgrade-{parent_pid}.cmd"));
+
+    let batch = format!(
+        "@echo off\r\n\
+         setlocal EnableExtensions\r\n\
+         set \"PARENT={parent_pid}\"\r\n\
+         set \"STAGING={staging}\"\r\n\
+         set \"DEST={dest}\"\r\n\
+         set \"BINDIR={bin_dir}\"\r\n\
+         set \"CARGOAX={cargo_ax}\"\r\n\
+         :wait_parent\r\n\
+         tasklist /FI \"PID eq %PARENT%\" 2>nul | find \" %PARENT% \" >nul && (\r\n\
+           timeout /t 1 /nobreak >nul\r\n\
+           goto wait_parent\r\n\
+         )\r\n\
+         timeout /t 2 /nobreak >nul\r\n\
+         taskkill /IM ax.exe /F >nul 2>&1\r\n\
+         timeout /t 1 /nobreak >nul\r\n\
+         if exist \"%DEST%\" rmdir /s /q \"%DEST%\"\r\n\
+         move /Y \"%STAGING%\" \"%DEST%\" >nul\r\n\
+         if not exist \"%BINDIR%\" mkdir \"%BINDIR%\" >nul\r\n\
+         copy /Y \"%DEST%\\ax.exe\" \"%BINDIR%\\ax.exe\" >nul\r\n\
+         if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" copy /Y \"%BINDIR%\\ax.exe\" \"%CARGOAX%\" >nul\r\n\
+         del \"%~f0\" >nul 2>&1\r\n",
+        staging = staging.display(),
+        dest = dest.display(),
+        bin_dir = bin_dir.display(),
+        cargo_ax = cargo_ax.display(),
+    );
+    std::fs::write(&batch_path, batch).map_err(|e| format!("write upgrade batch: {e}"))?;
+
+    let comspec = resolve_comspec();
+    std::process::Command::new(&comspec)
+        .arg("/C")
+        .arg(&batch_path)
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "spawn upgrade helper via {}: {e}\n\
+                 Reinstall once: irm https://getax.wenneker.io/install.ps1 | iex",
+                comspec.display()
+            )
+        })?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn schedule_windows_bundle_upgrade(bytes: &[u8], bundle: &str) -> Result<(), String> {
     let root = windows_install_root();
     let staging = root.join(format!("upgrade-staging-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
@@ -381,21 +486,15 @@ fn schedule_windows_bundle_upgrade(bytes: &[u8], bundle: &str) -> Result<(), Str
 
     let dest = root.join("current");
     let parent_pid = std::process::id();
-    let exe = std::env::current_exe().map_err(|e| format!("resolve ax.exe path: {e}"))?;
+    let helper = staging_helper_exe(&staging);
 
-    std::process::Command::new(&exe)
-        .arg("upgrade-apply")
-        .arg("--parent-pid")
-        .arg(parent_pid.to_string())
-        .arg("--staging")
-        .arg(&staging)
-        .arg("--dest")
-        .arg(&dest)
-        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
-        .spawn()
-        .map_err(|e| format!("spawn upgrade helper ({}): {e}", exe.display()))?;
-
-    Ok(())
+    spawn_upgrade_apply_helper(&helper, parent_pid, &staging, &dest).map_err(|e| {
+        format!(
+            "{e}\n\
+             Or run: $env:AX_VERSION='v{}'; irm https://getax.wenneker.io/install.ps1 | iex",
+            env!("CARGO_PKG_VERSION")
+        )
+    })
 }
 
 #[cfg(not(windows))]
