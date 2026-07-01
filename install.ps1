@@ -3,6 +3,9 @@
 #
 #   irm https://getax.wenneker.io/install.ps1 | iex
 #
+# Always installs the latest published release (highest semver with assets).
+# Stops running ax processes and replaces any previous install under %LOCALAPPDATA%\ax.
+# Pin a version: $env:AX_VERSION = 'v2.0.10'; irm ... | iex
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: remove %LOCALAPPDATA%\ax and its bin entry from user PATH.
 
@@ -19,7 +22,7 @@ function Stop-AxProcesses {
   foreach ($p in $procs) {
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
   }
-  for ($i = 0; $i -lt 10; $i++) {
+  for ($i = 0; $i -lt 15; $i++) {
     Start-Sleep -Milliseconds 300
     $left = @(Get-Process -Name 'ax' -ErrorAction SilentlyContinue | Where-Object { $ExcludePid -notcontains $_.Id })
     if ($left.Count -eq 0) { return }
@@ -33,16 +36,44 @@ function Stop-AxProcesses {
   }
 }
 
-function Remove-AxInstallTree {
-  param([string]$Path)
-  if (-not (Test-Path $Path)) { return }
+function Clear-AxInstallState {
   Stop-AxProcesses
-  try {
-    Remove-Item -Recurse -Force $Path
-  } catch {
-    Start-Sleep -Seconds 1
-    Stop-AxProcesses
-    Remove-Item -Recurse -Force $Path
+  if (Test-Path $installDir) {
+    Get-ChildItem -Path $installDir -Directory -Filter 'upgrade-staging-*' -ErrorAction SilentlyContinue |
+      ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
+    $current = Join-Path $installDir 'current'
+    if (Test-Path $current) {
+      try {
+        Remove-Item -Recurse -Force $current
+      } catch {
+        Start-Sleep -Seconds 1
+        Stop-AxProcesses
+        Remove-Item -Recurse -Force $current
+      }
+    }
+  }
+}
+
+function Copy-AxExeForce {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  Stop-AxProcesses
+  $destDir = Split-Path -Parent $Destination
+  if ($destDir -and -not (Test-Path $destDir)) {
+    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+  }
+  for ($i = 0; $i -lt 8; $i++) {
+    try {
+      if (Test-Path $Destination) { Remove-Item -Force $Destination -ErrorAction Stop }
+      Copy-Item -Force $Source $Destination
+      return
+    } catch {
+      if ($i -ge 7) { throw }
+      Start-Sleep -Milliseconds 400
+      Stop-AxProcesses
+    }
   }
 }
 
@@ -51,19 +82,25 @@ $target = "win32-$arch"
 
 function Test-AxReleaseAsset {
   param([string]$Tag)
-  $url = "https://github.com/$repo/releases/download/$Tag/ax-$target.zip"
-  try {
-    $resp = Invoke-WebRequest -Uri $url -Method Head -TimeoutSec 15 -UseBasicParsing
-    return $resp.StatusCode -eq 200
-  } catch {
-    return $false
+  foreach ($base in @(
+      "https://github.com/$repo/releases/download/$Tag/ax-$target.zip",
+      "$downloadBase/$Tag/ax-$target.zip"
+    )) {
+    try {
+      $resp = Invoke-WebRequest -Uri $base -Method Head -TimeoutSec 15 -UseBasicParsing
+      if ($resp.StatusCode -eq 200) { return $true }
+    } catch { }
   }
+  return $false
 }
 
 function Resolve-AxVersion {
   if ($env:AX_VERSION) {
     $v = $env:AX_VERSION.Trim()
     if ($v -notmatch '^v') { $v = "v$v" }
+    if (-not (Test-AxReleaseAsset -Tag $v)) {
+      throw "ax: AX_VERSION $v has no downloadable ax-$target.zip on GitHub or getax"
+    }
     return $v
   }
 
@@ -102,11 +139,14 @@ function Resolve-AxVersion {
   throw "ax: could not resolve a release with downloadable assets; set AX_VERSION or publish releases to GitHub ($repo)"
 }
 
+# Kill stale ax and wipe previous install before resolving/downloading.
+Clear-AxInstallState
+
 $version = Resolve-AxVersion
 
 $getaxUrl = "$downloadBase/$version/ax-$target.zip"
 $githubUrl = "https://github.com/$repo/releases/download/$version/ax-$target.zip"
-Write-Host "Installing ax $version ($target)..."
+Write-Host "Installing ax $version ($target) — latest available..."
 $tmp = Join-Path $env:TEMP ("ax-" + [guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $zip = Join-Path $tmp 'ax.zip'
@@ -128,8 +168,9 @@ if (-not $downloaded) {
 }
 Write-Host "  downloaded from: $downloadFrom" -ForegroundColor DarkGray
 
+Stop-AxProcesses
+
 $dest = Join-Path $installDir 'current'
-Remove-AxInstallTree -Path $dest
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Expand-Archive -Path $zip -DestinationPath $dest -Force
 $inner = Join-Path $dest "ax-$target"
@@ -143,7 +184,7 @@ $binDir = Join-Path $dest 'bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $exe = Join-Path $dest 'ax.exe'
 if (-not (Test-Path $exe)) { throw "ax.exe not found in bundle" }
-Copy-Item -Force $exe (Join-Path $binDir 'ax.exe')
+Copy-AxExeForce -Source $exe -Destination (Join-Path $binDir 'ax.exe')
 
 function Set-UserPathFirst([string]$entry) {
   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -162,12 +203,11 @@ $env:Path = ($binDir + ';' + (($env:Path -split ';') | Where-Object { $_ -and ($
 
 # Replace stale cargo-installed ax so `ax` resolves correctly even before a new terminal.
 $cargoAx = Join-Path $env:USERPROFILE '.cargo\bin\ax.exe'
-if ((Test-Path $cargoAx) -and ($env:AX_KEEP_CARGO_BIN -ne '1')) {
+if ($env:AX_KEEP_CARGO_BIN -ne '1') {
   try {
-    $oldVer = & $cargoAx version 2>&1 | Out-String
-    Stop-AxProcesses
-    Copy-Item -Force $exe $cargoAx
-    Write-Host "Updated $cargoAx (was: $($oldVer.Trim()))" -ForegroundColor DarkGray
+    $oldVer = if (Test-Path $cargoAx) { (& $cargoAx version 2>&1 | Out-String).Trim() } else { '(none)' }
+    Copy-AxExeForce -Source $exe -Destination $cargoAx
+    Write-Host "Updated $cargoAx (was: $oldVer)" -ForegroundColor DarkGray
   } catch {
     Write-Host "Note: could not update $cargoAx — use a new terminal or run:" -ForegroundColor Yellow
     Write-Host "  `$env:Path = '$binDir;' + `$env:Path" -ForegroundColor Yellow
@@ -179,12 +219,12 @@ $expectedVer = $version.TrimStart('v')
 if ($installedVer -notmatch [regex]::Escape($expectedVer)) {
   Write-Warning "Tag $version was installed but binary reports: $installedVer (release may have been built from wrong Cargo.toml — try again after CI republish)"
 }
-Write-Host "Installed to $dest"
+Write-Host "Installed to $dest (replaced previous install)" -ForegroundColor Green
 Write-Host "Active: $installedVer ($binDir\ax.exe)" -ForegroundColor Green
 
-$shadow = Get-Command ax -All -ErrorAction SilentlyContinue | Select-Object -Skip 1
+$shadow = Get-Command ax -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -ne (Join-Path $binDir 'ax.exe') }
 if ($shadow) {
-  Write-Host "Other ax on PATH (ignored if $binDir is first in new terminals):" -ForegroundColor DarkGray
+  Write-Host "Other ax on PATH (new terminals use $binDir first):" -ForegroundColor DarkGray
   foreach ($cmd in $shadow) {
     Write-Host "  $($cmd.Source)" -ForegroundColor DarkGray
   }
