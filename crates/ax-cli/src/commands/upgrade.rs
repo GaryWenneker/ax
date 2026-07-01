@@ -29,6 +29,7 @@ pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
         "tar.gz"
     };
 
+    let explicit_version = version.is_some();
     let target_version = match version {
         Some(v) => normalize_version(&v),
         None => {
@@ -42,6 +43,20 @@ pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
             .map_err(|e| format!("Could not resolve latest release: {e}"))?
         }
     };
+
+    if !explicit_version {
+        if let Some(cmp) = version_check::compare_versions(&target_version, current) {
+            if cmp < 0 {
+                return Err(format!(
+                    "Refusing to downgrade from {} to {} (getax latest.txt may be stale). \
+                     Use `ax upgrade {}` to pin a version, or install from GitHub Releases.",
+                    strip_v(current),
+                    strip_v(&target_version),
+                    target_version
+                ));
+            }
+        }
+    }
 
     if is_update_available(current, &target_version) {
         println!(

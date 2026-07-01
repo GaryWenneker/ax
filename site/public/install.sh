@@ -7,7 +7,7 @@
 #
 # Always installs the latest published release (highest semver with assets).
 # Stops running ax processes and replaces any previous install under ~/.ax.
-# Pin a version: AX_VERSION=v2.0.12 curl -fsSL ... | sh
+# Pin a version: AX_VERSION=v2.0.13 curl -fsSL ... | sh
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: curl -fsSL https://getax.wenneker.io/install.sh | sh -s -- --uninstall
 set -eu

@@ -254,6 +254,14 @@ pub async fn resolve_latest_installable_version(
     let client = http_client()?;
     let token = github_token();
     let token_ref = token.as_deref();
+    let asset_name = format!("ax-{bundle}.{ext}");
+
+    if let Ok(tag) =
+        resolve_installable_from_github_api(&client, repo, &asset_name, token_ref).await
+    {
+        return Ok(tag);
+    }
+
     let candidates = collect_latest_candidates(&client, repo).await;
 
     for tag in &candidates {
@@ -263,18 +271,79 @@ pub async fn resolve_latest_installable_version(
     }
 
     Err(format!(
-        "no release with downloadable ax-{bundle}.{ext}; set AX_VERSION or publish assets to GitHub ({repo})"
+        "no release with downloadable {asset_name}; set AX_VERSION or publish assets to GitHub ({repo})"
     ))
+}
+
+async fn resolve_installable_from_github_api(
+    client: &reqwest::Client,
+    repo: &str,
+    asset_name: &str,
+    token: Option<&str>,
+) -> Result<String, String> {
+    let releases = fetch_releases_with_assets(client, repo, token).await?;
+    let mut tags: Vec<String> = releases
+        .into_iter()
+        .filter(|r| r.assets.iter().any(|a| a == asset_name))
+        .map(|r| r.tag)
+        .collect();
+    tags = unique_tags_desc(tags);
+    tags.into_iter()
+        .next()
+        .ok_or_else(|| format!("no GitHub release ships {asset_name}"))
+}
+
+struct ReleaseAssets {
+    tag: String,
+    assets: Vec<String>,
+}
+
+async fn fetch_releases_with_assets(
+    client: &reqwest::Client,
+    repo: &str,
+    token: Option<&str>,
+) -> Result<Vec<ReleaseAssets>, String> {
+    let api = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
+    let mut req = client
+        .get(&api)
+        .header("Accept", "application/vnd.github+json");
+    if let Some(t) = token {
+        req = req.header("Authorization", format!("Bearer {t}"));
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("could not reach GitHub API: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned HTTP {}", resp.status()));
+    }
+
+    let body: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(body
+        .iter()
+        .filter(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter(|r| !r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter_map(|r| {
+            let tag = r.get("tag_name")?.as_str()?;
+            let assets = r
+                .get("assets")?
+                .as_array()?
+                .iter()
+                .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+                .map(String::from)
+                .collect();
+            Some(ReleaseAssets {
+                tag: normalize_version(tag),
+                assets,
+            })
+        })
+        .collect())
 }
 
 async fn collect_latest_candidates(client: &reqwest::Client, repo: &str) -> Vec<String> {
     let token = github_token();
     let token_ref = token.as_deref();
     let mut candidates = Vec::new();
-
-    if let Ok(v) = fetch_latest_from_cdn(client).await {
-        candidates.push(v);
-    }
 
     let url = format!("https://github.com/{repo}/releases/latest");
     if let Ok(resp) = client.get(&url).send().await {
@@ -291,6 +360,13 @@ async fn collect_latest_candidates(client: &reqwest::Client, repo: &str) -> Vec<
 
     if let Ok(list) = fetch_release_tags(client, repo, token_ref).await {
         candidates.extend(list);
+    }
+
+    // Legacy CDN pointer — only when GitHub did not return anything.
+    if candidates.is_empty() {
+        if let Ok(v) = fetch_latest_from_cdn(client).await {
+            candidates.push(v);
+        }
     }
 
     unique_tags_desc(candidates)
@@ -364,12 +440,15 @@ async fn release_asset_exists(
 }
 
 async fn head_ok(client: &reqwest::Client, url: &str, token: Option<&str>) -> bool {
-    let mut req = client.head(url);
+    // GitHub release URLs redirect to S3 signed URLs that often reject HEAD — use a 1-byte GET.
+    let mut req = client.get(url).header("Range", "bytes=0-0");
     if let Some(t) = token {
         req = req.header("Authorization", format!("Bearer {t}"));
     }
     match req.send().await {
-        Ok(resp) => resp.status().is_success(),
+        Ok(resp) => {
+            resp.status().is_success() || resp.status() == reqwest::StatusCode::PARTIAL_CONTENT
+        }
         Err(_) => false,
     }
 }
@@ -497,5 +576,15 @@ mod tests {
             "v2.0.5".into(),
         ]);
         assert_eq!(sorted, vec!["v2.0.7", "v2.0.6", "v2.0.5"]);
+    }
+
+    #[test]
+    fn collect_latest_candidates_prefers_github_over_stale_cdn() {
+        // When GitHub tags are present, stale CDN latest.txt must not appear alone.
+        let sorted = unique_tags_desc(vec![
+            "v2.0.12".into(),
+            "v2.0.5".into(),
+        ]);
+        assert_eq!(sorted.first().map(String::as_str), Some("v2.0.12"));
     }
 }

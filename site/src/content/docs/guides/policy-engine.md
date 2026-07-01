@@ -208,7 +208,11 @@ ax policy does not replace other systems:
 | `.cursor/rules`, `.cursor/skills` | Cursor (separate) |
 | Recall MCP | Recall OS projects (separate) |
 
-Use ax policy as the **portable, repo-committed** layer; keep IDE-specific rules in sync as needed.
+**Do not duplicate ax policy in `.cursor/rules/`.** Rules and skills under `.ax/policy/` are indexed into `ax.db` and delivered via `ax_preflight` MCP inject — not via Cursor's filesystem rules channel. Duplicating them in `.cursor/rules/` bypasses MCP and violates the pull-only model.
+
+Cursor-only conveniences that are **not** ax policy (e.g. a local dev reinstall skill) may stay in `.cursor/skills/`.
+
+Run `ax policy sync` to verify managed policy files and warn about duplicate `.cursor/rules/` entries.
 
 ---
 

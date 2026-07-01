@@ -1,9 +1,12 @@
 ---
-description: Cross-check every logic change against CodeGraph and update the compare matrix
-globs: "**/*.rs,docs/**"
+id: codegraph-parity
+level: CRITICAL
 alwaysApply: false
+globs: ["**/*.rs", "docs/**"]
+triggers: ["codegraph", "compare matrix", "parity", "EXTRACTION_VERSION"]
+tags: ["codegraph", "parity"]
+priority: 85
 ---
-
 # ax ↔ CodeGraph parity (mandatory)
 
 Every behavior change in ax must be validated against CodeGraph and reflected in the compare matrix.
@@ -44,4 +47,4 @@ Every behavior change in ax must be validated against CodeGraph and reflected in
 
 ## Encoding
 
-On Windows, verify Rust files stay UTF-8 no BOM after edits (see `no-mojibake.mdc`).
+On Windows, verify Rust files stay UTF-8 no BOM after edits (see `utf8-no-bom` rule).

@@ -30,6 +30,14 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/utf8-no-bom.mdc"),
     },
     Template {
+        rel: "rules/release-all-platforms.mdc",
+        body: include_str!("../templates/rules/release-all-platforms.mdc"),
+    },
+    Template {
+        rel: "rules/codegraph-parity.mdc",
+        body: include_str!("../templates/rules/codegraph-parity.mdc"),
+    },
+    Template {
         rel: "skills/startup/SKILL.md",
         body: include_str!("../templates/skills/startup/SKILL.md"),
     },
@@ -245,6 +253,66 @@ pub fn sync_instructions(ax_dir: &Path, fix: bool) -> std::io::Result<SyncResult
     Ok(result)
 }
 
+/// Known ax policy rule ids that must not be duplicated in `.cursor/rules/`.
+const KNOWN_POLICY_IDS: &[&str] = &[
+    "agent-workflow",
+    "subagents",
+    "english-only",
+    "utf8-no-bom",
+    "release-all-platforms",
+    "codegraph-parity",
+];
+
+/// Cursor rule filenames that alias ax policy ids.
+const CURSOR_RULE_ALIASES: &[(&str, &str)] = &[
+    ("no-mojibake", "utf8-no-bom"),
+    ("ax-codegraph-parity", "codegraph-parity"),
+];
+
+/// Warn when `.cursor/rules/*.mdc` duplicates ax policy — delivery must be MCP-only.
+pub fn check_cursor_rule_duplicates(project_root: &Path) -> Vec<String> {
+    let cursor_rules = project_root.join(".cursor").join("rules");
+    let Ok(entries) = std::fs::read_dir(&cursor_rules) else {
+        return vec![];
+    };
+    let mut warnings = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or(stem);
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+
+        for (cursor_name, policy_id) in CURSOR_RULE_ALIASES {
+            if stem == *cursor_name {
+                warnings.push(format!(
+                    "`.cursor/rules/{cursor_name}.mdc` duplicates ax policy rule `{policy_id}` — remove it; use `.ax/policy/rules/{policy_id}.mdc` + ax_preflight MCP instead"
+                ));
+            }
+        }
+
+        if KNOWN_POLICY_IDS.contains(&stem) {
+            warnings.push(format!(
+                "`.cursor/rules/{stem}.mdc` mirrors ax policy rule `{stem}` — remove it; delivery is via ax_preflight MCP only"
+            ));
+        }
+
+        for id in KNOWN_POLICY_IDS {
+            if content.contains(&format!("id: {id}")) {
+                let msg = format!(
+                    "`.cursor/rules/{fname}` contains ax policy id `{id}` — remove it; use MCP inject instead"
+                );
+                if !warnings.iter().any(|w| w == &msg) {
+                    warnings.push(msg);
+                }
+            }
+        }
+    }
+    warnings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +357,20 @@ mod tests {
     fn detect_stale_recall_references() {
         let issues = verify_content("call recall_context_preflight every turn");
         assert!(issues.iter().any(|i| i.contains("Recall")));
+    }
+
+    #[test]
+    fn detect_cursor_rule_duplicate_by_alias() {
+        let dir = tempdir().unwrap();
+        let cursor_rules = dir.path().join(".cursor").join("rules");
+        std::fs::create_dir_all(&cursor_rules).unwrap();
+        std::fs::write(
+            cursor_rules.join("no-mojibake.mdc"),
+            b"---\nid: utf8\n---\nbody",
+        )
+        .unwrap();
+        let warnings = check_cursor_rule_duplicates(dir.path());
+        assert!(warnings.iter().any(|w| w.contains("no-mojibake")));
+        assert!(warnings.iter().any(|w| w.contains("utf8-no-bom")));
     }
 }

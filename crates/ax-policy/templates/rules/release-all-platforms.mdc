@@ -1,8 +1,12 @@
 ---
-description: Every ax release must ship all platform binaries and update docs/web together.
-alwaysApply: true
+id: release-all-platforms
+level: CRITICAL
+alwaysApply: false
+globs: ["site/public/releases/**", "docs/PRODUCTION.md", ".github/workflows/release.yml"]
+triggers: ["release", "cut release", "bump version", "publish release", "latest.txt", "verify-release-assets"]
+tags: ["ops", "release"]
+priority: 95
 ---
-
 # Release — all platforms + docs (CRITICAL)
 
 > **Never publish a release or bump `latest.txt` unless every required binary is present and docs/web are updated in the same change.**

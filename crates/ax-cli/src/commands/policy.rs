@@ -185,5 +185,12 @@ pub async fn run_sync(path: Option<String>, fix: bool) -> Result<(), String> {
     if result.fail_count > 0 {
         std::process::exit(1);
     }
+    let dupes = ax_policy::check_cursor_rule_duplicates(&root);
+    for w in &dupes {
+        eprintln!("  WARN {w}");
+    }
+    if !dupes.is_empty() {
+        eprintln!("Remove duplicate `.cursor/rules/` files — ax policy is MCP-only (`.ax/policy/` + ax_preflight).");
+    }
     Ok(())
 }

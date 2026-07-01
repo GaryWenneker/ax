@@ -5,7 +5,7 @@
 #
 # Always installs the latest published release (highest semver with assets).
 # Stops running ax processes and replaces any previous install under %LOCALAPPDATA%\ax.
-# Pin a version: $env:AX_VERSION = 'v2.0.12'; irm ... | iex
+# Pin a version: $env:AX_VERSION = 'v2.0.13'; irm ... | iex
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: remove %LOCALAPPDATA%\ax and its bin entry from user PATH.
 

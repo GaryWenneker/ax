@@ -212,7 +212,7 @@ fn explore_tool() -> Value {
 fn preflight_tool() -> Value {
     json!({
         "name": "ax_preflight",
-        "description": "Turn-start policy gate: matched rules and suggested skills for the user prompt",
+        "description": "MANDATORY first tool call each turn when policy is indexed. Returns matched rules, skills, and inject block with full bodies.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -307,6 +307,8 @@ pub fn server_instructions(has_policy: bool) -> String {
     if has_policy {
         s.push_str(
             "Turn start: call ax_preflight with the user prompt and open/changed files. Apply CRITICAL rules before editing.\n\
+             Do not Read or Grep .ax/policy/ on disk — policy is delivered in ax_preflight inject only.\n\
+             If you have not called ax_preflight this turn, call it now before any other work.\n\
              Before Write/Delete on project files: call ax_guard when CRITICAL rules exist.\n\n",
         );
     }

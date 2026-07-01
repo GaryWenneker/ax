@@ -220,6 +220,8 @@ ax policy does **not** replace IDE-specific config:
 | `.cursor/rules`, `.cursor/skills` | Cursor (separate) |
 | Recall MCP | Recall OS projects (separate) |
 
-Teams can use ax policy as the **portable** layer and keep IDE rules in sync manually or via `ax web`.
+**Do not duplicate ax policy in `.cursor/rules/`.** Content under `.ax/policy/` must reach agents via `ax_preflight` MCP inject only. Files in `.cursor/rules/` with `alwaysApply: true` bypass MCP entirely.
+
+Cursor-only conveniences (e.g. local dev skills) may remain in `.cursor/skills/`. Run `ax policy sync` to detect duplicate `.cursor/rules/` entries.
 
 See [POLICY_ENGINE_PLAN.md](./POLICY_ENGINE_PLAN.md) for full architecture.
