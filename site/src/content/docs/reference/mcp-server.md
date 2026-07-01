@@ -47,12 +47,20 @@ When `.ax/policy/` contains indexed rules or skills, the server also exposes:
 
 | Tool | Purpose |
 |---|---|
-| `ax_preflight` | Turn-start: inject matched rules + skill names for the user intent |
+| `ax_preflight` | Turn-start: matched rules + skills + `inject` (full markdown bodies from SQLite) |
 | `ax_rules` | List all rules or match against a prompt |
 | `ax_skill` | Load the full markdown body of a skill by name |
 | `ax_guard` | Block or warn before writes that violate CRITICAL rules (UTF-8 BOM, secrets paths) |
 
-Call `ax_preflight` at the start of each agent turn when policy is enabled. Call `ax_guard` with the target file path before editing project files.
+Agents should **not** read `.ax/policy/` files when these tools are available — policy is indexed locally and returned in MCP responses.
+
+**Cursor:** call `ax_preflight` at turn start (MCP pull only — no prompt-hook).
+
+**Claude Code:** prompt-hook may auto-inject `<ax_policy>…</ax_policy>` before the model sees the prompt, in addition to MCP tools.
+
+Call `ax_guard` with the target file path before editing project files. See [Policy Engine](/guides/policy-engine/) for flow diagrams and delivery channels.
+
+**Not policy:** `ax_context` builds code-graph task context. Use `ax_preflight` for rules and skills.
 
 ## How agents should use it
 

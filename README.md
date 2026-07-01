@@ -3,7 +3,7 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.0.0](https://github.com/GaryWenneker/ax/releases/tag/v2.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.0.2](https://github.com/GaryWenneker/ax/releases/tag/v2.0.2)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** parses your codebase with [tree-sitter](https://tree-sitter.github.io/), stores symbols and relationships in a local SQLite graph (`.ax/`), and exposes them through a **CLI** and **MCP tools** so coding agents answer structural questions without scanning files.
 
@@ -203,7 +203,7 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 
 **Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read.
 
-**Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start and `ax_guard` before writes on guarded paths.
+**Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` — no need to read `.ax/policy/` files) and `ax_guard` before writes on guarded paths.
 
 ### Transport
 
@@ -255,6 +255,8 @@ ax serve --mcp --daemon # background daemon
 
 IDE-agnostic **rules** and **skills** for agents — not tied to Cursor or any single IDE format.
 
+Agents get policy through **MCP** (or the Claude prompt-hook), **not** by reading `.ax/policy/` files on disk. Files are the source of truth; SQLite is the delivery index.
+
 | Path | Purpose |
 |------|---------|
 | `.ax/policy/rules/*.mdc` | YAML frontmatter + markdown constraints |
@@ -265,6 +267,51 @@ ax policy index
 ax policy match "deploy to production"
 ax web --open    # edit rules/skills in browser
 ```
+
+### Architecture — source to agent context
+
+```mermaid
+flowchart LR
+  subgraph repo["Repo"]
+    R["rules/*.mdc"]
+    S["skills/*/SKILL.md"]
+  end
+  subgraph index["Index"]
+    I["ax policy index"]
+    DB[("ax.db")]
+  end
+  subgraph agent["Agent turn"]
+    PF["ax_preflight"]
+    INJ["inject block"]
+  end
+  R --> I
+  S --> I
+  I --> DB
+  DB --> PF
+  PF --> INJ
+```
+
+### Single turn flow
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant A as Agent
+  participant MCP as ax MCP
+  U->>A: prompt
+  A->>MCP: ax_preflight(prompt, files)
+  MCP-->>A: inject with full rule/skill bodies
+  A->>MCP: ax_guard(path) before writes
+  A->>U: response
+```
+
+| Delivery | Cursor | Claude Code |
+|----------|--------|-------------|
+| MCP `ax_preflight` (agent calls) | Yes | Yes |
+| Prompt-hook auto-inject | No | Yes |
+| `ax_skill` / `ax_guard` | Yes | Yes |
+
+**Policy vs code:** `ax_preflight` = rules/skills. `ax_explore` / `ax_context` = code graph — different tools.
 
 MCP: `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`. Full guide: [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md) and [getax policy docs](https://getax.wenneker.io/guides/policy-engine/).
 
@@ -309,7 +356,7 @@ cargo test -p ax-smoke-tests
 
 # Release packaging (maintainer — all six platforms required)
 bash scripts/verify-release-assets.sh dist/
-bash scripts/publish-getax-releases.sh v2.0.0
+bash scripts/publish-getax-releases.sh v2.0.2
 ```
 
 See [docs/PRODUCTION.md](docs/PRODUCTION.md) for GitHub Releases, Netlify docs site, and telemetry worker setup.
