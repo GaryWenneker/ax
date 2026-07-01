@@ -11,6 +11,41 @@ $repo = if ($env:AX_GITHUB_REPO) { $env:AX_GITHUB_REPO } else { 'GaryWenneker/ax
 $downloadBase = if ($env:AX_DOWNLOAD_BASE) { $env:AX_DOWNLOAD_BASE } else { 'https://getax.wenneker.io/releases' }
 $installDir = if ($env:AX_INSTALL_DIR) { $env:AX_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'ax' }
 
+function Stop-AxProcesses {
+  param([int[]]$ExcludePid = @())
+  $procs = @(Get-Process -Name 'ax' -ErrorAction SilentlyContinue | Where-Object { $ExcludePid -notcontains $_.Id })
+  if ($procs.Count -eq 0) { return }
+  Write-Host "Stopping $($procs.Count) running ax process(es)..."
+  foreach ($p in $procs) {
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+  }
+  for ($i = 0; $i -lt 10; $i++) {
+    Start-Sleep -Milliseconds 300
+    $left = @(Get-Process -Name 'ax' -ErrorAction SilentlyContinue | Where-Object { $ExcludePid -notcontains $_.Id })
+    if ($left.Count -eq 0) { return }
+    foreach ($p in $left) {
+      Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    }
+  }
+  $survivors = @(Get-Process -Name 'ax' -ErrorAction SilentlyContinue | Where-Object { $ExcludePid -notcontains $_.Id })
+  if ($survivors.Count -gt 0) {
+    throw "ax: could not stop running ax process(es). Close ax web, MCP, or IDE terminals using ax, then retry."
+  }
+}
+
+function Remove-AxInstallTree {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return }
+  Stop-AxProcesses
+  try {
+    Remove-Item -Recurse -Force $Path
+  } catch {
+    Start-Sleep -Seconds 1
+    Stop-AxProcesses
+    Remove-Item -Recurse -Force $Path
+  }
+}
+
 $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $target = "win32-$arch"
 
@@ -55,7 +90,7 @@ if (-not $downloaded) {
 }
 
 $dest = Join-Path $installDir 'current'
-if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+Remove-AxInstallTree -Path $dest
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Expand-Archive -Path $zip -DestinationPath $dest -Force
 $inner = Join-Path $dest "ax-$target"
@@ -91,6 +126,7 @@ $cargoAx = Join-Path $env:USERPROFILE '.cargo\bin\ax.exe'
 if ((Test-Path $cargoAx) -and ($env:AX_KEEP_CARGO_BIN -ne '1')) {
   try {
     $oldVer = & $cargoAx version 2>&1 | Out-String
+    Stop-AxProcesses
     Copy-Item -Force $exe $cargoAx
     Write-Host "Updated $cargoAx (was: $($oldVer.Trim()))" -ForegroundColor DarkGray
   } catch {

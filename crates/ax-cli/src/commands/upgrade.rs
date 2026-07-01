@@ -301,6 +301,10 @@ fn schedule_windows_bundle_upgrade(bytes: &[u8], bundle: &str) -> Result<(), Str
            Start-Sleep -Milliseconds 200\n\
          }}\n\
          Start-Sleep -Seconds 1\n\
+         Get-Process -Name 'ax' -ErrorAction SilentlyContinue | ForEach-Object {{\n\
+           Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue\n\
+         }}\n\
+         Start-Sleep -Seconds 1\n\
          $dest = '{}'\n\
          $staging = '{}'\n\
          $binDir = '{}'\n\

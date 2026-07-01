@@ -72,6 +72,12 @@ else
   exit 1
 fi
 
+# Stop running ax (web, mcp, daemon) so binaries can be replaced.
+if command -v pkill >/dev/null 2>&1; then
+  pkill -x ax 2>/dev/null || true
+  sleep 0.5
+fi
+
 dest="$INSTALL_DIR/versions/$version"
 rm -rf "$dest"
 mkdir -p "$dest"
