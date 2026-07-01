@@ -130,7 +130,7 @@ enum Commands {
     /// Print version
     #[command(long_about = help_text::VERSION_LONG)]
     Version,
-    /// Self-update from GitHub releases or cargo install
+    /// Self-update from getax CDN (GitHub fallback)
     #[command(long_about = help_text::UPGRADE_LONG)]
     Upgrade {
         #[arg(help = "Optional release tag (e.g. v0.1.0)")]

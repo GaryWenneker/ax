@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::ui::{ok_line, warn_line};
+use crate::ui::{ok_line, print_update_notice as show_update_notice, warn_line};
 
 const CDN_LATEST_URL: &str = "https://getax.wenneker.io/releases/latest.txt";
 const DEFAULT_REPO: &str = "GaryWenneker/ax";
@@ -292,18 +292,10 @@ async fn latest_with_cache(repo: &str) -> Option<String> {
 }
 
 pub fn print_update_notice(current: &str, latest: &str) {
-    let current = normalize_version(current);
-    let latest = normalize_version(latest);
-    eprintln!();
-    eprintln!(
-        "{}",
-        warn_line(format!(
-            "Update available: {} → {}. Run `ax upgrade` to install.",
-            strip_v(&current),
-            strip_v(&latest)
-        ))
+    show_update_notice(
+        &strip_v(&normalize_version(current)),
+        &strip_v(&normalize_version(latest)),
     );
-    eprintln!();
 }
 
 /// Non-blocking-ish notice after CLI commands (respects cache + env gates).
@@ -365,15 +357,7 @@ pub async fn run_check(force_refresh: bool) -> Result<(), String> {
     };
 
     if is_update_available(current, &latest) {
-        eprintln!(
-            "{}",
-            warn_line(format!(
-                "An update is available: {} → {}",
-                strip_v(current),
-                strip_v(&latest)
-            ))
-        );
-        eprintln!("  Run `ax upgrade` to install.");
+        print_update_notice(current, &latest);
     } else {
         eprintln!(
             "{}",

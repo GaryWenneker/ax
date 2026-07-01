@@ -218,18 +218,20 @@ pub const VERSION_LONG: &str = "Print the installed ax version.
 
 Also available as `ax -V` / `ax --version`.";
 
-pub const UPGRADE_LONG: &str = "Self-update from GitHub Releases (platform zip/tar.gz) or cargo install fallback.
+pub const UPGRADE_LONG: &str = "Self-update from getax.wenneker.io (non-interactive — no confirmation prompt).
 
-Uses AX_GITHUB_REPO (default GaryWenneker/ax). Matches bundle name to OS/arch.
+Downloads the platform zip/tar.gz for your OS/arch, replaces the running binary, and on Windows
+schedules a background replace when the exe is still in use.
 
 Examples:
-  ax upgrade               Latest release
-  ax upgrade v0.2.0          Specific tag
-  ax upgrade --check       Check for updates without installing
+  ax upgrade               Install latest release
+  ax upgrade v2.0.0        Install a specific tag
+  ax upgrade --check       Check only
 
-Background checks: after most commands, ax may print an update notice (cached ~24h).
-Private GitHub repos need GITHUB_TOKEN, GH_TOKEN, or `gh auth login`.
-Disable with AX_NO_UPDATE_CHECK=1.";
+If you are on ax 0.1.x (cargo install), `ax upgrade` may hang on [Y/n] — use install.ps1 / install.sh instead:
+  irm https://getax.wenneker.io/install.ps1 | iex
+
+Background notices after other commands are cached ~24h. Disable with AX_NO_UPDATE_CHECK=1.";
 
 pub const TELEMETRY_LONG: &str = "Anonymous usage telemetry (opt-in/out).
 

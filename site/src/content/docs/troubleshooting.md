@@ -27,6 +27,24 @@ Your agent starts the server itself. Verify the project is indexed (`ax status`)
 
 The MCP server auto-syncs on save (wait a couple of seconds). Run `ax sync` manually if needed. Check that the file's language is [supported](/reference/languages/) and isn't excluded via `.gitignore`, built-in skip dirs (`node_modules`, `target`, …), or `ax.json` `exclude`.
 
+## `ax upgrade` hangs on "Do you want to continue? [Y/n]"
+
+You are on **ax 0.1.x** installed via `cargo install`. That version uses the `self_update` crate, which waits for keyboard input and looks stuck on `Checking for updates…`.
+
+**Fix:** install the current release non-interactively (no prompt):
+
+```powershell
+# Windows
+irm https://getax.wenneker.io/install.ps1 | iex
+```
+
+```bash
+# macOS / Linux / WSL2
+curl -fsSL https://getax.wenneker.io/install.sh | sh
+```
+
+Open a **new terminal** so PATH picks up `%LOCALAPPDATA%\ax\current\bin` (Windows) or `~/.local/bin` (Unix). Then `ax version` should show **2.0.0+** and `ax upgrade` runs without prompts.
+
 ## Wrong or old version
 
 ```bash
