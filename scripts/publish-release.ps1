@@ -1,15 +1,16 @@
 # Tag and push a release (triggers .github/workflows/release.yml)
+# Deprecated wrapper — use .\scripts\release-tag.ps1 instead.
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Version
+    [string]$Version,
+    [switch]$Force,
+    [switch]$Wait
 )
 
 $ErrorActionPreference = 'Stop'
-if ($Version -notmatch '^v') {
-    $Version = "v$Version"
-}
-
-Write-Host "Creating tag $Version..."
-git tag -a $Version -m "Release $Version"
-git push origin $Version
-Write-Host "Pushed $Version — watch GitHub Actions 'Release' workflow."
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$args = @('-Tag', $Version)
+if ($Force) { $args += '-Force' }
+if ($Wait) { $args += '-Wait' }
+& (Join-Path $scriptDir 'release-tag.ps1') @args
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

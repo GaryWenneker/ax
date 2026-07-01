@@ -17,7 +17,7 @@ function Ensure-Git {
     git add -A
     $status = git status --porcelain
     if ($status) {
-        git commit -m "ax v2.0.0 - code intelligence CLI, MCP, and policy engine"
+        git commit -m "ax v2.0.6 - database-first policy engine, release pipeline"
         Write-Host "Committed working tree."
     } else {
         Write-Host "Nothing to commit."
@@ -44,15 +44,9 @@ Ensure-Git
 Ensure-GithubRepo
 
 if (-not $SkipTag) {
-    if (-not $Tag) { $Tag = "v2.0.0" }
-    if ($Tag -notmatch '^v') { $Tag = "v$Tag" }
-    $exists = git tag -l $Tag
-    if (-not $exists) {
-        git tag -a $Tag -m "Release $Tag"
-    }
-    git push origin $Tag
-    Write-Host "Pushed tag $Tag - GitHub Actions Release workflow should build binaries."
-    Write-Host "https://github.com/$Repo/actions"
+    $releaseScript = Join-Path $PSScriptRoot 'release-tag.ps1'
+    if (-not $Tag) { $Tag = 'v' + (Select-String -Path (Join-Path $root 'crates\ax-cli\Cargo.toml') -Pattern '^version = "(.+)"' | ForEach-Object { $_.Matches[0].Groups[1].Value }) }
+    & $releaseScript -Tag $Tag -Force
 }
 
 Write-Host ""
