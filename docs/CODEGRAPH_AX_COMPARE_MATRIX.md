@@ -1,7 +1,7 @@
 # CodeGraph vs ax — Compare Matrix & Critical Gap Plans
 
 **Generated:** 2026-06-29  
-**Sources:** `C:\gary\codegraph` (TypeScript v1.1.3) vs `C:\gary\ax` (Rust v0.1.0)  
+**Sources:** `C:\gary\codegraph` (TypeScript v1.1.3) vs `C:\gary\ax` (Rust **v2.0.0** — policy engine + six-platform release)  
 **Verification:** codebase inventory, line counts, smoke test (`init` / `index` / `status` / `query` on `test-smoke/hello.ts`)
 
 ---

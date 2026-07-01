@@ -6,6 +6,7 @@ import '@fontsource/ibm-plex-mono/600.css';
 import '../styles/theme.css';
 import LogoMark from '../components/LogoMark.astro';
 import { getStarsLabel } from '../lib/github';
+import { AX_VERSION } from '../lib/version';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const repo = 'https://github.com/GaryWenneker/ax';
@@ -48,10 +49,12 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 			<main>
 				<section class="hero">
 					<div class="hero-left">
+						<p class="release-tag">{AX_VERSION}</p>
 						<h1>Understand any codebase as a graph</h1>
 						<p class="lede">
 							A local-first code-intelligence tool that turns any codebase into a
-							queryable knowledge graph for AI coding agents.
+							queryable knowledge graph for AI coding agents — plus IDE-agnostic
+							rules and skills in <code>.ax/policy/</code> (v2.0.0).
 						</p>
 						<div class="cta">
 							<a class="btn btn-primary" href={`${base}/getting-started/quickstart`}>Get started</a>
@@ -100,16 +103,13 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 					</article>
 					<article class="feature">
 						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-							<circle cx="16" cy="24" r="10" />
-							<circle cx="16" cy="24" r="3.5" fill="currentColor" stroke="none" />
-							<path d="M16 8v6M16 34v6M2 24h4M26 24h6M32 24l8-6M32 24l8 6" />
-							<circle cx="41" cy="17" r="2.5" />
-							<circle cx="41" cy="31" r="2.5" />
+							<rect x="6" y="8" width="36" height="32" />
+							<path d="M14 18h20M14 26h14M14 34h18" />
 						</svg>
-						<h2>Impact analysis</h2>
+						<h2>Policy engine</h2>
 						<p>
-							Trace callers, callees, and the full impact radius of any symbol
-							before you change a line.
+							Rules and skills in <code>.ax/policy/</code> — matched per turn,
+							editable in ax web, delivered over MCP to any IDE.
 						</p>
 					</article>
 				</section>
@@ -228,6 +228,18 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 				letter-spacing: -0.04em;
 				margin: 0 0 1.6rem;
 				overflow-wrap: break-word;
+			}
+			.release-tag {
+				display: inline-block;
+				font-family: var(--sl-font-mono);
+				font-size: 0.85rem;
+				font-weight: 600;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				color: var(--cg-ink-2);
+				border: 1px solid var(--cg-rule);
+				padding: 0.35rem 0.65rem;
+				margin: 0 0 1.2rem;
 			}
 			.lede {
 				font-size: 1.18rem;

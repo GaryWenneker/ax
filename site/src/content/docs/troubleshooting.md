@@ -27,6 +27,15 @@ Your agent starts the server itself. Verify the project is indexed (`ax status`)
 
 The MCP server auto-syncs on save (wait a couple of seconds). Run `ax sync` manually if needed. Check that the file's language is [supported](/reference/languages/) and isn't excluded via `.gitignore`, built-in skip dirs (`node_modules`, `target`, …), or `ax.json` `exclude`.
 
+## Wrong or old version
+
+```bash
+ax version
+ax upgrade          # installs latest from getax / GitHub (v2.0.0+)
+```
+
+If `ax upgrade` reports up to date but you expect a newer release, check [latest.txt](https://getax.wenneker.io/releases/latest.txt) and reinstall with `AX_VERSION=v2.0.0`.
+
 ## Reinstall the CLI
 
 ```bash

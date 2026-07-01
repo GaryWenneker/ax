@@ -1,6 +1,13 @@
 # ax — local-first code intelligence for AI agents
 
+[![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
+[![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
+
+**Current release: [v2.0.0](https://github.com/GaryWenneker/ax/releases/tag/v2.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+
 **ax** parses your codebase with [tree-sitter](https://tree-sitter.github.io/), stores symbols and relationships in a local SQLite graph (`.ax/`), and exposes them through a **CLI** and **MCP tools** so coding agents answer structural questions without scanning files.
+
+**v2.0.0** adds an **IDE-agnostic policy engine** — project rules and skills in `.ax/policy/`, delivered via MCP, CLI, prompt-hook, and **ax web**. See [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md).
 
 - **100% local** — no source code leaves your machine
 - **Deterministic** — graph data comes from AST extraction, not LLM summaries
@@ -46,8 +53,9 @@ Each indexed project gets a `.ax/` directory:
 
 | File | Purpose |
 |------|---------|
-| `ax.db` | SQLite database (WAL mode) — nodes, edges, files, FTS5 search |
+| `ax.db` | SQLite database (WAL mode) — nodes, edges, files, FTS5, policy index |
 | `ax.json` | Project config (extensions, ignore rules) |
+| `policy/` | Rules (`.mdc`) and skills (`SKILL.md`) — IDE-agnostic agent instructions |
 | `ax.lock` | Cross-process lock during indexing |
 | `daemon.json` | MCP daemon metadata (when running) |
 
@@ -68,7 +76,7 @@ source files
 Extraction (tree-sitter, parallel via rayon)
     │  AST → nodes + edges + unresolved refs
     ▼
-Storage (SQLite .ax/ax.db, schema v6, FTS5)
+Storage (SQLite .ax/ax.db, schema v7, FTS5 + policy)
     │
     ▼
 Resolution (imports, name-matching, framework synthesizers)
@@ -138,6 +146,11 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax upgrade [tag]` | Self-update from GitHub releases |
 | `ax telemetry [on\|off\|status]` | Anonymous usage telemetry |
 | `ax offload …` | Optional BYO LLM for explore synthesis |
+| `ax policy index` | Index `.ax/policy/` rules and skills |
+| `ax policy match <text>` | Test which rules/skills match a prompt |
+| `ax policy rules` / `skills` | List indexed policy |
+| `ax policy guard` | Pre-write CRITICAL checks (encoding, secrets paths) |
+| `ax web [--open]` | Local web UI — graph browser + policy editor |
 
 Run `ax help <command>` for detailed help with examples.
 
@@ -183,8 +196,14 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 | `ax_callees` | Outgoing call edges |
 | `ax_impact` | Blast-radius subgraph |
 | `ax_affected` | Reverse impact → affected tests |
+| `ax_preflight` | Turn-start policy: matched rules + skills (when `.ax/policy/` exists) |
+| `ax_rules` | List or match policy rules |
+| `ax_skill` | Load a skill by name |
+| `ax_guard` | Pre-write guard for CRITICAL rules |
 
 **Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read.
+
+**Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start and `ax_guard` before writes on guarded paths.
 
 ### Transport
 
@@ -211,8 +230,10 @@ Per-project indexes: pass `projectPath` when the workspace root differs from cwd
 | `ax-mcp` | MCP server, daemon, query pool, tool handlers |
 | `ax-telemetry` | Opt-in anonymous usage events |
 | `ax-reasoning` | Optional BYO LLM offload for explore |
+| `ax-policy` | Rules/skills parse, index, match, guard |
+| `ax-web` | Embedded web UI (graph + policy management) |
 | `ax-types` | Shared types (`Node`, `Edge`, `ExploreResult`, …) |
-| `ax-utils` | Errors, paths, config helpers |
+| `ax-utils` | Errors, paths, config helpers, encoding checks |
 
 Build:
 
@@ -227,6 +248,25 @@ Run MCP (hidden command):
 ax serve --mcp          # stdio transport
 ax serve --mcp --daemon # background daemon
 ```
+
+---
+
+## Policy engine (v2.0.0)
+
+IDE-agnostic **rules** and **skills** for agents — not tied to Cursor or any single IDE format.
+
+| Path | Purpose |
+|------|---------|
+| `.ax/policy/rules/*.mdc` | YAML frontmatter + markdown constraints |
+| `.ax/policy/skills/*/SKILL.md` | Triggered workflows (deploy, review, …) |
+
+```bash
+ax policy index
+ax policy match "deploy to production"
+ax web --open    # edit rules/skills in browser
+```
+
+MCP: `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`. Full guide: [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md) and [getax policy docs](https://getax.wenneker.io/guides/policy-engine/).
 
 ---
 

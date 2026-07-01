@@ -3,16 +3,18 @@ title: How It Works
 description: The extraction, storage, resolution, and auto-sync pipeline.
 ---
 
-ax turns source code into a queryable graph in four stages.
+ax turns source code into a queryable graph in four stages. **ax v2.0.0** adds a fifth layer — **policy** — that indexes rules and skills alongside the code graph.
 
 ```
-files → Extraction (tree-sitter) → DB (nodes/edges/files)
+files → Extraction (tree-sitter) → DB (nodes/edges/files, schema v7)
             ↓
       Resolution (imports, name-matching, framework patterns)
             ↓
       Graph queries (callers, callees, impact)
             ↓
       Context building (markdown / JSON for AI consumption)
+            ↓
+      Policy match (.ax/policy/ → MCP preflight, guard, prompt-hook)
 ```
 
 ## 1. Extraction

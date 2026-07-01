@@ -143,6 +143,19 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
 
 All keys can also be set via environment variables (`AX_OFFLOAD_URL`, `AX_OFFLOAD_MODEL`, `AX_OFFLOAD_KEY`, `AX_OFFLOAD_EFFORT`, `AX_OFFLOAD_STYLE`). Env vars take precedence over the file.
 
+## Policy rules and skills
+
+**ax v2.0.0+** stores agent instructions under `.ax/policy/`:
+
+| Path | Format |
+|---|---|
+| `.ax/policy/rules/*.mdc` | YAML frontmatter + markdown rule body |
+| `.ax/policy/skills/*/SKILL.md` | YAML frontmatter + skill workflow |
+
+Run `ax policy index` after editing policy files (or let `ax init` / `ax sync` re-index automatically). Manage rules and skills in the browser with `ax web --open`.
+
+See the full [Policy Engine](/guides/policy-engine/) guide.
+
 ## Where data lives
 
-Per-project data lives in `.ax/` at your project root (SQLite database `ax.db`). Global config lives in `~/.ax/config.json`. Nothing leaves your machine.
+Per-project data lives in `.ax/` at your project root (SQLite database `ax.db`, schema v7). Global config lives in `~/.ax/config.json`. Nothing leaves your machine.

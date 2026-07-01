@@ -1,7 +1,18 @@
 ---
 title: Installation
-description: Install ax and configure your AI coding agents.
+description: Install ax v2.0.0 and configure your AI coding agents.
 ---
+
+## Current version
+
+**Latest release: v2.0.0** — install scripts and `ax upgrade` resolve the tag from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Check your install:
+
+```bash
+ax version
+# ax 2.0.0
+```
+
+Pin a specific release with `AX_VERSION=v2.0.0` when running `install.sh` / `install.ps1`.
 
 ## 1. Install the CLI
 
@@ -74,7 +85,7 @@ cd your-project
 ax init
 ```
 
-`ax init` creates `.ax/` (SQLite index + lock file) and runs a full index in one step.
+Creates `.ax/` (SQLite index + lock file) and runs a full index in one step. **v2.0.0+** also scaffolds `.ax/policy/rules/` and `.ax/policy/skills/` for the [policy engine](/guides/policy-engine/).
 
 ## Supported platforms
 

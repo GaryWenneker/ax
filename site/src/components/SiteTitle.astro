@@ -1,6 +1,7 @@
 ---
-// Starlight header: AX dot logo + wordmark.
+// Starlight header: AX dot logo + wordmark + current release tag.
 import LogoMark from './LogoMark.astro';
+import { AX_VERSION } from '../lib/version';
 
 const { siteTitle } = Astro.locals.starlightRoute;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -9,6 +10,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 <a href={`${base}/`} class="cg-site-title" translate="no">
 	<LogoMark size="sm" class="cg-site-title__logo" />
 	<span class="cg-site-title__text">{siteTitle}</span>
+	<span class="cg-site-title__version">{AX_VERSION}</span>
 </a>
 
 <style>
@@ -33,5 +35,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 	}
 	.cg-site-title:hover .cg-site-title__logo {
 		opacity: 0.92;
+	}
+	.cg-site-title__version {
+		font-size: 0.72rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		color: var(--cg-ink-2);
+		border: 1px solid var(--cg-rule);
+		padding: 0.15rem 0.45rem;
+		line-height: 1.2;
 	}
 </style>

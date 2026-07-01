@@ -1,6 +1,8 @@
 # @garywenneker/ax
 
-Native code-intelligence CLI for AI agents — MCP server, call graphs, and structural search.
+Native code-intelligence CLI for AI agents — MCP server, call graphs, structural search, and **policy engine** (rules/skills).
+
+**Current ax release:** [v2.0.0](https://github.com/GaryWenneker/ax/releases/tag/v2.0.0) — the npm launcher downloads the matching native binary automatically.
 
 This npm package is a **thin launcher**: it downloads the matching prebuilt `ax` binary from [getax.wenneker.io/releases](https://getax.wenneker.io/releases/) (GitHub Releases as fallback) and runs it. No bundled Node runtime; no JavaScript API.
 
@@ -21,10 +23,13 @@ npx @garywenneker/ax install
 ## What you get
 
 ```bash
-ax init          # index a project
+ax init          # index a project (+ .ax/policy/ scaffold on v2.0.0+)
 ax install       # wire MCP into Cursor, Claude Code, etc.
 ax explore "…"   # source + call paths for agents
+ax policy match "deploy"  # test policy rules/skills (v2.0.0+)
+ax web --open    # graph + policy editor in browser
 ax serve --mcp   # MCP stdio server (started by your agent)
+ax version       # print installed version (e.g. 2.0.0)
 ```
 
 Full docs: [getax.wenneker.io](https://getax.wenneker.io)

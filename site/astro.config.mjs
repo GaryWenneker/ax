@@ -10,7 +10,7 @@ export default defineConfig({
 		starlight({
 			title: 'ax',
 			description:
-				'A local-first code-intelligence tool that turns any codebase into a queryable knowledge graph for AI coding agents.',
+				'Local-first code intelligence for AI agents (v2.0.0) — knowledge graph + IDE-agnostic policy engine.',
 			favicon: '/logo.png',
 			head: [
 				{
@@ -72,6 +72,7 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Indexing a Project', slug: 'guides/indexing' },
+						{ label: 'Policy Engine', slug: 'guides/policy-engine' },
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },
 						{ label: 'Affected Tests in CI', slug: 'guides/affected-tests' },
 					],

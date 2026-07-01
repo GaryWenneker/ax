@@ -1,49 +1,34 @@
-# Starlight Starter Kit: Basics
+# ax docs site (getax.wenneker.io)
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+Starlight + Astro site for [ax](https://github.com/GaryWenneker/ax) documentation. The **current ax version** shown in the header and landing page is read from `public/releases/latest.txt` (e.g. `v2.0.0`).
 
-```
-npm create astro@latest -- --template starlight
-```
+## Commands
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
-
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
-
-```
-.
-├── public/
-├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+```bash
+cd site
+npm ci
+npm run dev      # http://localhost:4321
+npm run build    # output in site/dist
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+## Deploy
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+Production: https://getax.wenneker.io (Netlify).
 
-Static assets, like favicons, can be placed in the `public/` directory.
+```bash
+netlify deploy --prod --dir=dist
+```
 
-## 🧞 Commands
+Or run from repo root after a release:
 
-All commands are run from the root of the project, from a terminal:
+```powershell
+.\scripts\publish-getax-releases.ps1 -Tag v2.0.0
+```
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
+Requires Netlify CLI linked to the getax site (`netlify link` in `site/`).
 
-## 👀 Want to learn more?
+## Content
 
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+Markdown lives in `src/content/docs/`. Sidebar order is configured in `astro.config.mjs`.
+
+When cutting a new ax release, update `public/releases/latest.txt` only after all six platform binaries are on the CDN — see [docs/PRODUCTION.md](../docs/PRODUCTION.md).

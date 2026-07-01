@@ -10,7 +10,7 @@ The npm package is a **launcher only** — it downloads the native `ax` binary f
    - `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz` (WSL2)
    - `ax-darwin-x64.tar.gz`, `ax-darwin-arm64.tar.gz`
 3. Run `bash scripts/verify-release-assets.sh dist/` before upload or getax deploy.
-4. Bump `crates/ax-cli/Cargo.toml` version (npm version follows this).
+4. Bump `crates/ax-cli/Cargo.toml` version (npm version follows this — **2.0.0** as of the policy-engine release).
 
 ## Pack
 

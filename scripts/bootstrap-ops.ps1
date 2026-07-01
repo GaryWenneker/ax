@@ -17,7 +17,7 @@ function Ensure-Git {
     git add -A
     $status = git status --porcelain
     if ($status) {
-        git commit -m "ax v0.1.0 - Rust code intelligence CLI and MCP"
+        git commit -m "ax v2.0.0 - code intelligence CLI, MCP, and policy engine"
         Write-Host "Committed working tree."
     } else {
         Write-Host "Nothing to commit."
@@ -44,7 +44,7 @@ Ensure-Git
 Ensure-GithubRepo
 
 if (-not $SkipTag) {
-    if (-not $Tag) { $Tag = "v0.1.0" }
+    if (-not $Tag) { $Tag = "v2.0.0" }
     if ($Tag -notmatch '^v') { $Tag = "v$Tag" }
     $exists = git tag -l $Tag
     if (-not $exists) {

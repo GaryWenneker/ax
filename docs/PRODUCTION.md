@@ -9,7 +9,7 @@ cd C:\gary\ax
 .\scripts\bootstrap-ops.ps1
 ```
 
-Creates git repo (if needed), pushes to `GaryWenneker/ax`, tags `v0.1.0`, and triggers the Release workflow.
+Creates git repo (if needed), pushes to `GaryWenneker/ax`, tags `v2.0.0`, and triggers the Release workflow.
 
 ## Prerequisites
 
@@ -51,8 +51,8 @@ Partial uploads (e.g. Windows-only) break Mac/Linux/WSL installs — **never** b
 2. Create and push a tag:
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 3. GitHub Actions workflow `.github/workflows/release.yml` builds all six platform bundles, verifies them, creates the GitHub release, and (when Netlify secrets are set) mirrors to getax:
@@ -65,7 +65,7 @@ git push origin v0.1.0
 
 ### Manual trigger
 
-GitHub → Actions → **Release** → Run workflow → set tag `v0.1.0`.
+GitHub → Actions → **Release** → Run workflow → set tag `v2.0.0`.
 
 ### User install (after release exists)
 
@@ -99,7 +99,7 @@ Build and package **all six** targets before manual publish, or use Release CI a
 
 ```bash
 bash scripts/verify-release-assets.sh dist/
-bash scripts/publish-getax-releases.sh v0.1.3   # after dist/ is complete
+bash scripts/publish-getax-releases.sh v2.0.0   # after dist/ is complete
 ```
 
 ---
@@ -215,7 +215,7 @@ Deploy `site/dist` to Netlify, Cloudflare Pages, or GitHub Pages.
 | Step | Command / action |
 |------|------------------|
 | Tests green | `cargo test --workspace` |
-| Tag release | `git tag v0.1.0 && git push origin v0.1.0` |
+| Tag release | `git tag v2.0.0 && git push origin v2.0.0` |
 | Verify all 6 assets | `bash scripts/verify-release-assets.sh dist/` |
 | Verify GH + getax URLs | Each `https://getax.wenneker.io/releases/<tag>/ax-*` returns 200 |
 | Docs updated | installation.md, PRODUCTION.md, README, npm docs |

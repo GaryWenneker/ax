@@ -17,6 +17,10 @@ You've got ax installed and a graph built. Here's where to go next.
 - [Framework Routes](/ax/guides/framework-routes/) — link URL patterns to their handlers.
 - [Affected Tests in CI](/ax/guides/affected-tests/) — run only the tests a change touches.
 
+## Agent instructions (v2.0.0+)
+
+- [Policy Engine](/guides/policy-engine/) — IDE-agnostic rules and skills in `.ax/policy/`, MCP preflight, and ax web editor.
+
 ## Reference
 
 - [MCP Server](/ax/reference/mcp-server/) — the tools agents call.

@@ -9,7 +9,9 @@ ax runs as a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 ax serve --mcp
 ```
 
-When a `.ax/` index exists, the agent gets the tool below. In a workspace with **no** index, the server announces itself inactive and lists **no** tools — the agent works normally with its built-in tools, and indexing stays your decision.
+When a `.ax/` index exists, the agent gets the tools below. In a workspace with **no** index, the server announces itself inactive and lists **no** graph tools — the agent works normally with its built-in tools, and indexing stays your decision.
+
+When `.ax/policy/` is indexed (**ax v2.0.0+**), policy tools are listed automatically. See [Policy Engine](/guides/policy-engine/).
 
 ## One tool by default: `ax_explore`
 
@@ -38,6 +40,19 @@ ax_MCP_TOOLS=explore,node,search,callers
 ```
 
 Each also has a CLI equivalent (`ax node` / `query` / `callers` / `callees` / `impact` / `files` / `status`) for scripts and non-MCP harnesses.
+
+## Policy tools (v2.0.0+)
+
+When `.ax/policy/` contains indexed rules or skills, the server also exposes:
+
+| Tool | Purpose |
+|---|---|
+| `ax_preflight` | Turn-start: inject matched rules + skill names for the user intent |
+| `ax_rules` | List all rules or match against a prompt |
+| `ax_skill` | Load the full markdown body of a skill by name |
+| `ax_guard` | Block or warn before writes that violate CRITICAL rules (UTF-8 BOM, secrets paths) |
+
+Call `ax_preflight` at the start of each agent turn when policy is enabled. Call `ax_guard` with the target file path before editing project files.
 
 ## How agents should use it
 

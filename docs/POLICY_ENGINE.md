@@ -1,6 +1,6 @@
 # ax Policy Engine
 
-IDE-agnostic rules and skills for AI agents — stored in `.ax/policy/`, indexed locally, delivered via MCP, CLI, prompt-hook, and **ax web**.
+**Shipped in ax v2.0.0.** IDE-agnostic rules and skills for AI agents — stored in `.ax/policy/`, indexed locally, delivered via MCP, CLI, prompt-hook, and **ax web**.
 
 ## Quick start
 

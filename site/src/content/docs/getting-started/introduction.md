@@ -3,7 +3,9 @@ title: Introduction
 description: What ax is, and why it makes AI coding agents faster and more precise.
 ---
 
-ax is a **local-first code-intelligence tool** written in Rust. It parses your codebase with native [tree-sitter](https://tree-sitter.github.io/) grammars, stores symbols and relationships in a local SQLite database, and exposes a queryable **knowledge graph** through the [CLI](/reference/cli/), the [MCP server](/reference/mcp-server/), and the [`ax-core`](/reference/api/) Rust crate.
+**ax v2.0.0** is a **local-first code-intelligence tool** written in Rust. It parses your codebase with native [tree-sitter](https://tree-sitter.github.io/) grammars, stores symbols and relationships in a local SQLite database, and exposes a queryable **knowledge graph** through the [CLI](/reference/cli/), the [MCP server](/reference/mcp-server/), and the [`ax-core`](/reference/api/) Rust crate.
+
+Starting in **v2.0.0**, ax also ships a **policy engine** — IDE-agnostic rules and skills in `.ax/policy/` that any agent can load via MCP. See [Policy Engine](/guides/policy-engine/).
 
 It helps AI coding agents — Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro — **answer structural questions without scanning files**. Instead of fanning out across `grep`, `glob`, and `Read`, an agent queries a pre-built index and gets call paths, source, and impact in a handful of calls.
 

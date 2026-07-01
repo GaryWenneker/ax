@@ -25,6 +25,13 @@ ax daemon                  # Manage background daemons — pick one to stop (ali
 ax telemetry [on|off]      # Show or change anonymous usage telemetry
 ax upgrade [version]       # Update to the latest release (--check, --force)
 ax version                 # Print the installed version (also -v, --version)
+ax web [--port N] [--open] # Local web UI — graph + policy editor (v2.0.0+)
+ax policy index            # Index .ax/policy/ rules and skills
+ax policy match <text>     # Test policy match for a prompt (--file, --json)
+ax policy rules            # List rules (--json)
+ax policy skills           # List skills (--json)
+ax policy skill <name>     # Print one skill body
+ax policy guard            # Run CRITICAL guard checks (--file path)
 ax help [command]          # Show help, optionally for one command
 ```
 
