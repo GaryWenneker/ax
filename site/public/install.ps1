@@ -112,10 +112,12 @@ New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $zip = Join-Path $tmp 'ax.zip'
 
 $downloaded = $false
+$downloadFrom = $null
 foreach ($url in @($githubUrl, $getaxUrl)) {
   try {
     Invoke-WebRequest -Uri $url -OutFile $zip -TimeoutSec 120
     $downloaded = $true
+    $downloadFrom = $url
     break
   } catch {
     Write-Host "  download failed: $url" -ForegroundColor DarkGray
@@ -124,6 +126,7 @@ foreach ($url in @($githubUrl, $getaxUrl)) {
 if (-not $downloaded) {
   throw "ax: download failed. Try: cargo install --git https://github.com/$repo ax-cli"
 }
+Write-Host "  downloaded from: $downloadFrom" -ForegroundColor DarkGray
 
 $dest = Join-Path $installDir 'current'
 Remove-AxInstallTree -Path $dest
@@ -172,6 +175,10 @@ if ((Test-Path $cargoAx) -and ($env:AX_KEEP_CARGO_BIN -ne '1')) {
 }
 
 $installedVer = (& (Join-Path $binDir 'ax.exe') version 2>&1 | Out-String).Trim()
+$expectedVer = $version.TrimStart('v')
+if ($installedVer -notmatch [regex]::Escape($expectedVer)) {
+  Write-Warning "Tag $version was installed but binary reports: $installedVer (release may have been built from wrong Cargo.toml — try again after CI republish)"
+}
 Write-Host "Installed to $dest"
 Write-Host "Active: $installedVer ($binDir\ax.exe)" -ForegroundColor Green
 
