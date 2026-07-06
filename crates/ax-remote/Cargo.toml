@@ -1,0 +1,19 @@
+[package]
+name = "ax-remote"
+version = "2.0.14"
+edition = "2021"
+
+[dependencies]
+ax-types = { workspace = true }
+ax-utils = { workspace = true }
+ax-git = { workspace = true }
+async-trait = { workspace = true }
+octocrab = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+base64 = "0.22"
+ax-quality = { workspace = true }

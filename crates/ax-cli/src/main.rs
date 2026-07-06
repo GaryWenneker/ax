@@ -1,5 +1,7 @@
 //! ax CLI entry point.
 
+const _AX_SHIP_MARKER: &str = "ax-ship-marker-v1";
+
 mod commands;
 mod help_text;
 mod installer;
@@ -114,9 +116,53 @@ enum Commands {
     /// Impact radius
     #[command(long_about = help_text::IMPACT_LONG)]
     Impact { symbol: String },
+    /// Git diff symbol-level blast radius vs base branch
+    Diff {
+        #[arg(long, default_value = "main")]
+        base: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Test impact analysis (git diff + TIA)
+    TestImpact {
+        #[arg(long, default_value = "main")]
+        base: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Git Command Center — watch, evaluate, draft PR
+    Ship {
+        path: Option<String>,
+        #[arg(long, help = "Watch git events and open dashboard")]
+        watch: bool,
+        #[arg(long, help = "Run one quality gate evaluation")]
+        evaluate: bool,
+        #[arg(long, help = "Create draft PR after quality gate")]
+        draft: bool,
+        #[arg(long, help = "PR title")]
+        title: Option<String>,
+        #[arg(long, default_value = "7070")]
+        port: u16,
+        #[arg(long, help = "Open browser")]
+        open: bool,
+    },
     /// Affected tests
     #[command(long_about = help_text::AFFECTED_LONG)]
-    Affected { files: Vec<String> },
+    Affected {
+        files: Vec<String>,
+        #[arg(long, help = "Read changed file paths from stdin")]
+        stdin: bool,
+        #[arg(long, default_value = "main", help = "Base branch for git diff when no files given")]
+        base: String,
+        #[arg(short, long, default_value = "5", help = "Max dependency traversal depth")]
+        depth: u32,
+        #[arg(short, long, help = "Glob filter for test files")]
+        filter: Option<String>,
+        #[arg(short, long, help = "Output as JSON")]
+        json: bool,
+        #[arg(short, long, help = "Output file paths only")]
+        quiet: bool,
+    },
     /// Remove stale ax.lock
     #[command(long_about = help_text::UNLOCK_LONG)]
     Unlock { path: Option<String> },
@@ -329,7 +375,37 @@ async fn main() {
         Some(Commands::Callers { symbol }) => commands::callers::run(symbol).await,
         Some(Commands::Callees { symbol }) => commands::callees::run(symbol).await,
         Some(Commands::Impact { symbol }) => commands::impact::run(symbol).await,
-        Some(Commands::Affected { files }) => commands::affected::run(files).await,
+        Some(Commands::Affected {
+            files,
+            stdin,
+            base,
+            depth,
+            filter,
+            json,
+            quiet,
+        }) => {
+            commands::affected::run(commands::affected::AffectedArgs {
+                files,
+                stdin,
+                base,
+                depth,
+                filter,
+                json,
+                quiet,
+            })
+            .await
+        }
+        Some(Commands::Diff { base, json }) => commands::diff::run(base, json).await,
+        Some(Commands::TestImpact { base, json }) => commands::test_impact::run(base, json).await,
+        Some(Commands::Ship {
+            path,
+            watch,
+            evaluate,
+            draft,
+            title,
+            port,
+            open,
+        }) => commands::ship::run(path, watch, evaluate, draft, title, port, open).await,
         Some(Commands::Unlock { path }) => commands::unlock::run(path).await,
         Some(Commands::Daemon { path, action }) => {
             let act = match action {
@@ -443,6 +519,9 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Callees { .. }) => Some("callees".into()),
         Some(Commands::Impact { .. }) => Some("impact".into()),
         Some(Commands::Affected { .. }) => Some("affected".into()),
+        Some(Commands::Diff { .. }) => Some("diff".into()),
+        Some(Commands::TestImpact { .. }) => Some("test-impact".into()),
+        Some(Commands::Ship { .. }) => Some("ship".into()),
         Some(Commands::Unlock { .. }) => Some("unlock".into()),
         Some(Commands::Daemon { .. }) => Some("daemon".into()),
         Some(Commands::Version) => Some("version".into()),

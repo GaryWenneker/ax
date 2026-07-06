@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 7;
+pub const CURRENT_SCHEMA_VERSION: i32 = 8;
 
 struct Migration {
     version: i32,
@@ -91,6 +91,29 @@ const MIGRATIONS: &[Migration] = &[
             );
             CREATE INDEX IF NOT EXISTS idx_policy_rules_level ON policy_rules(level);
             CREATE INDEX IF NOT EXISTS idx_policy_skills_priority ON policy_skills(priority);
+        ",
+    },
+    Migration {
+        version: 8,
+        description: "Business rules and ship state for Command Center",
+        sql: "
+            CREATE TABLE IF NOT EXISTS business_rules (
+                id TEXT PRIMARY KEY,
+                node_id TEXT NOT NULL,
+                rule_text TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'warning',
+                file_path TEXT NOT NULL,
+                line INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_business_rules_node ON business_rules(node_id);
+            CREATE INDEX IF NOT EXISTS idx_business_rules_file ON business_rules(file_path);
+            CREATE TABLE IF NOT EXISTS ship_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
         ",
     },
 ];

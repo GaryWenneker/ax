@@ -20,12 +20,15 @@ ax files [path]            # Show file structure (--format, --filter, --pattern,
 ax callers <symbol>        # Find what calls a function/method (--limit, --json)
 ax callees <symbol>        # Find what a function/method calls (--limit, --json)
 ax impact <symbol>         # Analyze what code is affected by changing a symbol (--depth, --json)
+ax diff --base main          # Git diff symbol-level blast radius vs base branch (--json)
+ax test-impact --base main # Test impact analysis (git diff + TIA graph)
+ax ship [--watch|--evaluate|--draft]  # Command Center — see guides/command-center
 ax affected [files...]     # Find test files affected by changes (see below)
 ax daemon                  # Manage background daemons — pick one to stop (alias: daemons)
 ax telemetry [on|off]      # Show or change anonymous usage telemetry
 ax upgrade [version]       # Update to the latest release (--check, --force)
 ax version                 # Print the installed version (also -v, --version)
-ax web [--port N] [--open] # Local web UI — graph + policy editor (v2.0.0+)
+ax web [--port N] [--open] # Local web UI — graph + policy editor + Command Center tab
 ax policy index            # Index .ax/policy/ rules and skills
 ax policy match <text>     # Test policy match for a prompt (--file, --json)
 ax policy rules            # List rules (--json)
@@ -62,6 +65,10 @@ ax impact AuthMiddleware --depth 3
 
 `explore` and `node` are the CLI faces of the `ax_explore` and `ax_node` MCP tools — same output — so subagents and non-MCP harnesses can reach the graph from a shell.
 
-## affected
+## affected, diff, test-impact, ship
 
-Traces import dependencies transitively to find which test files are affected by changed source files. See [Affected Tests in CI](/ax/guides/affected-tests/) for options and a CI example.
+`ax affected` traces import dependencies to find which **test files** changed code touches. See [Affected Tests in CI](/ax/guides/affected-tests/).
+
+`ax diff` and `ax test-impact` use git diff against a base branch and the knowledge graph for symbol-level blast radius and test-function impact.
+
+`ax ship` runs the Command Center quality-gate pipeline, serves the SSE dashboard, and can open draft PRs (Azure DevOps or GitHub). See [Command Center](/ax/guides/command-center/).

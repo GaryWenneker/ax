@@ -3,11 +3,13 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.0.14](https://github.com/GaryWenneker/ax/releases/tag/v2.0.14)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.0.15](https://github.com/GaryWenneker/ax/releases/tag/v2.0.15)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** parses your codebase with [tree-sitter](https://tree-sitter.github.io/), stores symbols and relationships in a local SQLite graph (`.ax/`), and exposes them through a **CLI** and **MCP tools** so coding agents answer structural questions without scanning files.
 
 **v2.0.0** adds an **IDE-agnostic policy engine** — project rules and skills in `.ax/policy/`, delivered via MCP, CLI, prompt-hook, and **ax web**. See [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md).
+
+**v2.0.15** adds the **Command Center** — git-aware quality gates, test-impact analysis, SSE dashboard, and draft PRs (Azure DevOps or GitHub). See [Command Center guide](https://getax.wenneker.io/guides/command-center/).
 
 - **100% local** — no source code leaves your machine
 - **Deterministic** — graph data comes from AST extraction, not LLM summaries
@@ -56,6 +58,7 @@ Each indexed project gets a `.ax/` directory:
 | `ax.db` | SQLite database (WAL mode) — nodes, edges, files, FTS5, policy index |
 | `ax.json` | Project config (extensions, ignore rules) |
 | `policy/` | Rules (`.mdc`) and skills (`SKILL.md`) — IDE-agnostic agent instructions |
+| `ship.toml` | Command Center config — quality gates, remote PR provider, Sonar (seeded on `ax init`) |
 | `ax.lock` | Cross-process lock during indexing |
 | `daemon.json` | MCP daemon metadata (when running) |
 
@@ -141,6 +144,11 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax callees <symbol>` | What does this symbol call? |
 | `ax impact <symbol>` | Blast-radius subgraph |
 | `ax affected <files…>` | Tests affected by file changes |
+| `ax diff --base main` | Git diff symbol blast radius |
+| `ax test-impact --base main` | Test-function impact via graph |
+| `ax ship --evaluate` | Command Center quality gate |
+| `ax ship --watch` | Ship dashboard + git watcher |
+| `ax ship --draft` | Draft PR after quality gate |
 | `ax unlock [path]` | Remove stale `ax.lock` |
 | `ax daemon [status\|stop]` | MCP daemon control |
 | `ax upgrade [tag]` | Self-update from GitHub releases |
@@ -150,7 +158,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax policy match <text>` | Test which rules/skills match a prompt |
 | `ax policy rules` / `skills` | List indexed policy |
 | `ax policy guard` | Pre-write CRITICAL checks (encoding, secrets paths) |
-| `ax web [--open]` | Local web UI — graph browser + policy editor |
+| `ax web [--open]` | Local web UI — graph browser + policy editor + Command Center |
 
 Run `ax help <command>` for detailed help with examples.
 

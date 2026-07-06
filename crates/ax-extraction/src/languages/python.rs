@@ -31,6 +31,7 @@ impl LanguageExtractor for PythonExtractor {
         let file_id = file_node_id(path);
         append_lang_call_refs(&mut result, tree, source, path, Language::Python, &spans, &file_id, &["call"]);
         emit_same_file_call_edges(&mut result, path);
+        crate::test_mapper::annotate_tests(&mut result, source, tree, path);
         result
     }
 }

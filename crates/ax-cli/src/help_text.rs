@@ -56,7 +56,7 @@ Examples:
 
 pub const INIT_LONG: &str = "Initialize ax in a project directory and build the full index.
 
-Creates .ax/ (ax.db, ax.json, lock file), runs a full index, installs git hooks,
+Creates .ax/ (ax.db, ax.json, ship.toml, lock file), runs a full index, installs git hooks,
 then offers the interactive agent installer.
 
 Refuses home directory / filesystem roots unless you pass --force on index.

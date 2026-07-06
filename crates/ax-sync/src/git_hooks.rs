@@ -1,11 +1,12 @@
-//! Git hook installer for ax sync.
+//! Git hook installer for ax sync + ship evaluate.
 
 use std::fs;
 use std::path::Path;
 
 use ax_utils::errors::{AxError, FileError};
 
-const HOOK_SCRIPT: &str = "ax sync --quiet\n";
+const SYNC_LINE: &str = "ax sync --quiet";
+const SHIP_LINE: &str = "ax ship --evaluate";
 
 pub fn install_git_sync_hooks(project_root: &Path) -> Result<(), AxError> {
     let hooks_dir = project_root.join(".git").join("hooks");
@@ -16,14 +17,26 @@ pub fn install_git_sync_hooks(project_root: &Path) -> Result<(), AxError> {
         let hook_path = hooks_dir.join(name);
         let content = if hook_path.exists() {
             let existing = fs::read_to_string(hook_path.display().to_string()).unwrap_or_default();
-            if existing.contains("ax sync") {
+            if existing.contains(SYNC_LINE) && existing.contains(SHIP_LINE) {
                 continue;
             }
-            format!("{}\n{}", existing, HOOK_SCRIPT)
+            let mut lines: Vec<String> = existing.lines().map(String::from).collect();
+            if !existing.contains(SYNC_LINE) {
+                lines.push(SYNC_LINE.into());
+            }
+            if !existing.contains(SHIP_LINE) {
+                lines.push(SHIP_LINE.into());
+            }
+            lines.join("\n") + "\n"
         } else {
-            HOOK_SCRIPT.to_string()
+            format!("{SYNC_LINE}\n{SHIP_LINE}\n")
         };
-        fs::write(hook_path.display().to_string(), content).map_err(|e| AxError::File(FileError::with_path(e.to_string(), hook_path.display().to_string())))?;
+        fs::write(hook_path.display().to_string(), content).map_err(|e| {
+            AxError::File(FileError::with_path(
+                e.to_string(),
+                hook_path.display().to_string(),
+            ))
+        })?;
     }
     Ok(())
 }
@@ -39,10 +52,15 @@ pub fn remove_git_sync_hooks(project_root: &Path) -> Result<(), AxError> {
             let content = fs::read_to_string(hook_path.display().to_string()).unwrap_or_default();
             let filtered: String = content
                 .lines()
-                .filter(|l| !l.contains("ax sync"))
+                .filter(|l| !l.contains("ax sync") && !l.contains("ax ship"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            fs::write(hook_path.display().to_string(), filtered).map_err(|e| AxError::File(FileError::with_path(e.to_string(), hook_path.display().to_string())))?;
+            fs::write(hook_path.display().to_string(), filtered).map_err(|e| {
+                AxError::File(FileError::with_path(
+                    e.to_string(),
+                    hook_path.display().to_string(),
+                ))
+            })?;
         }
     }
     Ok(())

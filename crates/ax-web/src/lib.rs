@@ -2,11 +2,13 @@
 
 mod policy;
 mod queries;
+mod ship;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use ax_policy::PolicyStore;
+use tokio::sync::Mutex;
 use axum::{
     body::Body,
     extract::{Path, Query, State},
@@ -268,9 +270,22 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
 
     let policy_api = policy::router(policy_state);
 
+    let ship_daemon = Arc::new(ax_ship::ShipDaemon::new(root.clone()));
+    let ship_state = ship::ShipApiState {
+        daemon: ship_daemon.clone(),
+        report: Arc::new(Mutex::new(None)),
+    };
+    let ship_api = ship::router(ship_state.clone());
+
+    let ship_root = root.clone();
+    tokio::spawn(async move {
+        let _ = ax_ship::ShipDaemon::new(ship_root).run_watch().await;
+    });
+
     let app = Router::new()
         .nest("/api", graph_api)
         .nest("/api/policy", policy_api)
+        .nest("/api/ship", ship_api)
         .fallback(handle_spa)
         .layer(cors);
 

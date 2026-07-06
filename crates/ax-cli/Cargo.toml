@@ -20,6 +20,9 @@ ax-graph = { workspace = true }
 ax-telemetry = { workspace = true }
 ax-reasoning = { workspace = true }
 ax-policy = { workspace = true }
+ax-git = { workspace = true }
+ax-tia = { workspace = true }
+ax-ship = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

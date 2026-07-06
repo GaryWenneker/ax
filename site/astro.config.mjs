@@ -10,7 +10,7 @@ export default defineConfig({
 		starlight({
 			title: 'ax',
 			description:
-				'Local-first code intelligence for AI agents (v2.0.0) — knowledge graph + IDE-agnostic policy engine.',
+				'Local-first code intelligence for AI agents — knowledge graph, policy engine, and Command Center.',
 			favicon: '/logo.png',
 			head: [
 				{
@@ -75,6 +75,7 @@ export default defineConfig({
 						{ label: 'Policy Engine', slug: 'guides/policy-engine' },
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },
 						{ label: 'Affected Tests in CI', slug: 'guides/affected-tests' },
+						{ label: 'Command Center', slug: 'guides/command-center' },
 					],
 				},
 				{

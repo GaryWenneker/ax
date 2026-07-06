@@ -156,6 +156,20 @@ Run `ax policy index` after editing policy files (or let `ax init` / `ax sync` r
 
 See the full [Policy Engine](/guides/policy-engine/) guide.
 
+## Command Center (`.ax/ship.toml`)
+
+**ax v2.0.15+** seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quality-gate pipeline, optional SonarQube, and the PR remote (Azure DevOps by default):
+
+| Section | Purpose |
+|---|---|
+| `[ship]` | Target branch, dashboard port |
+| `[quality_gate]` | Pipeline steps and test runner |
+| `[remote]` | GitHub or Azure DevOps draft PR provider |
+| `[sonar]` | Optional local SonarQube via Podman |
+| `[reviewers]` | Map git blame emails to reviewer identities |
+
+See [Command Center](/guides/command-center/) for the full reference.
+
 ## Where data lives
 
-Per-project data lives in `.ax/` at your project root (SQLite database `ax.db`, schema v7). Global config lives in `~/.ax/config.json`. Nothing leaves your machine.
+Per-project data lives in `.ax/` at your project root (SQLite database `ax.db`, schema v8). Global config lives in `~/.ax/config.json`. Nothing leaves your machine.

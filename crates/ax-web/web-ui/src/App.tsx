@@ -9,12 +9,13 @@ import PolicyRuleEditor from './pages/PolicyRuleEditor';
 import PolicySkillsPage from './pages/PolicySkills';
 import PolicySkillEditor from './pages/PolicySkillEditor';
 import PolicyMatchPage from './pages/PolicyMatch';
+import ShipPage from './pages/Ship';
 import StatusBar from './components/StatusBar';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
 import { UiProvider } from './context/UiContext';
 
 type Page =
-  | 'stats' | 'nodes' | 'files' | 'search'
+  | 'stats' | 'nodes' | 'files' | 'search' | 'ship'
   | 'policy-rules' | 'policy-rule-edit' | 'policy-skills' | 'policy-skill-edit' | 'policy-match';
 
 const NAV: Array<{ id: NavId; label: string }> = [
@@ -22,6 +23,7 @@ const NAV: Array<{ id: NavId; label: string }> = [
   { id: 'nodes', label: 'Nodes' },
   { id: 'files', label: 'Files' },
   { id: 'search', label: 'Search' },
+  { id: 'ship', label: 'Ship' },
   { id: 'policy-rules', label: 'Rules' },
   { id: 'policy-skills', label: 'Skills' },
 ];
@@ -100,6 +102,7 @@ function AppShell() {
           {page === 'nodes' && <NodesPage />}
           {page === 'files' && <FilesPage />}
           {page === 'search' && <SearchPage />}
+          {page === 'ship' && <ShipPage />}
           {page === 'policy-rules' && (
             <PolicyRulesPage
               onEdit={(id) => { setEditRuleId(id); setPage('policy-rule-edit'); }}

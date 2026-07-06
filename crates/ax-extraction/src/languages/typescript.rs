@@ -38,6 +38,7 @@ impl LanguageExtractor for TypescriptExtractor {
         let file_id = file_node_id(path);
         append_ts_js_refs(&mut result, tree, source, path, lang, &file_id, &spans);
         emit_same_file_call_edges(&mut result, path);
+        crate::test_mapper::annotate_tests(&mut result, source, tree, path);
         result
     }
 }

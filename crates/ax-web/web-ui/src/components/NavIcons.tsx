@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-type NavId = 'stats' | 'nodes' | 'files' | 'search' | 'policy-rules' | 'policy-skills';
+type NavId = 'stats' | 'nodes' | 'files' | 'search' | 'ship' | 'policy-rules' | 'policy-skills';
 
 export type { NavId };
 
@@ -29,6 +29,11 @@ export function NavIcon({ id }: { id: NavId }) {
         <path d="M11.742 10.344a6.5 6.5 0 10-1.397 1.398l3.85 3.85a1 1 0 001.415-1.414l-3.868-3.834zM12 6.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
       </svg>
     ),
+    ship: (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M1 11.5a1.5 1.5 0 001.5 1.5h11a1.5 1.5 0 001.5-1.5V9H1v2.5zM2 8h12L10 3H6L2 8z" />
+      </svg>
+    ),
     'policy-rules': (
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
         <path d="M1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5.5a.5.5 0 01.5-.5h7a.5.5 0 010 1h-7a.5.5 0 01-.5-.5zm0 3a.5.5 0 01.5-.5h5a.5.5 0 010 1h-5a.5.5 0 01-.5-.5z" />
@@ -49,6 +54,7 @@ export const PAGE_LABELS: Record<string, string> = {
   nodes: 'Nodes',
   files: 'Files',
   search: 'Search',
+  ship: 'Command Center',
   'policy-rules': 'Rules',
   'policy-rule-edit': 'Rule editor',
   'policy-skills': 'Skills',

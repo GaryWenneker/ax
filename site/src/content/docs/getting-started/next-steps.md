@@ -16,6 +16,7 @@ You've got ax installed and a graph built. Here's where to go next.
 - [Indexing a Project](/ax/guides/indexing/) — full index, incremental sync, and the file watcher.
 - [Framework Routes](/ax/guides/framework-routes/) — link URL patterns to their handlers.
 - [Affected Tests in CI](/ax/guides/affected-tests/) — run only the tests a change touches.
+- [Command Center](/ax/guides/command-center/) — quality gates, test-impact, draft PRs, and the ship dashboard.
 
 ## Agent instructions (v2.0.0+)
 

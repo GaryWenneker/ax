@@ -7,6 +7,7 @@ pub mod grammars;
 pub mod languages;
 pub mod orchestrator;
 pub mod parse_pool;
+pub mod test_mapper;
 
 pub use extraction_version::EXTRACTION_VERSION;
 pub use function_ref::{CaptureMode, FnRefCandidate};

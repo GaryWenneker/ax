@@ -34,10 +34,12 @@ pub enum NodeKind {
     Export,
     Route,
     Component,
+    Test,
+    Table,
 }
 
 impl NodeKind {
-    pub const ALL: [NodeKind; 22] = [
+    pub const ALL: [NodeKind; 24] = [
         NodeKind::File,
         NodeKind::Module,
         NodeKind::Class,
@@ -60,6 +62,8 @@ impl NodeKind {
         NodeKind::Export,
         NodeKind::Route,
         NodeKind::Component,
+        NodeKind::Test,
+        NodeKind::Table,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -86,6 +90,8 @@ impl NodeKind {
             NodeKind::Export => "export",
             NodeKind::Route => "route",
             NodeKind::Component => "component",
+            NodeKind::Test => "test",
+            NodeKind::Table => "table",
         }
     }
 
@@ -113,6 +119,8 @@ impl NodeKind {
             "export" => Some(NodeKind::Export),
             "route" => Some(NodeKind::Route),
             "component" => Some(NodeKind::Component),
+            "test" => Some(NodeKind::Test),
+            "table" => Some(NodeKind::Table),
             _ => None,
         }
     }
@@ -134,10 +142,11 @@ pub enum EdgeKind {
     Instantiates,
     Overrides,
     Decorates,
+    Covers,
 }
 
 impl EdgeKind {
-    pub const ALL: [EdgeKind; 12] = [
+    pub const ALL: [EdgeKind; 13] = [
         EdgeKind::Contains,
         EdgeKind::Calls,
         EdgeKind::Imports,
@@ -150,6 +159,7 @@ impl EdgeKind {
         EdgeKind::Instantiates,
         EdgeKind::Overrides,
         EdgeKind::Decorates,
+        EdgeKind::Covers,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -166,6 +176,7 @@ impl EdgeKind {
             EdgeKind::Instantiates => "instantiates",
             EdgeKind::Overrides => "overrides",
             EdgeKind::Decorates => "decorates",
+            EdgeKind::Covers => "covers",
         }
     }
 
@@ -183,6 +194,7 @@ impl EdgeKind {
             "instantiates" => Some(EdgeKind::Instantiates),
             "overrides" => Some(EdgeKind::Overrides),
             "decorates" => Some(EdgeKind::Decorates),
+            "covers" => Some(EdgeKind::Covers),
             _ => None,
         }
     }

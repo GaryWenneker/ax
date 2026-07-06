@@ -167,6 +167,40 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         }
     }
 
+    let sql_re = Regex::new(r#"(?i)(?:FROM|INTO|UPDATE|JOIN)\s+([a-z_][a-z0-9_]*)"#).expect("sql table");
+    for cap in sql_re.captures_iter(&safe) {
+        let table = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        if ["select", "where", "set", "values", "on"].contains(&table) {
+            continue;
+        }
+        let line = safe[..cap.get(0).unwrap().start()].matches('\n').count() as i32 + 1;
+        let qualified = format!("table:{}", table);
+        let id = stable_node_id(file_path, &qualified);
+        out.nodes.push(Node {
+            id,
+            kind: NodeKind::Table,
+            name: table.to_string(),
+            qualified_name: qualified,
+            file_path: file_path.to_string(),
+            language: Language::Rust,
+            start_line: line,
+            end_line: line,
+            start_column: 0,
+            end_column: 0,
+            docstring: None,
+            signature: None,
+            visibility: None,
+            is_exported: None,
+            is_async: None,
+            is_static: None,
+            is_abstract: None,
+            decorators: None,
+            type_parameters: None,
+            return_type: None,
+            updated_at: now,
+        });
+    }
+
     out
 }
 

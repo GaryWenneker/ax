@@ -16,6 +16,11 @@ members = [
     "crates/ax-policy",
     "crates/ax-smoke-tests",
     "crates/ax-web",
+    "crates/ax-git",
+    "crates/ax-tia",
+    "crates/ax-ship",
+    "crates/ax-quality",
+    "crates/ax-remote",
 ]
 resolver = "2"
 
@@ -67,3 +72,14 @@ ax-web = { path = "crates/ax-web" }
 ax-policy = { path = "crates/ax-policy" }
 serde_yaml = "0.9"
 globset = "0.4"
+gix = { version = "0.68", default-features = false, features = ["max-performance-safe"] }
+octocrab = "0.43"
+toml = "0.8"
+futures-util = "0.3"
+async-stream = "0.3"
+
+ax-git = { path = "crates/ax-git" }
+ax-tia = { path = "crates/ax-tia" }
+ax-ship = { path = "crates/ax-ship" }
+ax-quality = { path = "crates/ax-quality" }
+ax-remote = { path = "crates/ax-remote" }

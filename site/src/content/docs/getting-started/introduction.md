@@ -7,6 +7,8 @@ description: What ax is, and why it makes AI coding agents faster and more preci
 
 Starting in **v2.0.0**, ax also ships a **policy engine** — IDE-agnostic rules and skills in `.ax/policy/` that any agent can load via MCP. See [Policy Engine](/guides/policy-engine/).
 
+**v2.0.15+** adds the **Command Center** — git-aware quality gates, test-impact analysis, an SSE dashboard, and draft PR integration (Azure DevOps or GitHub). See [Command Center](/guides/command-center/).
+
 It helps AI coding agents — Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro — **answer structural questions without scanning files**. Instead of fanning out across `grep`, `glob`, and `Read`, an agent queries a pre-built index and gets call paths, source, and impact in a handful of calls.
 
 ## Why it matters
