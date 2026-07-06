@@ -55,15 +55,42 @@ target="${os}-${arch}"
 
 asset_url_ok() {
   tag="$1"
+  asset="ax-${target}.tar.gz"
+  json="$(curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: ax-install" \
+    "https://api.github.com/repos/$REPO/releases/tags/$tag" 2>/dev/null)" || json=""
+  if [ -n "$json" ] && printf '%s' "$json" | grep -q "\"name\": *\"$asset\""; then
+    return 0
+  fi
   for url in \
-    "https://github.com/$REPO/releases/download/$tag/ax-${target}.tar.gz" \
-    "$DOWNLOAD_BASE/$tag/ax-${target}.tar.gz"
+    "https://github.com/$REPO/releases/download/$tag/$asset" \
+    "$DOWNLOAD_BASE/$tag/$asset"
   do
-    # GitHub S3 often rejects HEAD; probe with a 1-byte Range GET (matches ax-cli version_check.rs).
+    # Fallback when API is unreachable — 1-byte Range GET (GitHub S3 rejects HEAD).
     code="$(curl -fsSL -r 0-0 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
     [ "$code" = "200" ] || [ "$code" = "206" ] && return 0
   done
   return 1
+}
+
+resolve_version_from_api() {
+  asset="ax-${target}.tar.gz"
+  json="$(curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: ax-install" \
+    "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null)" || return 1
+  printf '%s' "$json" | python3 - "$asset" <<'PY' 2>/dev/null || return 1
+import json, re, sys
+asset = sys.argv[1]
+data = json.load(sys.stdin)
+tags = []
+for r in data:
+    if r.get("draft") or r.get("prerelease"):
+        continue
+    if any(a.get("name") == asset for a in r.get("assets", [])):
+        tags.append(r["tag_name"])
+def key(t):
+    return tuple(int(x) for x in re.sub(r"^v", "", t).split("."))
+if tags:
+    print(max(tags, key=key))
+PY
 }
 
 resolve_version() {
@@ -77,11 +104,19 @@ resolve_version() {
     return 0
   fi
 
+  best="$(resolve_version_from_api || true)"
+  if [ -n "$best" ]; then
+    printf '%s\n' "$best"
+    return 0
+  fi
+
   tmp="$(mktemp)"
-  # GitHub first — getax latest.txt is a site pointer and may lag behind GitHub.
-  curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+  # Fallback when API asset list unavailable — semver tags + Range probe, then latest.txt.
+  curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: ax-install" \
+    "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
     | sed -n 's/.*"tag_name": *"\(v[^"]*\)".*/\1/p' >>"$tmp" || true
-  curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null \
+  curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: ax-install" \
+    "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null \
     | sed -n 's/.*"tag_name": *"\(v[^"]*\)".*/\1/p' >>"$tmp" || true
   curl -fsSL "$DOWNLOAD_BASE/latest.txt" 2>/dev/null | tr -d '[:space:]\r' >>"$tmp" || true
 

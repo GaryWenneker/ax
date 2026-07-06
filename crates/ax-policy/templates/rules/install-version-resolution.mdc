@@ -23,7 +23,9 @@ while `ax upgrade --check` correctly shows `2.0.10 → 2.0.14` (tag list does no
 
 ## Required probe (all platforms)
 
-Use a **1-byte Range GET**, accept **200** or **206**:
+**Primary:** GitHub Releases API asset list (`releases?per_page=30` or `releases/tags/{tag}`) — pick highest semver release whose `assets[]` contains `ax-{platform}.{zip|tar.gz}`. **No HTTP probe needed** when the API responds.
+
+**Fallback only** (API unreachable): 1-byte Range GET, accept **200** or **206**:
 
 | Location | Pattern |
 |---|---|
@@ -31,7 +33,7 @@ Use a **1-byte Range GET**, accept **200** or **206**:
 | `install.sh` | `curl -r 0-0` |
 | `version_check.rs` | `client.get(url).header("Range", "bytes=0-0")` |
 
-Do **not** revert to `Method Head` / `client.head()` for GitHub release download URLs.
+Do **not** use `Method Head` / `client.head()` for GitHub release download URLs — and do **not** rely on Range probes alone when the API is available (corporate proxies may block Range on S3 redirects).
 
 ## Resolution order (keep in sync)
 

@@ -1,3 +1,4 @@
+# install.ps1 resolver schema: 2 (GitHub API assets first)
 # ax standalone installer for Windows x64 and arm64 (PowerShell).
 # macOS / Linux / WSL2: install.sh
 #
@@ -79,16 +80,63 @@ function Copy-AxExeForce {
 
 $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $target = "win32-$arch"
+$assetName = "ax-$target.zip"
+
+function Get-GitHubApiHeaders {
+  $h = @{
+    'User-Agent' = 'ax-install'
+    Accept         = 'application/vnd.github+json'
+  }
+  if ($env:GITHUB_TOKEN) { $h.Authorization = "Bearer $($env:GITHUB_TOKEN)" }
+  elseif ($env:GH_TOKEN) { $h.Authorization = "Bearer $($env:GH_TOKEN)" }
+  return $h
+}
+
+function Resolve-AxVersionFromGitHubApi {
+  param([string]$AssetName)
+  try {
+    $rels = Invoke-RestMethod `
+      -Uri "https://api.github.com/repos/$repo/releases?per_page=30" `
+      -Headers (Get-GitHubApiHeaders) `
+      -TimeoutSec 15
+    $installable = [System.Collections.Generic.List[string]]::new()
+    foreach ($r in $rels) {
+      if ($r.draft -or $r.prerelease) { continue }
+      $tag = "$($r.tag_name)".Trim()
+      if ($tag -notmatch '^v') { $tag = "v$tag" }
+      foreach ($a in $r.assets) {
+        if ($a.name -eq $AssetName) {
+          $installable.Add($tag)
+          break
+        }
+      }
+    }
+    if ($installable.Count -gt 0) {
+      return ($installable |
+        Sort-Object { [version]($_.TrimStart('v')) } -Descending |
+        Select-Object -First 1)
+    }
+  } catch { }
+  return $null
+}
 
 function Test-AxReleaseAsset {
   param([string]$Tag)
+  try {
+    $rel = Invoke-RestMethod `
+      -Uri "https://api.github.com/repos/$repo/releases/tags/$Tag" `
+      -Headers (Get-GitHubApiHeaders) `
+      -TimeoutSec 15
+    foreach ($a in $rel.assets) {
+      if ($a.name -eq $assetName) { return $true }
+    }
+  } catch { }
   foreach ($base in @(
-      "https://github.com/$repo/releases/download/$Tag/ax-$target.zip",
-      "$downloadBase/$Tag/ax-$target.zip"
+      "https://github.com/$repo/releases/download/$Tag/$assetName",
+      "$downloadBase/$Tag/$assetName"
     )) {
     try {
-      # GitHub release URLs redirect to S3 signed URLs that often reject HEAD.
-      # Probe with a 1-byte Range GET (matches crates/ax-cli/src/version_check.rs).
+      # Fallback when API is unreachable — 1-byte Range GET (GitHub S3 rejects HEAD).
       $resp = Invoke-WebRequest -Uri $base -Headers @{ Range = 'bytes=0-0' } -TimeoutSec 15 -UseBasicParsing
       if ($resp.StatusCode -eq 200 -or $resp.StatusCode -eq 206) { return $true }
     } catch { }
@@ -101,17 +149,21 @@ function Resolve-AxVersion {
     $v = $env:AX_VERSION.Trim()
     if ($v -notmatch '^v') { $v = "v$v" }
     if (-not (Test-AxReleaseAsset -Tag $v)) {
-      throw "ax: AX_VERSION $v has no downloadable ax-$target.zip on GitHub or getax"
+      throw "ax: AX_VERSION $v has no downloadable $assetName on GitHub or getax"
     }
     return $v
   }
 
-  # GitHub first — getax latest.txt is a site pointer and may lag behind GitHub.
+  # Prefer GitHub API asset list — no HTTP probe (HEAD/Range fail on some networks).
+  $fromApi = Resolve-AxVersionFromGitHubApi -AssetName $assetName
+  if ($fromApi) { return $fromApi }
+
+  # Fallback: semver-sorted tags + Range probe, then getax latest.txt pointer.
   $candidates = [System.Collections.Generic.List[string]]::new()
   foreach ($source in @(
-      { (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 15).tag_name },
+      { (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers (Get-GitHubApiHeaders) -TimeoutSec 15).tag_name },
       {
-        $rels = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=30" -TimeoutSec 15
+        $rels = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=30" -Headers (Get-GitHubApiHeaders) -TimeoutSec 15
         foreach ($r in $rels) {
           if (-not $r.draft -and -not $r.prerelease) { $r.tag_name }
         }
@@ -177,11 +229,11 @@ function Confirm-AxInstall {
   $expected = $ExpectedTag.TrimStart('v')
   foreach ($path in $Targets) {
     if (-not (Test-Path $path)) {
-      throw "ax: install incomplete — missing $path"
+      throw "ax: install incomplete - missing $path"
     }
     $ver = (& $path version 2>&1 | Out-String).Trim()
     if ($ver -notmatch [regex]::Escape($expected)) {
-      throw "ax: $path reports '$ver', expected $expected — close ax MCP/web/IDE terminals and re-run install"
+      throw "ax: $path reports '$ver', expected $expected - close ax MCP/web/IDE terminals and re-run install"
     }
   }
 }
@@ -215,7 +267,7 @@ $version = Resolve-AxVersion
 
 $getaxUrl = "$downloadBase/$version/ax-$target.zip"
 $githubUrl = "https://github.com/$repo/releases/download/$version/ax-$target.zip"
-Write-Host "Installing ax $version ($target) — latest available..."
+Write-Host "Installing ax $version ($target) - latest available..."
 $tmp = Join-Path $env:TEMP ("ax-" + [guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $zip = Join-Path $tmp 'ax.zip'
