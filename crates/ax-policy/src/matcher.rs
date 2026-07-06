@@ -86,6 +86,7 @@ fn score_rule(rule: &PolicyRuleRow, prompt_lc: &str, files: &[String]) -> Option
         level: rule.level.clone(),
         score,
         reason: reasons.join(", "),
+        always_apply: rule.always_apply,
         body: rule.body.clone(),
     })
 }

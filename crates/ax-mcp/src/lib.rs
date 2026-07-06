@@ -16,6 +16,6 @@ pub mod transport;
 pub use daemon::run_daemon;
 pub use engine::McpEngine;
 pub use proxy::attach_or_spawn;
-pub use server::run_stdio_server;
+pub use server::{resolve_mcp_project_root, run_stdio_server};
 pub use liveness_watchdog::run_watchdog_child;
 pub use transport::{JsonRpcRequest, JsonRpcResponse, StdioTransport};

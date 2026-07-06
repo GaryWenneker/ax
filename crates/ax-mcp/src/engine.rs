@@ -58,6 +58,23 @@ impl McpEngine {
         Ok(())
     }
 
+    /// Fresh Ax handle + policy sync — avoids stale SQLite WAL in long-lived daemon.
+    pub async fn ensure_policy_fresh(&mut self) -> Result<(), String> {
+        let root = if let Some(r) = &self.project_root {
+            r.clone()
+        } else {
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+            find_nearest_ax_root(&cwd).ok_or_else(|| "no ax project root".to_string())?
+        };
+        self.project_root = Some(root.clone());
+        let ax = Ax::open(&root).await.map_err(|e| e.to_string())?;
+        ax.ensure_policy_ready()
+            .await
+            .map_err(|e| e.to_string())?;
+        *self.ax.lock().await = Some(ax);
+        Ok(())
+    }
+
     pub async fn reopen_if_replaced(&mut self) -> Result<bool, String> {
         let mut guard = self.ax.lock().await;
         if let Some(ax) = guard.as_mut() {

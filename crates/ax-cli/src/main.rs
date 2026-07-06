@@ -254,14 +254,22 @@ enum PolicyCommands {
     },
     /// Pre-write guard check
     Guard {
-        path: Option<String>,
+        #[arg(help = "File path relative to project root")]
         file: String,
-        #[arg(long)]
-        write: bool,
+        #[arg(short, long, help = "Project root (defaults to cwd)")]
+        path: Option<String>,
+        #[arg(long, help = "Delete guard check (default is write)")]
+        delete: bool,
         #[arg(long)]
         json: bool,
     },
-    /// Verify ax preflight instruction files (Recall instruction-sync parity)
+    /// Run policy smoke tests (match, guard, bootstrap, subagents)
+    Test {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify ax preflight instruction and IDE bootstrap files (Recall instruction-sync parity)
     Sync {
         path: Option<String>,
         #[arg(long, help = "Restore missing or drifted managed policy files from embedded templates")]
@@ -341,10 +349,11 @@ async fn main() {
             PolicyCommands::Rules { path, json } => commands::policy::run_rules(path, json).await,
             PolicyCommands::Skills { path, json } => commands::policy::run_skills(path, json).await,
             PolicyCommands::Skill { name, path } => commands::policy::run_skill(path, name).await,
-            PolicyCommands::Guard { path, file, write, json } => {
-                commands::policy::run_guard(path, file, write, json).await
+            PolicyCommands::Guard { file, path, delete, json } => {
+                commands::policy::run_guard(path, file, delete, json).await
             }
             PolicyCommands::Sync { path, fix } => commands::policy::run_sync(path, fix).await,
+            PolicyCommands::Test { path, json } => commands::policy::run_test(path, json).await,
         },
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
@@ -372,8 +381,9 @@ async fn main() {
             let root = commands::resolve_path(path);
             ax_mcp::run_daemon(root).await.map_err(|e| e.to_string())
         }
-        Some(Commands::Serve { mcp, .. }) if mcp => {
-            ax_mcp::run_stdio_server().await.map_err(|e| e.to_string())
+        Some(Commands::Serve { mcp, path, .. }) if mcp => {
+            let root = path.map(std::path::PathBuf::from);
+            ax_mcp::run_stdio_server(root).await.map_err(|e| e.to_string())
         }
         Some(Commands::Serve { .. }) => Err("use ax serve --mcp".to_string()),
     };

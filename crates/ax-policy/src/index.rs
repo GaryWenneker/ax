@@ -5,7 +5,7 @@ use ax_utils::errors::{AxError, DatabaseError};
 
 use crate::config::{load_policy_config, PolicyStorage};
 use crate::parse::{parse_rule_file, parse_skill_file, serialize_rule, serialize_skill};
-use crate::paths::{ensure_scaffold, rule_file, rules_dir, skill_file, skills_dir, ax_dir_from_project};
+use crate::paths::{ensure_policy_dirs, rule_file, rules_dir, skill_file, skills_dir, ax_dir_from_project};
 use crate::types::{
     PolicyIndexResult, PolicyRuleDoc, PolicyRuleRow, PolicySkillDoc, PolicySkillRow,
     RuleFrontmatter, SkillFrontmatter,
@@ -51,7 +51,7 @@ pub async fn import_policy_from_files(
     mode: ImportMode,
 ) -> Result<PolicyIndexResult, AxError> {
     let ax_dir = ax_dir_from_project(project_root);
-    ensure_scaffold(&ax_dir).map_err(|e| AxError::Other(e.to_string()))?;
+    ensure_policy_dirs(&ax_dir).map_err(|e| AxError::Other(e.to_string()))?;
 
     let mut rules_indexed = 0u32;
     let mut skills_indexed = 0u32;
@@ -193,6 +193,129 @@ async fn db_counts(pool: &SqlitePool) -> Result<PolicyIndexResult, AxError> {
     Ok(PolicyIndexResult {
         rules_indexed: rules as u32,
         skills_indexed: skills as u32,
+    })
+}
+
+fn policy_storage_label(storage: PolicyStorage) -> &'static str {
+    match storage {
+        PolicyStorage::Database => "database",
+        PolicyStorage::Files => "files",
+    }
+}
+
+fn policy_files_nonempty(project_root: &Path) -> bool {
+    let ax_dir = ax_dir_from_project(project_root);
+    let has_rules = rules_dir(&ax_dir)
+        .read_dir()
+        .map(|d| d.flatten().any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("mdc")))
+        .unwrap_or(false);
+    let has_skills = skills_dir(&ax_dir)
+        .read_dir()
+        .map(|d| {
+            d.flatten().any(|e| {
+                e.path()
+                    .is_dir()
+                    .then(|| skill_file(&skills_dir(&ax_dir), &e.file_name().to_string_lossy()).is_file())
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+    has_rules || has_skills
+}
+
+/// Load policy into SQLite when the DB is empty or disk files changed (database mode),
+/// or refresh from disk (files mode). Safe to call on every MCP policy tool invocation.
+pub async fn ensure_policy_ready(pool: &SqlitePool, project_root: &Path) -> Result<PolicyIndexResult, AxError> {
+    let config = load_policy_config(project_root);
+    match config.storage {
+        PolicyStorage::Database => {
+            let counts = db_counts(pool).await?;
+            let stale = policy_disk_stale(pool, project_root).await?;
+            if (counts.rules_indexed == 0 && policy_files_nonempty(project_root)) || stale {
+                import_policy_from_files(pool, project_root, ImportMode::Merge).await
+            } else {
+                Ok(counts)
+            }
+        }
+        PolicyStorage::Files => import_policy_from_files(pool, project_root, ImportMode::Replace).await,
+    }
+}
+
+async fn policy_disk_stale(pool: &SqlitePool, project_root: &Path) -> Result<bool, AxError> {
+    let ax_dir = ax_dir_from_project(project_root);
+    let rules_path = rules_dir(&ax_dir);
+    if rules_path.is_dir() {
+        for entry in walkdir::WalkDir::new(&rules_path)
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
+            let doc = parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
+            let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
+            let db_hash: Option<String> = sqlx::query_scalar(
+                "SELECT content_hash FROM policy_rules WHERE id = ?",
+            )
+            .bind(&doc.frontmatter.id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            if db_hash.as_deref() != Some(hash.as_str()) {
+                return Ok(true);
+            }
+        }
+    }
+
+    let skills_path = skills_dir(&ax_dir);
+    if skills_path.is_dir() {
+        for entry in walkdir::WalkDir::new(&skills_path)
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let skill_path = skill_file(&skills_path, &name);
+            if !skill_path.is_file() {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
+            let doc = parse_skill_file(&skill_path, &raw).map_err(|e| AxError::Other(e.error))?;
+            let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
+            let db_hash: Option<String> = sqlx::query_scalar(
+                "SELECT content_hash FROM policy_skills WHERE name = ?",
+            )
+            .bind(&doc.frontmatter.name)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            if db_hash.as_deref() != Some(hash.as_str()) {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+/// Policy counts and storage mode for status / diagnostics.
+pub async fn policy_status(pool: &SqlitePool, project_root: &Path) -> Result<crate::types::PolicyStatus, AxError> {
+    let counts = db_counts(pool).await?;
+    let config = load_policy_config(project_root);
+    Ok(crate::types::PolicyStatus {
+        indexed: counts.rules_indexed > 0 || counts.skills_indexed > 0,
+        rules: counts.rules_indexed,
+        skills: counts.skills_indexed,
+        mode: policy_storage_label(config.storage).to_string(),
     })
 }
 
@@ -344,10 +467,12 @@ pub async fn get_skill(pool: &SqlitePool, name: &str) -> Result<Option<PolicySki
 
 /// Whether policy MCP tools should be listed for this project.
 pub fn policy_tools_enabled(project_root: &Path) -> bool {
-    let config = load_policy_config(project_root);
-    match config.storage {
-        PolicyStorage::Database => true,
-        PolicyStorage::Files => policy_exists_filesystem(project_root),
+    if policy_exists_filesystem(project_root) {
+        return true;
+    }
+    match load_policy_config(project_root).storage {
+        PolicyStorage::Database => ax_dir_from_project(project_root).join("ax.db").exists(),
+        PolicyStorage::Files => false,
     }
 }
 
@@ -565,5 +690,29 @@ mod tests {
         // index without force should not wipe DB-only rows
         let result = index_policy(&pool, root, false).await.unwrap();
         assert_eq!(result.rules_indexed, 1);
+    }
+
+    #[tokio::test]
+    async fn ensure_policy_ready_imports_when_db_empty() {
+        let (_dir, pool) = test_pool().await;
+        let root = _dir.path();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"policy":{"storage":"database"}}"#,
+        )
+        .unwrap();
+        let ax_dir = root.join(".ax");
+        let rules_path = rules_dir(&ax_dir);
+        std::fs::create_dir_all(&rules_path).unwrap();
+        std::fs::write(
+            rule_file(&rules_path, "disk-rule"),
+            "---\nid: disk-rule\nlevel: CRITICAL\nalwaysApply: true\n---\nfrom disk\n",
+        )
+        .unwrap();
+
+        let counts = ensure_policy_ready(&pool, root).await.unwrap();
+        assert!(counts.rules_indexed >= 1);
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(rules.iter().any(|r| r.id == "disk-rule"));
     }
 }

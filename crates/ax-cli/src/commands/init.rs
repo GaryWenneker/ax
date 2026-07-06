@@ -25,6 +25,7 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
 
     let ax_dir = root.join(".ax");
     let seed = ax_policy::seed_default_policy(&ax_dir).ok();
+    let ide = ax_policy::seed_ide_agent_workflow(&root).ok();
     let sync = ax_policy::sync_instructions(&ax_dir, true).ok();
     if let Some(ref s) = seed {
         if !s.created.is_empty() {
@@ -36,6 +37,33 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
                 ))
             );
             for rel in &s.created {
+                println!("  {}", dim(rel));
+            }
+            println!();
+        }
+    }
+    if let Some(ref i) = ide {
+        if !i.created.is_empty() {
+            println!(
+                "{}",
+                ok_line(format!(
+                    "Seeded {} IDE bootstrap file(s)",
+                    i.created.len()
+                ))
+            );
+            for rel in &i.created {
+                println!("  {}", dim(rel));
+            }
+            println!();
+        } else if !i.updated.is_empty() {
+            println!(
+                "{}",
+                ok_line(format!(
+                    "Updated {} IDE bootstrap file(s)",
+                    i.updated.len()
+                ))
+            );
+            for rel in &i.updated {
                 println!("  {}", dim(rel));
             }
             println!();

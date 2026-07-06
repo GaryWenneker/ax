@@ -21,6 +21,7 @@ ax_preflight({ "prompt": "<full user intent in English>", "files": ["<open or ch
 
 - Apply all **CRITICAL** rules from `inject` before editing files.
 - If a skill matched (including this one), follow its workflow from `inject` — do not re-read `.ax/policy/` on disk.
+- **Fallback:** If `inject` lacks `<ax_policy>` (some MCP clients filter it), this skill delivers the startup workflow — follow it.
 - `ax_rules` / `ax_skill` are for on-demand loads — preflight already returns full bodies in `inject` on turn start.
 
 ## SS-01 — Code context (after preflight)

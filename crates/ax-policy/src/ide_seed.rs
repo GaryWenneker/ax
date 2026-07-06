@@ -1,0 +1,491 @@
+//! IDE-specific bootstrap — written on `ax init` into each agent's native
+//! instructions surface. Team policy stays in `.ax/policy/` (MCP); only the
+//! `ax_preflight` entry point is seeded into IDE rules/instructions files.
+
+use std::path::{Path, PathBuf};
+
+use crate::seed::{InstructionCheck, SyncResult};
+
+const AX_SECTION_START: &str = "<!-- AX_START -->";
+const AX_SECTION_END: &str = "<!-- AX_END -->";
+
+const CURSOR_RULE_FILE: &str = "ax.mdc";
+const LEGACY_CURSOR_RULE_FILE: &str = "ax-agent-workflow.mdc";
+const CURSOR_RULE_BODY: &str = include_str!("../templates/ide/cursor/ax.mdc");
+const CLAUDE_RULE_FILE: &str = "ax.md";
+const CLAUDE_RULE_BODY: &str = include_str!("../templates/ide/claude/ax.md");
+
+const CLAUDE_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
+## ax
+
+When this repository has `.ax/policy/` indexed, call `ax_preflight` exactly once per turn before other work. Full workflow: see `.claude/rules/ax.md`.
+<!-- AX_END -->"#;
+
+const AGENTS_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
+## ax
+
+When `.ax/policy/` exists at the repo root, call `ax_preflight` exactly once per turn before other work. Team policy arrives via MCP inject — do not Read `.ax/policy/` files when ax MCP tools are available.
+
+**Inject fallback:** If preflight lacks `<ax_policy>` (empty inject/rules), call `ax_skill("startup")` once.
+
+Run preflight exactly once per turn. MCP unreachable → report degraded mode; do not proceed silently.
+<!-- AX_END -->"#;
+
+const GEMINI_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct IdeSeedResult {
+    pub created: Vec<String>,
+    pub updated: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+impl IdeSeedResult {
+    fn record_created(&mut self, rel: impl Into<String>) {
+        self.created.push(rel.into());
+    }
+
+    fn record_updated(&mut self, rel: impl Into<String>) {
+        self.updated.push(rel.into());
+    }
+
+    fn record_skipped(&mut self, rel: impl Into<String>) {
+        self.skipped.push(rel.into());
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpsertAction {
+    Created,
+    Updated,
+    Appended,
+    Unchanged,
+}
+
+fn replace_or_append_marked_section(
+    path: &Path,
+    body: &str,
+    start_marker: &str,
+    end_marker: &str,
+) -> std::io::Result<UpsertAction> {
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, format!("{body}\n"))?;
+        return Ok(UpsertAction::Created);
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    let start_idx = content.find(start_marker);
+    let end_idx = content.find(end_marker);
+
+    if let (Some(start), Some(end)) = (start_idx, end_idx) {
+        if end <= start {
+            return append_marked_section(path, &content, body);
+        }
+        let existing_block = &content[start..end + end_marker.len()];
+        if existing_block == body {
+            return Ok(UpsertAction::Unchanged);
+        }
+        let before = &content[..start];
+        let after = &content[end + end_marker.len()..];
+        std::fs::write(path, format!("{before}{body}{after}"))?;
+        return Ok(UpsertAction::Updated);
+    }
+
+    append_marked_section(path, &content, body)
+}
+
+fn append_marked_section(path: &Path, content: &str, body: &str) -> std::io::Result<UpsertAction> {
+    let trimmed = content.trim_end();
+    let sep = if trimmed.is_empty() { "" } else { "\n\n" };
+    std::fs::write(path, format!("{trimmed}{sep}{body}\n"))?;
+    Ok(UpsertAction::Appended)
+}
+
+fn record_upsert(result: &mut IdeSeedResult, rel: &str, action: UpsertAction) {
+    match action {
+        UpsertAction::Created => result.record_created(rel),
+        UpsertAction::Updated | UpsertAction::Appended => result.record_updated(rel),
+        UpsertAction::Unchanged => result.record_skipped(rel),
+    }
+}
+
+fn cursor_rules_dir(project_root: &Path) -> PathBuf {
+    project_root.join(".cursor").join("rules")
+}
+
+fn cursor_rule_path(project_root: &Path) -> PathBuf {
+    cursor_rules_dir(project_root).join(CURSOR_RULE_FILE)
+}
+
+fn legacy_cursor_rule_path(project_root: &Path) -> PathBuf {
+    cursor_rules_dir(project_root).join(LEGACY_CURSOR_RULE_FILE)
+}
+
+fn bootstrap_already_present(cursor_rules: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(cursor_rules) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if stem == "ax" || stem == "ax-agent-workflow" {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        if crate::seed::verify_content(&content).is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+fn remove_legacy_cursor_rule(project_root: &Path, result: &mut IdeSeedResult) {
+    let legacy = legacy_cursor_rule_path(project_root);
+    if legacy.exists() {
+        let _ = std::fs::remove_file(&legacy);
+        result.record_updated(format!(
+            ".cursor/rules/{LEGACY_CURSOR_RULE_FILE} (removed — replaced by {CURSOR_RULE_FILE})"
+        ));
+    }
+}
+
+fn cursor_bootstrap_stale(content: &str) -> bool {
+    !crate::seed::verify_content(content).is_empty() || content.trim() != CURSOR_RULE_BODY.trim()
+}
+
+fn seed_cursor_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let cursor_rules = cursor_rules_dir(project_root);
+    std::fs::create_dir_all(&cursor_rules)?;
+    remove_legacy_cursor_rule(project_root, result);
+
+    let target = cursor_rule_path(project_root);
+    let rel = format!(".cursor/rules/{CURSOR_RULE_FILE}");
+
+    if target.exists() {
+        let content = std::fs::read_to_string(&target)?;
+        if !cursor_bootstrap_stale(&content) {
+            result.record_skipped(rel);
+            return Ok(());
+        }
+        std::fs::write(&target, CURSOR_RULE_BODY.as_bytes())?;
+        result.record_updated(rel);
+        return Ok(());
+    }
+
+    if bootstrap_already_present(&cursor_rules) {
+        result.record_skipped(format!(
+            "{rel} (another .cursor/rules/*.mdc already contains ax_preflight bootstrap)"
+        ));
+        return Ok(());
+    }
+
+    std::fs::write(&target, CURSOR_RULE_BODY.as_bytes())?;
+    result.record_created(rel);
+    Ok(())
+}
+
+fn write_if_missing_or_stale(path: &Path, body: &str, rel: &str, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        if crate::seed::verify_content(&content).is_empty() {
+            result.record_skipped(rel);
+            return Ok(());
+        }
+        std::fs::write(path, body.as_bytes())?;
+        result.record_updated(rel);
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, body.as_bytes())?;
+    result.record_created(rel);
+    Ok(())
+}
+
+fn seed_claude_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let rule_path = project_root.join(".claude").join("rules").join(CLAUDE_RULE_FILE);
+    let rule_rel = format!(".claude/rules/{CLAUDE_RULE_FILE}");
+    write_if_missing_or_stale(&rule_path, CLAUDE_RULE_BODY, &rule_rel, result)?;
+
+    let instructions_path = project_root.join(".claude").join("CLAUDE.md");
+    let instructions_rel = ".claude/CLAUDE.md";
+    let action = replace_or_append_marked_section(
+        &instructions_path,
+        CLAUDE_INSTRUCTIONS_BLOCK,
+        AX_SECTION_START,
+        AX_SECTION_END,
+    )?;
+    record_upsert(result, instructions_rel, action);
+    Ok(())
+}
+
+fn seed_agents_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let path = project_root.join("AGENTS.md");
+    let action = replace_or_append_marked_section(
+        &path,
+        AGENTS_INSTRUCTIONS_BLOCK,
+        AX_SECTION_START,
+        AX_SECTION_END,
+    )?;
+    record_upsert(result, "AGENTS.md", action);
+    Ok(())
+}
+
+fn seed_gemini_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let path = project_root.join("GEMINI.md");
+    let action = replace_or_append_marked_section(
+        &path,
+        GEMINI_INSTRUCTIONS_BLOCK,
+        AX_SECTION_START,
+        AX_SECTION_END,
+    )?;
+    record_upsert(result, "GEMINI.md", action);
+    Ok(())
+}
+
+/// Ensure IDE bootstrap files exist (create or repair on init).
+pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedResult> {
+    let mut result = IdeSeedResult::default();
+    seed_cursor_rule(project_root, &mut result)?;
+    seed_claude_bootstrap(project_root, &mut result)?;
+    seed_agents_bootstrap(project_root, &mut result)?;
+    seed_gemini_bootstrap(project_root, &mut result)?;
+    Ok(result)
+}
+
+fn verify_marked_instructions(path: &Path, expected_block: &str) -> Vec<String> {
+    if !path.exists() {
+        return vec!["missing".into()];
+    }
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let Some(start) = content.find(AX_SECTION_START) else {
+        return vec!["missing AX marker block".into()];
+    };
+    let Some(end) = content.find(AX_SECTION_END) else {
+        return vec!["missing AX marker block".into()];
+    };
+    if end <= start {
+        return vec!["invalid AX marker block".into()];
+    }
+    let block = &content[start..end + AX_SECTION_END.len()];
+    if block == expected_block {
+        return vec![];
+    }
+    crate::seed::verify_content(block)
+}
+
+fn verify_dedicated_file(path: &Path) -> Vec<String> {
+    if !path.exists() {
+        return vec!["missing".into()];
+    }
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    crate::seed::verify_content(&content)
+}
+
+fn verify_cursor_bootstrap(project_root: &Path) -> InstructionCheck {
+    let path = cursor_rule_path(project_root);
+    let label = format!(".cursor/rules/{CURSOR_RULE_FILE}");
+    let cursor_rules = cursor_rules_dir(project_root);
+    if !path.exists() && bootstrap_already_present(&cursor_rules) {
+        return InstructionCheck {
+            label,
+            path,
+            ok: true,
+            issues: vec![],
+            optional: true,
+        };
+    }
+    let issues = verify_dedicated_file(&path);
+    if path.exists() {
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        if cursor_bootstrap_stale(&content) {
+            return InstructionCheck {
+                label,
+                path,
+                ok: false,
+                issues: vec!["bootstrap content drifts from embedded template".into()],
+                optional: false,
+            };
+        }
+    }
+    InstructionCheck {
+        label,
+        path,
+        ok: issues.is_empty(),
+        issues,
+        optional: false,
+    }
+}
+
+fn check_instruction(label: impl Into<String>, path: PathBuf, issues: Vec<String>, optional: bool) -> InstructionCheck {
+    InstructionCheck {
+        label: label.into(),
+        path,
+        ok: issues.is_empty(),
+        issues,
+        optional,
+    }
+}
+
+/// Verify per-IDE bootstrap instruction files (Cursor, Claude, Codex/opencode, Gemini).
+pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
+    let claude_rule = project_root.join(".claude").join("rules").join(CLAUDE_RULE_FILE);
+    let claude_md = project_root.join(".claude").join("CLAUDE.md");
+    let agents_md = project_root.join("AGENTS.md");
+    let gemini_md = project_root.join("GEMINI.md");
+
+    vec![
+        verify_cursor_bootstrap(project_root),
+        check_instruction(
+            format!(".claude/rules/{CLAUDE_RULE_FILE}"),
+            claude_rule.clone(),
+            verify_dedicated_file(&claude_rule),
+            false,
+        ),
+        check_instruction(
+            ".claude/CLAUDE.md",
+            claude_md.clone(),
+            verify_marked_instructions(&claude_md, CLAUDE_INSTRUCTIONS_BLOCK),
+            false,
+        ),
+        check_instruction(
+            "AGENTS.md",
+            agents_md.clone(),
+            verify_marked_instructions(&agents_md, AGENTS_INSTRUCTIONS_BLOCK),
+            false,
+        ),
+        check_instruction(
+            "GEMINI.md",
+            gemini_md.clone(),
+            verify_marked_instructions(&gemini_md, GEMINI_INSTRUCTIONS_BLOCK),
+            false,
+        ),
+    ]
+}
+
+/// Verify IDE bootstrap files; with `fix`, create or repair via `seed_ide_agent_workflow`.
+pub fn sync_ide_bootstrap(project_root: &Path, fix: bool) -> std::io::Result<SyncResult> {
+    let mut result = SyncResult::default();
+    result.checks = verify_ide_bootstrap(project_root);
+    result.fail_count = result
+        .checks
+        .iter()
+        .filter(|c| !c.ok && !c.optional)
+        .count();
+
+    if fix && result.fail_count > 0 {
+        let seed = seed_ide_agent_workflow(project_root)?;
+        result.fixed.extend(seed.created);
+        result.fixed.extend(seed.updated);
+        result.checks = verify_ide_bootstrap(project_root);
+        result.fail_count = result
+            .checks
+            .iter()
+            .filter(|c| !c.ok && !c.optional)
+            .count();
+    }
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn creates_cursor_ax_rule_on_init() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.created.iter().any(|p| p.contains("ax.mdc")));
+        let path = cursor_rule_path(dir.path());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(crate::seed::verify_content(&content).is_empty());
+    }
+
+    #[test]
+    fn migrates_legacy_ax_agent_workflow_to_ax_mdc() {
+        let dir = tempdir().unwrap();
+        let legacy = legacy_cursor_rule_path(dir.path());
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, CURSOR_RULE_BODY.as_bytes()).unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(!legacy.exists());
+        assert!(cursor_rule_path(dir.path()).exists());
+        assert!(result.updated.iter().any(|p| p.contains("ax-agent-workflow")));
+    }
+
+    #[test]
+    fn skips_when_bootstrap_already_in_another_cursor_rule() {
+        let dir = tempdir().unwrap();
+        let rules = cursor_rules_dir(dir.path());
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(
+            rules.join("custom.mdc"),
+            b"---\nalwaysApply: true\n---\nCall ax_preflight exactly once per turn.\n",
+        )
+        .unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(!cursor_rule_path(dir.path()).exists());
+        assert!(result.skipped.iter().any(|p| p.contains("ax.mdc")));
+    }
+
+    #[test]
+    fn repairs_stale_cursor_ax_rule() {
+        let dir = tempdir().unwrap();
+        let path = cursor_rule_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"---\nstale\n---\nno preflight here\n").unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.updated.iter().any(|p| p.contains("ax.mdc")));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("ax_preflight"));
+    }
+
+    #[test]
+    fn seeds_claude_rule_and_claude_md_marker() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.created.iter().any(|p| p == ".claude/rules/ax.md"));
+        assert!(result.created.iter().any(|p| p == ".claude/CLAUDE.md"));
+        let claude_md = std::fs::read_to_string(dir.path().join(".claude/CLAUDE.md")).unwrap();
+        assert!(claude_md.contains(AX_SECTION_START));
+        assert!(claude_md.contains(".claude/rules/ax.md"));
+    }
+
+    #[test]
+    fn upserts_agents_and_gemini_markers() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.created.iter().any(|p| p == "AGENTS.md"));
+        assert!(result.created.iter().any(|p| p == "GEMINI.md"));
+        let agents = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(agents.contains("ax_preflight"));
+    }
+
+    #[test]
+    fn verify_ide_bootstrap_fails_before_seed() {
+        let dir = tempdir().unwrap();
+        let checks = verify_ide_bootstrap(dir.path());
+        let fails: Vec<_> = checks.iter().filter(|c| !c.ok && !c.optional).collect();
+        assert!(fails.len() >= 4);
+    }
+
+    #[test]
+    fn sync_ide_bootstrap_fix_creates_all_targets() {
+        let dir = tempdir().unwrap();
+        let synced = sync_ide_bootstrap(dir.path(), true).unwrap();
+        assert_eq!(synced.fail_count, 0);
+        assert!(synced.fixed.iter().any(|p| p.contains("AGENTS.md")));
+        assert!(synced.fixed.iter().any(|p| p.contains("GEMINI.md")));
+        assert!(synced.fixed.iter().any(|p| p.contains(".claude/rules/ax.md")));
+    }
+}

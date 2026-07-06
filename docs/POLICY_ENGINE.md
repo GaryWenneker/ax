@@ -220,8 +220,33 @@ ax policy does **not** replace IDE-specific config:
 | `.cursor/rules`, `.cursor/skills` | Cursor (separate) |
 | Recall MCP | Recall OS projects (separate) |
 
-**Do not duplicate ax policy in `.cursor/rules/`.** Content under `.ax/policy/` must reach agents via `ax_preflight` MCP inject only. Files in `.cursor/rules/` with `alwaysApply: true` bypass MCP entirely.
+**Do not duplicate ax team policy in `.cursor/rules/`.** Content under `.ax/policy/` must reach agents via `ax_preflight` MCP inject only.
+
+**Exception — IDE bootstrap:** `ax init` seeds each agent's native instructions surface (create or repair). These files only tell the agent to call `ax_preflight`; they are not a substitute for team policy in `.ax/policy/`.
+
+| IDE | Dedicated file | Default instructions link |
+|-----|------------------|---------------------------|
+| Cursor | `.cursor/rules/ax.mdc` | — (`alwaysApply` rule) |
+| Claude Code | `.claude/rules/ax.md` | marker block in `.claude/CLAUDE.md` |
+| Codex / opencode | — | marker block in `AGENTS.md` |
+| Gemini CLI | — | marker block in `GEMINI.md` |
+
+Legacy `.cursor/rules/ax-agent-workflow.mdc` is migrated to `ax.mdc` on init.
 
 Cursor-only conveniences (e.g. local dev skills) may remain in `.cursor/skills/`. Run `ax policy sync` to detect duplicate `.cursor/rules/` entries.
 
 See [POLICY_ENGINE_PLAN.md](./POLICY_ENGINE_PLAN.md) for full architecture.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| MCP `ax_rules` returns `[]` | Reload MCP; `ax policy import`; `ax daemon stop` |
+| Preflight only shows `.cursor/rules/ax.mdc` | MCP not connected to project DB — reload MCP after reinstall |
+| DB empty, files exist | `ax policy import` or `ax policy index --force` |
+| Guard CLI parse error | Use `ax policy guard <file>` not `guard write <file>` |
+| Verify full stack | `ax policy test` |
+
+`ax_preflight` returns `policyStatus`, `matchedRules`, `matchedSkills`, `guardRequired`, and `inject`. AlwaysApply rules are never truncated from inject; contextual rules may be when `AX_POLICY_MAX_CHARS` is exceeded.

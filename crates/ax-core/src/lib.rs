@@ -134,12 +134,18 @@ impl Ax {
         if !self.db.is_replaced_on_disk() {
             return Ok(false);
         }
+        self.reopen_db().await?;
+        Ok(true)
+    }
+
+    /// Reopen SQLite from disk — picks up WAL commits from other processes (CLI, ax web).
+    pub async fn reopen_db(&mut self) -> Result<(), ax_utils::errors::AxError> {
         let db_path = self.db.path().to_path_buf();
         let fresh = Database::open(&db_path).await?;
         self.db.close().await;
         self.db = fresh;
         self.wire_layers();
-        Ok(true)
+        Ok(())
     }
 
     pub fn project_root(&self) -> &Path {
@@ -459,6 +465,14 @@ impl Ax {
 
     pub async fn index_policy(&self, force: bool) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {
         ax_policy::index_policy(self.db.pool(), &self.project_root, force).await
+    }
+
+    pub async fn ensure_policy_ready(&self) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {
+        ax_policy::ensure_policy_ready(self.db.pool(), &self.project_root).await
+    }
+
+    pub async fn policy_status(&self) -> Result<ax_policy::PolicyStatus, ax_utils::errors::AxError> {
+        ax_policy::policy_status(self.db.pool(), &self.project_root).await
     }
 
     pub async fn match_policy(

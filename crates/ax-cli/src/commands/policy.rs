@@ -13,6 +13,11 @@ pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> 
                 "Database mode: {} rules, {} skills in ax.db (use --force to import from .ax/policy/ files)",
                 result.rules_indexed, result.skills_indexed
             );
+            if result.rules_indexed == 0 && ax_policy::policy_exists_filesystem(&root) {
+                eprintln!(
+                    "Hint: .ax/policy/ files exist but DB is empty — run `ax policy import` or `ax policy index --force`"
+                );
+            }
         }
         ax_policy::PolicyStorage::Database if force => {
             println!(
@@ -130,14 +135,15 @@ pub async fn run_skill(path: Option<String>, name: String) -> Result<(), String>
 pub async fn run_guard(
     path: Option<String>,
     file_path: String,
-    write: bool,
+    delete: bool,
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let _ = ax.ensure_policy_ready().await.map_err(|e| e.to_string())?;
     let target = root.join(&file_path);
     let content = std::fs::read(&target).ok();
-    let op = if write { GuardOp::Write } else { GuardOp::Delete };
+    let op = if delete { GuardOp::Delete } else { GuardOp::Write };
     let result = ax
         .guard_operation(
             &target,
@@ -165,8 +171,12 @@ pub async fn run_sync(path: Option<String>, fix: bool) -> Result<(), String> {
     if !ax_dir.is_dir() {
         return Err("project not initialized — run ax init first".into());
     }
-    let result = ax_policy::sync_instructions(&ax_dir, fix).map_err(|e| e.to_string())?;
-    for check in &result.checks {
+
+    let mut fail_count = 0usize;
+    let mut all_fixed: Vec<String> = Vec::new();
+
+    let policy = ax_policy::sync_instructions(&ax_dir, fix).map_err(|e| e.to_string())?;
+    for check in &policy.checks {
         if check.optional && !check.path.exists() {
             continue;
         }
@@ -176,13 +186,31 @@ pub async fn run_sync(path: Option<String>, fix: bool) -> Result<(), String> {
             eprintln!("  FAIL {} — {}", check.label, check.issues.join("; "));
         }
     }
-    if fix && !result.fixed.is_empty() {
-        println!("Fixed {} file(s):", result.fixed.len());
-        for rel in &result.fixed {
+    fail_count += policy.fail_count;
+    all_fixed.extend(policy.fixed);
+
+    let ide = ax_policy::sync_ide_bootstrap(&root, fix).map_err(|e| e.to_string())?;
+    println!("IDE bootstrap:");
+    for check in &ide.checks {
+        if check.optional && !check.path.exists() {
+            continue;
+        }
+        if check.ok {
+            println!("  OK   {}", check.label);
+        } else {
+            eprintln!("  FAIL {} — {}", check.label, check.issues.join("; "));
+        }
+    }
+    fail_count += ide.fail_count;
+    all_fixed.extend(ide.fixed);
+
+    if fix && !all_fixed.is_empty() {
+        println!("Fixed {} file(s):", all_fixed.len());
+        for rel in &all_fixed {
             println!("  {rel}");
         }
     }
-    if result.fail_count > 0 {
+    if fail_count > 0 {
         std::process::exit(1);
     }
     let dupes = ax_policy::check_cursor_rule_duplicates(&root);
@@ -191,6 +219,172 @@ pub async fn run_sync(path: Option<String>, fix: bool) -> Result<(), String> {
     }
     if !dupes.is_empty() {
         eprintln!("Remove duplicate `.cursor/rules/` files — ax policy is MCP-only (`.ax/policy/` + ax_preflight).");
+    }
+    Ok(())
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PolicyTestResult {
+    name: String,
+    ok: bool,
+    detail: String,
+}
+
+pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let mut results: Vec<PolicyTestResult> = Vec::new();
+
+    let mut check = |name: &str, ok: bool, detail: &str| {
+        results.push(PolicyTestResult {
+            name: name.into(),
+            ok,
+            detail: detail.into(),
+        });
+    };
+
+    let ready = ax.ensure_policy_ready().await.map_err(|e| e.to_string())?;
+    check(
+        "ensure_policy_ready",
+        ready.rules_indexed > 0,
+        &format!("{} rules, {} skills", ready.rules_indexed, ready.skills_indexed),
+    );
+
+    let status = ax.policy_status().await.map_err(|e| e.to_string())?;
+    check(
+        "policy_status",
+        status.indexed && status.rules >= 4,
+        &format!("mode={} rules={} skills={}", status.mode, status.rules, status.skills),
+    );
+
+    let rules = ax_policy::list_rules(ax.db_pool()).await.map_err(|e| e.to_string())?;
+    let always: Vec<_> = rules.iter().filter(|r| r.always_apply).collect();
+    check(
+        "always_apply_rules",
+        always.len() >= 4,
+        &format!("{} alwaysApply rules", always.len()),
+    );
+
+    let subagents_rule = rules.iter().any(|r| r.id == "subagents");
+    check("subagents_rule", subagents_rule, "subagents rule indexed");
+
+    let skills = ax_policy::list_skills(ax.db_pool()).await.map_err(|e| e.to_string())?;
+    let subagents_skill = skills.iter().any(|s| s.name == "subagents");
+    let startup_skill = skills.iter().any(|s| s.name == "startup");
+    check("subagents_skill", subagents_skill, "subagents skill indexed");
+    check("startup_skill", startup_skill, "startup skill indexed");
+
+    let baseline = MatchInput {
+        prompt: "generic session".into(),
+        cwd: root.clone(),
+        open_files: vec![],
+        changed_files: vec![],
+    };
+    let baseline_match = ax.match_policy(baseline).await.map_err(|e| e.to_string())?;
+    check(
+        "match_baseline",
+        baseline_match.rules.len() >= 4,
+        &format!("{} rules matched", baseline_match.rules.len()),
+    );
+
+    let release = MatchInput {
+        prompt: "deploy release latest.txt".into(),
+        cwd: root.clone(),
+        open_files: vec![root.join("site/public/releases/latest.txt")],
+        changed_files: vec![],
+    };
+    let release_match = ax.match_policy(release).await.map_err(|e| e.to_string())?;
+    let has_release = release_match.rules.iter().any(|r| r.id == "release-all-platforms");
+    check(
+        "match_release_trigger",
+        has_release,
+        &format!(
+            "release rule matched={has_release}, skills={}",
+            release_match.skills.len()
+        ),
+    );
+
+    let meta = ax_policy::build_preflight_meta(&status, &baseline_match);
+    check(
+        "preflight_meta",
+        meta.guard_required && meta.matched_rules >= 4,
+        &format!(
+            "guardRequired={} matchedRules={}",
+            meta.guard_required, meta.matched_rules
+        ),
+    );
+
+    let inject_ok = baseline_match.inject.contains("<ax_policy")
+        && baseline_match.inject.contains("agent-workflow");
+    check("inject_block", inject_ok, "inject contains team policy");
+
+    let guard_target = root.join("crates/ax-cli/src/main.rs");
+    let guard_ok = ax
+        .guard_operation(&guard_target, GuardOp::Write, std::fs::read(&guard_target).ok().as_deref())
+        .await
+        .map(|r| r.allowed)
+        .unwrap_or(false);
+    check("guard_utf8_existing", guard_ok, "existing UTF-8 file allowed");
+
+    let new_target = root.join("target-dev/policy-test-new.rs");
+    let bom = [0xEFu8, 0xBB, 0xBF, b'x'];
+    let guard_bom = ax
+        .guard_operation(&new_target, GuardOp::Write, Some(&bom))
+        .await
+        .map(|r| !r.allowed)
+        .unwrap_or(false);
+    check("guard_utf8_bom_blocked", guard_bom, "UTF-8 BOM in proposed content blocked");
+
+    let env_target = root.join(".env");
+    let has_secrets_rule = rules
+        .iter()
+        .any(|r| r.id.contains("secret") || r.tags.iter().any(|t| t == "secrets"));
+    if has_secrets_rule {
+        let guard_env = ax
+            .guard_operation(&env_target, GuardOp::Delete, None)
+            .await
+            .map(|r| !r.allowed)
+            .unwrap_or(false);
+        check("guard_sensitive_delete", guard_env, ".env delete blocked by secrets rule");
+    } else {
+        check(
+            "guard_sensitive_delete",
+            true,
+            "skipped — no secrets rule indexed",
+        );
+    }
+
+    let ax_dir = root.join(".ax");
+    let sync = ax_policy::sync_instructions(&ax_dir, false).map_err(|e| e.to_string())?;
+    let startup_ok = sync.checks.iter().any(|c| c.label.contains("startup") && c.ok);
+    check("bootstrap_startup", startup_ok, "startup skill file OK");
+
+    let ide = ax_policy::sync_ide_bootstrap(&root, false).map_err(|e| e.to_string())?;
+    let cursor_ok = ide
+        .checks
+        .iter()
+        .any(|c| c.label.contains("ax.mdc") && c.ok);
+    check("bootstrap_cursor", cursor_ok, ".cursor/rules/ax.mdc OK");
+
+    let failed: Vec<_> = results.iter().filter(|r| !r.ok).collect();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results).unwrap_or_default());
+    } else {
+        for r in &results {
+            let mark = if r.ok { "OK" } else { "FAIL" };
+            println!("  {mark:<4} {} — {}", r.name, r.detail);
+        }
+        println!();
+        println!(
+            "{} passed, {} failed",
+            results.len() - failed.len(),
+            failed.len()
+        );
+    }
+
+    if !failed.is_empty() {
+        std::process::exit(1);
     }
     Ok(())
 }

@@ -114,10 +114,19 @@ fn ax_bin() -> String {
         .unwrap_or_else(|_| "ax".to_string())
 }
 
+fn mcp_serve_args(project_root: &Path) -> Vec<String> {
+    vec![
+        "serve".to_string(),
+        "--mcp".to_string(),
+        "--path".to_string(),
+        project_root.to_string_lossy().into_owned(),
+    ]
+}
+
 fn mcp_config_entry(project_root: &Path) -> Value {
     serde_json::json!({
         "command": ax_bin(),
-        "args": ["serve", "--mcp"],
+        "args": mcp_serve_args(project_root),
         "cwd": project_root.to_string_lossy(),
     })
 }
@@ -320,9 +329,9 @@ fn install_codex_mcp(project_root: &Path) -> Result<TargetReport, String> {
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("config.toml");
     let bin = ax_bin();
+    let cwd = project_root.to_string_lossy().replace('\\', "/");
     let block = format!(
-        "[mcp_servers.ax]\ncommand = \"{bin}\"\nargs = [\"serve\", \"--mcp\"]\ncwd = \"{cwd}\"\n",
-        cwd = project_root.to_string_lossy().replace('\\', "/")
+        "[mcp_servers.ax]\ncommand = \"{bin}\"\nargs = [\"serve\", \"--mcp\", \"--path\", \"{cwd}\"]\ncwd = \"{cwd}\"\n",
     );
     let content = if path.exists() {
         fs::read_to_string(&path).unwrap_or_default()
@@ -421,9 +430,12 @@ fn install_opencode_mcp(project_root: &Path) -> Result<TargetReport, String> {
     if config.get("mcp").is_none() {
         config["mcp"] = serde_json::json!({});
     }
+    let args: Vec<String> = std::iter::once(bin)
+        .chain(mcp_serve_args(project_root))
+        .collect();
     config["mcp"]["ax"] = serde_json::json!({
         "type": "local",
-        "command": [bin, "serve", "--mcp"],
+        "command": args,
         "enabled": true,
         "cwd": project_root.to_string_lossy(),
     });

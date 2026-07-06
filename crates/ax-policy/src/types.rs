@@ -119,11 +119,13 @@ pub struct MatchInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MatchedRule {
     pub id: String,
     pub level: String,
     pub score: i32,
     pub reason: String,
+    pub always_apply: bool,
     pub body: String,
 }
 
@@ -147,6 +149,25 @@ pub struct MatchResult {
 pub struct PolicyIndexResult {
     pub rules_indexed: u32,
     pub skills_indexed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyStatus {
+    pub indexed: bool,
+    pub rules: u32,
+    pub skills: u32,
+    pub mode: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreflightMeta {
+    pub policy_status: PolicyStatus,
+    pub matched_rules: usize,
+    pub matched_skills: usize,
+    pub guard_required: bool,
+    pub mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

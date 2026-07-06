@@ -208,9 +208,20 @@ ax policy does not replace other systems:
 | `.cursor/rules`, `.cursor/skills` | Cursor (separate) |
 | Recall MCP | Recall OS projects (separate) |
 
-**Do not duplicate ax policy in `.cursor/rules/`.** Rules and skills under `.ax/policy/` are indexed into `ax.db` and delivered via `ax_preflight` MCP inject — not via Cursor's filesystem rules channel. Duplicating them in `.cursor/rules/` bypasses MCP and violates the pull-only model.
+**Do not duplicate ax team policy in `.cursor/rules/`.** Rules and skills under `.ax/policy/` are indexed into `ax.db` and delivered via `ax_preflight` MCP inject.
 
-Cursor-only conveniences that are **not** ax policy (e.g. a local dev reinstall skill) may stay in `.cursor/skills/`.
+**Exception — IDE bootstrap:** `ax init` seeds each agent's native instructions surface (create or repair). These files only tell the agent to call `ax_preflight`; they are not team policy.
+
+| IDE | Dedicated file | Default instructions link |
+|-----|------------------|---------------------------|
+| Cursor | `.cursor/rules/ax.mdc` | — (`alwaysApply` rule) |
+| Claude Code | `.claude/rules/ax.md` | marker block in `.claude/CLAUDE.md` |
+| Codex / opencode | — | marker block in `AGENTS.md` |
+| Gemini CLI | — | marker block in `GEMINI.md` |
+
+Legacy `.cursor/rules/ax-agent-workflow.mdc` is migrated to `ax.mdc` on init.
+
+Cursor-only conveniences (e.g. a local dev reinstall skill) may stay in `.cursor/skills/`.
 
 Run `ax policy sync` to verify managed policy files and warn about duplicate `.cursor/rules/` entries.
 
@@ -223,6 +234,45 @@ Run `ax policy sync` to verify managed policy files and warn about duplicate `.c
 | `AX_NO_POLICY=1` | Skip policy injection in prompt-hook |
 | `AX_POLICY_MAX_CHARS` | Cap injected policy text (default 16000) |
 | `AX_WEB_READONLY` | Disable saves in ax web |
+
+---
+
+## Troubleshooting
+
+### MCP `ax_rules` returns empty or preflight only shows IDE bootstrap
+
+1. Reload ax MCP in Cursor (Settings → MCP) after `ax` upgrade or reinstall.
+2. Check DB: `ax policy rules` — should list indexed rules.
+3. If DB is empty but `.ax/policy/` exists: `ax policy import` or `ax policy index --force`.
+4. Restart daemon: `ax daemon stop`, then reload MCP.
+
+### `ax policy guard` CLI errors
+
+Use file-first syntax (write check is default):
+
+```bash
+ax policy guard crates/ax-cli/src/main.rs
+ax policy guard path/to/file.rs --delete
+ax policy guard -p /path/to/project file.rs
+```
+
+Do not pass `write` as a positional argument — it was parsed as project path in older versions.
+
+### Policy smoke tests
+
+```bash
+ax policy test          # match, guard, bootstrap, subagents checks
+ax policy test --json   # machine-readable output
+```
+
+### Bootstrap vs team policy
+
+| Layer | Location | Purpose |
+|---|---|---|
+| IDE bootstrap | `.cursor/rules/ax.mdc`, `AGENTS.md` | Reminder to call `ax_preflight` |
+| Team policy | `.ax/policy/` → MCP inject | Full CRITICAL rules and skills |
+
+Do not duplicate team rules in `.cursor/rules/` — delivery is MCP-only.
 
 ---
 

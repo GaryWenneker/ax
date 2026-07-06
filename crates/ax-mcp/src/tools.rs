@@ -37,12 +37,7 @@ impl ToolHandler {
                 let results = ax.search_nodes(query, &SearchOptions { limit: Some(20), ..Default::default() }).await.map_err(|e| e.to_string())?;
                 Ok(json!({ "results": results }))
             }
-            "ax_status" => {
-                let stats = ax.get_stats().await.map_err(|e| e.to_string())?;
-                let last = ax.get_last_indexed_at().await.map_err(|e| e.to_string())?;
-                let pending = ax.get_pending_files().await;
-                Ok(json!({ "stats": stats, "lastIndexedAt": last, "pendingFiles": pending }))
-            }
+            "ax_status" => status(ax).await,
             "ax_index" => {
                 let result = ax.sync(IndexOptions::default(), None).await.map_err(|e| e.to_string())?;
                 Ok(json!({ "filesIndexed": result.files_indexed, "durationMs": result.duration_ms }))
@@ -120,6 +115,22 @@ async fn explore(ax: &mut Ax, params: Value) -> Result<Value, String> {
     }))
 }
 
+async fn status(ax: &mut Ax) -> Result<Value, String> {
+    let stats = ax.get_stats().await.map_err(|e| e.to_string())?;
+    let last = ax.get_last_indexed_at().await.map_err(|e| e.to_string())?;
+    let pending = ax.get_pending_files().await;
+    let mut out = json!({
+        "stats": stats,
+        "lastIndexedAt": last,
+        "pendingFiles": pending,
+    });
+    if ax.policy_exists() {
+        let policy = ax.policy_status().await.map_err(|e| e.to_string())?;
+        out["policy"] = serde_json::to_value(policy).unwrap_or(Value::Null);
+    }
+    Ok(out)
+}
+
 async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let files = string_array(params.get("files"));
@@ -130,7 +141,14 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         changed_files: vec![],
     };
     let result = ax.match_policy(input).await.map_err(|e| e.to_string())?;
+    let status = ax.policy_status().await.map_err(|e| e.to_string())?;
+    let meta = ax_policy::build_preflight_meta(&status, &result);
     Ok(json!({
+        "policyStatus": meta.policy_status,
+        "matchedRules": meta.matched_rules,
+        "matchedSkills": meta.matched_skills,
+        "guardRequired": meta.guard_required,
+        "mode": meta.mode,
         "rules": result.rules,
         "skills": result.skills,
         "inject": result.inject,
@@ -176,12 +194,63 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
         _ => GuardOp::Write,
     };
     let path = ax.project_root().join(path_str);
-    let content = std::fs::read(&path).ok();
+    let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
     let result = ax
         .guard_operation(&path, op, content.as_ref().map(|v| v.as_slice()))
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!(result))
+}
+
+fn guard_content_from_params(params: &Value) -> Option<Vec<u8>> {
+    if let Some(b64) = params.get("contentBase64").and_then(|v| v.as_str()) {
+        return base64_decode(b64);
+    }
+    params
+        .get("content")
+        .and_then(|v| v.as_str())
+        .map(|s| s.as_bytes().to_vec())
+}
+
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    const TABLE: &[u8; 256] = &{
+        let mut t = [255u8; 256];
+        let mut i = 0u8;
+        while i < 64 {
+            let c = match i {
+                0..=25 => b'A' + i,
+                26..=51 => b'a' + (i - 26),
+                52..=61 => b'0' + (i - 52),
+                62 => b'+',
+                _ => b'/',
+            };
+            t[c as usize] = i;
+            i += 1;
+        }
+        t[b'=' as usize] = 0;
+        t
+    };
+    let bytes = input.trim().as_bytes();
+    if bytes.is_empty() || bytes.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for &b in bytes {
+        let v = TABLE[b as usize];
+        if v == 255 {
+            return None;
+        }
+        buf = (buf << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
 
 fn string_array(v: Option<&Value>) -> Vec<String> {
@@ -258,7 +327,9 @@ fn guard_tool() -> Value {
             "type": "object",
             "properties": {
                 "path": { "type": "string" },
-                "operation": { "type": "string", "enum": ["write", "delete"] }
+                "operation": { "type": "string", "enum": ["write", "delete"] },
+                "content": { "type": "string", "description": "Proposed file content for new files (UTF-8 check)" },
+                "contentBase64": { "type": "string", "description": "Base64-encoded proposed content" }
             },
             "required": ["path"]
         }

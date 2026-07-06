@@ -1,0 +1,13 @@
+---
+description: ax MCP bootstrap — call ax_preflight every turn before other work.
+alwaysApply: true
+---
+# ax
+
+When `.ax/policy/` is indexed, call **`ax_preflight`** exactly once per turn before other work. Team rules and skills arrive via MCP inject — do not Read `.ax/policy/` files on disk when MCP policy tools are available.
+
+**Inject fallback:** If the response lacks team policy (no `<ax_policy>` in `inject`, or empty `rules`), call **`ax_skill("startup")`** once — then continue.
+
+MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`.
+
+Full guide: [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).

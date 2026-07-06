@@ -1,6 +1,5 @@
 //! Default policy templates — embedded at compile time, written on `ax init`.
-//! Migrated from Recall OS `recall-instruction-sync` / `recall-push-skills`:
-//! IDE-specific `.cursor/rules` + `.cursor/skills` → IDE-agnostic `.ax/policy/`.
+//! Team policy → `.ax/policy/` (MCP). IDE bootstrap → per-IDE instructions via `ide_seed`.
 
 use std::path::{Path, PathBuf};
 
@@ -13,10 +12,6 @@ struct Template {
 }
 
 const TEMPLATES: &[Template] = &[
-    Template {
-        rel: "rules/agent-workflow.mdc",
-        body: include_str!("../templates/rules/agent-workflow.mdc"),
-    },
     Template {
         rel: "rules/subagents.mdc",
         body: include_str!("../templates/rules/subagents.mdc"),
@@ -48,11 +43,6 @@ const TEMPLATES: &[Template] = &[
 ];
 
 const MANAGED: &[(&str, &str, bool)] = &[
-    (
-        ".ax/policy/rules/agent-workflow.mdc",
-        "rules/agent-workflow.mdc",
-        false,
-    ),
     (
         ".ax/policy/skills/startup/SKILL.md",
         "skills/startup/SKILL.md",
@@ -254,8 +244,8 @@ pub fn sync_instructions(ax_dir: &Path, fix: bool) -> std::io::Result<SyncResult
 }
 
 /// Known ax policy rule ids that must not be duplicated in `.cursor/rules/`.
+/// `ax` is the IDE bootstrap rule — see `ide_seed`.
 const KNOWN_POLICY_IDS: &[&str] = &[
-    "agent-workflow",
     "subagents",
     "english-only",
     "utf8-no-bom",
@@ -282,6 +272,9 @@ pub fn check_cursor_rule_duplicates(project_root: &Path) -> Vec<String> {
             continue;
         }
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if stem == "ax" || stem == "ax-agent-workflow" {
+            continue;
+        }
         let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or(stem);
         let content = std::fs::read_to_string(&path).unwrap_or_default();
 
