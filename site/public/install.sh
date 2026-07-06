@@ -93,13 +93,42 @@ if tags:
 PY
 }
 
+clear_stale_ax_version_pin() {
+  invalid="$1"
+  case "$invalid" in v*) tag="$invalid" ;; *) tag="v$invalid" ;; esac
+  if [ -n "${AX_VERSION:-}" ]; then
+    case "$AX_VERSION" in v*) cur="$AX_VERSION" ;; *) cur="v$AX_VERSION" ;; esac
+    if [ "$cur" = "$tag" ]; then
+      unset AX_VERSION
+      echo "ax: cleared stale AX_VERSION from current shell." >&2
+    fi
+  fi
+  if command -v powershell.exe >/dev/null 2>&1; then
+    stored="$(powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable('AX_VERSION','User')" 2>/dev/null || true)"
+    [ -n "$stored" ] || return 0
+    case "$stored" in v*) sn="$stored" ;; *) sn="v$stored" ;; esac
+    if [ "$sn" = "$tag" ]; then
+      powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('AX_VERSION', `$null, 'User')" 2>/dev/null || true
+      echo "ax: cleared stale AX_VERSION=$stored from User environment." >&2
+    fi
+  fi
+}
+
 resolve_version() {
   if [ -n "${AX_VERSION:-}" ]; then
     case "$AX_VERSION" in v*) tag="$AX_VERSION" ;; *) tag="v$AX_VERSION" ;; esac
-    asset_url_ok "$tag" || {
+    if ! asset_url_ok "$tag"; then
+      best="$(resolve_version_from_api || true)"
+      clear_stale_ax_version_pin "$tag"
+      if [ -n "$best" ]; then
+        echo "ax: AX_VERSION $tag is not published (no ax-${target}.tar.gz). Installing latest: $best" >&2
+        printf '%s\n' "$best"
+        return 0
+      fi
       echo "ax: AX_VERSION $tag has no downloadable ax-${target}.tar.gz" >&2
+      echo "ax: unset pinning: unset AX_VERSION  (or remove from shell profile / User env)" >&2
       return 1
-    }
+    fi
     printf '%s\n' "$tag"
     return 0
   fi

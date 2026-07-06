@@ -144,12 +144,42 @@ function Test-AxReleaseAsset {
   return $false
 }
 
+function Clear-StaleAxVersionPin {
+  param(
+    [Parameter(Mandatory = $true)][string]$InvalidTag
+  )
+  $norm = $InvalidTag.Trim()
+  if ($norm -notmatch '^v') { $norm = "v$norm" }
+  Remove-Item Env:AX_VERSION -ErrorAction SilentlyContinue
+  foreach ($scope in @('User', 'Process')) {
+    $stored = [System.Environment]::GetEnvironmentVariable('AX_VERSION', $scope)
+    if (-not $stored) { continue }
+    $storedNorm = $stored.Trim()
+    if ($storedNorm -notmatch '^v') { $storedNorm = "v$storedNorm" }
+    if ($storedNorm -eq $norm) {
+      [System.Environment]::SetEnvironmentVariable('AX_VERSION', $null, $scope)
+      Write-Host "ax: cleared stale AX_VERSION=$stored from $scope environment." -ForegroundColor Yellow
+    }
+  }
+}
+
 function Resolve-AxVersion {
   if ($env:AX_VERSION) {
     $v = $env:AX_VERSION.Trim()
     if ($v -notmatch '^v') { $v = "v$v" }
     if (-not (Test-AxReleaseAsset -Tag $v)) {
-      throw "ax: AX_VERSION $v has no downloadable $assetName on GitHub or getax"
+      $latest = Resolve-AxVersionFromGitHubApi -AssetName $assetName
+      Clear-StaleAxVersionPin -InvalidTag $v
+      if ($latest) {
+        Write-Host "ax: AX_VERSION $v is not published (no $assetName). Installing latest: $latest" -ForegroundColor Yellow
+        return $latest
+      }
+      throw @"
+ax: AX_VERSION $v has no downloadable $assetName on GitHub or getax.
+Unset pinning: Remove-Item Env:AX_VERSION -ErrorAction SilentlyContinue
+  [System.Environment]::SetEnvironmentVariable('AX_VERSION', `$null, 'User')
+Or pin a published tag: `$env:AX_VERSION = 'v2.1.0'; irm https://getax.wenneker.io/install.ps1 | iex
+"@
     }
     return $v
   }

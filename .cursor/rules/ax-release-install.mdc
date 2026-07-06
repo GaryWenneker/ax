@@ -1,0 +1,40 @@
+---
+description: ax release, install, and CLI verification — avoid stale binaries and bad version pins
+alwaysApply: true
+---
+
+# ax release & install
+
+## Build output path
+
+Cargo uses `target-dev/` (see `.cargo/config.toml`), **not** `target/debug/`. Never test CLI changes with `.\target\debug\ax.exe`.
+
+After any `crates/ax-cli/` change: run `.\scripts\reinstall-cli.ps1` and verify `(Get-Command ax).Source` is `~/.cargo/bin/ax.exe` before handoff.
+
+## Version bumps
+
+Use `.\scripts\release-tag.ps1 -Bump patch|minor|major`:
+
+| Bump | Example |
+|------|---------|
+| patch | 2.0.14 → 2.0.15 |
+| minor | 2.0.14 → **2.1.0** (not 2.0.15) |
+| major | 2.0.14 → 3.0.0 |
+
+Never document or pin a version (`AX_VERSION`, docs, README) until the GitHub release tag exists with all six platform assets.
+
+Current Command Center release: **v2.1.0** (not v2.0.15).
+
+## Install / upgrade pitfalls
+
+- **`AX_VERSION` env var** — if set (session, User, or profile), `install.ps1` / `install.sh` pin to that tag. Invalid pins now auto-fallback to latest and clear stale User env; still avoid documenting unreleased pins.
+- **`ax ship`** — subcommand is `ax ship --watch`, not `ax ship watch`.
+- **MCP** — restart ax MCP in Cursor after reinstall so agents use the new binary.
+
+## Release checklist
+
+1. Commit feature + docs
+2. `.\scripts\release-tag.ps1 -Bump … -Force -Wait`
+3. Align doc version strings with the actual tag (minor bump ≠ patch increment)
+4. `.\scripts\deploy-netlify.ps1` if site/install scripts changed outside CI
+5. Smoke: `ax --version`, `ax ship --help`, `irm …/install.ps1 | iex` without `AX_VERSION` set
