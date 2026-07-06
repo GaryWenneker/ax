@@ -3,7 +3,7 @@ title: Command Center
 description: Git-aware quality gates, test-impact analysis, and draft PRs from ax ship.
 ---
 
-**ax v2.0.15+** ships a **Command Center** — a local git watcher, quality-gate pipeline, SSE dashboard, and optional draft PR integration (Azure DevOps or GitHub).
+**ax v2.1.0+** ships a **Command Center** — a local git watcher, quality-gate pipeline, SSE dashboard, and optional draft PR integration (Azure DevOps or GitHub).
 
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 

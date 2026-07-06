@@ -158,7 +158,7 @@ See the full [Policy Engine](/guides/policy-engine/) guide.
 
 ## Command Center (`.ax/ship.toml`)
 
-**ax v2.0.15+** seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quality-gate pipeline, optional SonarQube, and the PR remote (Azure DevOps by default):
+**ax v2.1.0+** seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quality-gate pipeline, optional SonarQube, and the PR remote (Azure DevOps by default):
 
 | Section | Purpose |
 |---|---|

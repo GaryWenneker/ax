@@ -3,13 +3,13 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.0.15](https://github.com/GaryWenneker/ax/releases/tag/v2.0.15)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.1.0](https://github.com/GaryWenneker/ax/releases/tag/v2.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** parses your codebase with [tree-sitter](https://tree-sitter.github.io/), stores symbols and relationships in a local SQLite graph (`.ax/`), and exposes them through a **CLI** and **MCP tools** so coding agents answer structural questions without scanning files.
 
 **v2.0.0** adds an **IDE-agnostic policy engine** — project rules and skills in `.ax/policy/`, delivered via MCP, CLI, prompt-hook, and **ax web**. See [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md).
 
-**v2.0.15** adds the **Command Center** — git-aware quality gates, test-impact analysis, SSE dashboard, and draft PRs (Azure DevOps or GitHub). See [Command Center guide](https://getax.wenneker.io/guides/command-center/).
+**v2.1.0** adds the **Command Center** — git-aware quality gates, test-impact analysis, SSE dashboard, and draft PRs (Azure DevOps or GitHub). See [Command Center guide](https://getax.wenneker.io/guides/command-center/).
 
 - **100% local** — no source code leaves your machine
 - **Deterministic** — graph data comes from AST extraction, not LLM summaries
