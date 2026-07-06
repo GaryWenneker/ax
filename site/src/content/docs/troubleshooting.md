@@ -45,14 +45,145 @@ curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 Open a **new terminal** so PATH picks up `%LOCALAPPDATA%\ax\current\bin` (Windows) or `~/.local/bin` (Unix). Then `ax version` should show **2.0.0+** and `ax upgrade` runs without prompts.
 
+See [Existing installations](/troubleshooting/#existing-installations) if you still get an old version after reinstall.
+
 ## Wrong or old version
+
+See **[Existing installations](#existing-installations)** below for the full upgrade path (multiple `ax` copies, stale installers, PATH).
+
+Quick check:
 
 ```bash
 ax version
-ax upgrade          # installs latest from getax / GitHub (v2.0.0+)
+ax upgrade --check
 ```
 
-If `ax upgrade` reports up to date but you expect a newer release, check [latest.txt](https://getax.wenneker.io/releases/latest.txt) and reinstall with `AX_VERSION=v2.0.0`.
+Pin and reinstall when you need a specific release:
+
+```bash
+# macOS / Linux / WSL2
+AX_VERSION=v2.0.14 curl -fsSL https://getax.wenneker.io/install.sh | sh
+
+# Windows (PowerShell)
+$env:AX_VERSION = 'v2.0.14'; irm https://getax.wenneker.io/install.ps1 | iex
+```
+
+Compare with [latest.txt](https://getax.wenneker.io/releases/latest.txt).
+
+## Existing installations
+
+You already have ax installed but `ax version` shows an old release (e.g. **2.0.10** while [latest.txt](https://getax.wenneker.io/releases/latest.txt) says **v2.0.14**), or `irm …/install.ps1 | iex` prints `Installing ax v2.0.10 — latest available`. This section covers diagnosis and fix.
+
+### Symptoms
+
+| What you see | Likely cause |
+|---|---|
+| `Installing ax v2.0.10 … latest available` while newer tags exist on GitHub | Stale install script or version resolver skipped newer releases (fixed in install **schema 2** — see below) |
+| `ax upgrade --check` shows `2.0.10 → 2.0.14` but install still picks 2.0.10 | Same — asset probe failed on your network; use schema 2 script or pin `AX_VERSION` |
+| Multiple paths under “Synced local instances” | Normal on Windows — see [Which binary is active](#which-binary-is-active) |
+| `cargo install` build overwritten after `install.ps1` | Installer syncs to `~/.cargo/bin/ax` by default |
+
+### Which binary is active
+
+ax can exist in more than one place. **The first match on `PATH` wins** in the current shell.
+
+**Windows** (typical layout after `install.ps1`):
+
+| Path | Role |
+|---|---|
+| `%LOCALAPPDATA%\ax\current\bin\ax.exe` | Canonical install (user PATH entry) |
+| `%LOCALAPPDATA%\ax\current\ax.exe` | Copy synced by installer |
+| `%USERPROFILE%\.cargo\bin\ax.exe` | Also synced unless you opt out |
+
+```powershell
+Get-Command ax -All | Format-Table Source
+ax version
+```
+
+**macOS / Linux / WSL2:**
+
+```bash
+which -a ax
+ax version
+```
+
+Open a **new terminal** after install so PATH picks up the updated entry (`%LOCALAPPDATA%\ax\current\bin` on Windows, `~/.local/bin` on Unix).
+
+### Fix: reinstall latest (recommended)
+
+1. Close ax MCP, `ax web`, and terminals running ax.
+2. Confirm you fetch the **current** install script (schema 2):
+
+```powershell
+# Windows — first line should mention "resolver schema: 2"
+(irm https://getax.wenneker.io/install.ps1).Split("`n")[0..2]
+```
+
+```bash
+# macOS / Linux / WSL2
+curl -fsSL https://getax.wenneker.io/install.sh | head -n 3
+```
+
+3. Reinstall:
+
+```powershell
+# Windows
+irm https://getax.wenneker.io/install.ps1 | iex
+```
+
+```bash
+# macOS / Linux / WSL2
+curl -fsSL https://getax.wenneker.io/install.sh | sh
+```
+
+4. New terminal → `ax version` should match [latest.txt](https://getax.wenneker.io/releases/latest.txt).
+
+### Fix: pin a version
+
+When GitHub API is rate-limited or you need a specific tag:
+
+```powershell
+# Windows
+$env:AX_VERSION = 'v2.0.14'
+irm https://getax.wenneker.io/install.ps1 | iex
+```
+
+```bash
+# macOS / Linux / WSL2
+AX_VERSION=v2.0.14 curl -fsSL https://getax.wenneker.io/install.sh | sh
+```
+
+### Fix: upgrade in place (`ax upgrade`)
+
+On **ax 2.0.0+** (non-interactive, no prompts):
+
+```bash
+ax upgrade              # latest installable release
+ax upgrade --check      # compare only
+ax upgrade v2.0.14      # pin
+```
+
+If `ax upgrade` refuses to downgrade, you are already on a newer build than the resolver found — run `ax version` and compare with [latest.txt](https://getax.wenneker.io/releases/latest.txt).
+
+Legacy **0.1.x** from `cargo install` may hang on prompts — use the install scripts above instead of old `ax upgrade`.
+
+### Developers: keep `cargo install` binary
+
+`install.ps1` copies the downloaded release to `~/.cargo/bin/ax.exe` so all local copies match. To **avoid overwriting** a dev build from `cargo install --path crates/ax-cli`:
+
+```powershell
+$env:AX_KEEP_CARGO_BIN = '1'
+irm https://getax.wenneker.io/install.ps1 | iex
+```
+
+Use `cargo install` or `.\scripts\reinstall-cli.ps1` for ax repo development; use `install.ps1` for the released binary under `%LOCALAPPDATA%\ax`.
+
+### Still stuck?
+
+1. Check [latest.txt](https://getax.wenneker.io/releases/latest.txt) and [GitHub Releases](https://github.com/GaryWenneker/ax/releases/latest).
+2. Pin with `AX_VERSION` (see above).
+3. From source: `cargo install --git https://github.com/GaryWenneker/ax ax-cli --force`
+4. Report version + `Get-Command ax -All` (Windows) or `which -a ax` (Unix) when opening an issue.
 
 ## Reinstall the CLI
 

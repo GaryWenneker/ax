@@ -14,6 +14,8 @@ ax version
 
 Pin a specific release with `AX_VERSION=v2.0.14` when running `install.sh` / `install.ps1`.
 
+**Upgrading an existing install?** See [Troubleshooting — Existing installations](/troubleshooting/#existing-installations).
+
 ## 1. Install the CLI
 
 ax is a **native Rust binary** — no Node.js required for normal use.
