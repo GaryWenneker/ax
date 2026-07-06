@@ -29,6 +29,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/release-all-platforms.mdc"),
     },
     Template {
+        rel: "rules/install-version-resolution.mdc",
+        body: include_str!("../templates/rules/install-version-resolution.mdc"),
+    },
+    Template {
         rel: "rules/codegraph-parity.mdc",
         body: include_str!("../templates/rules/codegraph-parity.mdc"),
     },
@@ -250,6 +254,7 @@ const KNOWN_POLICY_IDS: &[&str] = &[
     "english-only",
     "utf8-no-bom",
     "release-all-platforms",
+    "install-version-resolution",
     "codegraph-parity",
 ];
 

@@ -59,8 +59,9 @@ asset_url_ok() {
     "https://github.com/$REPO/releases/download/$tag/ax-${target}.tar.gz" \
     "$DOWNLOAD_BASE/$tag/ax-${target}.tar.gz"
   do
-    code="$(curl -fsSL -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
-    [ "$code" = "200" ] && return 0
+    # GitHub S3 often rejects HEAD; probe with a 1-byte Range GET (matches ax-cli version_check.rs).
+    code="$(curl -fsSL -r 0-0 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
+    [ "$code" = "200" ] || [ "$code" = "206" ] && return 0
   done
   return 1
 }

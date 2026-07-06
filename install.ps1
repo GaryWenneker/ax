@@ -87,8 +87,10 @@ function Test-AxReleaseAsset {
       "$downloadBase/$Tag/ax-$target.zip"
     )) {
     try {
-      $resp = Invoke-WebRequest -Uri $base -Method Head -TimeoutSec 15 -UseBasicParsing
-      if ($resp.StatusCode -eq 200) { return $true }
+      # GitHub release URLs redirect to S3 signed URLs that often reject HEAD.
+      # Probe with a 1-byte Range GET (matches crates/ax-cli/src/version_check.rs).
+      $resp = Invoke-WebRequest -Uri $base -Headers @{ Range = 'bytes=0-0' } -TimeoutSec 15 -UseBasicParsing
+      if ($resp.StatusCode -eq 200 -or $resp.StatusCode -eq 206) { return $true }
     } catch { }
   }
   return $false
