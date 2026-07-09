@@ -1,5 +1,5 @@
 use ax_context::format_explore_text;
-use ax_reasoning::maybe_synthesize_explore;
+use ax_reasoning::{maybe_synthesize_explore, ExploreOffloadMeta};
 use ax_types::ExploreOptions;
 
 use crate::commands::resolve_path;
@@ -19,7 +19,15 @@ pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
         println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
     } else {
         let raw = format_explore_text(&result);
-        let out = maybe_synthesize_explore(&query_text, &raw).await;
+        let project = root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string);
+        let meta = Some(ExploreOffloadMeta {
+            source: "cli_explore",
+            project,
+        });
+        let out = maybe_synthesize_explore(&query_text, &raw, meta).await;
         println!("{}", out);
     }
     Ok(())

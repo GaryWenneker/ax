@@ -193,6 +193,18 @@ enum Commands {
         #[arg(help = "on, off, or status")]
         action: Option<String>,
     },
+    /// Per-model LLM token usage (offload calls)
+    #[command(long_about = help_text::TOKENS_LONG)]
+    Tokens {
+        #[arg(long, value_name = "PERIOD", help = "week | month_to_date | month | year | custom")]
+        period: Option<String>,
+        #[arg(long, value_name = "YYYY-MM-DD", help = "Start date (required for custom)")]
+        from: Option<String>,
+        #[arg(long, value_name = "YYYY-MM-DD", help = "End date (optional for custom)")]
+        to: Option<String>,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
     /// Explore reasoning offload configuration
     #[command(long_about = help_text::OFFLOAD_LONG)]
     Offload {
@@ -528,6 +540,9 @@ async fn main() {
             commands::upgrade::run(version, check, local).await
         }
         Some(Commands::Telemetry { action }) => commands::telemetry::run(action).await,
+        Some(Commands::Tokens { period, from, to, json }) => {
+            commands::tokens::run(period, from, to, json).await
+        }
         Some(Commands::Offload { action }) => match action {
             Some(OffloadCommands::Status) => commands::offload::run(Some("status".into()), None, None),
             Some(OffloadCommands::SetEndpoint { url, key_env }) => {
@@ -610,6 +625,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Version) => Some("version".into()),
         Some(Commands::Upgrade { .. }) => Some("upgrade".into()),
         Some(Commands::Telemetry { .. }) => Some("telemetry".into()),
+        Some(Commands::Tokens { .. }) => Some("tokens".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),
         Some(Commands::Policy { .. }) => Some("policy".into()),

@@ -275,3 +275,21 @@ Examples:
   ax offload status
   ax offload set-endpoint https://api.openai.com/v1 --key-env OPENAI_API_KEY
   ax offload clear";
+
+pub const TOKENS_LONG: &str = "Show per-model LLM token usage recorded by ax offload.
+
+Stored locally in ~/.ax/usage.db. Counts prompt, completion, and total tokens for each
+OpenAI-compatible offload call (`ax explore` and ax_explore MCP when offload is enabled).
+
+Period filters:
+  week            Last 7 days (default rolling window)
+  month_to_date   From the 1st of the current month (default)
+  month           Last 30 days
+  year            From January 1 of the current year
+  custom          Requires --from YYYY-MM-DD (optional --to)
+
+Examples:
+  ax tokens
+  ax tokens --period week
+  ax tokens --period custom --from 2026-01-01 --to 2026-03-31
+  ax tokens --json";

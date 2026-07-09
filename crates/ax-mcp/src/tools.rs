@@ -6,7 +6,7 @@ use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
 use ax_context::format_explore_text;
 use ax_policy::{finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, PolicyStore, RuleFrontmatter};
-use ax_reasoning::maybe_synthesize_explore;
+use ax_reasoning::{maybe_synthesize_explore, ExploreOffloadMeta};
 use ax_types::{BuildContextOptions, ExploreOptions, SearchOptions, TaskInput};
 use serde_json::{json, Value};
 
@@ -107,7 +107,16 @@ async fn explore(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let opts = explore_opts_from_params(&params);
     let result = ax.explore(query, opts).await.map_err(|e| e.to_string())?;
     let raw = format_explore_text(&result);
-    let text = maybe_synthesize_explore(query, &raw).await;
+    let project = ax
+        .project_root()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string);
+    let meta = Some(ExploreOffloadMeta {
+        source: "mcp_explore",
+        project,
+    });
+    let text = maybe_synthesize_explore(query, &raw, meta).await;
     Ok(json!({
         "text": text,
         "query": result.query,

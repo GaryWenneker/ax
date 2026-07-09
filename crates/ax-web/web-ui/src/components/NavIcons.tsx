@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-type NavId = 'stats' | 'nodes' | 'files' | 'search' | 'ship' | 'settings' | 'policy-rules' | 'policy-skills';
+type NavId = 'stats' | 'nodes' | 'files' | 'search' | 'tokens' | 'ship' | 'settings' | 'policy-rules' | 'policy-skills';
 
 export type { NavId };
 
@@ -27,6 +27,12 @@ export function NavIcon({ id }: { id: NavId }) {
     search: (
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
         <path d="M11.742 10.344a6.5 6.5 0 10-1.397 1.398l3.85 3.85a1 1 0 001.415-1.414l-3.868-3.834zM12 6.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
+      </svg>
+    ),
+    tokens: (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zm0 1a5.5 5.5 0 110 11 5.5 5.5 0 010-11z" />
+        <path d="M8 4.5v3.25L10.5 9" stroke="currentColor" strokeWidth="1.2" fill="none" />
       </svg>
     ),
     ship: (
@@ -60,6 +66,7 @@ export const PAGE_LABELS: Record<string, string> = {
   nodes: 'Nodes',
   files: 'Files',
   search: 'Search',
+  tokens: 'Tokens',
   ship: 'Command Center',
   settings: 'Settings',
   'policy-rules': 'Rules',

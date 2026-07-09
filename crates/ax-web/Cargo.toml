@@ -1,6 +1,6 @@
 [package]
 name = "ax-web"
-version = "2.1.3"
+version = "2.1.4"
 edition = "2021"
 
 [dependencies]
@@ -19,6 +19,7 @@ ax-ship = { workspace = true }
 ax-git = { workspace = true }
 ax-quality = { workspace = true }
 ax-remote = { workspace = true }
+ax-usage = { workspace = true }
 futures-util = { workspace = true }
 async-stream = { workspace = true }
 

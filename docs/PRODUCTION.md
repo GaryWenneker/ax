@@ -195,6 +195,18 @@ Disable for one session:
 $env:AX_OFFLOAD_DISABLE = "1"
 ```
 
+### Token usage tracking (v2.1.4+)
+
+When offload is enabled, ax records prompt, completion, and total tokens per model in `~/.ax/usage.db` (local SQLite, global across projects).
+
+```bash
+ax tokens                              # month to date (default)
+ax tokens --period week --json
+ax web                                 # Tokens tab in the sidebar
+```
+
+Period filters: `week`, `month_to_date`, `month` (30 days), `year`, `custom` (with `--from` / `--to`).
+
 ---
 
 ## 4. Docs site

@@ -12,6 +12,7 @@ members = [
     "crates/ax-mcp",
     "crates/ax-cli",
     "crates/ax-telemetry",
+    "crates/ax-usage",
     "crates/ax-reasoning",
     "crates/ax-policy",
     "crates/ax-smoke-tests",
@@ -59,6 +60,7 @@ tar = "0.4"
 ax-types = { path = "crates/ax-types" }
 ax-utils = { path = "crates/ax-utils" }
 ax-telemetry = { path = "crates/ax-telemetry" }
+ax-usage = { path = "crates/ax-usage" }
 ax-reasoning = { path = "crates/ax-reasoning" }
 ax-db = { path = "crates/ax-db" }
 ax-extraction = { path = "crates/ax-extraction" }

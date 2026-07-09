@@ -3,6 +3,7 @@
 mod policy;
 mod queries;
 mod ship;
+mod tokens;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -285,6 +286,7 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
         readonly,
     };
     let ship_api = ship::router(ship_state.clone());
+    let tokens_api = tokens::router();
 
     let ship_root = root.clone();
     tokio::spawn(async move {
@@ -295,6 +297,7 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
         .nest("/api", graph_api)
         .nest("/api/policy", policy_api)
         .nest("/api/ship", ship_api)
+        .nest("/api/usage", tokens_api)
         .fallback(handle_spa)
         .layer(cors);
 

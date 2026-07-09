@@ -2,6 +2,7 @@
 
 pub mod offload;
 pub mod telemetry;
+pub mod tokens;
 pub mod upgrade;
 pub mod affected;
 pub mod diff;

@@ -95,6 +95,8 @@ Results stream to the dashboard via SSE (`/api/ship/events`).
 
 Default port: `7070` (override with `--port` or `[ship].web_port`).
 
+The same `ax web` UI includes a **Tokens** page (sidebar) for per-model LLM usage when explore offload is enabled — filter by week, month-to-date, month, year, or custom date range. Data lives in `~/.ax/usage.db`. See [`ax tokens`](/reference/cli/#ax-tokens).
+
 Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.toml`:
 
 - **SonarQube** — auto-detect Podman/Docker, one-click install & start

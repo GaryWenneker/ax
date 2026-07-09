@@ -11,12 +11,13 @@ import PolicySkillEditor from './pages/PolicySkillEditor';
 import PolicyMatchPage from './pages/PolicyMatch';
 import ShipPage from './pages/Ship';
 import SettingsPage from './pages/Settings';
+import TokensPage from './pages/Tokens';
 import StatusBar from './components/StatusBar';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
 import { UiProvider } from './context/UiContext';
 
 type Page =
-  | 'stats' | 'nodes' | 'files' | 'search' | 'ship' | 'settings'
+  | 'stats' | 'nodes' | 'files' | 'search' | 'ship' | 'settings' | 'tokens'
   | 'policy-rules' | 'policy-rule-edit' | 'policy-skills' | 'policy-skill-edit' | 'policy-match';
 
 const NAV_MAIN: Array<{ id: NavId; label: string }> = [
@@ -24,6 +25,7 @@ const NAV_MAIN: Array<{ id: NavId; label: string }> = [
   { id: 'nodes', label: 'Nodes' },
   { id: 'files', label: 'Files' },
   { id: 'search', label: 'Search' },
+  { id: 'tokens', label: 'Tokens' },
   { id: 'ship', label: 'Command Center' },
 ];
 
@@ -134,6 +136,7 @@ function AppShell() {
           {page === 'nodes' && <NodesPage />}
           {page === 'files' && <FilesPage />}
           {page === 'search' && <SearchPage />}
+          {page === 'tokens' && <TokensPage />}
           {page === 'ship' && <ShipPage onOpenSettings={() => navigate('settings')} />}
           {page === 'settings' && <SettingsPage />}
           {page === 'policy-rules' && (

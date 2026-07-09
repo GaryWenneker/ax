@@ -143,6 +143,8 @@ Stored in `~/.ax/config.json` under a separate `"offload"` key. Lets ax delegate
 
 All keys can also be set via environment variables (`AX_OFFLOAD_URL`, `AX_OFFLOAD_MODEL`, `AX_OFFLOAD_KEY`, `AX_OFFLOAD_EFFORT`, `AX_OFFLOAD_STYLE`). Env vars take precedence over the file.
 
+When offload runs (`ax explore` or `ax_explore` MCP), ax records token counts per model in **`~/.ax/usage.db`** (v2.1.4+). Query with [`ax tokens`](/reference/cli/#ax-tokens) or the **Tokens** page in `ax web`.
+
 ## Policy rules and skills
 
 **ax v2.0.0+** stores agent instructions under `.ax/policy/`:

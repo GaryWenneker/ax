@@ -71,3 +71,41 @@ export function fetchSearch(q: string, limit = 20): Promise<SearchPage> {
 export function fetchVersion(): Promise<{ version: string }> {
   return get<{ version: string }>('/version');
 }
+
+export interface ModelUsageRow {
+  model: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface DailyUsageRow {
+  date: string;
+  total_tokens: number;
+  calls: number;
+}
+
+export interface TokenUsageSummary {
+  period: string;
+  from: string;
+  to: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  by_model: ModelUsageRow[];
+  daily: DailyUsageRow[];
+  db_path: string;
+}
+
+export function fetchTokenUsage(params: {
+  period: string;
+  from?: string;
+  to?: string;
+}): Promise<TokenUsageSummary> {
+  const sp = new URLSearchParams({ period: params.period });
+  if (params.from) sp.set('from', params.from);
+  if (params.to) sp.set('to', params.to);
+  return get<TokenUsageSummary>(`/usage/tokens?${sp}`);
+}

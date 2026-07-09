@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v2.1.3).
+description: Complete reference for every ax command, argument, and flag (v2.1.4).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -304,13 +304,13 @@ Self-update from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.
 
 | Argument / flag | Type | Description |
 |---|---|---|
-| `version` | optional | Pin a release tag (e.g. `v2.1.3`) |
+| `version` | optional | Pin a release tag (e.g. `v2.1.4`) |
 | `--check` | flag | Check for updates without installing |
 | `--local [archive]` | flag / path | Install from local `dist/ax-<platform>.zip` (maintainers); optional explicit archive path |
 
 ```bash
 ax upgrade
-ax upgrade v2.1.3
+ax upgrade v2.1.4
 ax upgrade --check
 ax upgrade --local
 ax upgrade --local dist/ax-win32-x64.zip
@@ -331,6 +331,30 @@ Anonymous usage telemetry (command names and coarse buckets — never source cod
 | `on` | Enable telemetry |
 | `off` | Disable telemetry |
 | `status` | Show current setting (default when omitted) |
+
+---
+
+## Token usage
+
+### `ax tokens`
+
+Per-model LLM token usage from explore offload. Stored locally in `~/.ax/usage.db` (global across projects). Counts are recorded when offload runs via `ax explore` or `ax_explore` MCP.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--period` | string | `month_to_date` | `week` \| `month_to_date` \| `month` \| `year` \| `custom` |
+| `--from` | `YYYY-MM-DD` | — | Start date (required for `custom`) |
+| `--to` | `YYYY-MM-DD` | — | End date (optional for `custom`) |
+| `--json` | flag | — | JSON summary with per-model and daily breakdown |
+
+```bash
+ax tokens
+ax tokens --period week
+ax tokens --period year --json
+ax tokens --period custom --from 2026-01-01 --to 2026-03-31
+```
+
+The **Tokens** page in `ax web` exposes the same filters and shows totals, per-model tables, and daily usage.
 
 ---
 
@@ -361,7 +385,7 @@ Remove offload configuration.
 
 ### `ax web [path]`
 
-Local web UI — graph browser, policy editor, Command Center tab.
+Local web UI — graph browser, policy editor, token usage dashboard, Command Center tab.
 
 | Argument / flag | Type | Default | Description |
 |---|---|---|---|

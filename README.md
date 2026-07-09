@@ -3,9 +3,11 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.1.3](https://github.com/GaryWenneker/ax/releases/tag/v2.1.3)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.1.4](https://github.com/GaryWenneker/ax/releases/tag/v2.1.4)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** is local-first intelligence for AI coding agents: a **knowledge graph** (tree-sitter → SQLite), a **policy engine** (`.ax/policy/` rules and skills), and a **Command Center** (quality gates, test-impact, draft PRs) — one Rust binary, CLI + MCP.
+
+**v2.1.4** adds **per-model token usage tracking** — offload calls are stored in `~/.ax/usage.db`, queryable via `ax tokens` and the **Tokens** page in `ax web` (week, month-to-date, month, year, custom range).
 
 **v2.1.3** adds **`ax policy storage status`** — explicit subcommand to show effective storage mode (project + global config paths and values).
 

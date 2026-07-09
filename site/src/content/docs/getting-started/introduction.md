@@ -15,6 +15,8 @@ Three layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+**v2.1.4** adds **per-model token usage tracking** — LLM offload calls (`ax explore` / `ax_explore`) record prompt, completion, and total tokens in `~/.ax/usage.db`. Filter via `ax tokens` or the **Tokens** tab in `ax web`.
+
 **v2.1.3** adds **`ax policy storage status`** — show effective policy storage mode with project and global config paths.
 
 **v2.1.2** improves **database migration** — `ax policy storage database --migrate` recursively scans the repo for rules and skills, with per-item interview questions. See [Policy Engine](/guides/policy-engine/).

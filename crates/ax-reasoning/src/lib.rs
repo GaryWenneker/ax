@@ -9,4 +9,5 @@ pub use config::{
 };
 pub use reasoner::{
     maybe_synthesize_explore, offload_status, strip_agent_directives, synthesize_offload,
+    ExploreOffloadMeta,
 };

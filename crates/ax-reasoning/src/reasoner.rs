@@ -1,6 +1,7 @@
 //! Remote reasoning offload for explore output (OpenAI-compatible API).
 
 use crate::config::resolve_offload;
+use ax_usage::record_from_response;
 
 const ROLE: &str = "You are ax's reasoning engine. Your input is (1) a developer's question and (2) source code already retrieved for you (verbatim, with file paths and line numbers). Answer ONLY from that source.
 
@@ -49,7 +50,17 @@ pub fn strip_agent_directives(context: &str) -> String {
   joined.replace("\n\n\n", "\n\n").trim_end().to_string()
 }
 
-pub async fn synthesize_offload(query: &str, context: &str) -> Option<String> {
+#[derive(Debug, Clone)]
+pub struct ExploreOffloadMeta {
+    pub source: &'static str,
+    pub project: Option<String>,
+}
+
+pub async fn synthesize_offload(
+    query: &str,
+    context: &str,
+    meta: Option<&ExploreOffloadMeta>,
+) -> Option<String> {
     let cfg = resolve_offload();
     if !cfg.enabled {
         return None;
@@ -94,6 +105,14 @@ pub async fn synthesize_offload(query: &str, context: &str) -> Option<String> {
     match res {
         Ok(r) if r.status().is_success() => {
             let data: serde_json::Value = r.json().await.unwrap_or_default();
+            if let Some(m) = meta {
+                record_from_response(
+                    &cfg.model,
+                    m.source,
+                    m.project.as_deref(),
+                    &data,
+                );
+            }
             let answer = data
                 .get("choices")
                 .and_then(|c| c.get(0))
@@ -125,8 +144,12 @@ pub async fn synthesize_offload(query: &str, context: &str) -> Option<String> {
     }
 }
 
-pub async fn maybe_synthesize_explore(query: &str, explore_text: &str) -> String {
-    if let Some(answer) = synthesize_offload(query, explore_text).await {
+pub async fn maybe_synthesize_explore(
+    query: &str,
+    explore_text: &str,
+    meta: Option<ExploreOffloadMeta>,
+) -> String {
+    if let Some(answer) = synthesize_offload(query, explore_text, meta.as_ref()).await {
         return answer;
     }
     explore_text.to_string()
