@@ -1,5 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchFiles } from '../api';
+import {
+  FilterBar,
+  ItemList,
+  ItemRow,
+  PageCard,
+  PageCardBody,
+  PageEmpty,
+  PageHero,
+  PageLoading,
+  PagePagination,
+  PageShell,
+  PageStack,
+  PageToasts,
+} from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import type { FileRow } from '../types';
 
@@ -53,57 +67,69 @@ export default function FilesPage() {
   usePageContext('Files', fileDetail);
 
   return (
-    <>
-      <div className="page-header">
-        <h1 className="page-title">Files</h1>
-        <span className="count-label">{total.toLocaleString()} indexed</span>
-      </div>
+    <PageShell>
+      <PageHero
+        title="Files"
+        subtitle="All indexed source files with node counts and sizes."
+      />
 
-      <div className="filter-row">
-        <input
-          className="filter-input"
-          type="search"
-          placeholder="Filter by path…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <input
-          className="filter-input"
-          style={{ maxWidth: 140 }}
-          type="text"
-          placeholder="Language…"
-          value={lang}
-          onChange={(e) => setLang(e.target.value)}
-        />
-      </div>
+      <PageToasts err={error} />
 
-      {error && <div className="state-msg"><strong>Error</strong>{error}</div>}
+      <PageStack>
+        <PageCard
+          title="Indexed files"
+          description={`${total.toLocaleString()} files in the index.`}
+          footer={
+            total > LIMIT ? (
+              <PagePagination
+                page={page}
+                pages={pages}
+                onPrev={() => goPage(-1)}
+                onNext={() => goPage(1)}
+                prevDisabled={offset === 0}
+                nextDisabled={offset + LIMIT >= total}
+              />
+            ) : undefined
+          }
+        >
+          <FilterBar>
+            <input
+              className="settings-input settings-input--grow"
+              type="search"
+              placeholder="Filter by path…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <input
+              className="settings-input settings-input--narrow"
+              type="text"
+              placeholder="Language…"
+              value={lang}
+              onChange={(e) => setLang(e.target.value)}
+            />
+          </FilterBar>
 
-      {loading ? (
-        <div className="loading-row">Loading…</div>
-      ) : files.length === 0 ? (
-        <div className="state-msg"><strong>No files found</strong>Try a different filter.</div>
-      ) : (
-        <div className="list">
-          {files.map((f) => (
-            <div key={f.path} className="list-item" style={{ cursor: 'default' }}>
-              <div className="list-item-body">
-                <div className="list-item-name">{f.path}</div>
-                <div className="list-item-sub">
-                  {f.node_count} nodes · {formatBytes(f.size)} · indexed {formatDate(f.indexed_at)}
-                </div>
-              </div>
-              <span className="list-item-badge">{f.language}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="pagination">
-        <button className="btn" onClick={() => goPage(-1)} disabled={offset === 0}>← Prev</button>
-        <span className="page-info">Page {page} of {pages}</span>
-        <button className="btn" onClick={() => goPage(1)} disabled={offset + LIMIT >= total}>Next →</button>
-      </div>
-    </>
+          <PageCardBody>
+            {loading ? (
+              <PageLoading />
+            ) : files.length === 0 ? (
+              <PageEmpty title="No files found">Try a different filter.</PageEmpty>
+            ) : (
+              <ItemList>
+                {files.map((f) => (
+                  <ItemRow
+                    key={f.path}
+                    static
+                    title={f.path}
+                    subtitle={`${f.node_count} nodes · ${formatBytes(f.size)} · indexed ${formatDate(f.indexed_at)}`}
+                    badges={<span className="page-item-badge">{f.language}</span>}
+                  />
+                ))}
+              </ItemList>
+            )}
+          </PageCardBody>
+        </PageCard>
+      </PageStack>
+    </PageShell>
   );
 }

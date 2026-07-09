@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
+import {
+  PageCard,
+  PageCardBody,
+  PageHero,
+  PageRow,
+  PageShell,
+  PageStack,
+  PageToasts,
+} from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import type { SkillFrontmatter } from '../policyTypes';
 
@@ -62,30 +71,74 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
   }
 
   return (
-    <div className="page editor-page">
-      <div className="page-header">
-        <h1>{skillName ? `Edit skill: ${skillName}` : 'New skill'}</h1>
-        <div className="page-actions">
-          <button type="button" className="btn" onClick={onBack}>Back</button>
-          <button type="button" className="btn primary" disabled={saving} onClick={save}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+    <PageShell>
+      <PageHero
+        title={skillName ? `Edit skill: ${skillName}` : 'New skill'}
+        subtitle="Configure triggers and skill instructions."
+        actions={
+          <>
+            <button type="button" className="btn" onClick={onBack}>Back</button>
+            <button type="button" className="btn primary" disabled={saving} onClick={save}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        }
+      />
+
+      <PageToasts err={error || null} />
+
+      <div className="page-editor-grid">
+        <PageStack>
+          <PageCard title="Metadata" description="Frontmatter fields for skill matching.">
+            <PageCardBody>
+              <PageRow title="Name" description="Unique skill identifier.">
+                <input
+                  className="settings-input"
+                  value={fm.name}
+                  disabled={!!skillName}
+                  onChange={(e) => setFm({ ...fm, name: e.target.value })}
+                />
+              </PageRow>
+              <PageRow title="Description" description="Short summary shown in skill lists.">
+                <textarea
+                  className="settings-input"
+                  rows={3}
+                  value={fm.description}
+                  onChange={(e) => setFm({ ...fm, description: e.target.value })}
+                  style={{ resize: 'vertical' }}
+                />
+              </PageRow>
+              <PageRow title="Priority" description="Higher priority skills sort first.">
+                <input
+                  className="settings-input settings-input--narrow"
+                  type="number"
+                  value={fm.priority}
+                  onChange={(e) => setFm({ ...fm, priority: Number(e.target.value) })}
+                />
+              </PageRow>
+              <PageRow title="Triggers" description="Keywords that activate this skill.">
+                <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />
+              </PageRow>
+              <PageRow title="Tags" description="Optional categorization tags.">
+                <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
+              </PageRow>
+              <PageRow title="Context task" description="Optional task hint for skill loading.">
+                <input
+                  className="settings-input"
+                  value={fm.contextTask ?? ''}
+                  onChange={(e) => setFm({ ...fm, contextTask: e.target.value || undefined })}
+                />
+              </PageRow>
+            </PageCardBody>
+          </PageCard>
+        </PageStack>
+
+        <PageCard title="Skill body" description="Markdown instructions loaded via ax_skill.">
+          <div style={{ minHeight: 400 }}>
+            <MarkdownEditor value={body} onChange={setBody} />
+          </div>
+        </PageCard>
       </div>
-      {error && <p className="error">{error}</p>}
-      <div className="editor-grid">
-        <section className="form-panel">
-          <label>Name<input value={fm.name} disabled={!!skillName} onChange={(e) => setFm({ ...fm, name: e.target.value })} /></label>
-          <label>Description<textarea rows={3} value={fm.description} onChange={(e) => setFm({ ...fm, description: e.target.value })} /></label>
-          <label>Priority<input type="number" value={fm.priority} onChange={(e) => setFm({ ...fm, priority: Number(e.target.value) })} /></label>
-          <label>Triggers<input value={triggersText} onChange={(e) => setTriggersText(e.target.value)} /></label>
-          <label>Tags<input value={tagsText} onChange={(e) => setTagsText(e.target.value)} /></label>
-          <label>Context task (optional)<input value={fm.contextTask ?? ''} onChange={(e) => setFm({ ...fm, contextTask: e.target.value || undefined })} /></label>
-        </section>
-        <section className="md-panel">
-          <MarkdownEditor value={body} onChange={setBody} />
-        </section>
-      </div>
-    </div>
+    </PageShell>
   );
 }

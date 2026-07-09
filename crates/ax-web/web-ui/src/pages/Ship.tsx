@@ -1,5 +1,15 @@
 import { useEffect, useState } from 'react';
 
+import {
+  PageCard,
+  PageCardBody,
+  PageHero,
+  PageShell,
+  PageStack,
+  PageToasts,
+  StatusPanel,
+  StatusPill,
+} from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import { runShipCommand, type GateStep, type ShipReport } from '../shipApi';
 
@@ -81,138 +91,151 @@ export default function ShipPage({ onOpenSettings }: Props) {
   const stepsByName = new Map(qg?.steps?.map((s) => [s.step, s]) ?? []);
 
   return (
-    <div className="page ship-page">
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Command Center</h1>
-          <p className="ship-subtitle muted">
-            Git-aware quality gate · live pipeline via SSE
-          </p>
-        </div>
-        <div className="page-actions">
-          <button type="button" className="btn" disabled={!!busy} onClick={onOpenSettings}>
-            Settings
-          </button>
-          <button type="button" className="btn primary" disabled={!!busy} onClick={() => runCommand('evaluate')}>
-            {busy === 'evaluate' ? 'Evaluating…' : 'Evaluate'}
-          </button>
-          <button type="button" className="btn" disabled={!!busy} onClick={() => runCommand('draft')}>
-            {busy === 'draft' ? 'Creating…' : 'Draft PR'}
-          </button>
-        </div>
-      </div>
+    <PageShell>
+      <PageHero
+        title="Command Center"
+        subtitle="Git-aware quality gate with live pipeline updates via SSE."
+        actions={
+          <>
+            <button type="button" className="btn" disabled={!!busy} onClick={onOpenSettings}>
+              Settings
+            </button>
+            <button type="button" className="btn primary" disabled={!!busy} onClick={() => runCommand('evaluate')}>
+              {busy === 'evaluate' ? 'Evaluating…' : 'Evaluate'}
+            </button>
+            <button type="button" className="btn" disabled={!!busy} onClick={() => runCommand('draft')}>
+              {busy === 'draft' ? 'Creating…' : 'Draft PR'}
+            </button>
+          </>
+        }
+      />
 
-      {msg && <div className="ship-banner ship-banner--ok">{msg}</div>}
-      {err && <div className="ship-banner ship-banner--err">{err}</div>}
+      <PageToasts ok={msg} err={err} />
 
-      <div className="ship-metrics">
-        <div className="ship-metric">
-          <span className="ship-metric-label">Branch</span>
-          <span className="ship-metric-value">{branch ?? '—'}</span>
-        </div>
-        <div className="ship-metric">
-          <span className="ship-metric-label">Live feed</span>
-          <span className={`ship-metric-value ${connected ? 'ok' : 'warn'}`}>
-            {connected ? 'connected' : 'offline'}
-          </span>
-        </div>
-        <div className="ship-metric">
-          <span className="ship-metric-label">Changed files</span>
-          <span className="ship-metric-value">{changedCount}</span>
-        </div>
-        <div className="ship-metric">
-          <span className="ship-metric-label">Impacted tests</span>
-          <span className="ship-metric-value">{testCount}</span>
-        </div>
-        <div className="ship-metric">
-          <span className="ship-metric-label">Sonar</span>
-          <span className="ship-metric-value">
-            {qg?.sonar?.status ?? '—'}
-          </span>
-        </div>
-      </div>
+      <PageStack>
+        <PageCard title="Overview" description="Current branch and pipeline status.">
+          <StatusPanel title="Metrics">
+            <StatusPill label="Branch" value={branch ?? '—'} />
+            <StatusPill
+              label="Live feed"
+              value={connected ? 'connected' : 'offline'}
+              tone={connected ? 'ok' : 'warn'}
+            />
+            <StatusPill label="Changed files" value={String(changedCount)} />
+            <StatusPill label="Impacted tests" value={String(testCount)} />
+            <StatusPill label="Sonar" value={qg?.sonar?.status ?? '—'} />
+          </StatusPanel>
+        </PageCard>
 
-      <div className={`ship-gate ${passed === true ? 'ship-gate--pass' : passed === false ? 'ship-gate--fail' : ''}`}>
-        <div className="ship-gate-status">
-          <span className="ship-gate-label">Quality gate</span>
-          <strong className="ship-gate-title">
-            {!qg ? 'Not evaluated yet' : passed ? 'All checks passed' : 'Checks failed'}
-          </strong>
-          {liveStep && <span className="badge ship-live-badge">Running {liveStep}</span>}
-        </div>
-      </div>
-
-      <div className="detail-section-title" style={{ marginBottom: '8px' }}>Pipeline</div>
-      <div className="ship-pipeline">
-        {PIPELINE_STEPS.map((name) => {
-          const s = stepsByName.get(name) as GateStep | undefined;
-          const status = s?.status ?? 'pending';
-          const active = liveStep === name;
-          return (
+        <PageCard
+          title="Quality gate"
+          description={
+            !qg
+              ? 'Run Evaluate to check index, tests, Sonar, and policy.'
+              : passed
+                ? 'All pipeline checks passed.'
+                : 'One or more checks failed.'
+          }
+        >
+          <PageCardBody>
             <div
-              key={name}
-              className={`ship-step ship-step--${status}${active ? ' ship-step--active' : ''}`}
+              className={`ship-gate${passed === true ? ' ship-gate--pass' : passed === false ? ' ship-gate--fail' : ''}`}
+              style={{ margin: '0 clamp(16px, 2vw, 28px) 14px', borderRadius: 8 }}
             >
-              <div className="ship-step-icon" aria-hidden="true">
-                {stepIcon(status, active)}
-              </div>
-              <div className="ship-step-body">
-                <div className="ship-step-name">{name}</div>
-                <div className="ship-step-meta muted">
-                  {s?.detail ?? (active ? 'running…' : status)}
-                </div>
+              <div className="ship-gate-status">
+                <span className="ship-gate-label">Status</span>
+                <strong className="ship-gate-title">
+                  {!qg ? 'Not evaluated yet' : passed ? 'All checks passed' : 'Checks failed'}
+                </strong>
+                {liveStep && <span className="badge ship-live-badge">Running {liveStep}</span>}
               </div>
             </div>
-          );
-        })}
-      </div>
+          </PageCardBody>
+        </PageCard>
 
-      {report?.changed_files && report.changed_files.length > 0 && (
-        <>
-          <div className="detail-section-title" style={{ margin: '16px 0 8px' }}>Changed files</div>
-          <ul className="ship-file-list">
-            {report.changed_files.map((f) => (
-              <li key={f}><code>{f}</code></li>
-            ))}
-          </ul>
-        </>
-      )}
+        <PageCard title="Pipeline" description="Step-by-step quality gate progress.">
+          <div className="ship-pipeline-grid">
+            {PIPELINE_STEPS.map((name) => {
+              const s = stepsByName.get(name) as GateStep | undefined;
+              const status = s?.status ?? 'pending';
+              const active = liveStep === name;
+              return (
+                <div
+                  key={name}
+                  className={`ship-pipeline-step ship-pipeline-step--${status}${active ? ' ship-pipeline-step--active' : ''}`}
+                >
+                  <div className="ship-step-icon" aria-hidden="true">
+                    {stepIcon(status, active)}
+                  </div>
+                  <div className="ship-step-body">
+                    <div className="ship-step-name">{name}</div>
+                    <div className="ship-step-meta muted">
+                      {s?.detail ?? (active ? 'running…' : status)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </PageCard>
 
-      {report?.tia && report.tia.tests.length > 0 && (
-        <>
-          <div className="detail-section-title" style={{ margin: '16px 0 8px' }}>Test impact</div>
-          <ul className="ship-file-list">
-            {report.tia.tests.map((t) => (
-              <li key={t.name}>
-                <code>{t.name}</code>
-                <span className="muted"> · {t.runner_hint}</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+        {report?.changed_files && report.changed_files.length > 0 && (
+          <PageCard title="Changed files" description={`${report.changed_files.length} files in the diff.`}>
+            <PageCardBody>
+              <ul className="ship-file-list" style={{ border: 'none' }}>
+                {report.changed_files.map((f) => (
+                  <li key={f} style={{ padding: '8px clamp(16px, 2vw, 28px)' }}>
+                    <code>{f}</code>
+                  </li>
+                ))}
+              </ul>
+            </PageCardBody>
+          </PageCard>
+        )}
 
-      {(report?.breaking_warnings?.length ?? 0) > 0 && (
-        <div className="ship-alert ship-alert--warn">
-          <div className="detail-section-title">Breaking changes</div>
-          <ul>
-            {report!.breaking_warnings!.map((w, i) => (
-              <li key={i}>{w.node_name}: {w.reason}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+        {report?.tia && report.tia.tests.length > 0 && (
+          <PageCard title="Test impact" description={`${report.tia.tests.length} impacted tests.`}>
+            <PageCardBody>
+              <ul className="ship-file-list" style={{ border: 'none' }}>
+                {report.tia.tests.map((t) => (
+                  <li key={t.name} style={{ padding: '8px clamp(16px, 2vw, 28px)' }}>
+                    <code>{t.name}</code>
+                    <span className="muted"> · {t.runner_hint}</span>
+                  </li>
+                ))}
+              </ul>
+            </PageCardBody>
+          </PageCard>
+        )}
 
-      {(report?.business_rule_warnings?.length ?? 0) > 0 && (
-        <div className="ship-alert ship-alert--warn">
-          <div className="detail-section-title">Business rules</div>
-          <ul>
-            {report!.business_rule_warnings!.map((w, i) => (
-              <li key={i}>[{w.severity}] {w.rule_text}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+        {(report?.breaking_warnings?.length ?? 0) > 0 && (
+          <PageCard title="Breaking changes" description="API changes detected in the diff.">
+            <PageCardBody>
+              <div className="ship-alert ship-alert--warn" style={{ margin: '0 clamp(16px, 2vw, 28px) 14px', borderRadius: 8 }}>
+                <ul>
+                  {report!.breaking_warnings!.map((w, i) => (
+                    <li key={i}>{w.node_name}: {w.reason}</li>
+                  ))}
+                </ul>
+              </div>
+            </PageCardBody>
+          </PageCard>
+        )}
+
+        {(report?.business_rule_warnings?.length ?? 0) > 0 && (
+          <PageCard title="Business rules" description="Policy warnings from business rule checks.">
+            <PageCardBody>
+              <div className="ship-alert ship-alert--warn" style={{ margin: '0 clamp(16px, 2vw, 28px) 14px', borderRadius: 8 }}>
+                <ul>
+                  {report!.business_rule_warnings!.map((w, i) => (
+                    <li key={i}>[{w.severity}] {w.rule_text}</li>
+                  ))}
+                </ul>
+              </div>
+            </PageCardBody>
+          </PageCard>
+        )}
+      </PageStack>
+    </PageShell>
   );
 }

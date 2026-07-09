@@ -1,8 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchSearch } from '../api';
+import NodeDetailPanel from '../components/NodeDetail';
+import {
+  FilterBar,
+  ItemList,
+  ItemRow,
+  PageCard,
+  PageCardBody,
+  PageEmpty,
+  PageHero,
+  PageLoading,
+  PageShell,
+  PageStack,
+  PageToasts,
+} from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import type { SearchResult } from '../types';
-import NodeDetailPanel from '../components/NodeDetail';
 
 export default function SearchPage() {
   const [q, setQ] = useState('');
@@ -36,62 +49,59 @@ export default function SearchPage() {
   usePageContext('Search', searchDetail);
 
   return (
-    <>
-      <div className="page-header">
-        <h1 className="page-title">Search</h1>
-      </div>
+    <PageShell>
+      <PageHero
+        title="Search"
+        subtitle="Full-text search across all indexed symbols."
+      />
 
-      <div className="search-bar">
-        <input
-          className="search-input"
-          type="search"
-          placeholder="Search symbols, functions, classes…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          autoFocus
-        />
-      </div>
+      <PageToasts err={error} />
 
-      {error && <div className="state-msg"><strong>Error</strong>{error}</div>}
+      <PageStack>
+        <PageCard
+          title="Symbol search"
+          description={searched && q ? `${results.length} results for "${q}"` : 'Type to search as you go.'}
+        >
+          <FilterBar>
+            <input
+              className="settings-input settings-input--grow"
+              type="search"
+              placeholder="Search symbols, functions, classes…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              autoFocus
+            />
+          </FilterBar>
 
-      {loading && <div className="loading-row">Searching…</div>}
-
-      {!loading && searched && results.length === 0 && (
-        <div className="state-msg">
-          <strong>No results for "{q}"</strong>
-          Try a different query or prefix.
-        </div>
-      )}
-
-      {!loading && !searched && !q && (
-        <div className="state-msg">
-          Type to search across all indexed symbols using full-text search.
-        </div>
-      )}
-
-      {results.length > 0 && (
-        <div className="list">
-          {results.map((r) => (
-            <div
-              key={r.id}
-              className={`list-item${selectedId === r.id ? ' selected' : ''}`}
-              onClick={() => setSelectedId(r.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter') setSelectedId(r.id); }}
-            >
-              <span className="list-item-icon">{r.kind.slice(0, 4)}</span>
-              <div className="list-item-body">
-                <div className="list-item-name">{r.name}</div>
-                <div className="list-item-sub">
-                  {r.snippet ? r.snippet : `${r.file_path}:${r.start_line}`}
-                </div>
-              </div>
-              <span className="list-item-badge">{r.language}</span>
-            </div>
-          ))}
-        </div>
-      )}
+          <PageCardBody>
+            {loading ? (
+              <PageLoading label="Searching…" />
+            ) : !searched && !q ? (
+              <PageEmpty title="Start typing">
+                Search across all indexed symbols using full-text search.
+              </PageEmpty>
+            ) : searched && results.length === 0 ? (
+              <PageEmpty title={`No results for "${q}"`}>
+                Try a different query or prefix.
+              </PageEmpty>
+            ) : (
+              <ItemList>
+                {results.map((r) => (
+                  <ItemRow
+                    key={r.id}
+                    icon={r.kind.slice(0, 4)}
+                    title={r.name}
+                    subtitle={r.snippet ? r.snippet : `${r.file_path}:${r.start_line}`}
+                    selected={selectedId === r.id}
+                    onClick={() => setSelectedId(r.id)}
+                    badges={<span className="page-item-badge">{r.language}</span>}
+                  />
+                ))}
+              </ItemList>
+            )}
+          </PageCardBody>
+        </PageCard>
+      </PageStack>
 
       {selectedId && (
         <NodeDetailPanel
@@ -100,6 +110,6 @@ export default function SearchPage() {
           onNavigate={(id) => setSelectedId(id)}
         />
       )}
-    </>
+    </PageShell>
   );
 }

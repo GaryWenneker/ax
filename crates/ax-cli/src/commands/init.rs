@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ax_extraction::orchestrator::IndexOptions;
+use ax_reasoning::seed_offload_on_init;
 use ax_sync::git_hooks::install_git_sync_hooks;
 
 use crate::commands::{check_unsafe_root, resolve_path};
@@ -98,6 +99,66 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
                 println!("  {}", dim(rel));
             }
             println!();
+        }
+    }
+
+    match seed_offload_on_init().await {
+        Ok(report) => {
+            if report.catalog_written {
+                println!(
+                    "{}",
+                    ok_line(format!(
+                        "Wired {} LLM offload providers in ~/.ax/config.json",
+                        ax_reasoning::OFFLOAD_PROVIDERS.len()
+                    ))
+                );
+                for p in ax_reasoning::OFFLOAD_PROVIDERS {
+                    let marker = if report.discovered.contains(&p.id.to_string()) {
+                        "found"
+                    } else {
+                        "set key"
+                    };
+                    println!(
+                        "  {} {} ({}) — {}",
+                        dim("·"),
+                        p.name,
+                        p.key_env.unwrap_or("(no key)"),
+                        marker
+                    );
+                }
+                println!();
+            }
+            if let Some(active) = &report.active {
+                if report.skipped_existing {
+                    println!(
+                        "{}",
+                        ok_line(format!(
+                            "Offload already configured: {} ({})",
+                            active.name, active.url
+                        ))
+                    );
+                } else {
+                    println!(
+                        "{}",
+                        ok_line(format!(
+                            "Offload active: {} ({})",
+                            active.name, active.url
+                        ))
+                    );
+                }
+                println!();
+            } else if report.catalog_written {
+                println!(
+                    "  {}",
+                    dim(
+                        "No API keys detected — set OPENAI_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY, etc. then run ax explore"
+                    )
+                );
+                println!();
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", dim(format!("Offload wiring skipped: {e}")));
         }
     }
 

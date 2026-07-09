@@ -1,8 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchNodes } from '../api';
+import NodeDetailPanel from '../components/NodeDetail';
+import {
+  FilterBar,
+  ItemList,
+  ItemRow,
+  PageCard,
+  PageCardBody,
+  PageEmpty,
+  PageHero,
+  PageLoading,
+  PagePagination,
+  PageShell,
+  PageStack,
+  PageToasts,
+} from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import type { NodeRow } from '../types';
-import NodeDetailPanel from '../components/NodeDetail';
 
 const LIMIT = 50;
 
@@ -59,75 +73,87 @@ export default function NodesPage() {
   usePageContext('Nodes', detail);
 
   return (
-    <>
-      <div className="page-header">
-        <h1 className="page-title">Nodes</h1>
-        <span className="count-label">{total.toLocaleString()} total</span>
-      </div>
+    <PageShell>
+      <PageHero
+        title="Nodes"
+        subtitle="Browse indexed symbols. Click a row to inspect callers and callees."
+      />
 
-      <div className="filter-row">
-        <input
-          className="filter-input"
-          type="search"
-          placeholder="Search symbols…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <select
-          className="filter-select"
-          value={kind}
-          onChange={(e) => setKind(e.target.value)}
-          aria-label="Filter by kind"
+      <PageToasts err={error} />
+
+      <PageStack>
+        <PageCard
+          title="Symbol browser"
+          description={`${total.toLocaleString()} nodes in the graph.`}
+          footer={
+            total > LIMIT ? (
+              <PagePagination
+                page={page}
+                pages={pages}
+                onPrev={() => goPage(-1)}
+                onNext={() => goPage(1)}
+                prevDisabled={offset === 0}
+                nextDisabled={offset + LIMIT >= total}
+              />
+            ) : undefined
+          }
         >
-          <option value="">All kinds</option>
-          {KIND_OPTIONS.filter(Boolean).map((k) => (
-            <option key={k} value={k}>{k}</option>
-          ))}
-        </select>
-        <input
-          className="filter-input"
-          style={{ maxWidth: 120 }}
-          type="text"
-          placeholder="Language…"
-          value={lang}
-          onChange={(e) => setLang(e.target.value)}
-        />
-      </div>
-
-      {error && <div className="state-msg"><strong>Error</strong>{error}</div>}
-
-      {loading ? (
-        <div className="loading-row">Loading…</div>
-      ) : nodes.length === 0 ? (
-        <div className="state-msg"><strong>No nodes found</strong>Try a different search or filter.</div>
-      ) : (
-        <div className="list">
-          {nodes.map((n) => (
-            <div
-              key={n.id}
-              className={`list-item${selectedId === n.id ? ' selected' : ''}`}
-              onClick={() => setSelectedId(n.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter') setSelectedId(n.id); }}
+          <FilterBar>
+            <input
+              className="settings-input settings-input--grow"
+              type="search"
+              placeholder="Search symbols…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <select
+              className="settings-select"
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              aria-label="Filter by kind"
             >
-              <span className="list-item-icon">{n.kind.slice(0, 4)}</span>
-              <div className="list-item-body">
-                <div className="list-item-name">{n.name}</div>
-                <div className="list-item-sub">{n.file_path}:{n.start_line}</div>
-              </div>
-              <span className="list-item-badge">{n.language}</span>
-              {n.is_exported ? <span className="list-item-badge">pub</span> : null}
-            </div>
-          ))}
-        </div>
-      )}
+              <option value="">All kinds</option>
+              {KIND_OPTIONS.filter(Boolean).map((k) => (
+                <option key={k} value={k}>{k}</option>
+              ))}
+            </select>
+            <input
+              className="settings-input settings-input--narrow"
+              type="text"
+              placeholder="Language…"
+              value={lang}
+              onChange={(e) => setLang(e.target.value)}
+            />
+          </FilterBar>
 
-      <div className="pagination">
-        <button className="btn" onClick={() => goPage(-1)} disabled={offset === 0}>← Prev</button>
-        <span className="page-info">Page {page} of {pages}</span>
-        <button className="btn" onClick={() => goPage(1)} disabled={offset + LIMIT >= total}>Next →</button>
-      </div>
+          <PageCardBody>
+            {loading ? (
+              <PageLoading />
+            ) : nodes.length === 0 ? (
+              <PageEmpty title="No nodes found">Try a different search or filter.</PageEmpty>
+            ) : (
+              <ItemList>
+                {nodes.map((n) => (
+                  <ItemRow
+                    key={n.id}
+                    icon={n.kind.slice(0, 4)}
+                    title={n.name}
+                    subtitle={`${n.file_path}:${n.start_line}`}
+                    selected={selectedId === n.id}
+                    onClick={() => setSelectedId(n.id)}
+                    badges={
+                      <>
+                        <span className="page-item-badge">{n.language}</span>
+                        {n.is_exported ? <span className="page-item-badge">pub</span> : null}
+                      </>
+                    }
+                  />
+                ))}
+              </ItemList>
+            )}
+          </PageCardBody>
+        </PageCard>
+      </PageStack>
 
       {selectedId && (
         <NodeDetailPanel
@@ -136,6 +162,6 @@ export default function NodesPage() {
           onNavigate={(id) => setSelectedId(id)}
         />
       )}
-    </>
+    </PageShell>
   );
 }

@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicyRule, savePolicyRule } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
+import {
+  PageCard,
+  PageCardBody,
+  PageHero,
+  PageRow,
+  PageShell,
+  PageStack,
+  PageToasts,
+} from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import type { RuleFrontmatter } from '../policyTypes';
 
@@ -67,40 +76,92 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
   }
 
   return (
-    <div className="page editor-page">
-      <div className="page-header">
-        <h1>{ruleId ? `Edit rule: ${ruleId}` : 'New rule'}</h1>
-        <div className="page-actions">
-          <button type="button" className="btn" onClick={onBack}>Back</button>
-          <button type="button" className="btn primary" disabled={saving} onClick={save}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+    <PageShell>
+      <PageHero
+        title={ruleId ? `Edit rule: ${ruleId}` : 'New rule'}
+        subtitle="Configure matching criteria and rule body."
+        actions={
+          <>
+            <button type="button" className="btn" onClick={onBack}>Back</button>
+            <button type="button" className="btn primary" disabled={saving} onClick={save}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        }
+      />
+
+      <PageToasts err={error || null} />
+
+      <div className="page-editor-grid">
+        <PageStack>
+          <PageCard title="Metadata" description="Frontmatter fields for rule matching.">
+            <PageCardBody>
+              <PageRow title="ID" description="Unique rule identifier.">
+                <input
+                  className="settings-input"
+                  value={fm.id}
+                  disabled={!!ruleId}
+                  onChange={(e) => setFm({ ...fm, id: e.target.value })}
+                />
+              </PageRow>
+              <PageRow title="Level" description="CRITICAL rules block edits via ax_guard.">
+                <select
+                  className="settings-select"
+                  value={fm.level}
+                  onChange={(e) => setFm({ ...fm, level: e.target.value })}
+                >
+                  <option>CRITICAL</option>
+                  <option>WARNING</option>
+                  <option>INFO</option>
+                </select>
+              </PageRow>
+              <PageRow title="Always apply" description="Inject on every agent turn.">
+                <button
+                  type="button"
+                  className={`settings-toggle${fm.alwaysApply ? ' on' : ''}`}
+                  onClick={() => setFm({ ...fm, alwaysApply: !fm.alwaysApply })}
+                  aria-pressed={fm.alwaysApply}
+                >
+                  <span className="settings-toggle-thumb" />
+                </button>
+              </PageRow>
+              <PageRow title="Priority" description="Higher priority rules sort first.">
+                <input
+                  className="settings-input settings-input--narrow"
+                  type="number"
+                  value={fm.priority}
+                  onChange={(e) => setFm({ ...fm, priority: Number(e.target.value) })}
+                />
+              </PageRow>
+              <PageRow title="Globs" description="Comma-separated file patterns.">
+                <input
+                  className="settings-input"
+                  value={globsText}
+                  onChange={(e) => setGlobsText(e.target.value)}
+                  placeholder="**/*.tsx, **/*.css"
+                />
+              </PageRow>
+              <PageRow title="Triggers" description="Keywords that activate this rule.">
+                <input
+                  className="settings-input"
+                  value={triggersText}
+                  onChange={(e) => setTriggersText(e.target.value)}
+                  placeholder="mobile, deploy"
+                />
+              </PageRow>
+              <PageRow title="Tags" description="Optional categorization tags.">
+                <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
+              </PageRow>
+            </PageCardBody>
+          </PageCard>
+        </PageStack>
+
+        <PageCard title="Rule body" description="Markdown content injected into agent context.">
+          <div style={{ minHeight: 400 }}>
+            <MarkdownEditor value={body} onChange={setBody} />
+          </div>
+        </PageCard>
       </div>
-      {error && <p className="error">{error}</p>}
-      <div className="editor-grid">
-        <section className="form-panel">
-          <label>ID<input value={fm.id} disabled={!!ruleId} onChange={(e) => setFm({ ...fm, id: e.target.value })} /></label>
-          <label>Level
-            <select value={fm.level} onChange={(e) => setFm({ ...fm, level: e.target.value })}>
-              <option>CRITICAL</option>
-              <option>WARNING</option>
-              <option>INFO</option>
-            </select>
-          </label>
-          <label className="checkbox">
-            <input type="checkbox" checked={fm.alwaysApply} onChange={(e) => setFm({ ...fm, alwaysApply: e.target.checked })} />
-            Always apply
-          </label>
-          <label>Priority<input type="number" value={fm.priority} onChange={(e) => setFm({ ...fm, priority: Number(e.target.value) })} /></label>
-          <label>Globs (comma-separated)<input value={globsText} onChange={(e) => setGlobsText(e.target.value)} placeholder="**/*.tsx, **/*.css" /></label>
-          <label>Triggers<input value={triggersText} onChange={(e) => setTriggersText(e.target.value)} placeholder="mobile, deploy" /></label>
-          <label>Tags<input value={tagsText} onChange={(e) => setTagsText(e.target.value)} /></label>
-        </section>
-        <section className="md-panel">
-          <MarkdownEditor value={body} onChange={setBody} />
-        </section>
-      </div>
-    </div>
+    </PageShell>
   );
 }

@@ -1,5 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { deletePolicySkill, fetchPolicySkills } from '../policyApi';
+import {
+  DataTable,
+  PageCard,
+  PageCardBody,
+  PageEmpty,
+  PageHero,
+  PageLoading,
+  PageShell,
+  PageStack,
+  PageToasts,
+} from '../components/ui/PageLayout';
+import {
+  PolicyCount,
+  PolicyRowActions,
+  PolicyToolbar,
+  SortTh,
+} from '../components/ui/PolicyTable';
+import {
+  filterSkills,
+  sortSkills,
+  toggleSort,
+  type SkillSortKey,
+  type SortDir,
+} from '../components/ui/policyListUtils';
 import { usePageContext } from '../context/UiContext';
 import type { PolicySkillRow } from '../policyTypes';
 
@@ -13,6 +37,10 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
+  const [q, setQ] = useState('');
+  const [sortKey, setSortKey] = useState<SkillSortKey>('priority');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
   useEffect(() => {
     fetchPolicySkills()
       .then((r) => setSkills(r.skills))
@@ -20,7 +48,18 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
       .finally(() => setLoading(false));
   }, []);
 
-  usePageContext('Skills', !loading && !error ? `${skills.length} skills` : undefined);
+  const visible = useMemo(
+    () => sortSkills(filterSkills(skills, { q }), sortKey, sortDir),
+    [skills, q, sortKey, sortDir],
+  );
+
+  usePageContext('Skills', !loading && !error ? `${visible.length}/${skills.length} skills` : undefined);
+
+  function setSort(key: SkillSortKey) {
+    const next = toggleSort(sortKey, sortDir, key);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  }
 
   async function remove(name: string) {
     if (!confirm(`Delete skill "${name}"?`)) return;
@@ -28,37 +67,83 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
     setSkills((prev) => prev.filter((s) => s.name !== name));
   }
 
-  if (loading) return <p className="muted">Loading skills…</p>;
-  if (error) return <p className="error">{error}</p>;
+  if (loading) {
+    return (
+      <PageShell>
+        <PageHero title="Skills" subtitle="Reusable agent skills loaded on demand." />
+        <PageLoading label="Loading skills…" />
+      </PageShell>
+    );
+  }
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <h1>Skills</h1>
-        <div className="page-actions">
-          <button type="button" className="btn" onClick={onMatch}>Test match</button>
-          <button type="button" className="btn primary" onClick={() => onEdit(null)}>New skill</button>
-        </div>
-      </div>
-      {skills.length === 0 ? (
-        <p className="muted">No skills yet. Create your first skill.</p>
-      ) : (
-        <ul className="policy-list">
-          {skills.map((s) => (
-            <li key={s.name} className="policy-item level-info">
-              <div className="policy-item-main">
-                <strong>{s.name}</strong>
-                <span className="muted">p{s.priority}</span>
-              </div>
-              <div className="policy-item-meta">{s.description}</div>
-              <div className="policy-item-actions">
-                <button type="button" className="btn" onClick={() => onEdit(s.name)}>Edit</button>
-                <button type="button" className="btn danger" onClick={() => remove(s.name)}>Delete</button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <PageShell>
+      <PageHero
+        title="Skills"
+        subtitle="Task-specific instructions agents can load via ax_skill."
+        actions={
+          <>
+            <button type="button" className="btn btn-subtle" onClick={onMatch}>Test match</button>
+            <button type="button" className="btn primary" onClick={() => onEdit(null)}>New skill</button>
+          </>
+        }
+      />
+
+      <PageToasts err={error || null} />
+
+      <PageStack>
+        <PageCard title="All skills" description="Filter and sort to find skills quickly.">
+          <PolicyToolbar>
+            <input
+              className="settings-input policy-toolbar-search"
+              type="search"
+              placeholder="Search name, description, tags…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <PolicyCount shown={visible.length} total={skills.length} />
+          </PolicyToolbar>
+
+          <PageCardBody>
+            {skills.length === 0 ? (
+              <PageEmpty title="No skills yet">Create your first skill to guide agent workflows.</PageEmpty>
+            ) : visible.length === 0 ? (
+              <PageEmpty title="No matching skills">Adjust your search query.</PageEmpty>
+            ) : (
+              <DataTable dense>
+                <thead>
+                  <tr>
+                    <SortTh label="Name" active={sortKey === 'name'} dir={sortDir} onClick={() => setSort('name')} />
+                    <th>Description</th>
+                    <SortTh label="Pri" active={sortKey === 'priority'} dir={sortDir} onClick={() => setSort('priority')} className="col-num" />
+                    <SortTh label="Triggers" active={sortKey === 'triggers'} dir={sortDir} onClick={() => setSort('triggers')} className="col-num" />
+                    <th className="col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((s) => (
+                    <tr key={s.name} className="policy-table-row">
+                      <td className="mono">
+                        <button type="button" className="policy-link" onClick={() => onEdit(s.name)}>
+                          {s.name}
+                        </button>
+                      </td>
+                      <td className="policy-table-desc" title={s.description}>
+                        {s.description || '—'}
+                      </td>
+                      <td className="num">{s.priority}</td>
+                      <td className="num">{s.triggers.length}</td>
+                      <td className="col-actions">
+                        <PolicyRowActions onEdit={() => onEdit(s.name)} onDelete={() => remove(s.name)} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </DataTable>
+            )}
+          </PageCardBody>
+        </PageCard>
+      </PageStack>
+    </PageShell>
   );
 }

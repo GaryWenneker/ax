@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { fetchTokenUsage, type TokenUsageSummary } from '../api';
+import {
+  DataTable,
+  DistBar,
+  FilterBar,
+  PageCard,
+  PageCardBody,
+  PageEmpty,
+  PageHero,
+  PageLoading,
+  PageShell,
+  PageStack,
+  PageToasts,
+  StatusPanel,
+  StatusPill,
+} from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 
 type Period = 'week' | 'month_to_date' | 'month' | 'year' | 'custom';
@@ -59,147 +74,134 @@ export default function TokensPage() {
   const maxDaily = Math.max(...(data?.daily.map((d) => d.total_tokens) ?? [1]), 1);
 
   return (
-    <>
-      <div className="page-header">
-        <h1 className="page-title">Token usage</h1>
-      </div>
-
-      <p className="stats-summary">
-        Per-model LLM tokens from explore offload. Stored in <code>~/.ax/usage.db</code>.
-      </p>
-
-      <div className="filter-row" style={{ marginBottom: '12px' }}>
-        <select
-          className="filter-select"
-          value={period}
-          onChange={(e) => setPeriod(e.target.value as Period)}
-          aria-label="Time period"
-        >
-          {PERIOD_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        {period === 'custom' && (
+    <PageShell>
+      <PageHero
+        title="Token usage"
+        subtitle={
           <>
-            <input
-              className="filter-input"
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              aria-label="From date"
-              style={{ maxWidth: '160px' }}
-            />
-            <input
-              className="filter-input"
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              aria-label="To date"
-              style={{ maxWidth: '160px' }}
-            />
+            Per-model LLM tokens from explore offload. Stored in <code>~/.ax/usage.db</code>.
+          </>
+        }
+      />
+
+      <PageToasts err={error} />
+
+      <PageStack>
+        <PageCard title="Period" description="Select a time range for usage statistics.">
+          <FilterBar>
+            <select
+              className="settings-select"
+              value={period}
+              onChange={(e) => setPeriod(e.target.value as Period)}
+              aria-label="Time period"
+            >
+              {PERIOD_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            {period === 'custom' && (
+              <>
+                <input
+                  className="settings-input settings-input--narrow"
+                  type="date"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                  aria-label="From date"
+                />
+                <input
+                  className="settings-input settings-input--narrow"
+                  type="date"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  aria-label="To date"
+                />
+              </>
+            )}
+            <button type="button" className="btn primary" onClick={() => void load()} disabled={loading}>
+              {loading ? 'Loading…' : 'Apply'}
+            </button>
+          </FilterBar>
+        </PageCard>
+
+        {loading && !data && <PageLoading label="Loading token usage…" />}
+
+        {data && (
+          <>
+            <PageCard title="Summary" description={`${data.from} → ${data.to}`}>
+              <StatusPanel title="Totals">
+                <StatusPill label="Total tokens" value={fmt(data.total_tokens)} tone="ok" />
+                <StatusPill label="Prompt" value={fmt(data.prompt_tokens)} />
+                <StatusPill label="Completion" value={fmt(data.completion_tokens)} />
+                <StatusPill label="Calls" value={fmt(data.calls)} />
+              </StatusPanel>
+            </PageCard>
+
+            <PageCard title="By model" description="Breakdown per LLM model.">
+              <PageCardBody>
+                {data.by_model.length === 0 ? (
+                  <PageEmpty title="No usage in this period">
+                    Enable offload with <code>ax offload</code>.
+                  </PageEmpty>
+                ) : (
+                  <DataTable>
+                    <thead>
+                      <tr>
+                        <th>Model</th>
+                        <th>Calls</th>
+                        <th>Prompt</th>
+                        <th>Completion</th>
+                        <th>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.by_model.map((row) => (
+                        <tr key={row.model}>
+                          <td className="mono">{row.model}</td>
+                          <td className="num">{fmt(row.calls)}</td>
+                          <td className="num">{fmt(row.prompt_tokens)}</td>
+                          <td className="num">{fmt(row.completion_tokens)}</td>
+                          <td className="num">{fmt(row.total_tokens)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </DataTable>
+                )}
+              </PageCardBody>
+            </PageCard>
+
+            {data.daily.length > 0 && (
+              <PageCard title="Daily usage" description="Token volume per day.">
+                <PageCardBody>
+                  <DataTable>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Calls</th>
+                        <th>Tokens</th>
+                        <th style={{ width: '40%' }}>Share</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.daily.map((d) => (
+                        <tr key={d.date}>
+                          <td>{d.date}</td>
+                          <td className="num">{fmt(d.calls)}</td>
+                          <td className="num">{fmt(d.total_tokens)}</td>
+                          <td>
+                            <DistBar pct={Math.round((d.total_tokens / maxDaily) * 100)} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </DataTable>
+                </PageCardBody>
+              </PageCard>
+            )}
           </>
         )}
-        <button type="button" className="btn primary" onClick={() => void load()} disabled={loading}>
-          {loading ? 'Loading…' : 'Apply'}
-        </button>
-      </div>
-
-      {error && (
-        <div className="state-msg">
-          <strong>Error</strong>
-          {error}
-        </div>
-      )}
-
-      {!error && !data && loading && <div className="loading-row">Loading token usage…</div>}
-
-      {data && (
-        <>
-          <table className="lang-table" style={{ marginBottom: '1.5rem' }}>
-            <tbody>
-              <tr>
-                <th scope="row">Total tokens</th>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(data.total_tokens)}</td>
-                <th scope="row">Prompt</th>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(data.prompt_tokens)}</td>
-              </tr>
-              <tr>
-                <th scope="row">Completion</th>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(data.completion_tokens)}</td>
-                <th scope="row">Calls</th>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(data.calls)}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div style={{ marginTop: '1.5rem' }}>
-            <div className="detail-section-title" style={{ marginBottom: '8px' }}>
-              By model ({data.from} → {data.to})
-            </div>
-            {data.by_model.length === 0 ? (
-              <p className="stats-summary">No usage in this period. Enable offload with <code>ax offload</code>.</p>
-            ) : (
-              <table className="lang-table">
-                <thead>
-                  <tr>
-                    <th>Model</th>
-                    <th>Calls</th>
-                    <th>Prompt</th>
-                    <th>Completion</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.by_model.map((row) => (
-                    <tr key={row.model}>
-                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-sm)' }}>{row.model}</td>
-                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(row.calls)}</td>
-                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(row.prompt_tokens)}</td>
-                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(row.completion_tokens)}</td>
-                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(row.total_tokens)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {data.daily.length > 0 && (
-            <div style={{ marginTop: '1.5rem' }}>
-              <div className="detail-section-title" style={{ marginBottom: '8px' }}>
-                Daily usage
-              </div>
-              <table className="lang-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Calls</th>
-                    <th>Tokens</th>
-                    <th style={{ width: '40%' }}>Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.daily.map((d) => (
-                    <tr key={d.date}>
-                      <td>{d.date}</td>
-                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(d.calls)}</td>
-                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(d.total_tokens)}</td>
-                      <td>
-                        <div
-                          className="lang-bar"
-                          style={{ width: `${Math.round((d.total_tokens / maxDaily) * 100)}%` }}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </>
+      </PageStack>
+    </PageShell>
   );
 }

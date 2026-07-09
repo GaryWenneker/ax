@@ -64,6 +64,26 @@ export interface SonarDiscovery {
   host: string;
 }
 
+export interface SonarSetupStatus {
+  login_user: string;
+  login_password_hint: string;
+  project_exists: boolean;
+  token_configured: boolean;
+  scanner_available: boolean;
+  token_path: string;
+}
+
+export interface SonarBootstrapResult {
+  project_created: boolean;
+  token_saved: boolean;
+  token_env_set: boolean;
+  ui_url: string;
+  login_user: string;
+  login_password_hint: string;
+  token_path: string;
+  message: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${SHIP}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
@@ -80,7 +100,11 @@ export function fetchShipStatus(): Promise<{ branch: string | null; report: Ship
   return request('/status');
 }
 
-export function fetchShipConfig(): Promise<{ config: ShipConfig; sonar: SonarDiscovery }> {
+export function fetchShipConfig(): Promise<{
+  config: ShipConfig;
+  sonar: SonarDiscovery;
+  sonar_setup?: SonarSetupStatus;
+}> {
   return request('/config');
 }
 
@@ -88,16 +112,117 @@ export function saveShipConfig(config: ShipConfig): Promise<{ ok: boolean }> {
   return request('/config', { method: 'PUT', body: JSON.stringify(config) });
 }
 
-export function discoverSonar(): Promise<{ discovery: SonarDiscovery }> {
+export function discoverSonar(): Promise<{ discovery: SonarDiscovery; setup?: SonarSetupStatus }> {
   return request('/sonar/discover');
 }
 
-export function installSonar(): Promise<{ ok: boolean; discovery?: SonarDiscovery; error?: string }> {
+export function bootstrapSonar(): Promise<{
+  ok: boolean;
+  result?: SonarBootstrapResult;
+  setup?: SonarSetupStatus;
+  error?: string;
+}> {
+  return request('/sonar/bootstrap', { method: 'POST', body: '{}' });
+}
+
+export function installSonar(): Promise<{
+  ok: boolean;
+  discovery?: SonarDiscovery;
+  error?: string;
+  logs?: string[];
+}> {
   return request('/sonar/install', { method: 'POST', body: '{}' });
 }
 
-export function startSonar(): Promise<{ ok: boolean; discovery?: SonarDiscovery; error?: string }> {
+export function startSonar(): Promise<{
+  ok: boolean;
+  discovery?: SonarDiscovery;
+  error?: string;
+  logs?: string[];
+}> {
   return request('/sonar/start', { method: 'POST', body: '{}' });
+}
+
+export type SonarStreamEvent =
+  | { type: 'log'; line: string }
+  | { type: 'done'; ok: boolean; discovery?: SonarDiscovery; error?: string; logs?: string[] };
+
+async function consumeSse(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (ev: SonarStreamEvent) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() ?? '';
+    for (const chunk of chunks) {
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          onEvent(JSON.parse(line.slice(6)) as SonarStreamEvent);
+        } catch {
+          /* ignore malformed */
+        }
+      }
+    }
+  }
+}
+
+export async function streamSonarInstall(
+  onEvent: (ev: SonarStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${SHIP}/sonar/install/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  await consumeSse(res.body, onEvent);
+}
+
+export async function streamSonarStart(
+  onEvent: (ev: SonarStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${SHIP}/sonar/start/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  await consumeSse(res.body, onEvent);
+}
+
+export async function streamSonarStop(
+  onEvent: (ev: SonarStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${SHIP}/sonar/stop/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  await consumeSse(res.body, onEvent);
 }
 
 export function runShipCommand(

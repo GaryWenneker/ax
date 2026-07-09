@@ -13,6 +13,7 @@ import ShipPage from './pages/Ship';
 import SettingsPage from './pages/Settings';
 import TokensPage from './pages/Tokens';
 import StatusBar from './components/StatusBar';
+import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
 import { UiProvider } from './context/UiContext';
 
@@ -49,6 +50,7 @@ function AppShell() {
 
   useEffect(() => {
     initUiScale();
+    initSidebarWidth();
     setFontScale(loadUiScale());
   }, []);
 
@@ -130,6 +132,8 @@ function AppShell() {
             </button>
           ))}
         </nav>
+
+        <SidebarResizeHandle />
 
         <main className="main" id="main-content">
           {page === 'stats' && <StatsPage />}

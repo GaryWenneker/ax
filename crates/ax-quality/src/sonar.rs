@@ -6,7 +6,8 @@ use std::process::Command;
 use serde::Deserialize;
 use tracing::{info, warn};
 
-use crate::container::{resolve_runtime, start_container};
+use crate::bootstrap::{read_sonar_token, scanner_available, scanner_host_url};
+use crate::container::{resolve_runtime, start_container, SONAR_SCANNER_IMAGE};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SonarConfig {
@@ -115,8 +116,22 @@ impl SonarClient {
         if !self.config.enabled || dirty_files.is_empty() {
             return Ok(());
         }
-        let token = std::env::var(&self.config.token_env).ok();
+        let token = read_sonar_token(project_root, &self.config.token_env);
         let inclusions = dirty_files.join(",");
+
+        if scanner_available(&self.config.scanner_path) {
+            self.run_native_scan(project_root, &inclusions, token.as_deref())
+        } else {
+            self.run_container_scan(project_root, &inclusions, token.as_deref())
+        }
+    }
+
+    fn run_native_scan(
+        &self,
+        project_root: &Path,
+        inclusions: &str,
+        token: Option<&str>,
+    ) -> Result<(), String> {
         let mut cmd = Command::new(&self.config.scanner_path);
         cmd.current_dir(project_root)
             .arg(format!("-Dsonar.projectKey={}", self.config.project_key))
@@ -131,6 +146,59 @@ impl SonarClient {
             .map_err(|e| format!("sonar-scanner failed: {e}"))?;
         if !status.success() {
             return Err("sonar-scanner exited with error".into());
+        }
+        Ok(())
+    }
+
+    fn run_container_scan(
+        &self,
+        project_root: &Path,
+        inclusions: &str,
+        token: Option<&str>,
+    ) -> Result<(), String> {
+        let pref = if self.config.container_runtime == "auto" {
+            None
+        } else {
+            Some(self.config.container_runtime.as_str())
+        };
+        let runtime = resolve_runtime(pref)?;
+        let mount = project_root
+            .canonicalize()
+            .map_err(|e| format!("project path: {e}"))?;
+        let host = scanner_host_url(&self.config.host);
+
+        info!(
+            "Running SonarScanner via {} ({}) — native scanner not found on PATH",
+            runtime.cli(),
+            SONAR_SCANNER_IMAGE
+        );
+
+        let mut args = vec![
+            "run".to_string(),
+            "--rm".to_string(),
+            "-v".to_string(),
+            format!("{}:/usr/src", mount.display()),
+            "-w".to_string(),
+            "/usr/src".to_string(),
+            SONAR_SCANNER_IMAGE.to_string(),
+            format!("-Dsonar.projectKey={}", self.config.project_key),
+            "-Dsonar.sources=.".to_string(),
+            format!("-Dsonar.inclusions={inclusions}"),
+            format!("-Dsonar.host.url={host}"),
+        ];
+        if let Some(t) = token {
+            args.push(format!("-Dsonar.token={t}"));
+        }
+
+        let status = Command::new(runtime.cli())
+            .args(&args)
+            .status()
+            .map_err(|e| format!("container sonar-scanner failed: {e}"))?;
+        if !status.success() {
+            return Err(format!(
+                "container sonar-scanner exited with error ({} run)",
+                runtime.cli()
+            ));
         }
         Ok(())
     }

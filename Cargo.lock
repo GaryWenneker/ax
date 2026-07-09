@@ -358,6 +358,7 @@ version = "2.1.5"
 dependencies = [
  "ax-types",
  "ax-utils",
+ "base64",
  "reqwest",
  "serde",
  "serde_json",
