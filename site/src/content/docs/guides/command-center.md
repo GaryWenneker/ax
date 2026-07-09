@@ -95,6 +95,11 @@ Results stream to the dashboard via SSE (`/api/ship/events`).
 
 Default port: `7070` (override with `--port` or `[ship].web_port`).
 
+Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.toml`:
+
+- **SonarQube** — auto-detect Podman/Docker, one-click install & start
+- **Command Center** — target branch, test runner, Azure DevOps / GitHub remote
+
 ## Git hooks
 
 After `ax init`, post-commit hooks run `ax sync --quiet` and `ax ship --evaluate` so the graph and ship state stay current.

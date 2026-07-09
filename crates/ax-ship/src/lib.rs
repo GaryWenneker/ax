@@ -20,14 +20,14 @@ use tokio::sync::Mutex;
 
 pub struct ShipDaemon {
     pub project_root: PathBuf,
-    pub config: ax_remote::ShipConfig,
+    pub config: Arc<Mutex<ax_remote::ShipConfig>>,
     pub bus: ShipEventBus,
     pub state: Arc<Mutex<ShipState>>,
 }
 
 impl ShipDaemon {
     pub fn new(project_root: PathBuf) -> Self {
-        let config = ax_remote::load_ship_config(&project_root);
+        let config = Arc::new(Mutex::new(ax_remote::load_ship_config(&project_root)));
         Self {
             project_root,
             config,
@@ -36,11 +36,26 @@ impl ShipDaemon {
         }
     }
 
+    pub async fn config(&self) -> ax_remote::ShipConfig {
+        self.config.lock().await.clone()
+    }
+
+    pub async fn set_config(&self, cfg: ax_remote::ShipConfig) -> Result<(), String> {
+        ax_remote::save_ship_config(&self.project_root, &cfg)?;
+        *self.config.lock().await = cfg;
+        Ok(())
+    }
+
+    pub async fn reload_config(&self) {
+        *self.config.lock().await = ax_remote::load_ship_config(&self.project_root);
+    }
+
     pub async fn evaluate(&self) -> Result<ShipReport, String> {
-        let pipeline = ShipPipeline::new(self.project_root.clone(), self.config.clone(), self.bus.clone());
+        let cfg = self.config.lock().await.clone();
+        let pipeline = ShipPipeline::new(self.project_root.clone(), cfg, self.bus.clone());
         let report = pipeline.run_evaluate().await?;
         *self.state.lock().await = ShipState::from_report(&report);
-        self.bus.publish(ShipEvent::ReportUpdated(report.clone()));
+        self.bus.publish(ShipEvent::ReportUpdated { report: report.clone() });
         Ok(report)
     }
 

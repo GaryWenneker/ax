@@ -15,8 +15,15 @@ pub fn apply_pending_upgrade() {
     apply_pending_upgrade_windows();
 }
 
-pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
+pub async fn run(
+    version: Option<String>,
+    check: bool,
+    local: Option<String>,
+) -> Result<(), String> {
     if check {
+        if local.is_some() {
+            return Err("--check is not supported with --local".into());
+        }
         return version_check::run_check(true).await;
     }
 
@@ -29,22 +36,31 @@ pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
         "tar.gz"
     };
 
-    let explicit_version = version.is_some();
-    let target_version = match version {
-        Some(v) => normalize_version(&v),
-        None => {
-            let _spin = SpinnerGuard::new("Resolving latest release…", false);
-            version_check::resolve_latest_installable_version(
-                &version_check::github_repo(),
-                &bundle,
-                ext,
-            )
-            .await
-            .map_err(|e| format!("Could not resolve latest release: {e}"))?
+    let local_install = local.is_some();
+    let explicit_version = version.is_some() && !local_install;
+
+    let target_version = if local_install {
+        version
+            .filter(|v| !v.is_empty())
+            .map(|v| normalize_version(&v))
+            .unwrap_or_else(|| "local-build".into())
+    } else {
+        match version {
+            Some(v) => normalize_version(&v),
+            None => {
+                let _spin = SpinnerGuard::new("Resolving latest release…", false);
+                version_check::resolve_latest_installable_version(
+                    &version_check::github_repo(),
+                    &bundle,
+                    ext,
+                )
+                .await
+                .map_err(|e| format!("Could not resolve latest release: {e}"))?
+            }
         }
     };
 
-    if !explicit_version {
+    if !explicit_version && !local_install {
         if let Some(cmp) = version_check::compare_versions(&target_version, current) {
             if cmp < 0 {
                 return Err(format!(
@@ -58,7 +74,19 @@ pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
         }
     }
 
-    if is_update_available(current, &target_version) {
+    if local_install {
+        println!(
+            "{}",
+            ok_line(format!(
+                "Installing local build{}…",
+                if target_version == "local-build" {
+                    String::new()
+                } else {
+                    format!(" ({})", strip_v(&target_version))
+                }
+            ))
+        );
+    } else if is_update_available(current, &target_version) {
         println!(
             "{}",
             ok_line(format!(
@@ -86,9 +114,16 @@ pub async fn run(version: Option<String>, check: bool) -> Result<(), String> {
     }
     let archive_name = format!("ax-{bundle}.{ext}");
 
-    let _spin = SpinnerGuard::new(&format!("Downloading {archive_name}…"), false);
-    let bytes = download_archive(&target_version, &bundle, ext)?;
-    drop(_spin);
+    let bytes = if local_install {
+        let path = resolve_local_archive_path(local.as_deref(), &bundle, ext)?;
+        let _spin = SpinnerGuard::new(&format!("Loading {}…", path.display()), false);
+        std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?
+    } else {
+        let _spin = SpinnerGuard::new(&format!("Downloading {archive_name}…"), false);
+        let bytes = download_archive(&target_version, &bundle, ext)?;
+        drop(_spin);
+        bytes
+    };
 
     #[cfg(windows)]
     {
@@ -137,6 +172,49 @@ fn release_bundle_target() -> String {
         ("macos", "aarch64") => "darwin-arm64".into(),
         (os, arch) => format!("{os}-{arch}"),
     }
+}
+
+fn resolve_local_archive_path(
+    local: Option<&str>,
+    bundle: &str,
+    ext: &str,
+) -> Result<PathBuf, String> {
+    if let Some(path) = local.filter(|s| !s.is_empty()) {
+        let p = PathBuf::from(path);
+        if p.is_file() {
+            return Ok(p);
+        }
+        return Err(format!("local archive not found: {}", p.display()));
+    }
+
+    if let Ok(env_path) = std::env::var("AX_UPGRADE_ARCHIVE") {
+        let p = PathBuf::from(&env_path);
+        if p.is_file() {
+            return Ok(p);
+        }
+        return Err(format!("AX_UPGRADE_ARCHIVE not found: {}", p.display()));
+    }
+
+    let name = format!("ax-{bundle}.{ext}");
+    let mut candidates = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("dist").join(&name));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            candidates.push(root.join("dist").join(&name));
+        }
+    }
+
+    for path in candidates {
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+
+    Err(format!(
+        "local archive not found — run .\\scripts\\ship-local.ps1 first, or pass --local dist/{name}"
+    ))
 }
 
 fn download_archive(version: &str, bundle: &str, ext: &str) -> Result<Vec<u8>, String> {

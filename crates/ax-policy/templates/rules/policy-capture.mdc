@@ -1,0 +1,46 @@
+---
+id: policy-capture
+level: WARNING
+alwaysApply: false
+globs: []
+triggers: ["je moet", "you must", "always use", "never use", "@rule", "#rule", "voortaan", "from now on", "capture rule", "save as rule"]
+tags: ["policy", "capture"]
+priority: 70
+---
+# Policy capture from user directives
+
+When the user gives a **durable** instruction (not a one-off task), propose saving it as a team rule.
+
+## Triggers
+
+Directive language in the user prompt, for example:
+
+- Dutch: `je moet`, `altijd`, `nooit`, `voortaan`, `gebruik altijd`
+- English: `you must`, `always`, `never`, `from now on`, `don't`
+- Explicit: `@rule` or `#rule` prefix
+
+## Protocol (interview → confirm → save to database)
+
+1. Call `ax_policy_capture({ action: "propose", prompt: "<user message>", files: [...] })`
+2. Show the preview and ask the user each question from `questions[]`:
+   - **confirm** — save as durable rule? (yes/no)
+   - **id** — keep suggested slug or rename?
+   - **level** — INFO, WARNING, or CRITICAL?
+   - **alwaysApply** — every turn, or only when triggers/globs match?
+   - **triggers** — keywords that activate the rule
+   - **globs** — file patterns (optional)
+   - **priority** — 0–100 (higher = earlier in inject)
+   - **tags** — categorization
+   - **body** — refine rule wording (optional)
+3. Apply the user's answers to `rule.frontmatter` and `rule.body`
+4. **Only** when the user explicitly confirms (`ja`, `yes`, `save`, `opslaan`):
+   - Call `ax_policy_capture({ action: "save", rule: { frontmatter, body } })`
+5. Confirm save destination: in **database mode** the rule is stored in `ax.db` (not a disk-only `.mdc` file)
+
+Never auto-save without confirmation.
+
+## Not a capture candidate
+
+- One-off tasks: "fix this bug", "run tests"
+- Questions: "how does X work?"
+- Preferences for the current message only without durable wording

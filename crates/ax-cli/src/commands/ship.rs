@@ -19,7 +19,8 @@ pub async fn run(
 
     if draft {
         let daemon = ax_ship::ShipDaemon::new(root.clone());
-        let pipeline = ax_ship::ShipPipeline::new(root, daemon.config, daemon.bus);
+        let cfg = daemon.config().await;
+        let pipeline = ax_ship::ShipPipeline::new(root, cfg, daemon.bus);
         let pr = pipeline
             .create_draft_pr(
                 title.as_deref().unwrap_or("ax ship draft"),

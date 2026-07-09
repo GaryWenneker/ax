@@ -1,4 +1,6 @@
 import type {
+  CaptureProposeResult,
+  CaptureSaveResult,
   MatchResult,
   PolicyRuleDoc,
   PolicyRuleRow,
@@ -83,4 +85,15 @@ export function deletePolicySkill(name: string): Promise<{ ok: boolean }> {
 
 export function matchPolicy(prompt: string, files: string[] = []): Promise<MatchResult> {
   return request('/match', { method: 'POST', body: JSON.stringify({ prompt, files }) });
+}
+
+export function proposePolicyCapture(prompt: string, files: string[] = []): Promise<CaptureProposeResult> {
+  return request('/capture', { method: 'POST', body: JSON.stringify({ action: 'propose', prompt, files }) });
+}
+
+export function savePolicyCapture(frontmatter: RuleFrontmatter, body: string): Promise<CaptureSaveResult> {
+  return request('/capture', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'save', prompt: '', rule: { frontmatter, body } }),
+  });
 }

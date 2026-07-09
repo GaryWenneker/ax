@@ -11,6 +11,8 @@ Cargo uses `target-dev/` (see `.cargo/config.toml`), **not** `target/debug/`. Ne
 
 After any `crates/ax-cli/` change: run `.\scripts\reinstall-cli.ps1` and verify `(Get-Command ax).Source` is `~/.cargo/bin/ax.exe` before handoff.
 
+**Local release (no GitHub):** `.\scripts\ship-local.ps1` then `ax upgrade --local`.
+
 ## Version bumps
 
 Use `.\scripts\release-tag.ps1 -Bump patch|minor|major`:
@@ -23,7 +25,7 @@ Use `.\scripts\release-tag.ps1 -Bump patch|minor|major`:
 
 Never document or pin a version (`AX_VERSION`, docs, README) until the GitHub release tag exists with all six platform assets.
 
-Current Command Center release: **v2.1.0** (not v2.0.15).
+Current Command Center release: **v2.1.1** (not v2.0.15).
 
 ## Install / upgrade pitfalls
 

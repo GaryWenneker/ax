@@ -14,12 +14,77 @@ ax init                    # creates .ax/policy/ and seeds default preflight rul
 ax policy index            # index policy files into ax.db
 ax policy sync [--fix]     # verify/restore ax_preflight instruction files
 ax policy match "deploy"   # test which rules/skills match
+ax policy capture "always use mobile-first CSS"   # propose rule from directive language
+ax policy storage status   # show effective files vs database mode
 ax web --open              # edit rules/skills in the browser
 ```
 
 Commit `.ax/policy/` to git so your team shares the same agent instructions everywhere.
 
-Upgrade to **ax v2.0.0+** and restart your agent so MCP exposes `ax_preflight`, `ax_rules`, `ax_skill`, and `ax_guard`.
+Upgrade to **ax v2.1.2+** and restart your agent so MCP exposes `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`, and `ax_policy_capture`.
+
+---
+
+## Policy capture (v2.1.1+)
+
+When a user gives a **durable directive** — phrases like `always`, `you must`, `never`, `@rule`, or Dutch equivalents — agents can turn it into a team rule without hand-authoring YAML.
+
+**Flow:** detect directive → propose rule + interview questions → confirm with user → save.
+
+```bash
+# Preview proposal (no write)
+ax policy capture "always run tests before committing"
+
+# Save with defaults (skip interview — use in scripts only)
+ax policy capture "you must not commit secrets" --yes
+```
+
+In Cursor/Claude, call **`ax_policy_capture`** with `action: "propose"` first. Ask each item in `questions[]` (level, globs, triggers, etc.), then `action: "save"` only after explicit user confirmation.
+
+The prompt-hook may inject `<ax_capture_hint>` when a directive is detected. Disable with `AX_NO_POLICY_CAPTURE=1`.
+
+Saved rules go to **database** or **files** depending on `policy.storage` in `ax.json` — see [Policy storage](#policy-storage-v211) below.
+
+---
+
+## Policy storage (v2.1.1+)
+
+| Mode | Source of truth | Typical workflow |
+|---|---|---|
+| `files` | `.ax/policy/*.mdc` and `SKILL.md` on disk | Edit in git, `ax policy index` syncs to DB |
+| `database` | `ax.db` policy tables | Edit in ax web or via capture; `ax policy export` for git |
+
+```bash
+ax policy storage status                 # show project + global mode
+ax policy storage database --migrate           # propose: scan repo + interview questions
+ax policy storage database --migrate --yes     # apply: switch + import all candidates
+ax policy storage files --migrate              # export DB → files when switching
+ax policy storage database --global            # set default in ~/.ax/config.json
+```
+
+Configure in `ax.json`:
+
+```json
+{ "policy": { "storage": "database" } }
+```
+
+### Database migration scan (v2.1.2+)
+
+When switching to **database** with `--migrate`, ax does not import only `.ax/policy/`. It **recursively scans the project** for:
+
+| Pattern | Examples |
+|---|---|
+| `*.mdc` with YAML frontmatter | `.ax/policy/rules/`, `.cursor/rules/`, nested packages |
+| `**/SKILL.md` with frontmatter | `.ax/policy/skills/`, `.cursor/skills/`, monorepo subfolders |
+
+Skipped automatically: `node_modules`, `target`, `dist`, IDE bootstrap (`.cursor/rules/ax.mdc`), invalid frontmatter, duplicate ids.
+
+**Two-step flow:**
+
+1. **Propose** — `ax policy storage database --migrate` (no `--yes`): prints each candidate with interview questions (import yes/no, storage destination, id/name, level, alwaysApply, triggers, globs, priority, tags, keep/remove source file). Does **not** change storage or import yet.
+2. **Apply** — after interview: `ax policy storage database --migrate --yes` switches to database mode and upserts all candidates into `ax.db`.
+
+Use `--json` on either step for agent-driven interviews.
 
 ---
 
@@ -165,6 +230,7 @@ When `.ax/policy/` is indexed, the MCP server also lists:
 | `ax_rules` | List or match rules |
 | `ax_skill` | Load a skill by name |
 | `ax_guard` | Pre-write checks for CRITICAL rules (UTF-8, secrets paths) |
+| `ax_policy_capture` | Propose or save a rule from directive language in a prompt |
 
 Code-structure tools (`ax_explore`, etc.) are unchanged. See [MCP Server](/reference/mcp-server/).
 
@@ -182,6 +248,10 @@ ax policy rules [--json]
 ax policy skills [--json]
 ax policy skill <name>
 ax policy guard --file path        # test CRITICAL guard on a path
+ax policy capture <prompt> [--yes] [--json] [--file path]
+ax policy storage status [--json]
+ax policy storage database [--migrate] [--yes] [--global] [--json]
+ax policy storage files [--migrate] [--global] [--json]
 ```
 
 ---
@@ -232,6 +302,7 @@ Run `ax policy sync` to verify managed policy files and warn about duplicate `.c
 | Variable | Effect |
 |---|---|
 | `AX_NO_POLICY=1` | Skip policy injection in prompt-hook |
+| `AX_NO_POLICY_CAPTURE=1` | Skip directive capture hints in prompt-hook |
 | `AX_POLICY_MAX_CHARS` | Cap injected policy text (default 16000) |
 | `AX_WEB_READONLY` | Disable saves in ax web |
 

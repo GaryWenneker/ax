@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use ax_context::{
     extract_code_tokens, format_explore_text, has_structural_keyword, plan_frontload_full,
 };
-use ax_policy::MatchInput;
+use ax_policy::{detect_directive, MatchInput};
 use ax_types::ExploreOptions;
 
 use crate::commands::resolve_path;
@@ -68,6 +68,14 @@ pub async fn run() -> Result<(), String> {
                 }
             }
         }
+    }
+
+    if std::env::var("AX_NO_POLICY_CAPTURE").ok().as_deref() != Some("1")
+        && detect_directive(&prompt)
+    {
+        out.push_str(
+            "<ax_capture_hint>Directive detected — call ax_policy_capture({ action: \"propose\", prompt }), ask each question in questions[], then save only after explicit yes (ax.db in database mode).</ax_capture_hint>\n",
+        );
     }
 
     let keyworded = has_structural_keyword(&prompt);

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
 use ax_context::format_explore_text;
-use ax_policy::{GuardOp, MatchInput};
+use ax_policy::{finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, PolicyStore, RuleFrontmatter};
 use ax_reasoning::maybe_synthesize_explore;
 use ax_types::{BuildContextOptions, ExploreOptions, SearchOptions, TaskInput};
 use serde_json::{json, Value};
@@ -19,6 +19,7 @@ impl ToolHandler {
             tools.push(preflight_tool());
             tools.push(rules_tool());
             tools.push(skill_tool());
+            tools.push(capture_tool());
             tools.push(guard_tool());
         }
         tools.extend(extra_tools());
@@ -31,6 +32,7 @@ impl ToolHandler {
             "ax_preflight" => preflight(ax, params).await,
             "ax_rules" => rules(ax, params).await,
             "ax_skill" => skill(ax, params).await,
+            "ax_policy_capture" => policy_capture(ax, params).await,
             "ax_guard" => guard(ax, params).await,
             "ax_search" => {
                 let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
@@ -174,6 +176,80 @@ async fn rules(ax: &mut Ax, params: Value) -> Result<Value, String> {
     }
 }
 
+async fn policy_capture(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let action = params
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("propose");
+    let prompt = params
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let files = string_array(params.get("files"));
+
+    if action == "save" {
+        let rule = params.get("rule").ok_or("rule required for save action")?;
+        let fm: RuleFrontmatter = serde_json::from_value(
+            rule.get("frontmatter")
+                .cloned()
+                .ok_or("rule.frontmatter required")?,
+        )
+        .map_err(|e| e.to_string())?;
+        let body = rule
+            .get("body")
+            .and_then(|v| v.as_str())
+            .ok_or("rule.body required")?
+            .to_string();
+
+        let store = PolicyStore::new(ax.db_pool().clone(), ax.project_root().to_path_buf());
+        let storage = store.storage();
+        let doc = store.save_rule(fm.clone(), body).await.map_err(|e| e.error)?;
+        let storage_label = match storage {
+            ax_policy::PolicyStorage::Database => "database",
+            ax_policy::PolicyStorage::Files => "files",
+        };
+        return Ok(json!({
+            "ok": true,
+            "action": "save",
+            "id": doc.frontmatter.id,
+            "storage": storage_label,
+            "path": format!(".ax/policy/rules/{}.mdc", doc.frontmatter.id),
+            "instruction": format!(
+                "Rule saved to {storage_label}. It will match on future turns via ax_preflight."
+            ),
+        }));
+    }
+
+    let proposal = propose_rule_from_prompt(&prompt, &files);
+    if !proposal.detected {
+        return Ok(json!({
+            "ok": false,
+            "action": "propose",
+            "detected": false,
+            "instruction": "No directive language found. Use explicit markers (@rule, #rule) or phrases like 'je moet', 'always', 'never'.",
+        }));
+    }
+
+    let existing: Vec<String> = ax_policy::list_rules(ax.db_pool())
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    let proposal = finalize_proposal(proposal, &existing);
+
+    Ok(json!({
+        "ok": true,
+        "action": "propose",
+        "detected": true,
+        "proposal": proposal,
+        "preview": proposal.preview,
+        "questions": proposal.questions,
+        "instruction": "Ask the user each question in questions[] before save. Apply answers to rule.frontmatter/body. Save only after explicit yes — ax_policy_capture action=save writes to ax.db in database mode.",
+    }))
+}
+
 async fn skill(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let name = params.get("name").and_then(|v| v.as_str()).ok_or("name required")?;
     let row = ax_policy::get_skill(ax.db_pool(), name)
@@ -307,6 +383,29 @@ fn rules_tool() -> Value {
     })
 }
 
+fn capture_tool() -> Value {
+    json!({
+        "name": "ax_policy_capture",
+        "description": "Propose or save a policy rule from directive language in the user prompt (je moet, always, never, @rule). Propose returns interview questions (level, triggers, globs, alwaysApply, priority). Ask user each question; save only after yes — persisted to ax.db in database mode.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": { "type": "string" },
+                "files": { "type": "array", "items": { "type": "string" } },
+                "action": { "type": "string", "enum": ["propose", "save"] },
+                "rule": {
+                    "type": "object",
+                    "properties": {
+                        "frontmatter": { "type": "object" },
+                        "body": { "type": "string" }
+                    }
+                }
+            },
+            "required": ["prompt"]
+        }
+    })
+}
+
 fn skill_tool() -> Value {
     json!({
         "name": "ax_skill",
@@ -380,7 +479,8 @@ pub fn server_instructions(has_policy: bool) -> String {
             "Turn start: call ax_preflight with the user prompt and open/changed files. Apply CRITICAL rules before editing.\n\
              Do not Read or Grep .ax/policy/ on disk — policy is delivered in ax_preflight inject only.\n\
              If you have not called ax_preflight this turn, call it now before any other work.\n\
-             Before Write/Delete on project files: call ax_guard when CRITICAL rules exist.\n\n",
+             Before Write/Delete on project files: call ax_guard when CRITICAL rules exist.\n\
+             When the user gives durable directives (je moet, always, never, @rule): call ax_policy_capture(propose), show preview, save only after explicit yes.\n\n",
         );
     }
     s.push_str(

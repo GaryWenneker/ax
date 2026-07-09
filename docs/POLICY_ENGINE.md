@@ -13,7 +13,46 @@ ax policy match "deploy"   # test which rules/skills match
 ax web --open              # edit rules/skills in browser
 ```
 
-Restart your agent after upgrading to ax **v2.0.0+** so MCP lists the policy tools.
+Restart your agent after upgrading to ax **v2.1.2+** so MCP lists the policy tools (including `ax_policy_capture`).
+
+---
+
+## Policy capture (v2.1.1+)
+
+Durable user directives in prompts (`always`, `you must`, `never`, `@rule`, Dutch equivalents) can be proposed as team rules.
+
+1. **Detect** — `ax_policy::detect_directive()` or MCP `ax_policy_capture` with `action: "propose"`.
+2. **Interview** — agent asks `questions[]` (level, globs, triggers, priority, …).
+3. **Confirm** — save only after explicit user yes.
+4. **Persist** — `PolicyStore::save_rule()` to database or files per `policy.storage`.
+
+```bash
+ax policy capture "always run tests before committing"       # preview
+ax policy capture "you must not commit secrets" --yes        # save with defaults
+```
+
+Prompt-hook injects `<ax_capture_hint>` when a directive is detected. Set `AX_NO_POLICY_CAPTURE=1` to disable.
+
+---
+
+## Policy storage (v2.1.1+)
+
+| Mode | Config | Notes |
+|---|---|---|
+| `files` | `"policy": { "storage": "files" }` in `ax.json` | Default; `.ax/policy/` is source of truth |
+| `database` | `"policy": { "storage": "database" }` | Web UI and capture write to `ax.db` |
+
+```bash
+ax policy storage status
+ax policy storage database --migrate           # propose: recursive repo scan + interview
+ax policy storage database --migrate --yes     # apply: switch + import all
+ax policy storage files --migrate              # export DB → disk on switch
+ax policy storage database --global            # ~/.ax/config.json default
+```
+
+### Migration scan (v2.1.2+)
+
+`--migrate` toward **database** recursively discovers `.mdc` rules and `SKILL.md` skills across the repo (`.ax/policy/`, `.cursor/rules/`, `.cursor/skills/`, monorepo subfolders). Each candidate includes interview questions (import, storage, id/name, level, triggers, globs, priority). Without `--yes` = propose only; with `--yes` = import into `ax.db`.
 
 ---
 
@@ -171,6 +210,7 @@ Commit `.ax/policy/` to git — team-shared, IDE-agnostic.
 | `ax_rules` | List or match rules |
 | `ax_skill` | Load skill by name |
 | `ax_guard` | Pre-write CRITICAL checks |
+| `ax_policy_capture` | Propose or save rule from directive language |
 | `ax_explore` | Code structure (unchanged) |
 
 Policy tools appear in `tools/list` only when `.ax/policy/` exists **and** has been indexed (`ax policy index`).
@@ -186,6 +226,10 @@ ax policy rules [--json]
 ax policy skills [--json]
 ax policy skill <name>
 ax policy guard --file path
+ax policy capture <prompt> [--yes] [--json]
+ax policy storage status [--json]
+ax policy storage database [--migrate] [--yes] [--global] [--json]
+ax policy storage files [--migrate] [--global] [--json]
 ```
 
 ---
@@ -195,6 +239,7 @@ ax policy guard --file path
 | Variable | Effect |
 |---|---|
 | `AX_NO_POLICY` | Skip policy in prompt-hook |
+| `AX_NO_POLICY_CAPTURE` | Skip capture hints in prompt-hook |
 | `AX_POLICY_MAX_CHARS` | Injection cap (default 16000) |
 | `AX_WEB_READONLY` | Browse-only ax web |
 

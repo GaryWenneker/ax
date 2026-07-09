@@ -101,6 +101,13 @@ if (-not $SkipInstall) {
     cargo install --path crates/ax-cli --force
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+    $built = Join-Path $root 'target-dev\release\ax.exe'
+    $appDataBin = Join-Path $env:LOCALAPPDATA 'ax\current\bin\ax.exe'
+    if ((Test-Path $built) -and (Test-Path (Split-Path $appDataBin -Parent))) {
+        Write-Step "Sync release build -> $appDataBin"
+        Copy-Item -Force $built $appDataBin
+    }
+
     $bin = (Get-Command ax -ErrorAction Stop).Source
     $ver = & ax --version
     Write-Host $ver -ForegroundColor Green

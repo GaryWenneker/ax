@@ -13,10 +13,10 @@ pub fn styles() -> Styles {
         .error(AnsiColor::Red.on_default().effects(Effects::BOLD))
 }
 
-pub const ROOT_LONG: &str = "Local-first code intelligence for AI coding agents.
+pub const ROOT_LONG: &str = "Local intelligence for AI coding agents.
 
-Builds a queryable knowledge graph (.ax/) from your codebase: symbols, call edges,
-imports, and framework routes. Agents query via MCP tools or the CLI.
+Knowledge graph (.ax/), team policy (.ax/policy/), and Command Center
+(quality gates, test-impact, draft PRs) — one Rust binary, CLI + MCP.
 
 Run `ax` with no arguments to install into detected agents (Cursor, Claude Code, etc.).";
 
@@ -228,6 +228,7 @@ Examples:
   ax upgrade               Download and install latest available release (always reinstalls)
   ax upgrade v2.0.0        Install a specific tag
   ax upgrade --check       Check only
+  ax upgrade --local       Install from dist/ax-<platform>.zip (after .\\scripts\\ship-local.ps1)
 
 If you are on ax 0.1.x (cargo install), use install.ps1 / install.sh once, then `ax upgrade` works:
   irm https://getax.wenneker.io/install.ps1 | iex

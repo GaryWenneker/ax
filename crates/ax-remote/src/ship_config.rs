@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use ax_quality::SonarConfig;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::RemoteConfig;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ShipConfig {
     #[serde(default)]
     pub ship: ShipSection,
@@ -22,7 +22,7 @@ pub struct ShipConfig {
     pub reviewers: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ShipSection {
     #[serde(default = "default_branch")]
     pub target_branch: String,
@@ -47,7 +47,7 @@ impl Default for ShipSection {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct QualityGateSection {
     #[serde(default = "default_steps")]
     pub steps: Vec<String>,
@@ -74,7 +74,7 @@ impl Default for QualityGateSection {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TestRunnerSection {
     #[serde(default = "default_runner")]
     pub runner: String,
@@ -93,7 +93,7 @@ impl Default for TestRunnerSection {
 }
 
 pub fn load_ship_config(project_root: &Path) -> ShipConfig {
-    let path = project_root.join(".ax").join("ship.toml");
+    let path = crate::config::config_path(project_root);
     if !path.exists() {
         return ShipConfig {
             ship: ShipSection::default(),
@@ -111,4 +111,12 @@ pub fn load_ship_config(project_root: &Path) -> ShipConfig {
         sonar: SonarConfig::default(),
         reviewers: HashMap::new(),
     })
+}
+
+pub fn save_ship_config(project_root: &Path, config: &ShipConfig) -> Result<(), String> {
+    let ax_dir = project_root.join(".ax");
+    std::fs::create_dir_all(&ax_dir).map_err(|e| e.to_string())?;
+    let path = crate::config::config_path(project_root);
+    let text = toml::to_string_pretty(config).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text + "\n").map_err(|e| e.to_string())
 }

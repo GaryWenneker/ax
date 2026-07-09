@@ -128,18 +128,91 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
                 t.persist_sync();
             }
             ax_telemetry::trigger_background_flush();
-            result
+            match result {
+                Ok(value) => Ok(wrap_call_tool_result(value, false)),
+                Err(msg) => Ok(wrap_call_tool_result(
+                    json!({ "error": msg }),
+                    true,
+                )),
+            }
         }
         "notifications/initialized" => Ok(Value::Null),
         _ => Err(format!("method not found: {}", method)),
     }
 }
 
+/// MCP `tools/call` must return `{ content: [{ type, text }], structuredContent?, isError? }`.
+/// Raw JSON objects are invisible in strict clients (VS Code / Antigravity) and may not reach the model.
+fn wrap_call_tool_result(value: Value, is_error: bool) -> Value {
+    let text = tool_result_text(&value);
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "structuredContent": value,
+        "isError": is_error,
+    })
+}
+
+fn tool_result_text(value: &Value) -> String {
+    if let Some(inject) = value.get("inject").and_then(|v| v.as_str()) {
+        if !inject.is_empty() {
+            return inject.to_string();
+        }
+    }
+    if let Some(preview) = value.get("preview").and_then(|v| v.as_str()) {
+        if !preview.is_empty() {
+            return preview.to_string();
+        }
+    }
+    if let Some(proposal) = value.get("proposal") {
+        if let Some(preview) = proposal.get("preview").and_then(|v| v.as_str()) {
+            if !preview.is_empty() {
+                return preview.to_string();
+            }
+        }
+    }
+    if let Some(text) = value.get("text").and_then(|v| v.as_str()) {
+        if !text.is_empty() {
+            return text.to_string();
+        }
+    }
+    if let Some(body) = value.get("body").and_then(|v| v.as_str()) {
+        if !body.is_empty() {
+            return body.to_string();
+        }
+    }
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
 fn is_policy_tool(name: &str) -> bool {
     matches!(
         name,
-        "ax_preflight" | "ax_rules" | "ax_skill" | "ax_guard" | "ax_status"
+        "ax_preflight" | "ax_rules" | "ax_skill" | "ax_policy_capture" | "ax_guard" | "ax_status"
     )
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+
+    #[test]
+    fn wrap_preflight_puts_inject_in_content_text() {
+        let raw = json!({
+            "inject": "<ax_policy>team rules</ax_policy>",
+            "matchedRules": 4,
+        });
+        let wrapped = wrap_call_tool_result(raw.clone(), false);
+        let text = wrapped["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("<ax_policy>"));
+        assert_eq!(wrapped["structuredContent"], raw);
+        assert_eq!(wrapped["isError"], false);
+    }
+
+    #[test]
+    fn wrap_error_sets_is_error() {
+        let wrapped = wrap_call_tool_result(json!({ "error": "skill not found" }), true);
+        assert_eq!(wrapped["isError"], true);
+        assert!(wrapped["content"][0]["text"].as_str().unwrap().contains("skill not found"));
+    }
 }
 
 #[cfg(test)]
@@ -172,7 +245,10 @@ mod policy_integration {
         )
         .await
         .expect("ax_rules call");
-        let rules = result
+        let structured = result
+            .get("structuredContent")
+            .expect("MCP structuredContent");
+        let rules = structured
             .get("rules")
             .and_then(|v| v.as_array())
             .expect("rules array");
@@ -196,7 +272,10 @@ mod policy_integration {
         )
         .await
         .expect("ax_status call");
-        let policy = result.get("policy").expect("policy block");
+        let structured = result
+            .get("structuredContent")
+            .expect("MCP structuredContent");
+        let policy = structured.get("policy").expect("policy block");
         let rules = policy.get("rules").and_then(|v| v.as_u64()).unwrap_or(0);
         assert!(rules >= 4, "policy.rules should be >= 4, got {rules}");
     }

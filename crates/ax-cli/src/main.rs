@@ -9,6 +9,7 @@ mod ui;
 mod version_check;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use ax_policy::PolicyStorage;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -183,6 +184,8 @@ enum Commands {
         version: Option<String>,
         #[arg(long, action = clap::ArgAction::SetTrue, help = "Check for updates without installing")]
         check: bool,
+        #[arg(long, value_name = "ARCHIVE", num_args = 0..=1, default_missing_value = "", help = "Install from local dist/ archive (dev); optional path to zip/tar.gz")]
+        local: Option<String>,
     },
     /// Anonymous usage telemetry (on|off|status)
     #[command(long_about = help_text::TELEMETRY_LONG)]
@@ -321,6 +324,54 @@ enum PolicyCommands {
         #[arg(long, help = "Restore missing or drifted managed policy files from embedded templates")]
         fix: bool,
     },
+    /// Propose or save a policy rule from directive language in a prompt
+    Capture {
+        prompt: String,
+        path: Option<String>,
+        #[arg(long)]
+        file: Vec<String>,
+        #[arg(long, help = "Save the proposed rule without further confirmation")]
+        yes: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show or set policy storage mode (files vs database)
+    Storage {
+        #[command(subcommand)]
+        action: PolicyStorageCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyStorageCommands {
+    /// Show effective policy storage mode (project + global)
+    Status {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Store policy in ax.db (database source of truth)
+    Database {
+        path: Option<String>,
+        #[arg(long, help = "Write to ~/.ax/config.json instead of project ax.json")]
+        global: bool,
+        #[arg(long, help = "Scan repo and import rules/skills into database")]
+        migrate: bool,
+        #[arg(long, help = "Apply migration with parsed defaults (skip per-item interview)")]
+        yes: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Store policy on disk in .ax/policy/ (files source of truth)
+    Files {
+        path: Option<String>,
+        #[arg(long, help = "Write to ~/.ax/config.json instead of project ax.json")]
+        global: bool,
+        #[arg(long, help = "Export database policy to .ax/policy/ files")]
+        migrate: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -430,6 +481,36 @@ async fn main() {
             }
             PolicyCommands::Sync { path, fix } => commands::policy::run_sync(path, fix).await,
             PolicyCommands::Test { path, json } => commands::policy::run_test(path, json).await,
+            PolicyCommands::Capture { prompt, path, file, yes, json } => {
+                commands::policy::run_capture(path, prompt, file, yes, json).await
+            }
+            PolicyCommands::Storage { action } => match action {
+                PolicyStorageCommands::Status { path, json } => {
+                    commands::policy::run_storage_status(path, json).await
+                }
+                PolicyStorageCommands::Database { path, global, migrate, yes, json } => {
+                    commands::policy::run_storage_set(
+                        path,
+                        PolicyStorage::Database,
+                        global,
+                        migrate,
+                        yes,
+                        json,
+                    )
+                    .await
+                }
+                PolicyStorageCommands::Files { path, global, migrate, json } => {
+                    commands::policy::run_storage_set(
+                        path,
+                        PolicyStorage::Files,
+                        global,
+                        migrate,
+                        false,
+                        json,
+                    )
+                    .await
+                }
+            },
         },
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
@@ -443,7 +524,9 @@ async fn main() {
             println!("{} {}", ui::accent("ax"), env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Some(Commands::Upgrade { version, check }) => commands::upgrade::run(version, check).await,
+        Some(Commands::Upgrade { version, check, local }) => {
+            commands::upgrade::run(version, check, local).await
+        }
         Some(Commands::Telemetry { action }) => commands::telemetry::run(action).await,
         Some(Commands::Offload { action }) => match action {
             Some(OffloadCommands::Status) => commands::offload::run(Some("status".into()), None, None),

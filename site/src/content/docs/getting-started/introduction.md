@@ -1,21 +1,35 @@
 ---
 title: Introduction
-description: What ax is, and why it makes AI coding agents faster and more precise.
+description: What ax is — knowledge graph, policy engine, and Command Center for AI coding agents.
 ---
 
-**ax v2.0.0** is a **local-first code-intelligence tool** written in Rust. It parses your codebase with native [tree-sitter](https://tree-sitter.github.io/) grammars, stores symbols and relationships in a local SQLite database, and exposes a queryable **knowledge graph** through the [CLI](/reference/cli/), the [MCP server](/reference/mcp-server/), and the [`ax-core`](/reference/api/) Rust crate.
+**ax** is **local-first intelligence for AI coding agents** — written in Rust, installed as a single binary, with no cloud index and no API keys.
 
-Starting in **v2.0.0**, ax also ships a **policy engine** — IDE-agnostic rules and skills in `.ax/policy/` that any agent can load via MCP. See [Policy Engine](/guides/policy-engine/).
+Three layers work together in every project:
 
-**v2.1.0+** adds the **Command Center** — git-aware quality gates, test-impact analysis, an SSE dashboard, and draft PR integration (Azure DevOps or GitHub). See [Command Center](/guides/command-center/).
+| Layer | What it does |
+|---|---|
+| **Knowledge graph** | Tree-sitter parsing → SQLite index of symbols, calls, imports, and routes |
+| **Policy engine** | IDE-agnostic rules and skills in `.ax/policy/`, matched and injected per turn |
+| **Command Center** | Git watcher, quality gates, test-impact, SSE dashboard, draft PRs |
 
-It helps AI coding agents — Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro — **answer structural questions without scanning files**. Instead of fanning out across `grep`, `glob`, and `Read`, an agent queries a pre-built index and gets call paths, source, and impact in a handful of calls.
+Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
+
+**v2.1.3** adds **`ax policy storage status`** — show effective policy storage mode with project and global config paths.
+
+**v2.1.2** improves **database migration** — `ax policy storage database --migrate` recursively scans the repo for rules and skills, with per-item interview questions. See [Policy Engine](/guides/policy-engine/).
+
+**v2.1.1** adds **policy capture** — durable user directives (`always`, `you must`, `@rule`) can be proposed as team rules with an interview step before saving to `ax.db`. See [Policy Engine](/guides/policy-engine/).
+
+**v2.1.0** introduced the **Command Center** — git-aware quality gates, test-impact analysis, an SSE dashboard, and draft PR integration (Azure DevOps or GitHub). See [Command Center](/guides/command-center/).
+
+**v2.0.0** introduced the **policy engine** — project rules and skills delivered via MCP, CLI, prompt-hook, and ax web. See [Policy Engine](/guides/policy-engine/).
 
 ## Why it matters
 
-When an agent explores a codebase, most of its budget goes to *discovery* — finding the right files before it can read them. ax removes that step: one `ax_explore` call returns numbered source, caller/callee spines, and blast-radius summaries.
+When an agent explores a codebase, most of its budget goes to *discovery* — finding the right files before it can read them. ax removes that step for structure: one `ax_explore` call returns numbered source, caller/callee spines, and blast-radius summaries.
 
-The win is **surgical context and speed** — fewer tool calls, faster answers, on every codebase.
+Policy removes another class of waste: re-explaining team conventions every session. Rules load once per turn via `ax_preflight`.
 
 ## What's in the graph
 

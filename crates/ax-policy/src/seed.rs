@@ -37,6 +37,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/codegraph-parity.mdc"),
     },
     Template {
+        rel: "rules/policy-capture.mdc",
+        body: include_str!("../templates/rules/policy-capture.mdc"),
+    },
+    Template {
         rel: "skills/startup/SKILL.md",
         body: include_str!("../templates/skills/startup/SKILL.md"),
     },
@@ -256,6 +260,7 @@ const KNOWN_POLICY_IDS: &[&str] = &[
     "release-all-platforms",
     "install-version-resolution",
     "codegraph-parity",
+    "policy-capture",
 ];
 
 /// Cursor rule filenames that alias ax policy ids.

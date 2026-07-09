@@ -201,6 +201,14 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
             .header("Cache-Control", cache)
             .body(Body::from(file.contents().to_vec()))
             .unwrap()
+    } else if path.starts_with("assets/") || path.contains('.') {
+        // Never serve index.html for missing JS/CSS — browsers treat it as a module script → blank page.
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header("Content-Type", "text/plain; charset=utf-8")
+            .header("Cache-Control", "no-cache")
+            .body(Body::from("Not found"))
+            .unwrap()
     } else {
         let index = WEB_DIST
             .get_file("index.html")
@@ -209,7 +217,7 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
         Response::builder()
             .status(200)
             .header("Content-Type", "text/html; charset=utf-8")
-            .header("Cache-Control", "no-cache")
+            .header("Cache-Control", "no-cache, no-store, must-revalidate")
             .body(Body::from(index))
             .unwrap()
     }
@@ -274,6 +282,7 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
     let ship_state = ship::ShipApiState {
         daemon: ship_daemon.clone(),
         report: Arc::new(Mutex::new(None)),
+        readonly,
     };
     let ship_api = ship::router(ship_state.clone());
 

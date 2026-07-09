@@ -6,6 +6,8 @@ use std::process::Command;
 use serde::Deserialize;
 use tracing::{info, warn};
 
+use crate::container::{resolve_runtime, start_container};
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SonarConfig {
     pub enabled: bool,
@@ -14,6 +16,12 @@ pub struct SonarConfig {
     pub token_env: String,
     pub scanner_path: String,
     pub podman_container: Option<String>,
+    #[serde(default = "default_container_runtime")]
+    pub container_runtime: String,
+}
+
+fn default_container_runtime() -> String {
+    "auto".into()
 }
 
 impl Default for SonarConfig {
@@ -25,6 +33,7 @@ impl Default for SonarConfig {
             token_env: "SONAR_TOKEN".into(),
             scanner_path: "sonar-scanner".into(),
             podman_container: Some("sonarqube".into()),
+            container_runtime: default_container_runtime(),
         }
     }
 }
@@ -75,26 +84,27 @@ impl SonarClient {
         if !self.config.enabled {
             return Ok(());
         }
-        let url = format!("{}/api/system/status", self.config.host);
+        let url = format!("{}/api/system/status", self.config.host.trim_end_matches('/'));
         let client = reqwest::Client::new();
-        match client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => Ok(()),
-            _ => {
-                if let Some(container) = &self.config.podman_container {
-                    info!("Starting SonarQube container {container}");
-                    let status = Command::new("podman")
-                        .args(["start", container])
-                        .status()
-                        .map_err(|e| format!("podman start failed: {e}"))?;
-                    if !status.success() {
-                        return Err(format!("podman start {container} failed"));
-                    }
-                    Ok(())
-                } else {
-                    Err(format!("SonarQube not reachable at {}", self.config.host))
-                }
+        if let Ok(resp) = client.get(&url).send().await {
+            if resp.status().is_success() {
+                return Ok(());
             }
         }
+        let container = self
+            .config
+            .podman_container
+            .as_deref()
+            .unwrap_or("sonarqube");
+        let pref = if self.config.container_runtime == "auto" {
+            None
+        } else {
+            Some(self.config.container_runtime.as_str())
+        };
+        let runtime = resolve_runtime(pref)?;
+        info!("Starting SonarQube container {container} via {}", runtime.cli());
+        start_container(runtime, container)?;
+        crate::container::wait_for_sonar(&self.config.host, 180).await
     }
 
     pub fn run_incremental_scan(

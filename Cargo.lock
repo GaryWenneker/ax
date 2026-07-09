@@ -174,7 +174,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "ax-cli"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-context",
  "ax-core",
@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "ax-context"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-db",
  "ax-graph",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "ax-core"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-context",
  "ax-db",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "ax-db"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "ax-extraction"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "anyhow",
  "ax-db",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "ax-git"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "ax-graph"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "ax-mcp"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "ax-context",
@@ -335,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "ax-policy"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-utils",
  "blake3",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "ax-quality"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "ax-reasoning"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "dirs",
  "reqwest",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "ax-remote"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "ax-git",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "ax-resolution"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "ax-db",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "ax-ship"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "async-stream",
  "ax-core",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "ax-smoke-tests"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "ax-sync"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "ax-telemetry"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "dirs",
  "reqwest",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "ax-tia"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "ax-db",
  "ax-git",
@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "ax-types"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "ax-utils"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -512,12 +512,14 @@ dependencies = [
 
 [[package]]
 name = "ax-web"
-version = "2.1.0"
+version = "2.1.3"
 dependencies = [
  "anyhow",
  "async-stream",
  "ax-git",
  "ax-policy",
+ "ax-quality",
+ "ax-remote",
  "ax-ship",
  "axum",
  "futures-util",
@@ -657,9 +659,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.12.0"
+version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
+checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cc"
@@ -1670,9 +1672,9 @@ dependencies = [
 
 [[package]]
 name = "inotify-sys"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ea94e891b3606826e9c998be69ddca42247dad8ad50b1649a5cb7e1c9ae06fd"
+checksum = "c033f80b2c113cdf91ab7a33faa9cbc014726dcad99880c8609af2a370edf37d"
 dependencies = [
  "libc",
 ]
@@ -1871,9 +1873,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.8.2"
+version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
+checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mime"
@@ -2004,11 +2006,10 @@ dependencies = [
 
 [[package]]
 name = "num-iter"
-version = "0.1.45"
+version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
+checksum = "c92800bd69a1eac91786bcfe9da64a897eb72911b8dc3095decbd07429e8048b"
 dependencies = [
- "autocfg",
  "num-integer",
  "num-traits",
 ]
@@ -2443,9 +2444,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.4"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1292b7759ae1cb9ec195452d1390a074f0cd8541ab7a5a8c31cd6db45d4a6ba"
+checksum = "2a0e75113e14dc5acb068cd0786884f214f1312650a3d36d269f5c4f3cdee8a2"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2455,9 +2456,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.14"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
+checksum = "1f388202e4b80542a0921078cc23b6333bcf1409c1e3f86404cae4766a6131db"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2613,9 +2614,9 @@ dependencies = [
 
 [[package]]
 name = "rustversion"
-version = "1.0.22"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ryu"
@@ -4215,18 +4216,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.53"
+version = "0.8.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75726053136156d419e285b9b7eddaaea9e3fea6ce32eed44a89901f0bd98de1"
+checksum = "b7cbbc0a705a0fd05cc3676525980d2bf5a9bc4adac6d6475209a7887cf59d19"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.53"
+version = "0.8.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4714fd92cf900833d49538023a9b3915155210801d1c1169eba513b2addefd71"
+checksum = "e2e817b7b52d0c7358d3246da9d69935ebb18116b2b102b4230dac079b4862f5"
 dependencies = [
  "proc-macro2",
  "quote",

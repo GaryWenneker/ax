@@ -3,7 +3,7 @@ title: Get Started
 description: Get up and running with ax v2.0.0 in seconds.
 ---
 
-Install **ax v2.0.0** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — code graph + policy engine in one binary.
+Install **ax v2.1.3** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — knowledge graph, policy engine, and Command Center in one binary.
 
 ## 1. Install the CLI
 

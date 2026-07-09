@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use ax_policy::{
-    MatchInput, PolicyStore, RuleFrontmatter, SkillFrontmatter, ValidationError,
+    finalize_proposal, propose_rule_from_prompt, CaptureProposal, MatchInput, PolicyStore,
+    RuleFrontmatter, SkillFrontmatter, ValidationError,
 };
 use axum::{
     extract::{Path, State},
@@ -51,6 +52,7 @@ pub fn router(state: PolicyApiState) -> Router {
         .route("/skills", get(list_skills).post(create_skill))
         .route("/skills/{name}", get(get_skill).put(update_skill).delete(delete_skill))
         .route("/match", post(match_prompt))
+        .route("/capture", post(capture_prompt))
         .route("/reindex", post(reindex))
         .route("/export", post(export_policy))
         .with_state(state)
@@ -185,6 +187,95 @@ async fn match_prompt(
         Ok(result) => (StatusCode::OK, Json(serde_json::to_value(result).unwrap())).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
+}
+
+#[derive(Deserialize)]
+pub struct CapturePayload {
+    pub prompt: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+    #[serde(default = "default_capture_action")]
+    pub action: String,
+    #[serde(default)]
+    pub rule: Option<RulePayload>,
+}
+
+fn default_capture_action() -> String {
+    "propose".into()
+}
+
+async fn capture_prompt(
+    State(s): State<PolicyApiState>,
+    Json(payload): Json<CapturePayload>,
+) -> impl IntoResponse {
+    if payload.action == "save" {
+        if s.readonly {
+            return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+        }
+        let rule = match payload.rule {
+            Some(r) => r,
+            None => return err(StatusCode::BAD_REQUEST, "rule required for save action"),
+        };
+        match s.store.save_rule(rule.frontmatter.clone(), rule.body).await {
+            Ok(doc) => {
+                let id = doc.frontmatter.id.clone();
+                let storage = match s.store.storage() {
+                    ax_policy::PolicyStorage::Database => "database",
+                    ax_policy::PolicyStorage::Files => "files",
+                };
+                (
+                    StatusCode::CREATED,
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "action": "save",
+                        "id": id,
+                        "storage": storage,
+                        "path": format!(".ax/policy/rules/{id}.mdc"),
+                    })),
+                )
+                    .into_response()
+            }
+            Err(v) => validation_err(v),
+        }
+    } else {
+        let mut proposal = propose_rule_from_prompt(&payload.prompt, &payload.files);
+        if !proposal.detected {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "action": "propose",
+                    "detected": false,
+                    "proposal": proposal,
+                })),
+            )
+                .into_response();
+        }
+
+        let existing = match s.store.list_rules().await {
+            Ok(rules) => rules.into_iter().map(|r| r.id).collect::<Vec<_>>(),
+            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        };
+        proposal = finalize_proposal(proposal, &existing);
+
+        capture_propose_response(proposal)
+    }
+}
+
+fn capture_propose_response(proposal: CaptureProposal) -> axum::response::Response {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "action": "propose",
+            "detected": true,
+            "proposal": proposal,
+            "preview": proposal.preview,
+            "questions": proposal.questions,
+            "instruction": proposal.interview_instruction,
+        })),
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]

@@ -59,3 +59,41 @@ export interface MatchResult {
   skills: Array<{ name: string; score: number; reason: string; description: string; body: string }>;
   inject: string;
 }
+
+export interface CaptureInterviewQuestion {
+  field: string;
+  question: string;
+  current: string;
+  options: string[];
+  required: boolean;
+}
+
+export interface CaptureProposal {
+  detected: boolean;
+  confidence: string;
+  suggestedId: string;
+  frontmatter: RuleFrontmatter;
+  body: string;
+  previewPath: string;
+  preview: string;
+  questions: CaptureInterviewQuestion[];
+  interviewInstruction: string;
+}
+
+export interface CaptureProposeResult {
+  ok: boolean;
+  action: 'propose';
+  detected: boolean;
+  proposal?: CaptureProposal;
+  preview?: string;
+  questions?: CaptureInterviewQuestion[];
+  instruction?: string;
+}
+
+export interface CaptureSaveResult {
+  ok: boolean;
+  action: 'save';
+  id: string;
+  storage: string;
+  path: string;
+}

@@ -63,7 +63,7 @@ From $siteDir run once:
         Write-Step "Building Astro site"
         npm run build
     } elseif (-not (Test-Path $distDir)) {
-        throw "dist/ not found — run without -SkipBuild first"
+        throw "dist/ not found - run without -SkipBuild first"
     }
 
     Write-Step $(if ($Preview) { 'Deploying preview (draft)' } else { 'Deploying production' })

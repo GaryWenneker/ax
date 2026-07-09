@@ -20,13 +20,13 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" href={`${base}/logo.png`} type="image/png" />
-		<title>ax — Understand any codebase as a graph</title>
+		<title>ax — Local intelligence for AI agents</title>
 		<meta
 			name="description"
-			content="A local-first code-intelligence tool that turns any codebase into a queryable knowledge graph for AI coding agents."
+			content="Local-first code intelligence: knowledge graph, policy engine, and Command Center for Cursor, Claude Code, and every MCP agent."
 		/>
 		<meta property="og:title" content="ax" />
-		<meta property="og:description" content="Understand any codebase as a graph." />
+		<meta property="og:description" content="Graph, policy, and ship — local intelligence for AI coding agents." />
 		<meta property="og:type" content="website" />
 		<meta name="theme-color" content="#121110" />
 	</head>
@@ -50,11 +50,11 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 				<section class="hero">
 					<div class="hero-left">
 						<p class="release-tag">{AX_VERSION}</p>
-						<h1>Understand any codebase as a graph</h1>
+						<h1>Local intelligence for AI agents</h1>
 						<p class="lede">
-							A local-first code-intelligence tool that turns any codebase into a
-							queryable knowledge graph for AI coding agents — plus IDE-agnostic
-							rules and skills in <code>.ax/policy/</code> (v2.0.0).
+							Knowledge graph, team policy, and Command Center in one local
+							binary — structure your code, enforce your rules, and gate
+							delivery without the cloud.
 						</p>
 						<div class="cta">
 							<a class="btn btn-primary" href={`${base}/getting-started/quickstart`}>Get started</a>
@@ -84,21 +84,10 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 							<rect x="34" y="34" width="10" height="10" />
 							<path d="M24 14v10M9 34v-10h30v10M24 24v10" />
 						</svg>
-						<h2>Tree-sitter parsing</h2>
+						<h2>Knowledge graph</h2>
 						<p>
-							Fast, incremental parsing across 20+ languages — accurate symbols and
-							edges drawn from real ASTs, not guesses.
-						</p>
-					</article>
-					<article class="feature">
-						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-							<rect x="5" y="10" width="38" height="28" />
-							<path d="M13 20l6 4-6 4M26 28h9" />
-						</svg>
-						<h2>MCP server</h2>
-						<p>
-							Expose the graph to Claude Code, Cursor, Codex, opencode, Hermes,
-							Gemini, Antigravity, and Kiro over MCP — agents answer in a handful of calls.
+							Tree-sitter parsing across 20+ languages — symbols, call edges,
+							and blast radius in a handful of MCP calls, not hundreds of greps.
 						</p>
 					</article>
 					<article class="feature">
@@ -108,8 +97,19 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 						</svg>
 						<h2>Policy engine</h2>
 						<p>
-							Rules and skills in <code>.ax/policy/</code> — matched per turn,
-							editable in ax web, delivered over MCP to any IDE.
+							IDE-agnostic rules and skills in <code>.ax/policy/</code> —
+							matched per turn, captured from directives, editable in ax web.
+						</p>
+					</article>
+					<article class="feature">
+						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+							<path d="M8 36V18l16-10 16 10v18" />
+							<path d="M18 36V24h12v12M22 28h4" />
+						</svg>
+						<h2>Command Center</h2>
+						<p>
+							Git-aware quality gates, test-impact analysis, SSE dashboard,
+							and draft PRs — ship with confidence from your machine.
 						</p>
 					</article>
 				</section>

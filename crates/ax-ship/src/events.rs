@@ -10,7 +10,7 @@ pub enum ShipEvent {
     GitChanged { branch: Option<String> },
     StepStarted { step: String },
     StepFinished { step: String, ok: bool, detail: Option<String> },
-    ReportUpdated(ShipReport),
+    ReportUpdated { report: ShipReport },
     Error { message: String },
 }
 

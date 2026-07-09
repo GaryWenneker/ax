@@ -26,7 +26,7 @@ ax ship [--watch|--evaluate|--draft]  # Command Center — see guides/command-ce
 ax affected [files...]     # Find test files affected by changes (see below)
 ax daemon                  # Manage background daemons — pick one to stop (alias: daemons)
 ax telemetry [on|off]      # Show or change anonymous usage telemetry
-ax upgrade [version]       # Update to the latest release (--check, --force)
+ax upgrade [version]       # Update to the latest release (--check, --force, --local)
 ax version                 # Print the installed version (also -v, --version)
 ax web [--port N] [--open] # Local web UI — graph + policy editor + Command Center tab
 ax policy index            # Index .ax/policy/ rules and skills
@@ -35,6 +35,10 @@ ax policy rules            # List rules (--json)
 ax policy skills           # List skills (--json)
 ax policy skill <name>     # Print one skill body
 ax policy guard            # Run CRITICAL guard checks (--file path)
+ax policy capture <prompt> # Propose/save rule from directive language (--yes, --json)
+ax policy storage status   # Show effective files vs database mode (--json)
+ax policy storage database # Set database mode (--migrate, --yes, --global)
+ax policy storage files    # Set files mode (--migrate, --global)
 ax help [command]          # Show help, optionally for one command
 ```
 
@@ -72,3 +76,26 @@ ax impact AuthMiddleware --depth 3
 `ax diff` and `ax test-impact` use git diff against a base branch and the knowledge graph for symbol-level blast radius and test-function impact.
 
 `ax ship` runs the Command Center quality-gate pipeline, serves the SSE dashboard, and can open draft PRs (Azure DevOps or GitHub). See [Command Center](/ax/guides/command-center/).
+
+## policy
+
+Policy commands manage `.ax/policy/` rules and skills. See [Policy Engine](/guides/policy-engine/).
+
+```bash
+ax policy index [--force]
+ax policy match "deploy staging" --file src/app.ts
+ax policy capture "always validate input"    # propose rule; add --yes to save
+ax policy storage status
+ax policy storage database [--migrate]       # scan repo + per-item interview (propose)
+ax policy storage database --migrate --yes   # switch + import all candidates
+ax policy test                               # smoke tests
+```
+
+## upgrade
+
+```bash
+ax upgrade              # latest from getax.wenneker.io/releases/latest.txt
+ax upgrade v2.1.3       # pin a tag
+ax upgrade --check      # check only
+ax upgrade --local      # install from dist/ax-<platform>.zip (maintainers)
+```

@@ -1,4 +1,4 @@
-use ax_policy::{GuardOp, ImportMode, MatchInput};
+use ax_policy::{GuardOp, ImportMode, MatchInput, PolicyStorage};
 
 use crate::commands::resolve_path;
 
@@ -385,6 +385,258 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
 
     if !failed.is_empty() {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+pub async fn run_storage_status(path: Option<String>, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let status = ax_policy::policy_storage_status(&root);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&status).unwrap_or_default());
+    } else {
+        println!("Policy storage: {}", status.effective);
+        println!("  source: {}", status.source);
+        println!("  project config: {}", status.config_path);
+        println!("  global config: {}", status.global_config_path);
+        if let Some(v) = &status.project_value {
+            println!("  project value: {v}");
+        } else {
+            println!("  project value: (not set)");
+        }
+        if let Some(v) = &status.global_value {
+            println!("  global value: {v}");
+        } else {
+            println!("  global value: (not set)");
+        }
+        println!();
+        println!("Set: ax policy storage database|files [--migrate] [--yes] [--global]");
+    }
+    Ok(())
+}
+
+pub async fn run_storage_set(
+    path: Option<String>,
+    target: PolicyStorage,
+    global: bool,
+    migrate: bool,
+    yes: bool,
+    json: bool,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+
+    // Propose migration plan without changing storage or importing.
+    if migrate && target == PolicyStorage::Database && !yes && !global {
+        let plan = ax_policy::scan_policy_candidates(&root);
+        if json {
+            println!("{}", serde_json::to_string_pretty(&plan).unwrap_or_default());
+        } else {
+            println!(
+                "Migration scan: {} rules, {} skills ({} skipped)",
+                plan.rules_found,
+                plan.skills_found,
+                plan.skipped.len()
+            );
+            println!();
+            for c in &plan.candidates {
+                println!(
+                    "  [{}] {} — {} ({})",
+                    c.kind, c.key, c.source_path, c.source
+                );
+                for q in &c.questions {
+                    println!("    • {} (current: {})", q.question, q.current);
+                }
+                println!();
+            }
+            if !plan.skipped.is_empty() {
+                println!("Skipped:");
+                for s in &plan.skipped {
+                    println!("  {} — {}", s.source_path, s.reason);
+                }
+                println!();
+            }
+            println!("{}", plan.interview_instruction);
+            println!();
+            println!("After interview: ax policy storage database --migrate --yes");
+        }
+        return Ok(());
+    }
+
+    let current = ax_policy::load_policy_config(&root).storage;
+    if current == target && !migrate {
+        let status = ax_policy::policy_storage_status(&root);
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": true,
+                    "changed": false,
+                    "effective": status.effective,
+                    "source": status.source,
+                }))
+                .unwrap_or_default()
+            );
+        } else {
+            println!("Policy storage already set to {}.", target.as_str());
+        }
+        return Ok(());
+    }
+
+    let config_path = if global {
+        ax_policy::write_global_policy_storage(target)?
+    } else {
+        ax_policy::write_project_policy_storage(&root, target)?
+    };
+
+    if migrate {
+        let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+        match target {
+            PolicyStorage::Database => {
+                let (plan, apply) = ax_policy::migrate_to_database(ax.db_pool(), &root)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if !json {
+                    println!(
+                        "Migrated {} rules, {} skills into database (scanned {} candidates, {} skipped)",
+                        apply.rules_imported,
+                        apply.skills_imported,
+                        plan.candidates.len(),
+                        plan.skipped.len()
+                    );
+                    if !plan.skipped.is_empty() {
+                        println!("  skipped {} files (bootstrap, invalid, or duplicate)", plan.skipped.len());
+                    }
+                }
+            }
+            PolicyStorage::Files => {
+                let out = root.join(".ax").join("policy");
+                let result = ax_policy::export_policy_to_files(ax.db_pool(), &root, &out)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                ax.index_policy(true).await.map_err(|e| e.to_string())?;
+                if !json {
+                    println!(
+                        "Exported {} rules, {} skills to {}",
+                        result.rules_exported, result.skills_exported, result.output_dir
+                    );
+                }
+            }
+        }
+    }
+
+    if json {
+        let mut payload = serde_json::json!({
+            "ok": true,
+            "changed": true,
+            "storage": target.as_str(),
+            "configPath": config_path.display().to_string(),
+            "scope": if global { "global" } else { "project" },
+            "migrated": migrate,
+        });
+        if migrate && target == PolicyStorage::Database {
+            let plan = ax_policy::scan_policy_candidates(&root);
+            payload["rulesFound"] = serde_json::json!(plan.rules_found);
+            payload["skillsFound"] = serde_json::json!(plan.skills_found);
+            payload["candidates"] = serde_json::json!(plan.candidates.len());
+        }
+        println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+    } else {
+        println!("Policy storage set to {}.", target.as_str());
+        println!("  updated: {}", config_path.display());
+        if !migrate {
+            match target {
+                PolicyStorage::Database => {
+                    println!("  hint: run `ax policy import` to load .ax/policy/ files into ax.db");
+                }
+                PolicyStorage::Files => {
+                    println!("  hint: run `ax policy export --out .ax/policy` to write DB rules to disk");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_capture(
+    path: Option<String>,
+    prompt: String,
+    files: Vec<String>,
+    yes: bool,
+    json: bool,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+
+    let mut proposal = ax_policy::propose_rule_from_prompt(&prompt, &files);
+    if !proposal.detected {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&proposal).unwrap_or_default());
+        } else {
+            println!("No directive detected in prompt.");
+        }
+        return Ok(());
+    }
+
+    let existing: Vec<String> = ax_policy::list_rules(ax.db_pool())
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    proposal = ax_policy::finalize_proposal(proposal, &existing);
+
+    if !yes {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&proposal).unwrap_or_default());
+        } else {
+            println!("Directive detected (confidence: {})", proposal.confidence);
+            println!("Suggested id: {}", proposal.suggested_id);
+            println!("Path: {}", proposal.preview_path);
+            println!("Triggers: {}", proposal.frontmatter.triggers.join(", "));
+            println!();
+            print!("{}", proposal.preview);
+            println!();
+            println!("Ask the user about rule options before saving:");
+            for q in &proposal.questions {
+                let opts = if q.options.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", q.options.join(", "))
+                };
+                println!("  • {} (current: {}){}", q.question, q.current, opts);
+            }
+            println!();
+            println!("Run with --yes to save with defaults (skip interview).");
+        }
+        return Ok(());
+    }
+
+    let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
+    let storage = store.storage();
+    let doc = store
+        .save_rule(proposal.frontmatter.clone(), proposal.body.clone())
+        .await
+        .map_err(|e| e.error)?;
+
+    let storage_label = match storage {
+        ax_policy::PolicyStorage::Database => "database",
+        ax_policy::PolicyStorage::Files => "files",
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": true,
+                "id": doc.frontmatter.id,
+                "storage": storage_label,
+                "path": proposal.preview_path,
+            }))
+            .unwrap_or_default()
+        );
+    } else {
+        println!("Saved rule: {} ({storage_label})", doc.frontmatter.id);
+        println!("  {}", proposal.preview_path);
     }
     Ok(())
 }

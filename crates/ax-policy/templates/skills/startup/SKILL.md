@@ -24,6 +24,24 @@ ax_preflight({ "prompt": "<full user intent in English>", "files": ["<open or ch
 - **Fallback:** If `inject` lacks `<ax_policy>` (some MCP clients filter it), this skill delivers the startup workflow — follow it.
 - `ax_rules` / `ax_skill` are for on-demand loads — preflight already returns full bodies in `inject` on turn start.
 
+## SS-01b — Capture user directives (interview → confirm → save)
+
+When the user gives a **durable** instruction (`je moet`, `always`, `never`, `@rule`, `#rule`):
+
+```json
+ax_policy_capture({ "action": "propose", "prompt": "<verbatim user message>", "files": ["<open paths>"] })
+```
+
+Show the preview. Ask the user **each question** from `questions[]` (level, alwaysApply, triggers, globs, priority, tags, body). Apply their answers to the rule.
+
+Only after explicit user confirmation (`ja`, `yes`, `save`):
+
+```json
+ax_policy_capture({ "action": "save", "rule": { "frontmatter": { ... }, "body": "..." } })
+```
+
+Save writes to **ax.db** in database mode — not a disk-only file. Never auto-save without confirmation.
+
 ## SS-01 — Code context (after preflight)
 
 For structural questions — how code works, call paths, impact, dependencies:

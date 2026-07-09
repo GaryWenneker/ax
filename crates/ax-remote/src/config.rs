@@ -1,8 +1,8 @@
 //! Remote PR provider configuration.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RemoteConfig {
     #[serde(default = "default_provider")]
     pub provider: String,
@@ -14,7 +14,7 @@ fn default_provider() -> String {
     "azure_devops".into()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GithubSection {
     pub owner: String,
     pub repo: String,
@@ -26,7 +26,7 @@ fn default_gh_token_env() -> String {
     "GITHUB_TOKEN".into()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AzureDevOpsSection {
     pub org: String,
     pub project: String,

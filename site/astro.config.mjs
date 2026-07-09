@@ -10,7 +10,7 @@ export default defineConfig({
 		starlight({
 			title: 'ax',
 			description:
-				'Local-first code intelligence for AI agents — knowledge graph, policy engine, and Command Center.',
+				'Local intelligence for AI agents — knowledge graph, policy engine, and Command Center.',
 			favicon: '/logo.png',
 			head: [
 				{

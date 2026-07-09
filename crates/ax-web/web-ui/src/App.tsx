@@ -10,20 +10,28 @@ import PolicySkillsPage from './pages/PolicySkills';
 import PolicySkillEditor from './pages/PolicySkillEditor';
 import PolicyMatchPage from './pages/PolicyMatch';
 import ShipPage from './pages/Ship';
+import SettingsPage from './pages/Settings';
 import StatusBar from './components/StatusBar';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
 import { UiProvider } from './context/UiContext';
 
 type Page =
-  | 'stats' | 'nodes' | 'files' | 'search' | 'ship'
+  | 'stats' | 'nodes' | 'files' | 'search' | 'ship' | 'settings'
   | 'policy-rules' | 'policy-rule-edit' | 'policy-skills' | 'policy-skill-edit' | 'policy-match';
 
-const NAV: Array<{ id: NavId; label: string }> = [
+const NAV_MAIN: Array<{ id: NavId; label: string }> = [
   { id: 'stats', label: 'Stats' },
   { id: 'nodes', label: 'Nodes' },
   { id: 'files', label: 'Files' },
   { id: 'search', label: 'Search' },
-  { id: 'ship', label: 'Ship' },
+  { id: 'ship', label: 'Command Center' },
+];
+
+const NAV_CONFIG: Array<{ id: NavId; label: string }> = [
+  { id: 'settings', label: 'Settings' },
+];
+
+const NAV_POLICY: Array<{ id: NavId; label: string }> = [
   { id: 'policy-rules', label: 'Rules' },
   { id: 'policy-skills', label: 'Skills' },
 ];
@@ -84,7 +92,31 @@ function AppShell() {
           />
         )}
         <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
-          {NAV.map((n) => (
+          {NAV_MAIN.map((n) => (
+            <button
+              key={n.id}
+              type="button"
+              className={`nav-item${page === n.id ? ' active' : ''}`}
+              onClick={() => navigate(n.id)}
+            >
+              <NavIcon id={n.id} />
+              {n.label}
+            </button>
+          ))}
+          <div className="nav-section-label">Configuration</div>
+          {NAV_CONFIG.map((n) => (
+            <button
+              key={n.id}
+              type="button"
+              className={`nav-item${page === n.id ? ' active' : ''}`}
+              onClick={() => navigate(n.id)}
+            >
+              <NavIcon id={n.id} />
+              {n.label}
+            </button>
+          ))}
+          <div className="nav-section-label">Policy</div>
+          {NAV_POLICY.map((n) => (
             <button
               key={n.id}
               type="button"
@@ -102,7 +134,8 @@ function AppShell() {
           {page === 'nodes' && <NodesPage />}
           {page === 'files' && <FilesPage />}
           {page === 'search' && <SearchPage />}
-          {page === 'ship' && <ShipPage />}
+          {page === 'ship' && <ShipPage onOpenSettings={() => navigate('settings')} />}
+          {page === 'settings' && <SettingsPage />}
           {page === 'policy-rules' && (
             <PolicyRulesPage
               onEdit={(id) => { setEditRuleId(id); setPage('policy-rule-edit'); }}

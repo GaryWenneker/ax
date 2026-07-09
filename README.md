@@ -1,11 +1,17 @@
-# ax — local-first code intelligence for AI agents
+# ax — local intelligence for AI agents
 
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.1.0](https://github.com/GaryWenneker/ax/releases/tag/v2.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.1.3](https://github.com/GaryWenneker/ax/releases/tag/v2.1.3)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
-**ax** parses your codebase with [tree-sitter](https://tree-sitter.github.io/), stores symbols and relationships in a local SQLite graph (`.ax/`), and exposes them through a **CLI** and **MCP tools** so coding agents answer structural questions without scanning files.
+**ax** is local-first intelligence for AI coding agents: a **knowledge graph** (tree-sitter → SQLite), a **policy engine** (`.ax/policy/` rules and skills), and a **Command Center** (quality gates, test-impact, draft PRs) — one Rust binary, CLI + MCP.
+
+**v2.1.3** adds **`ax policy storage status`** — explicit subcommand to show effective storage mode (project + global config paths and values).
+
+**v2.1.2** improves **policy migration to database** — `--migrate` recursively scans the whole repo for `.mdc` rules and `SKILL.md` skills (not only `.ax/policy/`), with per-item interview questions before import. Use `--yes` to apply with parsed defaults.
+
+**v2.1.1** adds **policy capture** — propose team rules from directive language in prompts, interview the user on options, save to `ax.db`. Plus `ax policy storage` and `ax upgrade --local` for dev releases.
 
 **v2.0.0** adds an **IDE-agnostic policy engine** — project rules and skills in `.ax/policy/`, delivered via MCP, CLI, prompt-hook, and **ax web**. See [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md).
 
@@ -373,4 +379,4 @@ See [docs/PRODUCTION.md](docs/PRODUCTION.md) for GitHub Releases, Netlify docs s
 
 ## License
 
-See repository license file. ax is an independent Rust code-intelligence tool — MCP-first, native tree-sitter, local SQLite graph.
+See repository license file. ax is local intelligence for AI agents — knowledge graph, policy engine, and Command Center in one Rust binary.
