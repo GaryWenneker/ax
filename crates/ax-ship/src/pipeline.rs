@@ -109,7 +109,7 @@ impl ShipPipeline {
         } else {
             self.step_ok("sonar", None);
         }
-        let sonar_result = sonar.fetch_quality_gate().await.ok();
+        let sonar_result = sonar.fetch_quality_gate(&self.project_root).await.ok();
 
         self.step_start("policy");
         let business_rule_warnings = check_business_rules(&pool, &dirty_nodes)

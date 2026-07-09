@@ -113,16 +113,39 @@ impl SonarClient {
         project_root: &Path,
         dirty_files: &[String],
     ) -> Result<(), String> {
-        if !self.config.enabled || dirty_files.is_empty() {
+        if !self.config.enabled {
             return Ok(());
         }
-        let token = read_sonar_token(project_root, &self.config.token_env);
-        let inclusions = dirty_files.join(",");
+        let scannable: Vec<String> = dirty_files
+            .iter()
+            .filter(|f| !f.contains('\t') && !f.contains("web-ui/dist/"))
+            .filter(|f| project_root.join(f).is_file())
+            .cloned()
+            .collect();
+        if scannable.is_empty() {
+            return Ok(());
+        }
+        let token = read_sonar_token(project_root, &self.config.token_env)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "Sonar token missing. Open Settings → Setup project & token, or set {} and save token to .ax/sonar.token",
+                    self.config.token_env
+                )
+            })?;
+        let inclusions = scannable.join(",");
 
         if scanner_available(&self.config.scanner_path) {
-            self.run_native_scan(project_root, &inclusions, token.as_deref())
+            self.run_native_scan(project_root, &inclusions, Some(&token))
         } else {
-            self.run_container_scan(project_root, &inclusions, token.as_deref())
+            self.run_container_scan(project_root, &inclusions, Some(&token))
+        }
+    }
+
+    fn append_scanner_auth(cmd: &mut Command, token: Option<&str>) {
+        if let Some(t) = token {
+            // SonarQube 9.x: user token as sonar.login (no password).
+            cmd.arg(format!("-Dsonar.login={t}"));
         }
     }
 
@@ -138,9 +161,7 @@ impl SonarClient {
             .arg("-Dsonar.sources=.")
             .arg(format!("-Dsonar.inclusions={inclusions}"))
             .arg(format!("-Dsonar.host.url={}", self.config.host));
-        if let Some(t) = token {
-            cmd.arg(format!("-Dsonar.token={t}"));
-        }
+        Self::append_scanner_auth(&mut cmd, token);
         let status = cmd
             .status()
             .map_err(|e| format!("sonar-scanner failed: {e}"))?;
@@ -176,6 +197,12 @@ impl SonarClient {
         let mut args = vec![
             "run".to_string(),
             "--rm".to_string(),
+        ];
+        if let Some(t) = token {
+            args.push("-e".to_string());
+            args.push(format!("SONAR_TOKEN={t}"));
+        }
+        args.extend([
             "-v".to_string(),
             format!("{}:/usr/src", mount.display()),
             "-w".to_string(),
@@ -185,10 +212,7 @@ impl SonarClient {
             "-Dsonar.sources=.".to_string(),
             format!("-Dsonar.inclusions={inclusions}"),
             format!("-Dsonar.host.url={host}"),
-        ];
-        if let Some(t) = token {
-            args.push(format!("-Dsonar.token={t}"));
-        }
+        ]);
 
         let status = Command::new(runtime.cli())
             .args(&args)
@@ -203,7 +227,7 @@ impl SonarClient {
         Ok(())
     }
 
-    pub async fn fetch_quality_gate(&self) -> Result<QualityGateResult, String> {
+    pub async fn fetch_quality_gate(&self, project_root: &Path) -> Result<QualityGateResult, String> {
         if !self.config.enabled {
             return Ok(QualityGateResult {
                 status: "SKIPPED".into(),
@@ -213,26 +237,28 @@ impl SonarClient {
         }
         let url = format!(
             "{}/api/qualitygates/project_status?projectKey={}",
-            self.config.host, self.config.project_key
+            self.config.host.trim_end_matches('/'),
+            self.config.project_key
         );
         let client = reqwest::Client::new();
-        let resp = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
+        let mut req = client.get(&url);
+        if let Some(token) = read_sonar_token(project_root, &self.config.token_env) {
+            req = req.header("Authorization", token_basic_auth(&token));
+        }
+        let resp = req.send().await.map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
             warn!("SonarQube quality gate API returned {}", resp.status());
             return Ok(QualityGateResult {
                 status: "UNKNOWN".into(),
-                passed: true,
+                passed: false,
                 conditions: vec![],
             });
         }
         let body: SonarStatusResponse = resp.json().await.map_err(|e| e.to_string())?;
-        let passed = body.project_status.status == "OK";
+        let status = body.project_status.status.clone();
+        let passed = status == "OK";
         Ok(QualityGateResult {
-            status: body.project_status.status.clone(),
+            status,
             passed,
             conditions: body
                 .project_status
@@ -246,4 +272,9 @@ impl SonarClient {
                 .collect(),
         })
     }
+}
+
+fn token_basic_auth(token: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    format!("Basic {}", STANDARD.encode(format!("{token}:")))
 }
