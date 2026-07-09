@@ -1,6 +1,6 @@
 [package]
 name = "ax-usage"
-version = "2.1.4"
+version = "2.1.5"
 edition = "2021"
 description = "Per-model LLM token usage tracking for ax"
 
