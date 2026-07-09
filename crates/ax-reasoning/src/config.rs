@@ -135,6 +135,22 @@ fn trimmed(s: Option<&str>) -> Option<String> {
         .map(|t| t.to_string())
 }
 
+/// Well-known provider env vars → OpenAI-compatible base URLs (used when offload is not configured).
+const AUTO_PROVIDERS: &[(&str, &str)] = &[
+    ("OPENAI_API_KEY", "https://api.openai.com/v1"),
+    ("CEREBRAS_API_KEY", "https://api.cerebras.ai/v1"),
+    ("GROQ_API_KEY", "https://api.groq.com/openai/v1"),
+];
+
+fn detect_provider() -> (Option<String>, Option<String>, Option<String>) {
+    for (key_env, url) in AUTO_PROVIDERS {
+        if let Some(k) = trimmed(std::env::var(key_env).ok().as_deref()) {
+            return (Some(url.to_string()), Some(k), Some(key_env.to_string()));
+        }
+    }
+    (None, None, None)
+}
+
 pub fn resolve_offload() -> ResolvedOffload {
     if std::env::var("AX_OFFLOAD_DISABLE").ok().as_deref() == Some("1") {
         return ResolvedOffload {
@@ -158,30 +174,43 @@ pub fn resolve_offload() -> ResolvedOffload {
     let env_key = trimmed(std::env::var("AX_OFFLOAD_KEY").ok().as_deref());
     let had_env_url = env_url.is_some();
 
-    let url = env_url.or_else(|| trimmed(c.url.as_deref()));
+    let mut url = env_url.or_else(|| trimmed(c.url.as_deref()));
     let model = trimmed(std::env::var("AX_OFFLOAD_MODEL").ok().as_deref())
         .or_else(|| trimmed(c.model.as_deref()))
         .unwrap_or_else(|| "gpt-oss-120b".into());
 
-    let (api_key, key_source) = if let Some(k) = env_key {
-        (Some(k), Some("AX_OFFLOAD_KEY".into()))
+    let mut api_key = None;
+    let mut key_source = None;
+
+    if let Some(k) = env_key {
+        api_key = Some(k);
+        key_source = Some("AX_OFFLOAD_KEY".into());
     } else if let Some(key_env) = trimmed(c.key_env.as_deref()) {
         if let Some(k) = trimmed(std::env::var(&key_env).ok().as_deref()) {
-            (Some(k), Some(key_env))
-        } else {
-            (None, None)
+            api_key = Some(k);
+            key_source = Some(key_env);
         }
-    } else {
-        (None, None)
-    };
+    }
 
-    let origin = if had_env_url {
+    let mut origin = if had_env_url {
         "env"
     } else if trimmed(c.url.as_deref()).is_some() {
         "config"
     } else {
         "none"
     };
+
+    if url.is_none() {
+        let (auto_url, auto_key, auto_src) = detect_provider();
+        if let Some(u) = auto_url {
+            url = Some(u);
+            if api_key.is_none() {
+                api_key = auto_key;
+                key_source = auto_src;
+            }
+            origin = "auto";
+        }
+    }
 
     ResolvedOffload {
         enabled: url.is_some(),
@@ -211,4 +240,23 @@ pub fn resolve_offload() -> ResolvedOffload {
 
 pub fn is_offload_enabled() -> bool {
     resolve_offload().enabled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_detect_openai_key() {
+        let prev = std::env::var("OPENAI_API_KEY").ok();
+        std::env::set_var("OPENAI_API_KEY", "sk-test-key");
+        let (url, key, src) = detect_provider();
+        std::env::remove_var("OPENAI_API_KEY");
+        if let Some(v) = prev {
+            std::env::set_var("OPENAI_API_KEY", v);
+        }
+        assert_eq!(url.as_deref(), Some("https://api.openai.com/v1"));
+        assert_eq!(key.as_deref(), Some("sk-test-key"));
+        assert_eq!(src.as_deref(), Some("OPENAI_API_KEY"));
+    }
 }

@@ -280,6 +280,7 @@ pub const TOKENS_LONG: &str = "Show per-model LLM token usage recorded by ax off
 
 Stored locally in ~/.ax/usage.db. Counts prompt, completion, and total tokens for each
 OpenAI-compatible offload call (`ax explore` and ax_explore MCP when offload is enabled).
+Offload auto-enables when OPENAI_API_KEY, CEREBRAS_API_KEY, or GROQ_API_KEY is set.
 
 Period filters:
   week            Last 7 days (default rolling window)

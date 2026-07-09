@@ -1,5 +1,6 @@
 //! `ax tokens` — per-model LLM token usage from offload calls.
 
+use ax_reasoning::offload_status;
 use ax_usage::{query_summary, UsagePeriod, UsageQuery};
 
 pub async fn run(
@@ -38,7 +39,24 @@ pub async fn run(
     if summary.by_model.is_empty() {
         println!();
         println!("No token usage recorded in this period.");
-        println!("Usage is tracked when explore offload runs (ax explore / ax_explore MCP).");
+        let status = offload_status();
+        let enabled = status
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if enabled {
+            let model = status
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let url = status.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+            println!("Offload is enabled ({model} @ {url}) but no calls were recorded yet.");
+            println!("Run ax explore or use ax_explore MCP with offload active.");
+        } else {
+            println!("Offload is not configured — ax only records tokens from LLM offload calls.");
+            println!("  ax offload set-endpoint https://api.openai.com/v1 --key-env OPENAI_API_KEY");
+            println!("  Or set OPENAI_API_KEY, CEREBRAS_API_KEY, or GROQ_API_KEY in your environment.");
+        }
         return Ok(());
     }
 

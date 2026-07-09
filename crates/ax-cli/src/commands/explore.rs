@@ -15,18 +15,19 @@ pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     drop(_spinner);
+    let raw = format_explore_text(&result);
+    let project = root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string);
+    let meta = Some(ExploreOffloadMeta {
+        source: "cli_explore",
+        project,
+    });
     if json {
+        let _ = maybe_synthesize_explore(&query_text, &raw, meta).await;
         println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
     } else {
-        let raw = format_explore_text(&result);
-        let project = root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(str::to_string);
-        let meta = Some(ExploreOffloadMeta {
-            source: "cli_explore",
-            project,
-        });
         let out = maybe_synthesize_explore(&query_text, &raw, meta).await;
         println!("{}", out);
     }

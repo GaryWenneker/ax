@@ -106,12 +106,16 @@ pub async fn synthesize_offload(
         Ok(r) if r.status().is_success() => {
             let data: serde_json::Value = r.json().await.unwrap_or_default();
             if let Some(m) = meta {
-                record_from_response(
+                let recorded = record_from_response(
                     &cfg.model,
                     m.source,
                     m.project.as_deref(),
                     &data,
-                );
+                )
+                .await;
+                if !recorded && cfg.debug {
+                    tracing::debug!("offload response had no parseable token usage");
+                }
             }
             let answer = data
                 .get("choices")

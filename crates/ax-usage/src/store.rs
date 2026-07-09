@@ -72,23 +72,22 @@ pub struct UsageRecord {
     pub project: Option<String>,
 }
 
-/// Fire-and-forget record on a background task (never blocks the caller).
-pub fn record_usage(record: UsageRecord) {
-    tokio::spawn(async move {
-        if let Ok(pool) = open_pool().await {
-            let _ = insert_usage(&pool, &record).await;
-        }
-    });
+/// Persist usage (awaited — safe for short-lived CLI processes).
+pub async fn record_usage(record: UsageRecord) {
+    if let Ok(pool) = open_pool().await {
+        let _ = insert_usage(&pool, &record).await;
+    }
 }
 
-pub fn record_from_response(
+/// Returns `true` when token counts were parsed and persisted.
+pub async fn record_from_response(
     model: &str,
     source: &str,
     project: Option<&str>,
     response: &serde_json::Value,
-) {
+) -> bool {
     let Some((prompt, completion, total)) = parse_usage(response) else {
-        return;
+        return false;
     };
     record_usage(UsageRecord {
         model: model.to_string(),
@@ -97,29 +96,120 @@ pub fn record_from_response(
         total_tokens: total,
         source: source.to_string(),
         project: project.map(str::to_string),
-    });
+    })
+    .await;
+    true
+}
+
+fn json_i64(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_u64().and_then(|u| i64::try_from(u).ok()))
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+}
+
+fn usage_block<'a>(data: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+    if let Some(usage) = data.get("usage") {
+        return Some(usage);
+    }
+    if data.get("prompt_eval_count").is_some() || data.get("eval_count").is_some() {
+        return Some(data);
+    }
+    None
 }
 
 pub fn parse_usage(data: &serde_json::Value) -> Option<(i64, i64, i64)> {
-    let usage = data.get("usage")?;
-    let prompt = usage
+    let usage = usage_block(data)?;
+    let mut prompt = usage
         .get("prompt_tokens")
         .or_else(|| usage.get("input_tokens"))
-        .and_then(|v| v.as_i64())
+        .or_else(|| usage.get("prompt_eval_count"))
+        .and_then(json_i64)
         .unwrap_or(0);
+    for key in ["cache_read_input_tokens", "cache_creation_input_tokens"] {
+        if let Some(n) = usage.get(key).and_then(json_i64) {
+            prompt += n;
+        }
+    }
     let completion = usage
         .get("completion_tokens")
         .or_else(|| usage.get("output_tokens"))
-        .and_then(|v| v.as_i64())
+        .or_else(|| usage.get("eval_count"))
+        .and_then(json_i64)
         .unwrap_or(0);
     let total = usage
         .get("total_tokens")
-        .and_then(|v| v.as_i64())
+        .and_then(json_i64)
         .unwrap_or(prompt + completion);
     if prompt == 0 && completion == 0 && total == 0 {
         return None;
     }
     Some((prompt, completion, total))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn openai_usage() {
+        let data = json!({
+            "usage": { "prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150 }
+        });
+        assert_eq!(parse_usage(&data), Some((100, 50, 150)));
+    }
+
+    #[test]
+    fn anthropic_usage() {
+        let data = json!({
+            "usage": { "input_tokens": 80, "output_tokens": 40 }
+        });
+        assert_eq!(parse_usage(&data), Some((80, 40, 120)));
+    }
+
+    #[test]
+    fn anthropic_additive_cache() {
+        let data = json!({
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_read_input_tokens": 200,
+                "cache_creation_input_tokens": 50
+            }
+        });
+        assert_eq!(parse_usage(&data), Some((260, 5, 265)));
+    }
+
+    #[test]
+    fn ollama_native_root_fields() {
+        let data = json!({ "prompt_eval_count": 12, "eval_count": 8 });
+        assert_eq!(parse_usage(&data), Some((12, 8, 20)));
+    }
+
+    #[test]
+    fn string_encoded_counts() {
+        let data = json!({
+            "usage": { "prompt_tokens": "30", "completion_tokens": "20", "total_tokens": "50" }
+        });
+        assert_eq!(parse_usage(&data), Some((30, 20, 50)));
+    }
+
+    #[test]
+    fn total_only() {
+        let data = json!({ "usage": { "total_tokens": 99 } });
+        assert_eq!(parse_usage(&data), Some((0, 0, 99)));
+    }
+
+    #[test]
+    fn missing_usage_returns_none() {
+        assert_eq!(parse_usage(&json!({ "choices": [] })), None);
+    }
+
+    #[test]
+    fn all_zeros_returns_none() {
+        let data = json!({ "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 } });
+        assert_eq!(parse_usage(&data), None);
+    }
 }
 
 async fn insert_usage(pool: &SqlitePool, record: &UsageRecord) -> Result<(), AxError> {
