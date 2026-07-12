@@ -1,6 +1,6 @@
 [package]
 name = "ax-sync"
-version = "2.1.5"
+version = "2.1.6"
 edition = "2021"
 
 [dependencies]
@@ -11,3 +11,6 @@ notify = { workspace = true }
 walkdir = { workspace = true }
 ignore = { workspace = true }
 serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

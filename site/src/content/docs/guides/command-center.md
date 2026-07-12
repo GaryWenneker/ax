@@ -71,6 +71,19 @@ Set the PAT in your environment before draft PR or review commands:
 
 For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
+## Command Center pages (`ax web`)
+
+| Page | Purpose |
+|---|---|
+| **Ship** | Quality-gate pipeline, SSE logs, git events |
+| **SonarQube** | Proxied dashboard + container setup |
+| **Memory** | Browse, search, compose memories; capture from git |
+| **Savings** | Token and dollar savings from graph queries |
+| **Agent** | Terminal with MCP wired in (when enabled in Settings) |
+| **Policy** | View-first rule and skill editors |
+
+Open with `ax web --open` or `ax ship --watch --open`.
+
 ## Quality gate pipeline
 
 When you run `ax ship --evaluate` (or when git hooks trigger evaluation), ax runs:
@@ -95,7 +108,7 @@ Results stream to the dashboard via SSE (`/api/ship/events`).
 
 Default port: `7070` (override with `--port` or `[ship].web_port`).
 
-The same `ax web` UI includes a **Tokens** page (sidebar) for per-model LLM usage when explore offload is enabled — filter by week, month-to-date, month, year, or custom date range. Data lives in `~/.ax/usage.db`. See [`ax tokens`](/reference/cli/#ax-tokens).
+The same `ax web` UI includes **Memory**, **Savings**, **SonarQube**, and **Agent** pages — see the Command Center pages table above. Savings shows estimated context-token and dollar savings from MCP graph queries. See [`ax savings`](/reference/cli/#ax-savings) and [Token savings](/guides/token-savings/).
 
 Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.toml`:
 
@@ -104,7 +117,11 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 ## Git hooks
 
-After `ax init`, post-commit hooks run `ax sync --quiet` and `ax ship --evaluate` so the graph and ship state stay current.
+After `ax init`, git hooks keep the project current:
+
+- **post-commit** — `ax sync --quiet`, `ax ship --evaluate`, `ax capture-git --limit 1 --quiet` (stores non-trivial commit messages as memories)
+- **post-merge** — same sync/evaluate plus `ax capture-git --limit 20 --quiet` for merged commits
+- **post-checkout** — sync and evaluate only
 
 ## Test impact vs affected
 

@@ -15,7 +15,16 @@ import {
   StatusPill,
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
+import { saveString } from '../lib/uiStorage';
 import type { Stats } from '../types';
+
+function browseLanguage(language: string) {
+  saveString('nodes-lang', language);
+  saveString('nodes-q', '');
+  saveString('nodes-kind', '');
+  saveString('nodes-offset', '0');
+  window.location.hash = 'nodes';
+}
 
 function formatBytes(b: number) {
   if (b < 1024) return `${b} B`;
@@ -112,7 +121,12 @@ export default function StatsPage() {
                   </thead>
                   <tbody>
                     {stats.languages.map((l) => (
-                      <tr key={l.language}>
+                      <tr
+                        key={l.language}
+                        className="stats-lang-row"
+                        title={`Browse ${l.language} symbols`}
+                        onClick={() => browseLanguage(l.language)}
+                      >
                         <td className="mono">{l.language}</td>
                         <td className="num">{l.count.toLocaleString()}</td>
                         <td>

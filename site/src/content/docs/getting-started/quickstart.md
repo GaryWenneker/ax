@@ -1,9 +1,9 @@
 ---
 title: Get Started
-description: Get up and running with ax v2.0.0 in seconds.
+description: Get up and running with ax v2.1.6 in seconds.
 ---
 
-Install **ax v2.1.4** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — knowledge graph, policy engine, and Command Center in one binary.
+Install **ax v2.1.6** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — knowledge graph, memory vault, policy engine, and Command Center in one binary.
 
 ## 1. Install the CLI
 
@@ -25,6 +25,7 @@ Have Node? `npx @garywenneker/ax` downloads the native binary for your platform.
 
 ```bash
 ax install
+ax install --yes          # non-interactive
 ```
 
 Configures Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro with the ax MCP server. This step does **not** index code.
@@ -36,6 +37,14 @@ cd your-project
 ax init
 ```
 
-Creates `.ax/` and builds the knowledge graph. Your agent uses ax tools automatically when `.ax/` exists.
+Creates `.ax/`, builds the knowledge graph, installs git hooks (sync, ship evaluate, memory capture), and offers the agent installer. Your agent uses ax tools automatically when `.ax/` exists.
 
-Next: [Your First Graph](/getting-started/your-first-graph/), or full [Installation](/getting-started/installation/) options.
+## 4. Optional — open Command Center
+
+```bash
+ax web --open
+```
+
+Browse the graph, edit policy, view token savings, and manage SonarQube from the local dashboard.
+
+Next: [Your First Graph](/getting-started/your-first-graph/), [Memory vault](/guides/memory/), or full [Installation](/getting-started/installation/) options.

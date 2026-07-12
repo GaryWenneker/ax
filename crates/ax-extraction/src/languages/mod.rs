@@ -1,6 +1,8 @@
 //! Language extractors.
 
 mod common;
+mod csharp;
+mod generic;
 mod go;
 mod kotlin;
 mod java;
@@ -8,6 +10,7 @@ mod javascript;
 mod python;
 mod refs;
 mod rust;
+mod specs;
 mod typescript;
 
 use std::collections::HashMap;
@@ -23,12 +26,16 @@ pub fn all_extractors() -> HashMap<Language, Box<dyn LanguageExtractor>> {
         Box::new(python::PythonExtractor),
         Box::new(go::GoExtractor),
         Box::new(java::JavaExtractor),
+        Box::new(csharp::CsharpExtractor),
         Box::new(kotlin::KotlinExtractor),
         Box::new(typescript::TypescriptExtractor),
         Box::new(javascript::JavascriptExtractor),
     ];
     for e in extractors {
         map.insert(e.language(), e);
+    }
+    for ge in specs::generic_extractors() {
+        map.insert(ge.language(), Box::new(ge));
     }
     map
 }

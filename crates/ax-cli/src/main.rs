@@ -94,6 +94,38 @@ enum Commands {
     /// Explore (same as ax_explore MCP tool)
     #[command(long_about = help_text::EXPLORE_LONG)]
     Explore { query: Vec<String>, #[arg(long)] json: bool },
+    /// Store a durable project memory (decision, fix, convention)
+    Remember {
+        /// The memory content — what to remember and why
+        text: String,
+        #[arg(long, help = "Short title (defaults to first line)")]
+        title: Option<String>,
+        #[arg(long, help = "decision | bug_fix | architecture | convention | note")]
+        kind: Option<String>,
+        #[arg(long = "tag", help = "Tag (repeatable)")]
+        tags: Vec<String>,
+        #[arg(long = "file", help = "Related file path (repeatable)")]
+        files: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search project memories by free text
+    Recall {
+        query: String,
+        #[arg(long)]
+        limit: Option<u32>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mine recent git commits into memories (the "why" behind changes)
+    CaptureGit {
+        #[arg(long, help = "Number of commits to scan (default 100)")]
+        limit: Option<u32>,
+        #[arg(long, help = "No output (for git hooks)")]
+        quiet: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Node details (same as ax_node MCP tool)
     #[command(long_about = help_text::NODE_LONG)]
     Node { name: Option<String> },
@@ -193,9 +225,11 @@ enum Commands {
         #[arg(help = "on, off, or status")]
         action: Option<String>,
     },
-    /// Per-model LLM token usage (offload calls)
-    #[command(long_about = help_text::TOKENS_LONG)]
-    Tokens {
+    /// Estimated context-token savings from MCP graph queries
+    #[command(long_about = help_text::SAVINGS_LONG)]
+    Savings {
+        #[command(subcommand)]
+        action: Option<SavingsAction>,
         #[arg(long, value_name = "PERIOD", help = "week | month_to_date | month | year | custom")]
         period: Option<String>,
         #[arg(long, value_name = "YYYY-MM-DD", help = "Start date (required for custom)")]
@@ -252,6 +286,19 @@ enum Commands {
         daemon: bool,
         #[arg(long, hide = true)]
         path: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SavingsAction {
+    /// Import tool-call stats from local Cursor / Claude Code session logs
+    Import {
+        #[arg(long, help = "Import ~/.claude/projects/*.jsonl")]
+        claude: bool,
+        #[arg(long, help = "Import ~/.cursor/projects/*/agent-transcripts/*.jsonl")]
+        cursor: bool,
+        #[arg(long, help = "Import both Claude and Cursor logs")]
+        all: bool,
     },
 }
 
@@ -394,8 +441,28 @@ enum DaemonCommands {
     Stop,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // Windows main threads get 1 MB of stack; the combined command future is
+    // large enough to overflow it in unoptimized builds. Run everything on a
+    // worker thread with a roomier stack instead.
+    let child = std::thread::Builder::new()
+        .name("ax-main".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(16 * 1024 * 1024)
+                .build()
+                .expect("failed to build tokio runtime");
+            runtime.block_on(async_main());
+        })
+        .expect("failed to spawn main thread");
+    if child.join().is_err() {
+        std::process::exit(1);
+    }
+}
+
+async fn async_main() {
     ui::init_terminal();
 
     commands::upgrade::apply_pending_upgrade();
@@ -432,6 +499,15 @@ async fn main() {
             commands::query::run(text, kind, limit, json).await
         }
         Some(Commands::Explore { query, json }) => commands::explore::run(query, json).await,
+        Some(Commands::Remember { text, title, kind, tags, files, json }) => {
+            commands::memory::run_remember(text, title, kind, tags, files, json).await
+        }
+        Some(Commands::Recall { query, limit, json }) => {
+            commands::memory::run_recall(query, limit, json).await
+        }
+        Some(Commands::CaptureGit { limit, quiet, json }) => {
+            commands::memory::run_capture_git(limit, quiet, json).await
+        }
         Some(Commands::Node { name }) => commands::node::run(name).await,
         Some(Commands::Files { format, json }) => commands::files::run(format, json).await,
         Some(Commands::Context { task }) => commands::context::run(task).await,
@@ -540,9 +616,12 @@ async fn main() {
             commands::upgrade::run(version, check, local).await
         }
         Some(Commands::Telemetry { action }) => commands::telemetry::run(action).await,
-        Some(Commands::Tokens { period, from, to, json }) => {
-            commands::tokens::run(period, from, to, json).await
-        }
+        Some(Commands::Savings { action, period, from, to, json }) => match action {
+            Some(SavingsAction::Import { claude, cursor, all }) => {
+                commands::savings::run_import(claude, cursor, all).await
+            }
+            None => commands::savings::run_summary(period, from, to, json).await,
+        },
         Some(Commands::Offload { action }) => match action {
             Some(OffloadCommands::Status) => commands::offload::run(Some("status".into()), None, None),
             Some(OffloadCommands::SetEndpoint { url, key_env }) => {
@@ -610,6 +689,9 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Status { .. }) => Some("status".into()),
         Some(Commands::Query { .. }) => Some("query".into()),
         Some(Commands::Explore { .. }) => Some("explore".into()),
+        Some(Commands::Remember { .. }) => Some("remember".into()),
+        Some(Commands::Recall { .. }) => Some("recall".into()),
+        Some(Commands::CaptureGit { .. }) => Some("capture-git".into()),
         Some(Commands::Node { .. }) => Some("node".into()),
         Some(Commands::Files { .. }) => Some("files".into()),
         Some(Commands::Context { .. }) => Some("context".into()),
@@ -625,7 +707,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Version) => Some("version".into()),
         Some(Commands::Upgrade { .. }) => Some("upgrade".into()),
         Some(Commands::Telemetry { .. }) => Some("telemetry".into()),
-        Some(Commands::Tokens { .. }) => Some("tokens".into()),
+        Some(Commands::Savings { .. }) => Some("savings".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),
         Some(Commands::Policy { .. }) => Some("policy".into()),

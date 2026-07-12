@@ -20,13 +20,13 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" href={`${base}/logo.png`} type="image/png" />
-		<title>ax — Local intelligence for AI agents</title>
+		<title>ax — Graph it. Remember it. Ship it.</title>
 		<meta
 			name="description"
-			content="Local-first code intelligence: knowledge graph, policy engine, and Command Center for Cursor, Claude Code, and every MCP agent."
+			content="Local-first code intelligence: knowledge graph, memory vault, policy engine, and Command Center for Cursor, Claude Code, and every MCP agent."
 		/>
-		<meta property="og:title" content="ax" />
-		<meta property="og:description" content="Graph, policy, and ship — local intelligence for AI coding agents." />
+		<meta property="og:title" content="ax — Graph it. Remember it. Ship it." />
+		<meta property="og:description" content="Knowledge graph, memory vault, policy, and ship gates — one local binary for AI coding agents." />
 		<meta property="og:type" content="website" />
 		<meta name="theme-color" content="#121110" />
 	</head>
@@ -50,11 +50,11 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 				<section class="hero">
 					<div class="hero-left">
 						<p class="release-tag">{AX_VERSION}</p>
-						<h1>Local intelligence for AI agents</h1>
+						<h1>Graph it. Remember it. Ship it.</h1>
 						<p class="lede">
-							Knowledge graph, team policy, and Command Center in one local
-							binary — structure your code, enforce your rules, and gate
-							delivery without the cloud.
+							One local binary for AI agents — parse your codebase into a
+							knowledge graph, capture decisions in a memory vault, enforce
+							team policy, and gate delivery from the Command Center.
 						</p>
 						<div class="cta">
 							<a class="btn btn-primary" href={`${base}/getting-started/quickstart`}>Get started</a>
@@ -92,6 +92,18 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 					</article>
 					<article class="feature">
 						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+							<path d="M12 10h24v28H12z" />
+							<path d="M18 18h12M18 26h8M18 34h10" />
+						</svg>
+						<h2>Memory vault</h2>
+						<p>
+							Hybrid recall over decisions, fixes, and conventions — auto-captured
+							from git commits, injected via <code>ax_preflight</code>, editable in
+							Command Center.
+						</p>
+					</article>
+					<article class="feature">
+						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
 							<rect x="6" y="8" width="36" height="32" />
 							<path d="M14 18h20M14 26h14M14 34h18" />
 						</svg>
@@ -108,7 +120,7 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 						</svg>
 						<h2>Command Center</h2>
 						<p>
-							Git-aware quality gates, test-impact analysis, SSE dashboard,
+							Git-aware quality gates, SonarQube, test-impact, token savings,
 							and draft PRs — ship with confidence from your machine.
 						</p>
 					</article>
@@ -318,7 +330,7 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 			/* ---- features ---- */
 			.features {
 				display: grid;
-				grid-template-columns: repeat(3, 1fr);
+				grid-template-columns: repeat(2, 1fr);
 			}
 			.feature {
 				display: grid;
@@ -328,6 +340,15 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 				padding: 2.6rem 2rem;
 			}
 			.feature + .feature {
+				border-inline-start: 1px solid var(--cg-rule);
+			}
+			.feature:nth-child(n + 3) {
+				border-top: 1px solid var(--cg-rule);
+			}
+			.feature:nth-child(odd) {
+				border-inline-start: none;
+			}
+			.feature:nth-child(even) {
 				border-inline-start: 1px solid var(--cg-rule);
 			}
 			/* full-height vertical divider between the icon and the text */

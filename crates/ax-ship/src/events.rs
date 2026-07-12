@@ -2,6 +2,7 @@
 
 use tokio::sync::broadcast;
 
+use crate::run_log::LastRunLog;
 use crate::state::ShipReport;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -10,6 +11,24 @@ pub enum ShipEvent {
     GitChanged { branch: Option<String> },
     StepStarted { step: String },
     StepFinished { step: String, ok: bool, detail: Option<String> },
+    SonarProjectStarted {
+        project_key: String,
+        repo_name: String,
+        index: usize,
+        total: usize,
+    },
+    SonarProjectFinished {
+        project_key: String,
+        repo_name: String,
+        ok: bool,
+        detail: Option<String>,
+    },
+    SonarProjectSkipped {
+        project_key: String,
+        repo_name: String,
+        reason: String,
+    },
+    RunLogUpdated { last_run: LastRunLog },
     ReportUpdated { report: ShipReport },
     Error { message: String },
 }

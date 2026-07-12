@@ -10,7 +10,7 @@ export default defineConfig({
 		starlight({
 			title: 'ax',
 			description:
-				'Local intelligence for AI agents — knowledge graph, policy engine, and Command Center.',
+				'Graph it. Remember it. Ship it. — local knowledge graph, memory vault, policy, and Command Center for AI agents.',
 			favicon: '/logo.png',
 			head: [
 				{
@@ -76,6 +76,9 @@ export default defineConfig({
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },
 						{ label: 'Affected Tests in CI', slug: 'guides/affected-tests' },
 						{ label: 'Command Center', slug: 'guides/command-center' },
+						{ label: 'Agent Terminal', slug: 'guides/agent-terminal' },
+						{ label: 'Memory Vault', slug: 'guides/memory' },
+						{ label: 'Token Savings', slug: 'guides/token-savings' },
 					],
 				},
 				{

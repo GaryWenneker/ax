@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v2.1.4).
+description: Complete reference for every ax command, argument, and flag (v2.1.6).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -64,7 +64,9 @@ ax install --yes --all
 
 Remove ax entries from agent MCP configuration files. Does not delete `~/.ax` or project `.ax/` indexes.
 
-No flags.
+```bash
+ax uninstall
+```
 
 ---
 
@@ -91,6 +93,11 @@ Delete the `.ax/` directory and remove git sync hooks. Permanently removes the l
 |---|---|---|
 | `path` | optional | Project root (default: current directory) |
 
+```bash
+ax uninit
+ax uninit ./old-project
+```
+
 ### `ax index [path]`
 
 Full re-index from scratch (scan → extract → resolve). Use when the watcher is off or after large git operations.
@@ -102,6 +109,12 @@ Full re-index from scratch (scan → extract → resolve). Use when the watcher 
 | `--quiet` | flag | No progress bar or summary |
 | `--verbose` | flag | Reserved for extra diagnostics |
 
+```bash
+ax index
+ax index ./services/api --force
+ax index --quiet
+```
+
 ### `ax sync [path]`
 
 Incremental update — re-parses only changed files.
@@ -112,6 +125,14 @@ Incremental update — re-parses only changed files.
 | `--quiet` | flag | No progress bar or summary |
 | `--watch` | flag | Watch filesystem and auto-sync until Ctrl+C |
 
+Also refreshes git hooks when the memory-capture line is missing (idempotent upgrade path).
+
+```bash
+ax sync
+ax sync --quiet
+ax sync --watch
+```
+
 ### `ax watch [path]`
 
 Alias for `ax sync --watch`.
@@ -120,6 +141,11 @@ Alias for `ax sync --watch`.
 |---|---|---|
 | `path` | optional | Project root |
 | `--quiet` | flag | No progress bar or summary |
+
+```bash
+ax watch
+ax watch --quiet
+```
 
 ### `ax status [path]`
 
@@ -130,6 +156,11 @@ Index statistics: node/edge/file counts, unresolved refs, last indexed time.
 | `path` | optional | Project root |
 | `--json` | flag | Machine-readable JSON |
 
+```bash
+ax status
+ax status --json
+```
+
 ### `ax unlock [path]`
 
 Remove a stale `.ax/ax.lock` left by a crashed process.
@@ -137,6 +168,11 @@ Remove a stale `.ax/ax.lock` left by a crashed process.
 | Argument | Type | Description |
 |---|---|---|
 | `path` | optional | Project root |
+
+```bash
+ax unlock
+ax unlock ./repo-with-stale-lock
+```
 
 ---
 
@@ -153,6 +189,12 @@ Full-text symbol search (FTS5). For natural-language questions use `ax explore`.
 | `--limit` | number | Max results |
 | `--json` | flag | JSON array output |
 
+```bash
+ax query UserService
+ax query "handleRequest" --kind function --limit 10
+ax query auth --json
+```
+
 ### `ax explore [query…]`
 
 Natural-language explore — same output shape as the `ax_explore` MCP tool. Optional BYO LLM offload via `ax offload`.
@@ -162,6 +204,11 @@ Natural-language explore — same output shape as the `ax_explore` MCP tool. Opt
 | `query` | optional (words) | Question or symbol names (multi-word allowed) |
 | `--json` | flag | Structured JSON |
 
+```bash
+ax explore "how does auth flow work"
+ax explore ax_preflight token savings --json
+```
+
 ### `ax node [name]`
 
 One symbol's details, or a file with line numbers and dependents — same as `ax_node` MCP.
@@ -169,6 +216,11 @@ One symbol's details, or a file with line numbers and dependents — same as `ax
 | Argument | Type | Description |
 |---|---|---|
 | `name` | optional | Symbol name or file path |
+
+```bash
+ax node handleRequest
+ax node crates/ax-cli/src/main.rs
+```
 
 ### `ax files`
 
@@ -179,6 +231,11 @@ List indexed files and detected languages.
 | `--format` | string | Output format (e.g. `tree` when supported) |
 | `--json` | flag | JSON with paths and languages |
 
+```bash
+ax files
+ax files --format tree --json
+```
+
 ### `ax context <task>`
 
 Build task-oriented markdown context for agent prompts.
@@ -186,6 +243,10 @@ Build task-oriented markdown context for agent prompts.
 | Argument | Type | Description |
 |---|---|---|
 | `task` | required | Task description |
+
+```bash
+ax context "add rate limiting to the login endpoint"
+```
 
 ### `ax callers <symbol>`
 
@@ -195,6 +256,10 @@ Find symbols that call the given function/method/class. Output is JSON.
 |---|---|---|
 | `symbol` | required | Symbol name |
 
+```bash
+ax callers handleRequest
+```
+
 ### `ax callees <symbol>`
 
 Find symbols called by the given function/method. Output is JSON.
@@ -203,6 +268,10 @@ Find symbols called by the given function/method. Output is JSON.
 |---|---|---|
 | `symbol` | required | Symbol name |
 
+```bash
+ax callees run_preflight
+```
+
 ### `ax impact <symbol>`
 
 Blast-radius subgraph — what breaks if you change this symbol. Output is JSON.
@@ -210,6 +279,67 @@ Blast-radius subgraph — what breaks if you change this symbol. Output is JSON.
 | Argument | Type | Description |
 |---|---|---|
 | `symbol` | required | Symbol name |
+
+```bash
+ax impact AuthService
+```
+
+---
+
+## Memory vault
+
+See the [Memory vault guide](/guides/memory/).
+
+### `ax remember <text>`
+
+Store a durable project memory (decision, fix, convention). Flags similar existing memories so contradictions get updated instead of duplicated.
+
+| Argument / flag | Type | Description |
+|---|---|---|
+| `text` | required | The memory content — what to remember and why |
+| `--title` | string | Short title (defaults to first line) |
+| `--kind` | string | `decision` \| `bug_fix` \| `architecture` \| `convention` \| `note` |
+| `--tag` | string (repeat) | Tag |
+| `--file` | string (repeat) | Related file path |
+| `--json` | flag | JSON output |
+
+```bash
+ax remember "We use tiktoken o200k_base for token counts" --kind decision --tag tokenizer
+ax remember "Sonar proxy strips Content-Encoding after decompression" --kind bug_fix --file crates/ax-web/src/sonar_proxy.rs
+```
+
+### `ax recall <query>`
+
+Hybrid search (full-text + vector similarity, confidence-decay weighted) over project memories.
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `query` | required | — | Free-text query |
+| `--limit` | number | `5` | Max results (≤50) |
+| `--json` | flag | — | JSON output |
+
+```bash
+ax recall "why tiktoken"
+ax recall sonar proxy --limit 10 --json
+```
+
+### `ax capture-git`
+
+Mine recent non-merge git commits into memories (the "why" behind changes). Skips trivial messages and already-captured commits; safe to re-run.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--limit` | number | `100` | Number of commits to scan |
+| `--quiet` | flag | — | No output (used by git hooks) |
+| `--json` | flag | — | JSON output |
+
+Runs automatically from **post-commit** and **post-merge** git hooks after `ax init`. Skips trivial messages and already-captured commits.
+
+```bash
+ax capture-git
+ax capture-git --limit 50
+ax capture-git --limit 1 --quiet    # same as the post-commit hook
+```
 
 ---
 
@@ -224,6 +354,11 @@ Symbol-level blast radius for the current git diff vs a base branch.
 | `--base` | string | `main` | Base branch or ref |
 | `--json` | flag | — | JSON output |
 
+```bash
+ax diff --base main
+ax diff --base origin/main --json
+```
+
 ### `ax test-impact`
 
 Test-function impact analysis (git diff + TIA graph).
@@ -232,6 +367,11 @@ Test-function impact analysis (git diff + TIA graph).
 |---|---|---|---|
 | `--base` | string | `main` | Base branch or ref |
 | `--json` | flag | — | JSON output |
+
+```bash
+ax test-impact --base main
+ax test-impact --base develop --json
+```
 
 ### `ax affected [files…]`
 
@@ -270,6 +410,13 @@ Git-aware quality gates, SSE dashboard, draft PRs. See [Command Center](/guides/
 | `--port` | number | `7070` | Dashboard port |
 | `--open` | flag | — | Open browser |
 
+```bash
+ax ship --watch --open
+ax ship --evaluate
+ax ship --draft --title "feat: memory vault"
+ax web --open                    # Command Center without git watch
+```
+
 ---
 
 ## Daemon
@@ -297,6 +444,11 @@ ax daemon ./repo status
 ### `ax version`
 
 Print installed version. Aliases: `ax -V`, `ax --version`.
+
+```bash
+ax version
+ax --version
+```
 
 ### `ax upgrade [version]`
 
@@ -332,29 +484,35 @@ Anonymous usage telemetry (command names and coarse buckets — never source cod
 | `off` | Disable telemetry |
 | `status` | Show current setting (default when omitted) |
 
+```bash
+ax telemetry status
+ax telemetry on
+ax telemetry off
+```
+
 ---
 
-## Token usage
+## Context savings
 
-### `ax tokens`
+### `ax savings`
 
-Per-model LLM token usage from explore offload. Stored locally in `~/.ax/usage.db` (global across projects). Counts are recorded when offload runs via `ax explore` or `ax_explore` MCP.
+Estimated context-token savings from MCP graph queries. Stored locally in `~/.ax/usage.db`. Each `ax_explore` / graph MCP call logs response size and a counterfactual file-read estimate.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--period` | string | `month_to_date` | `week` \| `month_to_date` \| `month` \| `year` \| `custom` |
 | `--from` | `YYYY-MM-DD` | — | Start date (required for `custom`) |
 | `--to` | `YYYY-MM-DD` | — | End date (optional for `custom`) |
-| `--json` | flag | — | JSON summary with per-model and daily breakdown |
+| `--json` | flag | — | JSON summary with per-tool and daily breakdown |
 
 ```bash
-ax tokens
-ax tokens --period week
-ax tokens --period year --json
-ax tokens --period custom --from 2026-01-01 --to 2026-03-31
+ax savings
+ax savings --period week --json
+ax savings import --all
+ax savings import --claude --cursor
 ```
 
-The **Tokens** page in `ax web` exposes the same filters and shows totals, per-model tables, and daily usage.
+The **Savings** page in `ax web` (enable in Settings) exposes the same filters. See [Token savings](/guides/token-savings/).
 
 ---
 
@@ -368,6 +526,10 @@ Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API). Sto
 
 Show current endpoint and key env var name.
 
+```bash
+ax offload status
+```
+
 #### `ax offload set-endpoint <url>`
 
 | Argument / flag | Type | Description |
@@ -375,9 +537,17 @@ Show current endpoint and key env var name.
 | `url` | required | Base URL (must end with `/v1`) |
 | `--key-env` | string | Environment variable holding the API key |
 
+```bash
+ax offload set-endpoint https://api.openai.com/v1 --key-env OPENAI_API_KEY
+```
+
 #### `ax offload clear`
 
 Remove offload configuration.
+
+```bash
+ax offload clear
+```
 
 ---
 
@@ -395,6 +565,11 @@ Local web UI — graph browser, policy editor, token usage dashboard, Command Ce
 
 Set `AX_WEB_READONLY=1` for browse-only mode.
 
+```bash
+ax web
+ax web ./my-repo --port 8080 --open
+```
+
 ---
 
 ## Policy
@@ -411,9 +586,19 @@ Index `.ax/policy/` into SQLite. In **database** mode without `--force`, shows D
 |---|---|
 | `--force` | Re-import from disk (database mode) or full replace (files mode) |
 
+```bash
+ax policy index
+ax policy index --force
+```
+
 ### `ax policy import [path]`
 
 Import `.mdc` / `SKILL.md` from disk into database (merge — keeps DB-only rows).
+
+```bash
+ax policy import
+ax policy import ./my-project
+```
 
 ### `ax policy export [path]`
 
@@ -422,6 +607,11 @@ Export database policy to files.
 | Flag | Default | Description |
 |---|---|---|
 | `--out` | `.ax/policy/export` | Output directory |
+
+```bash
+ax policy export
+ax policy export --out ./policy-backup
+```
 
 ### `ax policy match <prompt> [path]`
 
@@ -433,6 +623,11 @@ Test which rules/skills match a prompt.
 | `--file` | string (repeat) | Open/changed file paths for glob matching |
 | `--json` | flag | JSON output |
 
+```bash
+ax policy match "deploy to production" --file src/ship.rs
+ax policy match "utf8 bom" --json
+```
+
 ### `ax policy rules [path]`
 
 List indexed rules.
@@ -440,6 +635,11 @@ List indexed rules.
 | Flag | Description |
 |---|---|
 | `--json` | JSON output |
+
+```bash
+ax policy rules
+ax policy rules --json
+```
 
 ### `ax policy skills [path]`
 
@@ -449,6 +649,11 @@ List indexed skills.
 |---|---|
 | `--json` | JSON output |
 
+```bash
+ax policy skills
+ax policy skill startup
+```
+
 ### `ax policy skill <name> [path]`
 
 Print one skill body (markdown).
@@ -456,6 +661,10 @@ Print one skill body (markdown).
 | Argument | Description |
 |---|---|
 | `name` | Skill name |
+
+```bash
+ax policy skill release
+```
 
 ### `ax policy guard <file>`
 
@@ -468,6 +677,12 @@ Pre-write CRITICAL guard check (UTF-8, secrets paths, etc.).
 | `--delete` | flag | Run delete guard instead of write (default: write) |
 | `--json` | flag | JSON output |
 
+```bash
+ax policy guard README.md
+ax policy guard .env --json
+ax policy guard old-file.txt --delete
+```
+
 ### `ax policy test [path]`
 
 Smoke tests: match, guard, bootstrap, subagents.
@@ -476,6 +691,11 @@ Smoke tests: match, guard, bootstrap, subagents.
 |---|---|
 | `--json` | JSON output |
 
+```bash
+ax policy test
+ax policy test --json
+```
+
 ### `ax policy sync [path]`
 
 Verify IDE bootstrap files (`.cursor/rules/ax.mdc`, `AGENTS.md`, etc.).
@@ -483,6 +703,11 @@ Verify IDE bootstrap files (`.cursor/rules/ax.mdc`, `AGENTS.md`, etc.).
 | Flag | Description |
 |---|---|
 | `--fix` | Restore missing or drifted managed files from embedded templates |
+
+```bash
+ax policy sync
+ax policy sync --fix
+```
 
 ### `ax policy capture <prompt> [path]`
 
@@ -495,6 +720,11 @@ Propose or save a team rule from directive language (`always`, `you must`, `@rul
 | `--yes` | flag | Save with defaults (skip interview) |
 | `--json` | flag | JSON proposal or result |
 
+```bash
+ax policy capture "always update docs when adding a feature"
+ax policy capture "never commit secrets" --file .env --json
+```
+
 ### `ax policy storage`
 
 Show or set policy storage mode (`files` vs `database`).
@@ -506,6 +736,11 @@ Show effective storage mode, config paths, and project/global values.
 | Flag | Description |
 |---|---|
 | `--json` | JSON output |
+
+```bash
+ax policy storage status
+ax policy storage status --json
+```
 
 #### `ax policy storage database [path]`
 
@@ -532,6 +767,11 @@ Set **files** as source of truth (`.ax/policy/` on disk).
 | `--global` | Write to `~/.ax/config.json` |
 | `--migrate` | Export database policy to `.ax/policy/` files |
 | `--json` | JSON output |
+
+```bash
+ax policy storage files --migrate
+ax policy storage files --global
+```
 
 ---
 
@@ -561,6 +801,11 @@ ax status --json
 ax explore "auth flow" --json
 ax query UserService --kind class
 ax callers handleRequest
+
+# Memory
+ax remember "we picked X because Y" --kind decision
+ax recall "why X"
+ax capture-git
 
 # Git / ship
 ax diff --base main --json

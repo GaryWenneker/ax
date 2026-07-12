@@ -9,6 +9,8 @@ use crate::ui::{
 
 pub async fn run(path: Option<String>, quiet: bool, watch: bool) -> Result<(), String> {
     let root = resolve_path(path);
+    // Idempotent — adds capture-git to hooks when missing (post-init upgrade path).
+    let _ = ax_sync::install_git_sync_hooks(&root);
     let mut ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let opts = IndexOptions {
         force: false,

@@ -193,6 +193,16 @@ impl Ax {
         opts: IndexOptions,
         mut on_progress: Option<Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> Result<IndexResult, ax_utils::errors::AxError> {
+        // A different extractor version means the whole graph is stale —
+        // incremental sync would silently keep old nodes, so reindex fully.
+        let stored_version = self
+            .queries
+            .get_metadata("extraction_version")
+            .await
+            .unwrap_or(None);
+        if stored_version.as_deref() != Some(EXTRACTION_VERSION) {
+            return self.index_all(opts, on_progress).await;
+        }
         let _guard = self.index_mutex.lock().await;
         self.file_lock.acquire()?;
         let index_opts = self.merge_index_opts(&opts);
@@ -502,6 +512,7 @@ async fn finalize_after_extract(
     db: &Database,
     on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
 ) -> Result<(), ax_utils::errors::AxError> {
+    let _ = ax_resolution::prune_stale_unresolved_refs(queries).await?;
     let resolution = resolver
         .resolve_all(queries, on_progress.as_mut())
         .await?;

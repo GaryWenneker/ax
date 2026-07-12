@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
-export function PageShell({ children }: { children: ReactNode }) {
-  return <div className="page settings-page">{children}</div>;
+export function PageShell({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={`page settings-page${className ? ` ${className}` : ''}`}>{children}</div>;
 }
 
 export function PageHero({
@@ -42,16 +42,24 @@ export function PageCard({
   description,
   children,
   footer,
+  className,
+  info,
 }: {
   title: string;
   description?: string;
   children: ReactNode;
   footer?: ReactNode;
+  className?: string;
+  /** Optional info-hover element rendered after the card title. */
+  info?: ReactNode;
 }) {
   return (
-    <section className="settings-card">
+    <section className={`settings-card${className ? ` ${className}` : ''}`}>
       <div className="settings-card-header">
-        <h2>{title}</h2>
+        <h2>
+          {title}
+          {info}
+        </h2>
         {description && <p>{description}</p>}
       </div>
       {children}
@@ -95,27 +103,48 @@ export function StatusPill({
   label,
   value,
   tone = 'neutral',
+  truncate = false,
+  title,
+  info,
 }: {
   label: string;
   value: string;
   tone?: 'ok' | 'warn' | 'neutral';
+  /** Single-line ellipsis in a fixed-width pill (e.g. branch name). */
+  truncate?: boolean;
+  title?: string;
+  /** Optional info-hover element rendered after the label (e.g. <InfoHover>…</InfoHover>). */
+  info?: ReactNode;
 }) {
   return (
-    <div className="settings-status-pill">
+    <div className={`settings-status-pill${truncate ? ' settings-status-pill--truncate' : ''}`}>
       <span className={`settings-status-dot settings-status-dot--${tone}`} aria-hidden="true" />
       <div className="settings-status-pill-body">
-        <span className="settings-status-pill-label">{label}</span>
-        <span className="settings-status-pill-value">{value}</span>
+        <span className="settings-status-pill-label">
+          {label}
+          {info}
+        </span>
+        <span className="settings-status-pill-value" title={title ?? (truncate ? value : undefined)}>
+          {value}
+        </span>
       </div>
     </div>
   );
 }
 
-export function StatusPanel({ title, children }: { title: string; children: ReactNode }) {
+export function StatusPanel({
+  title,
+  children,
+  className,
+}: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <div className="settings-status-panel">
       <div className="settings-status-panel-title">{title}</div>
-      <div className="settings-status-grid">{children}</div>
+      <div className={`settings-status-grid${className ? ` ${className}` : ''}`}>{children}</div>
     </div>
   );
 }
@@ -211,7 +240,7 @@ export function ItemRow({
   static: isStatic,
   onClick,
 }: {
-  icon?: string;
+  icon?: ReactNode;
   title: string;
   subtitle?: string;
   badges?: ReactNode;

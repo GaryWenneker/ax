@@ -1,11 +1,14 @@
 //! Ship Command Center API (SSE + status + settings).
 
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ax_quality::{
-    bootstrap_sonar, discover_sonar, ensure_sonar_live_with_log, inspect_setup,
-    start_sonar_container_with_log, stop_sonar_container_with_log, InstallLog, SonarBootstrapConfig,
+    bootstrap_sonar, discover_sonar, ensure_sonar_live_with_log, ensure_sonar_ready_for_scan,
+    ensure_sonar_stack_online, inspect_setup, read_sonar_token, regenerate_sonar_token,
+    start_sonar_container_with_log, stop_sonar_container_with_log, validate_sonar_login,
+    validate_sonar_token, InstallLog, SonarBootstrapConfig, SonarClient,
 };
 use ax_remote::ShipConfig;
 use ax_ship::{ShipDaemon, ShipEvent, ShipReport};
@@ -23,14 +26,17 @@ use futures_util::stream::Stream;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
+use crate::workspace_state::WebHub;
+
 #[derive(Clone)]
 pub struct ShipApiState {
     pub daemon: Arc<ShipDaemon>,
     pub report: Arc<Mutex<Option<ShipReport>>>,
     pub readonly: bool,
+    pub evaluating: Arc<AtomicBool>,
 }
 
-pub fn router(state: ShipApiState) -> Router {
+pub fn router_hub(hub: WebHub) -> Router {
     Router::new()
         .route("/events", get(handle_ship_events))
         .route("/status", get(handle_ship_status))
@@ -46,7 +52,16 @@ pub fn router(state: ShipApiState) -> Router {
         .route("/sonar/stop/stream", post(handle_sonar_stop_stream))
         .route("/sonar/bootstrap", post(handle_sonar_bootstrap))
         .route("/sonar/setup", get(handle_sonar_setup))
-        .with_state(state)
+        .route("/sonar/validate-login", post(handle_sonar_validate_login))
+        .route("/sonar/validate-token", get(handle_sonar_validate_token))
+        .route("/sonar/regenerate-token", post(handle_sonar_regenerate_token))
+        .route("/sonar/scan", post(handle_sonar_scan))
+        .route("/sonar/scan/stream", post(handle_sonar_scan_stream))
+        .route("/sonar/ui/info", get(crate::sonar_proxy::handle_sonar_ui_info))
+        .route("/sonar/ui", axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy))
+        .route("/sonar/ui/", axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy))
+        .route("/sonar/ui/{*path}", axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy))
+        .with_state(hub)
 }
 
 fn readonly_err() -> (StatusCode, Json<serde_json::Value>) {
@@ -56,30 +71,86 @@ fn readonly_err() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-async fn handle_ship_status(State(s): State<ShipApiState>) -> impl IntoResponse {
-    let report = s.report.lock().await.clone();
-    let config = s.daemon.config().await;
+struct ShipCtx {
+    daemon: Arc<ShipDaemon>,
+    report: Arc<Mutex<Option<ShipReport>>>,
+    evaluating: Arc<AtomicBool>,
+}
+
+async fn ship_ctx(hub: &WebHub) -> ShipCtx {
+    let ws = hub.read().await;
+    ShipCtx {
+        daemon: ws.ship.daemon.clone(),
+        report: ws.ship.report.clone(),
+        evaluating: ws.ship.evaluating.clone(),
+    }
+}
+
+async fn handle_ship_status(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ctx = ship_ctx(&hub).await;
+    ctx.daemon.reload_config().await;
+    let config = ctx.daemon.config().await;
+    let discovered = ax_ship::discover_git_repos(&ctx.daemon.project_root);
+    let git_roots = ax_ship::resolve_git_roots(&ctx.daemon.project_root, &config).ok();
+    let branches: std::collections::HashMap<String, String> = git_roots
+        .as_ref()
+        .map(|roots| {
+            roots
+                .iter()
+                .filter_map(|root| {
+                    let name = root.file_name()?.to_str()?;
+                    let branch = ax_git::current_branch(root).ok().flatten()?;
+                    Some((name.to_string(), branch))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let branch = branches.values().next().cloned();
+    let last_run = ax_ship::read_run_log(&ctx.daemon.project_root);
+    let report = ctx.report.lock().await.clone();
+    let run_in_progress = last_run.started_at.is_some() && last_run.finished_at.is_none();
+    let evaluating = ctx.evaluating.load(Ordering::SeqCst) || run_in_progress;
     Json(serde_json::json!({
-        "branch": ax_git::current_branch(&s.daemon.project_root).ok().flatten(),
+        "branch": branch,
+        "branches": branches,
+        "git_roots": config.ship.git_roots,
+        "git_roots_discovered": discovered,
+        "git_root_paths": git_roots.map(|roots| roots.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()),
         "report": report,
         "config": config,
+        "last_run": last_run,
+        "evaluating": evaluating,
     }))
 }
 
-async fn handle_ship_impact(State(s): State<ShipApiState>) -> impl IntoResponse {
-    let report = s.report.lock().await.clone();
+async fn handle_ship_impact(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ctx = ship_ctx(&hub).await;
+    let report = ctx.report.lock().await.clone();
     Json(serde_json::json!({ "report": report }))
 }
 
 async fn handle_ship_events(
-    State(s): State<ShipApiState>,
+    State(hub): State<WebHub>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let mut rx = s.daemon.bus.subscribe();
-    let report_store = s.report.clone();
+    let ctx = ship_ctx(&hub).await;
+    let mut rx = ctx.daemon.bus.subscribe();
+    let report_store = ctx.report.clone();
     let stream = async_stream::stream! {
-        if let Ok(report) = s.daemon.evaluate().await {
-            *report_store.lock().await = Some(report.clone());
-            yield Ok(Event::default().data(serde_json::to_string(&ShipEvent::ReportUpdated { report: report.clone() }).unwrap_or_default()));
+        let initial_log = ax_ship::read_run_log(&ctx.daemon.project_root);
+        yield Ok(Event::default().data(
+            serde_json::to_string(&ShipEvent::RunLogUpdated { last_run: initial_log }).unwrap_or_default(),
+        ));
+        let evaluating = ctx.evaluating.load(Ordering::SeqCst)
+            || {
+                let log = ax_ship::read_run_log(&ctx.daemon.project_root);
+                log.started_at.is_some() && log.finished_at.is_none()
+            };
+        if !evaluating {
+            if let Some(report) = report_store.lock().await.clone() {
+                yield Ok(Event::default().data(
+                    serde_json::to_string(&ShipEvent::ReportUpdated { report }).unwrap_or_default(),
+                ));
+            }
         }
         loop {
             match rx.recv().await {
@@ -107,20 +178,55 @@ struct ShipCommandBody {
 }
 
 async fn handle_ship_command(
-    State(s): State<ShipApiState>,
+    State(hub): State<WebHub>,
     Json(body): Json<ShipCommandBody>,
 ) -> impl IntoResponse {
+    let ctx = ship_ctx(&hub).await;
     match body.cmd.as_str() {
-        "evaluate" => match s.daemon.evaluate().await {
-            Ok(r) => Json(serde_json::json!({ "ok": true, "report": r })).into_response(),
-            Err(e) => Json(serde_json::json!({ "ok": false, "error": e })).into_response(),
-        },
+        "evaluate" => {
+            if hub.readonly {
+                return readonly_err().into_response();
+            }
+            if ctx.evaluating.swap(true, Ordering::SeqCst) {
+                let last_run = ax_ship::read_run_log(&ctx.daemon.project_root);
+                return Json(serde_json::json!({
+                    "ok": false,
+                    "error": "evaluate already running",
+                    "evaluating": true,
+                    "last_run": last_run,
+                }))
+                .into_response();
+            }
+            let daemon = ctx.daemon.clone();
+            let evaluating = ctx.evaluating.clone();
+            let report_store = ctx.report.clone();
+            tokio::spawn(async move {
+                let result = daemon.evaluate().await;
+                evaluating.store(false, Ordering::SeqCst);
+                match result {
+                    Ok(report) => {
+                        *report_store.lock().await = Some(report);
+                    }
+                    Err(message) => {
+                        daemon.bus.publish(ShipEvent::Error { message });
+                    }
+                }
+            });
+            let last_run = ax_ship::read_run_log(&ctx.daemon.project_root);
+            Json(serde_json::json!({
+                "ok": true,
+                "started": true,
+                "evaluating": true,
+                "last_run": last_run,
+            }))
+            .into_response()
+        }
         "draft" => {
-            let cfg = s.daemon.config().await;
+            let cfg = ctx.daemon.config().await;
             let pipeline = ax_ship::ShipPipeline::new(
-                s.daemon.project_root.clone(),
+                ctx.daemon.project_root.clone(),
                 cfg,
-                s.daemon.bus.clone(),
+                ctx.daemon.bus.clone(),
             );
             let title = body.title.as_deref().unwrap_or("ax ship draft");
             let pr_body = body
@@ -137,21 +243,30 @@ async fn handle_ship_command(
     }
 }
 
-async fn handle_get_config(State(s): State<ShipApiState>) -> impl IntoResponse {
-    let config = s.daemon.config().await;
+async fn handle_get_config(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ctx = ship_ctx(&hub).await;
+    ctx.daemon.reload_config().await;
+    let config = ctx.daemon.config().await;
+    let discovered = ax_ship::discover_git_repos(&ctx.daemon.project_root);
     let sonar = sonar_discovery(&config).await;
-    let setup = sonar_setup_status(&config, &s.daemon.project_root).await.ok();
-    Json(serde_json::json!({ "config": config, "sonar": sonar, "sonar_setup": setup }))
+    let setup = sonar_setup_status(&config, &ctx.daemon.project_root, sonar.reachable).await;
+    Json(serde_json::json!({
+        "config": config,
+        "sonar": sonar,
+        "sonar_setup": setup,
+        "git_roots_discovered": discovered,
+    }))
 }
 
 async fn handle_put_config(
-    State(s): State<ShipApiState>,
+    State(hub): State<WebHub>,
     Json(config): Json<ShipConfig>,
 ) -> impl IntoResponse {
-    if s.readonly {
+    if hub.readonly {
         return readonly_err().into_response();
     }
-    let current = s.daemon.config().await;
+    let ctx = ship_ctx(&hub).await;
+    let current = ctx.daemon.config().await;
     if let Err(e) = validate_config_change(&current, &config).await {
         return (
             StatusCode::BAD_REQUEST,
@@ -159,7 +274,7 @@ async fn handle_put_config(
         )
             .into_response();
     }
-    match s.daemon.set_config(config).await {
+    match ctx.daemon.set_config(config).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -169,36 +284,125 @@ async fn handle_put_config(
     }
 }
 
-async fn handle_sonar_discover(State(s): State<ShipApiState>) -> impl IntoResponse {
-    let config = s.daemon.config().await;
+async fn handle_sonar_discover(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ctx = ship_ctx(&hub).await;
+    ctx.daemon.reload_config().await;
+    let config = ctx.daemon.config().await;
     let discovery = sonar_discovery(&config).await;
-    let setup = sonar_setup_status(&config, &s.daemon.project_root).await.ok();
+    if config.sonar.enabled && discovery.reachable {
+        ctx.daemon.spawn_sonar_auto_provision();
+    }
+    let setup = sonar_setup_status(&config, &ctx.daemon.project_root, discovery.reachable).await;
     Json(serde_json::json!({ "discovery": discovery, "setup": setup }))
 }
 
-async fn handle_sonar_setup(State(s): State<ShipApiState>) -> impl IntoResponse {
-    let config = s.daemon.config().await;
-    match sonar_setup_status(&config, &s.daemon.project_root).await {
-        Ok(setup) => Json(serde_json::json!({ "ok": true, "setup": setup })).into_response(),
-        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })).into_response(),
+async fn handle_sonar_setup(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ctx = ship_ctx(&hub).await;
+    let config = ctx.daemon.config().await;
+    let discovery = sonar_discovery(&config).await;
+    match sonar_setup_status(&config, &ctx.daemon.project_root, discovery.reachable).await {
+        Some(setup) => Json(serde_json::json!({ "ok": true, "setup": setup })).into_response(),
+        None => Json(serde_json::json!({
+            "ok": true,
+            "setup": null,
+            "message": "SonarQube is not reachable",
+        }))
+        .into_response(),
     }
 }
 
-async fn handle_sonar_bootstrap(State(s): State<ShipApiState>) -> impl IntoResponse {
-    if s.readonly {
+#[derive(Debug, Deserialize)]
+struct SonarValidateLoginBody {
+    host: String,
+    admin_user: String,
+    admin_password: String,
+}
+
+async fn handle_sonar_validate_login(Json(body): Json<SonarValidateLoginBody>) -> impl IntoResponse {
+    match validate_sonar_login(&body.host, &body.admin_user, &body.admin_password).await {
+        Ok(valid) => Json(serde_json::json!({
+            "ok": true,
+            "reachable": true,
+            "valid": valid,
+            "message": if valid {
+                "Login successful"
+            } else {
+                "Invalid username or password"
+            },
+        }))
+        .into_response(),
+        Err(e) if e.contains("not reachable") => Json(serde_json::json!({
+            "ok": true,
+            "reachable": false,
+            "valid": false,
+            "message": e,
+        }))
+        .into_response(),
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "error": e,
+        }))
+        .into_response(),
+    }
+}
+
+async fn handle_sonar_validate_token(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ctx = ship_ctx(&hub).await;
+    let config = ctx.daemon.config().await;
+    let discovery = sonar_discovery(&config).await;
+    if !discovery.reachable {
+        return Json(serde_json::json!({
+            "ok": true,
+            "reachable": false,
+            "configured": false,
+            "valid": false,
+            "message": "SonarQube is not reachable",
+        }))
+        .into_response();
+    }
+
+    let token = read_sonar_token(&ctx.daemon.project_root, &config.sonar.token_env);
+    let Some(token) = token else {
+        return Json(serde_json::json!({
+            "ok": true,
+            "reachable": true,
+            "configured": false,
+            "valid": false,
+            "message": "No scanner token — run Setup project & token",
+        }))
+        .into_response();
+    };
+
+    let valid = validate_sonar_token(&config.sonar.host, &token).await;
+    Json(serde_json::json!({
+        "ok": true,
+        "reachable": true,
+        "configured": true,
+        "valid": valid,
+        "message": if valid {
+            "Scanner token is valid"
+        } else {
+            "Scanner token rejected by SonarQube — run Setup project & token to regenerate"
+        },
+    }))
+    .into_response()
+}
+
+async fn handle_sonar_regenerate_token(State(hub): State<WebHub>) -> impl IntoResponse {
+    if hub.readonly {
         return readonly_err().into_response();
     }
-    let config = s.daemon.config().await;
-    let bootstrap_cfg = SonarBootstrapConfig::from_sonar(
-        &config.sonar.host,
-        &config.sonar.project_key,
-        &config.sonar.token_env,
+    let ctx = ship_ctx(&hub).await;
+    let config = ctx.daemon.config().await;
+    let bootstrap_cfg = SonarBootstrapConfig::resolve_for_project(
+        &config.sonar,
+        &ctx.daemon.project_root,
     );
-    match bootstrap_sonar(&bootstrap_cfg, &s.daemon.project_root).await {
+
+    match regenerate_sonar_token(&bootstrap_cfg, &ctx.daemon.project_root).await {
         Ok(result) => {
-            let setup = sonar_setup_status(&config, &s.daemon.project_root)
-                .await
-                .ok();
+            let discovery = sonar_discovery(&config).await;
+            let setup = sonar_setup_status(&config, &ctx.daemon.project_root, discovery.reachable).await;
             Json(serde_json::json!({
                 "ok": true,
                 "result": result,
@@ -210,17 +414,63 @@ async fn handle_sonar_bootstrap(State(s): State<ShipApiState>) -> impl IntoRespo
     }
 }
 
-async fn handle_sonar_install(State(s): State<ShipApiState>) -> impl IntoResponse {
-    if s.readonly {
+async fn handle_sonar_bootstrap(State(hub): State<WebHub>) -> impl IntoResponse {
+    if hub.readonly {
         return readonly_err().into_response();
     }
-    let mut config = s.daemon.config().await;
+    let ctx = ship_ctx(&hub).await;
+    ctx.daemon.reload_config().await;
+    let mut config = ctx.daemon.config().await;
+    let bootstrap_cfg = SonarBootstrapConfig::resolve_for_project(
+        &config.sonar,
+        &ctx.daemon.project_root,
+    );
+
+    if config.sonar.project_key != bootstrap_cfg.project_key {
+        config.sonar.project_key = bootstrap_cfg.project_key.clone();
+        if let Err(e) = ctx.daemon.set_config(config.clone()).await {
+            return Json(serde_json::json!({ "ok": false, "error": e })).into_response();
+        }
+    }
+
+    let repo_names = sonar_repo_names(&config, &ctx.daemon.project_root).await;
+    match bootstrap_sonar(
+        &bootstrap_cfg,
+        &ctx.daemon.project_root,
+        &repo_names,
+        Some(&config.sonar),
+    )
+    .await {
+        Ok(result) => {
+            config.sonar.enabled = true;
+            if let Err(e) = ctx.daemon.set_config(config.clone()).await {
+                return Json(serde_json::json!({ "ok": false, "error": e })).into_response();
+            }
+            let setup = sonar_setup_status(&config, &ctx.daemon.project_root, true).await;
+            Json(serde_json::json!({
+                "ok": true,
+                "result": result,
+                "setup": setup,
+                "config": config,
+            }))
+            .into_response()
+        }
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })).into_response(),
+    }
+}
+
+async fn handle_sonar_install(State(hub): State<WebHub>) -> impl IntoResponse {
+    if hub.readonly {
+        return readonly_err().into_response();
+    }
+    let ctx = ship_ctx(&hub).await;
+    let mut config = ctx.daemon.config().await;
     config.sonar.enabled = true;
     let log = InstallLog::new();
     let result = install_sonar_with_log(&mut config, &log).await;
     match result {
         Ok(discovery) => {
-            let _ = s.daemon.set_config(config).await;
+            let _ = ctx.daemon.set_config(config).await;
             Json(serde_json::json!({
                 "ok": true,
                 "discovery": discovery,
@@ -238,28 +488,29 @@ async fn handle_sonar_install(State(s): State<ShipApiState>) -> impl IntoRespons
 }
 
 async fn handle_sonar_install_stream(
-    State(s): State<ShipApiState>,
+    State(hub): State<WebHub>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    sonar_operation_stream(s, SonarOp::Install).await
+    sonar_operation_stream(hub, SonarOp::Install).await
 }
 
 async fn handle_sonar_start_stream(
-    State(s): State<ShipApiState>,
+    State(hub): State<WebHub>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    sonar_operation_stream(s, SonarOp::Start).await
+    sonar_operation_stream(hub, SonarOp::Start).await
 }
 
 async fn handle_sonar_stop_stream(
-    State(s): State<ShipApiState>,
+    State(hub): State<WebHub>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    sonar_operation_stream(s, SonarOp::Stop).await
+    sonar_operation_stream(hub, SonarOp::Stop).await
 }
 
-async fn handle_sonar_stop(State(s): State<ShipApiState>) -> impl IntoResponse {
-    if s.readonly {
+async fn handle_sonar_stop(State(hub): State<WebHub>) -> impl IntoResponse {
+    if hub.readonly {
         return readonly_err().into_response();
     }
-    let config = s.daemon.config().await;
+    let ctx = ship_ctx(&hub).await;
+    let config = ctx.daemon.config().await;
     let log = InstallLog::new();
     match stop_sonar_with_log(&config, &log).await {
         Ok(discovery) => Json(serde_json::json!({
@@ -277,6 +528,125 @@ async fn handle_sonar_stop(State(s): State<ShipApiState>) -> impl IntoResponse {
     }
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct SonarScanBody {
+    project_key: Option<String>,
+}
+
+async fn handle_sonar_scan_stream(
+    State(hub): State<WebHub>,
+    body: Option<Json<SonarScanBody>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let project_key = body.map(|b| b.project_key.clone()).unwrap_or_default();
+    sonar_scan_stream(hub, project_key).await
+}
+
+async fn handle_sonar_scan(
+    State(hub): State<WebHub>,
+    body: Option<Json<SonarScanBody>>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return readonly_err().into_response();
+    }
+    let ctx = ship_ctx(&hub).await;
+    let log = InstallLog::new();
+    let mut config = ctx.daemon.config().await;
+    let project_key = body.and_then(|b| b.project_key.clone());
+    match scan_sonar_with_log(
+        &mut config,
+        &ctx.daemon.project_root,
+        &log,
+        project_key.as_deref(),
+    )
+    .await {
+        Ok(gate) => {
+            let _ = ctx.daemon.set_config(config).await;
+            Json(serde_json::json!({
+                "ok": true,
+                "quality_gate": gate,
+                "logs": log.lines(),
+            }))
+            .into_response()
+        }
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "error": e,
+            "logs": log.lines(),
+        }))
+        .into_response(),
+    }
+}
+
+async fn sonar_scan_stream(
+    hub: WebHub,
+    project_key: Option<String>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let ctx = ship_ctx(&hub).await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let daemon = ctx.daemon.clone();
+    let readonly = hub.readonly;
+
+    tokio::spawn(async move {
+        if readonly {
+            let _ = tx.send(
+                serde_json::json!({
+                    "type": "done",
+                    "ok": false,
+                    "error": "read-only mode (AX_WEB_READONLY=1)",
+                    "logs": [],
+                })
+                .to_string(),
+            );
+            return;
+        }
+
+        let log = InstallLog::with_stream(tx.clone());
+        let mut config = daemon.config().await;
+        match scan_sonar_with_log(
+            &mut config,
+            &daemon.project_root,
+            &log,
+            project_key.as_deref(),
+        )
+        .await {
+            Ok(gate) => {
+                let _ = daemon.set_config(config).await;
+                let _ = tx.send(
+                    serde_json::json!({
+                        "type": "done",
+                        "ok": true,
+                        "quality_gate": gate,
+                        "logs": log.lines(),
+                    })
+                    .to_string(),
+                );
+            }
+            Err(e) => {
+                let _ = tx.send(
+                    serde_json::json!({
+                        "type": "done",
+                        "ok": false,
+                        "error": e,
+                        "logs": log.lines(),
+                    })
+                    .to_string(),
+                );
+            }
+        }
+    });
+
+    let stream = async_stream::stream! {
+        while let Some(data) = rx.recv().await {
+            let is_done = data.contains("\"type\":\"done\"");
+            yield Ok(Event::default().data(data));
+            if is_done {
+                break;
+            }
+        }
+    };
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 enum SonarOp {
     Install,
     Start,
@@ -284,12 +654,13 @@ enum SonarOp {
 }
 
 async fn sonar_operation_stream(
-    s: ShipApiState,
+    hub: WebHub,
     op: SonarOp,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let ctx = ship_ctx(&hub).await;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let daemon = s.daemon.clone();
-    let readonly = s.readonly;
+    let daemon = ctx.daemon.clone();
+    let readonly = hub.readonly;
 
     tokio::spawn(async move {
         if readonly {
@@ -320,6 +691,9 @@ async fn sonar_operation_stream(
             Ok(discovery) => {
                 if matches!(op, SonarOp::Install) {
                     let _ = daemon.set_config(config).await;
+                }
+                if matches!(op, SonarOp::Install | SonarOp::Start) {
+                    daemon.spawn_sonar_auto_provision();
                 }
                 let _ = tx.send(
                     serde_json::json!({
@@ -357,11 +731,12 @@ async fn sonar_operation_stream(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-async fn handle_sonar_start(State(s): State<ShipApiState>) -> impl IntoResponse {
-    if s.readonly {
+async fn handle_sonar_start(State(hub): State<WebHub>) -> impl IntoResponse {
+    if hub.readonly {
         return readonly_err().into_response();
     }
-    let config = s.daemon.config().await;
+    let ctx = ship_ctx(&hub).await;
+    let config = ctx.daemon.config().await;
     let log = InstallLog::new();
     match start_sonar_with_log(&config, &log).await {
         Ok(discovery) => Json(serde_json::json!({
@@ -393,21 +768,28 @@ async fn sonar_discovery(config: &ShipConfig) -> ax_quality::SonarDiscovery {
     discover_sonar(&config.sonar.host, name, pref)
 }
 
+async fn sonar_repo_names(config: &ShipConfig, project_root: &std::path::Path) -> Vec<String> {
+    ax_ship::resolve_sonar_repo_names(project_root, config)
+}
+
 async fn sonar_setup_status(
     config: &ShipConfig,
     project_root: &std::path::Path,
-) -> Result<ax_quality::SonarSetupStatus, String> {
-    let bootstrap_cfg = SonarBootstrapConfig::from_sonar(
-        &config.sonar.host,
-        &config.sonar.project_key,
-        &config.sonar.token_env,
-    );
+    reachable: bool,
+) -> Option<ax_quality::SonarSetupStatus> {
+    if !reachable {
+        return None;
+    }
+    let bootstrap_cfg = SonarBootstrapConfig::resolve_for_project(&config.sonar, project_root);
+    let repo_names = sonar_repo_names(config, project_root).await;
     inspect_setup(
         &bootstrap_cfg,
         project_root,
         &config.sonar.scanner_path,
+        &repo_names,
     )
     .await
+    .ok()
 }
 
 async fn install_sonar_with_log(
@@ -455,6 +837,45 @@ async fn stop_sonar_with_log(
         .as_deref()
         .unwrap_or("sonarqube");
     stop_sonar_container_with_log(&config.sonar.host, name, log).await
+}
+
+async fn scan_sonar_with_log(
+    config: &mut ShipConfig,
+    project_root: &std::path::Path,
+    log: &InstallLog,
+    project_key: Option<&str>,
+) -> Result<ax_quality::QualityGateResult, String> {
+    config.sonar.enabled = true;
+    let mut repo_names = sonar_repo_names(config, project_root).await;
+    if let Some(key) = project_key.filter(|k| !k.trim().is_empty()) {
+        let bootstrap_cfg =
+            SonarBootstrapConfig::resolve_for_project(&config.sonar, project_root);
+        let workspace_key = ax_quality::workspace_sonar_key(&bootstrap_cfg.project_key, project_root);
+        let multi_repo = repo_names.len() > 1;
+        repo_names.retain(|repo| {
+            ax_quality::canonical_repo_project_key(&workspace_key, repo, multi_repo) == key
+        });
+        if repo_names.is_empty() {
+            return Err(format!("Unknown Sonar project key '{key}'"));
+        }
+        log.push(format!("Scanning SonarQube project {key} ({})…", repo_names[0]));
+    } else if repo_names.is_empty() {
+        log.push("No child git repositories — scanning workspace as a single SonarQube project.");
+    } else {
+        log.push(format!(
+            "Preparing {} SonarQube project(s): {}",
+            repo_names.len(),
+            repo_names.join(", ")
+        ));
+    }
+    ensure_sonar_stack_online(&config.sonar, log).await?;
+    ensure_sonar_ready_for_scan(&config.sonar, project_root, &repo_names).await?;
+    let client = SonarClient::new(config.sonar.clone());
+    log.push("Ensuring SonarQube is running…");
+    client.ensure_running().await?;
+    client.run_full_scan_with_log(project_root, &repo_names, log)?;
+    log.push("Fetching quality gate status…");
+    client.fetch_quality_gate(project_root, &repo_names).await
 }
 
 async fn validate_config_change(current: &ShipConfig, next: &ShipConfig) -> Result<(), String> {

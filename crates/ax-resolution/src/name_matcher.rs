@@ -47,7 +47,13 @@ impl NameMatcher {
         if let Some(hit) = self.cache.get(name) {
             return hit.clone();
         }
-        let nodes = queries.get_nodes_by_name(name).await.unwrap_or_default();
+        let nodes = match queries.get_nodes_by_name(name).await {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                tracing::warn!("name lookup failed for {name:?}: {e}");
+                return Vec::new();
+            }
+        };
         self.cache.put(name.to_string(), nodes.clone());
         nodes
     }

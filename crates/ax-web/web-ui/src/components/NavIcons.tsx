@@ -1,64 +1,30 @@
-import type { ReactNode } from 'react';
+import Codicon from './Codicon';
 
-type NavId = 'stats' | 'nodes' | 'files' | 'search' | 'tokens' | 'ship' | 'settings' | 'policy-rules' | 'policy-skills';
+type NavId = 'stats' | 'nodes' | 'files' | 'search' | 'memory' | 'savings' | 'ship' | 'sonar' | 'agent' | 'settings' | 'policy-rules' | 'policy-skills';
 
 export type { NavId };
 
+const NAV_CODICONS: Record<NavId, string> = {
+  stats: 'graph',
+  nodes: 'symbol-class',
+  files: 'files',
+  search: 'search',
+  memory: 'lightbulb',
+  savings: 'dashboard',
+  ship: 'rocket',
+  sonar: 'shield',
+  agent: 'terminal',
+  settings: 'settings-gear',
+  'policy-rules': 'law',
+  'policy-skills': 'mortar-board',
+};
+
 export function NavIcon({ id }: { id: NavId }) {
-  const icons: Record<NavId, ReactNode> = {
-    stats: (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M2 13V8h3v5H2zm4 0V3h3v10H6zm4 0V6h3v7h-3z" />
-      </svg>
-    ),
-    nodes: (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <circle cx="3" cy="8" r="2" />
-        <circle cx="13" cy="3" r="2" />
-        <circle cx="13" cy="13" r="2" />
-        <path d="M5 8h6M8.5 4.5L11 11.5" stroke="currentColor" strokeWidth="1" fill="none" />
-      </svg>
-    ),
-    files: (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 3.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" />
-      </svg>
-    ),
-    search: (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M11.742 10.344a6.5 6.5 0 10-1.397 1.398l3.85 3.85a1 1 0 001.415-1.414l-3.868-3.834zM12 6.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
-      </svg>
-    ),
-    tokens: (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zm0 1a5.5 5.5 0 110 11 5.5 5.5 0 010-11z" />
-        <path d="M8 4.5v3.25L10.5 9" stroke="currentColor" strokeWidth="1.2" fill="none" />
-      </svg>
-    ),
-    ship: (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M1 11.5a1.5 1.5 0 001.5 1.5h11a1.5 1.5 0 001.5-1.5V9H1v2.5zM2 8h12L10 3H6L2 8z" />
-      </svg>
-    ),
-    settings: (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M8 4.754a3.246 3.246 0 100 6.492 3.246 3.246 0 000-6.492zM5.754 8a2.246 2.246 0 114.492 0 2.246 2.246 0 01-4.492 0z" />
-        <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 01-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 01-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 01.52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 011.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 011.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 01.52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 01-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 01-1.255-.52l-.094-.319z" />
-      </svg>
-    ),
-    'policy-rules': (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5.5a.5.5 0 01.5-.5h7a.5.5 0 010 1h-7a.5.5 0 01-.5-.5zm0 3a.5.5 0 01.5-.5h5a.5.5 0 010 1h-5a.5.5 0 01-.5-.5z" />
-      </svg>
-    ),
-    'policy-skills': (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M2 2.5A1.5 1.5 0 013.5 1h4.793a1 1 0 01.707.293l2.707 2.707A1 1 0 0112 5.414V13.5A1.5 1.5 0 0110.5 15h-8A1.5 1.5 0 011 13.5v-11zM3.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h7a.5.5 0 00.5-.5V5.914L8.586 2H3.5z" />
-        <path d="M5 7.5a.5.5 0 01.5-.5h5a.5.5 0 010 1h-5a.5.5 0 01-.5-.5zm0 2.5a.5.5 0 01.5-.5h3a.5.5 0 010 1h-3a.5.5 0 01-.5-.5z" />
-      </svg>
-    ),
-  };
-  return <span className="nav-icon">{icons[id]}</span>;
+  return (
+    <span className="nav-icon">
+      <Codicon name={NAV_CODICONS[id]} />
+    </span>
+  );
 }
 
 export const PAGE_LABELS: Record<string, string> = {
@@ -66,8 +32,12 @@ export const PAGE_LABELS: Record<string, string> = {
   nodes: 'Nodes',
   files: 'Files',
   search: 'Search',
-  tokens: 'Tokens',
+  memory: 'Memory',
+  unresolved: 'Unresolved',
+  savings: 'Savings',
   ship: 'Command Center',
+  sonar: 'SonarQube',
+  agent: 'Agent',
   settings: 'Settings',
   'policy-rules': 'Rules',
   'policy-rule-edit': 'Rule editor',

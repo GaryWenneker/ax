@@ -22,11 +22,9 @@ impl GraphTraverser {
         options: TraversalOptions,
     ) -> Result<Subgraph, ax_utils::errors::AxError> {
         let opts = merge_options(options);
-        let start = self.queries.get_node_by_id(start_id).await?;
-        if start.is_none() {
+        let Some(start_node) = self.queries.get_node_by_id(start_id).await? else {
             return Ok(Subgraph::default());
-        }
-        let start_node = start.unwrap();
+        };
 
         let mut nodes = HashMap::new();
         let mut edges = Vec::new();
@@ -71,28 +69,42 @@ impl GraphTraverser {
                 TraversalDirection::Incoming | TraversalDirection::Both
             );
 
+            // Collect neighbor edges first, then resolve all neighbor nodes in
+            // one batched query instead of one round trip per edge (N+1 fix).
+            let mut neighbor_edges: Vec<(String, Edge)> = Vec::new();
+
             if follow_outgoing {
                 let outgoing = self.queries.get_outgoing_edges(&node.id, edge_kinds).await?;
                 for e in outgoing {
-                    if let Some(target) = self.queries.get_node_by_id(&e.target).await? {
-                        if filter_node(&target, &opts) {
-                            queue.push_back((target, e, depth + 1));
-                        }
-                    }
+                    neighbor_edges.push((e.target.clone(), e));
                 }
             }
 
             if follow_incoming {
                 let incoming = self.queries.get_incoming_edges(&node.id).await?;
-                let incoming: Vec<Edge> = if let Some(kinds) = edge_kinds {
-                    incoming.into_iter().filter(|e| kinds.contains(&e.kind)).collect()
-                } else {
-                    incoming
-                };
                 for e in incoming {
-                    if let Some(source) = self.queries.get_node_by_id(&e.source).await? {
-                        if filter_node(&source, &opts) {
-                            queue.push_back((source, e, depth + 1));
+                    if edge_kinds.map_or(true, |kinds| kinds.contains(&e.kind)) {
+                        neighbor_edges.push((e.source.clone(), e));
+                    }
+                }
+            }
+
+            if !neighbor_edges.is_empty() {
+                let ids: Vec<String> = {
+                    let mut seen = HashSet::new();
+                    neighbor_edges
+                        .iter()
+                        .filter(|(id, _)| !visited.contains(id) && seen.insert(id.clone()))
+                        .map(|(id, _)| id.clone())
+                        .collect()
+                };
+                let fetched = self.queries.get_nodes_by_ids(&ids).await?;
+                let by_id: HashMap<String, Node> =
+                    fetched.into_iter().map(|n| (n.id.clone(), n)).collect();
+                for (id, e) in neighbor_edges {
+                    if let Some(neighbor) = by_id.get(&id) {
+                        if filter_node(neighbor, &opts) {
+                            queue.push_back((neighbor.clone(), e, depth + 1));
                         }
                     }
                 }
@@ -167,13 +179,8 @@ impl GraphTraverser {
 
     pub async fn get_children(&self, node_id: &str) -> Result<Vec<Node>, ax_utils::errors::AxError> {
         let edges = self.queries.get_outgoing_edges(node_id, Some(&[EdgeKind::Contains])).await?;
-        let mut children = Vec::new();
-        for e in edges {
-            if let Some(n) = self.queries.get_node_by_id(&e.target).await? {
-                children.push(n);
-            }
-        }
-        Ok(children)
+        let ids: Vec<String> = edges.into_iter().map(|e| e.target).collect();
+        self.queries.get_nodes_by_ids(&ids).await
     }
 }
 

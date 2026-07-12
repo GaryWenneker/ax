@@ -1,6 +1,6 @@
 [package]
 name = "ax-web"
-version = "2.1.5"
+version = "2.1.6"
 edition = "2021"
 
 [dependencies]
@@ -10,16 +10,30 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 include_dir = "0.7"
 mime_guess = "2"
+ax-utils = { workspace = true }
+ax-db = { workspace = true }
+ax-resolution = { workspace = true }
 ax-policy = { workspace = true }
+ax-memory = { workspace = true }
 ax-ship = { workspace = true }
 ax-git = { workspace = true }
 ax-quality = { workspace = true }
 ax-remote = { workspace = true }
 ax-usage = { workspace = true }
+ax-installer = { workspace = true }
+ax-agent = { workspace = true }
+ax-reasoning = { workspace = true }
+dirs = { workspace = true }
+reqwest = { workspace = true }
 futures-util = { workspace = true }
 async-stream = { workspace = true }
+base64 = "0.22"
+portable-pty = "0.8"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

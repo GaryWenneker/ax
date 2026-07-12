@@ -1,0 +1,17 @@
+[package]
+name = "ax-memory"
+version = "2.1.6"
+edition = "2021"
+
+[dependencies]
+ax-utils = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+ax-db = { workspace = true }
+tempfile = "3"

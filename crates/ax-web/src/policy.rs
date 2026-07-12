@@ -13,6 +13,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::workspace_state::WebHub;
+
 #[derive(Clone)]
 pub struct PolicyApiState {
     pub store: Arc<PolicyStore>,
@@ -45,7 +47,7 @@ pub struct MatchPayload {
     pub files: Vec<String>,
 }
 
-pub fn router(state: PolicyApiState) -> Router {
+pub fn router_hub(hub: WebHub) -> Router {
     Router::new()
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", get(get_rule).put(update_rule).delete(delete_rule))
@@ -55,118 +57,128 @@ pub fn router(state: PolicyApiState) -> Router {
         .route("/capture", post(capture_prompt))
         .route("/reindex", post(reindex))
         .route("/export", post(export_policy))
-        .with_state(state)
+        .with_state(hub)
 }
 
-async fn list_rules(State(s): State<PolicyApiState>) -> impl IntoResponse {
-    match s.store.list_rules().await {
+async fn list_rules(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match ws.policy.store.list_rules().await {
         Ok(rules) => (StatusCode::OK, Json(serde_json::json!({ "rules": rules }))).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn get_rule(State(s): State<PolicyApiState>, Path(id): Path<String>) -> impl IntoResponse {
-    match s.store.get_rule_doc(&id).await {
-        Ok(Some(doc)) => (StatusCode::OK, Json(serde_json::to_value(doc).unwrap())).into_response(),
+async fn get_rule(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match ws.policy.store.get_rule_doc(&id).await {
+        Ok(Some(doc)) => (StatusCode::OK, Json(doc)).into_response(),
         Ok(None) => err(StatusCode::NOT_FOUND, "not found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
 async fn create_rule(
-    State(s): State<PolicyApiState>,
+    State(hub): State<WebHub>,
     Json(payload): Json<RulePayload>,
 ) -> impl IntoResponse {
-    if s.readonly {
+    if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
-    match s.store.save_rule(payload.frontmatter, payload.body).await {
-        Ok(doc) => (StatusCode::CREATED, Json(serde_json::to_value(doc).unwrap())).into_response(),
+    let ws = hub.read().await;
+    match ws.policy.store.save_rule(payload.frontmatter, payload.body).await {
+        Ok(doc) => (StatusCode::CREATED, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }
 }
 
 async fn update_rule(
-    State(s): State<PolicyApiState>,
+    State(hub): State<WebHub>,
     Path(id): Path<String>,
     Json(payload): Json<RulePayload>,
 ) -> impl IntoResponse {
-    if s.readonly {
+    if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     if payload.frontmatter.id != id {
         return err(StatusCode::BAD_REQUEST, "id mismatch");
     }
-    match s.store.save_rule(payload.frontmatter, payload.body).await {
-        Ok(doc) => (StatusCode::OK, Json(serde_json::to_value(doc).unwrap())).into_response(),
+    let ws = hub.read().await;
+    match ws.policy.store.save_rule(payload.frontmatter, payload.body).await {
+        Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }
 }
 
-async fn delete_rule(State(s): State<PolicyApiState>, Path(id): Path<String>) -> impl IntoResponse {
-    if s.readonly {
+async fn delete_rule(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+    if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
-    match s.store.delete_rule(&id).await {
+    let ws = hub.read().await;
+    match ws.policy.store.delete_rule(&id).await {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "not found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn list_skills(State(s): State<PolicyApiState>) -> impl IntoResponse {
-    match s.store.list_skills().await {
+async fn list_skills(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match ws.policy.store.list_skills().await {
         Ok(skills) => (StatusCode::OK, Json(serde_json::json!({ "skills": skills }))).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn get_skill(State(s): State<PolicyApiState>, Path(name): Path<String>) -> impl IntoResponse {
-    match s.store.get_skill_doc(&name).await {
-        Ok(Some(doc)) => (StatusCode::OK, Json(serde_json::to_value(doc).unwrap())).into_response(),
+async fn get_skill(State(hub): State<WebHub>, Path(name): Path<String>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match ws.policy.store.get_skill_doc(&name).await {
+        Ok(Some(doc)) => (StatusCode::OK, Json(doc)).into_response(),
         Ok(None) => err(StatusCode::NOT_FOUND, "not found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
 async fn create_skill(
-    State(s): State<PolicyApiState>,
+    State(hub): State<WebHub>,
     Json(payload): Json<SkillPayload>,
 ) -> impl IntoResponse {
-    if s.readonly {
+    if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
-    match s.store.save_skill(payload.frontmatter, payload.body).await {
-        Ok(doc) => (StatusCode::CREATED, Json(serde_json::to_value(doc).unwrap())).into_response(),
+    let ws = hub.read().await;
+    match ws.policy.store.save_skill(payload.frontmatter, payload.body).await {
+        Ok(doc) => (StatusCode::CREATED, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }
 }
 
 async fn update_skill(
-    State(s): State<PolicyApiState>,
+    State(hub): State<WebHub>,
     Path(name): Path<String>,
     Json(payload): Json<SkillPayload>,
 ) -> impl IntoResponse {
-    if s.readonly {
+    if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     if payload.frontmatter.name != name {
         return err(StatusCode::BAD_REQUEST, "name mismatch");
     }
-    match s.store.save_skill(payload.frontmatter, payload.body).await {
-        Ok(doc) => (StatusCode::OK, Json(serde_json::to_value(doc).unwrap())).into_response(),
+    let ws = hub.read().await;
+    match ws.policy.store.save_skill(payload.frontmatter, payload.body).await {
+        Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }
 }
 
 async fn delete_skill(
-    State(s): State<PolicyApiState>,
+    State(hub): State<WebHub>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    if s.readonly {
+    if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
-    match s.store.delete_skill(&name).await {
+    let ws = hub.read().await;
+    match ws.policy.store.delete_skill(&name).await {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "not found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -174,17 +186,18 @@ async fn delete_skill(
 }
 
 async fn match_prompt(
-    State(s): State<PolicyApiState>,
+    State(hub): State<WebHub>,
     Json(payload): Json<MatchPayload>,
 ) -> impl IntoResponse {
+    let ws = hub.read().await;
     let input = MatchInput {
         prompt: payload.prompt,
-        cwd: s.store.project_root().to_path_buf(),
+        cwd: ws.policy.store.project_root().to_path_buf(),
         open_files: payload.files.iter().map(std::path::PathBuf::from).collect(),
         changed_files: vec![],
     };
-    match ax_policy::match_policy(s.store.pool(), &input).await {
-        Ok(result) => (StatusCode::OK, Json(serde_json::to_value(result).unwrap())).into_response(),
+    match ax_policy::match_policy(ws.policy.store.pool(), &input).await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -205,21 +218,22 @@ fn default_capture_action() -> String {
 }
 
 async fn capture_prompt(
-    State(s): State<PolicyApiState>,
+    State(hub): State<WebHub>,
     Json(payload): Json<CapturePayload>,
 ) -> impl IntoResponse {
+    let ws = hub.read().await;
     if payload.action == "save" {
-        if s.readonly {
+        if hub.readonly {
             return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
         }
         let rule = match payload.rule {
             Some(r) => r,
             None => return err(StatusCode::BAD_REQUEST, "rule required for save action"),
         };
-        match s.store.save_rule(rule.frontmatter.clone(), rule.body).await {
+        match ws.policy.store.save_rule(rule.frontmatter.clone(), rule.body).await {
             Ok(doc) => {
                 let id = doc.frontmatter.id.clone();
-                let storage = match s.store.storage() {
+                let storage = match ws.policy.store.storage() {
                     ax_policy::PolicyStorage::Database => "database",
                     ax_policy::PolicyStorage::Files => "files",
                 };
@@ -252,7 +266,7 @@ async fn capture_prompt(
                 .into_response();
         }
 
-        let existing = match s.store.list_rules().await {
+        let existing = match ws.policy.store.list_rules().await {
             Ok(rules) => rules.into_iter().map(|r| r.id).collect::<Vec<_>>(),
             Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         };
@@ -289,25 +303,27 @@ fn default_export_dir() -> String {
 }
 
 async fn export_policy(
-    State(s): State<PolicyApiState>,
+    State(hub): State<WebHub>,
     Json(payload): Json<ExportPayload>,
 ) -> impl IntoResponse {
-    if s.readonly {
+    if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
-    let out = s.store.project_root().join(&payload.out_dir);
-    match s.store.export_to_files(&out).await {
-        Ok(r) => (StatusCode::OK, Json(serde_json::to_value(r).unwrap())).into_response(),
+    let ws = hub.read().await;
+    let out = ws.policy.store.project_root().join(&payload.out_dir);
+    match ws.policy.store.export_to_files(&out).await {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn reindex(State(s): State<PolicyApiState>) -> impl IntoResponse {
-    if s.readonly {
+async fn reindex(State(hub): State<WebHub>) -> impl IntoResponse {
+    if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
-    match s.store.reindex(true).await {
-        Ok(r) => (StatusCode::OK, Json(serde_json::to_value(r).unwrap())).into_response(),
+    let ws = hub.read().await;
+    match ws.policy.store.reindex(true).await {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }

@@ -1,13 +1,15 @@
-# ax — local intelligence for AI agents
+# ax — Graph it. Remember it. Ship it.
 
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.1.4](https://github.com/GaryWenneker/ax/releases/tag/v2.1.4)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.1.6](https://github.com/GaryWenneker/ax/releases/tag/v2.1.6)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
-**ax** is local-first intelligence for AI coding agents: a **knowledge graph** (tree-sitter → SQLite), a **policy engine** (`.ax/policy/` rules and skills), and a **Command Center** (quality gates, test-impact, draft PRs) — one Rust binary, CLI + MCP.
+**ax** is local-first intelligence for AI coding agents: a **knowledge graph** (tree-sitter → SQLite), a **memory vault** (decisions, git auto-capture, hybrid recall), a **policy engine** (`.ax/policy/` rules and skills), and a **Command Center** (quality gates, SonarQube, token savings, draft PRs) — one Rust binary, CLI + MCP.
 
-**v2.1.4** adds **per-model token usage tracking** — offload calls are stored in `~/.ax/usage.db`, queryable via `ax tokens` and the **Tokens** page in `ax web` (week, month-to-date, month, year, custom range).
+**v2.1.6** adds the **memory vault** — `ax remember`, `ax recall`, `ax capture-git`, MCP `ax_remember` / `ax_recall`, Command Center **Memory** page, git-hook auto-capture on commit, and hybrid FTS5 + vector recall injected via `ax_preflight`. **Savings** leaves beta with real BPE token counts and dollar estimates.
+
+**v2.1.5** adds **context-token savings tracking** — each MCP graph call logs estimated savings vs reading full files in `~/.ax/usage.db`. Query via `ax savings` and the **Savings** page in `ax web`. Import Cursor / Claude Code session logs with `ax savings import --all`.
 
 **v2.1.3** adds **`ax policy storage status`** — explicit subcommand to show effective storage mode (project + global config paths and values).
 
@@ -125,7 +127,7 @@ Some dynamic boundaries (callbacks, observers) are bridged by **synthesizers** s
 
 ### 4. Auto-sync
 
-`ax sync` incrementally re-indexes changed files. `ax sync --watch` (or `ax watch`) debounces filesystem events via `notify` and keeps the graph current. Git hooks (`post-commit`, `post-merge`, `post-checkout`) can trigger sync automatically after `ax init`.
+`ax sync` incrementally re-indexes changed files. `ax sync --watch` (or `ax watch`) debounces filesystem events via `notify` and keeps the graph current. Git hooks (`post-commit`, `post-merge`, `post-checkout`) run sync, ship evaluation, and memory capture automatically after `ax init`.
 
 ---
 
@@ -151,6 +153,10 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax callers <symbol>` | Who calls this symbol? |
 | `ax callees <symbol>` | What does this symbol call? |
 | `ax impact <symbol>` | Blast-radius subgraph |
+| `ax remember <text>` | Store a durable project memory (decision, fix, convention) |
+| `ax recall <query>` | Hybrid search (FTS + vectors) over project memories |
+| `ax capture-git` | Mine recent git commits into memories |
+| `ax savings` | Context-token and cost savings summary |
 | `ax affected <files…>` | Tests affected by file changes |
 | `ax diff --base main` | Git diff symbol blast radius |
 | `ax test-impact --base main` | Test-function impact via graph |
@@ -212,6 +218,8 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 | `ax_callees` | Outgoing call edges |
 | `ax_impact` | Blast-radius subgraph |
 | `ax_affected` | Reverse impact → affected tests |
+| `ax_remember` | Store a durable project memory (flags near-duplicates) |
+| `ax_recall` | Hybrid memory search (FTS5 + local vector embeddings) |
 | `ax_preflight` | Turn-start policy: matched rules + skills (when `.ax/policy/` exists) |
 | `ax_rules` | List or match policy rules |
 | `ax_skill` | Load a skill by name |

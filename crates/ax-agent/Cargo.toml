@@ -1,0 +1,16 @@
+[package]
+name = "ax-agent"
+version = "2.1.6"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+ax-reasoning = { workspace = true }
+ax-installer = { workspace = true }
+ax-mcp = { workspace = true }
+ax-policy = { workspace = true }

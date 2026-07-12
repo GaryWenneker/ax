@@ -4,8 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::AxError;
 
-use crate::index::list_rules;
-use crate::matcher::match_policy;
+use crate::matcher::{cached_rules_and_skills, match_policy};
 use crate::types::{GuardOp, GuardResult, GuardViolation, MatchInput, PolicyLevel};
 
 pub async fn guard_operation(
@@ -15,7 +14,7 @@ pub async fn guard_operation(
     op: GuardOp,
     content: Option<&[u8]>,
 ) -> Result<GuardResult, AxError> {
-    let rules = list_rules(pool).await?;
+    let (rules, _skills) = cached_rules_and_skills(pool).await?;
     let mut violations = Vec::new();
 
     let rel = path
@@ -25,7 +24,7 @@ pub async fn guard_operation(
         .replace('\\', "/");
     let rel_lc = rel.to_lowercase();
 
-    for rule in &rules {
+    for rule in rules.iter() {
         if PolicyLevel::parse(&rule.level) != Some(PolicyLevel::Critical) {
             continue;
         }
@@ -131,6 +130,16 @@ mod tests {
             "CREATE TABLE policy_rules (
                 id TEXT PRIMARY KEY, level TEXT, always_apply INTEGER, globs TEXT, triggers TEXT,
                 tags TEXT, priority INTEGER, body TEXT, source_path TEXT, content_hash TEXT, updated_at INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE policy_skills (
+                name TEXT PRIMARY KEY, description TEXT, triggers TEXT, tags TEXT,
+                priority INTEGER, context_task TEXT, body TEXT, source_path TEXT,
+                content_hash TEXT, updated_at INTEGER
             )",
         )
         .execute(&pool)

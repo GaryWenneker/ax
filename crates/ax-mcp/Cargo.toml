@@ -1,6 +1,6 @@
 [package]
 name = "ax-mcp"
-version = "2.1.5"
+version = "2.1.6"
 edition = "2021"
 
 [dependencies]
@@ -8,6 +8,7 @@ ax-types = { workspace = true }
 ax-utils = { workspace = true }
 ax-core = { workspace = true }
 ax-policy = { workspace = true }
+ax-memory = { workspace = true }
 ax-extraction = { workspace = true }
 ax-context = { workspace = true }
 ax-telemetry = { workspace = true }
@@ -17,6 +18,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
+ax-usage = { workspace = true }
 async-trait = { workspace = true }
 sysinfo = "0.33"
 sha2 = "0.10"

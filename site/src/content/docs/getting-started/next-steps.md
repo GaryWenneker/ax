@@ -7,24 +7,27 @@ You've got ax installed and a graph built. Here's where to go next.
 
 ## Understand the model
 
-- [How It Works](/ax/core-concepts/how-it-works/) — the extraction → storage → resolution → sync pipeline.
-- [The Knowledge Graph](/ax/core-concepts/knowledge-graph/) — the node and edge kinds the graph is built from.
-- [Resolution & Frameworks](/ax/core-concepts/resolution/) — how references and framework routes get connected.
+- [How It Works](/core-concepts/how-it-works/) — extraction, storage, resolution, sync, policy, and memory.
+- [The Knowledge Graph](/core-concepts/knowledge-graph/) — node and edge kinds the graph is built from.
+- [Resolution & Frameworks](/core-concepts/resolution/) — how references and framework routes get connected.
 
 ## Put it to work
 
-- [Indexing a Project](/ax/guides/indexing/) — full index, incremental sync, and the file watcher.
-- [Framework Routes](/ax/guides/framework-routes/) — link URL patterns to their handlers.
-- [Affected Tests in CI](/ax/guides/affected-tests/) — run only the tests a change touches.
-- [Command Center](/ax/guides/command-center/) — quality gates, test-impact, draft PRs, and the ship dashboard.
+- [Indexing a Project](/guides/indexing/) — full index, incremental sync, and the file watcher.
+- [Memory Vault](/guides/memory/) — store decisions, hybrid recall, git auto-capture, MCP tools.
+- [Framework Routes](/guides/framework-routes/) — link URL patterns to their handlers.
+- [Affected Tests in CI](/guides/affected-tests/) — run only the tests a change touches.
+- [Command Center](/guides/command-center/) — quality gates, SonarQube, test-impact, draft PRs, and the ship dashboard.
+- [Token Savings](/guides/token-savings/) — measure context-token savings from graph queries.
+- [Agent Terminal](/guides/agent-terminal/) — run agents from Command Center with MCP wired in.
 
-## Agent instructions (v2.0.0+)
+## Agent instructions
 
 - [Policy Engine](/guides/policy-engine/) — IDE-agnostic rules and skills in `.ax/policy/`, MCP preflight, and ax web editor.
 
 ## Reference
 
-- [MCP Server](/ax/reference/mcp-server/) — the tools agents call.
-- [CLI](/ax/reference/cli/) — every command and flag.
+- [MCP Server](/reference/mcp-server/) — the tools agents call.
+- [CLI](/reference/cli/) — every command with examples.
 - [Rust API](/reference/api/) — embed ax via the `ax-core` crate.
-- [Integrations](/ax/reference/integrations/) — supported agents and manual setup.
+- [Integrations](/reference/integrations/) — supported agents and manual setup.

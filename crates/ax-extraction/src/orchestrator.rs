@@ -88,12 +88,14 @@ impl ExtractionOrchestrator {
             cb(IndexProgress { phase: IndexPhase::Scanning, current: total, total, file_path: None });
         }
         let mut tasks = Vec::new();
+        let mut content_hashes: HashMap<String, String> = HashMap::new();
         for path in &files {
             let rel = path.strip_prefix(&self.project_root).unwrap_or(path).to_string_lossy().replace('\\', "/");
             let content = ax_utils::read_text_file(path)?;
             if is_generated(&content) { continue; }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let lang = opts.custom_extensions.get(&format!(".{}", ext)).copied().or_else(|| language_for_extension(ext)).unwrap_or(Language::Unknown);
+            content_hashes.insert(rel.clone(), hash(content.as_bytes()).to_hex().to_string());
             tasks.push(ParseTask { file_path: rel, content, language: lang });
         }
 
@@ -147,7 +149,7 @@ impl ExtractionOrchestrator {
                     let meta = std::fs::metadata(&full_path).ok();
                     let size = meta.as_ref().map(|m| m.len() as i64).unwrap_or(0);
                     let modified = meta.and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(now_ms());
-                    let content_hash = hash(full_path.to_string_lossy().as_bytes()).to_hex().to_string();
+                    let content_hash = content_hashes.remove(&file_path).unwrap_or_default();
                     queries.upsert_file(&FileRecord {
                         path: file_path,
                         content_hash,
@@ -215,12 +217,28 @@ impl ExtractionOrchestrator {
 
             let size = file_size(path);
             let modified = file_mtime_ms(path).unwrap_or(0);
-            let needs_reindex = match indexed_map.get(&rel) {
-                None => true,
-                Some(rec) => rec.modified_at != modified || rec.size != size,
-            };
-            if needs_reindex {
-                changed.push(rel);
+            match indexed_map.get(&rel) {
+                None => changed.push(rel),
+                Some(rec) if rec.modified_at == modified && rec.size == size => {}
+                Some(rec) => {
+                    // mtime or size differs — compare content hashes so that
+                    // touch-only changes (branch switches, checkouts) don't
+                    // trigger a re-extraction of identical content.
+                    let same_content = !rec.content_hash.is_empty()
+                        && std::fs::read(path)
+                            .map(|bytes| hash(&bytes).to_hex().to_string() == rec.content_hash)
+                            .unwrap_or(false);
+                    if same_content {
+                        // Refresh the stamp so the fast path applies next sync.
+                        let mut refreshed = rec.clone();
+                        refreshed.modified_at = modified;
+                        refreshed.size = size;
+                        refreshed.indexed_at = now_ms();
+                        queries.upsert_file(&refreshed).await?;
+                    } else {
+                        changed.push(rel);
+                    }
+                }
             }
         }
 
@@ -270,13 +288,14 @@ impl ExtractionOrchestrator {
     ) -> Result<IndexResult, ax_utils::errors::AxError> {
         let start = Instant::now();
         let mut tasks = Vec::new();
+        let mut content_hashes: HashMap<String, String> = HashMap::new();
         for file_path in file_paths {
             let rel = file_path.replace('\\', "/");
             let full_path = self.project_root.join(&rel);
             if !full_path.is_file() {
                 continue;
             }
-            let content = ax_utils::read_text_file(&full_path).map_err(|e| ax_utils::errors::AxError::File(e))?;
+            let content = ax_utils::read_text_file(&full_path).map_err(ax_utils::errors::AxError::File)?;
             if is_generated(&content) {
                 continue;
             }
@@ -287,6 +306,7 @@ impl ExtractionOrchestrator {
                 .copied()
                 .or_else(|| language_for_extension(ext))
                 .unwrap_or(Language::Unknown);
+            content_hashes.insert(rel.clone(), hash(content.as_bytes()).to_hex().to_string());
             tasks.push(ParseTask { file_path: rel, content, language: lang });
         }
 
@@ -345,7 +365,7 @@ impl ExtractionOrchestrator {
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_millis() as i64)
                         .unwrap_or(now_ms());
-                    let content_hash = hash(full_path.to_string_lossy().as_bytes()).to_hex().to_string();
+                    let content_hash = content_hashes.remove(&file_path).unwrap_or_default();
                     queries.upsert_file(&FileRecord {
                         path: file_path,
                         content_hash,

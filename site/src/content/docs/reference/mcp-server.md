@@ -62,6 +62,21 @@ Call `ax_guard` with the target file path before editing project files. See [Pol
 
 **Not policy:** `ax_context` builds code-graph task context. Use `ax_preflight` for rules and skills.
 
+## Memory tools
+
+The [memory vault](/guides/memory/) adds two tools:
+
+| Tool | Purpose |
+|---|---|
+| `ax_remember` | Store a durable project memory (decision, fix, convention). Returns similar existing memories so contradictions get updated instead of duplicated. |
+| `ax_recall` | Hybrid search (full-text + vector similarity) over stored memories |
+
+`ax_preflight` also recalls memories relevant to the prompt and injects the top matches automatically, so agents rarely need to call `ax_recall` by hand.
+
+Git hooks run `ax capture-git --quiet` on every commit — commit messages with real context become `kind: git` memories without agent action. Agents should still call `ax_remember` for durable decisions that commit messages do not capture.
+
+Responses larger than ~4k tokens carry a one-line `[ax] token budget` hint suggesting a narrower query or lower depth, nudging agents to keep context small.
+
 ## How agents should use it
 
 ax *is* the pre-built search index. For "how does X work?", architecture, a flow ("how does X reach Y"), or where-is-X questions — and while editing code — an agent should answer with `ax_explore` and stop, typically with **zero file reads**, rather than re-deriving the answer with `grep` + `Read`. A direct ax answer is one to a few calls; a grep/read exploration is dozens.

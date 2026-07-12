@@ -80,12 +80,17 @@ impl ExploreBuilder {
             }
 
             let source = if include_code {
-                Some(numbered_snippet(
-                    &self.project_root,
-                    &node,
-                    max_lines,
-                    max_source_chars,
-                ))
+                // File IO off the async runtime so slow disks don't stall
+                // other in-flight MCP queries.
+                let root = self.project_root.clone();
+                let snippet_node = node.clone();
+                Some(
+                    tokio::task::spawn_blocking(move || {
+                        numbered_snippet(&root, &snippet_node, max_lines, max_source_chars)
+                    })
+                    .await
+                    .unwrap_or_default(),
+                )
             } else {
                 None
             };
@@ -138,7 +143,13 @@ fn numbered_snippet_with_sep(
     sep: char,
 ) -> String {
     let full = root.join(&node.file_path);
-    let content = std::fs::read_to_string(&full).unwrap_or_default();
+    let content = match std::fs::read_to_string(&full) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("explore: cannot read {}: {e}", full.display());
+            return format!("(source unavailable: {})", node.file_path);
+        }
+    };
     let lines: Vec<&str> = content.lines().collect();
     let start = (node.start_line as usize).saturating_sub(1);
     let end = node.end_line as usize;

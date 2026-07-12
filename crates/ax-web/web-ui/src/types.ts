@@ -69,6 +69,12 @@ export interface FileRow {
   indexed_at: number;
 }
 
+export interface FileRoot {
+  name: string;
+  path: string;
+  count: number;
+}
+
 export interface SearchResult {
   id: string;
   kind: string;
@@ -78,4 +84,31 @@ export interface SearchResult {
   start_line: number;
   language: string;
   snippet: string | null;
+}
+
+export interface UnresolvedRow {
+  id: number;
+  from_node_id: string;
+  reference_name: string;
+  reference_kind: string;
+  line: number;
+  col: number;
+  file_path: string;
+  language: string;
+}
+
+export interface UnresolvedKindStat {
+  kind: string;
+  count: number;
+}
+
+export interface UnresolvedNameStat {
+  name: string;
+  count: number;
+}
+
+export interface UnresolvedSummary {
+  total: number;
+  by_kind: UnresolvedKindStat[];
+  top_names: UnresolvedNameStat[];
 }

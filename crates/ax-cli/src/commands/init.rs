@@ -26,7 +26,8 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
 
     let ax_dir = root.join(".ax");
     let seed = ax_policy::seed_default_policy(&ax_dir).ok();
-    let ship = ax_ship::seed_ship_config(&ax_dir).ok();
+    let project_name = root.file_name().and_then(|n| n.to_str());
+    let ship = ax_ship::seed_ship_config(&ax_dir, project_name).ok();
     let ide = ax_policy::seed_ide_agent_workflow(&root).ok();
     let sync = ax_policy::sync_instructions(&ax_dir, true).ok();
     if let Some(ref s) = seed {

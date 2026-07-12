@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchNodes } from '../api';
+import { fetchNodes, fetchStats } from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
+import Codicon from '../components/Codicon';
 import {
   FilterBar,
   ItemList,
@@ -15,6 +16,7 @@ import {
   PageStack,
   PageToasts,
 } from '../components/ui/PageLayout';
+import { usePersistedNumber, usePersistedString } from '../hooks/usePersistedState';
 import { usePageContext } from '../context/UiContext';
 import type { NodeRow } from '../types';
 
@@ -25,17 +27,44 @@ const KIND_OPTIONS = [
   'type', 'const', 'variable', 'module', 'file',
 ];
 
+const KIND_ICONS: Record<string, string> = {
+  function: 'symbol-method',
+  method: 'symbol-method',
+  class: 'symbol-class',
+  struct: 'symbol-structure',
+  enum: 'symbol-enum',
+  trait: 'symbol-interface',
+  interface: 'symbol-interface',
+  type: 'symbol-type-parameter',
+  const: 'symbol-constant',
+  variable: 'symbol-variable',
+  module: 'symbol-namespace',
+  file: 'file',
+};
+
+function kindIcon(kind: string): string {
+  return KIND_ICONS[kind] ?? 'symbol-misc';
+}
+
 export default function NodesPage() {
   const [nodes, setNodes] = useState<NodeRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [q, setQ] = useState('');
-  const [kind, setKind] = useState('');
-  const [lang, setLang] = useState('');
+  const [languages, setLanguages] = useState<string[]>([]);
+  const [q, setQ] = usePersistedString('nodes-q', '');
+  const [kind, setKind] = usePersistedString('nodes-kind', '');
+  const [lang, setLang] = usePersistedString('nodes-lang', '');
+  const [offset, setOffset] = usePersistedNumber('nodes-offset', 0, 0, 1_000_000);
+  const [selectedId, setSelectedId] = usePersistedString('nodes-selected', '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    fetchStats()
+      .then((s) => setLanguages(s.languages.map((l) => l.language).sort()))
+      .catch(() => {});
+  }, []);
 
   function load(newOffset: number, newQ: string, newKind: string, newLang: string) {
     setLoading(true);
@@ -50,9 +79,16 @@ export default function NodesPage() {
   }
 
   useEffect(() => {
-    setOffset(0);
+    if (!mounted.current) {
+      mounted.current = true;
+      load(offset, q, kind, lang);
+      return;
+    }
     if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => load(0, q, kind, lang), q ? 300 : 0);
+    debounce.current = setTimeout(() => {
+      setOffset(0);
+      load(0, q, kind, lang);
+    }, q ? 300 : 0);
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [q, kind, lang]);
 
@@ -117,13 +153,17 @@ export default function NodesPage() {
                 <option key={k} value={k}>{k}</option>
               ))}
             </select>
-            <input
-              className="settings-input settings-input--narrow"
-              type="text"
-              placeholder="Language…"
+            <select
+              className="settings-select"
               value={lang}
               onChange={(e) => setLang(e.target.value)}
-            />
+              aria-label="Filter by language"
+            >
+              <option value="">All languages</option>
+              {languages.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
           </FilterBar>
 
           <PageCardBody>
@@ -132,36 +172,40 @@ export default function NodesPage() {
             ) : nodes.length === 0 ? (
               <PageEmpty title="No nodes found">Try a different search or filter.</PageEmpty>
             ) : (
-              <ItemList>
-                {nodes.map((n) => (
-                  <ItemRow
-                    key={n.id}
-                    icon={n.kind.slice(0, 4)}
-                    title={n.name}
-                    subtitle={`${n.file_path}:${n.start_line}`}
-                    selected={selectedId === n.id}
-                    onClick={() => setSelectedId(n.id)}
-                    badges={
-                      <>
-                        <span className="page-item-badge">{n.language}</span>
-                        {n.is_exported ? <span className="page-item-badge">pub</span> : null}
-                      </>
-                    }
+              <div className={`page-split${selectedId ? ' page-split--with-detail' : ''}`}>
+                <div className="page-split-main">
+                  <ItemList>
+                    {nodes.map((n) => (
+                      <ItemRow
+                        key={n.id}
+                        icon={<Codicon name={kindIcon(n.kind)} className="page-item-codicon" />}
+                        title={n.name}
+                        subtitle={`${n.file_path}:${n.start_line}`}
+                        selected={selectedId === n.id}
+                        onClick={() => setSelectedId(n.id)}
+                        badges={
+                          <>
+                            <span className="page-item-badge">{n.language}</span>
+                            {n.is_exported ? <span className="page-item-badge">pub</span> : null}
+                          </>
+                        }
+                      />
+                    ))}
+                  </ItemList>
+                </div>
+                {selectedId && (
+                  <NodeDetailPanel
+                    nodeId={selectedId}
+                    onClose={() => setSelectedId('')}
+                    onNavigate={(id) => setSelectedId(id)}
+                    variant="blade"
                   />
-                ))}
-              </ItemList>
+                )}
+              </div>
             )}
           </PageCardBody>
         </PageCard>
       </PageStack>
-
-      {selectedId && (
-        <NodeDetailPanel
-          nodeId={selectedId}
-          onClose={() => setSelectedId(null)}
-          onNavigate={(id) => setSelectedId(id)}
-        />
-      )}
     </PageShell>
   );
 }

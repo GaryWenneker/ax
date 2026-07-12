@@ -9,9 +9,43 @@ alwaysApply: true
 
 Cargo uses `target-dev/` (see `.cargo/config.toml`), **not** `target/debug/`. Never test CLI changes with `.\target\debug\ax.exe`.
 
-After any `crates/ax-cli/` change: run `.\scripts\reinstall-cli.ps1` and verify `(Get-Command ax).Source` is `~/.cargo/bin/ax.exe` before handoff.
+After any `crates/ax-cli/` change: run `.\scripts\reinstall-cli.ps1` and **verify all ax.exe copies are identical** before handoff (see below).
 
 **Local release (no GitHub):** `.\scripts\ship-local.ps1` then `ax upgrade --local`.
+
+## Multi-location binary sync (ALWAYS check)
+
+Windows installs ax in **three** places. `cargo install` alone is not enough — `current\ax.exe` (root) is often stale while `current\bin\ax.exe` is fresh.
+
+| Path | Role |
+|------|------|
+| `%USERPROFILE%\.cargo\bin\ax.exe` | PATH / MCP fallback |
+| `%LOCALAPPDATA%\ax\current\bin\ax.exe` | Cursor MCP config target |
+| `%LOCALAPPDATA%\ax\current\ax.exe` | Legacy installer root (easy to miss) |
+
+**After every build/reinstall**, confirm all three match `target-dev\release\ax.exe` (hash + size + timestamp):
+
+```powershell
+$src = "target-dev\release\ax.exe"
+$targets = @(
+  "$env:USERPROFILE\.cargo\bin\ax.exe",
+  "$env:LOCALAPPDATA\ax\current\bin\ax.exe",
+  "$env:LOCALAPPDATA\ax\current\ax.exe"
+)
+$hash = (Get-FileHash $src).Hash
+foreach ($t in $targets) {
+  if (-not (Test-Path $t)) { Write-Warning "missing: $t"; continue }
+  $h = (Get-FileHash $t).Hash
+  if ($h -ne $hash) { throw "STALE: $t (hash mismatch — copy from $src)" }
+}
+Write-Host "OK: all ax.exe copies match $hash"
+(Get-Command ax).Source
+ax --version
+```
+
+If any path is stale: kill all `ax.exe`, copy `$src` to every target, re-run the check. `.\scripts\release-local.ps1` syncs all three automatically; still verify before handoff.
+
+**Never** mark ax-cli / Command Center work complete without this check passing or an explicit blocked reason.
 
 ## Version bumps
 

@@ -101,7 +101,11 @@ fn push_call_ref(
     callee: &str,
     result: &mut ax_types::ExtractionResult,
 ) {
-    if is_noise_callee(callee) {
+    if is_noise_callee(callee) || is_external_callee(callee) {
+        return;
+    }
+    let callee = normalize_callee_name(callee);
+    if callee.is_empty() || is_external_callee(&callee) {
         return;
     }
     let line = node.start_position().row as i32 + 1;
@@ -342,21 +346,94 @@ fn extract_ts_js_callee_from_expr(node: TsNode, source: &[u8]) -> Option<String>
 
 fn extract_generic_callee(node: TsNode, source: &[u8]) -> Option<String> {
     if let Some(func) = node.child_by_field_name("function") {
-        if func.kind() == "identifier" || func.kind() == "type_identifier" {
-            return Some(node_text(func, source));
-        }
-        if let Some(scope) = func.child_by_field_name("path") {
-            return Some(node_text(scope, source));
-        }
-        if func.kind() == "field_expression" || func.kind() == "selector_expression" {
-            let field = func.child_by_field_name("field");
-            return field.map(|f| node_text(f, source));
+        if let Some(name) = callee_from_expression(func, source) {
+            return Some(normalize_callee_name(&name));
         }
     }
-  if let Some(name) = node.child_by_field_name("name") {
-        return Some(node_text(name, source));
+    if let Some(name) = node.child_by_field_name("name") {
+        return Some(normalize_callee_name(&node_text(name, source)));
     }
     None
+}
+
+fn callee_from_expression(node: TsNode, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" | "type_identifier" => Some(node_text(node, source)),
+        "generic_name" => {
+            if let Some(name) = node.child_by_field_name("name") {
+                return Some(node_text(name, source));
+            }
+            for i in 0..node.named_child_count() {
+                let child = node.named_child(i)?;
+                if child.kind() == "identifier" {
+                    return Some(node_text(child, source));
+                }
+            }
+            None
+        }
+        "member_access_expression" => field_text(node, source, "name"),
+        "field_expression" | "selector_expression" => {
+            node.child_by_field_name("field").map(|f| node_text(f, source))
+        }
+        "qualified_name" => {
+            node.named_child(node.named_child_count().saturating_sub(1))
+                .map(|n| node_text(n, source))
+        }
+        _ => {
+            if let Some(scope) = node.child_by_field_name("path") {
+                Some(node_text(scope, source))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn normalize_callee_name(name: &str) -> String {
+    let trimmed = name.trim();
+    let base = trimmed.split('<').next().unwrap_or(trimmed).trim();
+    base.rsplit('.').next().unwrap_or(base).to_string()
+}
+
+fn is_external_callee(name: &str) -> bool {
+    let base = normalize_callee_name(name);
+    matches!(
+        base.as_str(),
+        "AddSingleton"
+            | "AddScoped"
+            | "AddTransient"
+            | "AddMediatR"
+            | "RegisterServicesFromAssembly"
+            | "GetExecutingAssembly"
+            | "AddControllers"
+            | "AddDbContext"
+            | "AddAutoMapper"
+            | "AddHttpClient"
+            | "AddMemoryCache"
+            | "AddStackExchangeRedisCache"
+            | "AddAuthentication"
+            | "AddAuthorization"
+            | "AddCors"
+            | "AddSwaggerGen"
+            | "UseAuthentication"
+            | "UseAuthorization"
+            | "UseRouting"
+            | "UseEndpoints"
+            | "UseSwagger"
+            | "UseSwaggerUI"
+            | "MapControllers"
+            | "Configure"
+            | "ConfigureServices"
+            | "Build"
+            | "Run"
+            | "RunAsync"
+            | "CreateBuilder"
+            | "CreateDefaultBuilder"
+            | "GetService"
+            | "GetRequiredService"
+            | "WriteLine"
+            | "ToString"
+    )
 }
 
 fn enclosing_symbol_id(line: i32, spans: &[SymbolSpan]) -> Option<String> {

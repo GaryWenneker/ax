@@ -1,135 +1,579 @@
-import { useEffect, useRef, useState } from 'react';
-import { fetchFiles } from '../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { fetchFileRoots, fetchFiles, fetchStats } from '../api';
+
+import FileTree from '../components/FileTree';
+
+import FilePreview from '../components/FilePreview';
+
+import NodeDetailPanel from '../components/NodeDetail';
+
+import Codicon from '../components/Codicon';
+
 import {
+
   FilterBar,
-  ItemList,
-  ItemRow,
+
   PageCard,
+
   PageCardBody,
+
   PageEmpty,
+
   PageHero,
+
   PageLoading,
-  PagePagination,
+
   PageShell,
+
   PageStack,
+
   PageToasts,
+
 } from '../components/ui/PageLayout';
+
+import { usePersistedString } from '../hooks/usePersistedState';
+
 import { usePageContext } from '../context/UiContext';
-import type { FileRow } from '../types';
 
-const LIMIT = 50;
+import type { FileRoot, FileRow } from '../types';
 
-function formatBytes(b: number) {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
-}
 
-function formatDate(ts: number) {
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
+
+const TREE_LIMIT = 10_000;
+
+
 
 export default function FilesPage() {
+
   const [files, setFiles] = useState<FileRow[]>([]);
+
+  const [roots, setRoots] = useState<FileRoot[]>([]);
+
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [q, setQ] = useState('');
-  const [lang, setLang] = useState('');
+
+  const [languages, setLanguages] = useState<string[]>([]);
+
+  const [projectName, setProjectName] = useState<string | undefined>();
+
+  const [q, setQ] = usePersistedString('files-q', '');
+
+  const [lang, setLang] = usePersistedString('files-lang', '');
+
+  const [selectedPath, setSelectedPath] = usePersistedString('files-selected', '');
+
+  const [selectedNodeId, setSelectedNodeId] = useState('');
+
+  const [detailBladeOpen, setDetailBladeOpen] = useState(false);
+
   const [loading, setLoading] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
+
+  const [loadedPrefixes, setLoadedPrefixes] = useState<Set<string>>(new Set());
+
+  const [loadingPrefixes, setLoadingPrefixes] = useState<Set<string>>(new Set());
+
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function load(newOffset: number, newQ: string, newLang: string) {
-    setLoading(true);
-    setError(null);
-    fetchFiles({ q: newQ, lang: newLang || undefined, limit: LIMIT, offset: newOffset })
-      .then((page) => { setFiles(page.files); setTotal(page.total); setLoading(false); })
-      .catch((e: Error) => { setError(e.message); setLoading(false); });
-  }
+  const loadedPrefixesRef = useRef(loadedPrefixes);
+
+  loadedPrefixesRef.current = loadedPrefixes;
+
+
+
+  const selected = files.find((f) => f.path === selectedPath) ?? null;
+
+
+
+  const filterActive = !!(q || lang);
+
+
+
+  const loadRoots = useCallback(async () => {
+
+    const page = await fetchFileRoots();
+
+    setRoots(page.roots);
+
+    if (!filterActive) {
+
+      setTotal(page.roots.reduce((sum, r) => sum + r.count, 0));
+
+    }
+
+    return page.roots;
+
+  }, [filterActive]);
+
+
 
   useEffect(() => {
-    setOffset(0);
-    if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => load(0, q, lang), q ? 300 : 0);
-    return () => { if (debounce.current) clearTimeout(debounce.current); };
-  }, [q, lang]);
 
-  function goPage(dir: 1 | -1) {
-    const next = offset + dir * LIMIT;
-    setOffset(next);
-    load(next, q, lang);
+    fetchStats()
+
+      .then((s) => {
+
+        setProjectName(s.project_name);
+
+        setLanguages(s.languages.map((l) => l.language).sort());
+
+        if (!filterActive) setTotal(s.file_count);
+
+      })
+
+      .catch(() => {});
+
+    loadRoots().catch(() => {});
+
+  }, [filterActive, loadRoots]);
+
+
+
+  const loadPrefix = useCallback(async (prefix: string) => {
+
+    if (loadedPrefixesRef.current.has(prefix)) return;
+
+    setLoadingPrefixes((prev) => new Set(prev).add(prefix));
+
+    try {
+
+      const page = await fetchFiles({ prefix, limit: TREE_LIMIT, offset: 0 });
+
+      setFiles((prev) => {
+
+        const byPath = new Map(prev.map((f) => [f.path, f]));
+
+        for (const f of page.files) byPath.set(f.path, f);
+
+        return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+
+      });
+
+      setLoadedPrefixes((prev) => new Set(prev).add(prefix));
+
+    } catch (e) {
+
+      setError(e instanceof Error ? e.message : 'Failed to load folder');
+
+    } finally {
+
+      setLoadingPrefixes((prev) => {
+
+        const next = new Set(prev);
+
+        next.delete(prefix);
+
+        return next;
+
+      });
+
+    }
+
+  }, []);
+
+
+
+  function loadFiltered(newQ: string, newLang: string) {
+
+    setLoading(true);
+
+    setError(null);
+
+    setLoadedPrefixes(new Set());
+
+    fetchFiles({ q: newQ, lang: newLang || undefined, limit: TREE_LIMIT, offset: 0 })
+
+      .then((page) => {
+
+        setFiles(page.files);
+
+        setTotal(page.total);
+
+        setLoading(false);
+
+      })
+
+      .catch((e: Error) => {
+
+        setError(e.message);
+
+        setLoading(false);
+
+      });
+
   }
 
-  const page = Math.floor(offset / LIMIT) + 1;
-  const pages = Math.ceil(total / LIMIT) || 1;
 
-  const fileDetail = `${files.length} shown · ${total.toLocaleString()} total · p${page}/${pages}${q ? ` · "${q}"` : ''}${lang ? ` · ${lang}` : ''}`;
+
+  function loadBrowseMode() {
+
+    setLoading(false);
+
+    setError(null);
+
+    setFiles([]);
+
+    setLoadedPrefixes(new Set());
+
+    loadRoots().catch(() => {});
+
+  }
+
+
+
+  useEffect(() => {
+
+    if (debounce.current) clearTimeout(debounce.current);
+
+    debounce.current = setTimeout(() => {
+
+      if (filterActive) loadFiltered(q, lang);
+
+      else loadBrowseMode();
+
+    }, q ? 300 : 0);
+
+    return () => {
+
+      if (debounce.current) clearTimeout(debounce.current);
+
+    };
+
+  }, [q, lang, filterActive]);
+
+
+
+  const refreshTree = useCallback(async () => {
+
+    setError(null);
+
+    const prefixes = [...loadedPrefixesRef.current];
+
+    try {
+
+      await loadRoots();
+
+      if (filterActive) {
+
+        loadFiltered(q, lang);
+
+        return;
+
+      }
+
+      setFiles([]);
+
+      setLoadedPrefixes(new Set());
+
+      for (const prefix of prefixes) {
+
+        await loadPrefix(prefix);
+
+      }
+
+    } catch (e) {
+
+      setError(e instanceof Error ? e.message : 'Refresh failed');
+
+    }
+
+  }, [filterActive, q, lang, loadRoots, loadPrefix]);
+
+
+
+  const truncated = total > files.length;
+
+  const fileDetail = filterActive
+
+    ? `${files.length}${truncated ? `/${total}` : ''} files${q ? ` · "${q}"` : ''}${lang ? ` · ${lang}` : ''}`
+
+    : `${roots.length} repos · ${total.toLocaleString()} indexed files`;
+
   usePageContext('Files', fileDetail);
 
+
+
+  function selectFile(file: FileRow) {
+
+    setSelectedPath(file.path);
+
+    setSelectedNodeId('');
+
+  }
+
+
+
+  function openNodeDetail(id: string) {
+
+    setSelectedNodeId(id);
+
+    setDetailBladeOpen(true);
+
+  }
+
+
+
+  function closeDetailBlade() {
+
+    setDetailBladeOpen(false);
+
+    setSelectedNodeId('');
+
+  }
+
+
+
+  function closePreview() {
+
+    setSelectedPath('');
+
+    closeDetailBlade();
+
+  }
+
+
+
+  const splitClass = [
+
+    'files-split',
+
+    selected ? 'files-split--with-preview' : '',
+
+    detailBladeOpen ? 'files-split--with-detail' : '',
+
+  ]
+
+    .filter(Boolean)
+
+    .join(' ');
+
+
+
+  const showTree = !loading && (filterActive ? files.length > 0 : roots.length > 0);
+
+
+
   return (
+
     <PageShell>
-      <PageHero
-        title="Files"
-        subtitle="All indexed source files with node counts and sizes."
-      />
 
-      <PageToasts err={error} />
+      <div className="files-page">
 
-      <PageStack>
-        <PageCard
-          title="Indexed files"
-          description={`${total.toLocaleString()} files in the index.`}
-          footer={
-            total > LIMIT ? (
-              <PagePagination
-                page={page}
-                pages={pages}
-                onPrev={() => goPage(-1)}
-                onNext={() => goPage(1)}
-                prevDisabled={offset === 0}
-                nextDisabled={offset + LIMIT >= total}
+        <PageHero
+
+          title="Files"
+
+          subtitle="Indexed source files in an explorer tree. Expand a repository to browse; select a file to preview its index."
+
+        />
+
+
+
+        <PageToasts err={error} />
+
+
+
+        <PageStack>
+
+          <PageCard
+
+            title="Indexed files"
+
+            description={
+
+              filterActive
+
+                ? truncated
+
+                  ? `Showing ${files.length} of ${total.toLocaleString()} matches — narrow your filter to see more.`
+
+                  : `${total.toLocaleString()} matching files.`
+
+                : `${roots.length} repositories · ${total.toLocaleString()} files in the index. Expand a folder to load its files.`
+
+            }
+
+          >
+
+            <FilterBar>
+
+              <input
+
+                className="settings-input settings-input--grow"
+
+                type="search"
+
+                placeholder="Filter by path…"
+
+                value={q}
+
+                onChange={(e) => setQ(e.target.value)}
+
               />
-            ) : undefined
-          }
-        >
-          <FilterBar>
-            <input
-              className="settings-input settings-input--grow"
-              type="search"
-              placeholder="Filter by path…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-            <input
-              className="settings-input settings-input--narrow"
-              type="text"
-              placeholder="Language…"
-              value={lang}
-              onChange={(e) => setLang(e.target.value)}
-            />
-          </FilterBar>
 
-          <PageCardBody>
-            {loading ? (
-              <PageLoading />
-            ) : files.length === 0 ? (
-              <PageEmpty title="No files found">Try a different filter.</PageEmpty>
-            ) : (
-              <ItemList>
-                {files.map((f) => (
-                  <ItemRow
-                    key={f.path}
-                    static
-                    title={f.path}
-                    subtitle={`${f.node_count} nodes · ${formatBytes(f.size)} · indexed ${formatDate(f.indexed_at)}`}
-                    badges={<span className="page-item-badge">{f.language}</span>}
-                  />
+              <select
+
+                className="settings-select"
+
+                value={lang}
+
+                onChange={(e) => setLang(e.target.value)}
+
+                aria-label="Filter by language"
+
+              >
+
+                <option value="">All languages</option>
+
+                {languages.map((l) => (
+
+                  <option key={l} value={l}>
+
+                    {l}
+
+                  </option>
+
                 ))}
-              </ItemList>
-            )}
-          </PageCardBody>
-        </PageCard>
-      </PageStack>
+
+              </select>
+
+            </FilterBar>
+
+
+
+            <PageCardBody>
+
+              {loading ? (
+
+                <PageLoading />
+
+              ) : !showTree ? (
+
+                <PageEmpty title="No files found">Try a different filter or run an index.</PageEmpty>
+
+              ) : (
+
+                <div className={splitClass}>
+
+                  <div className="files-tree-pane">
+
+                    <FileTree
+
+                      files={files}
+
+                      roots={filterActive ? undefined : roots}
+
+                      rootLabel={projectName?.toUpperCase()}
+
+                      filterActive={filterActive}
+
+                      selectedPath={selectedPath || null}
+
+                      loadingPrefixes={loadingPrefixes}
+
+                      onSelect={selectFile}
+
+                      onLoadPrefix={filterActive ? undefined : loadPrefix}
+
+                      onRefresh={refreshTree}
+
+                    />
+
+                  </div>
+
+                  {selected && (
+
+                    <FilePreview
+
+                      file={selected}
+
+                      onClose={closePreview}
+
+                      onNodeSelect={openNodeDetail}
+
+                      selectedNodeId={selectedNodeId || null}
+
+                    />
+
+                  )}
+
+                  {detailBladeOpen &&
+
+                    (selectedNodeId ? (
+
+                      <NodeDetailPanel
+
+                        nodeId={selectedNodeId}
+
+                        onClose={closeDetailBlade}
+
+                        onNavigate={openNodeDetail}
+
+                        variant="blade"
+
+                      />
+
+                    ) : (
+
+                      <div
+
+                        className="detail-panel detail-panel--blade"
+
+                        role="complementary"
+
+                        aria-label="Symbol detail"
+
+                      >
+
+                        <div className="detail-header">
+
+                          <span className="detail-title muted">Symbol detail</span>
+
+                          <button
+
+                            type="button"
+
+                            className="detail-close"
+
+                            onClick={closeDetailBlade}
+
+                            aria-label="Close"
+
+                          >
+
+                            <Codicon name="close" />
+
+                          </button>
+
+                        </div>
+
+                        <div className="detail-body">
+
+                          <div className="empty-label">Select a symbol in the index preview.</div>
+
+                        </div>
+
+                      </div>
+
+                    ))}
+
+                </div>
+
+              )}
+
+            </PageCardBody>
+
+          </PageCard>
+
+        </PageStack>
+
+      </div>
+
     </PageShell>
+
   );
+
 }
+
+

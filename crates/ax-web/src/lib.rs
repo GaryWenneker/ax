@@ -1,39 +1,33 @@
 //! ax-web: local HTTP server exposing the ax code graph + policy editor.
 
+mod agent;
+mod agent_pty;
+mod memory;
 mod policy;
 mod queries;
 mod ship;
-mod tokens;
+mod sonar_proxy;
+mod savings;
+mod workspace;
+mod workspace_state;
+
+pub use workspace_state::WebHub;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use ax_policy::PolicyStore;
-use tokio::sync::Mutex;
+use ax_db::queries::QueryBuilder;
+use ax_resolution::{prune_stale_unresolved_refs, ReferenceResolver};
 use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{Response, StatusCode, Uri},
     response::{IntoResponse, Json},
-    routing::get,
-    Router,
 };
 use include_dir::{include_dir, Dir};
-use policy::PolicyApiState;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use tower_http::cors::{Any, CorsLayer};
 
 static WEB_DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/web-ui/dist");
-
-#[derive(Clone)]
-struct AppState {
-    graph_pool: SqlitePool,
-    policy: PolicyApiState,
-    project_root: PathBuf,
-    db_path: PathBuf,
-    readonly: bool,
-}
 
 #[derive(Serialize)]
 struct WebStats {
@@ -52,16 +46,36 @@ struct ApiError {
 }
 
 fn api_err(msg: impl Into<String>) -> (StatusCode, Json<ApiError>) {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: msg.into() }))
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiError {
+            error: msg.into(),
+        }),
+    )
 }
 
-async fn handle_stats(State(s): State<AppState>) -> impl IntoResponse {
-    match queries::get_stats(&s.graph_pool).await {
+async fn handle_stats(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match queries::get_stats(&ws.graph_pool).await {
         Ok(graph) => {
-            let db_size_bytes = std::fs::metadata(&s.db_path).map(|m| m.len() as i64).unwrap_or(0);
-            let policy_rules_count = s.policy.store.list_rules().await.map(|r| r.len() as i64).unwrap_or(0);
-            let policy_skills_count = s.policy.store.list_skills().await.map(|sk| sk.len() as i64).unwrap_or(0);
-            let project_name = s
+            let db_size_bytes = std::fs::metadata(&ws.db_path)
+                .map(|m| m.len() as i64)
+                .unwrap_or(0);
+            let policy_rules_count = ws
+                .policy
+                .store
+                .list_rules()
+                .await
+                .map(|r| r.len() as i64)
+                .unwrap_or(0);
+            let policy_skills_count = ws
+                .policy
+                .store
+                .list_skills()
+                .await
+                .map(|sk| sk.len() as i64)
+                .unwrap_or(0);
+            let project_name = ws
                 .project_root
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -72,7 +86,7 @@ async fn handle_stats(State(s): State<AppState>) -> impl IntoResponse {
                 db_size_bytes,
                 policy_rules_count,
                 policy_skills_count,
-                readonly: s.readonly,
+                readonly: hub.readonly,
                 project_name,
             };
             (StatusCode::OK, Json(body)).into_response()
@@ -85,6 +99,7 @@ async fn handle_stats(State(s): State<AppState>) -> impl IntoResponse {
 struct NodesQuery {
     kind: Option<String>,
     lang: Option<String>,
+    file: Option<String>,
     q: Option<String>,
     #[serde(default = "default_limit")]
     limit: i64,
@@ -96,15 +111,28 @@ fn default_limit() -> i64 {
     50
 }
 
-async fn handle_nodes(State(s): State<AppState>, Query(p): Query<NodesQuery>) -> impl IntoResponse {
+fn files_max_limit() -> i64 {
+    10_000
+}
+
+fn nodes_max_limit() -> i64 {
+    2_000
+}
+
+async fn handle_nodes(
+    State(hub): State<WebHub>,
+    Query(p): Query<NodesQuery>,
+) -> impl IntoResponse {
+    let ws = hub.read().await;
     let filter = queries::NodeFilter {
         kind: p.kind.as_deref(),
         lang: p.lang.as_deref(),
+        file: p.file.as_deref(),
         q: p.q.as_deref(),
-        limit: p.limit.min(200),
+        limit: p.limit.min(nodes_max_limit()),
         offset: p.offset,
     };
-    match queries::get_nodes(&s.graph_pool, filter).await {
+    match queries::get_nodes(&ws.graph_pool, filter).await {
         Ok(page) => (
             StatusCode::OK,
             Json(serde_json::json!({ "nodes": page.nodes, "total": page.total })),
@@ -114,9 +142,10 @@ async fn handle_nodes(State(s): State<AppState>, Query(p): Query<NodesQuery>) ->
     }
 }
 
-async fn handle_node(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    match queries::get_node_detail(&s.graph_pool, &id).await {
-        Ok(Some(detail)) => (StatusCode::OK, Json(serde_json::to_value(detail).unwrap())).into_response(),
+async fn handle_node(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match queries::get_node_detail(&ws.graph_pool, &id).await {
+        Ok(Some(detail)) => (StatusCode::OK, Json(detail)).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(ApiError {
@@ -132,25 +161,39 @@ async fn handle_node(State(s): State<AppState>, Path(id): Path<String>) -> impl 
 struct FilesQuery {
     lang: Option<String>,
     q: Option<String>,
+    prefix: Option<String>,
     #[serde(default = "default_limit")]
     limit: i64,
     #[serde(default)]
     offset: i64,
 }
 
-async fn handle_files(State(s): State<AppState>, Query(p): Query<FilesQuery>) -> impl IntoResponse {
+async fn handle_files(
+    State(hub): State<WebHub>,
+    Query(p): Query<FilesQuery>,
+) -> impl IntoResponse {
+    let ws = hub.read().await;
     let filter = queries::FileFilter {
         lang: p.lang.as_deref(),
         q: p.q.as_deref(),
-        limit: p.limit.min(200),
+        prefix: p.prefix.as_deref(),
+        limit: p.limit.min(files_max_limit()),
         offset: p.offset,
     };
-    match queries::get_files(&s.graph_pool, filter).await {
+    match queries::get_files(&ws.graph_pool, filter).await {
         Ok(page) => (
             StatusCode::OK,
             Json(serde_json::json!({ "files": page.files, "total": page.total })),
         )
             .into_response(),
+        Err(e) => api_err(e.to_string()).into_response(),
+    }
+}
+
+async fn handle_file_roots(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match queries::get_file_roots(&ws.graph_pool).await {
+        Ok(roots) => (StatusCode::OK, Json(serde_json::json!({ "roots": roots }))).into_response(),
         Err(e) => api_err(e.to_string()).into_response(),
     }
 }
@@ -166,9 +209,13 @@ fn default_search_limit() -> i64 {
     20
 }
 
-async fn handle_search(State(s): State<AppState>, Query(p): Query<SearchQuery>) -> impl IntoResponse {
+async fn handle_search(
+    State(hub): State<WebHub>,
+    Query(p): Query<SearchQuery>,
+) -> impl IntoResponse {
+    let ws = hub.read().await;
     let q = p.q.as_deref().unwrap_or("");
-    match queries::search(&s.graph_pool, q, p.limit.min(100)).await {
+    match queries::search(&ws.graph_pool, q, p.limit.min(100)).await {
         Ok(results) => (
             StatusCode::OK,
             Json(serde_json::json!({ "results": results })),
@@ -176,6 +223,157 @@ async fn handle_search(State(s): State<AppState>, Query(p): Query<SearchQuery>) 
             .into_response(),
         Err(e) => api_err(e.to_string()).into_response(),
     }
+}
+
+#[derive(Deserialize)]
+struct UnresolvedQuery {
+    q: Option<String>,
+    kind: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+}
+
+async fn handle_unresolved_summary(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match queries::get_unresolved_summary(&ws.graph_pool).await {
+        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
+        Err(e) => api_err(e.to_string()).into_response(),
+    }
+}
+
+async fn handle_unresolved(
+    State(hub): State<WebHub>,
+    Query(p): Query<UnresolvedQuery>,
+) -> impl IntoResponse {
+    let ws = hub.read().await;
+    let filter = queries::UnresolvedFilter {
+        q: p.q.as_deref(),
+        kind: p.kind.as_deref(),
+        limit: p.limit.min(500),
+        offset: p.offset,
+    };
+    match queries::get_unresolved_refs(&ws.graph_pool, filter).await {
+        Ok(page) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "refs": page.refs, "total": page.total })),
+        )
+            .into_response(),
+        Err(e) => api_err(e.to_string()).into_response(),
+    }
+}
+
+async fn handle_unresolved_reconcile(State(hub): State<WebHub>) -> impl IntoResponse {
+    if hub.readonly {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "read-only mode (AX_WEB_READONLY=1)" })),
+        )
+            .into_response();
+    }
+    let ws = hub.read().await;
+    let queries = QueryBuilder::new(ws.graph_pool.clone());
+    let pruned = match prune_stale_unresolved_refs(&queries).await {
+        Ok(p) => p,
+        Err(e) => return api_err(e.to_string()).into_response(),
+    };
+    let mut resolver = ReferenceResolver::new(&ws.project_root);
+    let resolution = match resolver.resolve_all(&queries, None).await {
+        Ok(r) => r,
+        Err(e) => return api_err(e.to_string()).into_response(),
+    };
+    let remaining = queries.count_unresolved_refs().await.unwrap_or(0);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "pruned": pruned,
+            "resolved": resolution.stats.resolved,
+            "remaining": remaining,
+        })),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct SourceQuery {
+    path: String,
+    /// 1-based inclusive start line. Defaults to 1.
+    start: Option<i64>,
+    /// 1-based inclusive end line. Defaults to start + 200.
+    end: Option<i64>,
+    /// Extra lines shown above/below the requested range.
+    #[serde(default = "default_source_context")]
+    context: i64,
+}
+
+fn default_source_context() -> i64 {
+    3
+}
+
+const SOURCE_MAX_LINES: i64 = 500;
+
+async fn handle_source(
+    State(hub): State<WebHub>,
+    Query(p): Query<SourceQuery>,
+) -> impl IntoResponse {
+    let ws = hub.read().await;
+    let root = match ws.project_root.canonicalize() {
+        Ok(r) => r,
+        Err(e) => return api_err(format!("project root unavailable: {e}")).into_response(),
+    };
+    // Reject traversal: resolve the candidate and require it stays inside the root.
+    let candidate = root.join(p.path.replace('\\', "/"));
+    let resolved = match candidate.canonicalize() {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiError { error: format!("file not found: {}", p.path) }),
+            )
+                .into_response()
+        }
+    };
+    if !resolved.starts_with(&root) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ApiError { error: "path outside project root".into() }),
+        )
+            .into_response();
+    }
+
+    let text = match tokio::fs::read_to_string(&resolved).await {
+        Ok(t) => t,
+        Err(e) => return api_err(format!("cannot read {}: {e}", p.path)).into_response(),
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let total = lines.len() as i64;
+
+    let start = p.start.unwrap_or(1).max(1);
+    let end = p.end.unwrap_or(start + 200).max(start);
+    let from = (start - p.context.max(0)).max(1);
+    let to = (end + p.context.max(0)).min(total).min(from + SOURCE_MAX_LINES - 1);
+
+    let slice: Vec<serde_json::Value> = lines
+        .iter()
+        .enumerate()
+        .skip((from - 1) as usize)
+        .take((to - from + 1).max(0) as usize)
+        .map(|(i, l)| serde_json::json!({ "no": (i + 1) as i64, "text": l }))
+        .collect();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "path": p.path,
+            "from": from,
+            "to": to,
+            "total_lines": total,
+            "lines": slice,
+        })),
+    )
+        .into_response()
 }
 
 async fn handle_version() -> impl IntoResponse {
@@ -203,7 +401,6 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
             .body(Body::from(file.contents().to_vec()))
             .unwrap()
     } else if path.starts_with("assets/") || path.contains('.') {
-        // Never serve index.html for missing JS/CSS — browsers treat it as a module script → blank page.
         Response::builder()
             .status(StatusCode::NOT_FOUND)
             .header("Content-Type", "text/plain; charset=utf-8")
@@ -225,86 +422,19 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
 }
 
 pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
-    let db_path = root.join(".ax").join("ax.db");
-    if !db_path.exists() {
-        return Err(format!(
-            "No ax index found at {}. Run `ax init` first.",
-            db_path.display()
-        ));
-    }
-
-    let graph_opts = SqliteConnectOptions::new()
-        .filename(&db_path)
-        .read_only(true)
-        .create_if_missing(false);
-
-    let graph_pool = SqlitePool::connect_with(graph_opts)
-        .await
-        .map_err(|e| format!("Failed to open ax.db: {e}"))?;
-
-    let policy_pool = ax_policy::open_rw_pool(&db_path)
-        .await
-        .map_err(|e| e.to_string())?;
-    ax_policy::ensure_scaffold(&root.join(".ax")).map_err(|e| e.to_string())?;
-    let store = PolicyStore::new(policy_pool, root.clone());
-    let _ = store.reindex(false).await;
-
     let readonly = std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1");
-    let policy_state = PolicyApiState {
-        store: Arc::new(store),
-        readonly,
-    };
-
-    let state = AppState {
-        graph_pool,
-        policy: policy_state.clone(),
-        project_root: root.clone(),
-        db_path: db_path.clone(),
-        readonly,
-    };
+    let hub = WebHub::open(root.clone(), readonly, port).await?;
+    let _ = ax_agent::config::touch_recent_project(&root, true);
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let graph_api = Router::new()
-        .route("/stats", get(handle_stats))
-        .route("/version", get(handle_version))
-        .route("/nodes", get(handle_nodes))
-        .route("/node/{id}", get(handle_node))
-        .route("/files", get(handle_files))
-        .route("/search", get(handle_search))
-        .with_state(state);
-
-    let policy_api = policy::router(policy_state);
-
-    let ship_daemon = Arc::new(ax_ship::ShipDaemon::new(root.clone()));
-    let ship_state = ship::ShipApiState {
-        daemon: ship_daemon.clone(),
-        report: Arc::new(Mutex::new(None)),
-        readonly,
-    };
-    let ship_api = ship::router(ship_state.clone());
-    let tokens_api = tokens::router();
-
-    let ship_root = root.clone();
-    tokio::spawn(async move {
-        let _ = ax_ship::ShipDaemon::new(ship_root).run_watch().await;
-    });
-
-    let app = Router::new()
-        .nest("/api", graph_api)
-        .nest("/api/policy", policy_api)
-        .nest("/api/ship", ship_api)
-        .nest("/api/usage", tokens_api)
-        .fallback(handle_spa)
-        .layer(cors);
+    let app = hub.nest_routers(cors);
 
     let addr = format!("127.0.0.1:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|e| format!("Cannot bind to {addr}: {e}"))?;
+    let listener = bind_web_listener(&addr, port).await?;
 
     let url = format!("http://localhost:{port}");
     eprintln!("ax web  {url}");
@@ -319,6 +449,31 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| e.to_string())
+}
+
+async fn bind_web_listener(addr: &str, port: u16) -> Result<tokio::net::TcpListener, String> {
+    free_web_port(port);
+
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => Ok(listener),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            free_web_port(port);
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            tokio::net::TcpListener::bind(addr)
+                .await
+                .map_err(|e| format!("Cannot bind to {addr}: {e}"))
+        }
+        Err(e) => Err(format!("Cannot bind to {addr}: {e}")),
+    }
+}
+
+fn free_web_port(port: u16) {
+    let self_pid = std::process::id();
+    match ax_utils::kill_listening_on_port(port, self_pid) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("ax web: freed port {port} (stopped {n} process(es))"),
+        Err(e) => eprintln!("ax web: warning: could not free port {port}: {e}"),
+    }
 }
 
 fn open_browser(url: &str) {

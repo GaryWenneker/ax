@@ -71,8 +71,12 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
 
   async function remove(id: string) {
     if (!confirm(`Delete rule "${id}"?`)) return;
-    await deletePolicyRule(id);
-    setRules((prev) => prev.filter((r) => r.id !== id));
+    try {
+      await deletePolicyRule(id);
+      setRules((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Failed to delete rule "${id}"`);
+    }
   }
 
   function openCapture() {

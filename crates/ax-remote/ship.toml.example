@@ -7,6 +7,7 @@ web_port = 7070
 
 [quality_gate]
 steps = ["index", "tia", "tests", "sonar", "policy"]
+index_mode = "incremental"  # incremental | full
 
 [quality_gate.tests]
 runner = "cargo test"
@@ -33,6 +34,14 @@ token_env = "SONAR_TOKEN"
 scanner_path = "sonar-scanner"
 podman_container = "sonarqube"
 container_runtime = "auto"  # auto | podman | docker
+scan_mode = "incremental"   # incremental | full
+admin_user = "admin"
+admin_password = "admin"
+# PostgreSQL-backed stack: sonarqube:community + postgres:16 sidecar (4 GB RAM, 2 GB CE heap).
+# Install upgrades legacy embedded-H2 containers automatically (re-run Setup project & token after upgrade).
+
+[ui]
+show_tokens = false  # beta — show Tokens page in sidebar
 
 # Map git blame emails to AzDO reviewer identities (email or user GUID)
 # [reviewers]

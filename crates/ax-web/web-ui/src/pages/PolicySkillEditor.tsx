@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
+import MarkdownPreview from '../components/MarkdownPreview';
+import { SkillMetaView } from '../components/PolicyMetaView';
 import {
   PageCard,
   PageCardBody,
   PageHero,
+  PageLoading,
   PageRow,
   PageShell,
   PageStack,
@@ -31,26 +34,33 @@ function parseCsv(s: string): string[] {
 }
 
 export default function PolicySkillEditor({ skillName, onBack }: Props) {
+  const isNew = !skillName;
+  const [editing, setEditing] = useState(isNew);
   const [fm, setFm] = useState<SkillFrontmatter>(emptyFm());
   const [body, setBody] = useState('');
   const [triggersText, setTriggersText] = useState('');
   const [tagsText, setTagsText] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!skillName) return;
+    setLoading(true);
+    setError('');
     fetchPolicySkill(skillName)
       .then((doc) => {
         setFm(doc.frontmatter);
         setBody(doc.body);
         setTriggersText(doc.frontmatter.triggers.join(', '));
         setTagsText(doc.frontmatter.tags.join(', '));
+        setEditing(false);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
   }, [skillName]);
 
-  usePageContext('Skill editor', skillName ?? 'new skill');
+  usePageContext(isNew || editing ? 'Skill editor' : 'Skill', skillName ?? 'new skill');
 
   async function save() {
     setSaving(true);
@@ -70,75 +80,138 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
     }
   }
 
+  function cancelEdit() {
+    if (isNew) {
+      onBack();
+      return;
+    }
+    setError('');
+    setEditing(false);
+    if (!skillName) return;
+    setLoading(true);
+    fetchPolicySkill(skillName)
+      .then((doc) => {
+        setFm(doc.frontmatter);
+        setBody(doc.body);
+        setTriggersText(doc.frontmatter.triggers.join(', '));
+        setTagsText(doc.frontmatter.tags.join(', '));
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  const title = isNew ? 'New skill' : editing ? `Edit skill: ${skillName}` : skillName!;
+  const subtitle = isNew
+    ? 'Configure triggers and skill instructions.'
+    : editing
+      ? 'Update triggers and skill instructions.'
+      : 'Skill metadata and instructions — loaded via ax_skill when triggers match.';
+
   return (
     <PageShell>
       <PageHero
-        title={skillName ? `Edit skill: ${skillName}` : 'New skill'}
-        subtitle="Configure triggers and skill instructions."
+        title={title}
+        subtitle={subtitle}
         actions={
           <>
             <button type="button" className="btn" onClick={onBack}>Back</button>
-            <button type="button" className="btn primary" disabled={saving} onClick={save}>
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+            {!isNew && !editing && (
+              <button type="button" className="btn primary" onClick={() => setEditing(true)}>
+                Edit
+              </button>
+            )}
+            {editing && !isNew && (
+              <button type="button" className="btn" onClick={cancelEdit}>Cancel</button>
+            )}
+            {editing && (
+              <button type="button" className="btn primary" disabled={saving || loading} onClick={save}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            )}
           </>
         }
       />
 
       <PageToasts err={error || null} />
 
-      <div className="page-editor-grid">
-        <PageStack>
-          <PageCard title="Metadata" description="Frontmatter fields for skill matching.">
-            <PageCardBody>
-              <PageRow title="Name" description="Unique skill identifier.">
-                <input
-                  className="settings-input"
-                  value={fm.name}
-                  disabled={!!skillName}
-                  onChange={(e) => setFm({ ...fm, name: e.target.value })}
-                />
-              </PageRow>
-              <PageRow title="Description" description="Short summary shown in skill lists.">
-                <textarea
-                  className="settings-input"
-                  rows={3}
-                  value={fm.description}
-                  onChange={(e) => setFm({ ...fm, description: e.target.value })}
-                  style={{ resize: 'vertical' }}
-                />
-              </PageRow>
-              <PageRow title="Priority" description="Higher priority skills sort first.">
-                <input
-                  className="settings-input settings-input--narrow"
-                  type="number"
-                  value={fm.priority}
-                  onChange={(e) => setFm({ ...fm, priority: Number(e.target.value) })}
-                />
-              </PageRow>
-              <PageRow title="Triggers" description="Keywords that activate this skill.">
-                <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />
-              </PageRow>
-              <PageRow title="Tags" description="Optional categorization tags.">
-                <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
-              </PageRow>
-              <PageRow title="Context task" description="Optional task hint for skill loading.">
-                <input
-                  className="settings-input"
-                  value={fm.contextTask ?? ''}
-                  onChange={(e) => setFm({ ...fm, contextTask: e.target.value || undefined })}
-                />
-              </PageRow>
-            </PageCardBody>
-          </PageCard>
-        </PageStack>
+      {loading ? (
+        <PageLoading />
+      ) : (
+        <div className="page-editor-grid">
+          <PageStack>
+            <PageCard
+              title="Metadata"
+              description={editing ? 'Frontmatter fields for skill matching.' : 'How this skill is matched and prioritized.'}
+            >
+              <PageCardBody>
+                {editing ? (
+                  <>
+                    <PageRow title="Name" description="Unique skill identifier.">
+                      <input
+                        className="settings-input"
+                        value={fm.name}
+                        disabled={!!skillName}
+                        onChange={(e) => setFm({ ...fm, name: e.target.value })}
+                      />
+                    </PageRow>
+                    <PageRow title="Description" description="Short summary shown in skill lists.">
+                      <textarea
+                        className="settings-input"
+                        rows={3}
+                        value={fm.description}
+                        onChange={(e) => setFm({ ...fm, description: e.target.value })}
+                        style={{ resize: 'vertical' }}
+                      />
+                    </PageRow>
+                    <PageRow title="Priority" description="Higher priority skills sort first.">
+                      <input
+                        className="settings-input settings-input--narrow"
+                        type="number"
+                        value={fm.priority}
+                        onChange={(e) => setFm({ ...fm, priority: Number(e.target.value) })}
+                      />
+                    </PageRow>
+                    <PageRow title="Triggers" description="Keywords that activate this skill.">
+                      <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />
+                    </PageRow>
+                    <PageRow title="Tags" description="Optional categorization tags.">
+                      <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
+                    </PageRow>
+                    <PageRow title="Context task" description="Optional task hint for skill loading.">
+                      <input
+                        className="settings-input"
+                        value={fm.contextTask ?? ''}
+                        onChange={(e) => setFm({ ...fm, contextTask: e.target.value || undefined })}
+                      />
+                    </PageRow>
+                  </>
+                ) : (
+                  <SkillMetaView
+                    name={fm.name}
+                    description={fm.description}
+                    priority={fm.priority}
+                    triggers={fm.triggers}
+                    tags={fm.tags}
+                    contextTask={fm.contextTask}
+                  />
+                )}
+              </PageCardBody>
+            </PageCard>
+          </PageStack>
 
-        <PageCard title="Skill body" description="Markdown instructions loaded via ax_skill.">
-          <div style={{ minHeight: 400 }}>
-            <MarkdownEditor value={body} onChange={setBody} />
-          </div>
-        </PageCard>
-      </div>
+          <PageCard
+            title="Skill body"
+            description={editing ? 'Markdown instructions loaded via ax_skill.' : 'Rendered instructions loaded via ax_skill.'}
+            className="page-md-panel"
+          >
+            {editing ? (
+              <MarkdownEditor value={body} onChange={setBody} />
+            ) : (
+              <MarkdownPreview value={body} className="page-md-preview" />
+            )}
+          </PageCard>
+        </div>
+      )}
     </PageShell>
   );
 }

@@ -3,7 +3,7 @@
 use owo_colors::OwoColorize;
 
 use super::glyphs::{clack_glyphs, ClackGlyphs};
-use crate::installer::report::{FileAction, InstallSummary, TargetReport};
+use ax_installer::report::{FileAction, InstallSummary, TargetReport};
 
 pub fn intro(version: &str) {
     let g = clack_glyphs();

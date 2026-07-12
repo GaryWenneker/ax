@@ -10,6 +10,7 @@ members = [
     "crates/ax-sync",
     "crates/ax-core",
     "crates/ax-mcp",
+    "crates/ax-memory",
     "crates/ax-cli",
     "crates/ax-telemetry",
     "crates/ax-usage",
@@ -22,6 +23,8 @@ members = [
     "crates/ax-ship",
     "crates/ax-quality",
     "crates/ax-remote",
+    "crates/ax-installer",
+    "crates/ax-agent",
 ]
 resolver = "2"
 
@@ -32,7 +35,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 thiserror = "1"
-tree-sitter = "0.23"
+tree-sitter = "0.25"
 petgraph = "0.6"
 blake3 = "1"
 rayon = "1"
@@ -70,6 +73,7 @@ ax-context = { path = "crates/ax-context" }
 ax-sync = { path = "crates/ax-sync" }
 ax-core = { path = "crates/ax-core" }
 ax-mcp = { path = "crates/ax-mcp" }
+ax-memory = { path = "crates/ax-memory" }
 ax-web = { path = "crates/ax-web" }
 ax-policy = { path = "crates/ax-policy" }
 serde_yaml = "0.9"
@@ -85,3 +89,5 @@ ax-tia = { path = "crates/ax-tia" }
 ax-ship = { path = "crates/ax-ship" }
 ax-quality = { path = "crates/ax-quality" }
 ax-remote = { path = "crates/ax-remote" }
+ax-installer = { path = "crates/ax-installer" }
+ax-agent = { path = "crates/ax-agent" }

@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use sqlx::SqlitePool;
@@ -7,16 +9,76 @@ use ax_utils::errors::AxError;
 
 use crate::format::format_inject_block;
 use crate::index::list_rules;
-use crate::types::{MatchInput, MatchResult, MatchedRule, MatchedSkill, PolicyLevel, PolicyRuleRow};
+use crate::types::{
+    MatchInput, MatchResult, MatchedRule, MatchedSkill, PolicyLevel, PolicyRuleRow, PolicySkillRow,
+};
+
+/// (max updated_at, count) per table — cheap staleness fingerprint.
+type PolicyGeneration = (i64, i64, i64, i64);
+
+struct PolicyCacheEntry {
+    generation: PolicyGeneration,
+    rules: Arc<Vec<PolicyRuleRow>>,
+    skills: Arc<Vec<PolicySkillRow>>,
+}
+
+static POLICY_CACHE: OnceLock<Mutex<HashMap<String, PolicyCacheEntry>>> = OnceLock::new();
+
+fn policy_cache() -> &'static Mutex<HashMap<String, PolicyCacheEntry>> {
+    POLICY_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn policy_generation(pool: &SqlitePool) -> Result<PolicyGeneration, AxError> {
+    sqlx::query_as(
+        "SELECT (SELECT COALESCE(MAX(updated_at), 0) FROM policy_rules),
+                (SELECT COUNT(*) FROM policy_rules),
+                (SELECT COALESCE(MAX(updated_at), 0) FROM policy_skills),
+                (SELECT COUNT(*) FROM policy_skills)",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string())))
+}
+
+/// Load rules + skills through a per-database cache. A one-row generation
+/// query decides staleness so full policy bodies are not re-read from SQLite
+/// on every preflight call.
+pub async fn cached_rules_and_skills(
+    pool: &SqlitePool,
+) -> Result<(Arc<Vec<PolicyRuleRow>>, Arc<Vec<PolicySkillRow>>), AxError> {
+    let key = pool.connect_options().get_filename().display().to_string();
+    let generation = policy_generation(pool).await?;
+
+    if let Ok(cache) = policy_cache().lock() {
+        if let Some(entry) = cache.get(&key) {
+            if entry.generation == generation {
+                return Ok((Arc::clone(&entry.rules), Arc::clone(&entry.skills)));
+            }
+        }
+    }
+
+    let rules = Arc::new(list_rules(pool).await?);
+    let skills = Arc::new(crate::index::list_skills(pool).await?);
+    if let Ok(mut cache) = policy_cache().lock() {
+        cache.insert(
+            key,
+            PolicyCacheEntry {
+                generation,
+                rules: Arc::clone(&rules),
+                skills: Arc::clone(&skills),
+            },
+        );
+    }
+    Ok((rules, skills))
+}
 
 pub async fn match_policy(pool: &SqlitePool, input: &MatchInput) -> Result<MatchResult, AxError> {
-    let rules = list_rules(pool).await?;
-    let skills = crate::index::list_skills(pool).await?;
+    let (rules, skills) = cached_rules_and_skills(pool).await?;
     let prompt_lc = input.prompt.to_lowercase();
     let files = collect_relative_files(&input.cwd, &input.open_files, &input.changed_files);
 
     let mut matched_rules: Vec<(i32, MatchedRule)> = Vec::new();
-    for rule in &rules {
+    for rule in rules.iter() {
         if let Some(m) = score_rule(rule, &prompt_lc, &files) {
             matched_rules.push((rule.priority, m));
         }
@@ -30,7 +92,7 @@ pub async fn match_policy(pool: &SqlitePool, input: &MatchInput) -> Result<Match
     let rules_out: Vec<MatchedRule> = matched_rules.into_iter().map(|(_, r)| r).collect();
 
     let mut matched_skills: Vec<(i32, MatchedSkill)> = Vec::new();
-    for skill in &skills {
+    for skill in skills.iter() {
         if let Some(m) = score_skill(skill, &prompt_lc) {
             matched_skills.push((skill.priority, m));
         }

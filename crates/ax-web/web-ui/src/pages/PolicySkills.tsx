@@ -63,8 +63,12 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
 
   async function remove(name: string) {
     if (!confirm(`Delete skill "${name}"?`)) return;
-    await deletePolicySkill(name);
-    setSkills((prev) => prev.filter((s) => s.name !== name));
+    try {
+      await deletePolicySkill(name);
+      setSkills((prev) => prev.filter((s) => s.name !== name));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Failed to delete skill "${name}"`);
+    }
   }
 
   if (loading) {

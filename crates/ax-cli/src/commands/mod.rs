@@ -2,7 +2,7 @@
 
 pub mod offload;
 pub mod telemetry;
-pub mod tokens;
+pub mod savings;
 pub mod upgrade;
 pub mod affected;
 pub mod diff;
@@ -17,6 +17,7 @@ pub mod impact;
 pub mod index;
 pub mod init;
 pub mod install;
+pub mod memory;
 pub mod node;
 pub mod query;
 pub mod status;

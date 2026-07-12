@@ -1,0 +1,9 @@
+[package]
+name = "ax-installer"
+version = "2.1.6"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }

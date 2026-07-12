@@ -9,25 +9,38 @@ import PolicyRuleEditor from './pages/PolicyRuleEditor';
 import PolicySkillsPage from './pages/PolicySkills';
 import PolicySkillEditor from './pages/PolicySkillEditor';
 import PolicyMatchPage from './pages/PolicyMatch';
+import UnresolvedPage from './pages/Unresolved';
 import ShipPage from './pages/Ship';
+import AgentPage from './pages/Agent';
 import SettingsPage from './pages/Settings';
-import TokensPage from './pages/Tokens';
+import SonarQubePage from './pages/SonarQube';
+import SavingsPage from './pages/Savings';
+import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
 import { UiProvider } from './context/UiContext';
+import { fetchShipConfig } from './shipApi';
 
 type Page =
-  | 'stats' | 'nodes' | 'files' | 'search' | 'ship' | 'settings' | 'tokens'
+  | 'stats' | 'nodes' | 'files' | 'search' | 'memory' | 'ship' | 'sonar' | 'agent' | 'settings' | 'savings' | 'unresolved'
   | 'policy-rules' | 'policy-rule-edit' | 'policy-skills' | 'policy-skill-edit' | 'policy-match';
 
-const NAV_MAIN: Array<{ id: NavId; label: string }> = [
+const VALID_PAGES: Page[] = [
+  'stats', 'nodes', 'files', 'search', 'memory', 'ship', 'sonar', 'agent', 'settings', 'savings', 'unresolved',
+  'policy-rules', 'policy-rule-edit', 'policy-skills', 'policy-skill-edit', 'policy-match',
+];
+
+const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
   { id: 'stats', label: 'Stats' },
   { id: 'nodes', label: 'Nodes' },
   { id: 'files', label: 'Files' },
   { id: 'search', label: 'Search' },
-  { id: 'tokens', label: 'Tokens' },
+  { id: 'memory', label: 'Memory' },
+  { id: 'savings', label: 'Savings' },
   { id: 'ship', label: 'Command Center' },
+  { id: 'sonar', label: 'SonarQube' },
+  { id: 'agent', label: 'Agent' },
 ];
 
 const NAV_CONFIG: Array<{ id: NavId; label: string }> = [
@@ -41,27 +54,120 @@ const NAV_POLICY: Array<{ id: NavId; label: string }> = [
 
 const SCALE_STEP = 0.05;
 
+function parseHash(): { page: Page; ruleId: string | null; skillName: string | null } {
+  const raw = window.location.hash.replace(/^#/, '') || 'stats';
+  const [path, qs] = raw.split('?');
+  const params = new URLSearchParams(qs ?? '');
+  const page = VALID_PAGES.includes(path as Page) ? (path as Page) : 'stats';
+  return {
+    page,
+    ruleId: params.get('id'),
+    skillName: params.get('name'),
+  };
+}
+
+function writeHash(page: Page, ruleId: string | null, skillName: string | null) {
+  const params = new URLSearchParams();
+  if (page === 'policy-rule-edit' && ruleId) params.set('id', ruleId);
+  if (page === 'policy-skill-edit' && skillName) params.set('name', skillName);
+  const qs = params.toString();
+  const next = qs ? `${page}?${qs}` : page;
+  if (window.location.hash.replace(/^#/, '') !== next) {
+    window.location.hash = next;
+  }
+}
+
 function AppShell() {
-  const [page, setPage] = useState<Page>('stats');
+  const initial = parseHash();
+  const [page, setPage] = useState<Page>(initial.page);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [editRuleId, setEditRuleId] = useState<string | null>(null);
-  const [editSkillName, setEditSkillName] = useState<string | null>(null);
+  const [editRuleId, setEditRuleId] = useState<string | null>(initial.ruleId);
+  const [editSkillName, setEditSkillName] = useState<string | null>(initial.skillName);
   const [fontScale, setFontScale] = useState(loadUiScale);
+  const [showSavings, setShowSavings] = useState(false);
+  const [showAgent, setShowAgent] = useState(true);
 
   useEffect(() => {
     initUiScale();
     initSidebarWidth();
     setFontScale(loadUiScale());
+    if (!window.location.hash) {
+      writeHash(initial.page, initial.ruleId, initial.skillName);
+    }
+    fetchShipConfig()
+      .then((d) => {
+        setShowSavings(d.config.ui?.show_savings ?? d.config.ui?.show_tokens ?? true);
+        setShowAgent(d.config.ui?.show_agent_terminal ?? true);
+      })
+      .catch(() => {});
   }, []);
 
-  function navigate(p: Page) {
+  useEffect(() => {
+    if (page === 'savings' && !showSavings) {
+      setPage('stats');
+      writeHash('stats', editRuleId, editSkillName);
+    }
+  }, [page, showSavings, editRuleId, editSkillName]);
+
+  useEffect(() => {
+    if (page === 'agent' && !showAgent) {
+      setPage('stats');
+      writeHash('stats', editRuleId, editSkillName);
+    }
+  }, [page, showAgent, editRuleId, editSkillName]);
+
+  useEffect(() => {
+    function onHashChange() {
+      const { page: p, ruleId, skillName } = parseHash();
+      setPage(p);
+      setEditRuleId(ruleId);
+      setEditSkillName(skillName);
+      fetchShipConfig()
+        .then((d) => {
+          setShowSavings(d.config.ui?.show_savings ?? d.config.ui?.show_tokens ?? true);
+          setShowAgent(d.config.ui?.show_agent_terminal ?? true);
+        })
+        .catch(() => {});
+    }
+    window.addEventListener('hashchange', onHashChange);
+    function onShipConfigUpdated(ev: Event) {
+      const detail = (ev as CustomEvent<{ show_savings?: boolean }>).detail;
+      if (typeof detail?.show_savings === 'boolean') {
+        setShowSavings(detail.show_savings);
+      }
+      fetchShipConfig()
+        .then((d) => {
+          setShowSavings(d.config.ui?.show_savings ?? d.config.ui?.show_tokens ?? true);
+          setShowAgent(d.config.ui?.show_agent_terminal ?? true);
+        })
+        .catch(() => {});
+    }
+    window.addEventListener('ax-ship-config-updated', onShipConfigUpdated);
+    return () => {
+      window.removeEventListener('hashchange', onHashChange);
+      window.removeEventListener('ax-ship-config-updated', onShipConfigUpdated);
+    };
+  }, []);
+
+  function navigate(p: Page, extras?: { ruleId?: string | null; skillName?: string | null }) {
+    const ruleId = extras?.ruleId !== undefined ? extras.ruleId : editRuleId;
+    const skillName = extras?.skillName !== undefined ? extras.skillName : editSkillName;
+    if (extras?.ruleId !== undefined) setEditRuleId(extras.ruleId);
+    if (extras?.skillName !== undefined) setEditSkillName(extras.skillName);
     setPage(p);
     setSidebarOpen(false);
+    writeHash(p, ruleId, skillName);
   }
 
   function adjFont(delta: number) {
     setFontScale(adjustUiScale(delta));
   }
+
+  const navMain = NAV_MAIN_BASE.filter((n) => {
+    if (n.id === 'savings' && !showSavings) return false;
+    if (n.id === 'agent' && !showAgent) return false;
+    return true;
+  });
 
   return (
     <div className="layout">
@@ -74,16 +180,20 @@ function AppShell() {
             aria-label="Toggle menu"
             aria-expanded={sidebarOpen}
           >
-            ☰
+            <i className="codicon codicon-menu" aria-hidden="true" />
           </button>
           <span className="titlebar-brand">
             ax <span>/ graph + policy</span>
           </span>
         </div>
         <div className="font-ctrl">
-          <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">A−</button>
+          <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">
+            <i className="codicon codicon-remove" aria-hidden="true" />
+          </button>
           <span className="font-size-lbl">{Math.round(fontScale * 100)}%</span>
-          <button type="button" className="font-btn" onClick={() => adjFont(SCALE_STEP)} title="Larger text" aria-label="Larger text">A+</button>
+          <button type="button" className="font-btn" onClick={() => adjFont(SCALE_STEP)} title="Larger text" aria-label="Larger text">
+            <i className="codicon codicon-add" aria-hidden="true" />
+          </button>
         </div>
       </header>
 
@@ -96,7 +206,7 @@ function AppShell() {
           />
         )}
         <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
-          {NAV_MAIN.map((n) => (
+          {navMain.map((n) => (
             <button
               key={n.id}
               type="button"
@@ -140,28 +250,32 @@ function AppShell() {
           {page === 'nodes' && <NodesPage />}
           {page === 'files' && <FilesPage />}
           {page === 'search' && <SearchPage />}
-          {page === 'tokens' && <TokensPage />}
-          {page === 'ship' && <ShipPage onOpenSettings={() => navigate('settings')} />}
+          {page === 'memory' && <MemoryPage />}
+          {page === 'unresolved' && <UnresolvedPage />}
+          {page === 'savings' && showSavings && <SavingsPage />}
+          {page === 'ship' && <ShipPage onOpenSonar={() => navigate('sonar')} />}
+          {page === 'sonar' && <SonarQubePage />}
+          {page === 'agent' && showAgent && <AgentPage />}
           {page === 'settings' && <SettingsPage />}
           {page === 'policy-rules' && (
             <PolicyRulesPage
-              onEdit={(id) => { setEditRuleId(id); setPage('policy-rule-edit'); }}
-              onMatch={() => setPage('policy-match')}
+              onEdit={(id) => navigate('policy-rule-edit', { ruleId: id })}
+              onMatch={() => navigate('policy-match')}
             />
           )}
           {page === 'policy-rule-edit' && (
-            <PolicyRuleEditor ruleId={editRuleId} onBack={() => setPage('policy-rules')} />
+            <PolicyRuleEditor ruleId={editRuleId} onBack={() => navigate('policy-rules')} />
           )}
           {page === 'policy-skills' && (
             <PolicySkillsPage
-              onEdit={(name) => { setEditSkillName(name); setPage('policy-skill-edit'); }}
-              onMatch={() => setPage('policy-match')}
+              onEdit={(name) => navigate('policy-skill-edit', { skillName: name })}
+              onMatch={() => navigate('policy-match')}
             />
           )}
           {page === 'policy-skill-edit' && (
-            <PolicySkillEditor skillName={editSkillName} onBack={() => setPage('policy-skills')} />
+            <PolicySkillEditor skillName={editSkillName} onBack={() => navigate('policy-skills')} />
           )}
-          {page === 'policy-match' && <PolicyMatchPage onClose={() => setPage('policy-rules')} />}
+          {page === 'policy-match' && <PolicyMatchPage onClose={() => navigate('policy-rules')} />}
         </main>
       </div>
 

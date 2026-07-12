@@ -18,6 +18,7 @@ pub use logger::{get_logger, set_logger, Logger};
 pub use memory::MemoryMonitor;
 pub use mutex::AsyncMutex;
 pub use paths::validate_path_within_root;
+pub use process::{is_pid_alive, kill_listening_on_port, pids_listening_on_port};
 pub use security::{is_config_leaf_node, CONFIG_LEAF_LANGUAGES, SENSITIVE_PATHS};
 pub use text_encoding::read_text_file;
 

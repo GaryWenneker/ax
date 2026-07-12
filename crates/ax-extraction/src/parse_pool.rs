@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use ax_types::{ExtractionResult, Language};
 use rayon::prelude::*;
-use tree_sitter::{Language as TsLanguage, Parser};
+use tree_sitter::Parser;
 
 use crate::languages::all_extractors;
+use crate::ts_grammars;
 use crate::LanguageExtractor;
 
 const DEFAULT_POOL_CAP: usize = 8;
@@ -20,7 +21,10 @@ pub struct ParseTask {
 }
 
 pub struct ParsePool {
-    pool_size: usize,
+    /// Thread pool and extractor registry are built once and reused across
+    /// batches — rebuilding them per 48-file chunk dominated small syncs.
+    pool: rayon::ThreadPool,
+    extractors: Arc<HashMap<Language, Box<dyn LanguageExtractor>>>,
 }
 
 impl ParsePool {
@@ -35,17 +39,24 @@ impl ParsePool {
         } else {
             cpus.min(DEFAULT_POOL_CAP)
         };
-        Self { pool_size }
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(pool_size)
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::warn!("failed to build sized rayon pool ({e}); using default");
+                rayon::ThreadPoolBuilder::new()
+                    .build()
+                    .expect("rayon pool with default settings")
+            });
+        Self {
+            pool,
+            extractors: Arc::new(all_extractors()),
+        }
     }
 
     pub fn parse_batch(&self, tasks: Vec<ParseTask>) -> Vec<(String, Result<ExtractionResult, String>)> {
-        let extractors = Arc::new(all_extractors());
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.pool_size)
-            .build()
-            .expect("failed to build rayon pool");
-
-        pool.install(|| {
+        let extractors = Arc::clone(&self.extractors);
+        self.pool.install(|| {
             tasks
                 .into_par_iter()
                 .map(|task| {
@@ -58,13 +69,12 @@ impl ParsePool {
 }
 
 fn parse_file(task: &ParseTask, extractors: &HashMap<Language, Box<dyn LanguageExtractor>>) -> Result<ExtractionResult, String> {
-    let extractor = extractor_for_task(task.language, extractors);
-    if extractor.is_none() {
+    let Some(extractor) = extractor_for_task(task.language, extractors) else {
         return Ok(ExtractionResult::default());
-    }
-    let extractor = extractor.unwrap();
+    };
 
-    let ts_lang = ts_language_for(task.language)?;
+    let ts_lang = ts_grammars::ts_language_for(task.language)
+        .ok_or_else(|| format!("no tree-sitter grammar for {:?}", task.language))?;
     let mut parser = Parser::new();
     parser.set_language(&ts_lang).map_err(|e| e.to_string())?;
 
@@ -87,18 +97,8 @@ fn extractor_for_task(
     if lang == Language::Tsx {
         return extractors.get(&Language::Typescript).map(|b| b.as_ref());
     }
-    None
-}
-
-fn ts_language_for(lang: Language) -> Result<TsLanguage, String> {
-    match lang {
-        Language::Rust => Ok(tree_sitter_rust::LANGUAGE.into()),
-        Language::Python => Ok(tree_sitter_python::LANGUAGE.into()),
-        Language::Go => Ok(tree_sitter_go::LANGUAGE.into()),
-        Language::Java | Language::Kotlin => Ok(tree_sitter_java::LANGUAGE.into()),
-        Language::Javascript | Language::Jsx => Ok(tree_sitter_javascript::LANGUAGE.into()),
-        Language::Typescript => Ok(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        Language::Tsx => Ok(tree_sitter_typescript::LANGUAGE_TSX.into()),
-        _ => Err(format!("no tree-sitter grammar for {:?}", lang)),
+    if lang == Language::Jsx {
+        return extractors.get(&Language::Javascript).map(|b| b.as_ref());
     }
+    None
 }

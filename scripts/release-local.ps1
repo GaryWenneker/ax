@@ -29,11 +29,39 @@ function Write-Step {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Refresh-Path {
+    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:Path = @($machine, $user, $env:Path) -join ';'
+}
+
+function Resolve-AxCommand {
+    Refresh-Path
+    $cmd = Get-Command ax -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+
+    $candidates = @(
+        (Join-Path $env:USERPROFILE '.cargo\bin\ax.exe')
+        (Join-Path $env:LOCALAPPDATA 'ax\current\bin\ax.exe')
+        (Join-Path $root 'target-dev\release\ax.exe')
+        (Join-Path $root 'target-ui\release\ax.exe')
+    ) | Where-Object { $_ -and (Test-Path $_) }
+
+    foreach ($path in $candidates) {
+        $dir = Split-Path -Parent $path
+        if ($dir -and ($env:Path -split ';' -notcontains $dir)) {
+            $env:Path = "$dir;$env:Path"
+        }
+        if (Test-Path $path) { return $path }
+    }
+
+    return $null
+}
+
 function Stop-AllAxProcesses {
     Write-Step 'Graceful ax daemon stop'
-    $axCmd = Get-Command ax -ErrorAction SilentlyContinue
     $axCandidates = @(
-        $(if ($axCmd) { $axCmd.Source })
+        $(Resolve-AxCommand)
         (Join-Path $root 'target-dev\release\ax.exe')
         (Join-Path $root 'target-ui\release\ax.exe')
         (Join-Path $env:USERPROFILE '.cargo\bin\ax.exe')
@@ -102,16 +130,83 @@ if (-not $SkipInstall) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $built = Join-Path $root 'target-dev\release\ax.exe'
-    $appDataBin = Join-Path $env:LOCALAPPDATA 'ax\current\bin\ax.exe'
-    if ((Test-Path $built) -and (Test-Path (Split-Path $appDataBin -Parent))) {
-        Write-Step "Sync release build -> $appDataBin"
-        Copy-Item -Force $built $appDataBin
+    $appDataRoot = Join-Path $env:LOCALAPPDATA 'ax\current'
+    $appDataBin = Join-Path $appDataRoot 'bin\ax.exe'
+    $appDataExe = Join-Path $appDataRoot 'ax.exe'
+    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin\ax.exe'
+    if (Test-Path $built) {
+        foreach ($pair in @(
+            @{ Label = $appDataBin; Path = $appDataBin; NeedParent = $true }
+            @{ Label = $appDataExe; Path = $appDataExe; NeedParent = $false }
+            @{ Label = $cargoBin; Path = $cargoBin; NeedParent = $true }
+        )) {
+            $dest = $pair.Path
+            $parentOk = if ($pair.NeedParent) { Test-Path (Split-Path $dest -Parent) } else { Test-Path $appDataRoot }
+            if ($parentOk) {
+                Write-Step "Sync release build -> $dest"
+                Copy-Item -Force $built $dest
+            }
+        }
     }
 
-    $bin = (Get-Command ax -ErrorAction Stop).Source
-    $ver = & ax --version
+    $bin = Resolve-AxCommand
+    if (-not $bin) {
+        throw 'cargo install finished but ax is not on PATH. Open a new shell or add ~/.cargo/bin to PATH.'
+    }
+    $ver = & $bin --version
     Write-Host $ver -ForegroundColor Green
     Write-Host "Installed: $bin" -ForegroundColor Green
+
+    if (Test-Path $built) {
+        Write-Step 'Verify all ax.exe copies match release build'
+        Verify-AxBinarySync -Source $built -Targets @(
+            $cargoBin
+            $appDataBin
+            $appDataExe
+        )
+    }
+}
+
+function Verify-AxBinarySync {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string[]]$Targets
+    )
+    if (-not (Test-Path $Source)) {
+        throw "Source binary missing: $Source"
+    }
+    $srcHash = (Get-FileHash -Algorithm SHA256 $Source).Hash
+    $srcSize = (Get-Item $Source).Length
+    $checked = 0
+    $failed = @()
+
+    foreach ($target in $Targets) {
+        if (-not (Test-Path $target)) {
+            Write-Host "  skip (missing): $target" -ForegroundColor DarkYellow
+            continue
+        }
+        $checked++
+        $item = Get-Item $target
+        $hash = (Get-FileHash -Algorithm SHA256 $target).Hash
+        if ($hash -ne $srcHash) {
+            $failed += $target
+            Write-Host "  STALE: $target ($($item.Length) bytes, $($item.LastWriteTime))" -ForegroundColor Red
+        } else {
+            Write-Host "  OK:    $target" -ForegroundColor Green
+        }
+    }
+
+    if ($failed.Count -gt 0) {
+        throw @(
+            "ax.exe hash mismatch — copy manually from:",
+            "  $Source",
+            "  ($srcSize bytes, SHA256 $($srcHash.Substring(0, 16))…)",
+            "Stale:",
+            ($failed | ForEach-Object { "  $_" })
+        ) -join "`n"
+    }
+
+    Write-Host "All $checked ax.exe copy/copies match release build (SHA256 $($srcHash.Substring(0, 16))…)" -ForegroundColor Green
 }
 
 Write-Host ""

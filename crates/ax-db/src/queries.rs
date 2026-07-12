@@ -101,26 +101,58 @@ impl QueryBuilder {
         Ok(())
     }
 
-    /// CG: `insertNodes` — batch upsert in a single transaction.
+    /// CG: `insertNodes` — multi-row upsert in a single transaction.
+    /// Chunked to stay well under SQLite's bind-variable limit.
     pub async fn upsert_nodes(&self, nodes: &[Node]) -> Result<(), AxError> {
         if nodes.is_empty() {
             return Ok(());
         }
+        // 21 columns per row; 400 rows = 8,400 binds per statement.
+        const CHUNK: usize = 400;
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-        for node in nodes {
-            sqlx::query(
-                r#"
-                INSERT INTO nodes (
+        for chunk in nodes.chunks(CHUNK) {
+            let mut qb = sqlx::QueryBuilder::new(
+                "INSERT INTO nodes (
                     id, kind, name, qualified_name, file_path, language,
                     start_line, end_line, start_column, end_column,
                     docstring, signature, visibility, is_exported, is_async,
                     is_static, is_abstract, decorators, type_parameters, return_type, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
+                ) ",
+            );
+            qb.push_values(chunk, |mut b, node| {
+                b.push_bind(&node.id)
+                    .push_bind(node.kind.as_str())
+                    .push_bind(&node.name)
+                    .push_bind(&node.qualified_name)
+                    .push_bind(&node.file_path)
+                    .push_bind(node.language.as_str())
+                    .push_bind(node.start_line)
+                    .push_bind(node.end_line)
+                    .push_bind(node.start_column)
+                    .push_bind(node.end_column)
+                    .push_bind(&node.docstring)
+                    .push_bind(&node.signature)
+                    .push_bind(node.visibility.map(|v| match v {
+                        Visibility::Public => "public",
+                        Visibility::Private => "private",
+                        Visibility::Protected => "protected",
+                        Visibility::Internal => "internal",
+                    }))
+                    .push_bind(node.is_exported.unwrap_or(false))
+                    .push_bind(node.is_async.unwrap_or(false))
+                    .push_bind(node.is_static.unwrap_or(false))
+                    .push_bind(node.is_abstract.unwrap_or(false))
+                    .push_bind(node.decorators.as_ref().map(|d| serde_json::to_string(d).unwrap_or_default()))
+                    .push_bind(node.type_parameters.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default()))
+                    .push_bind(&node.return_type)
+                    .push_bind(node.updated_at);
+            });
+            qb.push(
+                " ON CONFLICT(id) DO UPDATE SET
                     kind=excluded.kind, name=excluded.name, qualified_name=excluded.qualified_name,
                     file_path=excluded.file_path, language=excluded.language,
                     start_line=excluded.start_line, end_line=excluded.end_line,
@@ -130,38 +162,12 @@ impl QueryBuilder {
                     is_async=excluded.is_async, is_static=excluded.is_static,
                     is_abstract=excluded.is_abstract, decorators=excluded.decorators,
                     type_parameters=excluded.type_parameters, return_type=excluded.return_type,
-                    updated_at=excluded.updated_at
-                "#,
-            )
-            .bind(&node.id)
-            .bind(node.kind.as_str())
-            .bind(&node.name)
-            .bind(&node.qualified_name)
-            .bind(&node.file_path)
-            .bind(node.language.as_str())
-            .bind(node.start_line)
-            .bind(node.end_line)
-            .bind(node.start_column)
-            .bind(node.end_column)
-            .bind(&node.docstring)
-            .bind(&node.signature)
-            .bind(node.visibility.map(|v| match v {
-                Visibility::Public => "public",
-                Visibility::Private => "private",
-                Visibility::Protected => "protected",
-                Visibility::Internal => "internal",
-            }))
-            .bind(node.is_exported.unwrap_or(false))
-            .bind(node.is_async.unwrap_or(false))
-            .bind(node.is_static.unwrap_or(false))
-            .bind(node.is_abstract.unwrap_or(false))
-            .bind(node.decorators.as_ref().map(|d| serde_json::to_string(d).unwrap_or_default()))
-            .bind(node.type_parameters.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default()))
-            .bind(&node.return_type)
-            .bind(node.updated_at)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                    updated_at=excluded.updated_at",
+            );
+            qb.build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         }
         tx.commit()
             .await
@@ -173,32 +179,34 @@ impl QueryBuilder {
         if edges.is_empty() {
             return Ok(());
         }
+        // 7 columns per row; 1000 rows = 7,000 binds per statement.
+        const CHUNK: usize = 1000;
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-        for edge in edges {
-            sqlx::query(
-                r#"
-                INSERT OR IGNORE INTO edges (source, target, kind, metadata, line, col, provenance)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(&edge.source)
-            .bind(&edge.target)
-            .bind(edge.kind.as_str())
-            .bind(edge.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()))
-            .bind(edge.line)
-            .bind(edge.column)
-            .bind(edge.provenance.map(|p| match p {
-                Provenance::TreeSitter => "tree-sitter",
-                Provenance::Scip => "scip",
-                Provenance::Heuristic => "heuristic",
-            }))
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        for chunk in edges.chunks(CHUNK) {
+            let mut qb = sqlx::QueryBuilder::new(
+                "INSERT OR IGNORE INTO edges (source, target, kind, metadata, line, col, provenance) ",
+            );
+            qb.push_values(chunk, |mut b, edge| {
+                b.push_bind(&edge.source)
+                    .push_bind(&edge.target)
+                    .push_bind(edge.kind.as_str())
+                    .push_bind(edge.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()))
+                    .push_bind(edge.line)
+                    .push_bind(edge.column)
+                    .push_bind(edge.provenance.map(|p| match p {
+                        Provenance::TreeSitter => "tree-sitter",
+                        Provenance::Scip => "scip",
+                        Provenance::Heuristic => "heuristic",
+                    }));
+            });
+            qb.build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         }
         tx.commit()
             .await
@@ -278,6 +286,30 @@ impl QueryBuilder {
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         Ok(row.map(|r| r.into_node()))
+    }
+
+    /// Batch fetch nodes by id — avoids N+1 round trips in graph traversal.
+    pub async fn get_nodes_by_ids(&self, ids: &[String]) -> Result<Vec<Node>, AxError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        const CHUNK: usize = 900;
+        let mut nodes = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(CHUNK) {
+            let mut qb = sqlx::QueryBuilder::new("SELECT * FROM nodes WHERE id IN (");
+            let mut separated = qb.separated(", ");
+            for id in chunk {
+                separated.push_bind(id);
+            }
+            separated.push_unseparated(")");
+            let rows: Vec<NodeRow> = qb
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            nodes.extend(rows.into_iter().map(|r| r.into_node()));
+        }
+        Ok(nodes)
     }
 
     pub async fn get_nodes_by_file(&self, file_path: &str) -> Result<Vec<Node>, AxError> {
@@ -507,29 +539,31 @@ impl QueryBuilder {
         if refs.is_empty() {
             return Ok(());
         }
+        // 8 columns per row; 1000 rows = 8,000 binds per statement.
+        const CHUNK: usize = 1000;
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-        for ref_ in refs {
-            sqlx::query(
-                r#"
-                INSERT INTO unresolved_refs (from_node_id, reference_name, reference_kind, line, col, candidates, file_path, language)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(&ref_.from_node_id)
-            .bind(&ref_.reference_name)
-            .bind(ref_.reference_kind.as_str())
-            .bind(ref_.line)
-            .bind(ref_.column)
-            .bind(ref_.candidates.as_ref().map(|c| serde_json::to_string(c).unwrap_or_default()))
-            .bind(ref_.file_path.as_deref().unwrap_or(""))
-            .bind(ref_.language.map(|l| l.as_str()).unwrap_or("unknown"))
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        for chunk in refs.chunks(CHUNK) {
+            let mut qb = sqlx::QueryBuilder::new(
+                "INSERT INTO unresolved_refs (from_node_id, reference_name, reference_kind, line, col, candidates, file_path, language) ",
+            );
+            qb.push_values(chunk, |mut b, ref_| {
+                b.push_bind(&ref_.from_node_id)
+                    .push_bind(&ref_.reference_name)
+                    .push_bind(ref_.reference_kind.as_str())
+                    .push_bind(ref_.line)
+                    .push_bind(ref_.column)
+                    .push_bind(ref_.candidates.as_ref().map(|c| serde_json::to_string(c).unwrap_or_default()))
+                    .push_bind(ref_.file_path.as_deref().unwrap_or(""))
+                    .push_bind(ref_.language.map(|l| l.as_str()).unwrap_or("unknown"));
+            });
+            qb.build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         }
         tx.commit()
             .await
@@ -595,6 +629,104 @@ impl QueryBuilder {
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         Ok(())
+    }
+
+    /// Rows whose `from_node_id` no longer exists in `nodes`.
+    pub async fn prune_orphan_unresolved_refs(&self) -> Result<u64, AxError> {
+        let result = sqlx::query(
+            "DELETE FROM unresolved_refs WHERE from_node_id NOT IN (SELECT id FROM nodes)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Rows for files removed from the index.
+    pub async fn prune_stale_file_unresolved_refs(&self) -> Result<u64, AxError> {
+        let result = sqlx::query(
+            "DELETE FROM unresolved_refs WHERE file_path != '' AND file_path NOT IN (SELECT path FROM files)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Full generic call text captured before callee normalization (e.g. `AddSingleton<T>`).
+    pub async fn prune_malformed_call_unresolved_refs(&self) -> Result<u64, AxError> {
+        let result = sqlx::query(
+            "DELETE FROM unresolved_refs WHERE reference_kind = 'calls' AND reference_name LIKE '%<%'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Known library / framework calls that cannot resolve to indexed symbols.
+    pub async fn prune_external_call_unresolved_refs(&self) -> Result<u64, AxError> {
+        const EXTERNAL: &[&str] = &[
+            "AddSingleton",
+            "AddScoped",
+            "AddTransient",
+            "AddMediatR",
+            "RegisterServicesFromAssembly",
+            "GetExecutingAssembly",
+            "AddControllers",
+            "AddDbContext",
+            "AddAutoMapper",
+            "AddHttpClient",
+            "AddMemoryCache",
+            "AddStackExchangeRedisCache",
+            "AddAuthentication",
+            "AddAuthorization",
+            "AddCors",
+            "AddSwaggerGen",
+            "UseAuthentication",
+            "UseAuthorization",
+            "UseRouting",
+            "UseEndpoints",
+            "UseSwagger",
+            "UseSwaggerUI",
+            "MapControllers",
+            "MapGet",
+            "MapPost",
+            "Configure",
+            "ConfigureServices",
+            "ConfigureAppConfiguration",
+            "Build",
+            "Run",
+            "RunAsync",
+            "CreateBuilder",
+            "CreateDefaultBuilder",
+            "AddMvc",
+            "AddRazorPages",
+            "AddSignalR",
+            "AddHealthChecks",
+            "AddLogging",
+            "AddOptions",
+            "Bind",
+            "GetService",
+            "GetRequiredService",
+            "GetServices",
+            "Console",
+            "WriteLine",
+            "ToString",
+            "Equals",
+            "GetHashCode",
+            "GetType",
+        ];
+        let placeholders = EXTERNAL.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "DELETE FROM unresolved_refs WHERE reference_kind = 'calls' AND reference_name IN ({placeholders})"
+        );
+        let mut query = sqlx::query(&sql);
+        for name in EXTERNAL {
+            query = query.bind(*name);
+        }
+        let result = query.execute(&self.pool).await.map_err(db_err)?;
+        Ok(result.rows_affected())
     }
 
     pub async fn get_stats(&self) -> Result<GraphStats, AxError> {

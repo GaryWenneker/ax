@@ -97,6 +97,8 @@ impl ToolHandler {
                 let affected = ax.get_affected_files(&files).await.map_err(|e| e.to_string())?;
                 Ok(json!({ "affected": affected }))
             }
+            "ax_remember" => remember(ax, params).await,
+            "ax_recall" => recall(ax, params).await,
             _ => Err(format!("unknown tool: {}", name)),
         }
     }
@@ -146,7 +148,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let files = string_array(params.get("files"));
     let input = MatchInput {
-        prompt,
+        prompt: prompt.clone(),
         cwd: ax.project_root().to_path_buf(),
         open_files: files.iter().map(PathBuf::from).collect(),
         changed_files: vec![],
@@ -154,16 +156,86 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let result = ax.match_policy(input).await.map_err(|e| e.to_string())?;
     let status = ax.policy_status().await.map_err(|e| e.to_string())?;
     let meta = ax_policy::build_preflight_meta(&status, &result);
+
+    // Durable memories ride along with the policy inject. Failures here must
+    // never break preflight — memories are additive context.
+    let memories = ax_memory::recall_for_prompt(ax.db_pool(), &prompt, 3)
+        .await
+        .unwrap_or_default();
+    let mut inject = result.inject.clone();
+    if !memories.is_empty() {
+        let block = ax_memory::format_memories_inject_block(&memories, 6_000);
+        if !block.is_empty() {
+            if !inject.is_empty() {
+                inject.push('\n');
+            }
+            inject.push_str(&block);
+        }
+    }
+
     Ok(json!({
         "policyStatus": meta.policy_status,
         "matchedRules": meta.matched_rules,
         "matchedSkills": meta.matched_skills,
+        "matchedMemories": memories.len(),
         "guardRequired": meta.guard_required,
         "mode": meta.mode,
         "rules": result.rules,
         "skills": result.skills,
-        "inject": result.inject,
+        "memories": memories,
+        "inject": inject,
         "instruction": "Apply CRITICAL rules before editing. If a skill matched, follow its workflow.",
+    }))
+}
+
+async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let body = params
+        .get("body")
+        .or_else(|| params.get("text"))
+        .and_then(|v| v.as_str())
+        .ok_or("body required")?
+        .to_string();
+    let input = ax_memory::RememberInput {
+        title: params.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        body,
+        kind: params.get("kind").and_then(|v| v.as_str()).map(String::from),
+        tags: string_array(params.get("tags")),
+        files: string_array(params.get("files")),
+        source: Some("mcp".into()),
+    };
+    let row = ax_memory::remember(ax.db_pool(), input).await.map_err(|e| e.to_string())?;
+    let similar = ax_memory::find_similar(
+        ax.db_pool(),
+        &format!("{} {}", row.title, row.body),
+        Some(&row.id),
+        0.80,
+        3,
+    )
+    .await
+    .unwrap_or_default();
+    let instruction = if similar.is_empty() {
+        "Memory saved. It will surface in future ax_preflight and ax_recall calls when relevant.".to_string()
+    } else {
+        "Memory saved, but very similar memories already exist (see similar[]). If they contradict the new memory, tell the user and consider deleting the stale one.".to_string()
+    };
+    Ok(json!({
+        "ok": true,
+        "id": row.id,
+        "title": row.title,
+        "kind": row.kind,
+        "similar": similar,
+        "instruction": instruction,
+    }))
+}
+
+async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let query = params.get("query").and_then(|v| v.as_str()).ok_or("query required")?;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5).min(25) as usize;
+    let matches = ax_memory::recall(ax.db_pool(), query, limit).await.map_err(|e| e.to_string())?;
+    let text = ax_memory::format_memories_inject_block(&matches, 12_000);
+    Ok(json!({
+        "matches": matches,
+        "inject": text,
     }))
 }
 
@@ -456,6 +528,33 @@ fn extra_tools() -> Vec<Value> {
         json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_affected", "description": "Affected test files", "inputSchema": { "type": "object", "properties": { "files": { "type": "array", "items": { "type": "string" } } } } }),
+        json!({
+            "name": "ax_remember",
+            "description": "Store a durable project memory (decision, bug fix, architecture choice, convention). Recalled automatically in future ax_preflight calls and searchable via ax_recall.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "body": { "type": "string", "description": "The memory content — what to remember and why" },
+                    "title": { "type": "string", "description": "Short title (defaults to first line of body)" },
+                    "kind": { "type": "string", "enum": ["decision", "bug_fix", "architecture", "convention", "note"] },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "Related project-relative file paths" }
+                },
+                "required": ["body"]
+            }
+        }),
+        json!({
+            "name": "ax_recall",
+            "description": "Search durable project memories (decisions, fixes, conventions) by free text. Fresh memories outrank stale ones via confidence decay.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "number" }
+                },
+                "required": ["query"]
+            }
+        }),
     ]
 }
 
@@ -495,6 +594,7 @@ pub fn server_instructions(has_policy: bool) -> String {
     s.push_str(
         "For structural questions — how code works, call paths, impact, dependencies, architecture — call ax_explore FIRST with the user's question or symbol names. Treat returned numbered source as already read; do not re-grep the same symbols.\n\n\
          Use ax_search for quick symbol lookup. Use ax_node for one symbol's file context. Use ax_callers / ax_callees / ax_impact for focused graph queries.\n\n\
+         Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
          Pass projectPath when cwd is not the indexed project root (monorepos). Prefer ax over grep/read for code structure.",
     );
     s

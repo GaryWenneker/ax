@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchSearch } from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
+import Codicon from '../components/Codicon';
 import {
   FilterBar,
   ItemList,
@@ -14,16 +15,32 @@ import {
   PageStack,
   PageToasts,
 } from '../components/ui/PageLayout';
+import { usePersistedString } from '../hooks/usePersistedState';
 import { usePageContext } from '../context/UiContext';
 import type { SearchResult } from '../types';
 
+const KIND_ICONS: Record<string, string> = {
+  function: 'symbol-method',
+  method: 'symbol-method',
+  class: 'symbol-class',
+  struct: 'symbol-structure',
+  enum: 'symbol-enum',
+  trait: 'symbol-interface',
+  interface: 'symbol-interface',
+  type: 'symbol-type-parameter',
+  const: 'symbol-constant',
+  variable: 'symbol-variable',
+  module: 'symbol-namespace',
+  file: 'file',
+};
+
 export default function SearchPage() {
-  const [q, setQ] = useState('');
+  const [q, setQ] = usePersistedString('search-q', '');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = usePersistedString('search-selected', '');
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -69,7 +86,6 @@ export default function SearchPage() {
               placeholder="Search symbols, functions, classes…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              autoFocus
             />
           </FilterBar>
 
@@ -85,31 +101,35 @@ export default function SearchPage() {
                 Try a different query or prefix.
               </PageEmpty>
             ) : (
-              <ItemList>
-                {results.map((r) => (
-                  <ItemRow
-                    key={r.id}
-                    icon={r.kind.slice(0, 4)}
-                    title={r.name}
-                    subtitle={r.snippet ? r.snippet : `${r.file_path}:${r.start_line}`}
-                    selected={selectedId === r.id}
-                    onClick={() => setSelectedId(r.id)}
-                    badges={<span className="page-item-badge">{r.language}</span>}
+              <div className={`page-split${selectedId ? ' page-split--with-detail' : ''}`}>
+                <div className="page-split-main">
+                  <ItemList>
+                    {results.map((r) => (
+                      <ItemRow
+                        key={r.id}
+                        icon={<Codicon name={KIND_ICONS[r.kind] ?? 'symbol-misc'} className="page-item-codicon" />}
+                        title={r.name}
+                        subtitle={r.snippet ? r.snippet : `${r.file_path}:${r.start_line}`}
+                        selected={selectedId === r.id}
+                        onClick={() => setSelectedId(r.id)}
+                        badges={<span className="page-item-badge">{r.language}</span>}
+                      />
+                    ))}
+                  </ItemList>
+                </div>
+                {selectedId && (
+                  <NodeDetailPanel
+                    nodeId={selectedId}
+                    onClose={() => setSelectedId('')}
+                    onNavigate={(id) => setSelectedId(id)}
+                    variant="blade"
                   />
-                ))}
-              </ItemList>
+                )}
+              </div>
             )}
           </PageCardBody>
         </PageCard>
       </PageStack>
-
-      {selectedId && (
-        <NodeDetailPanel
-          nodeId={selectedId}
-          onClose={() => setSelectedId(null)}
-          onNavigate={(id) => setSelectedId(id)}
-        />
-      )}
     </PageShell>
   );
 }

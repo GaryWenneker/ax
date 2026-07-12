@@ -6,6 +6,7 @@ pub mod daemon_lock;
 pub mod query_pool;
 pub mod daemon_conn;
 pub mod engine;
+pub mod invoke;
 pub mod liveness_watchdog;
 pub mod ppid_watchdog;
 pub mod proxy;
@@ -15,6 +16,7 @@ pub mod transport;
 
 pub use daemon::run_daemon;
 pub use engine::McpEngine;
+pub use invoke::{call_tool, format_tool_result};
 pub use proxy::attach_or_spawn;
 pub use server::{resolve_mcp_project_root, run_stdio_server};
 pub use liveness_watchdog::run_watchdog_child;

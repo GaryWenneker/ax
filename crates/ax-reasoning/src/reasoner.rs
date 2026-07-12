@@ -1,7 +1,6 @@
 //! Remote reasoning offload for explore output (OpenAI-compatible API).
 
 use crate::config::resolve_offload;
-use ax_usage::record_from_response;
 
 const ROLE: &str = "You are ax's reasoning engine. Your input is (1) a developer's question and (2) source code already retrieved for you (verbatim, with file paths and line numbers). Answer ONLY from that source.
 
@@ -59,7 +58,7 @@ pub struct ExploreOffloadMeta {
 pub async fn synthesize_offload(
     query: &str,
     context: &str,
-    meta: Option<&ExploreOffloadMeta>,
+    _meta: Option<&ExploreOffloadMeta>,
 ) -> Option<String> {
     let cfg = resolve_offload();
     if !cfg.enabled {
@@ -105,18 +104,6 @@ pub async fn synthesize_offload(
     match res {
         Ok(r) if r.status().is_success() => {
             let data: serde_json::Value = r.json().await.unwrap_or_default();
-            if let Some(m) = meta {
-                let recorded = record_from_response(
-                    &cfg.model,
-                    m.source,
-                    m.project.as_deref(),
-                    &data,
-                )
-                .await;
-                if !recorded && cfg.debug {
-                    tracing::debug!("offload response had no parseable token usage");
-                }
-            }
             let answer = data
                 .get("choices")
                 .and_then(|c| c.get(0))

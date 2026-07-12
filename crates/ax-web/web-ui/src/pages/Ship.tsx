@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import PipelineTrack from '../components/PipelineTrack';
 import {
   PageCard,
   PageCardBody,
@@ -11,76 +12,535 @@ import {
   StatusPill,
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
-import { runShipCommand, type GateStep, type ShipReport } from '../shipApi';
+import {
+  bootstrapSonar,
+  discoverSonar,
+  fetchShipStatus,
+  regenerateSonarToken,
+  runShipCommand,
+  streamSonarInstall,
+  streamSonarScanAll,
+  streamSonarScanProject,
+  streamSonarStart,
+  validateSonarToken,
+  type GateStep,
+  type LastRunLog,
+  type ShipReport,
+  type SonarDiscovery,
+  type SonarSetupStatus,
+  type SonarStreamEvent,
+} from '../shipApi';
+import {
+  isEvaluationInProgress,
+  mergePipelineFromLog,
+  seedSonarProjects,
+  applySonarProjectEvent,
+  finalizeSonarProjectSteps,
+  type SonarProjectStep,
+} from '../pipelineState';
+import { formatLogLine, liveActivityLabel } from '../logFormat';
 
 interface Props {
-  onOpenSettings: () => void;
+  onOpenSonar: () => void;
 }
 
-const PIPELINE_STEPS = ['index', 'tia', 'tests', 'sonar', 'policy'];
+function RunLogPanel({
+  log,
+  active,
+  liveStep,
+  liveSonarKey,
+  sonarProjects,
+}: {
+  log: LastRunLog | null;
+  active: boolean;
+  liveStep: string | null;
+  liveSonarKey: string | null;
+  sonarProjects: SonarProjectStep[];
+}) {
+  const preRef = useRef<HTMLPreElement>(null);
 
-function stepIcon(status: string, active: boolean) {
-  if (active) return '◌';
-  if (status === 'passed') return '✓';
-  if (status === 'failed') return '✕';
-  return '·';
+  useEffect(() => {
+    const el = preRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [log?.lines?.length]);
+
+  const formattedLines = (log?.lines ?? []).map(formatLogLine);
+  const liveLabel = active
+    ? liveActivityLabel(
+        log?.lines,
+        liveStep,
+        liveSonarKey,
+        sonarProjects.find((p) => p.key === liveSonarKey)?.name,
+      )
+    : null;
+  const highlightIndex =
+    active && formattedLines.length > 0 ? formattedLines.length - 1 : -1;
+
+  if (!log?.lines?.length && !active) return null;
+  return (
+    <PageCard
+      title="Last run log"
+      description={
+        log?.finished_at
+          ? log.ok
+            ? 'Last evaluation completed successfully.'
+            : 'Last evaluation finished with errors.'
+          : active
+            ? 'Evaluation in progress…'
+            : 'Log from the most recent Evaluate run.'
+      }
+    >
+      <PageCardBody>
+        <div className="settings-log-panel" style={{ margin: '0 clamp(16px, 2vw, 28px) 14px' }}>
+          <div className="settings-log-header">
+            <span>Pipeline log</span>
+            {active && (
+              <span className="settings-log-live">
+                live{liveLabel ? ` · ${liveLabel}` : ''}
+              </span>
+            )}
+            {log?.ok === false && !active && (
+              <span className="settings-log-live settings-log-live--err">failed</span>
+            )}
+          </div>
+          <pre ref={preRef} className="settings-log-body" aria-live="polite">
+            {formattedLines.length
+              ? formattedLines.map((line, i) => (
+                  <span
+                    key={`${i}-${line}`}
+                    className={
+                      i === highlightIndex ? 'settings-log-line settings-log-line--live' : 'settings-log-line'
+                    }
+                  >
+                    {line}
+                    {'\n'}
+                  </span>
+                ))
+              : 'Waiting for output…'}
+          </pre>
+        </div>
+      </PageCardBody>
+    </PageCard>
+  );
 }
 
-export default function ShipPage({ onOpenSettings }: Props) {
+export default function ShipPage({ onOpenSonar }: Props) {
   const [report, setReport] = useState<ShipReport | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
+  const [gitRoots, setGitRoots] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [liveStep, setLiveStep] = useState<string | null>(null);
+  const [liveSonarKey, setLiveSonarKey] = useState<string | null>(null);
+  const [liveSteps, setLiveSteps] = useState<Map<string, GateStep>>(new Map());
+  const [sonarProjectSteps, setSonarProjectSteps] = useState<SonarProjectStep[]>([]);
+  const [lastRun, setLastRun] = useState<LastRunLog | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [sonarDiscovery, setSonarDiscovery] = useState<SonarDiscovery | null>(null);
+  const [sonarSetup, setSonarSetup] = useState<SonarSetupStatus | null>(null);
+  const [sonarBusy, setSonarBusy] = useState<string | null>(null);
+  const [scanningProjectKey, setScanningProjectKey] = useState<string | null>(null);
+  const [sonarLog, setSonarLog] = useState<string[]>([]);
+  const [tokenValid, setTokenValid] = useState<boolean | null>(null);
+  const evaluatingRef = useRef(false);
+  const lastRunRef = useRef<LastRunLog | null>(null);
 
   const qg = report?.quality_gate;
   const passed = qg?.passed;
   const testCount = report?.tia?.tests.length ?? 0;
   const changedCount = report?.changed_files?.length ?? 0;
 
+  const containerRunning = sonarDiscovery?.container?.running === true;
+  const containerExists = !!sonarDiscovery?.container;
+  const sonarReachable = sonarDiscovery?.reachable === true;
+  const canInstallSonar = !containerExists && !sonarBusy;
+  const canStartSonar = containerExists && !containerRunning && !sonarBusy;
+  const repoProjects = sonarSetup?.repo_projects ?? [];
+  const readyRepos = repoProjects.filter((p) => p.exists).length;
+  const needsSonarSetup =
+    sonarReachable &&
+    (repoProjects.length > 0
+      ? readyRepos < repoProjects.length
+      : !sonarSetup?.project_exists || tokenValid === false || tokenValid === null);
+  const canScanAll =
+    sonarReachable &&
+    tokenValid === true &&
+    !sonarBusy &&
+    !busy &&
+    (repoProjects.length > 0 || sonarSetup?.project_exists === true);
+
+  const refreshSonar = useCallback(async () => {
+    const d = await discoverSonar();
+    setSonarDiscovery(d.discovery);
+    if (d.setup) setSonarSetup(d.setup);
+    const token = await validateSonarToken().catch(() => null);
+    setTokenValid(token?.valid ?? null);
+  }, []);
+
   usePageContext(
     'Command Center',
     qg ? (passed ? 'Quality gate passed' : 'Quality gate failed') : undefined,
   );
 
-  useEffect(() => {
-    fetch('/api/ship/status')
-      .then((r) => r.json())
-      .then((d) => {
-        setBranch(d.branch ?? null);
-        if (d.report) setReport(d.report);
-      })
-      .catch(() => {});
+  function setLastRunState(log: LastRunLog | null) {
+    lastRunRef.current = log;
+    setLastRun(log);
+  }
 
-    const es = new EventSource('/api/ship/events');
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
-    es.onmessage = (ev) => {
+  function syncPipelineFromLog(
+    log: LastRunLog | null | undefined,
+    evaluating: boolean,
+    sseLiveStep: string | null = null,
+  ) {
+    if (!log || (!evaluating && !isEvaluationInProgress(log))) return;
+    const { liveStep, liveSteps, liveSonarKey, sonarProjects } = mergePipelineFromLog(
+      log,
+      sseLiveStep,
+    );
+    setLiveStep(liveStep);
+    setLiveSonarKey(liveSonarKey);
+    setLiveSteps(liveSteps);
+    if (sonarProjects.size > 0) {
+      setSonarProjectSteps(Array.from(sonarProjects.values()));
+    }
+    setBusy('evaluate');
+    evaluatingRef.current = true;
+  }
+
+  useEffect(() => {
+    function resyncStatus() {
+      fetchShipStatus()
+        .then((d) => {
+          setBranch(d.branch ?? null);
+          setGitRoots(d.config?.ship?.git_roots ?? []);
+          const inProgress = !!d.evaluating || isEvaluationInProgress(d.last_run);
+          if (d.report && !inProgress) setReport(d.report);
+          if (d.last_run) {
+            setLastRunState(d.last_run);
+            if (inProgress) syncPipelineFromLog(d.last_run, true);
+          } else if (d.evaluating) {
+            setBusy('evaluate');
+            evaluatingRef.current = true;
+          }
+        })
+        .catch(() => {});
+    }
+    resyncStatus();
+    refreshSonar().catch(() => {});
+
+    // EventSource auto-retries transient errors, but gives up permanently once
+    // the connection is CLOSED (e.g. server restart). Recreate it with backoff
+    // and resync status on every reconnect so no events are missed.
+    let es: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryDelay = 1000;
+    let disposed = false;
+    let wasConnected = true;
+
+    function connect() {
+      if (disposed) return;
+      es = new EventSource('/api/ship/events');
+      es.onopen = () => {
+        setConnected(true);
+        retryDelay = 1000;
+        if (!wasConnected) resyncStatus();
+        wasConnected = true;
+      };
+      es.onerror = () => {
+        setConnected(false);
+        wasConnected = false;
+        if (es?.readyState === EventSource.CLOSED && !disposed) {
+          es.close();
+          retryTimer = setTimeout(connect, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, 15_000);
+        }
+      };
+      es.onmessage = handleShipEvent;
+    }
+
+    const handleShipEvent = (ev: MessageEvent) => {
       try {
         const payload = JSON.parse(ev.data);
-        if (payload.type === 'step_started') setLiveStep(payload.step ?? null);
-        if (payload.type === 'step_finished') setLiveStep(null);
-        if (payload.type === 'report_updated' && payload.report) setReport(payload.report);
+        if (payload.type === 'step_started') {
+          setLiveStep(payload.step ?? null);
+          if (payload.step === 'sonar' && repoProjects.length > 0) {
+            setSonarProjectSteps(
+              Array.from(
+                seedSonarProjects(repoProjects, new Map()).values(),
+              ),
+            );
+          }
+          if (payload.step) evaluatingRef.current = true;
+        }
+        if (payload.type === 'sonar_project_started') {
+          setLiveStep('sonar');
+          setLiveSonarKey(payload.project_key ?? null);
+          setSonarProjectSteps((prev) =>
+            Array.from(
+              applySonarProjectEvent(
+                new Map(prev.map((p) => [p.key, p])),
+                {
+                  type: 'sonar_project_started',
+                  project_key: payload.project_key,
+                  repo_name: payload.repo_name,
+                },
+              ).values(),
+            ),
+          );
+        }
+        if (payload.type === 'sonar_project_finished') {
+          setLiveSonarKey((prev) =>
+            prev === payload.project_key ? null : prev,
+          );
+          setSonarProjectSteps((prev) =>
+            Array.from(
+              applySonarProjectEvent(
+                new Map(prev.map((p) => [p.key, p])),
+                {
+                  type: 'sonar_project_finished',
+                  project_key: payload.project_key,
+                  repo_name: payload.repo_name,
+                  ok: payload.ok,
+                },
+              ).values(),
+            ),
+          );
+        }
+        if (payload.type === 'sonar_project_skipped') {
+          setSonarProjectSteps((prev) =>
+            Array.from(
+              applySonarProjectEvent(
+                new Map(prev.map((p) => [p.key, p])),
+                {
+                  type: 'sonar_project_skipped',
+                  project_key: payload.project_key,
+                  repo_name: payload.repo_name,
+                  reason: payload.reason,
+                },
+              ).values(),
+            ),
+          );
+        }
+        if (payload.type === 'step_finished') {
+          setLiveStep((prev) => (prev === payload.step ? null : prev));
+          if (payload.step === 'sonar') {
+            setLiveSonarKey(null);
+            setSonarProjectSteps((prev) => finalizeSonarProjectSteps(prev));
+          }
+          if (payload.step === 'sonar' && !payload.ok) {
+            setSonarProjectSteps((prev) =>
+              prev.map((p) =>
+                p.status === 'pending' || p.status === 'active'
+                  ? { ...p, status: 'skipped' as const }
+                  : p,
+              ),
+            );
+          }
+          if (payload.step) {
+            setLiveSteps((prev) => {
+              const next = new Map(prev);
+              next.set(payload.step, {
+                step: payload.step,
+                status: payload.ok ? 'passed' : 'failed',
+                detail: payload.detail ?? undefined,
+              });
+              return next;
+            });
+          }
+        }
+        if (payload.type === 'run_log_updated' && payload.last_run) {
+          setLastRunState(payload.last_run);
+          if (isEvaluationInProgress(payload.last_run)) {
+            setLiveStep((prev) => {
+              const { liveStep, liveSteps, liveSonarKey, sonarProjects } =
+                mergePipelineFromLog(payload.last_run, prev);
+              setLiveSteps(liveSteps);
+              setLiveSonarKey(liveSonarKey);
+              if (sonarProjects.size > 0) {
+                setSonarProjectSteps(Array.from(sonarProjects.values()));
+              }
+              setBusy('evaluate');
+              evaluatingRef.current = true;
+              return liveStep;
+            });
+          } else if (evaluatingRef.current) {
+            evaluatingRef.current = false;
+            setBusy(null);
+            setLiveStep(null);
+            setLiveSonarKey(null);
+          }
+        }
+        if (payload.type === 'report_updated' && payload.report) {
+          const inProgress =
+            evaluatingRef.current && isEvaluationInProgress(lastRunRef.current);
+          setReport(payload.report);
+          if (!inProgress) {
+            evaluatingRef.current = false;
+            setLiveSteps(new Map());
+            setBusy(null);
+            setLiveStep(null);
+            setLiveSonarKey(null);
+            setMsg('Evaluation complete');
+          }
+        }
+        if (payload.type === 'error') {
+          setErr(payload.message ?? 'Evaluation failed');
+          evaluatingRef.current = false;
+          setBusy(null);
+          setLiveStep(null);
+        }
         if (payload.type === 'git_changed' && payload.branch) setBranch(payload.branch);
       } catch {
         /* ignore */
       }
     };
-    return () => es.close();
-  }, []);
+
+    connect();
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      es?.close();
+    };
+  }, [refreshSonar, repoProjects]);
+
+  async function scanProject(projectKey: string, projectName: string) {
+    setScanningProjectKey(projectKey);
+    setSonarBusy(`scan:${projectKey}`);
+    setSonarLog([]);
+    setErr(null);
+    const append = (line: string) => setSonarLog((prev) => [...prev, line]);
+    try {
+      await streamSonarScanProject(projectKey, (ev) => {
+        if (ev.type === 'log') append(ev.line);
+        if (ev.type === 'done') {
+          if (ev.logs?.length) setSonarLog(ev.logs);
+          if (!ev.ok) throw new Error(ev.error ?? 'Scan failed');
+          setMsg(`Scan complete — ${projectName}`);
+        }
+      });
+      await refreshSonar();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setScanningProjectKey(null);
+      setSonarBusy(null);
+    }
+  }
+
+  async function runSonarStream(
+    label: string,
+    stream: (onEvent: (ev: SonarStreamEvent) => void, signal?: AbortSignal) => Promise<void>,
+  ) {
+    setSonarBusy(label);
+    setSonarLog([]);
+    const append = (line: string) => setSonarLog((prev) => [...prev, line]);
+    try {
+      await stream((ev) => {
+        if (ev.type === 'log') append(ev.line);
+        if (ev.type === 'done') {
+          if (ev.logs?.length) setSonarLog(ev.logs);
+          if (!ev.ok) throw new Error(ev.error ?? 'SonarQube operation failed');
+          if (label === 'scan' && ev.quality_gate) {
+            setMsg(
+              ev.quality_gate.passed
+                ? `All projects scanned — quality gate ${ev.quality_gate.status}`
+                : `Scan finished — quality gate ${ev.quality_gate.status}`,
+            );
+          }
+        }
+      });
+      await refreshSonar();
+      if (label === 'install') setMsg('SonarQube is live');
+      else if (label === 'start') setMsg('SonarQube started');
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSonarBusy(null);
+    }
+  }
+
+  async function setupSonar() {
+    setSonarBusy('bootstrap');
+    setErr(null);
+    try {
+      const r = await bootstrapSonar();
+      if (!r.ok) throw new Error(r.error ?? 'SonarQube setup failed');
+      if (r.setup) setSonarSetup(r.setup);
+      await refreshSonar();
+      setMsg(r.result?.message ?? 'SonarQube project and token configured');
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSonarBusy(null);
+    }
+  }
+
+  async function regenerateToken() {
+    setSonarBusy('token');
+    setErr(null);
+    try {
+      const r = await regenerateSonarToken();
+      if (!r.ok) throw new Error(r.error ?? 'Token regeneration failed');
+      if (r.setup) setSonarSetup(r.setup);
+      await refreshSonar();
+      setMsg('Scanner token regenerated');
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSonarBusy(null);
+    }
+  }
 
   async function runCommand(cmd: string) {
-    setBusy(cmd);
     setErr(null);
     setMsg(null);
+    if (cmd === 'evaluate') {
+      setBusy('evaluate');
+      evaluatingRef.current = true;
+      setLiveSteps(new Map());
+      setLiveStep(null);
+      setLiveSonarKey(null);
+      if (repoProjects.length > 0) {
+        setSonarProjectSteps(
+          repoProjects.map((p) => ({
+            key: p.key,
+            name: p.name,
+            status: 'pending' as const,
+          })),
+        );
+      } else {
+        setSonarProjectSteps([]);
+      }
+      setLastRunState({ ok: true, lines: [], started_at: new Date().toISOString() });
+      try {
+        const r = await runShipCommand(cmd);
+        if (r.last_run) {
+          setLastRunState(r.last_run);
+          syncPipelineFromLog(r.last_run, !!r.evaluating || !!r.started);
+        }
+        if (!r.ok && !r.started) throw new Error(r.error ?? 'Command failed');
+        if (r.report) {
+          setReport(r.report);
+          evaluatingRef.current = false;
+          setBusy(null);
+          setMsg('Evaluation complete');
+        }
+      } catch (e) {
+        setErr(String(e));
+        evaluatingRef.current = false;
+        setBusy(null);
+      }
+      return;
+    }
+    setBusy(cmd);
     try {
       const r = await runShipCommand(cmd);
+      if (r.last_run) setLastRun(r.last_run);
       if (!r.ok) throw new Error(r.error ?? 'Command failed');
       if (r.report) setReport(r.report);
       if (r.pr) setMsg(`Draft PR #${r.pr.number} — ${r.pr.url}`);
-      else setMsg(cmd === 'evaluate' ? 'Evaluation complete' : 'Done');
+      else setMsg('Done');
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -88,7 +548,15 @@ export default function ShipPage({ onOpenSettings }: Props) {
     }
   }
 
-  const stepsByName = new Map(qg?.steps?.map((s) => [s.step, s]) ?? []);
+  const stepsByName = new Map<string, GateStep>();
+  for (const s of qg?.steps ?? []) {
+    stepsByName.set(s.step, s);
+  }
+  for (const [name, step] of liveSteps) {
+    if (!stepsByName.has(name)) {
+      stepsByName.set(name, step);
+    }
+  }
 
   return (
     <PageShell>
@@ -97,8 +565,8 @@ export default function ShipPage({ onOpenSettings }: Props) {
         subtitle="Git-aware quality gate with live pipeline updates via SSE."
         actions={
           <>
-            <button type="button" className="btn" disabled={!!busy} onClick={onOpenSettings}>
-              Settings
+            <button type="button" className="btn" disabled={!!busy} onClick={onOpenSonar}>
+              SonarQube
             </button>
             <button type="button" className="btn primary" disabled={!!busy} onClick={() => runCommand('evaluate')}>
               {busy === 'evaluate' ? 'Evaluating…' : 'Evaluate'}
@@ -114,8 +582,13 @@ export default function ShipPage({ onOpenSettings }: Props) {
 
       <PageStack>
         <PageCard title="Overview" description="Current branch and pipeline status.">
-          <StatusPanel title="Metrics">
-            <StatusPill label="Branch" value={branch ?? '—'} />
+          <StatusPanel title="Metrics" className="settings-status-grid--metrics">
+            <StatusPill label="Branch" value={branch ?? '—'} truncate />
+            <StatusPill
+              label="Git repos"
+              value={gitRoots.length ? String(gitRoots.length) : '—'}
+              tone={gitRoots.length ? 'ok' : 'warn'}
+            />
             <StatusPill
               label="Live feed"
               value={connected ? 'connected' : 'offline'}
@@ -145,7 +618,13 @@ export default function ShipPage({ onOpenSettings }: Props) {
               <div className="ship-gate-status">
                 <span className="ship-gate-label">Status</span>
                 <strong className="ship-gate-title">
-                  {!qg ? 'Not evaluated yet' : passed ? 'All checks passed' : 'Checks failed'}
+                  {!qg && (busy === 'evaluate' || isEvaluationInProgress(lastRun))
+                    ? 'Evaluating…'
+                    : !qg
+                      ? 'Not evaluated yet'
+                      : passed
+                        ? 'All checks passed'
+                        : 'Checks failed'}
                 </strong>
                 {liveStep && <span className="badge ship-live-badge">Running {liveStep}</span>}
               </div>
@@ -154,30 +633,211 @@ export default function ShipPage({ onOpenSettings }: Props) {
         </PageCard>
 
         <PageCard title="Pipeline" description="Step-by-step quality gate progress.">
-          <div className="ship-pipeline-grid">
-            {PIPELINE_STEPS.map((name) => {
-              const s = stepsByName.get(name) as GateStep | undefined;
-              const status = s?.status ?? 'pending';
-              const active = liveStep === name;
-              return (
-                <div
-                  key={name}
-                  className={`ship-pipeline-step ship-pipeline-step--${status}${active ? ' ship-pipeline-step--active' : ''}`}
-                >
-                  <div className="ship-step-icon" aria-hidden="true">
-                    {stepIcon(status, active)}
-                  </div>
-                  <div className="ship-step-body">
-                    <div className="ship-step-name">{name}</div>
-                    <div className="ship-step-meta muted">
-                      {s?.detail ?? (active ? 'running…' : status)}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <PipelineTrack
+            stepsByName={stepsByName}
+            liveStep={liveStep}
+            liveSonarKey={liveSonarKey}
+            sonarProjects={
+              sonarProjectSteps.length > 0
+                ? sonarProjectSteps
+                : repoProjects.map((p) => ({
+                    key: p.key,
+                    name: p.name,
+                    status: 'pending' as const,
+                  }))
+            }
+          />
         </PageCard>
+
+        <PageCard
+          title="SonarQube"
+          description="Install, start, and configure SonarQube for the quality gate."
+        >
+          <PageCardBody>
+            <StatusPanel title="Sonar status">
+              <StatusPill
+                label="API"
+                value={sonarReachable ? 'reachable' : 'offline'}
+                tone={sonarReachable ? 'ok' : 'warn'}
+              />
+              <StatusPill
+                label="Container"
+                value={
+                  sonarDiscovery?.container
+                    ? sonarDiscovery.container.running
+                      ? 'running'
+                      : 'stopped'
+                    : 'not installed'
+                }
+                tone={containerRunning ? 'ok' : 'warn'}
+              />
+              <StatusPill
+                label="Database"
+                value={
+                  sonarDiscovery?.embedded_database
+                    ? 'embedded H2'
+                    : sonarDiscovery?.database
+                      ? sonarDiscovery.database.running
+                        ? 'PostgreSQL'
+                        : 'postgres stopped'
+                      : sonarDiscovery?.container
+                        ? 'unknown'
+                        : '—'
+                }
+                tone={
+                  sonarDiscovery?.embedded_database
+                    ? 'warn'
+                    : sonarDiscovery?.database?.running
+                      ? 'ok'
+                      : 'warn'
+                }
+              />
+              <StatusPill
+                label="Project"
+                value={
+                  repoProjects.length
+                    ? `${readyRepos}/${repoProjects.length} projects`
+                    : sonarSetup?.project_exists
+                      ? 'ready'
+                      : 'missing'
+                }
+                tone={
+                  repoProjects.length
+                    ? readyRepos === repoProjects.length
+                      ? 'ok'
+                      : 'warn'
+                    : sonarSetup?.project_exists
+                      ? 'ok'
+                      : 'warn'
+                }
+              />
+              <StatusPill
+                label="Token"
+                value={
+                  tokenValid === true ? 'valid' : tokenValid === false ? 'invalid' : 'unknown'
+                }
+                tone={tokenValid === true ? 'ok' : 'warn'}
+              />
+            </StatusPanel>
+            {repoProjects.length > 0 && (
+              <ul
+                className="ship-sonar-project-list"
+                style={{ margin: '0 clamp(16px, 2vw, 28px) 14px' }}
+              >
+                {repoProjects.map((p) => (
+                  <li key={p.key} className="ship-sonar-project-row">
+                    <div className="ship-sonar-project-info">
+                      <code>{p.name}</code>
+                      <span className="muted"> · {p.key}</span>
+                      <span
+                        className={`badge${p.exists ? '' : ' ship-live-badge'}`}
+                        style={{ marginLeft: 8 }}
+                      >
+                        {p.exists ? 'ready' : 'missing'}
+                      </span>
+                    </div>
+                    {sonarReachable && tokenValid === true && p.exists && (
+                      <button
+                        type="button"
+                        className="btn btn-subtle btn-sm"
+                        disabled={!!sonarBusy || !!busy}
+                        onClick={() => scanProject(p.key, p.name)}
+                      >
+                        {scanningProjectKey === p.key || sonarBusy === `scan:${p.key}`
+                          ? 'Scanning…'
+                          : 'Scan'}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '0 clamp(16px, 2vw, 28px) 14px' }}>
+              {canScanAll && (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!!sonarBusy || !!busy}
+                  onClick={() => runSonarStream('scan', streamSonarScanAll)}
+                >
+                  {sonarBusy === 'scan'
+                    ? 'Scanning…'
+                    : repoProjects.length > 1
+                      ? `Scan all ${repoProjects.length} projects`
+                      : 'Scan all projects'}
+                </button>
+              )}
+              {canInstallSonar && (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!!sonarBusy || !!busy}
+                  onClick={() => runSonarStream('install', streamSonarInstall)}
+                >
+                  {sonarBusy === 'install' ? 'Installing…' : 'Install & start SonarQube'}
+                </button>
+              )}
+              {canStartSonar && (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!!sonarBusy || !!busy}
+                  onClick={() => runSonarStream('start', streamSonarStart)}
+                >
+                  {sonarBusy === 'start' ? 'Starting…' : 'Start container'}
+                </button>
+              )}
+              {needsSonarSetup && (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!!sonarBusy || !!busy}
+                  onClick={setupSonar}
+                >
+                  {sonarBusy === 'bootstrap' ? 'Setting up…' : 'Setup project & token'}
+                </button>
+              )}
+              {sonarReachable && tokenValid === false && (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!!sonarBusy || !!busy}
+                  onClick={regenerateToken}
+                >
+                  {sonarBusy === 'token' ? 'Regenerating…' : 'Regenerate token'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-subtle"
+                disabled={!!sonarBusy}
+                onClick={() => refreshSonar().catch(() => {})}
+              >
+                Refresh
+              </button>
+              <button type="button" className="btn btn-subtle" onClick={onOpenSonar}>
+                SonarQube page
+              </button>
+            </div>
+            {sonarLog.length > 0 && (
+              <div className="settings-log-panel" style={{ margin: '0 clamp(16px, 2vw, 28px) 14px' }}>
+                <div className="settings-log-header">
+                  <span>Sonar log</span>
+                  {sonarBusy && <span className="settings-log-live">live</span>}
+                </div>
+                <pre className="settings-log-body">{sonarLog.join('\n')}</pre>
+              </div>
+            )}
+          </PageCardBody>
+        </PageCard>
+
+        <RunLogPanel
+          log={lastRun}
+          active={busy === 'evaluate' || !!liveStep}
+          liveStep={liveStep}
+          liveSonarKey={liveSonarKey}
+          sonarProjects={sonarProjectSteps}
+        />
 
         {report?.changed_files && report.changed_files.length > 0 && (
           <PageCard title="Changed files" description={`${report.changed_files.length} files in the diff.`}>

@@ -195,17 +195,20 @@ Disable for one session:
 $env:AX_OFFLOAD_DISABLE = "1"
 ```
 
-### Token usage tracking (v2.1.4+)
+### Context savings tracking (v2.1.5+)
 
-When offload is enabled, ax records prompt, completion, and total tokens per model in `~/.ax/usage.db` (local SQLite, global across projects).
+Each ax MCP graph call logs response size and an estimated counterfactual file-read cost in `~/.ax/usage.db` (local SQLite, global across projects).
 
 ```bash
-ax tokens                              # month to date (default)
-ax tokens --period week --json
-ax web                                 # Tokens tab in the sidebar
+ax savings                              # month to date (default)
+ax savings --period week --json
+ax savings import --all                 # Cursor + Claude Code session logs
+ax web                                  # Savings tab in the sidebar (enable in Settings)
 ```
 
 Period filters: `week`, `month_to_date`, `month` (30 days), `year`, `custom` (with `--from` / `--to`).
+
+See [Token savings guide](https://getax.wenneker.io/guides/token-savings/) for the estimation formula.
 
 ---
 

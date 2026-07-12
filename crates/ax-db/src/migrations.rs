@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 8;
+pub const CURRENT_SCHEMA_VERSION: i32 = 10;
 
 struct Migration {
     version: i32,
@@ -115,6 +115,53 @@ const MIGRATIONS: &[Migration] = &[
                 updated_at INTEGER NOT NULL
             );
         ",
+    },
+    Migration {
+        version: 9,
+        description: "Memory vault: memories table + FTS5 index",
+        sql: "
+            CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL DEFAULT 'note',
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                files TEXT NOT NULL DEFAULT '[]',
+                confidence REAL NOT NULL DEFAULT 1.0,
+                source TEXT NOT NULL DEFAULT 'manual',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memories_kind ON memories(kind);
+            CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at);
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                id,
+                title,
+                body,
+                tags,
+                content='memories',
+                content_rowid='rowid'
+            );
+            CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+                INSERT INTO memories_fts(rowid, id, title, body, tags)
+                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.body, NEW.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, id, title, body, tags)
+                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.body, OLD.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, id, title, body, tags)
+                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.body, OLD.tags);
+                INSERT INTO memories_fts(rowid, id, title, body, tags)
+                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.body, NEW.tags);
+            END;
+        ",
+    },
+    Migration {
+        version: 10,
+        description: "Memory embeddings for hybrid (FTS + vector) recall",
+        sql: "ALTER TABLE memories ADD COLUMN embedding BLOB;",
     },
 ];
 

@@ -45,6 +45,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/web-ui-rebuild.mdc"),
     },
     Template {
+        rel: "rules/docs-with-features.mdc",
+        body: include_str!("../templates/rules/docs-with-features.mdc"),
+    },
+    Template {
         rel: "skills/startup/SKILL.md",
         body: include_str!("../templates/skills/startup/SKILL.md"),
     },

@@ -9,10 +9,13 @@ use tracing::info;
 
 use crate::events::{ShipEvent, ShipEventBus};
 
-pub async fn start_git_watcher(project_root: PathBuf, bus: ShipEventBus) -> Result<(), String> {
-    let git_dir = project_root.join(".git");
-    if !git_dir.exists() {
-        return Err("no .git directory".into());
+pub async fn start_git_watcher(
+    workspace_root: PathBuf,
+    git_roots: Vec<PathBuf>,
+    bus: ShipEventBus,
+) -> Result<(), String> {
+    if git_roots.is_empty() {
+        return Err("no git repositories to watch".into());
     }
 
     let (tx, mut rx) = mpsc::channel(64);
@@ -23,15 +26,21 @@ pub async fn start_git_watcher(project_root: PathBuf, bus: ShipEventBus) -> Resu
     })
     .map_err(|e| e.to_string())?;
 
-    for sub in ["HEAD", "index", "refs"] {
-        let path = git_dir.join(sub);
-        if path.exists() {
-            let mode = if sub == "refs" {
-                RecursiveMode::Recursive
-            } else {
-                RecursiveMode::NonRecursive
-            };
-            watcher.watch(&path, mode).map_err(|e| e.to_string())?;
+    for git_root in &git_roots {
+        let git_dir = git_root.join(".git");
+        if !git_dir.exists() {
+            return Err(format!("no .git directory at {}", git_root.display()));
+        }
+        for sub in ["HEAD", "index", "refs"] {
+            let path = git_dir.join(sub);
+            if path.exists() {
+                let mode = if sub == "refs" {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                };
+                watcher.watch(&path, mode).map_err(|e| e.to_string())?;
+            }
         }
     }
 
@@ -44,10 +53,12 @@ pub async fn start_git_watcher(project_root: PathBuf, bus: ShipEventBus) -> Resu
                 continue;
             }
             debounce = tokio::time::Instant::now();
-            let branch = ax_git::current_branch(&project_root).ok().flatten();
-            info!(?branch, "git state changed");
+            let branch = git_roots
+                .first()
+                .and_then(|root| ax_git::current_branch(root).ok().flatten());
+            info!(?branch, repos = git_roots.len(), "git state changed");
             bus.publish(ShipEvent::GitChanged { branch });
-            if let Ok(report) = crate::evaluate_project(project_root.clone()).await {
+            if let Ok(report) = crate::evaluate_project(workspace_root.clone()).await {
                 bus.publish(ShipEvent::ReportUpdated { report });
             }
         }

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { fetchStats, fetchVersion } from '../api';
+import WorkspacePicker from './WorkspacePicker';
 import { useUiContext } from '../context/UiContext';
 import type { Stats } from '../types';
 
@@ -89,10 +90,83 @@ function formatRelative(ts: number) {
   return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+function formatFullDate(ts: number) {
+  if (!ts) return 'Never indexed';
+  return new Date(ts).toLocaleString();
+}
+
+function navigateHash(page: string, params?: Record<string, string>) {
+  const sp = new URLSearchParams(params);
+  const qs = sp.toString();
+  const next = qs ? `${page}?${qs}` : page;
+  if (window.location.hash.replace(/^#/, '') !== next) {
+    window.location.hash = next;
+  }
+}
+
+function StatusChip({
+  id,
+  title,
+  openPanel,
+  onTogglePanel,
+  onNavigate,
+  className = '',
+  children,
+  panel,
+}: {
+  id: string;
+  title: string;
+  openPanel: string | null;
+  onTogglePanel: (id: string | null) => void;
+  onNavigate?: () => void;
+  className?: string;
+  children: ReactNode;
+  panel?: ReactNode;
+}) {
+  const isOpen = openPanel === id;
+
+  function handleClick() {
+    if (panel) {
+      onTogglePanel(isOpen ? null : id);
+      return;
+    }
+    onNavigate?.();
+  }
+
+  return (
+    <span className={`status-chip-wrap${isOpen ? ' status-chip-wrap--open' : ''}`}>
+      <button
+        type="button"
+        className={`status-item status-item--clickable${className ? ` ${className}` : ''}${isOpen ? ' status-item--active' : ''}`}
+        title={title}
+        aria-expanded={panel ? isOpen : undefined}
+        onClick={handleClick}
+      >
+        {children}
+      </button>
+      {panel && isOpen && (
+        <div className="status-panel" role="region" aria-label={title}>
+          {panel}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function PanelLink({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="status-panel-link" onClick={onClick}>
+      {label}
+    </button>
+  );
+}
+
 export default function StatusBar() {
   const { pageContext } = useUiContext();
   const [stats, setStats] = useState<Stats | null>(null);
   const [version, setVersion] = useState('');
+  const [openPanel, setOpenPanel] = useState<string | null>(null);
+  const barRef = useRef<HTMLElement>(null);
 
   function refresh() {
     fetchStats().then(setStats).catch(() => {});
@@ -110,72 +184,222 @@ export default function StatusBar() {
     };
   }, []);
 
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!barRef.current?.contains(e.target as Node)) {
+        setOpenPanel(null);
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  function nav(page: string, params?: Record<string, string>) {
+    setOpenPanel(null);
+    navigateHash(page, params);
+  }
+
   const center = pageContext.detail
     ? `${pageContext.view} · ${pageContext.detail}`
     : pageContext.view;
 
+  const unresolvedCount = stats?.unresolved_ref_count ?? 0;
+
   return (
-    <footer className="statusbar" aria-label="Status">
+    <footer className="statusbar" aria-label="Status" ref={barRef}>
       <div className="statusbar-left">
-        <span className="status-item" title="Indexed nodes">
+        <StatusChip
+          id="nodes"
+          title="Indexed symbols — open Nodes"
+          openPanel={openPanel}
+          onTogglePanel={setOpenPanel}
+          onNavigate={() => nav('nodes')}
+        >
           <IconNodes />
           <span className="status-val">{stats ? stats.node_count.toLocaleString() : '—'}</span>
           <span className="status-lbl">nodes</span>
-        </span>
+        </StatusChip>
         <span className="status-sep" aria-hidden="true">|</span>
-        <span className="status-item" title="Graph edges">
+        <StatusChip
+          id="edges"
+          title="Graph edges — open Stats"
+          openPanel={openPanel}
+          onTogglePanel={setOpenPanel}
+          onNavigate={() => nav('stats')}
+          panel={
+            stats ? (
+              <>
+                <div className="status-panel-title">Graph edges</div>
+                <p className="status-panel-text">
+                  {stats.edge_count.toLocaleString()} relationships between indexed symbols (calls, contains, imports, …).
+                </p>
+                <PanelLink label="Open Stats →" onClick={() => nav('stats')} />
+              </>
+            ) : null
+          }
+        >
           <IconLink />
           <span className="status-val">{stats ? stats.edge_count.toLocaleString() : '—'}</span>
           <span className="status-lbl">edges</span>
-        </span>
+        </StatusChip>
         <span className="status-sep" aria-hidden="true">|</span>
-        <span className="status-item" title="Indexed files">
+        <StatusChip
+          id="files"
+          title="Indexed files — open Files explorer"
+          openPanel={openPanel}
+          onTogglePanel={setOpenPanel}
+          onNavigate={() => nav('files')}
+        >
           <IconFile />
           <span className="status-val">{stats ? stats.file_count.toLocaleString() : '—'}</span>
           <span className="status-lbl">files</span>
-        </span>
+        </StatusChip>
         <span className="status-sep" aria-hidden="true">|</span>
-        <span className="status-item" title="Languages in index">
+        <StatusChip
+          id="langs"
+          title="Languages in index"
+          openPanel={openPanel}
+          onTogglePanel={setOpenPanel}
+          panel={
+            stats ? (
+              <>
+                <div className="status-panel-title">Languages ({stats.languages.length})</div>
+                <ul className="status-panel-list">
+                  {stats.languages.slice(0, 8).map((l) => (
+                    <li key={l.language}>
+                      <span className="mono">{l.language}</span>
+                      <span className="status-panel-list-val">{l.count.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+                {stats.languages.length > 8 && (
+                  <p className="status-panel-muted">+{stats.languages.length - 8} more in Stats</p>
+                )}
+                <PanelLink label="Open Stats →" onClick={() => nav('stats')} />
+              </>
+            ) : null
+          }
+        >
           <IconCode />
           <span className="status-val">{stats ? stats.languages.length : '—'}</span>
           <span className="status-lbl">langs</span>
-        </span>
+        </StatusChip>
       </div>
 
-      <div className="statusbar-center" title={center}>
+      <button
+        type="button"
+        className="statusbar-center statusbar-center--clickable"
+        title={`${center} — open Stats`}
+        onClick={() => nav('stats')}
+      >
         {center}
-      </div>
+      </button>
 
       <div className="statusbar-right">
-        {stats && stats.unresolved_ref_count != null && stats.unresolved_ref_count > 0 && (
-          <span className="status-item status-warn" title="Unresolved references">
+        {unresolvedCount > 0 && (
+          <StatusChip
+            id="unresolved"
+            title="Unresolved symbol references — open list"
+            openPanel={openPanel}
+            onTogglePanel={setOpenPanel}
+            onNavigate={() => nav('unresolved')}
+            className="status-warn"
+          >
             <IconWarn />
-            <span className="status-val">{stats.unresolved_ref_count}</span>
+            <span className="status-val">{unresolvedCount.toLocaleString()}</span>
             <span className="status-lbl">unresolved</span>
-          </span>
+          </StatusChip>
         )}
-        <span className="status-item" title="Policy rules">
+        <StatusChip
+          id="rules"
+          title="Policy rules"
+          openPanel={openPanel}
+          onTogglePanel={setOpenPanel}
+          onNavigate={() => nav('policy-rules')}
+        >
           <IconShield />
           <span className="status-val">{stats ? stats.policy_rules_count : '—'}</span>
           <span className="status-lbl">rules</span>
-        </span>
-        <span className="status-item" title="Policy skills">
+        </StatusChip>
+        <StatusChip
+          id="skills"
+          title="Policy skills"
+          openPanel={openPanel}
+          onTogglePanel={setOpenPanel}
+          onNavigate={() => nav('policy-skills')}
+        >
           <IconShield />
           <span className="status-val">{stats ? stats.policy_skills_count : '—'}</span>
           <span className="status-lbl">skills</span>
-        </span>
-        <span className="status-item" title="Last index run">
+        </StatusChip>
+        <StatusChip
+          id="indexed"
+          title="Last index run"
+          openPanel={openPanel}
+          onTogglePanel={setOpenPanel}
+          panel={
+            stats ? (
+              <>
+                <div className="status-panel-title">Last indexed</div>
+                <p className="status-panel-text">{formatFullDate(stats.last_indexed_at)}</p>
+                <PanelLink label="Open Stats →" onClick={() => nav('stats')} />
+              </>
+            ) : null
+          }
+        >
           <IconClock />
           <span className="status-lbl">{stats ? formatRelative(stats.last_indexed_at) : '—'}</span>
-        </span>
-        <span className="status-item" title="Database size">
+        </StatusChip>
+        <StatusChip
+          id="db"
+          title="Database size"
+          openPanel={openPanel}
+          onTogglePanel={setOpenPanel}
+          panel={
+            stats ? (
+              <>
+                <div className="status-panel-title">Index database</div>
+                <ul className="status-panel-list">
+                  <li>
+                    <span>Size</span>
+                    <span className="status-panel-list-val">{formatBytes(stats.db_size_bytes)}</span>
+                  </li>
+                  <li>
+                    <span>Files</span>
+                    <span className="status-panel-list-val">{stats.file_count.toLocaleString()}</span>
+                  </li>
+                  <li>
+                    <span>Nodes</span>
+                    <span className="status-panel-list-val">{stats.node_count.toLocaleString()}</span>
+                  </li>
+                </ul>
+                <PanelLink label="Open Stats →" onClick={() => nav('stats')} />
+              </>
+            ) : null
+          }
+        >
           <IconDb />
           <span className="status-lbl">{stats ? formatBytes(stats.db_size_bytes) : '—'}</span>
-        </span>
+        </StatusChip>
         {stats?.project_name && (
-          <span className="status-item status-project" title="Project">
+          <StatusChip
+            id="project"
+            title="Switch project"
+            openPanel={openPanel}
+            onTogglePanel={setOpenPanel}
+            className="status-project"
+            panel={
+              <div className="status-panel-workspace">
+                <WorkspacePicker onSwitched={() => {
+                  setOpenPanel(null);
+                  refresh();
+                  window.dispatchEvent(new CustomEvent('ax-workspace-switched'));
+                }} />
+              </div>
+            }
+          >
             <span className="status-lbl">{stats.project_name}</span>
-          </span>
+          </StatusChip>
         )}
         {stats?.readonly && (
           <span className="status-item status-readonly" title="Read-only mode">

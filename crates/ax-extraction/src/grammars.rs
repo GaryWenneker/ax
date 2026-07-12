@@ -73,5 +73,5 @@ pub fn language_for_extension(ext: &str) -> Option<Language> {
 }
 
 pub fn is_language_supported(lang: Language) -> bool {
-  lang != Language::Unknown
+    lang != Language::Unknown && crate::ts_grammars::has_ts_grammar(lang)
 }

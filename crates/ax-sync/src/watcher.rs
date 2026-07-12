@@ -151,3 +151,92 @@ fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn insert_pending(watcher: &FileWatcher, path: &str, last_seen_ms: i64) {
+        watcher.pending.lock().await.insert(
+            path.to_string(),
+            PendingFile {
+                path: path.to_string(),
+                first_seen_ms: last_seen_ms,
+                last_seen_ms,
+                indexing: false,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn ready_files_respect_debounce() {
+        let w = FileWatcher::new(PathBuf::from("."));
+        insert_pending(&w, "old.ts", now_ms() - 10_000).await;
+        insert_pending(&w, "fresh.ts", now_ms()).await;
+
+        let ready = w.get_ready_files(500).await;
+        assert_eq!(ready, vec!["old.ts".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn marked_indexing_files_are_not_ready() {
+        let w = FileWatcher::new(PathBuf::from("."));
+        insert_pending(&w, "a.ts", now_ms() - 10_000).await;
+        w.mark_indexing(&["a.ts".to_string()]).await;
+
+        assert!(w.get_ready_files(500).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn clear_pending_removes_entries() {
+        let w = FileWatcher::new(PathBuf::from("."));
+        insert_pending(&w, "a.ts", now_ms() - 10_000).await;
+        insert_pending(&w, "b.ts", now_ms() - 10_000).await;
+        w.clear_pending(&["a.ts".to_string()]).await;
+
+        let pending = w.get_pending_files().await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].path, "b.ts");
+    }
+
+    #[tokio::test]
+    async fn live_watcher_picks_up_file_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let mut w = FileWatcher::new(root.clone());
+        w.start(WatcherOptions::default()).await.unwrap();
+        assert!(w.is_active().await);
+
+        std::fs::write(root.join("hello.ts"), "export const x = 1;\n").unwrap();
+
+        let mut found = false;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if w.get_pending_files().await.iter().any(|p| p.path == "hello.ts") {
+                found = true;
+                break;
+            }
+        }
+        w.stop().await;
+        assert!(found, "watcher should record the new file as pending");
+    }
+
+    #[tokio::test]
+    async fn events_under_ax_dir_are_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        let mut w = FileWatcher::new(root.clone());
+        w.start(WatcherOptions::default()).await.unwrap();
+
+        std::fs::write(root.join(".ax/ax.db"), "not really a db").unwrap();
+
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let pending = w.get_pending_files().await;
+        w.stop().await;
+        assert!(
+            pending.iter().all(|p| !p.path.starts_with(".ax/")),
+            "files under .ax/ must not become pending: {pending:?}"
+        );
+    }
+}

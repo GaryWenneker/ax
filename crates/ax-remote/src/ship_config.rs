@@ -19,7 +19,22 @@ pub struct ShipConfig {
     #[serde(default)]
     pub sonar: SonarConfig,
     #[serde(default)]
+    pub ui: UiSection,
+    #[serde(default)]
     pub reviewers: HashMap<String, String>,
+}
+
+impl Default for ShipConfig {
+    fn default() -> Self {
+        Self {
+            ship: ShipSection::default(),
+            quality_gate: QualityGateSection::default(),
+            remote: RemoteConfig::default(),
+            sonar: SonarConfig::default(),
+            ui: UiSection::default(),
+            reviewers: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -28,6 +43,15 @@ pub struct ShipSection {
     pub target_branch: String,
     #[serde(default = "default_port")]
     pub web_port: u16,
+    /// Relative path from workspace root to a single git repo (legacy — prefer `git_roots`).
+    #[serde(default)]
+    pub git_root: Option<String>,
+    /// Git repos under this workspace (folder names). Auto-discovered when empty.
+    #[serde(default)]
+    pub git_roots: Vec<String>,
+    /// Per-repo diff base branch overrides (folder name → branch). Falls back to smart detection.
+    #[serde(default)]
+    pub target_branches: HashMap<String, String>,
 }
 
 fn default_branch() -> String {
@@ -43,6 +67,9 @@ impl Default for ShipSection {
         Self {
             target_branch: default_branch(),
             web_port: default_port(),
+            git_root: None,
+            git_roots: Vec::new(),
+            target_branches: HashMap::new(),
         }
     }
 }
@@ -53,6 +80,13 @@ pub struct QualityGateSection {
     pub steps: Vec<String>,
     #[serde(default)]
     pub tests: TestRunnerSection,
+    /// `incremental` (sync dirty files) or `full` (re-index entire project).
+    #[serde(default = "default_index_mode")]
+    pub index_mode: String,
+}
+
+fn default_index_mode() -> String {
+    "incremental".into()
 }
 
 fn default_steps() -> Vec<String> {
@@ -70,6 +104,7 @@ impl Default for QualityGateSection {
         Self {
             steps: default_steps(),
             tests: TestRunnerSection::default(),
+            index_mode: default_index_mode(),
         }
     }
 }
@@ -92,25 +127,64 @@ impl Default for TestRunnerSection {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UiSection {
+    /// Show the Savings page in the sidebar.
+    #[serde(default = "default_show_savings", alias = "show_tokens")]
+    pub show_savings: bool,
+    /// Show the Agent terminal page in the sidebar.
+    #[serde(default = "default_show_agent")]
+    pub show_agent_terminal: bool,
+}
+
+fn default_show_savings() -> bool {
+    true
+}
+
+fn default_show_agent() -> bool {
+    true
+}
+
+impl Default for UiSection {
+    fn default() -> Self {
+        Self {
+            show_savings: true,
+            show_agent_terminal: true,
+        }
+    }
+}
+
 pub fn load_ship_config(project_root: &Path) -> ShipConfig {
     let path = crate::config::config_path(project_root);
-    if !path.exists() {
-        return ShipConfig {
+    let mut config = if !path.exists() {
+        ShipConfig {
             ship: ShipSection::default(),
             quality_gate: QualityGateSection::default(),
             remote: RemoteConfig::default(),
             sonar: SonarConfig::default(),
+            ui: UiSection::default(),
             reviewers: HashMap::new(),
-        };
+        }
+    } else {
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        toml::from_str(&text).unwrap_or_else(|_| ShipConfig {
+            ship: ShipSection::default(),
+            quality_gate: QualityGateSection::default(),
+            remote: RemoteConfig::default(),
+            sonar: SonarConfig::default(),
+            ui: UiSection::default(),
+            reviewers: HashMap::new(),
+        })
+    };
+
+    // Migrate legacy single git_root into git_roots when the list is empty.
+    if config.ship.git_roots.is_empty() {
+        if let Some(single) = config.ship.git_root.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            config.ship.git_roots = vec![single.to_string()];
+        }
     }
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    toml::from_str(&text).unwrap_or_else(|_| ShipConfig {
-        ship: ShipSection::default(),
-        quality_gate: QualityGateSection::default(),
-        remote: RemoteConfig::default(),
-        sonar: SonarConfig::default(),
-        reviewers: HashMap::new(),
-    })
+
+    config
 }
 
 pub fn save_ship_config(project_root: &Path, config: &ShipConfig) -> Result<(), String> {

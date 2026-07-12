@@ -13,6 +13,7 @@ use crate::proxy::attach_or_spawn;
 use crate::tools::{server_instructions, ToolHandler};
 use crate::transport::{is_notification, StdioTransport, PARSE_ERROR, METHOD_NOT_FOUND};
 use ax_telemetry::telemetry;
+use ax_usage::{estimate_savings, spawn_record_mcp_call, McpCallRecord};
 
 /// Resolve indexed project root for MCP: explicit `--path` first, then cwd walk-up.
 pub fn resolve_mcp_project_root(explicit: Option<PathBuf>) -> Option<PathBuf> {
@@ -95,6 +96,7 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
                 engine.ensure_initialized().await?;
                 engine.reopen_if_replaced().await?;
             }
+            let started = std::time::Instant::now();
             let result = if let Some(pool) = engine.query_pool() {
                 if pool.healthy() && crate::query_pool::is_read_tool(name) {
                     pool
@@ -128,12 +130,68 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
                 t.persist_sync();
             }
             ax_telemetry::trigger_background_flush();
-            match result {
-                Ok(value) => Ok(wrap_call_tool_result(value, false)),
-                Err(msg) => Ok(wrap_call_tool_result(
-                    json!({ "error": msg }),
-                    true,
-                )),
+            let duration_ms = started.elapsed().as_millis() as i64;
+            let project = project_root
+                .as_ref()
+                .map(|p| p.display().to_string());
+            match &result {
+                Ok(value) => {
+                    let text = tool_result_text(value);
+                    let est = estimate_savings(name, value, &text, project_root.as_deref());
+                    let wrapped = wrap_call_tool_result_with_hint(
+                        value.clone(),
+                        false,
+                        token_budget_hint(name, est.response_tokens_est),
+                    );
+                    spawn_record_mcp_call(McpCallRecord {
+                        tool: name.to_string(),
+                        project,
+                        response_chars: text.len() as i64,
+                        response_tokens_est: est.response_tokens_est,
+                        counterfactual_files: if est.savings_eligible {
+                            Some(est.counterfactual_files)
+                        } else {
+                            None
+                        },
+                        counterfactual_exact_files: if est.savings_eligible {
+                            Some(est.counterfactual_exact_files)
+                        } else {
+                            None
+                        },
+                        counterfactual_tokens_est: if est.savings_eligible {
+                            Some(est.counterfactual_tokens_est)
+                        } else {
+                            None
+                        },
+                        tokens_saved_est: if est.savings_eligible {
+                            Some(est.tokens_saved_est)
+                        } else {
+                            None
+                        },
+                        duration_ms: Some(duration_ms),
+                        ok: true,
+                        savings_eligible: est.savings_eligible,
+                    });
+                    Ok(wrapped)
+                }
+                Err(msg) => {
+                    let err_val = json!({ "error": msg });
+                    let text = tool_result_text(&err_val);
+                    spawn_record_mcp_call(McpCallRecord {
+                        tool: name.to_string(),
+                        project,
+                        response_chars: text.len() as i64,
+                        response_tokens_est: ax_usage::count_tokens(&text) as i64,
+                        counterfactual_files: None,
+                        counterfactual_exact_files: None,
+                        counterfactual_tokens_est: None,
+                        tokens_saved_est: None,
+                        duration_ms: Some(duration_ms),
+                        ok: false,
+                        savings_eligible: false,
+                    });
+                    Ok(wrap_call_tool_result(err_val, true))
+                }
             }
         }
         "notifications/initialized" => Ok(Value::Null),
@@ -144,12 +202,42 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
 /// MCP `tools/call` must return `{ content: [{ type, text }], structuredContent?, isError? }`.
 /// Raw JSON objects are invisible in strict clients (VS Code / Antigravity) and may not reach the model.
 fn wrap_call_tool_result(value: Value, is_error: bool) -> Value {
-    let text = tool_result_text(&value);
+    wrap_call_tool_result_with_hint(value, is_error, None)
+}
+
+fn wrap_call_tool_result_with_hint(value: Value, is_error: bool, hint: Option<String>) -> Value {
+    let mut text = tool_result_text(&value);
+    if let Some(hint) = hint {
+        text.push_str("\n\n");
+        text.push_str(&hint);
+    }
     json!({
         "content": [{ "type": "text", "text": text }],
         "structuredContent": value,
         "isError": is_error,
     })
+}
+
+/// Above this size, nudge the agent toward narrower queries instead of a follow-up dump.
+const TOKEN_HINT_THRESHOLD: i64 = 4_000;
+
+/// One-line budget hint appended to large tool responses so agents self-correct
+/// (narrower depth/limit) instead of pulling ever-bigger contexts.
+fn token_budget_hint(tool: &str, response_tokens: i64) -> Option<String> {
+    if response_tokens < TOKEN_HINT_THRESHOLD {
+        return None;
+    }
+    let advice = match tool {
+        "ax_explore" | "ax_context" => "narrow the question or pass a smaller depth",
+        "ax_search" | "ax_files" | "ax_recall" => "add a `limit` or a more specific query",
+        "ax_impact" | "ax_affected" | "ax_callers" | "ax_callees" => "reduce depth or target a more specific symbol",
+        _ => "use a more specific query",
+    };
+    Some(format!(
+        "[ax] token budget: this response is ~{}k tokens; {} to keep context small.",
+        (response_tokens + 500) / 1000,
+        advice
+    ))
 }
 
 fn tool_result_text(value: &Value) -> String {

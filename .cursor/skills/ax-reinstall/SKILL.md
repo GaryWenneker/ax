@@ -21,11 +21,40 @@ description: >-
 ## Workflow (end of every ax-cli task)
 
 ```text
-1. cargo build -p ax-cli          # confirm compile
-2. reinstall (script below)         # MUST — not optional
-3. ax --version                     # confirm PATH binary updated
-4. smoke: ax help                   # optional quick check
+1. cargo build --release -p ax-cli   # source of truth: target-dev/release/ax.exe
+2. reinstall (script below)            # MUST — not optional
+3. verify ALL ax.exe copies match      # MUST — hash check (see below)
+4. ax --version                        # confirm feature set on PATH binary
+5. smoke: ax help / changed subcommand # optional quick check
 ```
+
+## Verify all install locations (ALWAYS)
+
+`cargo install` can leave stale copies. On Windows, check **three** paths — especially `%LOCALAPPDATA%\ax\current\ax.exe` (root), which reinstall scripts used to skip:
+
+```powershell
+$src = "target-dev\release\ax.exe"
+$targets = @(
+  "$env:USERPROFILE\.cargo\bin\ax.exe",
+  "$env:LOCALAPPDATA\ax\current\bin\ax.exe",
+  "$env:LOCALAPPDATA\ax\current\ax.exe"
+)
+$hash = (Get-FileHash $src).Hash
+foreach ($t in $targets) {
+  if (-not (Test-Path $t)) { Write-Warning "missing: $t"; continue }
+  if ((Get-FileHash $t).Hash -ne $hash) {
+    Get-Process ax -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    Copy-Item -Force $src $t
+  }
+}
+# Re-check — throw if still mismatched
+foreach ($t in $targets) {
+  if ((Test-Path $t) -and (Get-FileHash $t).Hash -ne $hash) { throw "STALE: $t" }
+}
+Write-Host "OK: $($targets.Count) paths match"
+```
+
+Report checked paths + hash prefix in handoff. Do **not** skip this step.
 
 ## Reinstall command
 
