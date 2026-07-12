@@ -13,10 +13,10 @@ pub fn styles() -> Styles {
         .error(AnsiColor::Red.on_default().effects(Effects::BOLD))
 }
 
-pub const ROOT_LONG: &str = "Local intelligence for AI coding agents.
+pub const ROOT_LONG: &str = "Structured context for AI agents — entirely on your machine.
 
-Knowledge graph (.ax/), team policy (.ax/policy/), and Command Center
-(quality gates, test-impact, draft PRs) — one Rust binary, CLI + MCP.
+Graph it. Remember it. Ship it. Knowledge graph (.ax/), memory vault, team policy
+(.ax/policy/), and Command Center — one Rust binary, CLI + MCP.
 
 Run `ax` with no arguments to install into detected agents (Cursor, Claude Code, etc.).";
 
@@ -275,6 +275,19 @@ Examples:
   ax offload status
   ax offload set-endpoint https://api.openai.com/v1 --key-env OPENAI_API_KEY
   ax offload clear";
+
+pub const CURSOR_LONG: &str = "Save and restore Cursor IDE auth sessions for fast subscription switching.
+
+Snapshots cursorAuth/* keys from state.vscdb plus auth.json into ~/.ax/cursor-auth/.
+Close Cursor before `use`, then restart Cursor after applying a profile.
+
+Examples:
+  ax cursor auth status
+  ax cursor auth save enterprise --label \"ioDigital\"
+  ax cursor auth save personal --from-auth-json --email you@gmail.com --membership pro_plus
+  ax cursor auth list
+  ax cursor auth use personal
+  ax cursor auth use enterprise --force";
 
 pub const SAVINGS_LONG: &str = "Show estimated context-token savings from ax MCP graph queries.
 

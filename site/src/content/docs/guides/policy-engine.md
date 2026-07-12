@@ -264,6 +264,14 @@ ax web --port 7070 --open
 
 Open **Policy → Rules** or **Policy → Skills** in the sidebar to edit frontmatter and markdown, save to disk, and re-index automatically.
 
+![Policy Rules — sortable table with level badges, globs, triggers, capture and match testing](/screenshots/cc-policy-rules.png)
+
+![Policy Skills — task-specific instructions agents load on demand via ax_skill](/screenshots/cc-policy-skills.png)
+
+Use **Test match** to preview which rules and skills would inject for a given prompt — the same matcher that runs during `ax_preflight`:
+
+![Test match — simulate a prompt and preview the full policy inject output](/screenshots/cc-policy-match.png)
+
 Set `AX_WEB_READONLY=1` for browse-only mode.
 
 ---

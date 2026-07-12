@@ -3,6 +3,8 @@ title: Agent Terminal
 description: Chat with the built-in ax agent or external CLIs from the Command Center web UI.
 ---
 
+![Agent terminal — chat with AI agents, switch projects, profiles, and agents from the toolbar](/screenshots/cc-agent-terminal.png)
+
 **ax v2.1.5+** adds an **Agent Terminal** to `ax web` — a chat panel for talking to AI agents without leaving the Command Center.
 
 ## Quick start

@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 use crate::agent;
 use crate::policy::PolicyApiState;
 use crate::ship::ShipApiState;
+use crate::sonar_proxy::SonarProxyCache;
 use crate::workspace;
 
 #[derive(Clone)]
@@ -25,6 +26,7 @@ pub struct WebHub {
     pub readonly: bool,
     pub port: u16,
     switching: Arc<AtomicBool>,
+    pub(crate) sonar_proxy: Arc<Mutex<SonarProxyCache>>,
 }
 
 pub struct WorkspaceBundle {
@@ -45,6 +47,7 @@ impl WebHub {
             readonly,
             port,
             switching: Arc::new(AtomicBool::new(false)),
+            sonar_proxy: Arc::new(Mutex::new(SonarProxyCache::default())),
         })
     }
 
@@ -78,6 +81,7 @@ impl WebHub {
             drop(guard);
             old.close().await;
             let _ = ax_agent::config::touch_recent_project(&new_root, true);
+            self.sonar_proxy.lock().await.invalidate();
             Ok(SwitchInfo {
                 path: new_root.to_string_lossy().into_owned(),
                 label: new_root

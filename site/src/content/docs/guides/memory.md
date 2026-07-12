@@ -3,6 +3,8 @@ title: Memory vault
 description: Durable project memory for agents — decisions, fixes, and conventions with hybrid recall and automatic preflight injection.
 ---
 
+![Memory vault — browse, search, and inspect stored memories with hybrid recall](/screenshots/cc-memory-vault.png)
+
 ax keeps a persistent memory vault per project: decisions, bug fixes, architecture notes, and conventions that agents (and humans) should never re-discover from scratch. Memories live in `.ax/ax.db` next to the code graph, work fully offline, and are automatically injected into agent context.
 
 ## How it works
@@ -51,7 +53,7 @@ Preflight injection means agents usually don't need to call `ax_recall` explicit
 
 ## Command Center
 
-The **Memory** page in the Command Center (`ax ship` / `ax web`) lists all memories with live hybrid search, a composer for new memories, a one-click **Capture from git** action, and per-memory detail (kind, source, confidence, linked files).
+The **Memory** page in the Command Center (`ax ship` / `ax web`) lists all memories with live hybrid search, per-memory detail (kind, source, confidence, linked files), and a one-click **Capture from git** action. Creating a new memory opens a **modal composer** with fields for body, title, kind, tags, and related files.
 
 ## Storage
 

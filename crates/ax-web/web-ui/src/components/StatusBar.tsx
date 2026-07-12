@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { fetchStats, fetchVersion } from '../api';
-import WorkspacePicker from './WorkspacePicker';
+import Codicon from './Codicon';
+import ProjectBrowserModal from './ProjectBrowserModal';
 import { useUiContext } from '../context/UiContext';
+import { WORKSPACE_SWITCHED } from '../workspaceEvents';
 import type { Stats } from '../types';
 
 function IconNodes() {
@@ -166,6 +168,7 @@ export default function StatusBar() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [version, setVersion] = useState('');
   const [openPanel, setOpenPanel] = useState<string | null>(null);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
   const barRef = useRef<HTMLElement>(null);
 
   function refresh() {
@@ -177,10 +180,13 @@ export default function StatusBar() {
     refresh();
     const id = window.setInterval(refresh, 30_000);
     const onFocus = () => refresh();
+    const onWorkspaceSwitched = () => refresh();
     window.addEventListener('focus', onFocus);
+    window.addEventListener(WORKSPACE_SWITCHED, onWorkspaceSwitched);
     return () => {
       clearInterval(id);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener(WORKSPACE_SWITCHED, onWorkspaceSwitched);
     };
   }, []);
 
@@ -382,24 +388,21 @@ export default function StatusBar() {
           <span className="status-lbl">{stats ? formatBytes(stats.db_size_bytes) : '—'}</span>
         </StatusChip>
         {stats?.project_name && (
-          <StatusChip
-            id="project"
-            title="Switch project"
-            openPanel={openPanel}
-            onTogglePanel={setOpenPanel}
-            className="status-project"
-            panel={
-              <div className="status-panel-workspace">
-                <WorkspacePicker onSwitched={() => {
-                  setOpenPanel(null);
-                  refresh();
-                  window.dispatchEvent(new CustomEvent('ax-workspace-switched'));
-                }} />
-              </div>
-            }
+          <button
+            type="button"
+            className="status-item status-item--clickable status-project"
+            title={`${stats.project_name} — browse for ax projects`}
+            onClick={() => setProjectModalOpen(true)}
           >
+            <Codicon name="symbol-structure" className="status-project-icon" />
             <span className="status-lbl">{stats.project_name}</span>
-          </StatusChip>
+          </button>
+        )}
+        {projectModalOpen && (
+          <ProjectBrowserModal
+            onClose={() => setProjectModalOpen(false)}
+            onSwitched={() => setProjectModalOpen(false)}
+          />
         )}
         {stats?.readonly && (
           <span className="status-item status-readonly" title="Read-only mode">

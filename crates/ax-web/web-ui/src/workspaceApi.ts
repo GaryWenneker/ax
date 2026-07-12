@@ -38,6 +38,7 @@ export async function browseWorkspace(path?: string): Promise<{
   ok: boolean;
   path?: string;
   parent?: string;
+  initialized?: boolean;
   entries?: BrowseEntry[];
   error?: string;
 }> {

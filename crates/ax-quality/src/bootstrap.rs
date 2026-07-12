@@ -678,6 +678,7 @@ pub async fn ensure_sonar_dark_theme(host: &str, user: &str, password: &str) {
         ("appearance.theme", "dark"),
         ("sonar.ui.theme", "dark"),
         ("theme", "dark"),
+        ("user.theme", "dark"),
     ];
     for (key, value) in prefs {
         let url = format!(
@@ -686,16 +687,13 @@ pub async fn ensure_sonar_dark_theme(host: &str, user: &str, password: &str) {
             encode_query(key),
             encode_query(value),
         );
-        if authed_post(&url, user, password)
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
-        {
-            tracing::debug!(preference = key, "SonarQube dark theme preference set");
-            return;
+        if let Ok(resp) = authed_post(&url, user, password).await {
+            if resp.status().is_success() {
+                tracing::debug!(preference = key, "SonarQube dark theme preference set");
+            }
         }
     }
-    tracing::debug!("SonarQube dark theme API unavailable — proxy injects dark theme in HTML");
+    tracing::debug!("SonarQube dark theme preferences applied (proxy also injects dark theme in HTML)");
 }
 
 /// Whether the SonarQube HTTP API responds at `host`.

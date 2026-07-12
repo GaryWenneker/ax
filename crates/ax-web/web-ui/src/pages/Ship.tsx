@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PipelineTrack from '../components/PipelineTrack';
 import {
+  BusyLabel,
   PageCard,
   PageCardBody,
   PageHero,
@@ -133,6 +134,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
   const [liveSonarKey, setLiveSonarKey] = useState<string | null>(null);
   const [liveSteps, setLiveSteps] = useState<Map<string, GateStep>>(new Map());
   const [sonarProjectSteps, setSonarProjectSteps] = useState<SonarProjectStep[]>([]);
+  const [sonarPhase, setSonarPhase] = useState<'preparing' | 'scanning' | null>(null);
   const [lastRun, setLastRun] = useState<LastRunLog | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -194,15 +196,22 @@ export default function ShipPage({ onOpenSonar }: Props) {
     sseLiveStep: string | null = null,
   ) {
     if (!log || (!evaluating && !isEvaluationInProgress(log))) return;
-    const { liveStep, liveSteps, liveSonarKey, sonarProjects } = mergePipelineFromLog(
-      log,
-      sseLiveStep,
-    );
+    const { liveStep, liveSteps, liveSonarKey, sonarProjects, sonarPhase: phase } =
+      mergePipelineFromLog(log, sseLiveStep);
     setLiveStep(liveStep);
     setLiveSonarKey(liveSonarKey);
     setLiveSteps(liveSteps);
+    setSonarPhase(phase);
     if (sonarProjects.size > 0) {
       setSonarProjectSteps(Array.from(sonarProjects.values()));
+    } else if (
+      liveStep === 'sonar' &&
+      repoProjects.length > 0 &&
+      (phase === 'preparing' || phase === 'scanning')
+    ) {
+      setSonarProjectSteps(
+        Array.from(seedSonarProjects(repoProjects, new Map()).values()),
+      );
     }
     setBusy('evaluate');
     evaluatingRef.current = true;
@@ -353,12 +362,21 @@ export default function ShipPage({ onOpenSonar }: Props) {
           setLastRunState(payload.last_run);
           if (isEvaluationInProgress(payload.last_run)) {
             setLiveStep((prev) => {
-              const { liveStep, liveSteps, liveSonarKey, sonarProjects } =
+              const { liveStep, liveSteps, liveSonarKey, sonarProjects, sonarPhase: phase } =
                 mergePipelineFromLog(payload.last_run, prev);
               setLiveSteps(liveSteps);
               setLiveSonarKey(liveSonarKey);
+              setSonarPhase(phase);
               if (sonarProjects.size > 0) {
                 setSonarProjectSteps(Array.from(sonarProjects.values()));
+              } else if (
+                liveStep === 'sonar' &&
+                repoProjects.length > 0 &&
+                (phase === 'preparing' || phase === 'scanning')
+              ) {
+                setSonarProjectSteps(
+                  Array.from(seedSonarProjects(repoProjects, new Map()).values()),
+                );
               }
               setBusy('evaluate');
               evaluatingRef.current = true;
@@ -369,6 +387,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
             setBusy(null);
             setLiveStep(null);
             setLiveSonarKey(null);
+            setSonarPhase(null);
           }
         }
         if (payload.type === 'report_updated' && payload.report) {
@@ -558,6 +577,19 @@ export default function ShipPage({ onOpenSonar }: Props) {
     }
   }
 
+  const sonarEvalActive =
+    busy === 'evaluate' || isEvaluationInProgress(lastRun) || liveStep === 'sonar';
+  const pipelineSonarProjects =
+    sonarProjectSteps.length > 0
+      ? sonarProjectSteps
+      : sonarEvalActive && repoProjects.length > 0
+        ? repoProjects.map((p) => ({
+            key: p.key,
+            name: p.name,
+            status: 'pending' as const,
+          }))
+        : [];
+
   return (
     <PageShell>
       <PageHero
@@ -569,10 +601,10 @@ export default function ShipPage({ onOpenSonar }: Props) {
               SonarQube
             </button>
             <button type="button" className="btn primary" disabled={!!busy} onClick={() => runCommand('evaluate')}>
-              {busy === 'evaluate' ? 'Evaluating…' : 'Evaluate'}
+              {busy === 'evaluate' ? <BusyLabel label="Evaluating…" /> : 'Evaluate'}
             </button>
             <button type="button" className="btn" disabled={!!busy} onClick={() => runCommand('draft')}>
-              {busy === 'draft' ? 'Creating…' : 'Draft PR'}
+              {busy === 'draft' ? <BusyLabel label="Creating…" /> : 'Draft PR'}
             </button>
           </>
         }
@@ -612,7 +644,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
         >
           <PageCardBody>
             <div
-              className={`ship-gate${passed === true ? ' ship-gate--pass' : passed === false ? ' ship-gate--fail' : ''}`}
+              className={`ship-gate${passed === true ? ' ship-gate--pass' : passed === false ? ' ship-gate--fail' : ''}${busy === 'evaluate' || isEvaluationInProgress(lastRun) || liveStep ? ' ship-gate--live' : ''}`}
               style={{ margin: '0 clamp(16px, 2vw, 28px) 14px', borderRadius: 8 }}
             >
               <div className="ship-gate-status">
@@ -637,15 +669,8 @@ export default function ShipPage({ onOpenSonar }: Props) {
             stepsByName={stepsByName}
             liveStep={liveStep}
             liveSonarKey={liveSonarKey}
-            sonarProjects={
-              sonarProjectSteps.length > 0
-                ? sonarProjectSteps
-                : repoProjects.map((p) => ({
-                    key: p.key,
-                    name: p.name,
-                    status: 'pending' as const,
-                  }))
-            }
+            sonarPhase={sonarPhase}
+            sonarProjects={pipelineSonarProjects}
           />
         </PageCard>
 
@@ -719,54 +744,9 @@ export default function ShipPage({ onOpenSonar }: Props) {
                 tone={tokenValid === true ? 'ok' : 'warn'}
               />
             </StatusPanel>
-            {repoProjects.length > 0 && (
-              <ul
-                className="ship-sonar-project-list"
-                style={{ margin: '0 clamp(16px, 2vw, 28px) 14px' }}
-              >
-                {repoProjects.map((p) => (
-                  <li key={p.key} className="ship-sonar-project-row">
-                    <div className="ship-sonar-project-info">
-                      <code>{p.name}</code>
-                      <span className="muted"> · {p.key}</span>
-                      <span
-                        className={`badge${p.exists ? '' : ' ship-live-badge'}`}
-                        style={{ marginLeft: 8 }}
-                      >
-                        {p.exists ? 'ready' : 'missing'}
-                      </span>
-                    </div>
-                    {sonarReachable && tokenValid === true && p.exists && (
-                      <button
-                        type="button"
-                        className="btn btn-subtle btn-sm"
-                        disabled={!!sonarBusy || !!busy}
-                        onClick={() => scanProject(p.key, p.name)}
-                      >
-                        {scanningProjectKey === p.key || sonarBusy === `scan:${p.key}`
-                          ? 'Scanning…'
-                          : 'Scan'}
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '0 clamp(16px, 2vw, 28px) 14px' }}>
-              {canScanAll && (
-                <button
-                  type="button"
-                  className="btn primary"
-                  disabled={!!sonarBusy || !!busy}
-                  onClick={() => runSonarStream('scan', streamSonarScanAll)}
-                >
-                  {sonarBusy === 'scan'
-                    ? 'Scanning…'
-                    : repoProjects.length > 1
-                      ? `Scan all ${repoProjects.length} projects`
-                      : 'Scan all projects'}
-                </button>
-              )}
+
+            {/* Action buttons row */}
+            <div className="sq-actions-bar">
               {canInstallSonar && (
                 <button
                   type="button"
@@ -819,7 +799,119 @@ export default function ShipPage({ onOpenSonar }: Props) {
                 SonarQube page
               </button>
             </div>
-            {sonarLog.length > 0 && (
+
+            {/* Project cards grid */}
+            {repoProjects.length > 0 && (
+              <div className="sq-project-section">
+                <div className="sq-project-header">
+                  <h3 className="sq-project-heading">
+                    Projects ({repoProjects.length})
+                  </h3>
+                  {canScanAll && repoProjects.length > 1 && (
+                    <button
+                      type="button"
+                      className="btn primary"
+                      disabled={!!sonarBusy || !!busy}
+                      onClick={() => runSonarStream('scan', streamSonarScanAll)}
+                    >
+                      {sonarBusy === 'scan'
+                        ? 'Scanning all…'
+                        : `Scan all ${repoProjects.length} projects`}
+                    </button>
+                  )}
+                </div>
+
+                {!sonarReachable && (
+                  <div className="sq-project-alert sq-project-alert--warn">
+                    SonarQube API is not reachable. Start the container or check the host configuration.
+                  </div>
+                )}
+                {sonarReachable && tokenValid === false && (
+                  <div className="sq-project-alert sq-project-alert--warn">
+                    Scanner token is invalid. Click "Regenerate token" or "Setup project & token" to fix.
+                  </div>
+                )}
+                {sonarReachable && tokenValid === null && (
+                  <div className="sq-project-alert sq-project-alert--info">
+                    Validating scanner token…
+                  </div>
+                )}
+
+                <div className="sq-project-grid">
+                  {repoProjects.map((p) => {
+                    const isScanning = scanningProjectKey === p.key || sonarBusy === `scan:${p.key}`;
+                    const canScan = sonarReachable && tokenValid === true && p.exists && !sonarBusy && !busy;
+                    const blockedReason = !sonarReachable
+                      ? 'SonarQube offline'
+                      : tokenValid !== true
+                        ? 'Token not valid'
+                        : !p.exists
+                          ? 'Project not provisioned'
+                          : sonarBusy
+                            ? 'Another operation running'
+                            : busy
+                              ? 'Pipeline running'
+                              : null;
+
+                    return (
+                      <div
+                        key={p.key}
+                        className={`sq-project-card${isScanning ? ' sq-project-card--scanning' : ''}${!p.exists ? ' sq-project-card--missing' : ''}`}
+                      >
+                        <div className="sq-project-card-top">
+                          <div className="sq-project-card-info">
+                            <span className="sq-project-card-name">{p.name}</span>
+                            <span className="sq-project-card-key">{p.key}</span>
+                          </div>
+                          <span className={`sq-project-card-status${p.exists ? ' sq-project-card-status--ok' : ' sq-project-card-status--missing'}`}>
+                            {p.exists ? 'Ready' : 'Missing'}
+                          </span>
+                        </div>
+
+                        <div className="sq-project-card-actions">
+                          {isScanning ? (
+                            <button type="button" className="btn primary btn-sm" disabled>
+                              <span className="sq-spinner" /> Scanning…
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn primary btn-sm"
+                              disabled={!canScan}
+                              title={blockedReason ?? 'Run SonarQube analysis on this project'}
+                              onClick={() => scanProject(p.key, p.name)}
+                            >
+                              Scan
+                            </button>
+                          )}
+                        </div>
+
+                        {isScanning && sonarLog.length > 0 && (
+                          <div className="sq-project-card-log">
+                            <pre>{sonarLog.slice(-8).join('\n')}</pre>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {repoProjects.length === 0 && sonarReachable && (sonarSetup?.project_exists || canScanAll) && (
+              <div className="sq-actions-bar">
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!!sonarBusy || !!busy}
+                  onClick={() => runSonarStream('scan', streamSonarScanAll)}
+                >
+                  {sonarBusy === 'scan' ? 'Scanning…' : 'Scan project'}
+                </button>
+              </div>
+            )}
+
+            {sonarLog.length > 0 && !scanningProjectKey && (
               <div className="settings-log-panel" style={{ margin: '0 clamp(16px, 2vw, 28px) 14px' }}>
                 <div className="settings-log-header">
                   <span>Sonar log</span>

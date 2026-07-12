@@ -15,6 +15,7 @@ import {
   type AgentsConfig,
 } from '../agentApi';
 import ProfileEditor from './agent/ProfileEditor';
+import ModalShell from './ModalShell';
 
 function SettingRow({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
@@ -84,6 +85,7 @@ export default function AgentsSettingsSection() {
   const [newProfileProvider, setNewProfileProvider] = useState('');
   const [newProfileKeyEnv, setNewProfileKeyEnv] = useState('');
   const [newProfileModel, setNewProfileModel] = useState('');
+  const [addProfileOpen, setAddProfileOpen] = useState(false);
 
   const load = useCallback(async () => {
     const data = await fetchAgentStatus();
@@ -210,6 +212,7 @@ export default function AgentsSettingsSection() {
       setNewProfileProvider('');
       setNewProfileKeyEnv('');
       setNewProfileModel('');
+      setAddProfileOpen(false);
       setOkMsg('Profile created');
       void load();
     } else {
@@ -343,35 +346,59 @@ export default function AgentsSettingsSection() {
           (work vs personal). Use <strong>builtin</strong> for the built-in ax chat LLM (provider + API key env var).
           Switch profiles in the Agent terminal dropdown.
         </p>
-
-        <div className="agent-profile-new agent-profile-new--prominent">
-          <div className="settings-subsection-label">Add profile</div>
-          <div className="settings-row" style={{ flexWrap: 'wrap', gap: 8 }}>
-            <select className="settings-input" value={newProfileAgent} disabled={readonly} onChange={(e) => setNewProfileAgent(e.target.value)}>
-              {profileAgents.map((id) => (
-                <option key={id} value={id}>{PROFILE_AGENT_LABELS[id] ?? targets.find((t) => t.id === id)?.display_name ?? id}</option>
-              ))}
-            </select>
-            <input className="settings-input" placeholder="Profile id (e.g. work)" value={newProfileId} disabled={readonly} onChange={(e) => setNewProfileId(e.target.value)} />
-            <input className="settings-input" placeholder="Display label (e.g. Work account)" value={newProfileLabel} disabled={readonly} onChange={(e) => setNewProfileLabel(e.target.value)} />
-          </div>
-          {newProfileAgent === 'builtin' && (
-            <div className="settings-row" style={{ flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-              <select className="settings-input" value={newProfileProvider} disabled={readonly} onChange={(e) => setNewProfileProvider(e.target.value)}>
-                <option value="">Provider (default)</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="google">Google</option>
-                <option value="openrouter">OpenRouter</option>
-              </select>
-              <input className="settings-input" placeholder="API key env var (OPENAI_API_KEY)" value={newProfileKeyEnv} disabled={readonly} onChange={(e) => setNewProfileKeyEnv(e.target.value)} />
-              <input className="settings-input" placeholder="Model (gpt-4o-mini)" value={newProfileModel} disabled={readonly} onChange={(e) => setNewProfileModel(e.target.value)} />
-            </div>
-          )}
-          <button type="button" className="btn primary" style={{ marginTop: 8 }} disabled={!!busy || readonly} onClick={() => void addProfile()}>
+        <div className="settings-card-footer" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!!busy || readonly}
+            onClick={() => setAddProfileOpen(true)}
+          >
             Add profile
           </button>
         </div>
+
+        {addProfileOpen && (
+          <ModalShell
+            title="Add profile"
+            subtitle="Create a new account profile for an agent. Profiles appear in the Agent terminal dropdown."
+            onClose={() => setAddProfileOpen(false)}
+            footer={
+              <>
+                <button type="button" className="btn btn-subtle" disabled={!!busy} onClick={() => setAddProfileOpen(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="btn primary" disabled={!!busy || readonly} onClick={() => void addProfile()}>
+                  Add profile
+                </button>
+              </>
+            }
+          >
+            <div className="ax-modal-form-stack">
+              <div className="ax-modal-form-row">
+                <select className="settings-input" value={newProfileAgent} disabled={readonly} onChange={(e) => setNewProfileAgent(e.target.value)}>
+                  {profileAgents.map((id) => (
+                    <option key={id} value={id}>{PROFILE_AGENT_LABELS[id] ?? targets.find((t) => t.id === id)?.display_name ?? id}</option>
+                  ))}
+                </select>
+                <input className="settings-input" placeholder="Profile id (e.g. work)" value={newProfileId} disabled={readonly} onChange={(e) => setNewProfileId(e.target.value)} />
+              </div>
+              <input className="settings-input" placeholder="Display label (e.g. Work account)" value={newProfileLabel} disabled={readonly} onChange={(e) => setNewProfileLabel(e.target.value)} />
+              {newProfileAgent === 'builtin' && (
+                <>
+                  <select className="settings-input" value={newProfileProvider} disabled={readonly} onChange={(e) => setNewProfileProvider(e.target.value)}>
+                    <option value="">Provider (default)</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="google">Google</option>
+                    <option value="openrouter">OpenRouter</option>
+                  </select>
+                  <input className="settings-input" placeholder="API key env var (OPENAI_API_KEY)" value={newProfileKeyEnv} disabled={readonly} onChange={(e) => setNewProfileKeyEnv(e.target.value)} />
+                  <input className="settings-input" placeholder="Model (gpt-4o-mini)" value={newProfileModel} disabled={readonly} onChange={(e) => setNewProfileModel(e.target.value)} />
+                </>
+              )}
+            </div>
+          </ModalShell>
+        )}
 
         {profileAgents.map((agent) => {
           const list = config.profiles?.[agent] ?? [];
@@ -382,7 +409,7 @@ export default function AgentsSettingsSection() {
                 <span className="agent-profile-count">{list.length} profile{list.length === 1 ? '' : 's'}</span>
               </div>
               {list.length === 0 ? (
-                <p className="agent-profile-empty">No profiles yet — add one above.</p>
+                <p className="agent-profile-empty">No profiles yet — click Add profile above.</p>
               ) : (
                 <div className="agent-profile-list">
                   {list.map((p) => (

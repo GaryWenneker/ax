@@ -27,6 +27,8 @@ ax status
 
 This reports the node/edge/file counts, the active SQLite backend, and the journal mode — a quick health check that the index is ready.
 
+![Graph Stats — index summary with node/edge/file counts and language breakdown](/screenshots/cc-stats.png)
+
 ## Run a query
 
 Reach for `ax explore` first — a natural-language question or a bag of symbol names returns the relevant source plus the call paths between those symbols in a single shot (the same output the `ax_explore` tool gives your agent):

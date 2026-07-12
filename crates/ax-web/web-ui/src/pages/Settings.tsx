@@ -1,8 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import AgentsSettingsSection from '../components/AgentsSettingsSection';
+import { BusyLabel } from '../components/ui/PageLayout';
+import ThemeChooser from '../components/ThemeChooser';
 import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
+import { loadThemeId } from '../lib/themes';
 import { fetchShipConfig, saveShipConfig, type ShipConfig } from '../shipApi';
 
 const DEFAULT_CONFIG: ShipConfig = {
@@ -74,6 +77,7 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [themeId, setThemeId] = useState(loadThemeId);
 
   usePageContext('Settings', 'Command Center · pipeline & agents');
 
@@ -258,6 +262,13 @@ export default function SettingsPage() {
             <div className="settings-subsection-label">Interface</div>
 
             <SettingRow
+              title="Theme"
+              description="Accent color and palette for the Command Center UI."
+            >
+              <ThemeChooser activeId={themeId} onSelect={setThemeId} />
+            </SettingRow>
+
+            <SettingRow
               title="Show Savings page"
               description="Measured context-token and dollar savings from ax MCP graph queries."
             >
@@ -346,7 +357,7 @@ export default function SettingsPage() {
 
           <div className="settings-card-footer">
             <button type="button" className="btn primary" disabled={!!busy} onClick={() => void save()}>
-              {busy === 'save' ? 'Saving…' : 'Save settings'}
+              {busy === 'save' ? <BusyLabel label="Saving…" /> : 'Save settings'}
             </button>
           </div>
         </section>

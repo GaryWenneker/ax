@@ -34,6 +34,20 @@ pub fn write_run_log(project_root: &Path, log: &LastRunLog) -> Result<(), String
     std::fs::write(path, text + "\n").map_err(|e| e.to_string())
 }
 
+/// Mark an unfinished run as interrupted (e.g. after ax web restart mid-evaluate).
+pub fn finalize_stale_run_log(project_root: &Path) {
+    let mut log = read_run_log(project_root);
+    if log.started_at.is_some() && log.finished_at.is_none() {
+        log.finished_at = Some(now_label());
+        log.ok = false;
+        log.lines.push(format!(
+            "[{}] Evaluation interrupted — restart Evaluate to run again",
+            now_label()
+        ));
+        let _ = write_run_log(project_root, &log);
+    }
+}
+
 pub struct RunLogger {
     project_root: PathBuf,
     log: LastRunLog,

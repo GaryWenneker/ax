@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { fetchNodeDetail, fetchSource } from '../api';
 import type { SourceSlice } from '../api';
 import Codicon from './Codicon';
+import { Spinner } from './ui/Spinner';
 import { PreviewZoomToolbar, loadPreviewScale } from './PreviewZoom';
 import type { NodeDetail } from '../types';
 
@@ -91,7 +92,12 @@ export default function NodeDetailPanel({
         className="detail-body"
         style={{ fontSize: `calc(var(--fs-sm) * ${previewScale})` }}
       >
-        {loading && <div className="loading-row">Loading…</div>}
+        {loading && (
+          <div className="loading-row">
+            <Spinner />
+            Loading…
+          </div>
+        )}
         {error && <div className="state-msg"><strong>Error</strong> {error}</div>}
 
         {node && (
@@ -136,7 +142,12 @@ export default function NodeDetailPanel({
                 )}
               </div>
               {sourceError && <div className="empty-label">Source unavailable: {sourceError}</div>}
-              {!sourceError && !source && <div className="loading-row">Loading source…</div>}
+              {!sourceError && !source && (
+                <div className="loading-row">
+                  <Spinner />
+                  Loading source…
+                </div>
+              )}
               {source && (
                 <pre className="detail-code detail-code--source">
                   {source.lines.map((l) => (

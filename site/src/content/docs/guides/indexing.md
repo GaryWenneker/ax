@@ -94,6 +94,10 @@ ax status
 
 Reports node/edge/file counts, the active SQLite backend, and the journal mode. In an agent session, the MCP-side `ax_status` additionally surfaces the `### Pending sync:` block described above.
 
+![Graph Stats — index metrics, language distribution, and database size](/screenshots/cc-stats.png)
+
 ## What gets indexed
+
+![Files — explorer tree with file preview, indexed symbols, and node detail blade](/screenshots/cc-files.png)
 
 Every file whose extension maps to a [supported language](/ax/reference/languages/), minus dependency/build directories excluded by default (`node_modules`, `vendor`, `dist`, …), anything your `.gitignore` excludes, and files over 1 MB. See [Configuration](/ax/getting-started/configuration/).

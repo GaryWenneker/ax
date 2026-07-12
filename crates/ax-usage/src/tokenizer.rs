@@ -54,6 +54,27 @@ fn mtime_ms(meta: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+/// Exact BPE token count for an inclusive 1-indexed line range in a file.
+/// Returns `None` when the file cannot be read or the tokenizer is unavailable.
+pub fn count_file_line_range_tokens(path: &Path, start_line: u32, end_line: u32) -> Option<i64> {
+    if bpe().is_none() || start_line == 0 || end_line < start_line {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = text.lines().collect();
+    let start_idx = (start_line - 1) as usize;
+    let end_idx = (end_line as usize).min(lines.len());
+    if start_idx >= end_idx {
+        return Some(0);
+    }
+    let slice = lines[start_idx..end_idx].join("\n");
+    if slice.is_empty() {
+        return Some(0);
+    }
+    Some(count_tokens(&slice) as i64)
+}
+
 /// Exact token count of a file's current contents, cached by (mtime, size).
 /// Returns `None` when the file cannot be read or the tokenizer is unavailable.
 pub fn count_file_tokens(path: &Path) -> Option<i64> {
@@ -122,6 +143,25 @@ mod tests {
         let second = count_file_tokens(&path).unwrap();
         assert_eq!(first, second);
         assert!(first > 0);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn line_range_tokens_subset_of_full_file() {
+        let dir = std::env::temp_dir().join("ax-usage-tokenizer-range-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("range.rs");
+        std::fs::write(
+            &path,
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\n",
+        )
+        .unwrap();
+
+        let full = count_file_tokens(&path).unwrap();
+        let slice = count_file_line_range_tokens(&path, 2, 4).unwrap();
+        assert!(slice > 0);
+        assert!(slice < full);
 
         let _ = std::fs::remove_file(&path);
     }

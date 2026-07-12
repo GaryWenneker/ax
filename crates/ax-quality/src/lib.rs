@@ -18,7 +18,7 @@ pub use container::{
     discover_runtimes, discover_sonar, ensure_sonar_live, ensure_sonar_live_with_log,
     ensure_sonar_stack_online, find_container, find_container_any, resolve_runtime,
     start_sonar_container_with_log, start_sonar_stack, stop_sonar_container_with_log,
-    db_container_name, sonar_host_port, ContainerInfo, ContainerRuntime, InstallLog, RuntimeInfo,
-    SonarDiscovery,
+    db_container_name, sonar_host_port, sonar_localhost_candidates, sonar_ping_fast, ContainerInfo,
+    ContainerRuntime, InstallLog, RuntimeInfo, SonarDiscovery,
 };
 pub use sonar::{QualityGateResult, SonarClient, SonarCondition, SonarConfig, SonarScanProgressEvent};

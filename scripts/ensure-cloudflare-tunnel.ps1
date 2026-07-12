@@ -231,6 +231,12 @@ function Ensure-CloudflaredService {
         Write-Step 'Starting Cloudflared service'
         Set-Service -Name Cloudflared -StartupType Automatic -ErrorAction SilentlyContinue
         Start-Service -Name Cloudflared
+    } elseif ($service.StartType -ne 'Automatic') {
+        if (Test-IsAdmin) {
+            Set-Service -Name Cloudflared -StartupType Automatic -ErrorAction SilentlyContinue
+        } else {
+            Write-Host 'Warning: Cloudflared StartType is not Automatic — re-run as Administrator to persist after reboot.' -ForegroundColor Yellow
+        }
     }
 
     $service = Get-Service -Name Cloudflared

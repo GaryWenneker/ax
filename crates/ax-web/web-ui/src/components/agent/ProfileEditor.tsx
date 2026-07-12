@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { updateAgentProfile, type ProfileEntry } from '../../agentApi';
+import ModalShell from '../ModalShell';
 
 interface Props {
   agent: string;
@@ -71,42 +72,55 @@ export default function ProfileEditor({ agent, profile, readonly, onSaved, onErr
         )}
       </div>
       <div className="agent-profile-row-actions">
-        <button type="button" className="btn btn-subtle btn-sm" onClick={() => setOpen((v) => !v)}>
-          {open ? 'Close' : 'Edit'}
+        <button type="button" className="btn btn-subtle btn-sm" onClick={() => setOpen(true)}>
+          Edit
         </button>
       </div>
       {open && (
-        <div className="agent-profile-form">
-          <label className="agent-profile-field">
-            <span>Label</span>
-            <input className="settings-input" value={label} disabled={readonly} onChange={(e) => setLabel(e.target.value)} />
-          </label>
-          {agent === 'builtin' && (
+        <ModalShell
+          title="Edit profile"
+          subtitle={`${profile.id} · ${agent}`}
+          onClose={() => setOpen(false)}
+          footer={
             <>
-              <label className="agent-profile-field">
-                <span>Provider</span>
-                <select className="settings-input" value={provider} disabled={readonly} onChange={(e) => setProvider(e.target.value)}>
-                  <option value="">Default</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="google">Google</option>
-                  <option value="openrouter">OpenRouter</option>
-                </select>
-              </label>
-              <label className="agent-profile-field">
-                <span>API key env var</span>
-                <input className="settings-input" placeholder="OPENAI_API_KEY" value={keyEnv} disabled={readonly} onChange={(e) => setKeyEnv(e.target.value)} />
-              </label>
-              <label className="agent-profile-field">
-                <span>Model</span>
-                <input className="settings-input" placeholder="gpt-4o-mini" value={model} disabled={readonly} onChange={(e) => setModel(e.target.value)} />
-              </label>
+              <button type="button" className="btn btn-subtle" disabled={saving} onClick={() => setOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn primary" disabled={saving || readonly || !label.trim()} onClick={() => void save()}>
+                {saving ? 'Saving…' : 'Save profile'}
+              </button>
             </>
-          )}
-          <button type="button" className="btn primary btn-sm" disabled={saving || readonly || !label.trim()} onClick={() => void save()}>
-            {saving ? 'Saving…' : 'Save profile'}
-          </button>
-        </div>
+          }
+        >
+          <div className="ax-modal-form-stack">
+            <label className="agent-profile-field">
+              <span>Label</span>
+              <input className="settings-input" value={label} disabled={readonly} onChange={(e) => setLabel(e.target.value)} />
+            </label>
+            {agent === 'builtin' && (
+              <>
+                <label className="agent-profile-field">
+                  <span>Provider</span>
+                  <select className="settings-input" value={provider} disabled={readonly} onChange={(e) => setProvider(e.target.value)}>
+                    <option value="">Default</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="google">Google</option>
+                    <option value="openrouter">OpenRouter</option>
+                  </select>
+                </label>
+                <label className="agent-profile-field">
+                  <span>API key env var</span>
+                  <input className="settings-input" placeholder="OPENAI_API_KEY" value={keyEnv} disabled={readonly} onChange={(e) => setKeyEnv(e.target.value)} />
+                </label>
+                <label className="agent-profile-field">
+                  <span>Model</span>
+                  <input className="settings-input" placeholder="gpt-4o-mini" value={model} disabled={readonly} onChange={(e) => setModel(e.target.value)} />
+                </label>
+              </>
+            )}
+          </div>
+        </ModalShell>
       )}
     </div>
   );

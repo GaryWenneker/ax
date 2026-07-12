@@ -23,6 +23,7 @@ function sonarAggregateMeta(
   sonarProjects: SonarProjectStep[],
   liveSonarKey: string | null,
   active: boolean,
+  sonarPhase: 'preparing' | 'scanning' | null = null,
 ) {
   if (sonarProjects.length === 0) return null;
 
@@ -49,6 +50,9 @@ function sonarAggregateMeta(
       Math.max(scanTotal, 1),
     );
     if (active && allPending) {
+      if (sonarPhase === 'scanning') {
+        return <span className="badge ship-live-badge">Starting scans…</span>;
+      }
       return <span className="badge ship-live-badge">Preparing SonarQube…</span>;
     }
     if (active && scanning === 0 && !current && scanTotal > 0) {
@@ -80,9 +84,10 @@ function stepMeta(
   liveSonarKey: string | null,
   sonarProjects: SonarProjectStep[],
   stepName: (typeof PIPELINE_STEPS)[number],
+  sonarPhase: 'preparing' | 'scanning' | null = null,
 ) {
   if (stepName === 'sonar' && sonarProjects.length > 0) {
-    return sonarAggregateMeta(sonarProjects, liveSonarKey, active);
+    return sonarAggregateMeta(sonarProjects, liveSonarKey, active, sonarPhase);
   }
   if (active && liveSonarKey) {
     const current = sonarProjects.find((p) => p.key === liveSonarKey);
@@ -112,12 +117,14 @@ function sonarProjectStatusLabel(
   status: SonarProjectStep['status'],
   active: boolean,
   sonarStepActive: boolean,
+  sonarPhase: 'preparing' | 'scanning' | null = null,
 ) {
   if (active || status === 'active') return 'Scanning…';
   if (status === 'passed') return 'Done';
   if (status === 'failed') return 'Failed';
   if (status === 'skipped') return 'Skipped';
-  if (sonarStepActive) return 'Waiting…';
+  if (sonarStepActive && sonarPhase === 'preparing') return 'Queued';
+  if (sonarStepActive) return 'Queued';
   return 'Queued';
 }
 
@@ -126,6 +133,7 @@ interface Props {
   liveStep: string | null;
   liveSonarKey?: string | null;
   sonarProjects?: SonarProjectStep[];
+  sonarPhase?: 'preparing' | 'scanning' | null;
 }
 
 export default function PipelineTrack({
@@ -133,6 +141,7 @@ export default function PipelineTrack({
   liveStep,
   liveSonarKey = null,
   sonarProjects = [],
+  sonarPhase = null,
 }: Props) {
   const showSonarStack =
     sonarProjects.length > 0 &&
@@ -172,12 +181,14 @@ export default function PipelineTrack({
                 className={`ship-pipeline-step ship-pipeline-step--${status}${active ? ' ship-pipeline-step--active' : ''}${name === 'sonar' && showSonarStack ? ' ship-pipeline-step--sonar-expanded' : ''}`}
               >
                 <div className="ship-step-icon" aria-hidden="true">
-                  {stepIcon(status, active)}
+                  <span className={active ? 'ship-step-icon--live' : undefined}>
+                    {stepIcon(status, active)}
+                  </span>
                 </div>
                 <div className="ship-step-body">
                   <div className="ship-step-name">{STEP_LABELS[name]}</div>
                   <div className="ship-step-meta muted">
-                    {stepMeta(step, active, liveSonarKey, sonarProjects, name)}
+                    {stepMeta(step, active, liveSonarKey, sonarProjects, name, sonarPhase)}
                   </div>
 
                   {name === 'sonar' && showSonarStack && (
@@ -190,6 +201,7 @@ export default function PipelineTrack({
                           project.status,
                           projectActive,
                           active,
+                          sonarPhase,
                         );
 
                         return (
@@ -199,7 +211,9 @@ export default function PipelineTrack({
                             title={project.key}
                           >
                             <span className="ship-pipeline-sonar-row-icon" aria-hidden="true">
-                              {sonarProjectIcon(project.status, projectActive)}
+                              <span className={projectActive ? 'ship-step-icon--live' : undefined}>
+                                {sonarProjectIcon(project.status, projectActive)}
+                              </span>
                             </span>
                             <span className="ship-pipeline-sonar-row-name">{project.name}</span>
                             <span

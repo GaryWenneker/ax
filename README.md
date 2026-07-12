@@ -3,11 +3,13 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.1.6](https://github.com/GaryWenneker/ax/releases/tag/v2.1.6)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.1.7](https://github.com/GaryWenneker/ax/releases/tag/v2.1.7)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
-**ax** is local-first intelligence for AI coding agents: a **knowledge graph** (tree-sitter → SQLite), a **memory vault** (decisions, git auto-capture, hybrid recall), a **policy engine** (`.ax/policy/` rules and skills), and a **Command Center** (quality gates, SonarQube, token savings, draft PRs) — one Rust binary, CLI + MCP.
+**ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, draft PRs) — one Rust binary, CLI + MCP.
 
-**v2.1.6** adds the **memory vault** — `ax remember`, `ax recall`, `ax capture-git`, MCP `ax_remember` / `ax_recall`, Command Center **Memory** page, git-hook auto-capture on commit, and hybrid FTS5 + vector recall injected via `ax_preflight`. **Savings** leaves beta with real BPE token counts and dollar estimates.
+**v2.1.7** fixes **SonarQube dashboard responsiveness** in Command Center (iframe overlay, lighter dark-theme injection), improves **token savings counterfactuals** (line-range spans, related-file arrays, `AX_SAVINGS_CF_MODE`), and adds **running-state animations** across Ship, Savings, Sonar, and Settings.
+
+**v2.1.6** adds the **memory vault** — `ax remember`, `ax recall`, `ax capture-git`, MCP `ax_remember` / `ax_recall`, Command Center **Memory** page (modal composer), git-hook auto-capture on commit, and hybrid FTS5 + vector recall injected via `ax_preflight`. **Savings** leaves beta with real BPE token counts and dollar estimates. **Cursor auth switching** — `ax cursor auth save/use/list` for fast subscription profile switching. **Command Center** gains a **project browser** (disk navigation, ax-project detection, in-browser `ax init`), modal-based forms, and a comprehensive SonarQube dark-theme proxy with auto-login, cached credentials, and localhost fallback.
 
 **v2.1.5** adds **context-token savings tracking** — each MCP graph call logs estimated savings vs reading full files in `~/.ax/usage.db`. Query via `ax savings` and the **Savings** page in `ax web`. Import Cursor / Claude Code session logs with `ax savings import --all`.
 
@@ -157,6 +159,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax recall <query>` | Hybrid search (FTS + vectors) over project memories |
 | `ax capture-git` | Mine recent git commits into memories |
 | `ax savings` | Context-token and cost savings summary |
+| `ax cursor auth …` | Save/restore Cursor subscription sessions (`status`, `save`, `use`, `list`) |
 | `ax affected <files…>` | Tests affected by file changes |
 | `ax diff --base main` | Git diff symbol blast radius |
 | `ax test-impact --base main` | Test-function impact via graph |
@@ -255,7 +258,9 @@ Per-project indexes: pass `projectPath` when the workspace root differs from cwd
 | `ax-telemetry` | Opt-in anonymous usage events |
 | `ax-reasoning` | Optional BYO LLM offload for explore |
 | `ax-policy` | Rules/skills parse, index, match, guard |
-| `ax-web` | Embedded web UI (graph + policy management) |
+| `ax-agent` | Cursor auth session management (save/restore profiles) |
+| `ax-ship` | Quality-gate pipeline, SonarQube orchestration, draft PRs |
+| `ax-web` | Embedded web UI (graph + policy management + Command Center) |
 | `ax-types` | Shared types (`Node`, `Edge`, `ExploreResult`, …) |
 | `ax-utils` | Errors, paths, config helpers, encoding checks |
 

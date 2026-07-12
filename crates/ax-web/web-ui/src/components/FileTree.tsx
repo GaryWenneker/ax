@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FileRoot, FileRow } from '../types';
+import { Spinner } from './ui/Spinner';
 import Codicon from './Codicon';
 import FileTypeIcon from './FileTypeIcon';
 import { loadJson, saveJson } from '../lib/uiStorage';
@@ -180,7 +181,7 @@ function TreeRow({
         />
         <span className="file-tree-name">{node.name}</span>
         <span className="file-tree-folder-count">
-          {isLoading ? '…' : fileCount}
+          {isLoading ? <Spinner size="xs" /> : fileCount}
         </span>
       </button>
       {isOpen &&

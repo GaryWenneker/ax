@@ -10,14 +10,43 @@ export default defineConfig({
 		starlight({
 			title: 'ax',
 			description:
-				'Graph it. Remember it. Ship it. — local knowledge graph, memory vault, policy, and Command Center for AI agents.',
+				'Structured context for AI agents — entirely on your machine. Graph it. Remember it. Ship it.',
 			favicon: '/logo.png',
 			head: [
 				{
-					// Default to dark / ink theme on first visit.
 					tag: 'script',
 					content:
 						"if(!localStorage.getItem('starlight-theme')){try{localStorage.setItem('starlight-theme','dark')}catch(e){}document.documentElement.dataset.theme='dark';document.documentElement.style.colorScheme='dark'}",
+				},
+				{
+					tag: 'script',
+					content: `(function(){
+  var box,img;
+  function open(src,alt){
+    if(!box){
+      box=document.createElement('div');box.className='ax-lightbox';
+      box.innerHTML='<button class="ax-lightbox-close" aria-label="Close">&times;</button><img />';
+      img=box.querySelector('img');
+      box.addEventListener('click',function(e){if(e.target!==img)close()});
+      box.querySelector('.ax-lightbox-close').addEventListener('click',close);
+      document.body.appendChild(box);
+    }
+    img.src=src;img.alt=alt||'';
+    requestAnimationFrame(function(){box.classList.add('open')});
+    document.addEventListener('keydown',onKey);
+  }
+  function close(){
+    if(!box)return;box.classList.remove('open');
+    document.removeEventListener('keydown',onKey);
+  }
+  function onKey(e){if(e.key==='Escape')close()}
+  document.addEventListener('click',function(e){
+    var t=e.target;
+    if(t.tagName==='IMG'&&t.closest('.sl-markdown-content')){
+      e.preventDefault();open(t.src,t.alt);
+    }
+  });
+})();`,
 				},
 			],
 			social: [
@@ -32,20 +61,21 @@ export default defineConfig({
 				'@fontsource/ibm-plex-mono/400.css',
 				'@fontsource/ibm-plex-mono/500.css',
 				'@fontsource/ibm-plex-mono/600.css',
+				'@fontsource/bebas-neue',
 				'./src/styles/theme.css',
 			],
 			components: {
-				// Wordmark in the docs header.
 				SiteTitle: './src/components/SiteTitle.astro',
-				// Default GitHub icon + a live star-count pill (matches the landing nav).
 				SocialIcons: './src/components/SocialIcons.astro',
 			},
 			expressiveCode: {
 				themes: ['github-light', 'github-dark'],
 				styleOverrides: {
 					borderRadius: '0px',
-					borderColor: '#34322a',
+					borderColor: 'transparent',
+					borderWidth: '0px',
 					codeFontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+					codeBackground: '#1a1814',
 				},
 			},
 			sidebar: [

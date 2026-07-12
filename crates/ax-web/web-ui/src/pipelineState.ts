@@ -19,20 +19,23 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
   liveSteps: Map<string, GateStep>;
   liveSonarKey: string | null;
   sonarProjects: Map<string, SonarProjectStep>;
+  sonarPhase: 'preparing' | 'scanning' | null;
 } {
   const liveSteps = new Map<string, GateStep>();
   const sonarProjects = new Map<string, SonarProjectStep>();
   let liveStep: string | null = null;
   let liveSonarKey: string | null = null;
+  let sonarPhase: 'preparing' | 'scanning' | null = null;
 
   if (!log?.lines?.length) {
-    return { liveStep, liveSteps, liveSonarKey, sonarProjects };
+    return { liveStep, liveSteps, liveSonarKey, sonarProjects, sonarPhase };
   }
 
   for (const line of log.lines) {
     const sonarStart = line.match(/▶ sonar:([\w.-]+) — (.+?) \(\d+\/\d+\)/);
     if (sonarStart) {
       liveStep = 'sonar';
+      sonarPhase = 'scanning';
       liveSonarKey = sonarStart[1];
       sonarProjects.set(sonarStart[1], {
         key: sonarStart[1],
@@ -75,6 +78,20 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
       continue;
     }
 
+    if (/Preparing SonarQube|Ensuring SonarQube projects/.test(line)) {
+      liveStep = 'sonar';
+      sonarPhase = 'preparing';
+      continue;
+    }
+
+    if (/SonarQube scan —|Full SonarQube scan —/.test(line)) {
+      liveStep = 'sonar';
+      if (!sonarProjects.size) {
+        sonarPhase = 'scanning';
+      }
+      continue;
+    }
+
     const startMatch = line.match(/▶ (\w+)/);
     if (startMatch && VISIBLE_STEPS.has(startMatch[1])) {
       liveStep = startMatch[1];
@@ -107,9 +124,10 @@ export function parsePipelineFromLog(log: LastRunLog | null | undefined): {
   if (!isEvaluationInProgress(log)) {
     liveStep = null;
     liveSonarKey = null;
+    sonarPhase = null;
   }
 
-  return { liveStep, liveSteps, liveSonarKey, sonarProjects };
+  return { liveStep, liveSteps, liveSonarKey, sonarProjects, sonarPhase };
 }
 
 export function mergePipelineFromLog(
@@ -120,6 +138,7 @@ export function mergePipelineFromLog(
   liveSteps: Map<string, GateStep>;
   liveSonarKey: string | null;
   sonarProjects: Map<string, SonarProjectStep>;
+  sonarPhase: 'preparing' | 'scanning' | null;
 } {
   const parsed = parsePipelineFromLog(log);
   if (!isEvaluationInProgress(log)) {

@@ -1,9 +1,9 @@
 ---
 title: Get Started
-description: Get up and running with ax v2.1.6 in seconds.
+description: Get up and running with ax v2.1.7 in seconds.
 ---
 
-Install **ax v2.1.6** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — knowledge graph, memory vault, policy engine, and Command Center in one binary.
+Install **ax v2.1.7** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — knowledge graph, memory vault, policy engine, and Command Center in one binary.
 
 ## 1. Install the CLI
 
@@ -44,6 +44,8 @@ Creates `.ax/`, builds the knowledge graph, installs git hooks (sync, ship evalu
 ```bash
 ax web --open
 ```
+
+![Command Center — pipeline, savings, memory, and SonarQube in one dashboard](/screenshots/cc-ship-full.png)
 
 Browse the graph, edit policy, view token savings, and manage SonarQube from the local dashboard.
 

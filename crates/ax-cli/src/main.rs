@@ -259,6 +259,12 @@ enum Commands {
         #[command(subcommand)]
         action: PolicyCommands,
     },
+    /// Cursor IDE auth profiles (subscription switching)
+    #[command(long_about = help_text::CURSOR_LONG)]
+    Cursor {
+        #[command(subcommand)]
+        action: CursorCommands,
+    },
     /// Claude UserPromptSubmit hook (hidden; reads {prompt,cwd} JSON on stdin)
     #[command(hide = true, name = "prompt-hook")]
     PromptHook,
@@ -314,6 +320,62 @@ enum OffloadCommands {
     },
     /// Remove offload configuration
     Clear,
+}
+
+#[derive(Subcommand)]
+enum CursorCommands {
+    /// Cursor auth session management
+    Auth {
+        #[command(subcommand)]
+        action: CursorAuthCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum CursorAuthCommands {
+    /// Show live Cursor auth (plan, email, token age)
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// List saved auth profiles
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Save current Cursor auth as a named profile
+    Save {
+        name: String,
+        #[arg(long, help = "Human-readable label")]
+        label: Option<String>,
+        #[arg(
+            long,
+            help = "Save from auth.json only (for bootstrapping a stale personal session)"
+        )]
+        from_auth_json: bool,
+        #[arg(long)]
+        email: Option<String>,
+        #[arg(long)]
+        membership: Option<String>,
+        #[arg(long)]
+        subscription_status: Option<String>,
+        #[arg(long)]
+        sign_up_type: Option<String>,
+    },
+    /// Apply a saved profile to live Cursor data (restart Cursor after)
+    Use {
+        name: String,
+        #[arg(long, help = "Apply even when Cursor is running")]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a saved profile without applying
+    Show {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -554,6 +616,33 @@ async fn async_main() {
             commands::daemon::run(path, act).await
         }
         Some(Commands::Web { path, port, open }) => commands::web::run(path, port, open).await,
+        Some(Commands::Cursor { action }) => match action {
+            CursorCommands::Auth { action } => match action {
+                CursorAuthCommands::Status { json } => commands::cursor::run_status(json),
+                CursorAuthCommands::List { json } => commands::cursor::run_list(json),
+                CursorAuthCommands::Save {
+                    name,
+                    label,
+                    from_auth_json,
+                    email,
+                    membership,
+                    subscription_status,
+                    sign_up_type,
+                } => commands::cursor::run_save(
+                    name,
+                    label,
+                    from_auth_json,
+                    email,
+                    membership,
+                    subscription_status,
+                    sign_up_type,
+                ),
+                CursorAuthCommands::Use { name, force, json } => {
+                    commands::cursor::run_use(name, force, json)
+                }
+                CursorAuthCommands::Show { name, json } => commands::cursor::run_show(name, json),
+            },
+        },
         Some(Commands::Policy { action }) => match action {
             PolicyCommands::Index { path, force } => commands::policy::run_index(path, force).await,
             PolicyCommands::Import { path } => commands::policy::run_import(path).await,
@@ -710,6 +799,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Savings { .. }) => Some("savings".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),
+        Some(Commands::Cursor { .. }) => Some("cursor".into()),
         Some(Commands::Policy { .. }) => Some("policy".into()),
         Some(Commands::PromptHook) => None,
         Some(Commands::WatchdogChild { .. }) => None,

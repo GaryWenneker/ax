@@ -173,6 +173,7 @@ async fn handle_browse(
         "ok": true,
         "path": base.to_string_lossy(),
         "parent": base.parent().map(|p| p.to_string_lossy().into_owned()),
+        "initialized": is_initialized(&base),
         "entries": entries,
     }))
     .into_response()

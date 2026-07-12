@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 use crate::period::{resolve_period, UsagePeriod};
 use crate::pricing::{input_cost_usd, price_for_model, pricing_info, reference_pricing, PricingInfo};
 use crate::store::{open_pool, usage_db_path};
-use crate::tokenizer::{count_file_tokens, count_tokens, tokenizer_available};
+use crate::tokenizer::{count_file_line_range_tokens, count_file_tokens, count_tokens, tokenizer_available};
 
 const GRAPH_TOOLS: &[&str] = &[
     "ax_explore",
@@ -23,6 +23,42 @@ const GRAPH_TOOLS: &[&str] = &[
     "ax_impact",
     "ax_affected",
 ];
+
+/// JSON array keys whose string elements are project-relative file paths.
+const FILE_PATH_ARRAY_KEYS: &[&str] = &[
+    "relatedFiles",
+    "related_files",
+    "files",
+    "affected",
+    "pendingFiles",
+    "pending_files",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CounterfactualMode {
+    /// Whole-file Read baseline (default — largest legitimate savings vs Cursor Read).
+    Full,
+    /// Symbol line span when start+end are known.
+    Range,
+    /// Per file: max(whole file, line span).
+    Max,
+}
+
+fn counterfactual_mode() -> CounterfactualMode {
+    match std::env::var("AX_SAVINGS_CF_MODE").ok().as_deref() {
+        Some(s) if s.eq_ignore_ascii_case("range") => CounterfactualMode::Range,
+        Some(s) if s.eq_ignore_ascii_case("max") => CounterfactualMode::Max,
+        _ => CounterfactualMode::Full,
+    }
+}
+
+fn counterfactual_mode_label() -> &'static str {
+    match counterfactual_mode() {
+        CounterfactualMode::Full => "full",
+        CounterfactualMode::Range => "range",
+        CounterfactualMode::Max => "max",
+    }
+}
 
 pub fn is_savings_eligible_tool(tool: &str) -> bool {
     GRAPH_TOOLS.contains(&tool)
@@ -60,33 +96,181 @@ fn file_path_from_obj(map: &serde_json::Map<String, Value>) -> Option<&str> {
         .filter(|s| !s.is_empty())
 }
 
+fn start_line_from_obj(map: &serde_json::Map<String, Value>) -> Option<i64> {
+    map.get("startLine")
+        .or_else(|| map.get("start_line"))
+        .and_then(json_i64)
+}
+
 fn end_line_from_obj(map: &serde_json::Map<String, Value>) -> Option<i64> {
     map.get("endLine")
         .or_else(|| map.get("end_line"))
         .and_then(json_i64)
 }
 
-fn collect_file_lines(value: &Value, files: &mut HashMap<String, i64>) {
+#[derive(Debug, Clone, Default)]
+struct FileSpan {
+    min_start: i64,
+    max_end: i64,
+    has_start: bool,
+    has_end: bool,
+    /// Measured tokens from an inline `content` field (e.g. ax_context code blocks).
+    content_fallback_tokens: i64,
+}
+
+impl FileSpan {
+    fn merge(&mut self, start: Option<i64>, end: Option<i64>) {
+        if let Some(s) = start.filter(|&n| n > 0) {
+            self.min_start = if self.has_start {
+                self.min_start.min(s)
+            } else {
+                s
+            };
+            self.has_start = true;
+        }
+        if let Some(e) = end.filter(|&n| n > 0) {
+            self.max_end = self.max_end.max(e);
+            self.has_end = true;
+        }
+    }
+
+    fn has_line_span(&self) -> bool {
+        self.has_start && self.has_end && self.max_end >= self.min_start
+    }
+}
+
+fn merge_file_span(files: &mut HashMap<String, FileSpan>, path: &str, start: Option<i64>, end: Option<i64>) {
+    files
+        .entry(path.to_string())
+        .and_modify(|span| span.merge(start, end))
+        .or_insert_with(|| {
+            let mut span = FileSpan::default();
+            span.merge(start, end);
+            span
+        });
+}
+
+fn collect_file_refs(value: &Value, files: &mut HashMap<String, FileSpan>) {
     match value {
         Value::Object(map) => {
             if let Some(fp) = file_path_from_obj(map) {
-                if let Some(end) = end_line_from_obj(map) {
-                    files
-                        .entry(fp.to_string())
-                        .and_modify(|m| *m = (*m).max(end))
-                        .or_insert(end);
+                merge_file_span(
+                    files,
+                    fp,
+                    start_line_from_obj(map),
+                    end_line_from_obj(map),
+                );
+                if let Some(content) = map.get("content").and_then(|v| v.as_str()) {
+                    if !content.is_empty() {
+                        let tokens = count_tokens(content) as i64;
+                        files
+                            .entry(fp.to_string())
+                            .and_modify(|span| {
+                                span.content_fallback_tokens =
+                                    span.content_fallback_tokens.max(tokens);
+                            })
+                            .or_insert_with(|| {
+                                let mut span = FileSpan::default();
+                                span.content_fallback_tokens = tokens;
+                                span
+                            });
+                    }
                 }
             }
-            for v in map.values() {
-                collect_file_lines(v, files);
+            for (key, v) in map {
+                if FILE_PATH_ARRAY_KEYS.iter().any(|k| k == key) {
+                    if let Value::Array(arr) = v {
+                        for item in arr {
+                            if let Some(path) = item.as_str().filter(|s| !s.is_empty()) {
+                                merge_file_span(files, path, None, None);
+                            } else {
+                                collect_file_refs(item, files);
+                            }
+                        }
+                        continue;
+                    }
+                }
+                collect_file_refs(v, files);
             }
         }
         Value::Array(arr) => {
             for v in arr {
-                collect_file_lines(v, files);
+                collect_file_refs(v, files);
             }
         }
         _ => {}
+    }
+}
+
+fn heuristic_file_tokens(span: &FileSpan, tpl: i64, fallback: i64) -> i64 {
+    if span.has_end {
+        let lines = if span.has_line_span() {
+            span.max_end - span.min_start + 1
+        } else {
+            span.max_end
+        };
+        lines.max(1) * tpl
+    } else if span.content_fallback_tokens > 0 {
+        span.content_fallback_tokens
+    } else {
+        fallback
+    }
+}
+
+fn counterfactual_tokens_for_file(
+    resolved: &Path,
+    span: &FileSpan,
+    tpl: i64,
+    fallback: i64,
+) -> (i64, bool) {
+    let full = count_file_tokens(resolved);
+    let range = if span.has_line_span() {
+        count_file_line_range_tokens(
+            resolved,
+            span.min_start as u32,
+            span.max_end as u32,
+        )
+    } else {
+        None
+    };
+    let heuristic = heuristic_file_tokens(span, tpl, fallback);
+    let content = span.content_fallback_tokens;
+
+    let pick = |prefer_range: bool| -> (i64, bool) {
+        if prefer_range {
+            if let Some(t) = range {
+                return (t, true);
+            }
+        }
+        if let Some(t) = full {
+            return (t, true);
+        }
+        if content > 0 {
+            return (content, true);
+        }
+        (heuristic, false)
+    };
+
+    match counterfactual_mode() {
+        CounterfactualMode::Full => pick(false),
+        CounterfactualMode::Range => pick(true),
+        CounterfactualMode::Max => {
+            let mut best = heuristic;
+            let mut exact = false;
+            if let Some(t) = full {
+                best = best.max(t);
+                exact = true;
+            }
+            if let Some(t) = range {
+                best = best.max(t);
+                exact = true;
+            }
+            if content > 0 {
+                best = best.max(content);
+                exact = true;
+            }
+            (best, exact)
+        }
     }
 }
 
@@ -117,9 +301,10 @@ fn resolve_file_path(path: &str, project_root: Option<&Path>) -> PathBuf {
 /// Estimate context savings for one MCP call.
 ///
 /// Response tokens are measured with the o200k BPE tokenizer. The
-/// counterfactual (what a full-file read would have cost) is measured by
-/// tokenizing the actual file contents when the file is readable, falling
-/// back to `end_line x tokens_per_line`, then to a per-file average.
+/// counterfactual (what Read/Grep without ax would have cost) uses whole-file
+/// BPE when `AX_SAVINGS_CF_MODE=full` (default), symbol line spans when
+/// `range`, or the per-file max when `max`. Unreadable files fall back to line
+/// heuristics, inline `content` snippets, then avg file size.
 pub fn estimate_savings(
     tool: &str,
     structured: &Value,
@@ -137,22 +322,19 @@ pub fn estimate_savings(
         };
     }
 
-    let mut files = HashMap::new();
-    collect_file_lines(structured, &mut files);
+    let mut files: HashMap<String, FileSpan> = HashMap::new();
+    collect_file_refs(structured, &mut files);
 
     let tpl = tokens_per_line();
     let fallback = avg_file_tokens();
     let mut counterfactual_tokens_est: i64 = 0;
     let mut counterfactual_exact_files: i64 = 0;
-    for (file, max_line) in &files {
+    for (file, span) in &files {
         let resolved = resolve_file_path(file, project_root);
-        if let Some(exact) = count_file_tokens(&resolved) {
-            counterfactual_tokens_est += exact;
+        let (tokens, exact) = counterfactual_tokens_for_file(&resolved, span, tpl, fallback);
+        counterfactual_tokens_est += tokens;
+        if exact {
             counterfactual_exact_files += 1;
-        } else if *max_line > 0 {
-            counterfactual_tokens_est += max_line * tpl;
-        } else {
-            counterfactual_tokens_est += fallback;
         }
     }
 
@@ -228,8 +410,15 @@ pub struct SavingsQuery {
 pub struct ToolSavingsRow {
     pub tool: String,
     pub calls: i64,
+    /// Graph-tool invocations (savings-eligible subset of `calls`).
+    pub graph_calls: i64,
+    pub failed_calls: i64,
     pub tokens_saved_est: i64,
     pub counterfactual_files: i64,
+    pub counterfactual_tokens_est: i64,
+    pub graph_response_tokens_est: i64,
+    /// Average wall time when `duration_ms` was recorded.
+    pub avg_duration_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -237,8 +426,45 @@ pub struct DailySavings {
     pub date: String,
     pub tokens_saved_est: i64,
     pub calls: i64,
+    pub graph_calls: i64,
+    pub failed_calls: i64,
+    pub counterfactual_files: i64,
     pub counterfactual_tokens_est: i64,
     pub graph_response_tokens_est: i64,
+    pub cost_saved_usd_est: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WeekdaySavingsRow {
+    /// 0 = Sunday … 6 = Saturday (SQLite `%w`).
+    pub weekday: i64,
+    pub label: String,
+    pub tokens_saved_est: i64,
+    pub calls: i64,
+    pub graph_calls: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectSavingsRow {
+    pub project: String,
+    pub calls: i64,
+    pub graph_calls: i64,
+    pub tokens_saved_est: i64,
+    pub counterfactual_files: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecentCallRow {
+    pub tool: String,
+    pub project: Option<String>,
+    pub tokens_saved_est: i64,
+    pub counterfactual_tokens_est: i64,
+    pub response_tokens_est: i64,
+    pub counterfactual_files: i64,
+    pub ok: bool,
+    pub savings_eligible: bool,
+    pub duration_ms: Option<i64>,
+    pub created_at: i64,
 }
 
 /// Estimation constants in effect (defaults or `AX_SAVINGS_*` env overrides).
@@ -253,6 +479,8 @@ pub struct SavingsAssumptions {
     pub tokens_per_line: i64,
     /// Fallback: tokens per file when no line count is known (`AX_SAVINGS_AVG_FILE_TOKENS`).
     pub avg_file_tokens: i64,
+    /// Counterfactual baseline: `full` (whole file), `range` (symbol span), or `max`.
+    pub counterfactual_mode: String,
 }
 
 pub fn current_assumptions() -> SavingsAssumptions {
@@ -261,6 +489,7 @@ pub fn current_assumptions() -> SavingsAssumptions {
         chars_per_token: chars_per_token(),
         tokens_per_line: tokens_per_line(),
         avg_file_tokens: avg_file_tokens(),
+        counterfactual_mode: counterfactual_mode_label().to_string(),
     }
 }
 
@@ -318,12 +547,27 @@ pub struct SavingsSummary {
     pub graph_response_cost_usd_est: f64,
     /// USD the counterfactual full-file reads would have cost.
     pub counterfactual_cost_usd_est: f64,
+    /// Non-graph MCP calls (policy, status, …) that succeeded.
+    pub policy_calls: i64,
+    /// Successful calls ÷ all calls (0–100).
+    pub success_rate_pct: i64,
+    /// Mean response latency when duration was recorded.
+    pub avg_duration_ms: i64,
+    /// Distinct projects with at least one MCP call.
+    pub projects_active: i64,
+    /// Tokens lost to per-call clamping vs aggregate net (`tokens_saved_est − net`).
+    pub clamp_tokens_absorbed: i64,
+    /// Graph calls where per-call savings were > 0.
+    pub graph_calls_with_savings: i64,
     /// Pricing in effect (reference model, rates, config source).
     pub pricing: PricingInfo,
     /// Estimation constants in effect when this summary was computed.
     pub assumptions: SavingsAssumptions,
     pub by_tool: Vec<ToolSavingsRow>,
+    pub by_project: Vec<ProjectSavingsRow>,
+    pub by_weekday: Vec<WeekdaySavingsRow>,
     pub daily: Vec<DailySavings>,
+    pub recent_calls: Vec<RecentCallRow>,
     pub agent_sessions: Vec<AgentSessionRow>,
     pub db_path: String,
 }
@@ -332,7 +576,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     let range = resolve_period(q.period, q.from.as_deref(), q.to.as_deref())?;
     let pool = open_pool().await.map_err(|e| e.to_string())?;
 
-    let totals: (i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+    let totals: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, i64) = sqlx::query_as(
         "SELECT COUNT(*),
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0),
@@ -341,7 +585,10 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_tokens_est ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN response_tokens_est ELSE 0 END), 0),
                 COALESCE(SUM(response_tokens_est), 0),
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_exact_files ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_exact_files ELSE 0 END), 0),
+                COUNT(DISTINCT CASE WHEN project IS NOT NULL AND project != '' THEN project END),
+                COALESCE(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END), 0),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 AND tokens_saved_est > 0 THEN 1 ELSE 0 END), 0)
          FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?",
     )
     .bind(range.from_ms)
@@ -350,12 +597,18 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .await
     .map_err(|e| e.to_string())?;
 
-    let by_tool: Vec<ToolSavingsRow> = sqlx::query_as(
+    type ToolTuple = (String, i64, i64, i64, i64, i64, i64, i64, f64);
+    let by_tool: Vec<ToolSavingsRow> = sqlx::query_as::<_, ToolTuple>(
         "SELECT tool, COUNT(*) as calls,
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0) as saved,
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_files ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_files ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_tokens_est ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN response_tokens_est ELSE 0 END), 0),
+                COALESCE(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END), 0)
          FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
-         GROUP BY tool ORDER BY saved DESC, calls DESC",
+         GROUP BY tool ORDER BY 5 DESC, 2 DESC",
     )
     .bind(range.from_ms)
     .bind(range.to_ms)
@@ -363,18 +616,39 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .await
     .map_err(|e| e.to_string())?
     .into_iter()
-    .map(|(tool, calls, saved, files)| ToolSavingsRow {
-        tool,
-        calls,
-        tokens_saved_est: saved,
-        counterfactual_files: files,
-    })
+    .map(
+        |(
+            tool,
+            calls,
+            graph_calls,
+            failed_calls,
+            saved,
+            files,
+            cf_tokens,
+            resp_tokens,
+            avg_duration,
+        )| ToolSavingsRow {
+            tool,
+            calls,
+            graph_calls,
+            failed_calls,
+            tokens_saved_est: saved,
+            counterfactual_files: files,
+            counterfactual_tokens_est: cf_tokens,
+            graph_response_tokens_est: resp_tokens,
+            avg_duration_ms: avg_duration.round() as i64,
+        },
+    )
     .collect();
 
-    let daily: Vec<DailySavings> = sqlx::query_as(
+    type DailyTuple = (String, i64, i64, i64, i64, i64, i64, i64);
+    let daily_raw: Vec<DailyTuple> = sqlx::query_as(
         "SELECT date(created_at / 1000, 'unixepoch', 'localtime') as d,
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0),
                 COUNT(*),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_files ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_tokens_est ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN response_tokens_est ELSE 0 END), 0)
          FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
@@ -384,20 +658,141 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .bind(range.to_ms)
     .fetch_all(&pool)
     .await
-    .map_err(|e| e.to_string())?
-    .into_iter()
-    .map(
-        |(date, tokens_saved_est, calls, counterfactual_tokens_est, graph_response_tokens_est)| {
-            DailySavings {
+    .map_err(|e| e.to_string())?;
+
+    let reference = reference_pricing();
+    let daily: Vec<DailySavings> = daily_raw
+        .into_iter()
+        .map(
+            |(
                 date,
                 tokens_saved_est,
                 calls,
+                graph_calls,
+                failed_calls,
+                counterfactual_files,
                 counterfactual_tokens_est,
                 graph_response_tokens_est,
-            }
+            )| DailySavings {
+                date,
+                tokens_saved_est,
+                calls,
+                graph_calls,
+                failed_calls,
+                counterfactual_files,
+                counterfactual_tokens_est,
+                graph_response_tokens_est,
+                cost_saved_usd_est: input_cost_usd(tokens_saved_est, reference),
+            },
+        )
+        .collect();
+
+    type ProjectTuple = (String, i64, i64, i64, i64);
+    let by_project: Vec<ProjectSavingsRow> = sqlx::query_as::<_, ProjectTuple>(
+        "SELECT COALESCE(NULLIF(project, ''), '(no project)') as p,
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_files ELSE 0 END), 0)
+         FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
+         GROUP BY p ORDER BY 4 DESC, 2 DESC LIMIT 25",
+    )
+    .bind(range.from_ms)
+    .bind(range.to_ms)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .into_iter()
+    .map(|(project, calls, graph_calls, tokens_saved_est, counterfactual_files)| ProjectSavingsRow {
+        project,
+        calls,
+        graph_calls,
+        tokens_saved_est,
+        counterfactual_files,
+    })
+    .collect();
+
+    type RecentTuple = (
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        i64,
+        i64,
+        Option<i64>,
+        i64,
+    );
+    let recent_calls: Vec<RecentCallRow> = sqlx::query_as::<_, RecentTuple>(
+        "SELECT tool, project, tokens_saved_est, counterfactual_tokens_est, response_tokens_est,
+                counterfactual_files, ok, savings_eligible, duration_ms, created_at
+         FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
+         ORDER BY created_at DESC LIMIT 40",
+    )
+    .bind(range.from_ms)
+    .bind(range.to_ms)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .into_iter()
+    .map(
+        |(
+            tool,
+            project,
+            tokens_saved_est,
+            counterfactual_tokens_est,
+            response_tokens_est,
+            counterfactual_files,
+            ok,
+            savings_eligible,
+            duration_ms,
+            created_at,
+        )| RecentCallRow {
+            tool,
+            project,
+            tokens_saved_est: tokens_saved_est.unwrap_or(0),
+            counterfactual_tokens_est: counterfactual_tokens_est.unwrap_or(0),
+            response_tokens_est,
+            counterfactual_files: counterfactual_files.unwrap_or(0),
+            ok: ok != 0,
+            savings_eligible: savings_eligible != 0,
+            duration_ms,
+            created_at,
         },
     )
     .collect();
+
+    const WEEKDAY_LABELS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    type WeekdayTuple = (i64, i64, i64, i64);
+    let weekday_raw: Vec<WeekdayTuple> = sqlx::query_as(
+        "SELECT CAST(strftime('%w', created_at / 1000, 'unixepoch', 'localtime') AS INTEGER) as wd,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0),
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0)
+         FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
+         GROUP BY wd ORDER BY wd",
+    )
+    .bind(range.from_ms)
+    .bind(range.to_ms)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let by_weekday: Vec<WeekdaySavingsRow> = weekday_raw
+        .into_iter()
+        .map(|(weekday, tokens_saved_est, calls, graph_calls)| WeekdaySavingsRow {
+            label: WEEKDAY_LABELS
+                .get(weekday as usize)
+                .copied()
+                .unwrap_or("?")
+                .to_string(),
+            weekday,
+            tokens_saved_est,
+            calls,
+            graph_calls,
+        })
+        .collect();
 
     type SessionTuple = (
         String,
@@ -485,9 +880,20 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         graph_response_tokens_est,
         response_tokens_est,
         counterfactual_exact_files,
+        projects_active,
+        avg_duration_raw,
+        graph_calls_with_savings,
     ) = totals;
 
-    let reference = reference_pricing();
+    let net_tokens_saved_est = counterfactual_tokens_est - graph_response_tokens_est;
+    let clamp_tokens_absorbed = tokens_saved_est - net_tokens_saved_est;
+    let policy_calls = (mcp_calls - graph_calls).max(0);
+    let success_rate_pct = if mcp_calls > 0 {
+        ((mcp_calls - failed_calls) * 100 / mcp_calls).max(0)
+    } else {
+        0
+    };
+
     Ok(SavingsSummary {
         period: range.period,
         from: range.from_date,
@@ -498,7 +904,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         graph_calls,
         failed_calls,
         tokens_saved_est,
-        net_tokens_saved_est: counterfactual_tokens_est - graph_response_tokens_est,
+        net_tokens_saved_est,
         counterfactual_files,
         counterfactual_tokens_est,
         graph_response_tokens_est,
@@ -507,10 +913,19 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         cost_saved_usd_est: input_cost_usd(tokens_saved_est, reference),
         graph_response_cost_usd_est: input_cost_usd(graph_response_tokens_est, reference),
         counterfactual_cost_usd_est: input_cost_usd(counterfactual_tokens_est, reference),
+        policy_calls,
+        success_rate_pct,
+        avg_duration_ms: avg_duration_raw.round() as i64,
+        projects_active,
+        clamp_tokens_absorbed,
+        graph_calls_with_savings,
         pricing: pricing_info(),
         assumptions: current_assumptions(),
         by_tool,
+        by_project,
+        by_weekday,
         daily,
+        recent_calls,
         agent_sessions,
         db_path: usage_db_path().display().to_string(),
     })
@@ -847,6 +1262,7 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tokenizer::count_file_tokens;
     use serde_json::json;
 
     fn long_response(chars: usize) -> String {
@@ -917,6 +1333,47 @@ mod tests {
         // Exact measurement, not 3 lines x 9 tokens.
         assert_ne!(est.counterfactual_tokens_est, 3 * tokens_per_line());
         assert!(est.counterfactual_tokens_est > 0);
+
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn path_only_ref_still_counts_file() {
+        let structured = json!({ "node": { "filePath": "src/a.rs" } });
+        let est = estimate_savings("ax_node", &structured, "", None);
+        assert_eq!(est.counterfactual_files, 1);
+        assert!(est.counterfactual_tokens_est > 0);
+    }
+
+    #[test]
+    fn related_files_array_increments_counterfactual() {
+        let structured = json!({
+            "relatedFiles": ["src/a.rs", "src/b.rs"],
+            "codeBlocks": [{
+                "filePath": "src/c.rs",
+                "startLine": 1,
+                "endLine": 20,
+                "content": "fn main() {}"
+            }]
+        });
+        let est = estimate_savings("ax_context", &structured, &long_response(200), None);
+        assert_eq!(est.counterfactual_files, 3);
+        assert!(est.tokens_saved_est >= 0);
+    }
+
+    #[test]
+    fn range_mode_uses_line_span_when_set() {
+        let dir = std::env::temp_dir().join("ax-usage-savings-range-mode");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("span.rs");
+        std::fs::write(&file, (1..=50).map(|i| format!("fn f{i}() {{}}")).collect::<Vec<_>>().join("\n")).unwrap();
+
+        std::env::set_var("AX_SAVINGS_CF_MODE", "range");
+        let structured = json!({ "node": { "filePath": "span.rs", "startLine": 2, "endLine": 4 } });
+        let est = estimate_savings("ax_node", &structured, "", Some(&dir));
+        let full_only = count_file_tokens(&file).unwrap();
+        assert!(est.counterfactual_tokens_est < full_only);
+        std::env::remove_var("AX_SAVINGS_CF_MODE");
 
         let _ = std::fs::remove_file(&file);
     }

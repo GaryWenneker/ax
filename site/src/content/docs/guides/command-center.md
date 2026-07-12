@@ -7,6 +7,8 @@ description: Git-aware quality gates, test-impact analysis, and draft PRs from a
 
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
+![Command Center — Ship dashboard with pipeline, quality gate, SonarQube project cards, run log, changed files, and test impact](/screenshots/cc-ship-full.png)
+
 ## Quick start
 
 ```bash
@@ -76,13 +78,32 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 | Page | Purpose |
 |---|---|
 | **Ship** | Quality-gate pipeline, SSE logs, git events |
-| **SonarQube** | Proxied dashboard + container setup |
-| **Memory** | Browse, search, compose memories; capture from git |
-| **Savings** | Token and dollar savings from graph queries |
+| **SonarQube** | Proxied dashboard with auto-login and dark theme |
+| **Memory** | Browse, search, compose memories (modal composer); capture from git |
+| **Savings** | Token and dollar savings from graph queries (real BPE counts, dollar estimates) |
 | **Agent** | Terminal with MCP wired in (when enabled in Settings) |
 | **Policy** | View-first rule and skill editors |
 
 Open with `ax web --open` or `ax ship --watch --open`.
+
+### Project browser
+
+![Project browser — browse, filter, and switch between ax projects](/screenshots/cc-project-browser.png)
+
+The workspace picker in the Command Center status bar opens a **project browser** modal. From there you can:
+
+- See **recent ax projects** with quick-switch buttons
+- Browse your file system for directories containing `.ax/`
+- Filter by name or show ax-initialized projects only
+- Create new folders
+- **Initialize** a folder with `ax init` directly from the browser
+- Switch the active workspace without restarting the server
+
+### Modal-based forms
+
+![New memory modal — kind selector, title, body, and save action](/screenshots/cc-modal-composer.png)
+
+Create and edit flows in the Command Center (new memory, new agent profile, profile editing) open as **centered modals with a blurred backdrop** — never as inline page sections. The shared `ModalShell` component handles Escape-to-close, backdrop click, and scroll lock.
 
 ## Quality gate pipeline
 
@@ -105,15 +126,31 @@ Results stream to the dashboard via SSE (`/api/ship/events`).
 - Changed files and impacted tests
 - Quality-gate summary
 - Draft PR action (when remote is configured)
+- **SonarQube project cards** — each discovered git repository appears as a card with status, project key, and a per-project **Scan** button. A **Scan all** button triggers all projects at once. Inline logs stream progress during scans.
 
 Default port: `7070` (override with `--port` or `[ship].web_port`).
 
 The same `ax web` UI includes **Memory**, **Savings**, **SonarQube**, and **Agent** pages — see the Command Center pages table above. Savings shows estimated context-token and dollar savings from MCP graph queries. See [`ax savings`](/reference/cli/#ax-savings) and [Token savings](/guides/token-savings/).
 
+![Settings — pipeline config, AI agents, theme, pull request integration](/screenshots/cc-settings.png)
+
 Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.toml`:
 
-- **SonarQube** — auto-detect Podman/Docker, one-click install & start
+- **SonarQube** — auto-detect Podman/Docker, one-click install & start, admin auto-login, dark theme
 - **Command Center** — target branch, test runner, Azure DevOps / GitHub remote
+- **Interface** — theme chooser (accent/palette presets applied live), toggle Savings and Agent pages in the sidebar
+
+### SonarQube proxy
+
+![SonarQube embedded in the Command Center with forced dark theme](/screenshots/cc-sonarqube-dark.png)
+
+The SonarQube page reverse-proxies your local SonarQube instance through the Command Center. The proxy automatically:
+
+- Injects admin credentials (no login screen)
+- Forces **dark theme** via CSS overrides, localStorage/sessionStorage keys, user-preference API patching, and a MutationObserver that prevents theme resets
+- Rewrites asset URLs and API paths so SonarQube works behind the `/api/ship/sonar/ui` prefix
+- Caches credentials per session (no health-check probe per request)
+- Falls back to `127.0.0.1` / `localhost` when the configured hostname is unreachable
 
 ## Git hooks
 
@@ -122,6 +159,10 @@ After `ax init`, git hooks keep the project current:
 - **post-commit** — `ax sync --quiet`, `ax ship --evaluate`, `ax capture-git --limit 1 --quiet` (stores non-trivial commit messages as memories)
 - **post-merge** — same sync/evaluate plus `ax capture-git --limit 20 --quiet` for merged commits
 - **post-checkout** — sync and evaluate only
+
+## Stale-run recovery
+
+If the server restarts while an evaluation is in progress (e.g. `ax web` crashes mid-scan), the in-progress run log is finalized as failed on startup. This prevents the dashboard from showing a phantom "evaluating" state after a restart.
 
 ## Test impact vs affected
 

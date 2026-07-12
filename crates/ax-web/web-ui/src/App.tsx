@@ -20,7 +20,9 @@ import StatusBar from './components/StatusBar';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
 import { UiProvider } from './context/UiContext';
+import { initTheme } from './lib/themes';
 import { fetchShipConfig } from './shipApi';
+import { WORKSPACE_SWITCHED } from './workspaceEvents';
 
 type Page =
   | 'stats' | 'nodes' | 'files' | 'search' | 'memory' | 'ship' | 'sonar' | 'agent' | 'settings' | 'savings' | 'unresolved'
@@ -86,20 +88,35 @@ function AppShell() {
   const [fontScale, setFontScale] = useState(loadUiScale);
   const [showSavings, setShowSavings] = useState(false);
   const [showAgent, setShowAgent] = useState(true);
+  const [workspaceKey, setWorkspaceKey] = useState(0);
 
-  useEffect(() => {
-    initUiScale();
-    initSidebarWidth();
-    setFontScale(loadUiScale());
-    if (!window.location.hash) {
-      writeHash(initial.page, initial.ruleId, initial.skillName);
-    }
+  function refreshNavConfig() {
     fetchShipConfig()
       .then((d) => {
         setShowSavings(d.config.ui?.show_savings ?? d.config.ui?.show_tokens ?? true);
         setShowAgent(d.config.ui?.show_agent_terminal ?? true);
       })
       .catch(() => {});
+  }
+
+  useEffect(() => {
+    initUiScale();
+    initSidebarWidth();
+    initTheme();
+    setFontScale(loadUiScale());
+    if (!window.location.hash) {
+      writeHash(initial.page, initial.ruleId, initial.skillName);
+    }
+    refreshNavConfig();
+  }, []);
+
+  useEffect(() => {
+    function onWorkspaceSwitched() {
+      setWorkspaceKey((k) => k + 1);
+      refreshNavConfig();
+    }
+    window.addEventListener(WORKSPACE_SWITCHED, onWorkspaceSwitched);
+    return () => window.removeEventListener(WORKSPACE_SWITCHED, onWorkspaceSwitched);
   }, []);
 
   useEffect(() => {
@@ -211,7 +228,7 @@ function AppShell() {
               key={n.id}
               type="button"
               className={`nav-item${page === n.id ? ' active' : ''}`}
-              onClick={() => navigate(n.id)}
+              onClick={() => navigate(n.id as Page)}
             >
               <NavIcon id={n.id} />
               {n.label}
@@ -223,7 +240,7 @@ function AppShell() {
               key={n.id}
               type="button"
               className={`nav-item${page === n.id ? ' active' : ''}`}
-              onClick={() => navigate(n.id)}
+              onClick={() => navigate(n.id as Page)}
             >
               <NavIcon id={n.id} />
               {n.label}
@@ -235,7 +252,7 @@ function AppShell() {
               key={n.id}
               type="button"
               className={`nav-item${page === n.id ? ' active' : ''}`}
-              onClick={() => navigate(n.id)}
+              onClick={() => navigate(n.id as Page)}
             >
               <NavIcon id={n.id} />
               {n.label}
@@ -246,36 +263,38 @@ function AppShell() {
         <SidebarResizeHandle />
 
         <main className="main" id="main-content">
-          {page === 'stats' && <StatsPage />}
-          {page === 'nodes' && <NodesPage />}
-          {page === 'files' && <FilesPage />}
-          {page === 'search' && <SearchPage />}
-          {page === 'memory' && <MemoryPage />}
-          {page === 'unresolved' && <UnresolvedPage />}
-          {page === 'savings' && showSavings && <SavingsPage />}
-          {page === 'ship' && <ShipPage onOpenSonar={() => navigate('sonar')} />}
-          {page === 'sonar' && <SonarQubePage />}
-          {page === 'agent' && showAgent && <AgentPage />}
-          {page === 'settings' && <SettingsPage />}
+          {page === 'stats' && <StatsPage key={workspaceKey} />}
+          {page === 'nodes' && <NodesPage key={workspaceKey} />}
+          {page === 'files' && <FilesPage key={workspaceKey} />}
+          {page === 'search' && <SearchPage key={workspaceKey} />}
+          {page === 'memory' && <MemoryPage key={workspaceKey} />}
+          {page === 'unresolved' && <UnresolvedPage key={workspaceKey} />}
+          {page === 'savings' && showSavings && <SavingsPage key={workspaceKey} />}
+          {page === 'ship' && <ShipPage key={workspaceKey} onOpenSonar={() => navigate('sonar')} />}
+          {page === 'sonar' && <SonarQubePage key={workspaceKey} />}
+          {page === 'agent' && showAgent && <AgentPage key={workspaceKey} />}
+          {page === 'settings' && <SettingsPage key={workspaceKey} />}
           {page === 'policy-rules' && (
             <PolicyRulesPage
+              key={workspaceKey}
               onEdit={(id) => navigate('policy-rule-edit', { ruleId: id })}
               onMatch={() => navigate('policy-match')}
             />
           )}
           {page === 'policy-rule-edit' && (
-            <PolicyRuleEditor ruleId={editRuleId} onBack={() => navigate('policy-rules')} />
+            <PolicyRuleEditor key={workspaceKey} ruleId={editRuleId} onBack={() => navigate('policy-rules')} />
           )}
           {page === 'policy-skills' && (
             <PolicySkillsPage
+              key={workspaceKey}
               onEdit={(name) => navigate('policy-skill-edit', { skillName: name })}
               onMatch={() => navigate('policy-match')}
             />
           )}
           {page === 'policy-skill-edit' && (
-            <PolicySkillEditor skillName={editSkillName} onBack={() => navigate('policy-skills')} />
+            <PolicySkillEditor key={workspaceKey} skillName={editSkillName} onBack={() => navigate('policy-skills')} />
           )}
-          {page === 'policy-match' && <PolicyMatchPage onClose={() => navigate('policy-rules')} />}
+          {page === 'policy-match' && <PolicyMatchPage key={workspaceKey} onClose={() => navigate('policy-rules')} />}
         </main>
       </div>
 

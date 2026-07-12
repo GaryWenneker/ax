@@ -36,6 +36,7 @@ pub struct ShipDaemon {
 
 impl ShipDaemon {
     pub fn new(project_root: PathBuf) -> Self {
+        run_log::finalize_stale_run_log(&project_root);
         let mut config = ax_remote::load_ship_config(&project_root);
         sync_discovered_git_roots(&project_root, &mut config);
         let config = Arc::new(Mutex::new(config));

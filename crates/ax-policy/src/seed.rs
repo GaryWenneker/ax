@@ -49,6 +49,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/docs-with-features.mdc"),
     },
     Template {
+        rel: "rules/modal-forms.mdc",
+        body: include_str!("../templates/rules/modal-forms.mdc"),
+    },
+    Template {
         rel: "skills/startup/SKILL.md",
         body: include_str!("../templates/skills/startup/SKILL.md"),
     },

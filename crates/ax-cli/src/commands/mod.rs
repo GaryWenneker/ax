@@ -11,6 +11,7 @@ pub mod ship;
 pub mod callers;
 pub mod callees;
 pub mod context;
+pub mod cursor;
 pub mod explore;
 pub mod files;
 pub mod impact;

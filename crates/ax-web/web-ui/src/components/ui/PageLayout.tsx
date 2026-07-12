@@ -1,5 +1,9 @@
 import type { ReactNode } from 'react';
 
+import { isLiveStatus, Spinner } from './Spinner';
+
+export { BusyLabel, Spinner, isLiveStatus } from './Spinner';
+
 export function PageShell({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={`page settings-page${className ? ` ${className}` : ''}`}>{children}</div>;
 }
@@ -106,6 +110,7 @@ export function StatusPill({
   truncate = false,
   title,
   info,
+  live,
 }: {
   label: string;
   value: string;
@@ -115,10 +120,18 @@ export function StatusPill({
   title?: string;
   /** Optional info-hover element rendered after the label (e.g. <InfoHover>…</InfoHover>). */
   info?: ReactNode;
+  /** Pulse dot + value — auto-detected from common in-progress status strings when omitted. */
+  live?: boolean;
 }) {
+  const isLive = live ?? isLiveStatus(value);
   return (
-    <div className={`settings-status-pill${truncate ? ' settings-status-pill--truncate' : ''}`}>
-      <span className={`settings-status-dot settings-status-dot--${tone}`} aria-hidden="true" />
+    <div
+      className={`settings-status-pill${truncate ? ' settings-status-pill--truncate' : ''}${isLive ? ' settings-status-pill--live' : ''}`}
+    >
+      <span
+        className={`settings-status-dot settings-status-dot--${tone}${isLive ? ' settings-status-dot--live' : ''}`}
+        aria-hidden="true"
+      />
       <div className="settings-status-pill-body">
         <span className="settings-status-pill-label">
           {label}
@@ -163,7 +176,12 @@ export function PageEmpty({ title, children }: { title: string; children?: React
 }
 
 export function PageLoading({ label = 'Loading…' }: { label?: string }) {
-  return <div className="page-loading">{label}</div>;
+  return (
+    <div className="page-loading" role="status" aria-live="polite">
+      <Spinner />
+      <span className="page-loading-label">{label}</span>
+    </div>
+  );
 }
 
 export function DataTable({ children, dense }: { children: ReactNode; dense?: boolean }) {

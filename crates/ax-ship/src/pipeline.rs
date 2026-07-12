@@ -214,71 +214,12 @@ impl ShipPipeline {
                 ("failed".to_string(), Some(e), None)
             } else {
             let bus = self.bus.clone();
-            let sonar_scan = if full_sonar {
+            if full_sonar {
                 logger.line(format!(
                     "Full SonarQube scan — all {} git repositor{}",
                     repo_names.len().max(1),
                     if repo_names.len() == 1 { "y" } else { "ies" }
                 ));
-                let mut progress = |ev: ax_quality::SonarScanProgressEvent| match ev {
-                    ax_quality::SonarScanProgressEvent::Started {
-                        index,
-                        total,
-                        project_key,
-                        repo_name,
-                    } => {
-                        bus.publish(ShipEvent::SonarProjectStarted {
-                            project_key: project_key.clone(),
-                            repo_name: repo_name.clone(),
-                            index,
-                            total,
-                        });
-                        logger.sonar_project_start(index, total, &project_key, &repo_name);
-                    }
-                    ax_quality::SonarScanProgressEvent::Finished {
-                        project_key,
-                        repo_name,
-                        ok,
-                        error,
-                    } => {
-                        bus.publish(ShipEvent::SonarProjectFinished {
-                            project_key: project_key.clone(),
-                            repo_name: repo_name.clone(),
-                            ok,
-                            detail: error.clone(),
-                        });
-                        if ok {
-                            logger.sonar_project_ok(&project_key, &repo_name);
-                        } else {
-                            logger.sonar_project_fail(
-                                &project_key,
-                                &repo_name,
-                                error.as_deref().unwrap_or("scan failed"),
-                            );
-                        }
-                    }
-                    ax_quality::SonarScanProgressEvent::Skipped {
-                        project_key,
-                        repo_name,
-                        reason,
-                    } => {
-                        bus.publish(ShipEvent::SonarProjectSkipped {
-                            project_key: project_key.clone(),
-                            repo_name: repo_name.clone(),
-                            reason: reason.clone(),
-                        });
-                        logger.sonar_project_skip(&project_key, &repo_name, &reason);
-                    }
-                };
-                let mut progress_cb: Option<&mut dyn FnMut(ax_quality::SonarScanProgressEvent)> =
-                    Some(&mut progress);
-                sonar.run_platform_scan_with_progress(
-                    &self.project_root,
-                    &repo_names,
-                    &[],
-                    true,
-                    &mut progress_cb,
-                )
             } else {
                 logger.line(format!(
                     "SonarQube scan — all {} git repositor{} ({} changed file(s) in diff)",
@@ -286,66 +227,21 @@ impl ShipPipeline {
                     if repo_names.len() == 1 { "y" } else { "ies" },
                     changed_files.len()
                 ));
-                let mut progress = |ev: ax_quality::SonarScanProgressEvent| match ev {
-                    ax_quality::SonarScanProgressEvent::Started {
-                        index,
-                        total,
-                        project_key,
-                        repo_name,
-                    } => {
-                        bus.publish(ShipEvent::SonarProjectStarted {
-                            project_key: project_key.clone(),
-                            repo_name: repo_name.clone(),
-                            index,
-                            total,
-                        });
-                        logger.sonar_project_start(index, total, &project_key, &repo_name);
-                    }
-                    ax_quality::SonarScanProgressEvent::Finished {
-                        project_key,
-                        repo_name,
-                        ok,
-                        error,
-                    } => {
-                        bus.publish(ShipEvent::SonarProjectFinished {
-                            project_key: project_key.clone(),
-                            repo_name: repo_name.clone(),
-                            ok,
-                            detail: error.clone(),
-                        });
-                        if ok {
-                            logger.sonar_project_ok(&project_key, &repo_name);
-                        } else {
-                            logger.sonar_project_fail(
-                                &project_key,
-                                &repo_name,
-                                error.as_deref().unwrap_or("scan failed"),
-                            );
-                        }
-                    }
-                    ax_quality::SonarScanProgressEvent::Skipped {
-                        project_key,
-                        repo_name,
-                        reason,
-                    } => {
-                        bus.publish(ShipEvent::SonarProjectSkipped {
-                            project_key: project_key.clone(),
-                            repo_name: repo_name.clone(),
-                            reason: reason.clone(),
-                        });
-                        logger.sonar_project_skip(&project_key, &repo_name, &reason);
-                    }
-                };
-                let mut progress_cb: Option<&mut dyn FnMut(ax_quality::SonarScanProgressEvent)> =
-                    Some(&mut progress);
-                sonar.run_platform_scan_with_progress(
-                    &self.project_root,
-                    &repo_names,
-                    &changed_files,
-                    false,
-                    &mut progress_cb,
-                )
-            };
+            }
+            let sonar_scan = run_sonar_platform_scan_async(
+                self.config.sonar.clone(),
+                self.project_root.clone(),
+                repo_names.clone(),
+                if full_sonar {
+                    Vec::new()
+                } else {
+                    changed_files.clone()
+                },
+                full_sonar,
+                bus,
+                &mut logger,
+            )
+            .await;
             let scan_ok = sonar_scan.is_ok();
             if let Err(e) = sonar_scan {
                 self.step_fail("sonar", &e);
@@ -517,6 +413,99 @@ fn run_impacted_tests(config: &ShipConfig, tia: &ax_tia::TiaResult) -> bool {
         ))
         .status();
     matches!(status, Ok(s) if s.success())
+}
+
+fn dispatch_sonar_progress(
+    ev: &ax_quality::SonarScanProgressEvent,
+    bus: &ShipEventBus,
+    logger: &mut RunLogger,
+) {
+    use ax_quality::SonarScanProgressEvent;
+    match ev {
+        SonarScanProgressEvent::Started {
+            index,
+            total,
+            project_key,
+            repo_name,
+        } => {
+            bus.publish(ShipEvent::SonarProjectStarted {
+                project_key: project_key.clone(),
+                repo_name: repo_name.clone(),
+                index: *index,
+                total: *total,
+            });
+            logger.sonar_project_start(*index, *total, project_key, repo_name);
+        }
+        SonarScanProgressEvent::Finished {
+            project_key,
+            repo_name,
+            ok,
+            error,
+        } => {
+            bus.publish(ShipEvent::SonarProjectFinished {
+                project_key: project_key.clone(),
+                repo_name: repo_name.clone(),
+                ok: *ok,
+                detail: error.clone(),
+            });
+            if *ok {
+                logger.sonar_project_ok(project_key, repo_name);
+            } else {
+                logger.sonar_project_fail(
+                    project_key,
+                    repo_name,
+                    error.as_deref().unwrap_or("scan failed"),
+                );
+            }
+        }
+        SonarScanProgressEvent::Skipped {
+            project_key,
+            repo_name,
+            reason,
+        } => {
+            bus.publish(ShipEvent::SonarProjectSkipped {
+                project_key: project_key.clone(),
+                repo_name: repo_name.clone(),
+                reason: reason.clone(),
+            });
+            logger.sonar_project_skip(project_key, repo_name, reason);
+        }
+    }
+}
+
+async fn run_sonar_platform_scan_async(
+    sonar_config: ax_quality::SonarConfig,
+    project_root: PathBuf,
+    repo_names: Vec<String>,
+    changed_files: Vec<String>,
+    full_repo: bool,
+    bus: ShipEventBus,
+    logger: &mut RunLogger,
+) -> Result<(), String> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let scan_task = tokio::task::spawn_blocking(move || {
+        let sonar = SonarClient::new(sonar_config);
+        let mut progress = move |ev: ax_quality::SonarScanProgressEvent| {
+            let _ = tx.send(ev);
+        };
+        let mut progress_cb: Option<&mut dyn FnMut(ax_quality::SonarScanProgressEvent)> =
+            Some(&mut progress);
+        sonar.run_platform_scan_with_progress(
+            &project_root,
+            &repo_names,
+            &changed_files,
+            full_repo,
+            &mut progress_cb,
+        )
+    });
+
+    while let Some(ev) = rx.recv().await {
+        dispatch_sonar_progress(&ev, &bus, logger);
+    }
+
+    scan_task
+        .await
+        .map_err(|e| format!("Sonar scan task failed: {e}"))?
 }
 
 fn empty_report() -> ShipReport {

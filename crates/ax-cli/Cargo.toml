@@ -1,6 +1,6 @@
 [package]
 name = "ax-cli"
-version = "2.1.6"
+version = "2.1.7"
 edition = "2021"
 
 [[bin]]
@@ -26,6 +26,7 @@ ax-git = { workspace = true }
 ax-tia = { workspace = true }
 ax-ship = { workspace = true }
 ax-installer = { workspace = true }
+ax-agent = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

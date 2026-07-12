@@ -3,6 +3,8 @@ title: Introduction
 description: What ax is — knowledge graph, memory vault, policy engine, and Command Center for AI coding agents.
 ---
 
+![ax Command Center — quality gate pipeline with live SSE updates](/screenshots/cc-ship-full.png)
+
 **ax** is **local-first intelligence for AI coding agents** — written in Rust, installed as a single binary, with no cloud index and no API keys.
 
 Four layers work together in every project:
@@ -16,12 +18,22 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v2.1.7
+
+- **SonarQube dashboard** — iframe loading overlay no longer blocks clicks; lighter dark-theme injection so the proxied UI stays responsive.
+- **Token savings** — line-range counterfactuals, related-file array scanning, `codeBlocks` fallback, and `AX_SAVINGS_CF_MODE` (`full` / `range` / `max`).
+- **Command Center UX** — running-state spinners on Ship, Savings, Sonar, Settings, and pipeline steps.
+
+See [Token savings](/guides/token-savings/) and [Command Center](/guides/command-center/).
+
 ## What's new in v2.1.6
 
-- **Memory vault** — `ax remember`, `ax recall`, `ax capture-git`, MCP `ax_remember` / `ax_recall`, Command Center **Memory** page. Hybrid search (FTS5 + local embeddings). Git hooks auto-capture non-trivial commits after every `git commit`.
+- **Memory vault** — `ax remember`, `ax recall`, `ax capture-git`, MCP `ax_remember` / `ax_recall`, Command Center **Memory** page with modal composer. Hybrid search (FTS5 + local embeddings). Git hooks auto-capture non-trivial commits after every `git commit`.
 - **Token savings** — real BPE token estimates, dollar pricing, **Savings** page in Command Center (no longer beta). Import Cursor / Claude Code session logs via `ax savings import`.
-- **Command Center** — workspace switcher, Agent terminal, SonarQube reverse proxy with auto-login, policy view-first editors, Memory and Savings pages.
-- **Performance** — batch graph inserts, policy cache, incremental index content hashing, CI workflow for `cargo test`.
+- **Cursor auth switching** — `ax cursor auth save/use/list/status/show` for fast Cursor subscription switching. Snapshots `cursorAuth/*` keys from `state.vscdb` plus `auth.json` into `~/.ax/cursor-auth/`.
+- **Command Center** — project browser with disk navigation, ax-project detection, and in-browser `ax init`; modal-based forms for Memory, Agent profiles, and settings; workspace switcher; Agent terminal; SonarQube reverse proxy with auto-login and comprehensive dark theme; policy view-first editors.
+- **SonarQube proxy** — full dark-theme injection (CSS overrides, MutationObserver, user-preference patching), cached credentials, localhost fallback, improved URL rewriting.
+- **Performance** — batch graph inserts, policy cache, incremental index content hashing, async SonarQube scans in the ship pipeline.
 
 See [Memory vault](/guides/memory/), [Token savings](/guides/token-savings/), and [Command Center](/guides/command-center/).
 

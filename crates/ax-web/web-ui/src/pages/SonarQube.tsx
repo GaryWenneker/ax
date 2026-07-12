@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
+  BusyLabel,
   PageCard,
   PageCardBody,
   PageHero,
@@ -8,6 +9,7 @@ import {
   PageStack,
   PageToasts,
 } from '../components/ui/PageLayout';
+import { Spinner } from '../components/ui/Spinner';
 import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG, SONAR_GUIDE_SECTIONS } from '../lib/sonarGuide';
 import {
@@ -106,14 +108,20 @@ function StatusPill({
   label,
   value,
   tone = 'neutral',
+  live,
 }: {
   label: string;
   value: string;
   tone?: 'ok' | 'warn' | 'neutral';
+  live?: boolean;
 }) {
+  const isLive = live ?? /running|scanning|starting|installing|stopping|loading|setting up|regenerating/i.test(value);
   return (
-    <div className="settings-status-pill">
-      <span className={`settings-status-dot settings-status-dot--${tone}`} aria-hidden="true" />
+    <div className={`settings-status-pill${isLive ? ' settings-status-pill--live' : ''}`}>
+      <span
+        className={`settings-status-dot settings-status-dot--${tone}${isLive ? ' settings-status-dot--live' : ''}`}
+        aria-hidden="true"
+      />
       <div className="settings-status-pill-body">
         <span className="settings-status-pill-label">{label}</span>
         <span className="settings-status-pill-value">{value}</span>
@@ -195,11 +203,11 @@ export default function SonarQubePage() {
         : '';
 
   useEffect(() => {
-    if (tab === 'dashboard' && discovery?.reachable) {
+    if (tab === 'dashboard') {
       setIframeState('loading');
       setIframeKey((k) => k + 1);
     }
-  }, [tab, discovery?.reachable]);
+  }, [tab]);
 
   useEffect(() => {
     if (tab !== 'dashboard' || iframeState !== 'loading') {
@@ -209,9 +217,10 @@ export default function SonarQubePage() {
       }
       return;
     }
+    // Dismiss loading overlay quickly — iframe stays interactive underneath (pointer-events: none on overlay).
     iframeLoadTimer.current = setTimeout(() => {
       setIframeState((s) => (s === 'loading' ? 'loaded' : s));
-    }, 12_000);
+    }, 600);
     return () => {
       if (iframeLoadTimer.current) {
         clearTimeout(iframeLoadTimer.current);
@@ -278,7 +287,6 @@ export default function SonarQubePage() {
   }, [runTokenCheck]);
 
   const loadShipAndSonar = useCallback(async () => {
-    setConfigLoaded(false);
     setErr(null);
     try {
       const d = await fetchShipConfig();
@@ -292,33 +300,31 @@ export default function SonarQubePage() {
       });
       setDiscovery(d.sonar);
       if (d.sonar_setup) setSonarSetup(d.sonar_setup);
+      setConfigLoaded(true);
 
-      const live = await discoverSonar();
-      setDiscovery(live.discovery);
-      if (live.setup) setSonarSetup(live.setup);
+      // Live discovery in background — do not block the iframe.
+      void discoverSonar()
+        .then((live) => {
+          setDiscovery(live.discovery);
+          if (live.setup) setSonarSetup(live.setup);
+        })
+        .catch(() => null);
     } catch (e) {
       setErr(String(e));
       setDiscovery(null);
-    } finally {
       setConfigLoaded(true);
     }
   }, []);
 
+  // Token validation hits SonarQube APIs (~4s) — defer until Setup tab so Dashboard stays snappy.
   useEffect(() => {
-    if (!configLoaded || !discovery?.reachable) return;
-    void runTokenCheck();
-  }, [configLoaded, discovery?.reachable, runTokenCheck]);
+    if (tab !== 'setup' || !configLoaded || !discovery?.reachable) return;
+    const t = setTimeout(() => void runTokenCheck(), 0);
+    return () => clearTimeout(t);
+  }, [tab, configLoaded, discovery?.reachable, runTokenCheck]);
 
   useEffect(() => {
     void loadShipAndSonar();
-  }, [loadShipAndSonar]);
-
-  useEffect(() => {
-    function onWorkspaceSwitched() {
-      void loadShipAndSonar();
-    }
-    window.addEventListener('ax-workspace-switched', onWorkspaceSwitched);
-    return () => window.removeEventListener('ax-workspace-switched', onWorkspaceSwitched);
   }, [loadShipAndSonar]);
 
   async function save(nextConfig: ShipConfig = config) {
@@ -530,9 +536,7 @@ export default function SonarQubePage() {
       ? 'ok'
       : 'warn';
 
-  const dashboardUrl = SONAR_UI_PROXY;
-  const sonarReachable = discovery?.reachable === true;
-  const sonarChecking = !configLoaded;
+  const dashboardEntry = `${SONAR_UI_PROXY}projects`;
 
   return (
     <PageShell className="sonar-page">
@@ -564,25 +568,9 @@ export default function SonarQubePage() {
             >
               Setup
             </button>
-          </div>
-        }
-      />
-
-      <PageToasts ok={msg} err={err} />
-
-      {tab === 'dashboard' && (
-        <section className="sonar-dashboard-panel settings-card">
-          <div className="settings-card-header sonar-dashboard-header">
-            <div>
-              <h2>SonarQube dashboard</h2>
-              <p>
-                Proxied at <code>{dashboardUrl}</code> — credentials injected by ax, dark theme enabled
-                automatically.
-              </p>
-            </div>
-            {sonarReachable && (
-              <div className="sonar-dashboard-actions">
-                <a className="btn btn-subtle" href={dashboardUrl} target="_blank" rel="noreferrer">
+            {tab === 'dashboard' && (
+              <>
+                <a className="btn btn-subtle" href={dashboardEntry} target="_blank" rel="noreferrer">
                   Open in new tab
                 </a>
                 <button
@@ -595,52 +583,41 @@ export default function SonarQubePage() {
                 >
                   Reload
                 </button>
-              </div>
+              </>
             )}
           </div>
-          {sonarChecking ? (
-            <div className="sonar-dashboard-offline">
-              <StatusSkeleton />
-              <p>Checking SonarQube…</p>
-            </div>
-          ) : sonarReachable ? (
-            <div className="sonar-dashboard-frame-wrap">
-              {iframeState === 'loading' && (
-                <div className="sonar-dashboard-loading" aria-live="polite">
-                  Loading SonarQube…
-                </div>
-              )}
-              {iframeState === 'error' && (
-                <div className="sonar-dashboard-offline">
-                  <p>Dashboard failed to load. Try Reload or open in a new tab.</p>
-                  <a className="btn primary" href={dashboardUrl} target="_blank" rel="noreferrer">
-                    Open in new tab
-                  </a>
-                </div>
-              )}
-              <iframe
-                key={iframeKey}
-                className={`sonar-dashboard-frame${iframeState === 'loaded' ? ' sonar-dashboard-frame--visible' : ''}`}
-                title="SonarQube dashboard"
-                src={dashboardUrl}
-                referrerPolicy="no-referrer"
-                onLoad={() => setIframeState('loaded')}
-                onError={() => setIframeState('error')}
-              />
-            </div>
-          ) : (
-            <div className="sonar-dashboard-offline">
-              <p>SonarQube is not reachable yet — install and start the container from Setup.</p>
-              <div className="sonar-dashboard-offline-actions">
-                <button type="button" className="btn btn-subtle" onClick={() => refreshDiscovery()}>
-                  Check again
-                </button>
-                <button type="button" className="btn primary" onClick={() => setTab('setup')}>
-                  Go to Setup — install &amp; start
-                </button>
+        }
+      />
+
+      <PageToasts ok={msg} err={err} />
+
+      {tab === 'dashboard' && (
+        <section className="sonar-dashboard-panel">
+          <div className="sonar-dashboard-frame-wrap">
+            {iframeState === 'loading' && (
+              <div className="sonar-dashboard-loading" aria-live="polite">
+                <Spinner size="md" />
+                <span>Loading SonarQube…</span>
               </div>
-            </div>
-          )}
+            )}
+            {iframeState === 'error' && (
+              <div className="sonar-dashboard-offline">
+                <p>Dashboard failed to load. Try Reload or open in a new tab.</p>
+                <a className="btn primary" href={dashboardEntry} target="_blank" rel="noreferrer">
+                  Open in new tab
+                </a>
+              </div>
+            )}
+            <iframe
+              key={iframeKey}
+              className={`sonar-dashboard-frame${iframeState !== 'error' ? ' sonar-dashboard-frame--visible' : ''}`}
+              title="SonarQube dashboard"
+              src={dashboardEntry}
+              referrerPolicy="no-referrer"
+              onLoad={() => setIframeState('loaded')}
+              onError={() => setIframeState('error')}
+            />
+          </div>
         </section>
       )}
 
@@ -848,17 +825,17 @@ export default function SonarQubePage() {
           <div className="settings-card-footer">
             {canInstall && (
               <button type="button" className="btn primary" disabled={!!busy} onClick={install}>
-                {busy === 'install' ? 'Installing…' : 'Install & start SonarQube'}
+                {busy === 'install' ? <BusyLabel label="Installing…" /> : 'Install & start SonarQube'}
               </button>
             )}
             {canStart && (
               <button type="button" className="btn primary" disabled={!!busy} onClick={start}>
-                {busy === 'start' ? 'Starting…' : 'Start container'}
+                {busy === 'start' ? <BusyLabel label="Starting…" /> : 'Start container'}
               </button>
             )}
             {canStop && (
               <button type="button" className="btn btn-subtle" disabled={!!busy} onClick={stop}>
-                {busy === 'stop' ? 'Stopping…' : 'Stop container'}
+                {busy === 'stop' ? <BusyLabel label="Stopping…" /> : 'Stop container'}
               </button>
             )}
             {canRegenerateToken && (
@@ -875,7 +852,7 @@ export default function SonarQubePage() {
               Refresh status
             </button>
             <button type="button" className="btn primary" disabled={!!busy} onClick={() => void save()}>
-              {busy === 'save' ? 'Saving…' : 'Save SonarQube settings'}
+              {busy === 'save' ? <BusyLabel label="Saving…" /> : 'Save SonarQube settings'}
             </button>
           </div>
         </PageCard>

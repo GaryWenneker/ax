@@ -1,12 +1,16 @@
 //! SonarScanner CLI wrapper and Quality Gate API client.
 
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read as _, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use tracing::{info, warn};
+
+/// Maximum time a single sonar-scanner invocation may run before being killed.
+const SCAN_TIMEOUT: Duration = Duration::from_secs(300);
 
 use crate::bootstrap::{canonical_repo_project_key, read_sonar_token, scanner_available, scanner_host_url, sonar_reachable, workspace_sonar_key};
 use crate::container::{find_container_any, resolve_runtime, start_sonar_stack, InstallLog, SONAR_SCANNER_IMAGE};
@@ -223,12 +227,7 @@ impl SonarClient {
         if !self.config.enabled {
             return Ok(());
         }
-        let scannable: Vec<String> = dirty_files
-            .iter()
-            .filter(|f| !f.contains('\t') && !f.contains("web-ui/dist/"))
-            .filter(|f| project_root.join(f).is_file())
-            .cloned()
-            .collect();
+        let scannable = filter_scannable_paths(project_root, dirty_files);
 
         if scannable.is_empty() && repo_names.is_empty() {
             return Ok(());
@@ -244,7 +243,13 @@ impl SonarClient {
             })?;
 
         let workspace_key = workspace_sonar_key(&self.config.project_key, project_root);
-        let targets = build_scan_targets(&workspace_key, repo_names, &scannable, full_repo);
+        let filtered_dirty = filter_dirty_paths(dirty_files);
+        let files_for_targets: &[String] = if repo_names.is_empty() {
+            &scannable
+        } else {
+            &filtered_dirty
+        };
+        let targets = build_scan_targets(&workspace_key, repo_names, files_for_targets, full_repo);
         emit_skipped_repos(
             &workspace_key,
             repo_names,
@@ -389,13 +394,7 @@ impl SonarClient {
                 .arg(format!("-Dsonar.host.url={}", self.config.host));
             Self::append_scanner_auth(&mut cmd, token);
         }
-        let status = cmd
-            .status()
-            .map_err(|e| format!("sonar-scanner failed: {e}"))?;
-        if !status.success() {
-            return Err("sonar-scanner exited with error".into());
-        }
-        Ok(())
+        run_command_with_timeout(&mut cmd, SCAN_TIMEOUT)
     }
 
     fn run_container_scan(
@@ -456,25 +455,10 @@ impl SonarClient {
             ]);
         }
 
-        let status = Command::new(runtime.cli())
-            .args(&args)
-            .output()
-            .map_err(|e| format!("container sonar-scanner failed: {e}"))?;
-        if !status.status.success() {
-            let stderr = String::from_utf8_lossy(&status.stderr);
-            let stdout = String::from_utf8_lossy(&status.stdout);
-            let detail = if !stderr.trim().is_empty() {
-                stderr.trim().to_string()
-            } else {
-                stdout.trim().to_string()
-            };
-            return Err(format!(
-                "container sonar-scanner exited with error ({} run): {}",
-                runtime.cli(),
-                detail.lines().last().unwrap_or(&detail)
-            ));
-        }
-        Ok(())
+        let mut cmd = Command::new(runtime.cli());
+        cmd.args(&args);
+        run_command_with_timeout(&mut cmd, SCAN_TIMEOUT)
+            .map_err(|e| format!("container sonar-scanner ({} run): {e}", runtime.cli()))
     }
 
     pub async fn fetch_quality_gate(
@@ -562,6 +546,44 @@ impl SonarClient {
     }
 }
 
+fn run_command_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<(), String> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("failed to start scanner: {e}"))?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    let mut stderr_buf = String::new();
+                    if let Some(mut se) = child.stderr.take() {
+                        let _ = se.read_to_string(&mut stderr_buf);
+                    }
+                    let detail = stderr_buf.trim();
+                    let msg = if detail.is_empty() {
+                        "exited with error".to_string()
+                    } else {
+                        detail.lines().last().unwrap_or(detail).to_string()
+                    };
+                    return Err(msg);
+                }
+                return Ok(());
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "timed out after {}s — killed",
+                        timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Err(e) => return Err(format!("error waiting for scanner process: {e}")),
+        }
+    }
+}
+
 fn token_basic_auth(token: &str) -> String {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
     format!("Basic {}", STANDARD.encode(format!("{token}:")))
@@ -574,6 +596,28 @@ const REPO_GLOB_THRESHOLD: usize = 200;
 
 fn use_properties_file(inclusions: &str) -> bool {
     inclusions.len() > CMDLINE_INCLUSIONS_LIMIT
+}
+
+/// Join a repo-relative path on Windows and Unix (`repo/src/Foo.cs` → nested segments).
+fn resolve_rel_path(project_root: &Path, rel: &str) -> PathBuf {
+    rel.split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .fold(project_root.to_path_buf(), |acc, part| acc.join(part))
+}
+
+fn filter_dirty_paths(dirty_files: &[String]) -> Vec<String> {
+    dirty_files
+        .iter()
+        .filter(|f| !f.contains('\t') && !f.contains("web-ui/dist/"))
+        .cloned()
+        .collect()
+}
+
+fn filter_scannable_paths(project_root: &Path, dirty_files: &[String]) -> Vec<String> {
+    filter_dirty_paths(dirty_files)
+        .into_iter()
+        .filter(|f| resolve_rel_path(project_root, f).is_file())
+        .collect()
 }
 
 /// Build `sonar.inclusions` — explicit paths for small diffs, scan entire source tree for large ones.
@@ -730,6 +774,13 @@ mod tests {
         let inc = build_inclusions(&files);
         assert_eq!(inc, "**/*");
         assert!(!use_properties_file(&inc));
+    }
+
+    #[test]
+    fn resolve_rel_path_splits_forward_slashes() {
+        let root = Path::new(if cfg!(windows) { r"C:\workspace" } else { "/workspace" });
+        let resolved = resolve_rel_path(root, "Mijn-Pf/src/Foo.cs");
+        assert_eq!(resolved, root.join("Mijn-Pf").join("src").join("Foo.cs"));
     }
 
     #[test]

@@ -12,6 +12,7 @@
   "dependencies": {
     "@astrojs/starlight": "^0.39.2",
     "@fontsource-variable/archivo": "^5.2.8",
+    "@fontsource/bebas-neue": "^5.2.7",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "astro": "^6.3.1",
     "jose": "^5.9.6",

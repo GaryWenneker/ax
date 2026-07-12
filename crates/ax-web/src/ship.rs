@@ -248,12 +248,10 @@ async fn handle_get_config(State(hub): State<WebHub>) -> impl IntoResponse {
     ctx.daemon.reload_config().await;
     let config = ctx.daemon.config().await;
     let discovered = ax_ship::discover_git_repos(&ctx.daemon.project_root);
-    let sonar = sonar_discovery(&config).await;
-    let setup = sonar_setup_status(&config, &ctx.daemon.project_root, sonar.reachable).await;
+    let sonar = sonar_status_light(&config).await;
     Json(serde_json::json!({
         "config": config,
         "sonar": sonar,
-        "sonar_setup": setup,
         "git_roots_discovered": discovered,
     }))
 }
@@ -274,8 +272,13 @@ async fn handle_put_config(
         )
             .into_response();
     }
-    match ctx.daemon.set_config(config).await {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+    match ctx.daemon.set_config(config.clone()).await {
+        Ok(()) => {
+            if sonar_proxy_settings_changed(&current, &config) {
+                hub.sonar_proxy.lock().await.invalidate();
+            }
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "ok": false, "error": e })),
@@ -754,18 +757,56 @@ async fn handle_sonar_start(State(hub): State<WebHub>) -> impl IntoResponse {
     }
 }
 
+async fn sonar_status_light(config: &ShipConfig) -> ax_quality::SonarDiscovery {
+    ax_quality::SonarDiscovery {
+        runtimes: vec![],
+        preferred: None,
+        container: None,
+        database: None,
+        reachable: false,
+        host: config.sonar.host.trim_end_matches('/').to_string(),
+        embedded_database: false,
+    }
+}
+
 async fn sonar_discovery(config: &ShipConfig) -> ax_quality::SonarDiscovery {
+    let host = config.sonar.host.clone();
     let name = config
         .sonar
         .podman_container
-        .as_deref()
-        .unwrap_or("sonarqube");
-    let pref = if config.sonar.container_runtime == "auto" {
-        None
+        .clone()
+        .unwrap_or_else(|| "sonarqube".into());
+    let runtime_pref = if config.sonar.container_runtime == "auto" {
+        String::new()
     } else {
-        Some(config.sonar.container_runtime.as_str())
+        config.sonar.container_runtime.clone()
     };
-    discover_sonar(&config.sonar.host, name, pref)
+    tokio::task::spawn_blocking(move || {
+        let pref = if runtime_pref.is_empty() {
+            None
+        } else {
+            Some(runtime_pref.as_str())
+        };
+        discover_sonar(&host, &name, pref)
+    })
+    .await
+    .unwrap_or_else(|_| ax_quality::SonarDiscovery {
+        runtimes: vec![],
+        preferred: None,
+        container: None,
+        database: None,
+        reachable: false,
+        host: config.sonar.host.trim_end_matches('/').to_string(),
+        embedded_database: false,
+    })
+}
+
+fn sonar_proxy_settings_changed(current: &ShipConfig, next: &ShipConfig) -> bool {
+    current.sonar.host != next.sonar.host
+        || current.sonar.admin_user != next.sonar.admin_user
+        || current.sonar.admin_password != next.sonar.admin_password
+        || current.sonar.podman_container != next.sonar.podman_container
+        || current.sonar.container_runtime != next.sonar.container_runtime
 }
 
 async fn sonar_repo_names(config: &ShipConfig, project_root: &std::path::Path) -> Vec<String> {
@@ -873,9 +914,21 @@ async fn scan_sonar_with_log(
     let client = SonarClient::new(config.sonar.clone());
     log.push("Ensuring SonarQube is running…");
     client.ensure_running().await?;
-    client.run_full_scan_with_log(project_root, &repo_names, log)?;
+
+    let scan_root = project_root.to_path_buf();
+    let scan_repos = repo_names.clone();
+    let scan_log = log.clone();
+    let sonar_cfg = config.sonar.clone();
+    tokio::task::spawn_blocking(move || {
+        let c = SonarClient::new(sonar_cfg);
+        c.run_full_scan_with_log(&scan_root, &scan_repos, &scan_log)
+    })
+    .await
+    .map_err(|e| format!("scan task panicked: {e}"))??;
+
     log.push("Fetching quality gate status…");
-    client.fetch_quality_gate(project_root, &repo_names).await
+    let gate_client = SonarClient::new(config.sonar.clone());
+    gate_client.fetch_quality_gate(project_root, &repo_names).await
 }
 
 async fn validate_config_change(current: &ShipConfig, next: &ShipConfig) -> Result<(), String> {

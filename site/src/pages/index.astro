@@ -3,6 +3,7 @@ import '@fontsource-variable/archivo';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/600.css';
+import '@fontsource/bebas-neue';
 import '../styles/theme.css';
 import LogoMark from '../components/LogoMark.astro';
 import { getStarsLabel } from '../lib/github';
@@ -12,6 +13,64 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const repo = 'https://github.com/GaryWenneker/ax';
 const stars = await getStarsLabel();
 const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
+
+const TAGLINE = 'Structured context for AI agents — entirely on your machine.';
+
+const pipeline = [
+	{
+		step: '01',
+		title: 'Index',
+		cmd: 'ax index',
+		body: 'Tree-sitter parses 20+ languages into a local knowledge graph — symbols, callers, callees, blast radius.',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="19" y="4" width="10" height="10"/><rect x="4" y="34" width="10" height="10"/><rect x="34" y="34" width="10" height="10"/><path d="M24 14v10M9 34v-10h30v10M24 24v10"/></svg>`,
+	},
+	{
+		step: '02',
+		title: 'Remember',
+		cmd: 'ax remember',
+		body: 'Hybrid memory vault with git auto-capture. Recalled via MCP preflight on every agent turn.',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 10h24v28H12z"/><path d="M18 18h12M18 26h8M18 34h10"/></svg>`,
+	},
+	{
+		step: '03',
+		title: 'Ship',
+		cmd: 'ax ship',
+		body: 'Quality gates, SonarQube, test-impact, and draft PRs from the Command Center on your machine.',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 36V18l16-10 16 10v18"/><path d="M18 36V24h12v12M22 28h4"/></svg>`,
+	},
+];
+
+const pillars = [
+	{
+		title: 'Knowledge graph',
+		body: 'MCP tools replace hundreds of greps — explore call paths, impact, and architecture in one shot.',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="19" y="4" width="10" height="10"/><rect x="4" y="34" width="10" height="10"/><rect x="34" y="34" width="10" height="10"/><path d="M24 14v10M9 34v-10h30v10M24 24v10"/></svg>`,
+	},
+	{
+		title: 'Memory vault',
+		body: 'Decisions, fixes, and conventions with hybrid search. Editable in Command Center, injected at preflight.',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 10h24v28H12z"/><path d="M18 18h12M18 26h8M18 34h10"/></svg>`,
+	},
+	{
+		title: 'Policy engine',
+		body: 'IDE-agnostic rules and skills in .ax/policy/. Matched per turn, captured from directives, enforced before writes.',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="8" width="36" height="32"/><path d="M14 18h20M14 26h14M14 34h18"/></svg>`,
+	},
+	{
+		title: 'Command Center',
+		body: 'ax web — graph browser, policy editor, SonarQube proxy, token savings, and agent terminal in one UI.',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 36V18l16-10 16 10v18"/><path d="M18 36V24h12v12M22 28h4"/></svg>`,
+	},
+];
+
+const agents = ['Cursor', 'Claude Code', 'Codex CLI', 'Gemini CLI', 'OpenCode', 'Any MCP client'];
+
+const stats = [
+	{ value: '20+', label: 'Languages indexed' },
+	{ value: 'MCP', label: 'Native agent tools' },
+	{ value: '0', label: 'Cloud uploads required' },
+	{ value: '1', label: 'Binary on your PATH' },
+];
 ---
 
 <!doctype html>
@@ -21,123 +80,191 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" href={`${base}/logo.png`} type="image/png" />
 		<title>ax — Graph it. Remember it. Ship it.</title>
-		<meta
-			name="description"
-			content="Local-first code intelligence: knowledge graph, memory vault, policy engine, and Command Center for Cursor, Claude Code, and every MCP agent."
-		/>
+		<meta name="description" content={TAGLINE} />
 		<meta property="og:title" content="ax — Graph it. Remember it. Ship it." />
-		<meta property="og:description" content="Knowledge graph, memory vault, policy, and ship gates — one local binary for AI coding agents." />
+		<meta
+			property="og:description"
+			content="Local knowledge graph, memory vault, policy engine, and Command Center for AI coding agents."
+		/>
 		<meta property="og:type" content="website" />
-		<meta name="theme-color" content="#121110" />
+		<meta name="theme-color" content="#0a0a0f" />
 	</head>
 	<body>
-		<div class="frame">
-			<header class="nav">
-				<a class="wordmark" href={`${base}/`}>
-					<LogoMark size="md" />
-				</a>
-				<nav class="nav-links">
-					<a href={`${base}/getting-started/introduction`}>Docs</a>
-					<a class="opt" href={`${base}/reference/languages`}>Languages</a>
-					<a href={repo}>GitHub</a>
-					<a class="star" href={`${repo}/stargazers`}>
-						<span class="star-glyph" aria-hidden="true">★</span>{stars}
-					</a>
-				</nav>
-			</header>
-
-			<main>
-				<section class="hero">
-					<div class="hero-left">
-						<p class="release-tag">{AX_VERSION}</p>
-						<h1>Graph it. Remember it. Ship it.</h1>
-						<p class="lede">
-							One local binary for AI agents — parse your codebase into a
-							knowledge graph, capture decisions in a memory vault, enforce
-							team policy, and gate delivery from the Command Center.
-						</p>
-						<div class="cta">
-							<a class="btn btn-primary" href={`${base}/getting-started/quickstart`}>Get started</a>
-							<a class="btn btn-ghost" href={`${base}/getting-started/introduction`}>View documentation</a>
-						</div>
-						<div class="install" data-install={install}>
-							<code>{install}</code>
-							<button class="copy" type="button" aria-label="Copy install command">
-								<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
-									<rect x="9" y="9" width="11" height="11" />
-									<path d="M5 15V5a1 1 0 0 1 1-1h9" />
-								</svg>
-							</button>
-						</div>
-					</div>
-					<div class="hero-right">
-						<LogoMark size="hero" />
-					</div>
-				</section>
-
-				<section class="features">
-					<article class="feature">
-						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-							<rect x="19" y="4" width="10" height="10" />
-							<rect x="4" y="34" width="10" height="10" />
-							<rect x="19" y="34" width="10" height="10" />
-							<rect x="34" y="34" width="10" height="10" />
-							<path d="M24 14v10M9 34v-10h30v10M24 24v10" />
-						</svg>
-						<h2>Knowledge graph</h2>
-						<p>
-							Tree-sitter parsing across 20+ languages — symbols, call edges,
-							and blast radius in a handful of MCP calls, not hundreds of greps.
-						</p>
-					</article>
-					<article class="feature">
-						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-							<path d="M12 10h24v28H12z" />
-							<path d="M18 18h12M18 26h8M18 34h10" />
-						</svg>
-						<h2>Memory vault</h2>
-						<p>
-							Hybrid recall over decisions, fixes, and conventions — auto-captured
-							from git commits, injected via <code>ax_preflight</code>, editable in
-							Command Center.
-						</p>
-					</article>
-					<article class="feature">
-						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-							<rect x="6" y="8" width="36" height="32" />
-							<path d="M14 18h20M14 26h14M14 34h18" />
-						</svg>
-						<h2>Policy engine</h2>
-						<p>
-							IDE-agnostic rules and skills in <code>.ax/policy/</code> —
-							matched per turn, captured from directives, editable in ax web.
-						</p>
-					</article>
-					<article class="feature">
-						<svg class="ficon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-							<path d="M8 36V18l16-10 16 10v18" />
-							<path d="M18 36V24h12v12M22 28h4" />
-						</svg>
-						<h2>Command Center</h2>
-						<p>
-							Git-aware quality gates, SonarQube, test-impact, token savings,
-							and draft PRs — ship with confidence from your machine.
-						</p>
-					</article>
-				</section>
-			</main>
-
-			<footer class="foot">
-				<span class="foot-mark"><LogoMark size="sm" /></span>
-				<nav class="foot-links">
-					<a href={`${base}/getting-started/introduction`}>Docs</a>
-					<a href={repo}>GitHub</a>
-					<a href={`${repo}/blob/main/LICENSE`}>MIT</a>
-				</nav>
-			</footer>
+		<!-- cinematic bokeh layer — fixed behind everything -->
+		<div class="bokeh-field" aria-hidden="true">
+			<div class="bokeh b1"></div>
+			<div class="bokeh b2"></div>
+			<div class="bokeh b3"></div>
+			<div class="bokeh b4"></div>
+			<div class="bokeh b5"></div>
+			<div class="bokeh b6"></div>
+			<div class="bokeh b7"></div>
+			<div class="bokeh b8"></div>
+			<div class="bokeh b9"></div>
+			<div class="bokeh b10"></div>
+			<div class="bokeh b11"></div>
+			<div class="bokeh b12"></div>
 		</div>
 
+		<header class="nav">
+			<a class="wordmark" href={`${base}/`}>
+				<LogoMark size="md" />
+			</a>
+			<nav class="nav-links">
+				<a href={`${base}/getting-started/introduction`}>Docs</a>
+				<a class="opt" href={`${base}/reference/languages`}>Languages</a>
+				<a href={repo}>GitHub</a>
+				<a class="star" href={`${repo}/stargazers`}>
+					<span class="star-glyph" aria-hidden="true">&#9733;</span>{stars}
+				</a>
+			</nav>
+		</header>
+
+		<main>
+			<!-- ===== HERO ===== -->
+			<section class="hero" id="hero">
+				<div class="hero-bg" aria-hidden="true">
+					<div class="hero-bokeh hb1"></div>
+					<div class="hero-bokeh hb2"></div>
+					<div class="hero-bokeh hb3"></div>
+				</div>
+				<div class="hero-content reveal">
+					<div class="hero-meta">
+						<span class="release-tag">{AX_VERSION}</span>
+						<span class="hero-meta-sep" aria-hidden="true">&middot;</span>
+						<span class="hero-meta-note">Open source &middot; MIT</span>
+					</div>
+					<p class="tagline">{TAGLINE}</p>
+					<h1>
+						<span class="h1-line">Graph it.</span>
+						<span class="h1-line">Remember it.</span>
+						<span class="h1-line h1-accent">Ship it.</span>
+					</h1>
+					<p class="lede">
+						One local binary turns your repo into agent-ready intelligence — parse
+						the codebase, capture team knowledge, enforce policy, and gate delivery
+						without sending code to the cloud.
+					</p>
+					<div class="cta">
+						<a class="btn btn-primary" href={`${base}/getting-started/quickstart`}>
+							<span class="btn-glow"></span>Get started
+						</a>
+						<a class="btn btn-ghost" href={`${base}/getting-started/introduction`}>Read the docs</a>
+					</div>
+					<div class="install" data-install={install}>
+						<span class="install-label">Install</span>
+						<code>{install}</code>
+						<button class="copy" type="button" aria-label="Copy install command">
+							<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+								<rect x="9" y="9" width="11" height="11" />
+								<path d="M5 15V5a1 1 0 0 1 1-1h9" />
+							</svg>
+						</button>
+					</div>
+				</div>
+				<div class="scroll-hint" aria-hidden="true">
+					<div class="scroll-line"></div>
+				</div>
+			</section>
+
+			<!-- ===== STATS ===== -->
+			<section class="stats" aria-label="Highlights">
+				<div class="stats-inner reveal">
+					{stats.map((s) => (
+						<div class="stat">
+							<span class="stat-value" data-count={s.value}>{s.value}</span>
+							<span class="stat-label">{s.label}</span>
+						</div>
+					))}
+				</div>
+			</section>
+
+			<!-- ===== WORKFLOW ===== -->
+			<section class="workflow" id="workflow">
+				<header class="section-head reveal">
+					<p class="section-kicker">Workflow</p>
+					<h2>From codebase to confident ship</h2>
+					<p class="section-lede">Three commands. One local stack. Agents get structure instead of guesswork.</p>
+				</header>
+				<div class="pipeline-grid">
+					{pipeline.map((item, i) => (
+						<article class="pipeline-card reveal" style={`--delay: ${i * 0.12}s`}>
+							<div class="pipeline-card-inner">
+								<div class="pipeline-head">
+									<span class="pipeline-num">{item.step}</span>
+									<div class="pipeline-icon" set:html={item.icon} />
+								</div>
+								<h3>{item.title}</h3>
+								<p class="pipeline-cmd"><code>{item.cmd}</code></p>
+								<p class="pipeline-body">{item.body}</p>
+								{i < pipeline.length - 1 && (
+									<div class="pipeline-connector" aria-hidden="true">
+										<svg viewBox="0 0 60 24" fill="none">
+											<path d="M0 12h50M44 6l6 6-6 6" stroke="currentColor" stroke-width="1.5" />
+										</svg>
+									</div>
+								)}
+							</div>
+						</article>
+					))}
+				</div>
+			</section>
+
+			<!-- ===== FEATURES ===== -->
+			<section class="features" id="features">
+				<header class="section-head reveal">
+					<p class="section-kicker">Platform</p>
+					<h2>Everything agents need — local by default</h2>
+				</header>
+				<div class="feature-grid">
+					{pillars.map((p, i) => (
+						<article class="feature-card reveal" style={`--delay: ${i * 0.1}s`}>
+							<div class="feature-card-glow" aria-hidden="true"></div>
+							<div class="feature-icon" set:html={p.icon} />
+							<h3>{p.title}</h3>
+							<p>{p.body}</p>
+						</article>
+					))}
+				</div>
+			</section>
+
+			<!-- ===== AGENTS ===== -->
+			<section class="agents-section">
+				<div class="agents-inner reveal">
+					<p class="agents-kicker">Works with</p>
+					<div class="agents-marquee">
+						<div class="agents-track">
+							{[...agents, ...agents].map((name) => (
+								<span class="agent-chip">{name}</span>
+							))}
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<!-- ===== BOTTOM CTA ===== -->
+			<section class="final-cta" id="cta">
+				<div class="final-cta-content reveal">
+					<h2>Install in one line.<br />Index in minutes.</h2>
+					<p>No account. No telemetry. Your graph, memory, and gates stay on disk.</p>
+					<a class="btn btn-primary btn-lg" href={`${base}/getting-started/quickstart`}>
+						<span class="btn-glow"></span>Start the quickstart
+					</a>
+				</div>
+			</section>
+		</main>
+
+		<footer class="foot">
+			<span class="foot-mark"><LogoMark size="sm" /></span>
+			<nav class="foot-links">
+				<a href={`${base}/getting-started/introduction`}>Docs</a>
+				<a href={repo}>GitHub</a>
+				<a href={`${repo}/blob/main/LICENSE`}>MIT</a>
+			</nav>
+		</footer>
+
 		<script>
+			// Copy install command
 			const wrap = document.querySelector('.install');
 			const btn = wrap?.querySelector('.copy');
 			if (wrap && btn) {
@@ -147,345 +274,1110 @@ const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
 						await navigator.clipboard.writeText(wrap.getAttribute('data-install') || '');
 						btn.innerHTML = '<span class="copied">Copied</span>';
 						setTimeout(() => (btn.innerHTML = original), 1400);
-					} catch {
-						/* clipboard blocked — no-op */
-					}
+					} catch { /* clipboard blocked */ }
+				});
+			}
+
+			// Scroll-triggered reveals
+			const reveals = document.querySelectorAll('.reveal');
+			const io = new IntersectionObserver(
+				(entries) => {
+					entries.forEach((e) => {
+						if (e.isIntersecting) {
+							e.target.classList.add('revealed');
+							io.unobserve(e.target);
+						}
+					});
+				},
+				{ threshold: 0.12, rootMargin: '0px 0px -40px 0px' },
+			);
+			reveals.forEach((el) => io.observe(el));
+
+			// Parallax bokeh on mouse move
+			const bokehs = document.querySelectorAll('.bokeh-field .bokeh');
+			if (bokehs.length) {
+				let ticking = false;
+				window.addEventListener('mousemove', (e) => {
+					if (ticking) return;
+					ticking = true;
+					requestAnimationFrame(() => {
+						const cx = (e.clientX / window.innerWidth - 0.5) * 2;
+						const cy = (e.clientY / window.innerHeight - 0.5) * 2;
+						bokehs.forEach((b, i) => {
+							const depth = 0.5 + (i % 4) * 0.5;
+							(b as HTMLElement).style.transform =
+								`translate(${cx * depth * 18}px, ${cy * depth * 12}px)`;
+						});
+						ticking = false;
+					});
 				});
 			}
 		</script>
 
-		<style>
-			:global(html) {
-				background: var(--cg-paper);
+	<style>
+		/* ================================================================
+		   FOUNDATION
+		   ================================================================ */
+		:global(html) {
+			background: #060610;
+			scroll-behavior: smooth;
+			overflow-x: hidden;
+		}
+		:global(body) {
+			margin: 0;
+			font-family: var(--sl-font);
+			color: #f3f1ea;
+			overflow-x: hidden;
+			background: #060610;
+			min-width: 0;
+		}
+		:global(*, *::before, *::after) {
+			box-sizing: border-box;
+		}
+
+		/* ================================================================
+		   CINEMATIC BOKEH FIELD — fixed, parallax on mouse
+		   ================================================================ */
+		.bokeh-field {
+			position: fixed;
+			inset: 0;
+			z-index: 0;
+			pointer-events: none;
+			overflow: hidden;
+			background: radial-gradient(ellipse 120% 80% at 50% 50%, #0c1520 0%, #060610 100%);
+			width: 100vw;
+			max-width: 100%;
+		}
+		.bokeh {
+			position: absolute;
+			border-radius: 50%;
+			will-change: transform;
+			transition: transform 0.4s ease-out;
+		}
+
+		/* large teal — hero center */
+		.b1 {
+			width: 700px; height: 700px;
+			background: radial-gradient(circle, rgba(20, 120, 140, 0.55) 0%, rgba(20, 120, 140, 0) 70%);
+			top: 5%; left: 25%;
+			filter: blur(90px);
+			animation: bkFloat1 22s ease-in-out infinite;
+		}
+		/* deep blue — right */
+		.b2 {
+			width: 550px; height: 550px;
+			background: radial-gradient(circle, rgba(30, 80, 160, 0.5) 0%, transparent 70%);
+			top: -5%; right: 5%;
+			filter: blur(80px);
+			animation: bkFloat2 18s ease-in-out infinite;
+		}
+		/* warm amber — left hero */
+		.b3 {
+			width: 500px; height: 500px;
+			background: radial-gradient(circle, rgba(190, 140, 50, 0.4) 0%, transparent 70%);
+			top: 20%; left: -8%;
+			filter: blur(100px);
+			animation: bkFloat3 20s ease-in-out infinite;
+		}
+		/* cyan highlight — top */
+		.b4 {
+			width: 350px; height: 350px;
+			background: radial-gradient(circle, rgba(60, 200, 210, 0.35) 0%, transparent 70%);
+			top: -10%; left: 55%;
+			filter: blur(70px);
+			animation: bkFloat1 16s ease-in-out infinite reverse;
+		}
+		/* dark navy fill — massive */
+		.b5 {
+			width: 900px; height: 900px;
+			background: radial-gradient(circle, rgba(15, 35, 70, 0.6) 0%, transparent 65%);
+			top: 30%; left: 30%;
+			filter: blur(120px);
+			animation: bkFloat2 26s ease-in-out infinite;
+		}
+		/* gold accent — mid */
+		.b6 {
+			width: 400px; height: 400px;
+			background: radial-gradient(circle, rgba(201, 165, 92, 0.3) 0%, transparent 70%);
+			top: 50%; right: 15%;
+			filter: blur(80px);
+			animation: bkFloat3 15s ease-in-out infinite;
+		}
+		/* teal bottom */
+		.b7 {
+			width: 600px; height: 600px;
+			background: radial-gradient(circle, rgba(20, 100, 130, 0.4) 0%, transparent 70%);
+			bottom: -10%; left: 10%;
+			filter: blur(100px);
+			animation: bkFloat1 19s ease-in-out infinite;
+		}
+		/* blue-purple — bottom right */
+		.b8 {
+			width: 500px; height: 500px;
+			background: radial-gradient(circle, rgba(50, 60, 150, 0.35) 0%, transparent 70%);
+			bottom: 5%; right: -5%;
+			filter: blur(90px);
+			animation: bkFloat2 21s ease-in-out infinite reverse;
+		}
+		/* small bright teal spot */
+		.b9 {
+			width: 250px; height: 250px;
+			background: radial-gradient(circle, rgba(40, 180, 180, 0.4) 0%, transparent 70%);
+			top: 35%; left: 60%;
+			filter: blur(60px);
+			animation: bkFloat3 14s ease-in-out infinite;
+		}
+		/* warm edge — bottom left */
+		.b10 {
+			width: 450px; height: 450px;
+			background: radial-gradient(circle, rgba(160, 110, 40, 0.3) 0%, transparent 70%);
+			bottom: 20%; left: -5%;
+			filter: blur(90px);
+			animation: bkFloat1 17s ease-in-out infinite reverse;
+		}
+		/* pale cyan — center float */
+		.b11 {
+			width: 300px; height: 300px;
+			background: radial-gradient(circle, rgba(80, 200, 220, 0.25) 0%, transparent 70%);
+			top: 60%; left: 40%;
+			filter: blur(70px);
+			animation: bkFloat2 13s ease-in-out infinite;
+		}
+		/* deep blue — far background fill */
+		.b12 {
+			width: 800px; height: 800px;
+			background: radial-gradient(circle, rgba(10, 30, 60, 0.5) 0%, transparent 60%);
+			top: 10%; right: 20%;
+			filter: blur(130px);
+			animation: bkFloat3 28s ease-in-out infinite;
+		}
+
+		@keyframes bkFloat1 {
+			0%, 100% { transform: translate(0, 0) scale(1); }
+			25% { transform: translate(40px, -30px) scale(1.06); }
+			50% { transform: translate(-20px, 50px) scale(0.97); }
+			75% { transform: translate(30px, 20px) scale(1.04); }
+		}
+		@keyframes bkFloat2 {
+			0%, 100% { transform: translate(0, 0) scale(1); }
+			33% { transform: translate(-50px, 40px) scale(1.08); }
+			66% { transform: translate(35px, -35px) scale(0.95); }
+		}
+		@keyframes bkFloat3 {
+			0%, 100% { transform: translate(0, 0) scale(1); }
+			40% { transform: translate(45px, -55px) scale(1.1); }
+			80% { transform: translate(-30px, 25px) scale(0.98); }
+		}
+
+		/* hero-local bokeh accents (on top of fixed field) */
+		.hero-bg {
+			position: absolute;
+			inset: 0;
+			z-index: 0;
+		}
+		.hero-bokeh {
+			position: absolute;
+			border-radius: 50%;
+		}
+		.hb1 {
+			width: 500px; height: 500px;
+			background: radial-gradient(circle, rgba(30, 150, 170, 0.3) 0%, transparent 65%);
+			top: 10%; left: 40%;
+			filter: blur(80px);
+			animation: bkFloat1 12s ease-in-out infinite;
+		}
+		.hb2 {
+			width: 350px; height: 350px;
+			background: radial-gradient(circle, rgba(201, 165, 92, 0.2) 0%, transparent 70%);
+			top: 50%; left: 15%;
+			filter: blur(70px);
+			animation: bkFloat3 10s ease-in-out infinite;
+		}
+		.hb3 {
+			width: 400px; height: 400px;
+			background: radial-gradient(circle, rgba(50, 80, 180, 0.2) 0%, transparent 70%);
+			bottom: -5%; right: 10%;
+			filter: blur(90px);
+			animation: bkFloat2 14s ease-in-out infinite;
+		}
+
+		/* ================================================================
+		   SCROLL-REVEAL SYSTEM
+		   ================================================================ */
+		.reveal {
+			opacity: 0;
+			transform: translateY(40px);
+			transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+						transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+			transition-delay: var(--delay, 0s);
+		}
+		.reveal.revealed {
+			opacity: 1;
+			transform: none;
+		}
+
+		/* ================================================================
+		   NAV — glass over bokeh
+		   ================================================================ */
+		.nav {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			z-index: 100;
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 1.25rem 2.5rem;
+			background: rgba(6, 6, 16, 0.45);
+			-webkit-backdrop-filter: blur(24px) saturate(160%);
+			backdrop-filter: blur(24px) saturate(160%);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+		}
+		.wordmark {
+			display: inline-flex;
+			text-decoration: none;
+			line-height: 0;
+		}
+		.nav-links {
+			display: flex;
+			align-items: center;
+			gap: 1.75rem;
+		}
+		.nav-links a {
+			color: #f3f1ea;
+			text-decoration: none;
+			font-size: 0.95rem;
+			transition: color 0.15s;
+		}
+		.nav-links a:not(.star):hover {
+			color: #c9a55c;
+		}
+		.star {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			background: rgba(255, 255, 255, 0.06);
+			padding: 0.35rem 0.75rem;
+			font-variant-numeric: tabular-nums;
+			font-size: 0.9rem;
+			transition: background 0.15s;
+		}
+		.star:hover {
+			background: rgba(255, 255, 255, 0.12);
+		}
+		.star-glyph {
+			color: #c9a55c;
+		}
+
+		/* ================================================================
+		   HERO
+		   ================================================================ */
+		.hero {
+			position: relative;
+			min-height: 100vh;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			padding: 6rem 2.5rem 3rem;
+			overflow: hidden;
+		}
+		.hero-content {
+			position: relative;
+			z-index: 1;
+			max-width: min(820px, 100%);
+			width: 100%;
+			text-align: center;
+		}
+
+		.hero-meta {
+			display: flex;
+			align-items: center;
+			gap: 0.55rem;
+			justify-content: center;
+			flex-wrap: wrap;
+			margin-bottom: 1.75rem;
+		}
+		.release-tag {
+			font-family: var(--sl-font-mono);
+			font-size: 0.78rem;
+			font-weight: 600;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+			color: #c9a55c;
+			background: rgba(201, 165, 92, 0.1);
+			padding: 0.3rem 0.7rem;
+			border: 1px solid rgba(201, 165, 92, 0.12);
+		}
+		.hero-meta-note {
+			font-size: 0.82rem;
+			color: rgba(255, 255, 255, 0.4);
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+		}
+		.hero-meta-sep {
+			color: rgba(255, 255, 255, 0.25);
+		}
+		.tagline {
+			font-size: 1.1rem;
+			line-height: 1.5;
+			color: rgba(255, 255, 255, 0.65);
+			max-width: min(42ch, 100%);
+			margin: 0 auto 2rem;
+			font-weight: 500;
+		}
+		h1 {
+			margin: 0 0 2rem;
+			font-family: 'Bebas Neue', var(--sl-font);
+			font-size: clamp(4.5rem, 12vw, 9rem);
+			line-height: 0.9;
+			font-weight: 400;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+			color: #fff;
+			text-shadow: 0 0 60px rgba(255, 255, 255, 0.08);
+		}
+		.h1-line {
+			display: block;
+		}
+		.h1-accent {
+			color: #c9a55c;
+			text-shadow: 0 0 80px rgba(201, 165, 92, 0.35),
+						 0 0 160px rgba(201, 165, 92, 0.15);
+		}
+		.lede {
+			font-size: 1.12rem;
+			line-height: 1.6;
+			color: rgba(255, 255, 255, 0.55);
+			max-width: min(48ch, 100%);
+			margin: 0 auto 2.5rem;
+		}
+
+		/* CTAs */
+		.cta {
+			display: flex;
+			gap: 0.75rem;
+			margin-bottom: 2rem;
+			flex-wrap: wrap;
+			justify-content: center;
+		}
+		.btn {
+			position: relative;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 0.85rem 1.75rem;
+			font-size: 0.98rem;
+			font-weight: 600;
+			text-decoration: none;
+			border: none;
+			overflow: hidden;
+			transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+		}
+		.btn-primary {
+			background: #c9a55c;
+			color: #0a0a0f;
+		}
+		.btn-primary:hover {
+			background: #d4b06a;
+			transform: translateY(-2px);
+			box-shadow: 0 8px 40px rgba(201, 165, 92, 0.3);
+		}
+		.btn-glow {
+			position: absolute;
+			inset: 0;
+			background: linear-gradient(135deg, rgba(255, 255, 255, 0.25) 0%, transparent 50%);
+			opacity: 0;
+			transition: opacity 0.3s;
+		}
+		.btn:hover .btn-glow {
+			opacity: 1;
+		}
+		.btn-ghost {
+			background: rgba(255, 255, 255, 0.06);
+			color: #f3f1ea;
+			border: 1px solid rgba(255, 255, 255, 0.08);
+		}
+		.btn-ghost:hover {
+			background: rgba(255, 255, 255, 0.12);
+			border-color: rgba(255, 255, 255, 0.16);
+			transform: translateY(-2px);
+		}
+		.btn-lg {
+			padding: 1.1rem 2.5rem;
+			font-size: 1.08rem;
+		}
+
+		/* Install bar */
+		.install {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.65rem;
+			background: rgba(255, 255, 255, 0.04);
+			padding: 0.55rem 0.7rem 0.55rem 1rem;
+			font-family: var(--sl-font-mono);
+			font-size: 0.88rem;
+			max-width: 100%;
+			border: 1px solid rgba(255, 255, 255, 0.06);
+			min-width: 0;
+			overflow: hidden;
+		}
+		.install-label {
+			font-family: var(--sl-font);
+			font-size: 0.72rem;
+			font-weight: 700;
+			text-transform: uppercase;
+			letter-spacing: 0.06em;
+			color: rgba(255, 255, 255, 0.35);
+			flex-shrink: 0;
+		}
+		.install code {
+			font-family: inherit;
+			background: none;
+			color: rgba(255, 255, 255, 0.8);
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.copy {
+			display: inline-flex;
+			border: none;
+			background: transparent;
+			cursor: pointer;
+			padding: 0.25rem;
+			color: rgba(255, 255, 255, 0.4);
+			flex-shrink: 0;
+			transition: color 0.15s;
+		}
+		.copy:hover {
+			color: #c9a55c;
+		}
+		.copy :global(.copied) {
+			font-family: var(--sl-font);
+			font-size: 0.75rem;
+		}
+
+		/* Scroll hint */
+		.scroll-hint {
+			position: absolute;
+			bottom: 2rem;
+			left: 50%;
+			transform: translateX(-50%);
+		}
+		.scroll-line {
+			width: 1px;
+			height: 48px;
+			background: linear-gradient(to bottom, rgba(255, 255, 255, 0.4), transparent);
+			animation: scrollPulse 2s ease-in-out infinite;
+		}
+		@keyframes scrollPulse {
+			0%, 100% { opacity: 0.3; transform: scaleY(0.6); }
+			50% { opacity: 1; transform: scaleY(1); }
+		}
+
+		/* ================================================================
+		   STATS
+		   ================================================================ */
+		.stats {
+			position: relative;
+			z-index: 1;
+			padding: 0 2.5rem;
+		}
+		.stats-inner {
+			display: grid;
+			grid-template-columns: repeat(4, 1fr);
+			gap: 1px;
+			background: rgba(255, 255, 255, 0.04);
+			max-width: 1100px;
+			margin: 0 auto;
+		}
+		.stat {
+			display: flex;
+			flex-direction: column;
+			gap: 0.4rem;
+			padding: 2.5rem 2rem;
+			background: rgba(6, 6, 16, 0.7);
+			-webkit-backdrop-filter: blur(16px);
+			backdrop-filter: blur(16px);
+			text-align: center;
+			transition: background 0.3s;
+		}
+		.stat:hover {
+			background: rgba(15, 20, 35, 0.8);
+		}
+		.stat-value {
+			font-family: 'Bebas Neue', var(--sl-font);
+			font-size: 3rem;
+			letter-spacing: 0.02em;
+			font-variant-numeric: tabular-nums;
+			color: #fff;
+		}
+		.stat-label {
+			font-size: 0.82rem;
+			color: rgba(255, 255, 255, 0.35);
+			line-height: 1.35;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		/* ================================================================
+		   WORKFLOW
+		   ================================================================ */
+		.workflow {
+			position: relative;
+			padding: 6rem 2.5rem;
+			overflow: hidden;
+		}
+
+		.section-head {
+			max-width: 52ch;
+			margin: 0 auto 3rem;
+			position: relative;
+			z-index: 1;
+			text-align: center;
+		}
+		.section-kicker {
+			font-family: var(--sl-font-mono);
+			font-size: 0.75rem;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.1em;
+			color: #c9a55c;
+			margin: 0 0 0.75rem;
+		}
+		.section-head h2 {
+			font-family: 'Bebas Neue', var(--sl-font);
+			font-size: clamp(2rem, 4vw, 3.2rem);
+			font-weight: 400;
+			letter-spacing: 0.03em;
+			margin: 0 0 0.75rem;
+			line-height: 1;
+			text-transform: uppercase;
+			color: #fff;
+		}
+		.section-lede {
+			margin: 0;
+			color: rgba(255, 255, 255, 0.5);
+			line-height: 1.55;
+			font-size: 1.05rem;
+		}
+
+		.pipeline-grid {
+			display: grid;
+			grid-template-columns: repeat(3, 1fr);
+			gap: 1.5rem;
+			max-width: 1100px;
+			margin: 0 auto;
+			position: relative;
+			z-index: 1;
+		}
+		.pipeline-card {
+			position: relative;
+		}
+		.pipeline-card-inner {
+			position: relative;
+			padding: 2.5rem 2rem;
+			background: rgba(255, 255, 255, 0.03);
+			border: 1px solid rgba(255, 255, 255, 0.05);
+			-webkit-backdrop-filter: blur(12px);
+			backdrop-filter: blur(12px);
+			transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+			height: 100%;
+		}
+		.pipeline-card-inner:hover {
+			background: rgba(255, 255, 255, 0.07);
+			border-color: rgba(201, 165, 92, 0.2);
+			transform: translateY(-6px);
+			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4),
+						0 0 0 1px rgba(201, 165, 92, 0.08),
+						inset 0 1px 0 rgba(255, 255, 255, 0.05);
+		}
+		.pipeline-head {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			margin-bottom: 1.25rem;
+		}
+		.pipeline-num {
+			font-family: 'Bebas Neue', var(--sl-font-mono);
+			font-size: 2rem;
+			color: rgba(255, 255, 255, 0.15);
+			letter-spacing: 0.04em;
+		}
+		.pipeline-icon {
+			width: 40px;
+			height: 40px;
+			color: #c9a55c;
+			opacity: 0.5;
+		}
+		.pipeline-icon :global(svg) {
+			width: 100%;
+			height: 100%;
+		}
+		.pipeline-card h3 {
+			margin: 0 0 0.6rem;
+			font-size: 1.35rem;
+			font-weight: 700;
+			color: #fff;
+		}
+		.pipeline-cmd {
+			margin: 0 0 0.85rem;
+		}
+		.pipeline-cmd code {
+			font-family: var(--sl-font-mono);
+			font-size: 0.88rem;
+			background: rgba(201, 165, 92, 0.1);
+			padding: 0.25rem 0.6rem;
+			color: #c9a55c;
+		}
+		.pipeline-body {
+			margin: 0;
+			font-size: 0.95rem;
+			line-height: 1.6;
+			color: rgba(255, 255, 255, 0.5);
+		}
+		.pipeline-connector {
+			display: none;
+		}
+
+		/* ================================================================
+		   FEATURES
+		   ================================================================ */
+		.features {
+			position: relative;
+			padding: 6rem 2.5rem;
+			overflow: hidden;
+		}
+
+		.feature-grid {
+			display: grid;
+			grid-template-columns: repeat(2, 1fr);
+			gap: 1.5rem;
+			max-width: 1100px;
+			margin: 0 auto;
+			position: relative;
+			z-index: 1;
+		}
+		.feature-card {
+			position: relative;
+			padding: 2.5rem;
+			background: rgba(255, 255, 255, 0.03);
+			border: 1px solid rgba(255, 255, 255, 0.05);
+			-webkit-backdrop-filter: blur(12px);
+			backdrop-filter: blur(12px);
+			overflow: hidden;
+			transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+		}
+		.feature-card:hover {
+			background: rgba(255, 255, 255, 0.07);
+			border-color: rgba(201, 165, 92, 0.2);
+			transform: translateY(-6px);
+			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4),
+						inset 0 1px 0 rgba(255, 255, 255, 0.05);
+		}
+		.feature-card-glow {
+			position: absolute;
+			top: -50%;
+			left: -50%;
+			width: 200%;
+			height: 200%;
+			background: radial-gradient(circle at 30% 30%, rgba(30, 140, 160, 0.08) 0%, transparent 50%);
+			opacity: 0;
+			transition: opacity 0.5s;
+		}
+		.feature-card:hover .feature-card-glow {
+			opacity: 1;
+		}
+		.feature-icon {
+			width: 48px;
+			height: 48px;
+			margin-bottom: 1.25rem;
+			color: #c9a55c;
+		}
+		.feature-icon :global(svg) {
+			width: 100%;
+			height: 100%;
+		}
+		.feature-card h3 {
+			margin: 0 0 0.65rem;
+			font-size: 1.2rem;
+			font-weight: 700;
+			color: #fff;
+		}
+		.feature-card p {
+			margin: 0;
+			font-size: 0.95rem;
+			line-height: 1.6;
+			color: rgba(255, 255, 255, 0.5);
+			max-width: 38ch;
+		}
+
+		/* ================================================================
+		   AGENTS MARQUEE
+		   ================================================================ */
+		.agents-section {
+			position: relative;
+			z-index: 1;
+			padding: 3rem 2.5rem;
+			border-top: 1px solid rgba(255, 255, 255, 0.04);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+		}
+		.agents-inner {
+			max-width: 1100px;
+			margin: 0 auto;
+		}
+		.agents-kicker {
+			font-family: var(--sl-font-mono);
+			font-size: 0.72rem;
+			font-weight: 700;
+			text-transform: uppercase;
+			letter-spacing: 0.08em;
+			color: rgba(255, 255, 255, 0.3);
+			margin: 0 0 1.5rem;
+			text-align: center;
+		}
+		.agents-marquee {
+			overflow: hidden;
+			mask-image: linear-gradient(to right, transparent 0%, black 10%, black 90%, transparent 100%);
+			-webkit-mask-image: linear-gradient(to right, transparent 0%, black 10%, black 90%, transparent 100%);
+		}
+		.agents-track {
+			display: flex;
+			gap: 1rem;
+			animation: marquee 20s linear infinite;
+			width: max-content;
+		}
+		@keyframes marquee {
+			0% { transform: translateX(0); }
+			100% { transform: translateX(-50%); }
+		}
+		.agent-chip {
+			font-size: 0.92rem;
+			font-weight: 600;
+			padding: 0.5rem 1.25rem;
+			background: rgba(255, 255, 255, 0.04);
+			border: 1px solid rgba(255, 255, 255, 0.06);
+			color: rgba(255, 255, 255, 0.5);
+			white-space: nowrap;
+			transition: all 0.3s;
+		}
+		.agent-chip:hover {
+			background: rgba(201, 165, 92, 0.08);
+			border-color: rgba(201, 165, 92, 0.15);
+			color: #c9a55c;
+		}
+
+		/* ================================================================
+		   FINAL CTA
+		   ================================================================ */
+		.final-cta {
+			position: relative;
+			padding: 8rem 2.5rem;
+			overflow: hidden;
+			text-align: center;
+		}
+		.final-cta-content {
+			position: relative;
+			z-index: 1;
+			max-width: min(600px, 100%);
+			margin: 0 auto;
+		}
+		.final-cta h2 {
+			font-family: 'Bebas Neue', var(--sl-font);
+			margin: 0 0 1rem;
+			font-size: clamp(2.2rem, 5vw, 3.5rem);
+			font-weight: 400;
+			letter-spacing: 0.03em;
+			text-transform: uppercase;
+			line-height: 1;
+			color: #fff;
+		}
+		.final-cta p {
+			margin: 0 0 2rem;
+			color: rgba(255, 255, 255, 0.5);
+			line-height: 1.6;
+			font-size: 1.08rem;
+		}
+
+		/* ================================================================
+		   FOOTER
+		   ================================================================ */
+		.foot {
+			position: relative;
+			z-index: 1;
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 1.5rem 2.5rem;
+			border-top: 1px solid rgba(255, 255, 255, 0.04);
+		}
+		.foot-mark {
+			display: inline-flex;
+			opacity: 0.45;
+		}
+		.foot-links {
+			display: flex;
+			gap: 1.5rem;
+		}
+		.foot-links a {
+			color: rgba(255, 255, 255, 0.3);
+			text-decoration: none;
+			font-size: 0.9rem;
+			transition: color 0.15s;
+		}
+		.foot-links a:hover {
+			color: #f3f1ea;
+		}
+
+		/* ================================================================
+		   RESPONSIVE
+		   ================================================================ */
+
+		/* -- tablet -- */
+		@media (max-width: 960px) {
+			.hero {
+				padding: 5rem 2rem 3rem;
 			}
-			:global(body) {
-				margin: 0;
-				font-family: var(--sl-font);
-				color: var(--cg-ink);
+			.hero-content {
+				max-width: 100%;
+			}
+			.pipeline-grid {
+				grid-template-columns: 1fr;
+				max-width: 600px;
+			}
+			.feature-grid {
+				grid-template-columns: 1fr;
+				max-width: 600px;
+			}
+			.stats-inner {
+				grid-template-columns: repeat(2, 1fr);
+			}
+			h1 {
+				font-size: clamp(3.5rem, 10vw, 7rem);
+			}
+		}
+
+		/* -- phone -- */
+		@media (max-width: 640px) {
+			/* global overflow guard */
+			.hero,
+			.workflow,
+			.features,
+			.agents-section,
+			.final-cta,
+			.stats {
+				max-width: 100vw;
 				overflow-x: hidden;
 			}
 
-			.frame {
-				max-width: 1440px;
-				margin: 0 auto;
-				border: 1px solid var(--cg-rule);
-			}
-
-			/* ---- nav ---- */
 			.nav {
-				display: flex;
-				align-items: center;
-				justify-content: space-between;
-				padding: 1.1rem 2rem;
-				border-bottom: 1px solid var(--cg-rule);
-			}
-			.wordmark {
-				display: inline-flex;
-				align-items: center;
-				text-decoration: none;
-				line-height: 0;
+				padding: 0.75rem 1rem;
 			}
 			.nav-links {
-				display: flex;
-				align-items: center;
-				gap: 2rem;
+				gap: 1rem;
 			}
-			.nav-links a {
-				color: var(--cg-ink);
-				text-decoration: none;
-				font-size: 0.98rem;
-			}
-			.nav-links a:not(.star):hover {
-				text-decoration: underline;
-				text-underline-offset: 4px;
-			}
-			.star {
-				display: inline-flex;
-				align-items: center;
-				gap: 0.4rem;
-				border: 1px solid var(--cg-rule);
-				padding: 0.4rem 0.85rem;
-				font-variant-numeric: tabular-nums;
-			}
-			.star:hover {
-				background: var(--cg-paper-press);
-			}
-			.star-glyph {
-				font-size: 0.85em;
+			.nav-links .opt,
+			.nav-links .star {
+				display: none;
 			}
 
-			/* ---- hero ---- */
+			/* hero */
 			.hero {
-				display: grid;
-				grid-template-columns: 1.05fr 0.95fr;
-				border-bottom: 1px solid var(--cg-rule);
+				padding: 5rem 1.25rem 2.5rem;
+				min-height: auto;
+				min-height: 100svh;
 			}
-			.hero-left {
-				padding: 4.5rem 3rem 4rem;
-				min-width: 0; /* allow the grid cell to shrink below content width */
+			.hero-content {
+				max-width: 100%;
+				text-align: left;
 			}
-			.hero-right {
-				border-inline-start: 1px solid var(--cg-rule);
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				padding: 2.5rem;
-				min-width: 0;
-				background: radial-gradient(ellipse at center, var(--cg-glow) 0%, transparent 68%);
-			}
-			h1 {
-				font-size: clamp(2.4rem, 6vw, 4.6rem);
-				line-height: 0.98;
-				font-weight: 800;
-				letter-spacing: -0.04em;
-				margin: 0 0 1.6rem;
-				overflow-wrap: break-word;
-			}
-			.release-tag {
-				display: inline-block;
-				font-family: var(--sl-font-mono);
-				font-size: 0.85rem;
-				font-weight: 600;
-				letter-spacing: 0.04em;
-				text-transform: uppercase;
-				color: var(--cg-ink-2);
-				border: 1px solid var(--cg-rule);
-				padding: 0.35rem 0.65rem;
-				margin: 0 0 1.2rem;
-			}
-			.lede {
-				font-size: 1.18rem;
-				line-height: 1.5;
-				color: var(--cg-ink-2);
-				max-width: 34ch;
-				margin: 0 0 2.2rem;
+			.hero-meta {
+				justify-content: flex-start;
 			}
 			.cta {
-				display: flex;
-				gap: 0.9rem;
-				margin-bottom: 1.6rem;
-				flex-wrap: wrap;
+				justify-content: flex-start;
 			}
-			.btn {
-				display: inline-flex;
-				align-items: center;
-				justify-content: center;
-				padding: 0.8rem 1.5rem;
+			.tagline,
+			.lede {
+				text-align: left;
+				margin-left: 0;
+				margin-right: 0;
+				max-width: 100%;
+			}
+			h1 {
+				font-size: clamp(2.8rem, 13vw, 5rem);
+				letter-spacing: 0.04em;
+			}
+			.lede {
 				font-size: 1rem;
-				font-weight: 600;
-				text-decoration: none;
-				border: 1px solid var(--cg-rule);
-				transition:
-					background 0.12s ease,
-					color 0.12s ease;
 			}
-			.btn-primary {
-				background: var(--cg-ink);
-				color: var(--cg-paper);
-			}
-			.btn-primary:hover {
-				background: transparent;
-				color: var(--cg-ink);
-			}
-			.btn-ghost {
-				background: transparent;
-				color: var(--cg-ink);
-			}
-			.btn-ghost:hover {
-				background: var(--cg-paper-press);
-			}
+
+			/* install bar — must not overflow */
 			.install {
-				display: inline-flex;
-				align-items: center;
-				gap: 0.5rem;
-				border: 1px solid var(--cg-rule);
-				padding: 0.5rem 0.55rem 0.5rem 0.9rem;
-				font-family: var(--sl-font-mono);
-				font-size: 0.95rem;
+				max-width: 100%;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				padding: 0.5rem 0.6rem;
 			}
 			.install code {
-				font-family: inherit;
-				background: none;
-				color: var(--cg-ink);
+				font-size: 0.72rem;
+				min-width: 0;
+				word-break: break-all;
+				white-space: normal;
 			}
-			.copy {
-				display: inline-flex;
-				align-items: center;
-				justify-content: center;
-				border: none;
-				background: transparent;
-				cursor: pointer;
-				padding: 0.3rem;
-				color: var(--cg-ink-2);
-			}
-			.copy:hover {
-				color: var(--cg-ink);
-			}
-			.copy :global(.copied) {
-				font-family: var(--sl-font);
-				font-size: 0.8rem;
-				padding: 0 0.2rem;
+			.install-label {
+				width: 100%;
 			}
 
-			/* ---- features ---- */
-			.features {
-				display: grid;
+			/* stats */
+			.stats {
+				padding: 0 1rem;
+			}
+			.stats-inner {
 				grid-template-columns: repeat(2, 1fr);
 			}
-			.feature {
-				display: grid;
-				grid-template-columns: auto 1px 1fr;
-				column-gap: 1.5rem;
-				align-items: center;
-				padding: 2.6rem 2rem;
+			.stat {
+				padding: 1.5rem 1rem;
 			}
-			.feature + .feature {
-				border-inline-start: 1px solid var(--cg-rule);
-			}
-			.feature:nth-child(n + 3) {
-				border-top: 1px solid var(--cg-rule);
-			}
-			.feature:nth-child(odd) {
-				border-inline-start: none;
-			}
-			.feature:nth-child(even) {
-				border-inline-start: 1px solid var(--cg-rule);
-			}
-			/* full-height vertical divider between the icon and the text */
-			.feature::before {
-				content: '';
-				grid-column: 2;
-				grid-row: 1 / 3;
-				align-self: stretch;
-				width: 1px;
-				background: var(--cg-rule);
-			}
-			.ficon {
-				grid-column: 1;
-				grid-row: 1 / 3;
-				align-self: center;
-				width: 64px;
-				height: 64px;
-				color: var(--cg-ink);
-			}
-			.feature h2 {
-				grid-column: 3;
-				grid-row: 1;
-				font-size: 1.3rem;
-				font-weight: 700;
-				margin: 0 0 0.6rem;
-			}
-			.feature p {
-				grid-column: 3;
-				grid-row: 2;
-				font-size: 1rem;
-				line-height: 1.55;
-				color: var(--cg-ink-2);
-				margin: 0;
-				max-width: 34ch;
+			.stat-value {
+				font-size: 2.2rem;
 			}
 
-			/* ---- footer ---- */
+			/* workflow + features */
+			.workflow,
+			.features {
+				padding: 3.5rem 1.25rem;
+			}
+			.section-head {
+				text-align: left;
+				margin-bottom: 2rem;
+			}
+			.section-head h2 {
+				font-size: clamp(1.6rem, 7vw, 2.4rem);
+			}
+			.pipeline-grid,
+			.feature-grid {
+				gap: 1rem;
+			}
+			.pipeline-card-inner,
+			.feature-card {
+				padding: 1.75rem 1.25rem;
+			}
+			.pipeline-num {
+				font-size: 1.5rem;
+			}
+			.pipeline-card h3 {
+				font-size: 1.15rem;
+			}
+			.feature-card h3 {
+				font-size: 1.1rem;
+			}
+
+			/* agents */
+			.agents-section {
+				padding: 2rem 1.25rem;
+			}
+
+			/* final cta */
+			.final-cta {
+				padding: 4rem 1.25rem;
+				text-align: left;
+			}
+			.final-cta-content {
+				max-width: 100%;
+			}
+			.final-cta h2 {
+				font-size: clamp(1.8rem, 8vw, 2.8rem);
+			}
+
+			/* footer */
 			.foot {
-				display: flex;
-				align-items: center;
-				justify-content: space-between;
-				padding: 1.4rem 2rem;
-				border-top: 1px solid var(--cg-rule);
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+				padding: 1.25rem 1.25rem;
 			}
-			.foot-mark {
-				display: inline-flex;
-				align-items: center;
-				opacity: 0.75;
+
+			/* scroll hint — hide on tiny screens */
+			.scroll-hint {
+				display: none;
 			}
-			.foot-links {
-				display: flex;
-				gap: 1.6rem;
+		}
+
+		/* -- very small phones (iPhone SE, Galaxy Fold) -- */
+		@media (max-width: 380px) {
+			.hero {
+				padding: 4.5rem 0.85rem 2rem;
 			}
-			.foot-links a {
-				color: var(--cg-ink-2);
-				text-decoration: none;
+			h1 {
+				font-size: clamp(2.4rem, 12vw, 3.8rem);
+			}
+			.tagline {
+				font-size: 0.95rem;
+			}
+			.lede {
 				font-size: 0.92rem;
 			}
-			.foot-links a:hover {
-				color: var(--cg-ink);
-				text-decoration: underline;
-				text-underline-offset: 3px;
+			.btn {
+				padding: 0.7rem 1.25rem;
+				font-size: 0.9rem;
 			}
+			.btn-lg {
+				padding: 0.85rem 1.5rem;
+				font-size: 0.95rem;
+			}
+			.stat-value {
+				font-size: 1.8rem;
+			}
+			.stat-label {
+				font-size: 0.72rem;
+			}
+			.pipeline-card-inner,
+			.feature-card {
+				padding: 1.25rem 1rem;
+			}
+			.workflow,
+			.features {
+				padding: 3rem 0.85rem;
+			}
+			.stats {
+				padding: 0 0.85rem;
+			}
+			.agents-section {
+				padding: 1.5rem 0.85rem;
+			}
+			.final-cta {
+				padding: 3rem 0.85rem;
+			}
+			.foot {
+				padding: 1rem 0.85rem;
+			}
+			.nav {
+				padding: 0.65rem 0.85rem;
+			}
+			.nav-links {
+				gap: 0.75rem;
+				font-size: 0.85rem;
+			}
+		}
 
-			/* ---- restrained entrance ---- */
-			@media (prefers-reduced-motion: no-preference) {
-				.hero-left > * {
-					opacity: 0;
-					transform: translateY(8px);
-					animation: cg-in 0.5s ease forwards;
-				}
-				.hero-left > *:nth-child(1) {
-					animation-delay: 0.04s;
-				}
-				.hero-left > *:nth-child(2) {
-					animation-delay: 0.1s;
-				}
-				.hero-left > *:nth-child(3) {
-					animation-delay: 0.16s;
-				}
-				.hero-left > *:nth-child(4) {
-					animation-delay: 0.22s;
-				}
-				@keyframes cg-in {
-					to {
-						opacity: 1;
-						transform: none;
-					}
-				}
+		/* ================================================================
+		   REDUCED MOTION
+		   ================================================================ */
+		@media (prefers-reduced-motion: reduce) {
+			.bokeh,
+			.hero-bokeh,
+			.agents-track,
+			.scroll-line {
+				animation: none !important;
 			}
-
-			/* ---- responsive ---- */
-			@media (max-width: 860px) {
-				.hero {
-					grid-template-columns: 1fr;
-				}
-				.hero-right {
-					border-inline-start: none;
-					border-top: 1px solid var(--cg-rule);
-				}
-				.features {
-					grid-template-columns: 1fr;
-				}
-				.feature + .feature {
-					border-inline-start: none;
-					border-top: 1px solid var(--cg-rule);
-				}
-				.feature {
-					column-gap: 1rem;
-					padding: 2rem 1.25rem;
-				}
-				.ficon {
-					width: 48px;
-					height: 48px;
-				}
-				.nav {
-					padding: 1rem 1.25rem;
-				}
-				.nav-links {
-					gap: 0.85rem;
-					font-size: 0.85rem;
-				}
-				.nav-links .opt {
-					display: none;
-				}
-				.star {
-					display: none; /* count still lives on the GitHub page */
-				}
-				.hero-left {
-					padding: 2.75rem 1.25rem 2.5rem;
-				}
-				.foot {
-					flex-direction: column;
-					gap: 1rem;
-					align-items: flex-start;
-				}
+			.reveal {
+				opacity: 1;
+				transform: none;
+				transition: none;
 			}
-		</style>
+		}
+	</style>
 	</body>
 </html>

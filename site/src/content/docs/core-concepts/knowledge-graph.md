@@ -5,6 +5,8 @@ description: The node and edge kinds the graph is built from.
 
 ax stores three things: **nodes** (symbols and files), **edges** (relationships between them), and **files**. Every node and edge carries an exact `kind`, drawn from a fixed vocabulary so queries are consistent across languages.
 
+![Nodes — browse indexed symbols with kind/language filters, caller/callee detail, and pagination](/screenshots/cc-nodes.png)
+
 ## Node kinds
 
 `file`, `module`, `class`, `struct`, `interface`, `trait`, `protocol`, `function`, `method`, `property`, `field`, `variable`, `constant`, `enum`, `enum_member`, `type_alias`, `namespace`, `parameter`, `import`, `export`, `route`, `component`.
@@ -18,6 +20,8 @@ ax stores three things: **nodes** (symbols and files), **edges** (relationships 
 Most edges come straight from the AST. A few — at dynamic-dispatch boundaries that static parsing can't follow — are **synthesized** and marked with `provenance: 'heuristic'` plus the wiring site that created them. These are surfaced inline in `explore` and the `node` trail, so an agent can see exactly where a connection came from.
 
 ## Querying it
+
+![Search — full-text symbol search with caller/callee detail panel and source preview](/screenshots/cc-search.png)
 
 - **Search** symbols by name (FTS5).
 - **Callers / callees** walk the call graph one hop at a time.

@@ -9,6 +9,8 @@ import {
   type MemoryRow,
 } from '../api';
 import Codicon from '../components/Codicon';
+import ModalShell from '../components/ModalShell';
+import { InfoHover } from '../components/ui/InfoHover';
 import {
   FilterBar,
   ItemList,
@@ -144,19 +146,47 @@ export default function MemoryPage() {
 
   usePageContext('Memory', `${total} memories${q ? ` · "${q}"` : ''}`);
 
+  const gitCount = memories.filter((m) => m.source === 'git').length;
+  const manualCount = memories.filter((m) => m.source !== 'git').length;
+
   return (
     <PageShell>
       <PageHero
         title="Memory"
-        subtitle="Durable project knowledge: decisions, fixes, conventions. Relevant memories are injected into every agent turn via ax_preflight."
+        subtitle={
+          <>
+            Durable project knowledge: decisions, fixes, conventions. Relevant memories are
+            injected into every agent turn via <code>ax_preflight</code>.
+            <InfoHover label="How Memory works">
+              <strong>Memory is your team's long-term knowledge base.</strong> It stores decisions,
+              bug fixes, architecture notes, and conventions so AI agents never forget important
+              context — even across sessions. Every time an agent calls <code>ax_preflight</code>,
+              ax recalls the most relevant memories for the current prompt and injects them into the
+              agent's context as <code>&lt;ax_memories&gt;</code>. This happens{' '}
+              <strong>automatically</strong> — the agent does not need to ask for memories.
+            </InfoHover>
+          </>
+        }
         actions={
           <>
             <button type="button" className="btn" disabled={capturing} onClick={runCaptureGit}>
               {capturing ? 'Capturing…' : 'Capture from git'}
             </button>
-            <button type="button" className="btn primary" onClick={() => setComposerOpen((v) => !v)}>
-              {composerOpen ? 'Cancel' : 'New memory'}
+            <InfoHover label="About Capture from git">
+              Scans your git log for non-trivial commits (skips merge commits, version bumps, and
+              single-line changes) and creates a memory for each one. This gives agents
+              historical context about <strong>why</strong> code changed. Duplicates are
+              automatically skipped. Run this periodically or set up a post-commit hook.
+            </InfoHover>
+            <button type="button" className="btn primary" onClick={() => setComposerOpen(true)}>
+              New memory
             </button>
+            <InfoHover label="About New memory">
+              Manually store a decision, convention, or piece of knowledge. When you save, ax
+              checks for <strong>similar existing memories</strong> — if duplicates exist, you
+              are warned so you can avoid contradictions. Choose a <strong>kind</strong> (note,
+              decision, bug_fix, architecture, convention) to help categorize recall.
+            </InfoHover>
           </>
         }
       />
@@ -165,48 +195,176 @@ export default function MemoryPage() {
 
       <PageStack>
         {composerOpen && (
-          <PageCard
+          <ModalShell
             title="New memory"
-            description="What should the team (and its agents) never forget?"
+            subtitle="What should the team (and its agents) never forget?"
+            onClose={() => setComposerOpen(false)}
             footer={
-              <button type="button" className="btn primary" disabled={saving || !newBody.trim()} onClick={saveNew}>
-                {saving ? 'Saving…' : 'Save memory'}
-              </button>
+              <>
+                <button type="button" className="btn btn-subtle" disabled={saving} onClick={() => setComposerOpen(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="btn primary" disabled={saving || !newBody.trim()} onClick={saveNew}>
+                  {saving ? 'Saving…' : 'Save memory'}
+                </button>
+              </>
             }
           >
-            <PageCardBody>
-              <div className="memory-composer">
-                <div className="memory-composer-row">
-                  <input
-                    className="settings-input settings-input--grow"
-                    placeholder="Title (optional — defaults to first line)"
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                  />
-                  <select
-                    className="settings-select"
-                    value={newKind}
-                    onChange={(e) => setNewKind(e.target.value)}
-                    aria-label="Memory kind"
-                  >
-                    {KIND_OPTIONS.map((k) => <option key={k} value={k}>{k}</option>)}
-                  </select>
-                </div>
-                <textarea
-                  className="settings-input memory-composer-body"
-                  placeholder="The decision, fix, or convention — and why."
-                  rows={5}
-                  value={newBody}
-                  onChange={(e) => setNewBody(e.target.value)}
+            <div className="memory-composer ax-modal-form-stack">
+              <div className="memory-composer-row ax-modal-form-row">
+                <input
+                  className="settings-input settings-input--grow"
+                  placeholder="Title (optional — defaults to first line)"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
                 />
+                <select
+                  className="settings-select"
+                  value={newKind}
+                  onChange={(e) => setNewKind(e.target.value)}
+                  aria-label="Memory kind"
+                >
+                  {KIND_OPTIONS.map((k) => <option key={k} value={k}>{k}</option>)}
+                </select>
               </div>
-            </PageCardBody>
-          </PageCard>
+              <textarea
+                className="settings-input memory-composer-body"
+                placeholder="The decision, fix, or convention — and why."
+                rows={5}
+                value={newBody}
+                onChange={(e) => setNewBody(e.target.value)}
+              />
+            </div>
+          </ModalShell>
         )}
 
+        {/* How it works explainer */}
+        <PageCard
+          title="How Memory works"
+          description="Three ways memories enter the vault, and how they reach your agents."
+          info={
+            <InfoHover label="Overview">
+              Memory is the bridge between your team's past decisions and your AI agents' current
+              context. Without memory, every agent session starts from zero.
+            </InfoHover>
+          }
+        >
+          <PageCardBody>
+            <div className="mem-how-grid">
+              <div className="mem-how-card">
+                <div className="mem-how-icon"><Codicon name="git-commit" /></div>
+                <div className="mem-how-title">
+                  Automatic — git commits
+                  <InfoHover label="Git capture details">
+                    When you click <strong>Capture from git</strong> or run <code>ax memory capture-git</code>,
+                    ax scans recent commits and extracts meaningful ones as memories. Trivial commits
+                    (bumps, merges, formatting) are skipped. You can also set up a <strong>post-commit
+                    hook</strong> so every non-trivial commit is captured automatically.
+                  </InfoHover>
+                </div>
+                <div className="mem-how-desc">
+                  Non-trivial git commits are automatically captured as memories with the files they
+                  touched. Click "Capture from git" or set up a post-commit hook for continuous capture.
+                </div>
+              </div>
+              <div className="mem-how-card">
+                <div className="mem-how-icon"><Codicon name="edit" /></div>
+                <div className="mem-how-title">
+                  Manual — you or your agent
+                  <InfoHover label="Manual memory details">
+                    Click <strong>New memory</strong> to store a decision, convention, or fix.
+                    Agents can also create memories by calling <code>ax_remember</code> via MCP —
+                    for example, when they discover something important during a coding session.
+                    Duplicate detection warns you if a similar memory already exists.
+                  </InfoHover>
+                </div>
+                <div className="mem-how-desc">
+                  Click "New memory" above, or let agents store knowledge by calling{' '}
+                  <code>ax_remember</code> via MCP. Either way, ax checks for duplicates before saving.
+                </div>
+              </div>
+              <div className="mem-how-card">
+                <div className="mem-how-icon"><Codicon name="rocket" /></div>
+                <div className="mem-how-title">
+                  Injected — every agent turn
+                  <InfoHover label="Injection details">
+                    Every time an agent calls <code>ax_preflight</code> (which happens at the start
+                    of every turn per ax policy), the prompt is matched against all memories using{' '}
+                    <strong>hybrid search</strong> (FTS5 full-text + vector similarity via RRF).
+                    The top-matching memories are injected as <code>&lt;ax_memories&gt;</code> in the
+                    preflight response. The agent sees them automatically — no manual recall needed.
+                    Confidence decays over time so stale memories rank lower.
+                  </InfoHover>
+                </div>
+                <div className="mem-how-desc">
+                  When an agent calls <code>ax_preflight</code>, relevant memories are automatically
+                  matched and injected into context. The agent never has to ask — it just knows.
+                </div>
+              </div>
+            </div>
+          </PageCardBody>
+        </PageCard>
+
+        {/* Stats strip */}
+        <div className="mem-stats-strip">
+          <div className="mem-stat">
+            <span className="mem-stat-value">{total}</span>
+            <span className="mem-stat-label">
+              total memories
+              <InfoHover label="About total">
+                All memories stored in <code>ax.db</code>, including git-captured and manually created ones.
+              </InfoHover>
+            </span>
+          </div>
+          <div className="mem-stat">
+            <span className="mem-stat-value">{gitCount}</span>
+            <span className="mem-stat-label">
+              from git
+              <InfoHover label="About git memories">
+                Memories automatically extracted from git commit history. Each captures the commit
+                message, the files touched, and the approximate time — giving agents historical
+                context about why code changed.
+              </InfoHover>
+            </span>
+          </div>
+          <div className="mem-stat">
+            <span className="mem-stat-value">{manualCount}</span>
+            <span className="mem-stat-label">
+              manual / agent
+              <InfoHover label="About manual memories">
+                Memories created by you via "New memory" or by agents via <code>ax_remember</code>.
+                These are typically higher-value: architecture decisions, conventions, bug root
+                causes, or knowledge that is not captured in code or commits.
+              </InfoHover>
+            </span>
+          </div>
+          <div className="mem-stat">
+            <span className="mem-stat-value">hybrid</span>
+            <span className="mem-stat-label">
+              search mode
+              <InfoHover label="About hybrid search">
+                Recall uses <strong>two search methods combined</strong>: FTS5 full-text search
+                (exact keyword matching) and vector similarity (semantic meaning via local
+                embeddings). Results are merged using <strong>Reciprocal Rank Fusion (RRF)</strong>,
+                which gives the best of both worlds: exact term hits and semantically similar
+                matches. Confidence decay lowers the rank of stale memories over time.
+              </InfoHover>
+            </span>
+          </div>
+        </div>
+
+        {/* Memory vault */}
         <PageCard
           title="Memory vault"
           description={`${total.toLocaleString()} memories in ax.db. Hybrid search: full-text + vector similarity with confidence decay.`}
+          info={
+            <InfoHover label="About the vault">
+              This is the full list of stored memories, newest first. Use the search box to
+              <strong> recall</strong> — it runs the same hybrid search that agents use during
+              preflight. Click any memory to see its full content, files, and metadata. You can
+              delete memories that are no longer relevant.
+            </InfoHover>
+          }
         >
           <FilterBar>
             <input
@@ -216,6 +374,12 @@ export default function MemoryPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
+            <InfoHover label="About recall search">
+              Type a question or keywords. This runs the <strong>same hybrid search</strong> that
+              agents use during <code>ax_preflight</code> — FTS5 full-text + vector similarity,
+              merged via RRF. The <strong>score</strong> shown per result is the combined relevance.
+              Use this to test what an agent would "remember" for a given prompt.
+            </InfoHover>
           </FilterBar>
 
           <PageCardBody>
@@ -264,10 +428,41 @@ export default function MemoryPage() {
                     </div>
                     <div className="detail-body">
                       <div className="detail-meta">
-                        <div className="detail-kv"><span className="detail-key">Kind</span><span className="detail-val">{selected.kind}</span></div>
-                        <div className="detail-kv"><span className="detail-key">Source</span><span className="detail-val">{selected.source}</span></div>
+                        <div className="detail-kv">
+                          <span className="detail-key">Kind</span>
+                          <span className="detail-val">
+                            {selected.kind}
+                            <InfoHover label="About memory kinds">
+                              Kinds help categorize memories for better recall. <strong>note</strong> = general
+                              knowledge, <strong>decision</strong> = an architectural or process choice,{' '}
+                              <strong>bug_fix</strong> = root cause and fix, <strong>architecture</strong> = system
+                              design, <strong>convention</strong> = coding standard or pattern.
+                            </InfoHover>
+                          </span>
+                        </div>
+                        <div className="detail-kv">
+                          <span className="detail-key">Source</span>
+                          <span className="detail-val">
+                            {selected.source}
+                            <InfoHover label="About memory source">
+                              <strong>git</strong> = auto-captured from a git commit. <strong>user</strong> = manually
+                              created via the UI or <code>ax memory add</code>. <strong>agent</strong> = stored by
+                              an AI agent via <code>ax_remember</code> MCP tool during a session.
+                            </InfoHover>
+                          </span>
+                        </div>
                         <div className="detail-kv"><span className="detail-key">Updated</span><span className="detail-val">{fmtAge(selected.updated_at)}</span></div>
-                        <div className="detail-kv"><span className="detail-key">Confidence</span><span className="detail-val">{Math.round(selected.confidence * 100)}%</span></div>
+                        <div className="detail-kv">
+                          <span className="detail-key">Confidence</span>
+                          <span className="detail-val">
+                            {Math.round(selected.confidence * 100)}%
+                            <InfoHover label="About confidence">
+                              Confidence starts at 100% and <strong>decays over time</strong>. Newer memories
+                              rank higher in recall. This prevents stale, outdated knowledge from dominating
+                              agent context. You can refresh confidence by editing or re-saving a memory.
+                            </InfoHover>
+                          </span>
+                        </div>
                       </div>
                       <div>
                         <div className="detail-section-title">Content</div>
@@ -275,7 +470,15 @@ export default function MemoryPage() {
                       </div>
                       {selected.files.length > 0 && (
                         <div>
-                          <div className="detail-section-title">Files ({selected.files.length})</div>
+                          <div className="detail-section-title">
+                            Files ({selected.files.length})
+                            <InfoHover label="About associated files">
+                              Files linked to this memory. For git memories, these are the files touched
+                              by the commit. For manual memories, you can optionally attach file paths.
+                              During recall, file overlap boosts relevance — if an agent is working on a
+                              file that a memory references, that memory ranks higher.
+                            </InfoHover>
+                          </div>
                           <div className="edge-list">
                             {selected.files.map((f) => (
                               <div key={f} className="edge-item edge-item--static">

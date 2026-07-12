@@ -1,6 +1,6 @@
 [package]
 name = "ax-agent"
-version = "2.1.6"
+version = "2.1.7"
 edition = "2021"
 
 [dependencies]
@@ -14,3 +14,4 @@ ax-reasoning = { workspace = true }
 ax-installer = { workspace = true }
 ax-mcp = { workspace = true }
 ax-policy = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }

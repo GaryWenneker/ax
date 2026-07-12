@@ -1,7 +1,7 @@
 //! Podman/Docker runtime discovery and SonarQube container lifecycle.
 
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -328,15 +328,40 @@ pub async fn ensure_sonar_stack_online(
     ensure_sonar_live_with_log(host, name, pref, sonar_host_port(host), log).await
 }
 
+fn sonar_blocking_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(800))
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    })
+}
+
 fn sonar_reachable_sync(host: &str) -> bool {
+    sonar_ping_fast(host)
+}
+
+/// Fast HTTP ping to SonarQube `/api/system/status` (shared client, ~800ms timeout).
+pub fn sonar_ping_fast(host: &str) -> bool {
     let url = format!("{}/api/system/status", host.trim_end_matches('/'));
-    reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()
+    sonar_blocking_client()
+        .get(&url)
+        .send()
         .ok()
-        .and_then(|c| c.get(&url).send().ok())
         .map(|r| r.status().is_success())
         .unwrap_or(false)
+}
+
+/// Localhost variants for the same port — used when the configured hostname does not resolve locally.
+pub fn sonar_localhost_candidates(host: &str) -> Vec<String> {
+    let port = sonar_host_port(host);
+    let base = host.trim_end_matches('/');
+    ["http://127.0.0.1", "http://localhost"]
+        .into_iter()
+        .map(|scheme| format!("{scheme}:{port}"))
+        .filter(|c| c != base)
+        .collect()
 }
 
 pub async fn wait_for_sonar(host: &str, timeout_secs: u64) -> Result<(), String> {

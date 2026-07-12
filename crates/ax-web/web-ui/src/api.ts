@@ -244,16 +244,54 @@ export function fetchVersion(): Promise<{ version: string }> {
 export interface ToolSavingsRow {
   tool: string;
   calls: number;
+  graph_calls: number;
+  failed_calls: number;
   tokens_saved_est: number;
   counterfactual_files: number;
+  counterfactual_tokens_est: number;
+  graph_response_tokens_est: number;
+  avg_duration_ms: number;
 }
 
 export interface DailySavingsRow {
   date: string;
   tokens_saved_est: number;
   calls: number;
+  graph_calls: number;
+  failed_calls: number;
+  counterfactual_files: number;
   counterfactual_tokens_est: number;
   graph_response_tokens_est: number;
+  cost_saved_usd_est: number;
+}
+
+export interface ProjectSavingsRow {
+  project: string;
+  calls: number;
+  graph_calls: number;
+  tokens_saved_est: number;
+  counterfactual_files: number;
+}
+
+export interface WeekdaySavingsRow {
+  weekday: number;
+  label: string;
+  tokens_saved_est: number;
+  calls: number;
+  graph_calls: number;
+}
+
+export interface RecentCallRow {
+  tool: string;
+  project: string | null;
+  tokens_saved_est: number;
+  counterfactual_tokens_est: number;
+  response_tokens_est: number;
+  counterfactual_files: number;
+  ok: boolean;
+  savings_eligible: boolean;
+  duration_ms: number | null;
+  created_at: number;
 }
 
 export interface AgentSessionRow {
@@ -275,6 +313,7 @@ export interface SavingsAssumptions {
   chars_per_token: number;
   tokens_per_line: number;
   avg_file_tokens: number;
+  counterfactual_mode: string;
 }
 
 export interface PricingInfo {
@@ -302,10 +341,19 @@ export interface SavingsSummary {
   cost_saved_usd_est: number;
   graph_response_cost_usd_est: number;
   counterfactual_cost_usd_est: number;
+  policy_calls: number;
+  success_rate_pct: number;
+  avg_duration_ms: number;
+  projects_active: number;
+  clamp_tokens_absorbed: number;
+  graph_calls_with_savings: number;
   pricing: PricingInfo;
   assumptions: SavingsAssumptions;
   by_tool: ToolSavingsRow[];
+  by_project: ProjectSavingsRow[];
+  by_weekday: WeekdaySavingsRow[];
   daily: DailySavingsRow[];
+  recent_calls: RecentCallRow[];
   agent_sessions: AgentSessionRow[];
   db_path: string;
 }

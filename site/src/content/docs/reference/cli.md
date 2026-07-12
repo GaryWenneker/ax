@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v2.1.6).
+description: Complete reference for every ax command, argument, and flag (v2.1.7).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -513,6 +513,41 @@ ax savings import --claude --cursor
 ```
 
 The **Savings** page in `ax web` (enable in Settings) exposes the same filters. See [Token savings](/guides/token-savings/).
+
+---
+
+## Cursor auth switching
+
+### `ax cursor auth`
+
+Save and restore Cursor IDE auth sessions for fast subscription switching. Snapshots `cursorAuth/*` keys from `%APPDATA%\\Cursor\\User\\globalStorage\\state.vscdb` plus `auth.json` into `~/.ax/cursor-auth/`.
+
+| Subcommand | Description |
+|---|---|
+| `status` | Show live plan, email, login method |
+| `list` | List saved profiles |
+| `save <name>` | Snapshot current Cursor auth |
+| `use <name>` | Apply a saved profile (restart Cursor after) |
+| `show <name>` | Inspect a saved profile without applying |
+
+| Flag | Applies to | Description |
+|---|---|---|
+| `--label` | `save` | Human-readable profile label |
+| `--from-auth-json` | `save` | Bootstrap from stale `auth.json` only |
+| `--email`, `--membership`, `--subscription-status`, `--sign-up-type` | `save` | Override metadata when bootstrapping |
+| `--force` | `use` | Apply while Cursor is running (still restart after) |
+| `--json` | all | JSON output |
+
+Close Cursor before `use`, then restart Cursor after switching.
+
+```bash
+ax cursor auth status
+ax cursor auth save enterprise --label "Work"
+ax cursor auth save personal --from-auth-json --email you@gmail.com --membership pro_plus
+ax cursor auth list
+ax cursor auth use personal
+ax cursor auth use enterprise
+```
 
 ---
 

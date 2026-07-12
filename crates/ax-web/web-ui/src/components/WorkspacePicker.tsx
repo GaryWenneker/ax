@@ -10,6 +10,7 @@ import {
   type BrowseEntry,
   type RecentProject,
 } from '../workspaceApi';
+import { notifyWorkspaceSwitched } from '../workspaceEvents';
 
 interface Props {
   compact?: boolean;
@@ -75,6 +76,7 @@ export default function WorkspacePicker({ compact, onSwitched }: Props) {
     if (res.ok && res.switched) {
       setLog(['Switched project — refreshing data…']);
       setOpen(false);
+      notifyWorkspaceSwitched(res.path);
       onSwitched?.();
       void refresh();
       return;
@@ -94,6 +96,7 @@ export default function WorkspacePicker({ compact, onSwitched }: Props) {
       return;
     }
     setOpen(false);
+    notifyWorkspaceSwitched(res.path);
     onSwitched?.();
     void refresh();
   }
