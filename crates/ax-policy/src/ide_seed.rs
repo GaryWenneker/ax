@@ -18,20 +18,35 @@ const CLAUDE_RULE_BODY: &str = include_str!("../templates/ide/claude/ax.md");
 const CLAUDE_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
 ## ax
 
-When this repository has `.ax/policy/` indexed, call `ax_preflight` exactly once per turn before other work. Full workflow: see `.claude/rules/ax.md`.
+Call `ax_preflight` exactly once per turn **before all other work** whenever the ax MCP server is available. Full workflow: see `.claude/rules/ax.md`.
+
+**Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
+
+**Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.
+
+MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
 <!-- AX_END -->"#;
 
 const AGENTS_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
 ## ax
 
-When `.ax/policy/` exists at the repo root, call `ax_preflight` exactly once per turn before other work. Team policy arrives via MCP inject — do not Read `.ax/policy/` files when ax MCP tools are available.
+Call `ax_preflight` exactly once per turn **before all other work** whenever the `user-ax` MCP server is available. Team policy arrives via MCP inject — do not Read `.ax/policy/` files when ax MCP tools are available.
 
 **Inject fallback:** If preflight lacks `<ax_policy>` (empty inject/rules), call `ax_skill("startup")` once.
 
-Run preflight exactly once per turn. MCP unreachable → report degraded mode; do not proceed silently.
+**Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
+
+**Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.
+
+**Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_guard` before writes when CRITICAL rules exist, `ax_policy_capture` for durable rules, `ax_context` for task context.
+
+Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
 <!-- AX_END -->"#;
 
 const GEMINI_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
+const COPILOT_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
+const WINDSURF_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
+const CLINE_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct IdeSeedResult {
@@ -250,6 +265,42 @@ fn seed_gemini_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std
     Ok(())
 }
 
+fn seed_copilot_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let path = project_root.join(".github").join("copilot-instructions.md");
+    let action = replace_or_append_marked_section(
+        &path,
+        COPILOT_INSTRUCTIONS_BLOCK,
+        AX_SECTION_START,
+        AX_SECTION_END,
+    )?;
+    record_upsert(result, ".github/copilot-instructions.md", action);
+    Ok(())
+}
+
+fn seed_windsurf_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let path = project_root.join(".windsurfrules");
+    let action = replace_or_append_marked_section(
+        &path,
+        WINDSURF_INSTRUCTIONS_BLOCK,
+        AX_SECTION_START,
+        AX_SECTION_END,
+    )?;
+    record_upsert(result, ".windsurfrules", action);
+    Ok(())
+}
+
+fn seed_cline_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let path = project_root.join(".clinerules");
+    let action = replace_or_append_marked_section(
+        &path,
+        CLINE_INSTRUCTIONS_BLOCK,
+        AX_SECTION_START,
+        AX_SECTION_END,
+    )?;
+    record_upsert(result, ".clinerules", action);
+    Ok(())
+}
+
 /// Ensure IDE bootstrap files exist (create or repair on init).
 pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedResult> {
     let mut result = IdeSeedResult::default();
@@ -257,6 +308,9 @@ pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedRe
     seed_claude_bootstrap(project_root, &mut result)?;
     seed_agents_bootstrap(project_root, &mut result)?;
     seed_gemini_bootstrap(project_root, &mut result)?;
+    seed_copilot_bootstrap(project_root, &mut result)?;
+    seed_windsurf_bootstrap(project_root, &mut result)?;
+    seed_cline_bootstrap(project_root, &mut result)?;
     Ok(result)
 }
 
@@ -334,12 +388,15 @@ fn check_instruction(label: impl Into<String>, path: PathBuf, issues: Vec<String
     }
 }
 
-/// Verify per-IDE bootstrap instruction files (Cursor, Claude, Codex/opencode, Gemini).
+/// Verify per-IDE bootstrap instruction files (Cursor, Claude, Codex/opencode, Gemini, Copilot, Windsurf, Cline).
 pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
     let claude_rule = project_root.join(".claude").join("rules").join(CLAUDE_RULE_FILE);
     let claude_md = project_root.join(".claude").join("CLAUDE.md");
     let agents_md = project_root.join("AGENTS.md");
     let gemini_md = project_root.join("GEMINI.md");
+    let copilot_md = project_root.join(".github").join("copilot-instructions.md");
+    let windsurf_rules = project_root.join(".windsurfrules");
+    let cline_rules = project_root.join(".clinerules");
 
     vec![
         verify_cursor_bootstrap(project_root),
@@ -365,6 +422,24 @@ pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
             "GEMINI.md",
             gemini_md.clone(),
             verify_marked_instructions(&gemini_md, GEMINI_INSTRUCTIONS_BLOCK),
+            false,
+        ),
+        check_instruction(
+            ".github/copilot-instructions.md",
+            copilot_md.clone(),
+            verify_marked_instructions(&copilot_md, COPILOT_INSTRUCTIONS_BLOCK),
+            false,
+        ),
+        check_instruction(
+            ".windsurfrules",
+            windsurf_rules.clone(),
+            verify_marked_instructions(&windsurf_rules, WINDSURF_INSTRUCTIONS_BLOCK),
+            false,
+        ),
+        check_instruction(
+            ".clinerules",
+            cline_rules.clone(),
+            verify_marked_instructions(&cline_rules, CLINE_INSTRUCTIONS_BLOCK),
             false,
         ),
     ]
@@ -472,11 +547,41 @@ mod tests {
     }
 
     #[test]
+    fn seeds_copilot_instructions() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.created.iter().any(|p| p == ".github/copilot-instructions.md"));
+        let content = std::fs::read_to_string(dir.path().join(".github/copilot-instructions.md")).unwrap();
+        assert!(content.contains("ax_preflight"));
+        assert!(content.contains(AX_SECTION_START));
+    }
+
+    #[test]
+    fn seeds_windsurf_rules() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.created.iter().any(|p| p == ".windsurfrules"));
+        let content = std::fs::read_to_string(dir.path().join(".windsurfrules")).unwrap();
+        assert!(content.contains("ax_preflight"));
+        assert!(content.contains(AX_SECTION_START));
+    }
+
+    #[test]
+    fn seeds_cline_rules() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result.created.iter().any(|p| p == ".clinerules"));
+        let content = std::fs::read_to_string(dir.path().join(".clinerules")).unwrap();
+        assert!(content.contains("ax_preflight"));
+        assert!(content.contains(AX_SECTION_START));
+    }
+
+    #[test]
     fn verify_ide_bootstrap_fails_before_seed() {
         let dir = tempdir().unwrap();
         let checks = verify_ide_bootstrap(dir.path());
         let fails: Vec<_> = checks.iter().filter(|c| !c.ok && !c.optional).collect();
-        assert!(fails.len() >= 4);
+        assert!(fails.len() >= 7);
     }
 
     #[test]
@@ -487,5 +592,8 @@ mod tests {
         assert!(synced.fixed.iter().any(|p| p.contains("AGENTS.md")));
         assert!(synced.fixed.iter().any(|p| p.contains("GEMINI.md")));
         assert!(synced.fixed.iter().any(|p| p.contains(".claude/rules/ax.md")));
+        assert!(synced.fixed.iter().any(|p| p.contains("copilot-instructions.md")));
+        assert!(synced.fixed.iter().any(|p| p.contains(".windsurfrules")));
+        assert!(synced.fixed.iter().any(|p| p.contains(".clinerules")));
     }
 }
