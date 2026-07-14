@@ -14,6 +14,8 @@ const LEGACY_CURSOR_RULE_FILE: &str = "ax-agent-workflow.mdc";
 const CURSOR_RULE_BODY: &str = include_str!("../templates/ide/cursor/ax.mdc");
 const CLAUDE_RULE_FILE: &str = "ax.md";
 const CLAUDE_RULE_BODY: &str = include_str!("../templates/ide/claude/ax.md");
+const CONTINUE_RULE_FILE: &str = "ax.md";
+const CONTINUE_RULE_BODY: &str = include_str!("../templates/ide/continue/ax.md");
 
 const CLAUDE_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
 ## ax
@@ -38,7 +40,7 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.
 
-**Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_guard` before writes when CRITICAL rules exist, `ax_policy_capture` for durable rules, `ax_context` for task context.
+**Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_insights`/`ax_report` for whole-graph architecture (communities, god nodes, surprising links), `ax_guard` before writes when CRITICAL rules exist, `ax_policy_capture` for durable rules, `ax_context` for task context.
 
 Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
 <!-- AX_END -->"#;
@@ -140,12 +142,16 @@ fn legacy_cursor_rule_path(project_root: &Path) -> PathBuf {
 }
 
 fn bootstrap_already_present(cursor_rules: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(cursor_rules) else {
+    bootstrap_already_present_ext(cursor_rules, "mdc")
+}
+
+fn bootstrap_already_present_ext(rules_dir: &Path, ext: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(rules_dir) else {
         return false;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
+        if path.extension().and_then(|e| e.to_str()) != Some(ext) {
             continue;
         }
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -201,6 +207,48 @@ fn seed_cursor_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io:
     }
 
     std::fs::write(&target, CURSOR_RULE_BODY.as_bytes())?;
+    result.record_created(rel);
+    Ok(())
+}
+
+fn continue_rules_dir(project_root: &Path) -> PathBuf {
+    project_root.join(".continue").join("rules")
+}
+
+fn continue_rule_path(project_root: &Path) -> PathBuf {
+    continue_rules_dir(project_root).join(CONTINUE_RULE_FILE)
+}
+
+fn continue_bootstrap_stale(content: &str) -> bool {
+    !crate::seed::verify_content(content).is_empty() || content.trim() != CONTINUE_RULE_BODY.trim()
+}
+
+fn seed_continue_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let continue_rules = continue_rules_dir(project_root);
+    std::fs::create_dir_all(&continue_rules)?;
+
+    let target = continue_rule_path(project_root);
+    let rel = format!(".continue/rules/{CONTINUE_RULE_FILE}");
+
+    if target.exists() {
+        let content = std::fs::read_to_string(&target)?;
+        if !continue_bootstrap_stale(&content) {
+            result.record_skipped(rel);
+            return Ok(());
+        }
+        std::fs::write(&target, CONTINUE_RULE_BODY.as_bytes())?;
+        result.record_updated(rel);
+        return Ok(());
+    }
+
+    if bootstrap_already_present_ext(&continue_rules, "md") {
+        result.record_skipped(format!(
+            "{rel} (another .continue/rules/*.md already contains ax_preflight bootstrap)"
+        ));
+        return Ok(());
+    }
+
+    std::fs::write(&target, CONTINUE_RULE_BODY.as_bytes())?;
     result.record_created(rel);
     Ok(())
 }
@@ -305,6 +353,7 @@ fn seed_cline_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std:
 pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedResult> {
     let mut result = IdeSeedResult::default();
     seed_cursor_rule(project_root, &mut result)?;
+    seed_continue_rule(project_root, &mut result)?;
     seed_claude_bootstrap(project_root, &mut result)?;
     seed_agents_bootstrap(project_root, &mut result)?;
     seed_gemini_bootstrap(project_root, &mut result)?;
@@ -378,6 +427,41 @@ fn verify_cursor_bootstrap(project_root: &Path) -> InstructionCheck {
     }
 }
 
+fn verify_continue_bootstrap(project_root: &Path) -> InstructionCheck {
+    let path = continue_rule_path(project_root);
+    let label = format!(".continue/rules/{CONTINUE_RULE_FILE}");
+    let continue_rules = continue_rules_dir(project_root);
+    if !path.exists() && bootstrap_already_present_ext(&continue_rules, "md") {
+        return InstructionCheck {
+            label,
+            path,
+            ok: true,
+            issues: vec![],
+            optional: true,
+        };
+    }
+    let issues = verify_dedicated_file(&path);
+    if path.exists() {
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        if continue_bootstrap_stale(&content) {
+            return InstructionCheck {
+                label,
+                path,
+                ok: false,
+                issues: vec!["bootstrap content drifts from embedded template".into()],
+                optional: false,
+            };
+        }
+    }
+    InstructionCheck {
+        label,
+        path,
+        ok: issues.is_empty(),
+        issues,
+        optional: false,
+    }
+}
+
 fn check_instruction(label: impl Into<String>, path: PathBuf, issues: Vec<String>, optional: bool) -> InstructionCheck {
     InstructionCheck {
         label: label.into(),
@@ -400,6 +484,7 @@ pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
 
     vec![
         verify_cursor_bootstrap(project_root),
+        verify_continue_bootstrap(project_root),
         check_instruction(
             format!(".claude/rules/{CLAUDE_RULE_FILE}"),
             claude_rule.clone(),
@@ -526,6 +611,39 @@ mod tests {
     }
 
     #[test]
+    fn seeds_continue_rule() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result
+            .created
+            .iter()
+            .any(|p| p == ".continue/rules/ax.md"));
+        let path = continue_rule_path(dir.path());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("ax_preflight"));
+        assert!(crate::seed::verify_content(&content).is_empty());
+    }
+
+    #[test]
+    fn skips_when_bootstrap_already_in_another_continue_rule() {
+        let dir = tempdir().unwrap();
+        let rules = continue_rules_dir(dir.path());
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(
+            rules.join("custom.md"),
+            b"---\nalwaysApply: true\n---\nCall ax_preflight exactly once per turn.\n",
+        )
+        .unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(!continue_rule_path(dir.path()).exists());
+        assert!(result
+            .skipped
+            .iter()
+            .any(|p| p.contains(".continue/rules/ax.md")));
+    }
+
+    #[test]
     fn seeds_claude_rule_and_claude_md_marker() {
         let dir = tempdir().unwrap();
         let result = seed_ide_agent_workflow(dir.path()).unwrap();
@@ -581,7 +699,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let checks = verify_ide_bootstrap(dir.path());
         let fails: Vec<_> = checks.iter().filter(|c| !c.ok && !c.optional).collect();
-        assert!(fails.len() >= 7);
+        assert!(fails.len() >= 8);
     }
 
     #[test]
@@ -589,6 +707,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let synced = sync_ide_bootstrap(dir.path(), true).unwrap();
         assert_eq!(synced.fail_count, 0);
+        assert!(synced.fixed.iter().any(|p| p.contains(".continue/rules/ax.md")));
         assert!(synced.fixed.iter().any(|p| p.contains("AGENTS.md")));
         assert!(synced.fixed.iter().any(|p| p.contains("GEMINI.md")));
         assert!(synced.fixed.iter().any(|p| p.contains(".claude/rules/ax.md")));
