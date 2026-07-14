@@ -8,7 +8,7 @@ Call **`ax_preflight`** exactly once per turn **before all other work**. This is
 
 **Inject fallback:** If the response lacks team policy (no `<ax_policy>` in `inject`, or empty `rules`), call **`ax_skill("startup")`** once — then continue.
 
-**Directive capture:** When the user gives durable rules (`je moet`, `always`, `never`, `@rule`), call **`ax_policy_capture`** with `action: "propose"`, ask each question from `questions[]`, and save only after explicit confirmation (stored in ax.db).
+**Directive capture:** When the user states a durable rule (`je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule`), persist it. `ax_preflight` sets `directiveDetected` and returns a ready `captureProposal` (rule + `questions[]`) — ask each question, then call **`ax_policy_capture`** with `action: "save"` after explicit confirmation. Works even if the project has no policy yet (the first save bootstraps it, stored in ax.db). Never silently ignore such a directive.
 
 ## Capability discovery
 

@@ -14,6 +14,10 @@
 
 **Inject fallback:** If step 1 returns no `<ax_policy>` inject (empty `rules`), call `ax_skill("startup")` once before other work.
 
+## Directive capture
+
+When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` sets `directiveDetected` and returns a ready `captureProposal` (rule + `questions`). Ask each question, then call `ax_policy_capture(action="save", rule)` after the user confirms. This works even if the project has no policy yet — the first save bootstraps it. Never silently ignore such a directive.
+
 ## Capability discovery
 
 ax is actively developed. **Do not rely on cached knowledge of ax features.** `ax_preflight` returns the latest matched rules, skills, and capabilities every call. When preflight returns tools or rules you haven't seen before, use them.

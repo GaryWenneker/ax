@@ -15,11 +15,17 @@ pub struct ToolHandler;
 impl ToolHandler {
     pub async fn list_tools(project_has_policy: bool) -> Value {
         let mut tools = vec![explore_tool()];
+        // ax_preflight + ax_policy_capture are ALWAYS advertised, even when the
+        // project has no policy yet. Otherwise directive capture can never
+        // bootstrap: the tool that would create the first rule is hidden until
+        // a rule already exists (chicken-and-egg). The first capture save
+        // creates the policy store. Tools that only make sense with existing
+        // policy (rules/skill/guard) stay gated.
+        tools.push(preflight_tool());
+        tools.push(capture_tool());
         if project_has_policy {
-            tools.push(preflight_tool());
             tools.push(rules_tool());
             tools.push(skill_tool());
-            tools.push(capture_tool());
             tools.push(guard_tool());
         }
         tools.extend(extra_tools());
@@ -176,16 +182,33 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     }
 
     let has_directive = detect_directive(&prompt);
+
+    // When the prompt carries a durable directive, build the rule proposal
+    // right here so the agent has it in hand (no extra round-trip) and can go
+    // straight to the confirm-then-save flow.
+    let capture_proposal = if has_directive {
+        let proposal = propose_rule_from_prompt(&prompt, &files);
+        let existing: Vec<String> = ax_policy::list_rules(ax.db_pool())
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        Some(finalize_proposal(proposal, &existing))
+    } else {
+        None
+    };
+
     if has_directive && !inject.is_empty() {
         inject.push('\n');
     }
     if has_directive {
-        inject.push_str("<ax_capture_hint>Directive detected — call ax_policy_capture({ action: \"propose\", prompt }), ask each question in questions[], then save only after explicit yes.</ax_capture_hint>");
+        inject.push_str("<ax_capture_hint>Directive detected — a ready rule proposal is in captureProposal. Ask the user captureProposal.questions, then call ax_policy_capture({ action: \"save\", rule }) after they confirm.</ax_capture_hint>");
     }
 
     let mut instruction = "Apply CRITICAL rules before editing. If a skill matched, follow its workflow.".to_string();
     if has_directive {
-        instruction.push_str(" DIRECTIVE DETECTED in prompt — call ax_policy_capture({ action: \"propose\", prompt }) to capture it as a durable rule.");
+        instruction.push_str(" DIRECTIVE DETECTED — captureProposal holds a ready rule. Ask the user the questions in captureProposal.questions, then call ax_policy_capture(action=\"save\", rule) after they say yes. This persists even in a project with no prior policy.");
     }
 
     Ok(json!({
@@ -196,6 +219,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "guardRequired": meta.guard_required,
         "mode": meta.mode,
         "directiveDetected": has_directive,
+        "captureProposal": capture_proposal,
         "rules": result.rules,
         "skills": result.skills,
         "memories": memories,
@@ -490,7 +514,7 @@ fn explore_tool() -> Value {
 fn preflight_tool() -> Value {
     json!({
         "name": "ax_preflight",
-        "description": "MANDATORY first tool call each turn — never skip. Returns matched rules, skills, memories, and inject block. Also detects directive language (always/never/must/@rule) and sets directiveDetected=true with capture instructions. Pass the full user prompt.",
+        "description": "MANDATORY first tool call each turn — never skip. Returns matched rules, skills, memories, and inject block. Detects durable directives (je moet/altijd/nooit/always/never/must/@rule): sets directiveDetected=true and returns a ready captureProposal (rule + interview questions) — ask the questions, then ax_policy_capture(action=save) after the user confirms. Works even with no existing policy. Pass the full user prompt.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -656,13 +680,15 @@ pub fn server_instructions(has_policy: bool) -> String {
     let mut s = String::from(
         "You have access to ax code intelligence tools (MCP).\n\n",
     );
+    // Always shipped — works even in a project with no policy yet, so the
+    // first durable directive can bootstrap the policy store.
+    s.push_str(
+        "Turn start: call ax_preflight with the user prompt and open/changed files. If you have not called it this turn, call it now before other work.\n\
+         Directive capture (IMPORTANT): whenever the user states a durable rule — phrases like 'je moet', 'altijd', 'nooit', 'voortaan', 'always', 'never', 'you must', or '@rule' — treat it as a rule to persist. preflight returns directiveDetected + a ready captureProposal; ask the questions it lists, then call ax_policy_capture(action=\"save\", rule) after the user confirms. This works even if the project has no policy yet — the first save bootstraps it. Do not silently ignore such directives.\n\n",
+    );
     if has_policy {
         s.push_str(
-            "Turn start: call ax_preflight with the user prompt and open/changed files. Apply CRITICAL rules before editing.\n\
-             Do not Read or Grep .ax/policy/ on disk — policy is delivered in ax_preflight inject only.\n\
-             If you have not called ax_preflight this turn, call it now before any other work.\n\
-             Before Write/Delete on project files: call ax_guard when CRITICAL rules exist.\n\
-             When the user gives durable directives (je moet, always, never, @rule): call ax_policy_capture(propose), show preview, save only after explicit yes.\n\n",
+            "This project has team policy: apply CRITICAL rules before editing; do not Read or Grep .ax/policy/ on disk (policy is delivered in ax_preflight inject only); call ax_guard before Write/Delete when CRITICAL rules exist.\n\n",
         );
     }
     s.push_str(
@@ -673,4 +699,46 @@ pub fn server_instructions(has_policy: bool) -> String {
          Pass projectPath when cwd is not the indexed project root (monorepos). Prefer ax over grep/read for code structure.",
     );
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_names(v: &Value) -> Vec<String> {
+        v["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn preflight_and_capture_always_advertised_even_without_policy() {
+        let names = tool_names(&ToolHandler::list_tools(false).await);
+        assert!(names.contains(&"ax_preflight".to_string()));
+        assert!(names.contains(&"ax_policy_capture".to_string()));
+        // Tools that need existing policy stay gated.
+        assert!(!names.contains(&"ax_guard".to_string()));
+        assert!(!names.contains(&"ax_rules".to_string()));
+        assert!(!names.contains(&"ax_skill".to_string()));
+    }
+
+    #[tokio::test]
+    async fn policy_tools_appear_when_policy_present() {
+        let names = tool_names(&ToolHandler::list_tools(true).await);
+        for expected in ["ax_preflight", "ax_policy_capture", "ax_guard", "ax_rules", "ax_skill"] {
+            assert!(names.contains(&expected.to_string()), "missing {expected}");
+        }
+    }
+
+    #[test]
+    fn server_instructions_always_mention_directive_capture() {
+        // Even with no policy, agents must be told to capture directives.
+        let s = server_instructions(false);
+        assert!(s.contains("ax_preflight"));
+        assert!(s.contains("Directive capture"));
+        assert!(s.contains("ax_policy_capture"));
+    }
 }
