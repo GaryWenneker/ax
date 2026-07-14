@@ -203,6 +203,12 @@ impl NameMatcher {
         target: &Node,
         resolved_by: ResolvedBy,
     ) -> Option<ResolvedRef> {
+        // Fuzzy name matches picked one of several plausible targets → ambiguous.
+        let confidence = if resolved_by == ResolvedBy::Fuzzy {
+            ax_types::EdgeConfidence::Ambiguous
+        } else {
+            ax_types::EdgeConfidence::Inferred
+        };
         let edge = Edge {
             source: ref_.from_node_id.clone(),
             target: target.id.clone(),
@@ -211,6 +217,7 @@ impl NameMatcher {
             line: Some(ref_.line),
             column: Some(ref_.column),
             provenance: Some(Provenance::Heuristic),
+            confidence: Some(confidence),
         };
         if queries.upsert_edge(&edge).await.is_err() {
             return None;

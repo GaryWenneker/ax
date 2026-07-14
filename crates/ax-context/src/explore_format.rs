@@ -1,6 +1,6 @@
 //! Plain-text formatter for explore results (CLI + MCP parity).
 
-use ax_types::{ExploreResult, Node};
+use ax_types::{CallNeighbor, ExploreResult};
 
 /// Format an explore result as agent-readable plain text (CodeGraph explore shape).
 pub fn format_explore_text(result: &ExploreResult) -> String {
@@ -47,16 +47,22 @@ pub fn format_explore_text(result: &ExploreResult) -> String {
     out
 }
 
-fn format_node_list(out: &mut String, label: &str, nodes: &[Node]) {
-    out.push_str(&format!("\n### {} ({})\n", label, nodes.len()));
-    if nodes.is_empty() {
+fn format_node_list(out: &mut String, label: &str, neighbors: &[CallNeighbor]) {
+    out.push_str(&format!("\n### {} ({})\n", label, neighbors.len()));
+    if neighbors.is_empty() {
         out.push_str("(none)\n");
         return;
     }
-    for n in nodes {
+    for c in neighbors {
+        let n = &c.node;
+        let edge_tag = match (c.edge_kind, c.confidence) {
+            (Some(kind), Some(conf)) => format!(" [{} · {}]", kind.as_str(), conf.as_str()),
+            (Some(kind), None) => format!(" [{}]", kind.as_str()),
+            _ => String::new(),
+        };
         out.push_str(&format!(
-            "- {} @ {}:{}-{} ({:?})\n",
-            n.qualified_name, n.file_path, n.start_line, n.end_line, n.kind
+            "- {} @ {}:{}-{} ({:?}){}\n",
+            n.qualified_name, n.file_path, n.start_line, n.end_line, n.kind, edge_tag
         ));
     }
 }
@@ -64,7 +70,23 @@ fn format_node_list(out: &mut String, label: &str, nodes: &[Node]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ax_types::{ExploreEntry, ExploreResult, Language, Node, NodeKind};
+    use ax_types::{
+        EdgeConfidence, EdgeKind, ExploreEntry, ExploreResult, Language, Node, NodeKind,
+    };
+
+    fn neighbor(
+        name: &str,
+        file: &str,
+        line: i32,
+        kind: Option<EdgeKind>,
+        conf: Option<EdgeConfidence>,
+    ) -> CallNeighbor {
+        CallNeighbor {
+            node: sample_node(name, file, line),
+            edge_kind: kind,
+            confidence: conf,
+        }
+    }
 
     fn sample_node(name: &str, file: &str, line: i32) -> Node {
         Node {
@@ -94,8 +116,14 @@ mod tests {
 
     #[test]
     fn golden_explore_text_shape() {
-        let caller = sample_node("callerFn", "src/caller.ts", 10);
-        let callee = sample_node("calleeFn", "src/callee.ts", 20);
+        let caller = neighbor(
+            "callerFn",
+            "src/caller.ts",
+            10,
+            Some(EdgeKind::Calls),
+            Some(EdgeConfidence::Extracted),
+        );
+        let callee = neighbor("calleeFn", "src/callee.ts", 20, None, None);
         let focal = sample_node("greet", "greet.ts", 1);
         let result = ExploreResult {
             query: "greet".to_string(),
@@ -117,6 +145,8 @@ mod tests {
         assert!(text.contains("### Callers (1)"));
         assert!(text.contains("### Callees (1)"));
         assert!(text.contains("callerFn @ src/caller.ts"));
+        // Direct edge carries a confidence tag; transitive neighbor does not.
+        assert!(text.contains("[calls · extracted]"));
         assert!(text.contains("1\texport function greet"));
         assert!(text.contains("Signature: fn greet()"));
     }

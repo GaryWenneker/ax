@@ -3,7 +3,7 @@ title: Token savings
 description: How ax estimates context-token savings from MCP graph queries vs reading full files.
 ---
 
-![Savings dashboard — token savings, cost comparison, heatmap, and per-tool breakdown](/screenshots/cc-savings-dashboard.png)
+![Context savings — tokens saved, cost reduction, graph call metrics, highlights, and daily activity heatmap](/screenshots/cc-savings-dashboard.png)
 
 ax replaces blind file crawls with targeted graph queries. Each MCP graph call logs how much context it returned versus how many tokens Read/Grep without ax would have cost.
 

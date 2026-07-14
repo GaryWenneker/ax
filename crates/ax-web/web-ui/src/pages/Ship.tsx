@@ -23,6 +23,7 @@ import {
   streamSonarScanAll,
   streamSonarScanProject,
   streamSonarStart,
+  toggleSonarExclude,
   validateSonarToken,
   type GateStep,
   type LastRunLog,
@@ -34,9 +35,11 @@ import {
 import {
   isEvaluationInProgress,
   mergePipelineFromLog,
+  parsePipelineFromLog,
   seedSonarProjects,
   applySonarProjectEvent,
   finalizeSonarProjectSteps,
+  resolveSonarProjectCardStatus,
   type SonarProjectStep,
 } from '../pipelineState';
 import { formatLogLine, liveActivityLabel } from '../logFormat';
@@ -145,6 +148,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
   const [scanningProjectKey, setScanningProjectKey] = useState<string | null>(null);
   const [sonarLog, setSonarLog] = useState<string[]>([]);
   const [tokenValid, setTokenValid] = useState<boolean | null>(null);
+  const [excludeRepos, setExcludeRepos] = useState<Set<string>>(new Set());
   const evaluatingRef = useRef(false);
   const lastRunRef = useRef<LastRunLog | null>(null);
 
@@ -223,11 +227,20 @@ export default function ShipPage({ onOpenSonar }: Props) {
         .then((d) => {
           setBranch(d.branch ?? null);
           setGitRoots(d.config?.ship?.git_roots ?? []);
+          setExcludeRepos(new Set(d.config?.sonar?.exclude_repos ?? []));
           const inProgress = !!d.evaluating || isEvaluationInProgress(d.last_run);
           if (d.report && !inProgress) setReport(d.report);
           if (d.last_run) {
             setLastRunState(d.last_run);
-            if (inProgress) syncPipelineFromLog(d.last_run, true);
+            if (inProgress) {
+              syncPipelineFromLog(d.last_run, true);
+            } else {
+              const parsed = parsePipelineFromLog(d.last_run);
+              if (parsed.liveSteps.size > 0) setLiveSteps(parsed.liveSteps);
+              if (parsed.sonarProjects.size > 0) {
+                setSonarProjectSteps(Array.from(parsed.sonarProjects.values()));
+              }
+            }
           } else if (d.evaluating) {
             setBusy('evaluate');
             evaluatingRef.current = true;
@@ -428,6 +441,14 @@ export default function ShipPage({ onOpenSonar }: Props) {
     setSonarBusy(`scan:${projectKey}`);
     setSonarLog([]);
     setErr(null);
+    setLiveStep('sonar');
+    setLiveSonarKey(projectKey);
+    setSonarProjectSteps((prev) => {
+      const next = prev.length > 0 ? prev.map((p) =>
+        p.key === projectKey ? { ...p, status: 'active' as const } : p,
+      ) : [{ key: projectKey, name: projectName, status: 'active' as const }];
+      return next;
+    });
     const append = (line: string) => setSonarLog((prev) => [...prev, line]);
     try {
       await streamSonarScanProject(projectKey, (ev) => {
@@ -438,12 +459,20 @@ export default function ShipPage({ onOpenSonar }: Props) {
           setMsg(`Scan complete — ${projectName}`);
         }
       });
+      setSonarProjectSteps((prev) =>
+        prev.map((p) => p.key === projectKey ? { ...p, status: 'passed' as const } : p),
+      );
       await refreshSonar();
     } catch (e) {
       setErr(String(e));
+      setSonarProjectSteps((prev) =>
+        prev.map((p) => p.key === projectKey ? { ...p, status: 'failed' as const } : p),
+      );
     } finally {
       setScanningProjectKey(null);
       setSonarBusy(null);
+      setLiveSonarKey(null);
+      setLiveStep(null);
     }
   }
 
@@ -453,7 +482,49 @@ export default function ShipPage({ onOpenSonar }: Props) {
   ) {
     setSonarBusy(label);
     setSonarLog([]);
-    const append = (line: string) => setSonarLog((prev) => [...prev, line]);
+    if (label === 'scan') {
+      setLiveStep('sonar');
+      setSonarProjectSteps(
+        repoProjects.map((p) => ({ key: p.key, name: p.name, status: 'pending' as const })),
+      );
+    }
+    const append = (line: string) => {
+      setSonarLog((prev) => [...prev, line]);
+      if (label === 'scan') {
+        const startMatch = line.match(/\[\d+\/\d+\] Scanning .+? \(([\w.-]+)\)/);
+        if (startMatch) {
+          setLiveSonarKey(startMatch[1]);
+          setSonarProjectSteps((prev) =>
+            prev.map((p) => p.key === startMatch[1] ? { ...p, status: 'active' as const } : p),
+          );
+        }
+        const doneMatch = line.match(/✓ ([\w.-]+) complete/);
+        if (doneMatch) {
+          setLiveSonarKey((prev) => prev === doneMatch[1] ? null : prev);
+          setSonarProjectSteps((prev) =>
+            prev.map((p) => p.key === doneMatch[1] ? { ...p, status: 'passed' as const } : p),
+          );
+        }
+        const failMatch = line.match(/✕ ([\w.-]+)/);
+        if (failMatch) {
+          setLiveSonarKey((prev) => prev === failMatch[1] ? null : prev);
+          setSonarProjectSteps((prev) =>
+            prev.map((p) => p.key === failMatch[1] ? { ...p, status: 'failed' as const } : p),
+          );
+        }
+        const skipMatch = line.match(/– (.+?) skipped/);
+        if (skipMatch) {
+          const skippedName = skipMatch[1];
+          setSonarProjectSteps((prev) =>
+            prev.map((p) =>
+              p.name === skippedName || p.key.endsWith(`-${skippedName}`)
+                ? { ...p, status: 'skipped' as const }
+                : p,
+            ),
+          );
+        }
+      }
+    };
     try {
       await stream((ev) => {
         if (ev.type === 'log') append(ev.line);
@@ -476,6 +547,11 @@ export default function ShipPage({ onOpenSonar }: Props) {
       setErr(String(e));
     } finally {
       setSonarBusy(null);
+      if (label === 'scan') {
+        setLiveStep(null);
+        setLiveSonarKey(null);
+        setSonarProjectSteps((prev) => finalizeSonarProjectSteps(prev));
+      }
     }
   }
 
@@ -508,6 +584,18 @@ export default function ShipPage({ onOpenSonar }: Props) {
       setErr(String(e));
     } finally {
       setSonarBusy(null);
+    }
+  }
+
+  async function toggleExclude(repoName: string, exclude: boolean) {
+    setErr(null);
+    try {
+      const r = await toggleSonarExclude(repoName, exclude);
+      if (!r.ok) throw new Error('Failed to update exclusion');
+      setExcludeRepos(new Set(r.exclude_repos));
+      setMsg(exclude ? `${repoName} excluded from scans` : `${repoName} included in scans`);
+    } catch (e) {
+      setErr(String(e));
     }
   }
 
@@ -590,6 +678,8 @@ export default function ShipPage({ onOpenSonar }: Props) {
           }))
         : [];
 
+  const sonarStepsByKey = new Map(pipelineSonarProjects.map((p) => [p.key, p]));
+
   return (
     <PageShell>
       <PageHero
@@ -603,6 +693,16 @@ export default function ShipPage({ onOpenSonar }: Props) {
             <button type="button" className="btn primary" disabled={!!busy} onClick={() => runCommand('evaluate')}>
               {busy === 'evaluate' ? <BusyLabel label="Evaluating…" /> : 'Evaluate'}
             </button>
+            {canScanAll && (
+              <button
+                type="button"
+                className="btn"
+                disabled={!!sonarBusy || !!busy}
+                onClick={() => runSonarStream('scan', streamSonarScanAll)}
+              >
+                {sonarBusy === 'scan' ? <BusyLabel label="Scanning…" /> : 'Scan all'}
+              </button>
+            )}
             <button type="button" className="btn" disabled={!!busy} onClick={() => runCommand('draft')}>
               {busy === 'draft' ? <BusyLabel label="Creating…" /> : 'Draft PR'}
             </button>
@@ -839,32 +939,47 @@ export default function ShipPage({ onOpenSonar }: Props) {
 
                 <div className="sq-project-grid">
                   {repoProjects.map((p) => {
-                    const isScanning = scanningProjectKey === p.key || sonarBusy === `scan:${p.key}`;
-                    const canScan = sonarReachable && tokenValid === true && p.exists && !sonarBusy && !busy;
-                    const blockedReason = !sonarReachable
-                      ? 'SonarQube offline'
-                      : tokenValid !== true
-                        ? 'Token not valid'
-                        : !p.exists
-                          ? 'Project not provisioned'
-                          : sonarBusy
-                            ? 'Another operation running'
-                            : busy
-                              ? 'Pipeline running'
-                              : null;
+                    const isExcluded = excludeRepos.has(p.name);
+                    const pipelineStep = sonarStepsByKey.get(p.key);
+                    const cardStatus = isExcluded
+                      ? { label: 'Excluded', variant: 'skipped' as const, scanning: false }
+                      : resolveSonarProjectCardStatus(p.exists, pipelineStep, {
+                          evalActive: sonarEvalActive,
+                          liveSonarKey,
+                          projectKey: p.key,
+                        });
+                    const isManualScan =
+                      scanningProjectKey === p.key || sonarBusy === `scan:${p.key}`;
+                    const isScanning = cardStatus.scanning || isManualScan;
+                    const canScan = sonarReachable && tokenValid === true && p.exists && !sonarBusy && !busy && !isExcluded;
+                    const blockedReason = isExcluded
+                      ? 'Project excluded from scans'
+                      : !sonarReachable
+                        ? 'SonarQube offline'
+                        : tokenValid !== true
+                          ? 'Token not valid'
+                          : !p.exists
+                            ? 'Project not provisioned'
+                            : sonarBusy
+                              ? 'Another operation running'
+                              : busy
+                                ? 'Pipeline running'
+                                : null;
 
                     return (
                       <div
                         key={p.key}
-                        className={`sq-project-card${isScanning ? ' sq-project-card--scanning' : ''}${!p.exists ? ' sq-project-card--missing' : ''}`}
+                        className={`sq-project-card${isScanning ? ' sq-project-card--scanning' : ''}${!p.exists ? ' sq-project-card--missing' : ''}${isExcluded ? ' sq-project-card--excluded' : ''}${cardStatus.variant === 'failed' ? ' sq-project-card--failed' : ''}`}
                       >
                         <div className="sq-project-card-top">
                           <div className="sq-project-card-info">
                             <span className="sq-project-card-name">{p.name}</span>
                             <span className="sq-project-card-key">{p.key}</span>
                           </div>
-                          <span className={`sq-project-card-status${p.exists ? ' sq-project-card-status--ok' : ' sq-project-card-status--missing'}`}>
-                            {p.exists ? 'Ready' : 'Missing'}
+                          <span
+                            className={`sq-project-card-status sq-project-card-status--${cardStatus.variant}`}
+                          >
+                            {cardStatus.label}
                           </span>
                         </div>
 
@@ -884,6 +999,14 @@ export default function ShipPage({ onOpenSonar }: Props) {
                               Scan
                             </button>
                           )}
+                          <button
+                            type="button"
+                            className={`btn btn-sm${isExcluded ? ' btn-subtle' : ' btn-danger-subtle'}`}
+                            title={isExcluded ? 'Include this project in scans' : 'Exclude this project from scans'}
+                            onClick={() => toggleExclude(p.name, !isExcluded)}
+                          >
+                            {isExcluded ? 'Include' : 'Exclude'}
+                          </button>
                         </div>
 
                         {isScanning && sonarLog.length > 0 && (

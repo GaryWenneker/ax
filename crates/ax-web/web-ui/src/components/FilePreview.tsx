@@ -3,6 +3,7 @@ import { fetchNodes, fetchSource } from '../api';
 import type { SourceSlice } from '../api';
 import Codicon from './Codicon';
 import FileTypeIcon from './FileTypeIcon';
+import SourceViewer from './SourceViewer';
 import SymbolOutline from './SymbolOutline';
 import { PreviewZoomToolbar, loadPreviewScale } from './PreviewZoom';
 import type { FileRow, NodeRow } from '../types';
@@ -147,14 +148,7 @@ export default function FilePreview({ file, onClose, onNodeSelect, selectedNodeI
             {!sourceError && !source && <div className="page-loading">Loading source…</div>}
             {source && (
               <>
-                <pre className="detail-code detail-code--source">
-                  {source.lines.map((l) => (
-                    <div key={l.no} className="source-line">
-                      <span className="source-line-no">{l.no}</span>
-                      <span className="source-line-text">{l.text || ' '}</span>
-                    </div>
-                  ))}
-                </pre>
+                <SourceViewer lines={source.lines} language={file.language} />
                 {source.total_lines > source.to && (
                   <div className="files-index-truncated">
                     Showing lines 1–{source.to} of {source.total_lines}.

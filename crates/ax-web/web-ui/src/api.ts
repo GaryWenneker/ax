@@ -241,6 +241,167 @@ export function fetchVersion(): Promise<{ version: string }> {
   return get<{ version: string }>('/version');
 }
 
+export interface GraphNode {
+  id: string;
+  name: string;
+  kind: string;
+  file_path: string;
+  community_id: number;
+  community_label?: string;
+  degree: number;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  kind: string;
+  confidence?: string;
+}
+
+export interface GraphPayload {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  total_nodes: number;
+  truncated: boolean;
+}
+
+export function fetchGraph(params: { limit?: number; recompute?: boolean } = {}): Promise<GraphPayload> {
+  const sp = new URLSearchParams();
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  if (params.recompute) sp.set('recompute', 'true');
+  const qs = sp.toString();
+  return get<GraphPayload>(`/graph${qs ? `?${qs}` : ''}`);
+}
+
+export interface GraphStreamMeta {
+  total_nodes: number;
+  truncated: boolean;
+  node_count: number;
+  edge_count: number;
+}
+
+export interface GraphStreamHandlers {
+  onMeta?: (meta: GraphStreamMeta) => void;
+  onNodes?: (nodes: GraphNode[]) => void;
+  onEdges?: (edges: GraphEdge[]) => void;
+  onDone?: () => void;
+}
+
+/**
+ * Stream the graph as Server-Sent Events so it can be rendered gradually.
+ * Falls back to the one-shot `fetchGraph` if streaming is unavailable.
+ * Returns an abort function that cancels the in-flight stream.
+ */
+export function streamGraph(
+  params: { limit?: number; recompute?: boolean },
+  handlers: GraphStreamHandlers,
+): () => void {
+  const ctrl = new AbortController();
+  const sp = new URLSearchParams();
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  if (params.recompute) sp.set('recompute', 'true');
+  const qs = sp.toString();
+
+  (async () => {
+    try {
+      const res = await fetch(`${BASE}/graph/stream${qs ? `?${qs}` : ''}`, {
+        signal: ctrl.signal,
+        headers: { Accept: 'text/event-stream' },
+      });
+      if (!res.ok || !res.body) {
+        // Fallback: one-shot fetch, delivered through the same handlers.
+        const p = await fetchGraph(params);
+        handlers.onMeta?.({
+          total_nodes: p.total_nodes,
+          truncated: p.truncated,
+          node_count: p.nodes.length,
+          edge_count: p.edges.length,
+        });
+        handlers.onNodes?.(p.nodes);
+        handlers.onEdges?.(p.edges);
+        handlers.onDone?.();
+        return;
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() ?? '';
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            let ev: { type: string; nodes?: GraphNode[]; edges?: GraphEdge[] } & GraphStreamMeta;
+            try {
+              ev = JSON.parse(line.slice(6));
+            } catch {
+              continue;
+            }
+            if (ev.type === 'meta') handlers.onMeta?.(ev);
+            else if (ev.type === 'nodes' && ev.nodes) handlers.onNodes?.(ev.nodes);
+            else if (ev.type === 'edges' && ev.edges) handlers.onEdges?.(ev.edges);
+            else if (ev.type === 'done') handlers.onDone?.();
+          }
+        }
+      }
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') throw e;
+    }
+  })();
+
+  return () => ctrl.abort();
+}
+
+export interface GodNode {
+  nodeId: string;
+  name: string;
+  qualifiedName: string;
+  filePath: string;
+  kind: string;
+  inDegree: number;
+  outDegree: number;
+  degree: number;
+}
+
+export interface CommunitySummary {
+  communityId: number;
+  label: string;
+  size: number;
+  keyNodes: string[];
+}
+
+export interface SurprisingEdge {
+  sourceId: string;
+  targetId: string;
+  sourceName: string;
+  targetName: string;
+  kind: string;
+  confidence: string;
+  sourceCommunity: number;
+  targetCommunity: number;
+  sourceModule: string;
+  targetModule: string;
+  score: number;
+}
+
+export interface GraphInsights {
+  nodeCount: number;
+  edgeCount: number;
+  numCommunities: number;
+  modularity: number;
+  godNodes: GodNode[];
+  communities: CommunitySummary[];
+  surprisingConnections: SurprisingEdge[];
+}
+
+export function fetchInsights(resolution = 1.0): Promise<GraphInsights> {
+  const sp = new URLSearchParams({ resolution: String(resolution) });
+  return get<GraphInsights>(`/insights?${sp}`);
+}
+
 export interface ToolSavingsRow {
   tool: string;
   calls: number;

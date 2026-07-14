@@ -1,5 +1,3 @@
-pub use ax_remote::ShipConfig;
-
 #[derive(Debug, Clone)]
 pub struct ShipDaemonConfig {
     pub debounce_ms: u64,

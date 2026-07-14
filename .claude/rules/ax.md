@@ -12,6 +12,8 @@
 
 > **Run preflight exactly once per turn.** If you already called `ax_preflight` this turn, skip it and continue work.
 
+For a whole-graph overview use `ax_insights` (communities, god nodes, surprising links) or `ax_report` (full Markdown architecture report). Edges carry a confidence tag (extracted / inferred / ambiguous); Markdown docs are indexed as `Doc` nodes.
+
 ## Hard rules
 
 - Never skip step 1 on a new user message when `.ax/policy/` is indexed.

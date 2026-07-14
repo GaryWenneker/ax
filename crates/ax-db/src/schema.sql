@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS edges (
     line INTEGER,
     col INTEGER,
     provenance TEXT DEFAULT NULL,
+    confidence TEXT DEFAULT NULL,
     FOREIGN KEY (source) REFERENCES nodes(id) ON DELETE CASCADE,
     FOREIGN KEY (target) REFERENCES nodes(id) ON DELETE CASCADE
 );
@@ -121,6 +122,16 @@ CREATE INDEX IF NOT EXISTS idx_unresolved_name ON unresolved_refs(reference_name
 CREATE INDEX IF NOT EXISTS idx_unresolved_file_path ON unresolved_refs(file_path);
 CREATE INDEX IF NOT EXISTS idx_unresolved_from_name ON unresolved_refs(from_node_id, reference_name);
 CREATE INDEX IF NOT EXISTS idx_edges_provenance ON edges(provenance);
+CREATE INDEX IF NOT EXISTS idx_edges_confidence ON edges(confidence);
+
+CREATE TABLE IF NOT EXISTS node_communities (
+    node_id TEXT PRIMARY KEY,
+    community_id INTEGER NOT NULL,
+    community_label TEXT,
+    computed_at INTEGER NOT NULL,
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_node_communities_community ON node_communities(community_id);
 
 CREATE TABLE IF NOT EXISTS project_metadata (
     key TEXT PRIMARY KEY,

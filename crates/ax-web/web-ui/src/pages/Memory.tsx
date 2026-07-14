@@ -9,6 +9,7 @@ import {
   type MemoryRow,
 } from '../api';
 import Codicon from '../components/Codicon';
+import { ResizableBlade } from '../components/BladeResize';
 import ModalShell from '../components/ModalShell';
 import { InfoHover } from '../components/ui/InfoHover';
 import {
@@ -416,6 +417,7 @@ export default function MemoryPage() {
                   </ItemList>
                 </div>
                 {selected && (
+                  <ResizableBlade>
                   <div className="detail-panel detail-panel--blade" role="complementary" aria-label={selected.title}>
                     <div className="detail-header">
                       <span className="detail-title">
@@ -496,6 +498,7 @@ export default function MemoryPage() {
                       </div>
                     </div>
                   </div>
+                  </ResizableBlade>
                 )}
               </div>
             )}

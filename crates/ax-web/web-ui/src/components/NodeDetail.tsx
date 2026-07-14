@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { fetchNodeDetail, fetchSource } from '../api';
 import type { SourceSlice } from '../api';
 import Codicon from './Codicon';
+import SourceViewer from './SourceViewer';
 import { Spinner } from './ui/Spinner';
 import { PreviewZoomToolbar, loadPreviewScale } from './PreviewZoom';
+import { ResizableBlade } from './BladeResize';
 import type { NodeDetail } from '../types';
 
 interface Props {
@@ -149,17 +151,11 @@ export default function NodeDetailPanel({
                 </div>
               )}
               {source && (
-                <pre className="detail-code detail-code--source">
-                  {source.lines.map((l) => (
-                    <div
-                      key={l.no}
-                      className={`source-line${l.no >= node.start_line && l.no <= node.end_line ? ' source-line--in-node' : ''}`}
-                    >
-                      <span className="source-line-no">{l.no}</span>
-                      <span className="source-line-text">{l.text || ' '}</span>
-                    </div>
-                  ))}
-                </pre>
+                <SourceViewer
+                  lines={source.lines}
+                  language={node.language}
+                  highlightRange={{ start: node.start_line, end: node.end_line }}
+                />
               )}
             </div>
 
@@ -176,6 +172,9 @@ export default function NodeDetailPanel({
                     >
                       <Codicon name={KIND_ICONS[c.kind] ?? 'symbol-misc'} className="edge-item-icon" />
                       <span className="edge-name">{c.name}</span>
+                      {c.edge_confidence && (
+                        <span className={`confidence-badge confidence-${c.edge_confidence}`}>{c.edge_confidence}</span>
+                      )}
                       <span className="edge-meta">:{c.start_line}</span>
                     </button>
                   ))}
@@ -202,6 +201,9 @@ export default function NodeDetailPanel({
                     >
                       <Codicon name={KIND_ICONS[c.kind] ?? 'symbol-misc'} className="edge-item-icon" />
                       <span className="edge-name">{c.name}</span>
+                      {c.edge_confidence && (
+                        <span className={`confidence-badge confidence-${c.edge_confidence}`}>{c.edge_confidence}</span>
+                      )}
                       <span className="edge-meta">:{c.start_line}</span>
                     </button>
                   ))}
@@ -230,6 +232,10 @@ export default function NodeDetailPanel({
         {panel}
       </div>
     );
+  }
+
+  if (variant === 'blade') {
+    return <ResizableBlade>{panel}</ResizableBlade>;
   }
 
   return panel;

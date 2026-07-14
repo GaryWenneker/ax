@@ -1,7 +1,7 @@
 //! Mark test functions and emit Covers edges from test calls to production symbols.
 
-use ax_types::{Edge, EdgeKind, ExtractionResult, Node, NodeKind, Provenance};
-use tree_sitter::{Node as TsNode, Tree};
+use ax_types::{Edge, EdgeConfidence, EdgeKind, ExtractionResult, Node, NodeKind, Provenance};
+use tree_sitter::Tree;
 
 /// Mark test functions and emit Covers edges from test calls to production symbols.
 pub fn annotate_tests(result: &mut ExtractionResult, source: &[u8], tree: &Tree, path: &str) {
@@ -33,6 +33,7 @@ pub fn annotate_tests(result: &mut ExtractionResult, source: &[u8], tree: &Tree,
                         line: None,
                         column: None,
                         provenance: Some(Provenance::Heuristic),
+                        confidence: Some(EdgeConfidence::Inferred),
                     });
                 }
             }

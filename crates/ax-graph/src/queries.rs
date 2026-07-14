@@ -130,4 +130,29 @@ impl GraphQueryManager {
     ) -> Result<ax_types::Subgraph, ax_utils::errors::AxError> {
         self.traverser.get_impact_subgraph(node_id, depth).await
     }
+
+    /// Run whole-graph analysis (communities, god nodes, surprising edges) and
+    /// persist the community assignments. `resolution` tunes cluster granularity.
+    pub async fn compute_insights(
+        &self,
+        resolution: f64,
+        god_limit: usize,
+        surprising_limit: usize,
+    ) -> Result<crate::analysis::GraphInsights, ax_utils::errors::AxError> {
+        let nodes = self.queries.get_all_nodes().await?;
+        let edges = self.queries.get_all_edges().await?;
+        let (insights, assignments) = crate::analysis::compute_insights(
+            &nodes,
+            &edges,
+            resolution,
+            god_limit,
+            surprising_limit,
+        );
+        let rows: Vec<(String, i64, Option<String>)> = assignments
+            .into_iter()
+            .map(|a| (a.node_id, a.community_id, a.label))
+            .collect();
+        self.queries.replace_node_communities(&rows).await?;
+        Ok(insights)
+    }
 }

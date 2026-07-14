@@ -1,6 +1,7 @@
 //! Ax facade - wires all layers together.
 
 mod project_config;
+pub mod report;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -174,6 +175,8 @@ impl Ax {
                     &mut self.resolver,
                     &self.queries,
                     &self.db,
+                    &self.project_root,
+                    &index_opts.exclude,
                     &mut on_progress,
                 )
                 .await?;
@@ -217,6 +220,8 @@ impl Ax {
                         &mut self.resolver,
                         &self.queries,
                         &self.db,
+                        &self.project_root,
+                        &index_opts.exclude,
                         &mut on_progress,
                     )
                     .await?;
@@ -270,6 +275,8 @@ impl Ax {
                     &mut self.resolver,
                     &self.queries,
                     &self.db,
+                    &self.project_root,
+                    &index_opts.exclude,
                     on_progress,
                 )
                 .await?;
@@ -413,6 +420,50 @@ impl Ax {
         self.traverser.get_impact_radius(node_id, depth).await
     }
 
+    /// Whole-graph insights: Leiden communities, god nodes, and surprising
+    /// cross-community connections. Persists community assignments as a side
+    /// effect so later queries and the web API can reuse them.
+    pub async fn insights(
+        &self,
+        resolution: f64,
+        god_limit: usize,
+        surprising_limit: usize,
+    ) -> Result<ax_graph::GraphInsights, ax_utils::errors::AxError> {
+        self.graph_manager
+            .compute_insights(resolution, god_limit, surprising_limit)
+            .await
+    }
+
+    /// Non-exported symbols with no inbound references (best-effort dead code).
+    pub async fn find_dead_code(&self) -> Result<Vec<ax_types::Node>, ax_utils::errors::AxError> {
+        self.graph_manager.find_dead_code().await
+    }
+
+    /// Render a full Markdown architecture report from the current graph.
+    pub async fn architecture_report(
+        &self,
+        resolution: f64,
+    ) -> Result<String, ax_utils::errors::AxError> {
+        let insights = self.insights(resolution, 15, 15).await?;
+        let dead_code = self.find_dead_code().await?;
+        let unresolved = self.queries.get_unresolved_refs().await?;
+        let names: Vec<String> = unresolved.into_iter().map(|u| u.reference_name).collect();
+        let (unresolved_total, unresolved_top) = report::summarize_unresolved(&names, 20);
+        let project_name = self
+            .project_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project");
+        let input = report::ReportInput {
+            project_name,
+            insights: &insights,
+            dead_code: &dead_code,
+            unresolved_total,
+            unresolved_top: &unresolved_top,
+        };
+        Ok(report::render_architecture_report(&input))
+    }
+
     pub async fn get_callers(
         &self,
         node_id: &str,
@@ -510,6 +561,8 @@ async fn finalize_after_extract(
     resolver: &mut ReferenceResolver,
     queries: &QueryBuilder,
     db: &Database,
+    project_root: &Path,
+    exclude: &[String],
     on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
 ) -> Result<(), ax_utils::errors::AxError> {
     let _ = ax_resolution::prune_stale_unresolved_refs(queries).await?;
@@ -532,6 +585,11 @@ async fn finalize_after_extract(
         .await?;
     queries
         .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
+        .await?;
+    let docs_indexed =
+        ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
+    queries
+        .set_metadata("docs_indexed", &docs_indexed.to_string())
         .await?;
     db.run_maintenance().await?;
     queries

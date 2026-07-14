@@ -45,7 +45,7 @@ Creates `.ax/`, builds the knowledge graph, installs git hooks (sync, ship evalu
 ax web --open
 ```
 
-![Command Center — pipeline, savings, memory, and SonarQube in one dashboard](/screenshots/cc-ship-full.png)
+![Command Center — completed quality gate pipeline with Index, TIA, Tests, Sonar, and Policy steps](/screenshots/cc-ship-full.png)
 
 Browse the graph, edit policy, view token savings, and manage SonarQube from the local dashboard.
 

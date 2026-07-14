@@ -37,16 +37,20 @@ impl AzureDevOpsProvider {
 
 #[derive(Serialize)]
 struct AdoPrCreate {
-    sourceRefName: String,
-    targetRefName: String,
+    #[serde(rename = "sourceRefName")]
+    source_ref_name: String,
+    #[serde(rename = "targetRefName")]
+    target_ref_name: String,
     title: String,
     description: String,
-    isDraft: bool,
+    #[serde(rename = "isDraft")]
+    is_draft: bool,
 }
 
 #[derive(Deserialize)]
 struct AdoPrResponse {
-    pullRequestId: u64,
+    #[serde(rename = "pullRequestId")]
+    pull_request_id: u64,
     url: String,
 }
 
@@ -55,11 +59,11 @@ impl PrProvider for AzureDevOpsProvider {
     async fn create_draft_pr(&self, req: DraftPrRequest) -> Result<PrRef, String> {
         let url = format!("{}/pullrequests?api-version=7.1", self.base_url());
         let body = AdoPrCreate {
-            sourceRefName: format!("refs/heads/{}", req.head_branch),
-            targetRefName: format!("refs/heads/{}", req.base_branch),
+            source_ref_name: format!("refs/heads/{}", req.head_branch),
+            target_ref_name: format!("refs/heads/{}", req.base_branch),
             title: req.title,
             description: req.body,
-            isDraft: req.draft,
+            is_draft: req.draft,
         };
         let resp = self
             .client
@@ -75,7 +79,7 @@ impl PrProvider for AzureDevOpsProvider {
         }
         let pr: AdoPrResponse = resp.json().await.map_err(|e| e.to_string())?;
         Ok(PrRef {
-            number: pr.pullRequestId,
+            number: pr.pull_request_id,
             url: pr.url,
             provider: "azure_devops".into(),
         })

@@ -11,6 +11,14 @@ Cargo uses `target-dev/` (see `.cargo/config.toml`), **not** `target/debug/`. Ne
 
 After any `crates/ax-cli/` change: run `.\scripts\reinstall-cli.ps1` and **verify all ax.exe copies are identical** before handoff (see below).
 
+**Command Center web UI (`crates/ax-web/web-ui/`):** `ax web` embeds `web-ui/dist` at **compile time**. `npm run build` alone does **not** update localhost:7070. After any web-ui change, run:
+
+```powershell
+.\scripts\rebuild-web.ps1
+```
+
+This rebuilds `ax-cli` (cargo runs `npm run build` via `ax-web/build.rs`), syncs all three `ax.exe` copies, restarts `ax web`, and verifies the served JS bundle matches `dist/index.html`. Never hand off web-ui work without this check.
+
 **Local release (no GitHub):** `.\scripts\ship-local.ps1` then `ax upgrade --local`.
 
 ## Multi-location binary sync (ALWAYS check)

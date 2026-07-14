@@ -80,7 +80,6 @@ pub async fn find_affected_routes(
     pool: &SqlitePool,
     dirty_nodes: &[ax_git::DirtyNode],
 ) -> Result<Vec<String>, ax_utils::errors::AxError> {
-    let queries = QueryBuilder::new(pool.clone());
     let traverser = GraphTraverser::new(QueryBuilder::new(pool.clone()));
     let mut routes = std::collections::HashSet::new();
 
@@ -107,43 +106,4 @@ pub async fn find_affected_routes(
         }
     }
     Ok(routes.into_iter().collect())
-}
-
-/// Index inline business rule comments from source into SQLite.
-pub async fn index_business_rules_from_nodes(
-    pool: &SqlitePool,
-    nodes: &[ax_types::Node],
-) -> Result<u32, ax_utils::errors::AxError> {
-    let mut count = 0u32;
-    for node in nodes {
-        if let Some(doc) = &node.docstring {
-            if doc.contains("BUSINESS RULE:") || doc.contains("@ax-rule:") {
-                let rule_text = doc
-                    .lines()
-                    .find(|l| l.contains("BUSINESS RULE:") || l.contains("@ax-rule:"))
-                    .unwrap_or(doc.as_str())
-                    .to_string();
-                let id = format!("br-{}", node.id);
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
-                sqlx::query(
-                    "INSERT OR REPLACE INTO business_rules (id, node_id, rule_text, severity, file_path, line, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&id)
-                .bind(&node.id)
-                .bind(&rule_text)
-                .bind("warning")
-                .bind(&node.file_path)
-                .bind(node.start_line)
-                .bind(now)
-                .execute(pool)
-                .await
-                .map_err(|e| ax_utils::errors::AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string())))?;
-                count += 1;
-            }
-        }
-    }
-    Ok(count)
 }

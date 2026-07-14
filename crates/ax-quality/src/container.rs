@@ -701,32 +701,6 @@ fn stop_sonar_stack(runtime: ContainerRuntime, sonar_name: &str, log: &InstallLo
     Ok(())
 }
 
-pub fn pull_image(runtime: ContainerRuntime, image: &str) -> Result<(), String> {
-    info!("Pulling {image} via {}", runtime.cli());
-    let status = Command::new(runtime.cli())
-        .args(["pull", image])
-        .status()
-        .map_err(|e| format!("{} pull failed: {e}", runtime.cli()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{} pull {image} failed", runtime.cli()))
-    }
-}
-
-pub fn create_sonar_container(
-    runtime: ContainerRuntime,
-    name: &str,
-    host_port: u16,
-) -> Result<(), String> {
-    let log = InstallLog::new();
-    if find_container(runtime, name).is_some() {
-        return start_sonar_stack(runtime, name, &log);
-    }
-    let db_name = db_container_name(name);
-    create_sonar_app_container(runtime, name, &db_name, host_port, &log)
-}
-
 pub async fn ensure_sonar_live(
     host: &str,
     container_name: &str,

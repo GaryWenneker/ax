@@ -1,6 +1,8 @@
 //! `ax upgrade` — non-interactive self-update from GitHub Releases (getax redirect fallback).
 
-use std::io::{Read, Write};
+use std::io::Write;
+#[cfg(not(windows))]
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::ui::{info_line, ok_line, SpinnerGuard};
@@ -258,6 +260,7 @@ fn download_bytes(url: &str, token: Option<&str>) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())
 }
 
+#[cfg(not(windows))]
 fn extract_from_targz(bytes: &[u8], inner_path: &str) -> Result<Vec<u8>, String> {
     use flate2::read::GzDecoder;
     use tar::Archive;
@@ -312,7 +315,6 @@ pub fn run_upgrade_apply(parent_pid: u32, staging: PathBuf, dest: PathBuf) -> Re
 
 #[cfg(windows)]
 fn windows_no_window() -> u32 {
-    use std::os::windows::process::CommandExt;
     0x0800_0000 // CREATE_NO_WINDOW
 }
 

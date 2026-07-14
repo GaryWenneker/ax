@@ -149,6 +149,33 @@ enum Commands {
     /// Impact radius
     #[command(long_about = help_text::IMPACT_LONG)]
     Impact { symbol: String },
+    /// Graph insights: communities, god nodes, surprising connections
+    Insights {
+        path: Option<String>,
+        #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
+        resolution: f64,
+        #[arg(long, default_value_t = 20, help = "Max god nodes to show")]
+        god_limit: usize,
+        #[arg(long, default_value_t = 20, help = "Max surprising connections to show")]
+        surprising_limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Architecture report (AX_REPORT.md) from graph insights
+    Report {
+        path: Option<String>,
+        #[arg(long, help = "Output file (default: AX_REPORT.md at project root)")]
+        out: Option<String>,
+        #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
+        resolution: f64,
+        #[arg(long, help = "Print the report to stdout instead of writing a file")]
+        stdout: bool,
+    },
+    /// Export the graph to a portable format
+    Export {
+        #[command(subcommand)]
+        action: ExportCommands,
+    },
     /// Git diff symbol-level blast radius vs base branch
     Diff {
         #[arg(long, default_value = "main")]
@@ -305,6 +332,20 @@ enum SavingsAction {
         cursor: bool,
         #[arg(long, help = "Import both Claude and Cursor logs")]
         all: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExportCommands {
+    /// Self-contained interactive HTML graph (portable, no server needed)
+    GraphHtml {
+        path: Option<String>,
+        #[arg(long, help = "Output file (default: graph.html at project root)")]
+        out: Option<String>,
+        #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
+        resolution: f64,
+        #[arg(long, default_value_t = 3000, help = "Max nodes to include (top by degree)")]
+        limit: usize,
     },
 }
 
@@ -576,6 +617,17 @@ async fn async_main() {
         Some(Commands::Callers { symbol }) => commands::callers::run(symbol).await,
         Some(Commands::Callees { symbol }) => commands::callees::run(symbol).await,
         Some(Commands::Impact { symbol }) => commands::impact::run(symbol).await,
+        Some(Commands::Insights { path, resolution, god_limit, surprising_limit, json }) => {
+            commands::insights::run(path, resolution, god_limit, surprising_limit, json).await
+        }
+        Some(Commands::Report { path, out, resolution, stdout }) => {
+            commands::report::run(path, out, resolution, stdout).await
+        }
+        Some(Commands::Export { action }) => match action {
+            ExportCommands::GraphHtml { path, out, resolution, limit } => {
+                commands::export::run_graph_html(path, out, resolution, limit).await
+            }
+        },
         Some(Commands::Affected {
             files,
             stdin,
@@ -787,6 +839,9 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Callers { .. }) => Some("callers".into()),
         Some(Commands::Callees { .. }) => Some("callees".into()),
         Some(Commands::Impact { .. }) => Some("impact".into()),
+        Some(Commands::Insights { .. }) => Some("insights".into()),
+        Some(Commands::Report { .. }) => Some("report".into()),
+        Some(Commands::Export { .. }) => Some("export".into()),
         Some(Commands::Affected { .. }) => Some("affected".into()),
         Some(Commands::Diff { .. }) => Some("diff".into()),
         Some(Commands::TestImpact { .. }) => Some("test-impact".into()),

@@ -3,6 +3,105 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+// ---- Graph (force-directed viz) -------------------------------------------
+
+#[derive(Serialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub file_path: String,
+    pub community_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub community_label: Option<String>,
+    pub degree: i64,
+}
+
+#[derive(Serialize)]
+pub struct GraphEdge {
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct GraphPayload {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    pub total_nodes: i64,
+    pub truncated: bool,
+}
+
+/// Build a force-directed graph payload: the top-`limit` nodes by degree
+/// (excluding structural `contains` edges) plus the edges between them.
+/// Community ids come from the persisted `node_communities` table.
+pub async fn get_graph(pool: &SqlitePool, limit: i64) -> anyhow::Result<GraphPayload> {
+    let total_nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes").fetch_one(pool).await?;
+
+    let node_rows = sqlx::query_as::<_, (String, String, String, String, Option<i64>, Option<String>, i64)>(
+        r#"
+        WITH deg AS (
+            SELECT id, SUM(cnt) AS degree FROM (
+                SELECT source AS id, COUNT(*) AS cnt FROM edges WHERE kind != 'contains' GROUP BY source
+                UNION ALL
+                SELECT target AS id, COUNT(*) AS cnt FROM edges WHERE kind != 'contains' GROUP BY target
+            ) GROUP BY id
+        )
+        SELECT n.id, n.name, n.kind, n.file_path,
+               nc.community_id, nc.community_label,
+               COALESCE(deg.degree, 0) AS degree
+        FROM nodes n
+        LEFT JOIN node_communities nc ON nc.node_id = n.id
+        LEFT JOIN deg ON deg.id = n.id
+        ORDER BY degree DESC, n.name ASC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    let nodes: Vec<GraphNode> = node_rows
+        .into_iter()
+        .map(|(id, name, kind, file_path, community_id, community_label, degree)| GraphNode {
+            id,
+            name,
+            kind,
+            file_path,
+            community_id: community_id.unwrap_or(-1),
+            community_label,
+            degree,
+        })
+        .collect();
+
+    let truncated = total_nodes > nodes.len() as i64;
+
+    if nodes.is_empty() {
+        return Ok(GraphPayload { nodes, edges: Vec::new(), total_nodes, truncated });
+    }
+
+    let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+
+    // Fetch candidate edges, then keep only those whose endpoints are both in
+    // the selected node set. Binding thousands of ids is awkward, so we filter
+    // in Rust over the (already capped) semantic edge set.
+    let edge_rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        "SELECT source, target, kind, confidence FROM edges WHERE kind != 'contains'",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let edges: Vec<GraphEdge> = edge_rows
+        .into_iter()
+        .filter(|(s, t, _, _)| id_set.contains(s.as_str()) && id_set.contains(t.as_str()))
+        .map(|(source, target, kind, confidence)| GraphEdge { source, target, kind, confidence })
+        .collect();
+
+    Ok(GraphPayload { nodes, edges, total_nodes, truncated })
+}
+
 // ---- Stats ----------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -209,6 +308,8 @@ pub struct EdgeNode {
     pub file_path: String,
     pub start_line: i64,
     pub edge_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_confidence: Option<String>,
 }
 
 pub async fn get_node_detail(pool: &SqlitePool, id: &str) -> anyhow::Result<Option<NodeDetail>> {
@@ -230,8 +331,8 @@ pub async fn get_node_detail(pool: &SqlitePool, id: &str) -> anyhow::Result<Opti
         is_exported: r.11, is_async: r.12,
     };
 
-    let callers = sqlx::query_as::<_, (String, String, String, String, i64, String)>(
-        r#"SELECT n.id, n.kind, n.name, n.file_path, n.start_line, e.kind
+    let callers = sqlx::query_as::<_, (String, String, String, String, i64, String, Option<String>)>(
+        r#"SELECT n.id, n.kind, n.name, n.file_path, n.start_line, e.kind, e.confidence
            FROM edges e JOIN nodes n ON n.id = e.source
            WHERE e.target = ?
            ORDER BY n.name LIMIT 50"#,
@@ -240,11 +341,11 @@ pub async fn get_node_detail(pool: &SqlitePool, id: &str) -> anyhow::Result<Opti
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| EdgeNode { id: r.0, kind: r.1, name: r.2, file_path: r.3, start_line: r.4, edge_kind: r.5 })
+    .map(|r| EdgeNode { id: r.0, kind: r.1, name: r.2, file_path: r.3, start_line: r.4, edge_kind: r.5, edge_confidence: r.6 })
     .collect();
 
-    let callees = sqlx::query_as::<_, (String, String, String, String, i64, String)>(
-        r#"SELECT n.id, n.kind, n.name, n.file_path, n.start_line, e.kind
+    let callees = sqlx::query_as::<_, (String, String, String, String, i64, String, Option<String>)>(
+        r#"SELECT n.id, n.kind, n.name, n.file_path, n.start_line, e.kind, e.confidence
            FROM edges e JOIN nodes n ON n.id = e.target
            WHERE e.source = ?
            ORDER BY n.name LIMIT 50"#,
@@ -253,7 +354,7 @@ pub async fn get_node_detail(pool: &SqlitePool, id: &str) -> anyhow::Result<Opti
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| EdgeNode { id: r.0, kind: r.1, name: r.2, file_path: r.3, start_line: r.4, edge_kind: r.5 })
+    .map(|r| EdgeNode { id: r.0, kind: r.1, name: r.2, file_path: r.3, start_line: r.4, edge_kind: r.5, edge_confidence: r.6 })
     .collect();
 
     Ok(Some(NodeDetail { node, callers, callees }))

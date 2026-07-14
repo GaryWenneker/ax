@@ -199,3 +199,56 @@ export function finalizeSonarProjectSteps(
     p.status === 'pending' ? { ...p, status: 'skipped' as const } : p,
   );
 }
+
+export type SonarProjectCardVariant =
+  | 'ok'
+  | 'missing'
+  | 'live'
+  | 'queued'
+  | 'failed'
+  | 'skipped';
+
+export interface SonarProjectCardStatus {
+  label: string;
+  variant: SonarProjectCardVariant;
+  scanning: boolean;
+}
+
+/** Align SonarQube project cards with pipeline per-repo scan state. */
+export function resolveSonarProjectCardStatus(
+  exists: boolean,
+  pipeline: SonarProjectStep | undefined,
+  options: { evalActive: boolean; liveSonarKey: string | null; projectKey: string },
+): SonarProjectCardStatus {
+  const { evalActive, liveSonarKey, projectKey } = options;
+  const scanning =
+    liveSonarKey === projectKey || pipeline?.status === 'active';
+
+  if (scanning) {
+    return { label: 'Scanning…', variant: 'live', scanning: true };
+  }
+
+  if (pipeline) {
+    switch (pipeline.status) {
+      case 'passed':
+        return { label: 'Scanned', variant: 'ok', scanning: false };
+      case 'failed':
+        return { label: 'Failed', variant: 'failed', scanning: false };
+      case 'skipped':
+        return { label: 'Skipped', variant: 'skipped', scanning: false };
+      case 'pending':
+        if (evalActive) {
+          return { label: 'Queued', variant: 'queued', scanning: false };
+        }
+        break;
+      case 'active':
+        return { label: 'Scanning…', variant: 'live', scanning: true };
+    }
+  }
+
+  if (!exists) {
+    return { label: 'Missing', variant: 'missing', scanning: false };
+  }
+
+  return { label: 'Ready', variant: 'ok', scanning: false };
+}

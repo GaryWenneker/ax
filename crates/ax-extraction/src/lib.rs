@@ -5,6 +5,7 @@ pub mod function_ref;
 pub mod generated_detection;
 pub mod grammars;
 pub mod languages;
+pub mod markdown;
 pub mod orchestrator;
 pub mod parse_pool;
 pub mod test_mapper;

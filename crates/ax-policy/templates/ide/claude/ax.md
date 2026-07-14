@@ -27,6 +27,8 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Code architecture, how something works | `ax_explore`, `ax_search`, `ax_node` |
 | Impact analysis before changes | `ax_impact`, `ax_callers`, `ax_callees` |
 | Which tests are affected by changes | `ax_affected` |
+| Architecture overview: communities, god nodes, surprising links | `ax_insights` |
+| Full Markdown architecture report | `ax_report` |
 | Pre-write policy guard (CRITICAL rules) | `ax_guard` |
 | Capture durable rules | `ax_policy_capture` |
 | Re-index after large changes | `ax_index` |

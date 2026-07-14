@@ -47,6 +47,7 @@ mod tests {
                 line: None,
                 column: None,
                 provenance: Some(Provenance::Heuristic),
+                confidence: Some(ax_types::EdgeConfidence::Inferred),
             },
             Edge {
                 source: "b".into(),
@@ -56,6 +57,7 @@ mod tests {
                 line: None,
                 column: None,
                 provenance: Some(Provenance::Heuristic),
+                confidence: Some(ax_types::EdgeConfidence::Inferred),
             },
         ];
         assert!(call_graph_has_cycle(&edges));
@@ -72,6 +74,7 @@ mod tests {
                 line: None,
                 column: None,
                 provenance: Some(Provenance::Heuristic),
+                confidence: Some(ax_types::EdgeConfidence::Inferred),
             },
             Edge {
                 source: "b".into(),
@@ -81,6 +84,7 @@ mod tests {
                 line: None,
                 column: None,
                 provenance: Some(Provenance::Heuristic),
+                confidence: Some(ax_types::EdgeConfidence::Inferred),
             },
         ];
         assert!(!call_graph_has_cycle(&edges));

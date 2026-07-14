@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use ax_types::{
-    Edge, EdgeKind, FileRecord, GraphStats, Language, Node, NodeKind, Provenance, ReferenceKind,
-    SearchOptions, SearchResult, UnresolvedReference, Visibility,
+    Edge, EdgeConfidence, EdgeKind, FileRecord, GraphStats, Language, Node, NodeKind, Provenance,
+    ReferenceKind, SearchOptions, SearchResult, UnresolvedReference, Visibility,
 };
 use sqlx::SqlitePool;
 
@@ -80,8 +80,8 @@ impl QueryBuilder {
     pub async fn upsert_edge(&self, edge: &Edge) -> Result<(), AxError> {
         sqlx::query(
             r#"
-            INSERT OR IGNORE INTO edges (source, target, kind, metadata, line, col, provenance)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO edges (source, target, kind, metadata, line, col, provenance, confidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&edge.source)
@@ -95,6 +95,7 @@ impl QueryBuilder {
             Provenance::Scip => "scip",
             Provenance::Heuristic => "heuristic",
         }))
+        .bind(edge_confidence_str(edge))
         .execute(&self.pool)
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -179,8 +180,8 @@ impl QueryBuilder {
         if edges.is_empty() {
             return Ok(());
         }
-        // 7 columns per row; 1000 rows = 7,000 binds per statement.
-        const CHUNK: usize = 1000;
+        // 8 columns per row; 875 rows = 7,000 binds per statement.
+        const CHUNK: usize = 875;
         let mut tx = self
             .pool
             .begin()
@@ -188,7 +189,7 @@ impl QueryBuilder {
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         for chunk in edges.chunks(CHUNK) {
             let mut qb = sqlx::QueryBuilder::new(
-                "INSERT OR IGNORE INTO edges (source, target, kind, metadata, line, col, provenance) ",
+                "INSERT OR IGNORE INTO edges (source, target, kind, metadata, line, col, provenance, confidence) ",
             );
             qb.push_values(chunk, |mut b, edge| {
                 b.push_bind(&edge.source)
@@ -201,7 +202,8 @@ impl QueryBuilder {
                         Provenance::TreeSitter => "tree-sitter",
                         Provenance::Scip => "scip",
                         Provenance::Heuristic => "heuristic",
-                    }));
+                    }))
+                    .push_bind(edge_confidence_str(edge));
             });
             qb.build()
                 .execute(&mut *tx)
@@ -334,7 +336,7 @@ impl QueryBuilder {
         let rows = if let Some(kinds) = kinds {
             let placeholders: Vec<String> = kinds.iter().map(|k| k.as_str().to_string()).collect();
             let sql = format!(
-                "SELECT source, target, kind, metadata, line, col, provenance FROM edges WHERE source = ? AND kind IN ({})",
+                "SELECT source, target, kind, metadata, line, col, provenance, confidence FROM edges WHERE source = ? AND kind IN ({})",
                 placeholders.iter().map(|_| "?").collect::<Vec<_>>().join(",")
             );
             let mut query = sqlx::query_as::<_, EdgeRow>(&sql).bind(node_id);
@@ -347,7 +349,7 @@ impl QueryBuilder {
                 .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?
         } else {
             sqlx::query_as::<_, EdgeRow>(
-                "SELECT source, target, kind, metadata, line, col, provenance FROM edges WHERE source = ?",
+                "SELECT source, target, kind, metadata, line, col, provenance, confidence FROM edges WHERE source = ?",
             )
             .bind(node_id)
             .fetch_all(&self.pool)
@@ -359,13 +361,115 @@ impl QueryBuilder {
 
     pub async fn get_incoming_edges(&self, node_id: &str) -> Result<Vec<Edge>, AxError> {
         let rows = sqlx::query_as::<_, EdgeRow>(
-            "SELECT source, target, kind, metadata, line, col, provenance FROM edges WHERE target = ?",
+            "SELECT source, target, kind, metadata, line, col, provenance, confidence FROM edges WHERE target = ?",
         )
         .bind(node_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         Ok(rows.into_iter().map(|r| r.into_edge()).collect())
+    }
+
+    /// Fetch every edge in the graph. Used by whole-graph analysis
+    /// (community detection, god-node ranking).
+    pub async fn get_all_edges(&self) -> Result<Vec<Edge>, AxError> {
+        let rows = sqlx::query_as::<_, EdgeRow>(
+            "SELECT source, target, kind, metadata, line, col, provenance, confidence FROM edges",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        Ok(rows.into_iter().map(|r| r.into_edge()).collect())
+    }
+
+    /// Fetch every node in the graph. Used by whole-graph analysis.
+    pub async fn get_all_nodes(&self) -> Result<Vec<Node>, AxError> {
+        let rows = sqlx::query_as::<_, NodeRow>("SELECT * FROM nodes")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        Ok(rows.into_iter().map(|r| r.into_node()).collect())
+    }
+
+    /// Replace all stored community assignments in a single transaction.
+    pub async fn replace_node_communities(
+        &self,
+        assignments: &[(String, i64, Option<String>)],
+    ) -> Result<(), AxError> {
+        let now = now_ms();
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        sqlx::query("DELETE FROM node_communities")
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        if !assignments.is_empty() {
+            const CHUNK: usize = 800;
+            for chunk in assignments.chunks(CHUNK) {
+                let mut qb = sqlx::QueryBuilder::new(
+                    "INSERT OR REPLACE INTO node_communities (node_id, community_id, community_label, computed_at) ",
+                );
+                qb.push_values(chunk, |mut b, (node_id, community_id, label)| {
+                    b.push_bind(node_id)
+                        .push_bind(community_id)
+                        .push_bind(label)
+                        .push_bind(now);
+                });
+                qb.build().execute(&mut *tx).await.map_err(db_err)?;
+            }
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(())
+    }
+
+    /// All stored community assignments as (node_id, community_id, label).
+    pub async fn get_node_communities(
+        &self,
+    ) -> Result<Vec<(String, i64, Option<String>)>, AxError> {
+        let rows = sqlx::query_as::<_, (String, i64, Option<String>)>(
+            "SELECT node_id, community_id, community_label FROM node_communities",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows)
+    }
+
+    /// Remove all documentation nodes (edges cascade via FK). Used to refresh
+    /// the markdown/doc layer on each index pass.
+    pub async fn delete_doc_nodes(&self) -> Result<(), AxError> {
+        sqlx::query("DELETE FROM nodes WHERE kind = 'doc'")
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// Node ids whose exact `qualified_name` or `name` equals `symbol`
+    /// (excluding doc nodes). Used to link doc mentions to code symbols.
+    pub async fn get_node_ids_by_symbol(&self, symbol: &str, limit: i64) -> Result<Vec<String>, AxError> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM nodes WHERE kind != 'doc' AND (qualified_name = ? OR name = ?) LIMIT ?",
+        )
+        .bind(symbol)
+        .bind(symbol)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows)
+    }
+
+    /// When communities were last computed (max computed_at), if ever.
+    pub async fn communities_computed_at(&self) -> Result<Option<i64>, AxError> {
+        let v: Option<i64> = sqlx::query_scalar("SELECT MAX(computed_at) FROM node_communities")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(v)
     }
 
     pub async fn search_nodes(&self, query: &str, opts: &SearchOptions) -> Result<Vec<SearchResult>, AxError> {
@@ -1012,10 +1116,24 @@ struct EdgeRow {
     line: Option<i32>,
     col: Option<i32>,
     provenance: Option<String>,
+    confidence: Option<String>,
 }
 
 impl EdgeRow {
     fn into_edge(self) -> Edge {
+        let provenance = self.provenance.as_ref().and_then(|p| match p.as_str() {
+            "tree-sitter" => Some(Provenance::TreeSitter),
+            "scip" => Some(Provenance::Scip),
+            "heuristic" => Some(Provenance::Heuristic),
+            _ => None,
+        });
+        // Prefer the stored value; older rows written before v11 fall back to a
+        // provenance-derived confidence so downstream consumers always see one.
+        let confidence = self
+            .confidence
+            .as_ref()
+            .and_then(|c| EdgeConfidence::from_str(c))
+            .or_else(|| EdgeConfidence::from_provenance(provenance));
         Edge {
             source: self.source,
             target: self.target,
@@ -1023,14 +1141,18 @@ impl EdgeRow {
             metadata: self.metadata.and_then(|m| serde_json::from_str(&m).ok()),
             line: self.line,
             column: self.col,
-            provenance: self.provenance.as_ref().and_then(|p| match p.as_str() {
-                "tree-sitter" => Some(Provenance::TreeSitter),
-                "scip" => Some(Provenance::Scip),
-                "heuristic" => Some(Provenance::Heuristic),
-                _ => None,
-            }),
+            provenance,
+            confidence,
         }
     }
+}
+
+/// Serialize an edge's confidence for storage, deriving from provenance when
+/// the edge itself did not carry an explicit value.
+fn edge_confidence_str(edge: &Edge) -> Option<&'static str> {
+    edge.confidence
+        .or_else(|| EdgeConfidence::from_provenance(edge.provenance))
+        .map(|c| c.as_str())
 }
 
 #[derive(sqlx::FromRow)]

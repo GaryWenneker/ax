@@ -13,7 +13,6 @@ pub struct Glyphs {
     pub spinner_ticks: &'static [&'static str],
     pub bar_filled: &'static str,
     pub bar_empty: &'static str,
-    pub rail: &'static str,
 }
 
 const UNICODE: Glyphs = Glyphs {
@@ -24,7 +23,6 @@ const UNICODE: Glyphs = Glyphs {
     spinner_ticks: &["\u{28CB}", "\u{28FB}", "\u{28F9}", "\u{28F8}", "\u{28FC}", "\u{28F4}", "\u{28F6}", "\u{28F7}", "\u{28F1}", "\u{28CF}"],
     bar_filled: "\u{2588}",
     bar_empty: "\u{2591}",
-    rail: "\u{2502}",
 };
 
 const ASCII: Glyphs = Glyphs {
@@ -35,7 +33,6 @@ const ASCII: Glyphs = Glyphs {
     spinner_ticks: &[".", "*", "+", "x", "o", "O"],
     bar_filled: "#",
     bar_empty: "-",
-    rail: "|",
 };
 
 /// @clack/prompts tree + note glyphs (install / uninstall UI).

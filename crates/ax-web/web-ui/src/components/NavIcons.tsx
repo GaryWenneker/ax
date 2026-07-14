@@ -1,12 +1,13 @@
 import Codicon from './Codicon';
 
-type NavId = 'stats' | 'nodes' | 'files' | 'search' | 'memory' | 'savings' | 'ship' | 'sonar' | 'agent' | 'settings' | 'policy-rules' | 'policy-skills';
+type NavId = 'stats' | 'nodes' | 'graph' | 'files' | 'search' | 'memory' | 'savings' | 'ship' | 'sonar' | 'agent' | 'settings' | 'policy-rules' | 'policy-skills';
 
 export type { NavId };
 
 const NAV_CODICONS: Record<NavId, string> = {
   stats: 'graph',
   nodes: 'symbol-class',
+  graph: 'type-hierarchy-sub',
   files: 'files',
   search: 'search',
   memory: 'lightbulb',
@@ -30,6 +31,7 @@ export function NavIcon({ id }: { id: NavId }) {
 export const PAGE_LABELS: Record<string, string> = {
   stats: 'Stats',
   nodes: 'Nodes',
+  graph: 'Graph',
   files: 'Files',
   search: 'Search',
   memory: 'Memory',

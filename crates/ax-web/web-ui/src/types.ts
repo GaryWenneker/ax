@@ -37,6 +37,7 @@ export interface EdgeNode {
   file_path: string;
   start_line: number;
   edge_kind: string;
+  edge_confidence?: string;
 }
 
 export interface NodeDetailRow {

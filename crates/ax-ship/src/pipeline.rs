@@ -176,10 +176,14 @@ impl ShipPipeline {
             logger.step_fail("tests", tests_detail.as_deref().unwrap_or("tests failed"));
         }
 
-        let repo_names: Vec<String> = git_roots
-            .iter()
-            .filter_map(|p| p.file_name().and_then(|n| n.to_str().map(str::to_string)))
-            .collect();
+        let repo_names: Vec<String> = if git_roots.len() == 1 && git_roots[0] == self.project_root {
+            Vec::new()
+        } else {
+            git_roots
+                .iter()
+                .filter_map(|p| p.file_name().and_then(|n| n.to_str().map(str::to_string)))
+                .collect()
+        };
 
         self.step_start("sonar");
         logger.step_start("sonar");
@@ -251,7 +255,7 @@ impl ShipPipeline {
                 logger.step_ok("sonar", Some("Scan completed"));
             }
             let sonar_result = sonar
-                .fetch_quality_gate(&self.project_root, &repo_names)
+                .fetch_quality_gate_snapshot(&self.project_root, &repo_names)
                 .await
                 .ok();
             let (status, detail) = if !scan_ok {

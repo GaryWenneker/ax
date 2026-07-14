@@ -3,7 +3,7 @@ title: Introduction
 description: What ax is — knowledge graph, memory vault, policy engine, and Command Center for AI coding agents.
 ---
 
-![ax Command Center — quality gate pipeline with live SSE updates](/screenshots/cc-ship-full.png)
+![ax Command Center — completed quality gate with pipeline steps, branch overview, and SonarQube status](/screenshots/cc-ship-full.png)
 
 **ax** is **local-first intelligence for AI coding agents** — written in Rust, installed as a single binary, with no cloud index and no API keys.
 

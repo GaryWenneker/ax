@@ -57,6 +57,7 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/sonar/regenerate-token", post(handle_sonar_regenerate_token))
         .route("/sonar/scan", post(handle_sonar_scan))
         .route("/sonar/scan/stream", post(handle_sonar_scan_stream))
+        .route("/sonar/exclude", post(handle_sonar_exclude))
         .route("/sonar/ui/info", get(crate::sonar_proxy::handle_sonar_ui_info))
         .route("/sonar/ui", axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy))
         .route("/sonar/ui/", axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy))
@@ -536,6 +537,40 @@ struct SonarScanBody {
     project_key: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct SonarExcludeBody {
+    repo: String,
+    excluded: bool,
+}
+
+async fn handle_sonar_exclude(
+    State(hub): State<WebHub>,
+    Json(body): Json<SonarExcludeBody>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return readonly_err().into_response();
+    }
+    let ctx = ship_ctx(&hub).await;
+    let mut config = ctx.daemon.config().await;
+    let repo = body.repo.trim().to_string();
+    if repo.is_empty() {
+        return Json(serde_json::json!({ "ok": false, "error": "repo name required" })).into_response();
+    }
+    if body.excluded {
+        if !config.sonar.exclude_repos.contains(&repo) {
+            config.sonar.exclude_repos.push(repo);
+            config.sonar.exclude_repos.sort();
+        }
+    } else {
+        config.sonar.exclude_repos.retain(|r| r != &body.repo);
+    }
+    let exclude_repos = config.sonar.exclude_repos.clone();
+    if let Err(e) = ctx.daemon.set_config(config).await {
+        return Json(serde_json::json!({ "ok": false, "error": e })).into_response();
+    }
+    Json(serde_json::json!({ "ok": true, "exclude_repos": exclude_repos })).into_response()
+}
+
 async fn handle_sonar_scan_stream(
     State(hub): State<WebHub>,
     body: Option<Json<SonarScanBody>>,
@@ -888,11 +923,12 @@ async fn scan_sonar_with_log(
 ) -> Result<ax_quality::QualityGateResult, String> {
     config.sonar.enabled = true;
     let mut repo_names = sonar_repo_names(config, project_root).await;
+    let workspace_repo_count = repo_names.len();
     if let Some(key) = project_key.filter(|k| !k.trim().is_empty()) {
         let bootstrap_cfg =
             SonarBootstrapConfig::resolve_for_project(&config.sonar, project_root);
         let workspace_key = ax_quality::workspace_sonar_key(&bootstrap_cfg.project_key, project_root);
-        let multi_repo = repo_names.len() > 1;
+        let multi_repo = workspace_repo_count > 1;
         repo_names.retain(|repo| {
             ax_quality::canonical_repo_project_key(&workspace_key, repo, multi_repo) == key
         });
@@ -921,7 +957,7 @@ async fn scan_sonar_with_log(
     let sonar_cfg = config.sonar.clone();
     tokio::task::spawn_blocking(move || {
         let c = SonarClient::new(sonar_cfg);
-        c.run_full_scan_with_log(&scan_root, &scan_repos, &scan_log)
+        c.run_full_scan_with_log_multi(&scan_root, &scan_repos, &scan_log, workspace_repo_count)
     })
     .await
     .map_err(|e| format!("scan task panicked: {e}"))??;
@@ -969,12 +1005,4 @@ fn parse_host_port(host: &str) -> Option<u16> {
         .split(':')
         .nth(1)
         .and_then(|p| p.parse().ok())
-}
-
-pub async fn start_watcher(state: ShipApiState) {
-    let root = state.daemon.project_root.clone();
-    let bus = state.daemon.bus.clone();
-    let _ = ax_ship::ShipDaemon::new(root.clone()).run_watch().await;
-    let _ = state.daemon.evaluate().await;
-    let _ = bus;
 }

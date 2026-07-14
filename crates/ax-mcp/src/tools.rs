@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
 use ax_context::format_explore_text;
-use ax_policy::{finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, PolicyStore, RuleFrontmatter};
+use ax_policy::{detect_directive, finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, PolicyStore, RuleFrontmatter};
 use ax_reasoning::{maybe_synthesize_explore, ExploreOffloadMeta};
 use ax_types::{BuildContextOptions, ExploreOptions, SearchOptions, TaskInput};
 use serde_json::{json, Value};
@@ -99,6 +99,8 @@ impl ToolHandler {
             }
             "ax_remember" => remember(ax, params).await,
             "ax_recall" => recall(ax, params).await,
+            "ax_insights" => insights(ax, params).await,
+            "ax_report" => report(ax, params).await,
             _ => Err(format!("unknown tool: {}", name)),
         }
     }
@@ -173,6 +175,19 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         }
     }
 
+    let has_directive = detect_directive(&prompt);
+    if has_directive && !inject.is_empty() {
+        inject.push('\n');
+    }
+    if has_directive {
+        inject.push_str("<ax_capture_hint>Directive detected — call ax_policy_capture({ action: \"propose\", prompt }), ask each question in questions[], then save only after explicit yes.</ax_capture_hint>");
+    }
+
+    let mut instruction = "Apply CRITICAL rules before editing. If a skill matched, follow its workflow.".to_string();
+    if has_directive {
+        instruction.push_str(" DIRECTIVE DETECTED in prompt — call ax_policy_capture({ action: \"propose\", prompt }) to capture it as a durable rule.");
+    }
+
     Ok(json!({
         "policyStatus": meta.policy_status,
         "matchedRules": meta.matched_rules,
@@ -180,11 +195,12 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "matchedMemories": memories.len(),
         "guardRequired": meta.guard_required,
         "mode": meta.mode,
+        "directiveDetected": has_directive,
         "rules": result.rules,
         "skills": result.skills,
         "memories": memories,
         "inject": inject,
-        "instruction": "Apply CRITICAL rules before editing. If a skill matched, follow its workflow.",
+        "instruction": instruction,
     }))
 }
 
@@ -237,6 +253,42 @@ async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "matches": matches,
         "inject": text,
     }))
+}
+
+async fn insights(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let resolution = params
+        .get("resolution")
+        .and_then(|v| v.as_f64())
+        .filter(|r| *r > 0.0)
+        .unwrap_or(1.0);
+    let god_limit = params
+        .get("godLimit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .clamp(1, 200) as usize;
+    let surprising_limit = params
+        .get("surprisingLimit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .clamp(1, 200) as usize;
+    let insights = ax
+        .insights(resolution, god_limit, surprising_limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!(insights))
+}
+
+async fn report(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let resolution = params
+        .get("resolution")
+        .and_then(|v| v.as_f64())
+        .filter(|r| *r > 0.0)
+        .unwrap_or(1.0);
+    let markdown = ax
+        .architecture_report(resolution)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!({ "markdown": markdown }))
 }
 
 async fn rules(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -438,7 +490,7 @@ fn explore_tool() -> Value {
 fn preflight_tool() -> Value {
     json!({
         "name": "ax_preflight",
-        "description": "MANDATORY first tool call each turn when policy is indexed. Returns matched rules, skills, and inject block with full bodies.",
+        "description": "MANDATORY first tool call each turn — never skip. Returns matched rules, skills, memories, and inject block. Also detects directive language (always/never/must/@rule) and sets directiveDetected=true with capture instructions. Pass the full user prompt.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -527,6 +579,28 @@ fn extra_tools() -> Vec<Value> {
         json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
+        json!({
+            "name": "ax_insights",
+            "description": "Whole-graph insights: Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Use to understand overall architecture before diving in.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "resolution": { "type": "number", "description": "Cluster granularity; higher = more, smaller communities (default 1.0)" },
+                    "godLimit": { "type": "number", "description": "Max god nodes to return (default 20)" },
+                    "surprisingLimit": { "type": "number", "description": "Max surprising connections to return (default 20)" }
+                }
+            }
+        }),
+        json!({
+            "name": "ax_report",
+            "description": "Generate a full Markdown architecture report (god nodes, communities, surprising connections, dead code, unresolved refs, suggested questions). Returns { markdown }.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "resolution": { "type": "number", "description": "Cluster granularity (default 1.0)" }
+                }
+            }
+        }),
         json!({ "name": "ax_affected", "description": "Affected test files", "inputSchema": { "type": "object", "properties": { "files": { "type": "array", "items": { "type": "string" } } } } }),
         json!({
             "name": "ax_remember",
@@ -594,6 +668,7 @@ pub fn server_instructions(has_policy: bool) -> String {
     s.push_str(
         "For structural questions — how code works, call paths, impact, dependencies, architecture — call ax_explore FIRST with the user's question or symbol names. Treat returned numbered source as already read; do not re-grep the same symbols.\n\n\
          Use ax_search for quick symbol lookup. Use ax_node for one symbol's file context. Use ax_callers / ax_callees / ax_impact for focused graph queries.\n\n\
+         Whole-graph understanding: call ax_insights for Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Call ax_report for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous) and Markdown docs are indexed as Doc nodes linked to the code they reference.\n\n\
          Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
          Pass projectPath when cwd is not the indexed project root (monorepos). Prefer ax over grep/read for code structure.",
     );

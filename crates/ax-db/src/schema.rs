@@ -60,10 +60,24 @@ pub fn split_statements(sql: &str) -> Vec<String> {
 pub async fn apply_initial_schema(pool: &SqlitePool) -> Result<(), AxError> {
     let schema = include_str!("schema.sql");
     for trimmed in split_statements(schema) {
-        sqlx::query(&trimmed)
-            .execute(pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(format!("schema: {e}: {trimmed}"))))?;
+        let result = sqlx::query(&trimmed).execute(pool).await;
+        if let Err(e) = result {
+            // schema.sql reflects the current end-state and runs *before*
+            // migrations. On an older database, a column a later migration adds
+            // does not exist yet, so an index/table in schema.sql that references
+            // it fails here — the owning migration creates it moments later.
+            // Tolerate those recoverable cases, mirroring `run_migrations`.
+            let msg = e.to_string();
+            if msg.contains("no such column")
+                || msg.contains("duplicate column")
+                || msg.contains("already exists")
+            {
+                continue;
+            }
+            return Err(AxError::Database(DatabaseError::new(format!(
+                "schema: {e}: {trimmed}"
+            ))));
+        }
     }
     Ok(())
 }
@@ -80,5 +94,30 @@ mod tests {
             }
         }
         assert!(stmts.len() > 10);
+    }
+
+    /// Regression: schema.sql runs before migrations. On a pre-v11 database the
+    /// `edges` table has no `confidence` column yet, so the schema's
+    /// `idx_edges_confidence` (and other forward-looking statements) must be
+    /// tolerated rather than aborting the whole open.
+    #[tokio::test]
+    async fn apply_initial_schema_tolerates_pre_migration_columns() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        // Simulate an old edges table without the confidence/line/col columns.
+        sqlx::query(
+            "CREATE TABLE edges (id INTEGER PRIMARY KEY, source TEXT, target TEXT, kind TEXT, provenance TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        apply_initial_schema(&pool)
+            .await
+            .expect("schema apply must tolerate columns a later migration will add");
     }
 }

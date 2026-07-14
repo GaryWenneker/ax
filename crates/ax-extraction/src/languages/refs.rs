@@ -621,6 +621,7 @@ pub fn emit_same_file_call_edges(result: &mut ax_types::ExtractionResult, file_p
                 line: Some(ref_.line),
                 column: Some(ref_.column),
                 provenance: Some(ax_types::Provenance::TreeSitter),
+                confidence: Some(ax_types::EdgeConfidence::Extracted),
             });
             resolved_indices.push(idx);
         }

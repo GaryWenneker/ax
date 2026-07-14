@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 10;
+pub const CURRENT_SCHEMA_VERSION: i32 = 11;
 
 struct Migration {
     version: i32,
@@ -162,6 +162,22 @@ const MIGRATIONS: &[Migration] = &[
         version: 10,
         description: "Memory embeddings for hybrid (FTS + vector) recall",
         sql: "ALTER TABLE memories ADD COLUMN embedding BLOB;",
+    },
+    Migration {
+        version: 11,
+        description: "Edge confidence taxonomy + community detection storage",
+        sql: "
+            ALTER TABLE edges ADD COLUMN confidence TEXT DEFAULT NULL;
+            CREATE INDEX IF NOT EXISTS idx_edges_confidence ON edges(confidence);
+            CREATE TABLE IF NOT EXISTS node_communities (
+                node_id TEXT PRIMARY KEY,
+                community_id INTEGER NOT NULL,
+                community_label TEXT,
+                computed_at INTEGER NOT NULL,
+                FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_node_communities_community ON node_communities(community_id);
+        ",
     },
 ];
 

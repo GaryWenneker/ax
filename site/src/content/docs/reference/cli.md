@@ -286,6 +286,65 @@ ax impact AuthService
 
 ---
 
+## Architecture insights
+
+Whole-graph analysis built on the same engine as the `ax_insights` / `ax_report` MCP tools and the Command Center **Graph** page. See [Architecture Insights](/guides/architecture-insights/).
+
+### `ax insights [path]`
+
+Detect subsystems (Leiden community detection), rank **god nodes** (most-connected concepts by in+out degree), and flag **surprising connections** (edges that cross both a community and a top-level module boundary).
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `path` | optional | cwd | Project root |
+| `--resolution` | number | `1.0` | Cluster granularity — higher yields more, smaller communities |
+| `--god-limit` | number | `20` | Max god nodes to show |
+| `--surprising-limit` | number | `20` | Max surprising connections to show |
+| `--json` | flag | — | Machine-readable JSON |
+
+Community assignments are persisted (`node_communities` table) and only recomputed after `ax index` / `ax sync` or when you re-run with a different `--resolution`.
+
+```bash
+ax insights
+ax insights --resolution 1.4 --god-limit 30
+ax insights --json
+```
+
+### `ax report [path]`
+
+Render a full Markdown architecture report: god nodes, communities with member counts, surprising connections, dead code, an unresolved-refs summary, and a set of suggested questions templated from the top god nodes and communities.
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `path` | optional | cwd | Project root |
+| `--out` | string | `AX_REPORT.md` | Output file at project root |
+| `--resolution` | number | `1.0` | Cluster granularity |
+| `--stdout` | flag | — | Print to stdout instead of writing a file |
+
+```bash
+ax report
+ax report --out docs/ARCHITECTURE.md
+ax report --stdout
+```
+
+### `ax export graph-html [path]`
+
+Export the graph as a single self-contained, interactive HTML file (inline JSON + a small force-directed renderer) — portable, no server required. Node color = community, node size = degree, docs render as distinct squares.
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `path` | optional | cwd | Project root |
+| `--out` | string | `graph.html` | Output file |
+| `--resolution` | number | `1.0` | Cluster granularity |
+| `--limit` | number | `3000` | Max nodes to include (top by degree) |
+
+```bash
+ax export graph-html
+ax export graph-html --out graph.html --limit 1500
+```
+
+---
+
 ## Memory vault
 
 See the [Memory vault guide](/guides/memory/).
@@ -836,6 +895,11 @@ ax status --json
 ax explore "auth flow" --json
 ax query UserService --kind class
 ax callers handleRequest
+
+# Architecture insights
+ax insights --json
+ax report --out AX_REPORT.md
+ax export graph-html --out graph.html
 
 # Memory
 ax remember "we picked X because Y" --kind decision

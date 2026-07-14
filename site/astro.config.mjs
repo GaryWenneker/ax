@@ -102,6 +102,7 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Indexing a Project', slug: 'guides/indexing' },
+						{ label: 'Architecture Insights', slug: 'guides/architecture-insights' },
 						{ label: 'Policy Engine', slug: 'guides/policy-engine' },
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },
 						{ label: 'Affected Tests in CI', slug: 'guides/affected-tests' },

@@ -10,7 +10,20 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 /// Maximum time a single sonar-scanner invocation may run before being killed.
-const SCAN_TIMEOUT: Duration = Duration::from_secs(300);
+const SCAN_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Directories excluded from every scan (build artifacts, deps, VCS).
+const DEFAULT_EXCLUSIONS: &str = "\
+**/target-dev/**,\
+**/target/**,\
+**/node_modules/**,\
+**/.git/**,\
+**/dist/**,\
+**/*.exe,\
+**/*.dll,\
+**/*.pdb,\
+**/*.so,\
+**/*.dylib";
 
 use crate::bootstrap::{canonical_repo_project_key, read_sonar_token, scanner_available, scanner_host_url, sonar_reachable, workspace_sonar_key};
 use crate::container::{find_container_any, resolve_runtime, start_sonar_stack, InstallLog, SONAR_SCANNER_IMAGE};
@@ -34,6 +47,9 @@ pub struct SonarConfig {
     /// SonarQube web UI password (stored in ship.toml for local dev).
     #[serde(default = "default_admin_password")]
     pub admin_password: String,
+    /// Repos to exclude from SonarQube scanning (folder names).
+    #[serde(default)]
+    pub exclude_repos: Vec<String>,
 }
 
 fn default_admin_user() -> String {
@@ -65,6 +81,7 @@ impl Default for SonarConfig {
             scan_mode: default_scan_mode(),
             admin_user: default_admin_user(),
             admin_password: default_admin_password(),
+            exclude_repos: Vec::new(),
         }
     }
 }
@@ -97,9 +114,11 @@ struct ProjectStatus {
 
 #[derive(Deserialize, Debug)]
 struct ConditionRaw {
-    metricKey: String,
+    #[serde(rename = "metricKey")]
+    metric_key: String,
     status: String,
-    actualValue: String,
+    #[serde(rename = "actualValue")]
+    actual_value: String,
 }
 
 pub struct SonarClient {
@@ -215,6 +234,17 @@ impl SonarClient {
         self.run_platform_scan_inner(project_root, repo_names, &[], true, Some(log), &mut None)
     }
 
+    /// Full scan with explicit workspace repo count (for single-repo scans from multi-repo workspaces).
+    pub fn run_full_scan_with_log_multi(
+        &self,
+        project_root: &Path,
+        repo_names: &[String],
+        log: &crate::container::InstallLog,
+        workspace_repo_count: usize,
+    ) -> Result<(), String> {
+        self.run_platform_scan_inner_counted(project_root, repo_names, &[], true, Some(log), &mut None, workspace_repo_count)
+    }
+
     fn run_platform_scan_inner(
         &self,
         project_root: &Path,
@@ -224,12 +254,25 @@ impl SonarClient {
         log: Option<&crate::container::InstallLog>,
         progress: &mut Option<&mut dyn FnMut(SonarScanProgressEvent)>,
     ) -> Result<(), String> {
+        self.run_platform_scan_inner_counted(project_root, repo_names, dirty_files, full_repo, log, progress, repo_names.len())
+    }
+
+    fn run_platform_scan_inner_counted(
+        &self,
+        project_root: &Path,
+        repo_names: &[String],
+        dirty_files: &[String],
+        full_repo: bool,
+        log: Option<&crate::container::InstallLog>,
+        progress: &mut Option<&mut dyn FnMut(SonarScanProgressEvent)>,
+        workspace_repo_count: usize,
+    ) -> Result<(), String> {
         if !self.config.enabled {
             return Ok(());
         }
         let scannable = filter_scannable_paths(project_root, dirty_files);
 
-        if scannable.is_empty() && repo_names.is_empty() {
+        if scannable.is_empty() && repo_names.is_empty() && !full_repo {
             return Ok(());
         }
 
@@ -249,7 +292,7 @@ impl SonarClient {
         } else {
             &filtered_dirty
         };
-        let targets = build_scan_targets(&workspace_key, repo_names, files_for_targets, full_repo);
+        let targets = build_scan_targets_with_count(&workspace_key, repo_names, files_for_targets, full_repo, workspace_repo_count);
         emit_skipped_repos(
             &workspace_key,
             repo_names,
@@ -364,7 +407,9 @@ impl SonarClient {
 
     fn append_scanner_auth(cmd: &mut Command, token: Option<&str>) {
         if let Some(t) = token {
-            // SonarQube 9.x: user token as sonar.login (no password).
+            // SonarScanner 6.x uses sonar.token; older versions use sonar.login.
+            // Provide both for backward compatibility.
+            cmd.arg(format!("-Dsonar.token={t}"));
             cmd.arg(format!("-Dsonar.login={t}"));
         }
     }
@@ -391,6 +436,7 @@ impl SonarClient {
             cmd.arg(format!("-Dsonar.projectKey={}", target.project_key))
                 .arg(format!("-Dsonar.sources={}", target.sources))
                 .arg(format!("-Dsonar.inclusions={}", target.inclusions))
+                .arg(format!("-Dsonar.exclusions={DEFAULT_EXCLUSIONS}"))
                 .arg(format!("-Dsonar.host.url={}", self.config.host));
             Self::append_scanner_auth(&mut cmd, token);
         }
@@ -451,6 +497,7 @@ impl SonarClient {
                 format!("-Dsonar.projectKey={}", target.project_key),
                 format!("-Dsonar.sources={}", target.sources),
                 format!("-Dsonar.inclusions={}", target.inclusions),
+                format!("-Dsonar.exclusions={DEFAULT_EXCLUSIONS}"),
                 format!("-Dsonar.host.url={host}"),
             ]);
         }
@@ -465,6 +512,24 @@ impl SonarClient {
         &self,
         project_root: &Path,
         repo_names: &[String],
+    ) -> Result<QualityGateResult, String> {
+        self.fetch_quality_gate_inner(project_root, repo_names, true).await
+    }
+
+    /// Fetch without waiting for the Compute Engine (for status checks / dashboards).
+    pub async fn fetch_quality_gate_snapshot(
+        &self,
+        project_root: &Path,
+        repo_names: &[String],
+    ) -> Result<QualityGateResult, String> {
+        self.fetch_quality_gate_inner(project_root, repo_names, false).await
+    }
+
+    async fn fetch_quality_gate_inner(
+        &self,
+        project_root: &Path,
+        repo_names: &[String],
+        wait_for_ce: bool,
     ) -> Result<QualityGateResult, String> {
         if !self.config.enabled {
             return Ok(QualityGateResult {
@@ -491,7 +556,7 @@ impl SonarClient {
         };
 
         for key in keys {
-            let result = self.fetch_quality_gate_for_key(project_root, &key).await?;
+            let result = self.fetch_quality_gate_for_key(project_root, &key, wait_for_ce).await?;
             if !result.passed {
                 combined.passed = false;
                 combined.status = result.status.clone();
@@ -506,43 +571,75 @@ impl SonarClient {
         &self,
         project_root: &Path,
         project_key: &str,
+        wait_for_ce: bool,
     ) -> Result<QualityGateResult, String> {
         let url = format!(
             "{}/api/qualitygates/project_status?projectKey={}",
             self.config.host.trim_end_matches('/'),
             project_key
         );
-        let client = reqwest::Client::new();
-        let mut req = client.get(&url);
-        if let Some(token) = read_sonar_token(project_root, &self.config.token_env) {
-            req = req.header("Authorization", token_basic_auth(&token));
-        }
-        let resp = req.send().await.map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            warn!("SonarQube quality gate API returned {}", resp.status());
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let token = read_sonar_token(project_root, &self.config.token_env);
+        let auth = token.as_deref().map(token_basic_auth);
+
+        // SonarQube returns "NONE" while the Compute Engine is still processing
+        // the analysis. Poll with back-off until we get a real result.
+        const MAX_RETRIES: u32 = 10;
+        const RETRY_DELAY: Duration = Duration::from_secs(3);
+
+        for attempt in 0..=MAX_RETRIES {
+            let mut req = client.get(&url);
+            if let Some(ref a) = auth {
+                req = req.header("Authorization", a.clone());
+            }
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => return Err(e.to_string()),
+            };
+            if !resp.status().is_success() {
+                warn!("SonarQube quality gate API returned {}", resp.status());
+                return Ok(QualityGateResult {
+                    status: "UNKNOWN".into(),
+                    passed: false,
+                    conditions: vec![],
+                });
+            }
+            let body: SonarStatusResponse = resp.json().await.map_err(|e| e.to_string())?;
+            let status = body.project_status.status.clone();
+
+            if status == "NONE" && wait_for_ce && attempt < MAX_RETRIES {
+                info!(
+                    project = %project_key,
+                    attempt = attempt + 1,
+                    "Quality gate NONE — CE task still pending, retrying in {}s",
+                    RETRY_DELAY.as_secs()
+                );
+                tokio::time::sleep(RETRY_DELAY).await;
+                continue;
+            }
+
+            let passed = matches!(status.as_str(), "OK" | "NONE" | "WARN");
             return Ok(QualityGateResult {
-                status: "UNKNOWN".into(),
-                passed: false,
-                conditions: vec![],
+                status,
+                passed,
+                conditions: body
+                    .project_status
+                    .conditions
+                    .into_iter()
+                    .map(|c| SonarCondition {
+                        metric_key: c.metric_key,
+                        status: c.status,
+                        actual_value: c.actual_value,
+                    })
+                    .collect(),
             });
         }
-        let body: SonarStatusResponse = resp.json().await.map_err(|e| e.to_string())?;
-        let status = body.project_status.status.clone();
-        let passed = status == "OK";
-        Ok(QualityGateResult {
-            status,
-            passed,
-            conditions: body
-                .project_status
-                .conditions
-                .into_iter()
-                .map(|c| SonarCondition {
-                    metric_key: c.metricKey,
-                    status: c.status,
-                    actual_value: c.actualValue,
-                })
-                .collect(),
-        })
+
+        unreachable!()
     }
 }
 
@@ -666,11 +763,22 @@ fn emit_skipped_repos(
     }
 }
 
+#[cfg(test)]
 fn build_scan_targets(
     workspace_key: &str,
     repo_names: &[String],
     dirty_files: &[String],
     full_repo: bool,
+) -> Vec<ScanTarget> {
+    build_scan_targets_with_count(workspace_key, repo_names, dirty_files, full_repo, repo_names.len())
+}
+
+fn build_scan_targets_with_count(
+    workspace_key: &str,
+    repo_names: &[String],
+    dirty_files: &[String],
+    full_repo: bool,
+    workspace_repo_count: usize,
 ) -> Vec<ScanTarget> {
     if repo_names.is_empty() {
         let inclusions = if full_repo {
@@ -700,8 +808,9 @@ fn build_scan_targets(
         grouped.entry(repo.to_string()).or_default().push(rel.to_string());
     }
 
-    // Multi-repo workspace: scan every repo on full scans; incremental scans only touch repos with changes.
-    let multi_repo = repo_names.len() > 1;
+    // Use workspace_repo_count for multi-repo detection so that scanning a single repo
+    // from a multi-repo workspace still uses the correct prefixed project key.
+    let multi_repo = workspace_repo_count > 1;
     let mut targets: Vec<ScanTarget> = repo_names
         .iter()
         .filter_map(|repo| {
@@ -746,8 +855,10 @@ fn write_scan_properties(
     writeln!(file, "sonar.projectKey={project_key}").map_err(|e| e.to_string())?;
     writeln!(file, "sonar.sources={sources}").map_err(|e| e.to_string())?;
     writeln!(file, "sonar.inclusions={inclusions}").map_err(|e| e.to_string())?;
+    writeln!(file, "sonar.exclusions={DEFAULT_EXCLUSIONS}").map_err(|e| e.to_string())?;
     writeln!(file, "sonar.host.url={host}").map_err(|e| e.to_string())?;
     if let Some(t) = token {
+        writeln!(file, "sonar.token={t}").map_err(|e| e.to_string())?;
         writeln!(file, "sonar.login={t}").map_err(|e| e.to_string())?;
     }
     Ok(path)
@@ -801,5 +912,22 @@ mod tests {
         assert!(mijn.inclusions.contains("Foo.cs"));
         let klant = targets.iter().find(|t| t.sources == "Klantbeeld").unwrap();
         assert!(klant.inclusions.contains("Bar.cs"));
+    }
+
+    #[test]
+    fn single_repo_from_multi_workspace_keeps_prefixed_key() {
+        let repos = vec!["Adviseurportaal".into()];
+        let targets = build_scan_targets_with_count("ax", &repos, &[], true, 10);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].project_key, "ax-Adviseurportaal");
+        assert_eq!(targets[0].sources, "Adviseurportaal");
+    }
+
+    #[test]
+    fn single_repo_workspace_uses_workspace_key() {
+        let repos = vec!["my-repo".into()];
+        let targets = build_scan_targets_with_count("ax", &repos, &[], true, 1);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].project_key, "ax");
     }
 }

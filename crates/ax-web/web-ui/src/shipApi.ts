@@ -31,6 +31,7 @@ export interface SonarConfig {
   scan_mode?: string;
   admin_user?: string;
   admin_password?: string;
+  exclude_repos?: string[];
 }
 
 export interface UiConfig {
@@ -346,6 +347,16 @@ async function streamSonarScan(
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
   await consumeSse(res.body, onEvent);
+}
+
+export function toggleSonarExclude(
+  repoName: string,
+  excluded: boolean,
+): Promise<{ ok: boolean; exclude_repos: string[] }> {
+  return request('/sonar/exclude', {
+    method: 'POST',
+    body: JSON.stringify({ repo: repoName, excluded }),
+  });
 }
 
 export function runShipCommand(

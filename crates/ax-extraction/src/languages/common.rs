@@ -116,6 +116,7 @@ pub fn extract_symbols(
                 line: None,
                 column: None,
                 provenance: Some(Provenance::TreeSitter),
+                confidence: Some(ax_types::EdgeConfidence::Extracted),
             });
         });
     }

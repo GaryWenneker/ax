@@ -36,7 +36,7 @@ impl GraphTraverser {
         }
         queue.push_back((start_node, Edge {
             source: String::new(), target: String::new(), kind: EdgeKind::Contains,
-            metadata: None, line: None, column: None, provenance: None,
+            metadata: None, line: None, column: None, provenance: None, confidence: None,
         }, 0));
 
         while let Some((node, edge, depth)) = queue.pop_front() {

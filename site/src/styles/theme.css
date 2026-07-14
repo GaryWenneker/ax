@@ -132,10 +132,57 @@
 }
 
 body {
-	background: var(--cg-paper);
+	background: #060610;
 	color: var(--cg-ink);
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
+}
+
+/* ================================================================
+   CINEMATIC BOKEH BACKGROUND — all pages
+   Fixed layer with animated radial gradients mimicking the homepage.
+   ================================================================ */
+body::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	background:
+		radial-gradient(ellipse 700px 700px at 25% 15%, rgba(20, 120, 140, 0.35) 0%, transparent 70%),
+		radial-gradient(ellipse 550px 550px at 85% 5%, rgba(30, 80, 160, 0.30) 0%, transparent 70%),
+		radial-gradient(ellipse 500px 500px at 5% 30%, rgba(190, 140, 50, 0.22) 0%, transparent 70%),
+		radial-gradient(ellipse 350px 350px at 55% 0%, rgba(60, 200, 210, 0.20) 0%, transparent 70%),
+		radial-gradient(ellipse 900px 900px at 40% 50%, rgba(15, 35, 70, 0.45) 0%, transparent 65%),
+		radial-gradient(ellipse 400px 400px at 80% 55%, rgba(201, 165, 92, 0.15) 0%, transparent 70%),
+		radial-gradient(ellipse 600px 600px at 10% 85%, rgba(20, 100, 130, 0.25) 0%, transparent 70%),
+		radial-gradient(ellipse 500px 500px at 90% 80%, rgba(50, 60, 150, 0.20) 0%, transparent 70%),
+		radial-gradient(ellipse 120% 80% at 50% 50%, #0c1520 0%, #060610 100%);
+	animation: ax-bokeh-drift 30s ease-in-out infinite alternate;
+}
+
+@keyframes ax-bokeh-drift {
+	0%   { background-position: 0% 0%; }
+	100% { background-position: 3% 2%; }
+}
+
+/* Make Starlight chrome transparent so bokeh shows through */
+:root[data-theme='dark'] {
+	--sl-color-bg: transparent;
+	--sl-color-bg-nav: rgba(6, 6, 16, 0.75);
+	--sl-color-bg-sidebar: rgba(6, 6, 16, 0.6);
+	--cg-paper: transparent;
+	--cg-paper-2: rgba(18, 16, 12, 0.8);
+	--cg-card-bg: rgba(243, 241, 234, 0.04);
+	--cg-card-hover: rgba(243, 241, 234, 0.07);
+}
+
+/* Light theme: disable bokeh, use flat white background */
+html[data-theme='light'] body::before {
+	display: none;
+}
+html[data-theme='light'] body {
+	background: #ffffff;
 }
 
 :where(h1, h2, h3, h4, h5) {
@@ -202,24 +249,26 @@ body {
    DOCS CHROME — seamless with homepage
    ================================================================ */
 
-/* Header: no border, same paper background */
+/* Header: glass over bokeh */
 .header {
-	background: var(--cg-paper) !important;
-	-webkit-backdrop-filter: none;
-	backdrop-filter: none;
+	background: rgba(6, 6, 16, 0.65) !important;
+	-webkit-backdrop-filter: blur(20px) saturate(140%);
+	backdrop-filter: blur(20px) saturate(140%);
 }
 header.header {
-	border-bottom: none !important;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
 }
 .header .header {
 	border-bottom: 0;
 }
 
-/* Sidebar: no border, homepage background */
+/* Sidebar: glass over bokeh */
 #starlight__sidebar,
 .sidebar-pane {
 	border-inline-end: none !important;
-	background: var(--cg-paper);
+	background: rgba(6, 6, 16, 0.6);
+	-webkit-backdrop-filter: blur(16px) saturate(130%);
+	backdrop-filter: blur(16px) saturate(130%);
 }
 
 /* Sidebar group labels — editorial small-caps kicker (like homepage section-kicker) */
@@ -270,6 +319,7 @@ starlight-toc a[aria-current='true'] {
 }
 .right-sidebar {
 	border-inline-start: none !important;
+	background: transparent;
 }
 .right-sidebar-panel {
 	border-top: none !important;
@@ -286,9 +336,12 @@ starlight-toc > nav > h2,
 	color: var(--cg-accent);
 }
 
-/* Content pane */
+/* Content pane — subtle glass to keep text readable */
 .main-pane {
 	border-inline-start: none !important;
+	background: rgba(6, 6, 16, 0.4);
+	-webkit-backdrop-filter: blur(8px);
+	backdrop-filter: blur(8px);
 }
 
 /* ================================================================

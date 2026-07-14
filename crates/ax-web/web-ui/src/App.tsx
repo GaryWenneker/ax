@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import StatsPage from './pages/Stats';
 import NodesPage from './pages/Nodes';
+import GraphPage from './pages/Graph';
 import FilesPage from './pages/Files';
 import SearchPage from './pages/Search';
 import PolicyRulesPage from './pages/PolicyRules';
@@ -18,6 +19,7 @@ import SavingsPage from './pages/Savings';
 import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
+import { initBladeWidth } from './components/BladeResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
 import { UiProvider } from './context/UiContext';
 import { initTheme } from './lib/themes';
@@ -25,17 +27,18 @@ import { fetchShipConfig } from './shipApi';
 import { WORKSPACE_SWITCHED } from './workspaceEvents';
 
 type Page =
-  | 'stats' | 'nodes' | 'files' | 'search' | 'memory' | 'ship' | 'sonar' | 'agent' | 'settings' | 'savings' | 'unresolved'
+  | 'stats' | 'nodes' | 'graph' | 'files' | 'search' | 'memory' | 'ship' | 'sonar' | 'agent' | 'settings' | 'savings' | 'unresolved'
   | 'policy-rules' | 'policy-rule-edit' | 'policy-skills' | 'policy-skill-edit' | 'policy-match';
 
 const VALID_PAGES: Page[] = [
-  'stats', 'nodes', 'files', 'search', 'memory', 'ship', 'sonar', 'agent', 'settings', 'savings', 'unresolved',
+  'stats', 'nodes', 'graph', 'files', 'search', 'memory', 'ship', 'sonar', 'agent', 'settings', 'savings', 'unresolved',
   'policy-rules', 'policy-rule-edit', 'policy-skills', 'policy-skill-edit', 'policy-match',
 ];
 
 const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
   { id: 'stats', label: 'Stats' },
   { id: 'nodes', label: 'Nodes' },
+  { id: 'graph', label: 'Graph' },
   { id: 'files', label: 'Files' },
   { id: 'search', label: 'Search' },
   { id: 'memory', label: 'Memory' },
@@ -102,6 +105,7 @@ function AppShell() {
   useEffect(() => {
     initUiScale();
     initSidebarWidth();
+    initBladeWidth();
     initTheme();
     setFontScale(loadUiScale());
     if (!window.location.hash) {
@@ -265,6 +269,7 @@ function AppShell() {
         <main className="main" id="main-content">
           {page === 'stats' && <StatsPage key={workspaceKey} />}
           {page === 'nodes' && <NodesPage key={workspaceKey} />}
+          {page === 'graph' && <GraphPage key={workspaceKey} />}
           {page === 'files' && <FilesPage key={workspaceKey} />}
           {page === 'search' && <SearchPage key={workspaceKey} />}
           {page === 'memory' && <MemoryPage key={workspaceKey} />}

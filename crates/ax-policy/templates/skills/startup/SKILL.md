@@ -52,6 +52,8 @@ ax_explore({ "query": "<question or symbol names>" })
 
 Use `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact` for focused graph queries.
 
+For a whole-graph overview — subsystems (Leiden communities), god nodes, and surprising cross-community links — use `ax_insights`, or `ax_report` for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous), and Markdown docs are indexed as `Doc` nodes linked to the code they reference.
+
 **Policy vs code:** `ax_preflight` = rules/skills. `ax_explore` / `ax_context` = code graph — different tools.
 
 ## SS-02 — Pre-write guard

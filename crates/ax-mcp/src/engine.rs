@@ -1,13 +1,41 @@
 //! Shared MCP engine with lazy Ax initialization.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ax_context::directory::find_nearest_ax_root;
 use ax_core::Ax;
+use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
 use crate::query_pool::{QueryPool, resolve_pool_size};
+
+async fn seed_memories_if_empty(pool: &SqlitePool, project_root: &Path) {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(-1);
+    if count != 0 {
+        return;
+    }
+    if project_root.join(".git").exists() {
+        match ax_memory::capture_git_history(pool, project_root, 100).await {
+            Ok(r) => {
+                eprintln!(
+                    "[ax] auto-seeded memory vault: {} captured, {} trivial skipped",
+                    r.captured, r.skipped_trivial
+                );
+                return;
+            }
+            Err(e) => eprintln!("[ax] git memory seed failed, falling back to graph: {e}"),
+        }
+    }
+    match ax_memory::seed_from_graph(pool).await {
+        Ok(n) if n > 0 => eprintln!("[ax] auto-seeded memory vault from graph: {n} memories"),
+        Ok(_) => {}
+        Err(e) => eprintln!("[ax] graph memory seed failed: {e}"),
+    }
+}
 
 pub struct McpEngine {
     ax: Arc<Mutex<Option<Ax>>>,
@@ -54,6 +82,7 @@ impl McpEngine {
         };
         self.project_root = Some(root.clone());
         let ax = Ax::open(&root).await.map_err(|e| e.to_string())?;
+        seed_memories_if_empty(ax.db_pool(), &root).await;
         *self.ax.lock().await = Some(ax);
         Ok(())
     }

@@ -14,9 +14,12 @@ description: >-
 ## When (always)
 
 - Edited any file in `crates/ax-cli/`
+- Edited any file in `crates/ax-web/web-ui/` (Settings, Nodes, Files, themes, etc.)
 - Ran `cargo build -p ax-cli` or `cargo build --release -p ax-cli`
 - Fixed CLI colors, commands, help, or installer behavior
 - User will test `ax …` in a terminal or MCP uses the installed binary
+
+**Web UI:** use `.\scripts\rebuild-web.ps1` instead of only `reinstall-cli.ps1` — embeds fresh `dist/` and verifies `http://localhost:7070/` serves the new JS bundle.
 
 ## Workflow (end of every ax-cli task)
 

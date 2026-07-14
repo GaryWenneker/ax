@@ -72,26 +72,33 @@ pub fn sync_discovered_git_roots(workspace: &Path, config: &mut ShipConfig) -> V
 }
 
 /// Git repo folder names for Sonar provisioning — configured roots plus any autodiscovered repos.
+/// Repos listed in `sonar.exclude_repos` are filtered out.
 pub fn resolve_sonar_repo_names(workspace: &Path, config: &ShipConfig) -> Vec<String> {
     let discovered = discover_git_repos(workspace);
     let existing: HashSet<String> = discovered.iter().cloned().collect();
-    if config.ship.git_roots.is_empty() {
-        return discovered;
-    }
-    let mut names: Vec<String> = config
-        .ship
-        .git_roots
-        .iter()
-        .filter(|r| existing.contains(*r))
-        .cloned()
-        .collect();
-    for repo in discovered {
-        if !names.contains(&repo) {
-            names.push(repo);
+    let mut names = if config.ship.git_roots.is_empty() {
+        discovered
+    } else {
+        let mut merged: Vec<String> = config
+            .ship
+            .git_roots
+            .iter()
+            .filter(|r| existing.contains(*r))
+            .cloned()
+            .collect();
+        for repo in discovered {
+            if !merged.contains(&repo) {
+                merged.push(repo);
+            }
         }
+        merged.sort();
+        merged.dedup();
+        merged
+    };
+    let excluded: HashSet<&str> = config.sonar.exclude_repos.iter().map(|s| s.as_str()).collect();
+    if !excluded.is_empty() {
+        names.retain(|name| !excluded.contains(name.as_str()));
     }
-    names.sort();
-    names.dedup();
     names
 }
 

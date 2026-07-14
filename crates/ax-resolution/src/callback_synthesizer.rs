@@ -111,6 +111,7 @@ impl CallbackSynthesizer {
                         line: Some(emit_line),
                         column: None,
                         provenance: Some(Provenance::Heuristic),
+                        confidence: Some(ax_types::EdgeConfidence::Inferred),
                     };
                     queries.upsert_edge(&edge).await?;
                 }
@@ -185,6 +186,7 @@ impl CallbackSynthesizer {
                         line: Some(parent.start_line),
                         column: None,
                         provenance: Some(Provenance::Heuristic),
+                        confidence: Some(ax_types::EdgeConfidence::Inferred),
                     };
                     queries.upsert_edge(&edge).await?;
                     added += 1;

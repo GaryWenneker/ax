@@ -185,6 +185,14 @@ impl WorkspaceBundle {
             }))
         };
 
+        if !readonly {
+            let seed_pool = graph_pool.clone();
+            let seed_root = root.clone();
+            tokio::spawn(async move {
+                seed_memories_if_empty(seed_pool, seed_root).await;
+            });
+        }
+
         Ok(Self {
             project_root: root,
             db_path,
@@ -207,6 +215,34 @@ impl WorkspaceBundle {
     }
 }
 
+async fn seed_memories_if_empty(pool: SqlitePool, project_root: PathBuf) {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(-1);
+    if count != 0 {
+        return;
+    }
+    if project_root.join(".git").exists() {
+        match ax_memory::capture_git_history(&pool, &project_root, 100).await {
+            Ok(r) => {
+                tracing::info!(
+                    captured = r.captured,
+                    skipped = r.skipped_trivial,
+                    "auto-seeded memory vault from git history"
+                );
+                return;
+            }
+            Err(e) => tracing::warn!("git memory seed failed, falling back to graph: {e}"),
+        }
+    }
+    match ax_memory::seed_from_graph(&pool).await {
+        Ok(n) if n > 0 => tracing::info!(captured = n, "auto-seeded memory vault from knowledge graph"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("graph memory seed failed: {e}"),
+    }
+}
+
 async fn spawn_unresolved_cleanup_inner(pool: SqlitePool) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
     interval.tick().await;
@@ -224,6 +260,9 @@ fn graph_router(hub: WebHub) -> Router {
         .route("/version", get(crate::handle_version))
         .route("/nodes", get(crate::handle_nodes))
         .route("/node/{id}", get(crate::handle_node))
+        .route("/graph", get(crate::handle_graph))
+        .route("/graph/stream", get(crate::handle_graph_stream))
+        .route("/insights", get(crate::handle_insights))
         .route("/files", get(crate::handle_files))
         .route("/files/roots", get(crate::handle_file_roots))
         .route("/search", get(crate::handle_search))

@@ -36,10 +36,11 @@ pub enum NodeKind {
     Component,
     Test,
     Table,
+    Doc,
 }
 
 impl NodeKind {
-    pub const ALL: [NodeKind; 24] = [
+    pub const ALL: [NodeKind; 25] = [
         NodeKind::File,
         NodeKind::Module,
         NodeKind::Class,
@@ -64,6 +65,7 @@ impl NodeKind {
         NodeKind::Component,
         NodeKind::Test,
         NodeKind::Table,
+        NodeKind::Doc,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -92,6 +94,7 @@ impl NodeKind {
             NodeKind::Component => "component",
             NodeKind::Test => "test",
             NodeKind::Table => "table",
+            NodeKind::Doc => "doc",
         }
     }
 
@@ -121,6 +124,7 @@ impl NodeKind {
             "component" => Some(NodeKind::Component),
             "test" => Some(NodeKind::Test),
             "table" => Some(NodeKind::Table),
+            "doc" => Some(NodeKind::Doc),
             _ => None,
         }
     }
@@ -143,10 +147,12 @@ pub enum EdgeKind {
     Overrides,
     Decorates,
     Covers,
+    /// A documentation node mentions/links to a code symbol.
+    Documents,
 }
 
 impl EdgeKind {
-    pub const ALL: [EdgeKind; 13] = [
+    pub const ALL: [EdgeKind; 14] = [
         EdgeKind::Contains,
         EdgeKind::Calls,
         EdgeKind::Imports,
@@ -160,6 +166,7 @@ impl EdgeKind {
         EdgeKind::Overrides,
         EdgeKind::Decorates,
         EdgeKind::Covers,
+        EdgeKind::Documents,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -177,6 +184,7 @@ impl EdgeKind {
             EdgeKind::Overrides => "overrides",
             EdgeKind::Decorates => "decorates",
             EdgeKind::Covers => "covers",
+            EdgeKind::Documents => "documents",
         }
     }
 
@@ -195,6 +203,7 @@ impl EdgeKind {
             "overrides" => Some(EdgeKind::Overrides),
             "decorates" => Some(EdgeKind::Decorates),
             "covers" => Some(EdgeKind::Covers),
+            "documents" => Some(EdgeKind::Documents),
             _ => None,
         }
     }
@@ -370,6 +379,57 @@ pub enum Provenance {
     Heuristic,
 }
 
+/// How confident ax is that an edge is correct.
+///
+/// - `Extracted`: read directly from the source via tree-sitter AST (or SCIP).
+/// - `Inferred`: resolved by a heuristic / name-matching / framework pass.
+/// - `Ambiguous`: multiple candidate targets existed and one was picked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeConfidence {
+    Extracted,
+    Inferred,
+    Ambiguous,
+}
+
+impl EdgeConfidence {
+    pub const ALL: [EdgeConfidence; 3] = [
+        EdgeConfidence::Extracted,
+        EdgeConfidence::Inferred,
+        EdgeConfidence::Ambiguous,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EdgeConfidence::Extracted => "extracted",
+            EdgeConfidence::Inferred => "inferred",
+            EdgeConfidence::Ambiguous => "ambiguous",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "extracted" => Some(EdgeConfidence::Extracted),
+            "inferred" => Some(EdgeConfidence::Inferred),
+            "ambiguous" => Some(EdgeConfidence::Ambiguous),
+            _ => None,
+        }
+    }
+
+    /// Deterministic mapping from edge provenance to a baseline confidence.
+    ///
+    /// Direct AST/SCIP edges are `Extracted`; heuristic edges are `Inferred`.
+    /// Callers that know a resolution was ambiguous should override with
+    /// `EdgeConfidence::Ambiguous` explicitly.
+    pub fn from_provenance(provenance: Option<Provenance>) -> Option<Self> {
+        match provenance {
+            Some(Provenance::TreeSitter) | Some(Provenance::Scip) => Some(EdgeConfidence::Extracted),
+            Some(Provenance::Heuristic) => Some(EdgeConfidence::Inferred),
+            None => None,
+        }
+    }
+}
+
 /// Internal-only reference kind for fn-as-value capture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -512,6 +572,18 @@ pub struct Edge {
     pub column: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<EdgeConfidence>,
+}
+
+impl Edge {
+    /// The edge's stored confidence, or a value derived from its provenance
+    /// when none was persisted. Falls back to `Ambiguous` when nothing is known.
+    pub fn effective_confidence(&self) -> EdgeConfidence {
+        self.confidence
+            .or_else(|| EdgeConfidence::from_provenance(self.provenance))
+            .unwrap_or(EdgeConfidence::Ambiguous)
+    }
 }
 
 /// Metadata about a tracked file.
@@ -802,6 +874,23 @@ pub struct ExploreOptions {
     pub max_source_chars: Option<u32>,
 }
 
+/// A caller/callee neighbor plus the confidence of the edge that connects it to
+/// the focal node.
+///
+/// `node` is flattened so existing consumers keep seeing the plain [`Node`]
+/// fields at the top level; `edgeKind`/`confidence` are additive and only
+/// present for direct (depth-1) neighbors.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallNeighbor {
+    #[serde(flatten)]
+    pub node: Node,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_kind: Option<EdgeKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<EdgeConfidence>,
+}
+
 /// One explore hit with optional numbered source and call spine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -810,8 +899,8 @@ pub struct ExploreEntry {
     pub score: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
-    pub callers: Vec<Node>,
-    pub callees: Vec<Node>,
+    pub callers: Vec<CallNeighbor>,
+    pub callees: Vec<CallNeighbor>,
 }
 
 /// Rich explore payload for MCP and CLI.

@@ -77,6 +77,17 @@ Git hooks run `ax capture-git --quiet` on every commit — commit messages with 
 
 Responses larger than ~4k tokens carry a one-line `[ax] token budget` hint suggesting a narrower query or lower depth, nudging agents to keep context small.
 
+## Architecture tools
+
+For whole-graph understanding — subsystems, hot spots, and unexpected coupling — two tools sit on top of the graph analysis engine. See [Architecture Insights](/guides/architecture-insights/).
+
+| Tool | Purpose |
+|---|---|
+| `ax_insights` | Leiden **communities** (subsystems), **god nodes** (most-connected concepts), and **surprising connections** (edges crossing both a community and a module boundary). Params: `resolution`, `godLimit`, `surprisingLimit`. |
+| `ax_report` | Full Markdown architecture report (god nodes, communities, surprising links, dead code, unresolved refs, suggested questions). Returns `{ markdown }`. Param: `resolution`. |
+
+Every edge also carries a **confidence** tag — `extracted` (read straight from the AST), `inferred` (resolved by a heuristic/name-matching pass), or `ambiguous` (one of several candidate targets was picked) — surfaced in `ax_node` / `ax_callers` / `ax_callees` output and the Command Center edge badges. Markdown docs (`.md`/`.mdx`) are indexed as `Doc` nodes, linked to each other and to the code symbols they mention.
+
 ## How agents should use it
 
 ax *is* the pre-built search index. For "how does X work?", architecture, a flow ("how does X reach Y"), or where-is-X questions — and while editing code — an agent should answer with `ax_explore` and stop, typically with **zero file reads**, rather than re-deriving the answer with `grep` + `Read`. A direct ax answer is one to a few calls; a grep/read exploration is dozens.

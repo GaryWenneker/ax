@@ -24,7 +24,7 @@ const LIMIT = 50;
 
 const KIND_OPTIONS = [
   '', 'function', 'method', 'class', 'struct', 'enum', 'trait', 'interface',
-  'type', 'const', 'variable', 'module', 'file',
+  'type', 'const', 'variable', 'module', 'file', 'doc',
 ];
 
 const KIND_ICONS: Record<string, string> = {
@@ -40,6 +40,7 @@ const KIND_ICONS: Record<string, string> = {
   variable: 'symbol-variable',
   module: 'symbol-namespace',
   file: 'file',
+  doc: 'book',
 };
 
 function kindIcon(kind: string): string {

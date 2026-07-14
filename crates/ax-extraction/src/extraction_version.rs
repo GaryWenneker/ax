@@ -1,3 +1,3 @@
 //! Extraction version stamp — bump when extractor behavior changes.
 
-pub const EXTRACTION_VERSION: &str = "4";
+pub const EXTRACTION_VERSION: &str = "6";

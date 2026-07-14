@@ -1,6 +1,6 @@
 //! Installer for AI agent targets — CLI wrapper around ax-installer.
 
-pub use ax_installer::{self, InstallSummary, TargetReport};
+pub use ax_installer::{self};
 
 use std::path::Path;
 

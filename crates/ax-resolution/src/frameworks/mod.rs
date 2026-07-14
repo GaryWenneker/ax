@@ -154,6 +154,7 @@ async fn apply_extract(
             line: Some(node.start_line),
             column: Some(node.start_column),
             provenance: Some(Provenance::Heuristic),
+            confidence: Some(ax_types::EdgeConfidence::Inferred),
         };
         queries.upsert_edge(&edge).await?;
     }

@@ -81,7 +81,7 @@ async fn handle_install_stream(
     if hub.readonly {
         return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
     }
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let (tx, rx) = mpsc::unbounded_channel::<String>();
     let ws = hub.read().await;
     let root = ws.project_root.clone();
     drop(ws);
@@ -416,7 +416,7 @@ async fn handle_chat_stream(
     let mode = resolve_agent_mode(&cfg, &agent);
     let explicit_external = body.agent.as_deref().is_some_and(|a| a != "builtin")
         || cfg.terminal_mode == "external";
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let (tx, rx) = mpsc::unbounded_channel::<String>();
 
     let prompt = body.prompt.clone();
     let ws = hub.read().await;

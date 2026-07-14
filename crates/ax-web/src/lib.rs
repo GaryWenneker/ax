@@ -376,6 +376,135 @@ async fn handle_source(
         .into_response()
 }
 
+#[derive(Deserialize)]
+struct GraphQuery {
+    #[serde(default = "default_graph_limit")]
+    limit: i64,
+    #[serde(default)]
+    recompute: bool,
+}
+
+fn default_graph_limit() -> i64 {
+    600
+}
+
+fn graph_max_limit() -> i64 {
+    3_000
+}
+
+/// Ensure community assignments exist (compute + persist on first use or when
+/// `recompute` is requested), then return the force-directed graph payload.
+async fn handle_graph(
+    State(hub): State<WebHub>,
+    Query(p): Query<GraphQuery>,
+) -> impl IntoResponse {
+    let ws = hub.read().await;
+    let qb = QueryBuilder::new(ws.graph_pool.clone());
+    let needs_compute = p.recompute
+        || matches!(qb.communities_computed_at().await, Ok(None) | Err(_));
+    if needs_compute && !hub.readonly {
+        let gm = ax_graph::GraphQueryManager::new(QueryBuilder::new(ws.graph_pool.clone()));
+        if let Err(e) = gm.compute_insights(1.0, 30, 30).await {
+            return api_err(format!("community detection failed: {e}")).into_response();
+        }
+    }
+    let limit = p.limit.clamp(1, graph_max_limit());
+    match queries::get_graph(&ws.graph_pool, limit).await {
+        Ok(payload) => (StatusCode::OK, Json(payload)).into_response(),
+        Err(e) => api_err(e.to_string()).into_response(),
+    }
+}
+
+/// Streaming variant of [`handle_graph`]: emits the graph as SSE events
+/// (`meta`, then batches of `nodes`, then batches of `edges`, then `done`) so
+/// the client can render the graph gradually instead of blocking on one large
+/// JSON payload.
+async fn handle_graph_stream(
+    State(hub): State<WebHub>,
+    Query(p): Query<GraphQuery>,
+) -> impl IntoResponse {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+
+    let ws = hub.read().await;
+    let qb = QueryBuilder::new(ws.graph_pool.clone());
+    let needs_compute =
+        p.recompute || matches!(qb.communities_computed_at().await, Ok(None) | Err(_));
+    if needs_compute && !hub.readonly {
+        let gm = ax_graph::GraphQueryManager::new(QueryBuilder::new(ws.graph_pool.clone()));
+        if let Err(e) = gm.compute_insights(1.0, 30, 30).await {
+            return api_err(format!("community detection failed: {e}")).into_response();
+        }
+    }
+    let limit = p.limit.clamp(1, graph_max_limit());
+    let payload = match queries::get_graph(&ws.graph_pool, limit).await {
+        Ok(payload) => payload,
+        Err(e) => return api_err(e.to_string()).into_response(),
+    };
+    drop(ws);
+
+    const NODE_BATCH: usize = 200;
+    const EDGE_BATCH: usize = 800;
+
+    let stream = async_stream::stream! {
+        let meta = format!(
+            "{{\"type\":\"meta\",\"total_nodes\":{},\"truncated\":{},\"node_count\":{},\"edge_count\":{}}}",
+            payload.total_nodes,
+            payload.truncated,
+            payload.nodes.len(),
+            payload.edges.len()
+        );
+        yield Ok::<Event, std::convert::Infallible>(Event::default().data(meta));
+
+        for chunk in payload.nodes.chunks(NODE_BATCH) {
+            let arr = serde_json::to_string(chunk).unwrap_or_else(|_| "[]".to_string());
+            yield Ok(Event::default().data(format!("{{\"type\":\"nodes\",\"nodes\":{arr}}}")));
+            tokio::task::yield_now().await;
+        }
+
+        for chunk in payload.edges.chunks(EDGE_BATCH) {
+            let arr = serde_json::to_string(chunk).unwrap_or_else(|_| "[]".to_string());
+            yield Ok(Event::default().data(format!("{{\"type\":\"edges\",\"edges\":{arr}}}")));
+            tokio::task::yield_now().await;
+        }
+
+        yield Ok(Event::default().data("{\"type\":\"done\"}".to_string()));
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+#[derive(Deserialize)]
+struct InsightsQuery {
+    #[serde(default = "default_resolution")]
+    resolution: f64,
+}
+
+fn default_resolution() -> f64 {
+    1.0
+}
+
+/// Recompute and return whole-graph insights (god nodes, communities,
+/// surprising connections). Persists community assignments as a side effect.
+async fn handle_insights(
+    State(hub): State<WebHub>,
+    Query(p): Query<InsightsQuery>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ApiError { error: "read-only mode (AX_WEB_READONLY=1)".into() }),
+        )
+            .into_response();
+    }
+    let ws = hub.read().await;
+    let gm = ax_graph::GraphQueryManager::new(QueryBuilder::new(ws.graph_pool.clone()));
+    let resolution = if p.resolution > 0.0 { p.resolution } else { 1.0 };
+    match gm.compute_insights(resolution, 25, 25).await {
+        Ok(insights) => (StatusCode::OK, Json(insights)).into_response(),
+        Err(e) => api_err(e.to_string()).into_response(),
+    }
+}
+
 async fn handle_version() -> impl IntoResponse {
     (
         StatusCode::OK,

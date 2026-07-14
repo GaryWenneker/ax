@@ -63,6 +63,7 @@ impl CFnptrSynthesizer {
                     line: Some(line),
                     column: None,
                     provenance: Some(Provenance::Heuristic),
+                    confidence: Some(ax_types::EdgeConfidence::Inferred),
                 };
                 queries.upsert_edge(&edge).await?;
             }

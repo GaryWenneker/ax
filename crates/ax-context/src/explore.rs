@@ -1,13 +1,16 @@
 //! Rich explore: search hits, numbered source snippets, caller/callee spines.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use ax_db::queries::QueryBuilder;
 use ax_graph::query_parser::parse_query;
 use ax_graph::query_utils::matches_parsed_query;
 use ax_graph::GraphTraverser;
-use ax_types::{ExploreEntry, ExploreOptions, ExploreResult, Node, SearchOptions};
+use ax_types::{
+    CallNeighbor, EdgeConfidence, EdgeKind, ExploreEntry, ExploreOptions, ExploreResult, Node,
+    SearchOptions,
+};
 
 pub struct ExploreBuilder {
     queries: QueryBuilder,
@@ -79,6 +82,21 @@ impl ExploreBuilder {
                 files_seen.insert(c.file_path.clone());
             }
 
+            // Two batched edge queries give the direct (depth-1) edge kind +
+            // confidence for each neighbor; transitive neighbors stay untagged.
+            let incoming = self.queries.get_incoming_edges(&node.id).await?;
+            let outgoing = self.queries.get_outgoing_edges(&node.id, None).await?;
+            let caller_conf: HashMap<String, (EdgeKind, EdgeConfidence)> = incoming
+                .iter()
+                .map(|e| (e.source.clone(), (e.kind, e.effective_confidence())))
+                .collect();
+            let callee_conf: HashMap<String, (EdgeKind, EdgeConfidence)> = outgoing
+                .iter()
+                .map(|e| (e.target.clone(), (e.kind, e.effective_confidence())))
+                .collect();
+            let callers = to_neighbors(callers, &caller_conf);
+            let callees = to_neighbors(callees, &callee_conf);
+
             let source = if include_code {
                 // File IO off the async runtime so slow disks don't stall
                 // other in-flight MCP queries.
@@ -133,6 +151,27 @@ impl ExploreBuilder {
 
 fn numbered_snippet(root: &Path, node: &Node, max_lines: usize, max_chars: usize) -> String {
     numbered_snippet_with_sep(root, node, max_lines, max_chars, '\t')
+}
+
+/// Attach the direct edge kind + confidence (if known) to each neighbor node.
+fn to_neighbors(
+    nodes: Vec<Node>,
+    conf: &HashMap<String, (EdgeKind, EdgeConfidence)>,
+) -> Vec<CallNeighbor> {
+    nodes
+        .into_iter()
+        .map(|node| {
+            let (edge_kind, confidence) = match conf.get(&node.id) {
+                Some((k, c)) => (Some(*k), Some(*c)),
+                None => (None, None),
+            };
+            CallNeighbor {
+                node,
+                edge_kind,
+                confidence,
+            }
+        })
+        .collect()
 }
 
 fn numbered_snippet_with_sep(

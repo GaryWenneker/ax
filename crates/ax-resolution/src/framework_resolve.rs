@@ -124,6 +124,7 @@ async fn commit_resolution(
         line: Some(ref_.line),
         column: Some(ref_.column),
         provenance: Some(Provenance::Heuristic),
+        confidence: Some(ax_types::EdgeConfidence::Inferred),
     };
     if queries.upsert_edge(&edge).await.is_err() {
         return None;

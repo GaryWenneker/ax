@@ -7,7 +7,7 @@ description: Git-aware quality gates, test-impact analysis, and draft PRs from a
 
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
-![Command Center — Ship dashboard with pipeline, quality gate, SonarQube project cards, run log, changed files, and test impact](/screenshots/cc-ship-full.png)
+![Command Center — quality gate pipeline with completed evaluation, pipeline steps (Index, TIA, Tests, Sonar, Policy), branch overview, and SonarQube status](/screenshots/cc-ship-full.png)
 
 ## Quick start
 
@@ -78,6 +78,7 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 | Page | Purpose |
 |---|---|
 | **Ship** | Quality-gate pipeline, SSE logs, git events |
+| **Graph** | Interactive force-directed graph — communities, god nodes, edge confidence, docs ([details](/guides/architecture-insights/#visual-graph)) |
 | **SonarQube** | Proxied dashboard with auto-login and dark theme |
 | **Memory** | Browse, search, compose memories (modal composer); capture from git |
 | **Savings** | Token and dollar savings from graph queries (real BPE counts, dollar estimates) |
@@ -88,7 +89,7 @@ Open with `ax web --open` or `ax ship --watch --open`.
 
 ### Project browser
 
-![Project browser — browse, filter, and switch between ax projects](/screenshots/cc-project-browser.png)
+![Project browser — browse your disk for indexed ax projects, filter, initialize, and switch workspace](/screenshots/cc-project-browser.png)
 
 The workspace picker in the Command Center status bar opens a **project browser** modal. From there you can:
 
@@ -101,7 +102,7 @@ The workspace picker in the Command Center status bar opens a **project browser*
 
 ### Modal-based forms
 
-![New memory modal — kind selector, title, body, and save action](/screenshots/cc-modal-composer.png)
+![New memory modal — centered modal with blurred backdrop, title, kind selector, body field, and save action](/screenshots/cc-modal-composer.png)
 
 Create and edit flows in the Command Center (new memory, new agent profile, profile editing) open as **centered modals with a blurred backdrop** — never as inline page sections. The shared `ModalShell` component handles Escape-to-close, backdrop click, and scroll lock.
 
@@ -132,7 +133,7 @@ Default port: `7070` (override with `--port` or `[ship].web_port`).
 
 The same `ax web` UI includes **Memory**, **Savings**, **SonarQube**, and **Agent** pages — see the Command Center pages table above. Savings shows estimated context-token and dollar savings from MCP graph queries. See [`ax savings`](/reference/cli/#ax-savings) and [Token savings](/guides/token-savings/).
 
-![Settings — pipeline config, AI agents, theme, pull request integration](/screenshots/cc-settings.png)
+![Settings — AI agents with terminal mode and profiles, pipeline config, and account profiles](/screenshots/cc-settings.png)
 
 Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.toml`:
 
@@ -142,7 +143,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 ### SonarQube proxy
 
-![SonarQube embedded in the Command Center with forced dark theme](/screenshots/cc-sonarqube-dark.png)
+![SonarQube dashboard reverse-proxied inside the Command Center with dark theme, project list, and quality gate filters](/screenshots/cc-sonarqube-dark.png)
 
 The SonarQube page reverse-proxies your local SonarQube instance through the Command Center. The proxy automatically:
 

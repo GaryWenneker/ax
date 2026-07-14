@@ -556,28 +556,6 @@ pub async fn ensure_sonar_token(
     Ok(())
 }
 
-/// True when the SonarQube project exists but has never received an analysis.
-pub async fn project_needs_baseline_scan(host: &str, project_key: &str, token: &str) -> bool {
-    let url = format!(
-        "{}/api/measures/component?component={project_key}&metricKeys=ncloc",
-        host.trim_end_matches('/')
-    );
-    let Ok(resp) = token_authed_get(&url, token).await else {
-        return true;
-    };
-    if !resp.status().is_success() {
-        return true;
-    }
-    let Ok(body) = resp.json::<serde_json::Value>().await else {
-        return true;
-    };
-    body.get("component")
-        .and_then(|c| c.get("measures"))
-        .and_then(|m| m.as_array())
-        .map(|m| m.is_empty())
-        .unwrap_or(true)
-}
-
 /// Idempotent Sonar provisioning driven by autodiscovered git repositories.
 pub async fn auto_provision_sonar_from_discovery(
     sonar: &crate::sonar::SonarConfig,
