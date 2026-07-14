@@ -1,6 +1,6 @@
 [package]
 name = "ax-extraction"
-version = "2.1.7"
+version = "2.1.8"
 edition = "2021"
 
 [dependencies]
@@ -46,3 +46,4 @@ blake3 = { workspace = true }
 ignore = { workspace = true }
 walkdir = { workspace = true }
 tracing = { workspace = true }
+pulldown-cmark = { workspace = true }

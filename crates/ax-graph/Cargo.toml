@@ -1,6 +1,6 @@
 [package]
 name = "ax-graph"
-version = "2.1.7"
+version = "2.1.8"
 edition = "2021"
 
 [dependencies]
@@ -8,6 +8,7 @@ ax-types = { workspace = true }
 ax-utils = { workspace = true }
 ax-db = { workspace = true }
 petgraph = { workspace = true }
+leiden-rs = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

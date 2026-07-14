@@ -1,6 +1,6 @@
 [package]
 name = "ax-mcp"
-version = "2.1.7"
+version = "2.1.8"
 edition = "2021"
 
 [dependencies]
@@ -13,6 +13,7 @@ ax-extraction = { workspace = true }
 ax-context = { workspace = true }
 ax-telemetry = { workspace = true }
 ax-reasoning = { workspace = true }
+sqlx = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
