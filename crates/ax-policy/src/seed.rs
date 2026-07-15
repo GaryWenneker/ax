@@ -60,6 +60,18 @@ const TEMPLATES: &[Template] = &[
         rel: "skills/subagents/SKILL.md",
         body: include_str!("../templates/skills/subagents/SKILL.md"),
     },
+    Template {
+        rel: "skills/systematic-debugging/SKILL.md",
+        body: include_str!("../templates/skills/systematic-debugging/SKILL.md"),
+    },
+    Template {
+        rel: "skills/tdd/SKILL.md",
+        body: include_str!("../templates/skills/tdd/SKILL.md"),
+    },
+    Template {
+        rel: "skills/design-first/SKILL.md",
+        body: include_str!("../templates/skills/design-first/SKILL.md"),
+    },
 ];
 
 const MANAGED: &[(&str, &str, bool)] = &[

@@ -245,25 +245,125 @@ fn ax_bin() -> String {
         .unwrap_or_else(|_| "ax".to_string())
 }
 
-fn mcp_serve_args(project_root: &Path) -> Vec<String> {
+/// VS Code / Cursor lineage — resolved per open workspace.
+const VS_WORKSPACE: &str = "${workspaceFolder}";
+
+/// Claude Code injects this when spawning MCP servers.
+const CLAUDE_WORKSPACE: &str = "${CLAUDE_PROJECT_DIR:-.}";
+
+/// Agents that set MCP process cwd to the active workspace.
+const PROCESS_CWD: &str = ".";
+
+/// Workspace path token for MCP `--path` / `cwd` (never a fixed install-time directory).
+fn mcp_path_token(target: &str) -> &'static str {
+    match target {
+        "claude" => CLAUDE_WORKSPACE,
+        "codex" | "hermes" => PROCESS_CWD,
+        _ => VS_WORKSPACE,
+    }
+}
+
+fn mcp_serve_args(path_token: &str) -> Vec<String> {
     vec![
         "serve".to_string(),
         "--mcp".to_string(),
         "--path".to_string(),
-        project_root.to_string_lossy().into_owned(),
+        path_token.to_string(),
     ]
 }
 
-fn mcp_config_entry(project_root: &Path) -> Value {
+fn mcp_config_entry(target: &str) -> Value {
+    let path_token = mcp_path_token(target);
     serde_json::json!({
         "command": ax_bin(),
-        "args": mcp_serve_args(project_root),
-        "cwd": project_root.to_string_lossy(),
+        "args": mcp_serve_args(path_token),
+        "cwd": path_token,
     })
 }
 
-fn antigravity_mcp_entry(project_root: &Path) -> Value {
-    mcp_config_entry(project_root)
+fn antigravity_mcp_entry() -> Value {
+    mcp_config_entry("antigravity")
+}
+
+fn replace_toml_section(content: &str, section: &str, block: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut out = Vec::new();
+    let mut skip = false;
+    for line in lines {
+        if line.trim() == section {
+            skip = true;
+            continue;
+        }
+        if skip {
+            if line.starts_with('[') {
+                skip = false;
+                out.push(line);
+            }
+            continue;
+        }
+        out.push(line);
+    }
+    let mut result = out.join("\n");
+    if !result.is_empty() && !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(block);
+    result
+}
+
+fn codex_ax_block(bin: &str) -> String {
+    let path = mcp_path_token("codex");
+    format!(
+        "[mcp_servers.ax]\ncommand = \"{bin}\"\nargs = [\"serve\", \"--mcp\", \"--path\", \"{path}\"]\ncwd = \"{path}\"\n",
+    )
+}
+
+fn hermes_ax_block(bin: &str) -> String {
+    let path = mcp_path_token("hermes");
+    format!(
+        "mcp_servers:\n  ax:\n    command: {bin}\n    args:\n      - serve\n      - --mcp\n      - --path\n      - {path}\n    cwd: {path}\n    timeout: 120\n    connect_timeout: 60\n    enabled: true\nplatform_toolsets:\n  cli:\n    - mcp-ax\n",
+    )
+}
+
+fn replace_hermes_ax_block(content: &str, block: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut out = Vec::new();
+    let mut skip = false;
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "mcp_servers:" || trimmed == "  ax:" {
+            skip = true;
+            continue;
+        }
+        if skip {
+            if trimmed == "platform_toolsets:" {
+                skip = false;
+                continue;
+            }
+            if !line.starts_with(' ') && !line.is_empty() {
+                skip = false;
+                out.push(line);
+            }
+            continue;
+        }
+        if trimmed == "platform_toolsets:" {
+            continue;
+        }
+        if trimmed == "cli:" || trimmed == "- mcp-ax" {
+            continue;
+        }
+        out.push(line);
+    }
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    let mut result = out.join("\n");
+    if !result.is_empty() {
+        result.push('\n');
+    }
+    result.push('\n');
+    result.push_str(block);
+    result
 }
 
 fn home_dir() -> Result<PathBuf, String> {
@@ -304,12 +404,12 @@ fn write_json_action(path: &Path, value: &Value) -> Result<FileAction, String> {
     })
 }
 
-fn upsert_mcp_servers(path: &Path, project_root: &Path) -> Result<FileAction, String> {
+fn upsert_mcp_servers(path: &Path, target: &str) -> Result<FileAction, String> {
     let mut config = read_json(path);
     if config.get("mcpServers").is_none() {
         config["mcpServers"] = serde_json::json!({});
     }
-    config["mcpServers"]["ax"] = mcp_config_entry(project_root);
+    config["mcpServers"]["ax"] = mcp_config_entry(target);
     write_json_action(path, &config)
 }
 
@@ -331,10 +431,10 @@ fn remove_mcp_servers(path: &Path) -> Result<Option<FileAction>, String> {
     Ok(Some(write_json_action(path, &config)?))
 }
 
-fn install_cursor_mcp(project_root: &Path) -> Result<TargetReport, String> {
+fn install_cursor_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("cursor", display_name("cursor"));
     let path = home_dir()?.join(".cursor").join("mcp.json");
-    let action = upsert_mcp_servers(&path, project_root)?;
+    let action = upsert_mcp_servers(&path, "cursor")?;
     report.push_file(path, action);
     report.note("Restart Cursor for MCP changes to take effect.");
     Ok(report)
@@ -353,9 +453,9 @@ fn install_claude_mcp(project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("claude", display_name("claude"));
     let home = home_dir()?;
     let global = home.join(".claude.json");
-    report.push_file(global.clone(), upsert_mcp_servers(&global, project_root)?);
+    report.push_file(global.clone(), upsert_mcp_servers(&global, "claude")?);
     let local = project_root.join(".mcp.json");
-    report.push_file(local.clone(), upsert_mcp_servers(&local, project_root)?);
+    report.push_file(local.clone(), upsert_mcp_servers(&local, "claude")?);
     let settings = home.join(".claude").join("settings.json");
     match install_claude_prompt_hook(&settings)? {
         Some((path, action)) => report.push_file(path, action),
@@ -454,30 +554,18 @@ fn remove_claude_prompt_hook(settings_path: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
-fn install_codex_mcp(project_root: &Path) -> Result<TargetReport, String> {
+fn install_codex_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("codex", display_name("codex"));
     let dir = home_dir()?.join(".codex");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("config.toml");
-    let bin = ax_bin();
-    let cwd = project_root.to_string_lossy().replace('\\', "/");
-    let block = format!(
-        "[mcp_servers.ax]\ncommand = \"{bin}\"\nargs = [\"serve\", \"--mcp\", \"--path\", \"{cwd}\"]\ncwd = \"{cwd}\"\n",
-    );
     let content = if path.exists() {
         fs::read_to_string(&path).unwrap_or_default()
     } else {
         String::new()
     };
-    if content.contains("[mcp_servers.ax]") {
-        report.push_file(path, FileAction::Unchanged);
-        return Ok(report);
-    }
-    let mut out = content;
-    if !out.ends_with('\n') && !out.is_empty() {
-        out.push('\n');
-    }
-    out.push_str(&block);
+    let block = codex_ax_block(&ax_bin());
+    let out = replace_toml_section(&content, "[mcp_servers.ax]", &block);
     let action = write_text_action(&path, &out)?;
     report.push_file(path, action);
     Ok(report)
@@ -553,22 +641,23 @@ fn opencode_config_path() -> Result<PathBuf, String> {
     }
 }
 
-fn install_opencode_mcp(project_root: &Path) -> Result<TargetReport, String> {
+fn install_opencode_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("opencode", display_name("opencode"));
     let path = opencode_config_path()?;
     let bin = ax_bin();
+    let path_token = mcp_path_token("opencode");
     let mut config = read_json(&path);
     if config.get("mcp").is_none() {
         config["mcp"] = serde_json::json!({});
     }
     let args: Vec<String> = std::iter::once(bin)
-        .chain(mcp_serve_args(project_root))
+        .chain(mcp_serve_args(path_token))
         .collect();
     config["mcp"]["ax"] = serde_json::json!({
         "type": "local",
         "command": args,
         "enabled": true,
-        "cwd": project_root.to_string_lossy(),
+        "cwd": path_token,
     });
     report.push_file(path.clone(), write_json_action(&path, &config)?);
     if let Ok(app_data) = std::env::var("APPDATA") {
@@ -601,12 +690,12 @@ fn uninstall_opencode_mcp() -> Result<TargetReport, String> {
     Ok(report)
 }
 
-fn install_gemini_mcp(project_root: &Path) -> Result<TargetReport, String> {
+fn install_gemini_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("gemini", display_name("gemini"));
     let dir = home_dir()?.join(".gemini");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("settings.json");
-    report.push_file(path.clone(), upsert_mcp_servers(&path, project_root)?);
+    report.push_file(path.clone(), upsert_mcp_servers(&path, "gemini")?);
     report.note("Restart Gemini CLI for MCP changes to take effect.");
     Ok(report)
 }
@@ -632,14 +721,14 @@ fn antigravity_mcp_path() -> Result<PathBuf, String> {
     }
 }
 
-fn install_antigravity_mcp(project_root: &Path) -> Result<TargetReport, String> {
+fn install_antigravity_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("antigravity", display_name("antigravity"));
     let path = antigravity_mcp_path()?;
     let mut config = read_json(&path);
     if config.get("mcpServers").is_none() {
         config["mcpServers"] = serde_json::json!({});
     }
-    config["mcpServers"]["ax"] = antigravity_mcp_entry(project_root);
+    config["mcpServers"]["ax"] = antigravity_mcp_entry();
     report.push_file(path.clone(), write_json_action(&path, &config)?);
     report.note("Restart Antigravity for MCP changes to take effect.");
     Ok(report)
@@ -658,10 +747,10 @@ fn uninstall_antigravity_mcp() -> Result<TargetReport, String> {
     Ok(report)
 }
 
-fn install_kiro_mcp(project_root: &Path) -> Result<TargetReport, String> {
+fn install_kiro_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("kiro", display_name("kiro"));
     let path = home_dir()?.join(".kiro").join("settings").join("mcp.json");
-    report.push_file(path.clone(), upsert_mcp_servers(&path, project_root)?);
+    report.push_file(path.clone(), upsert_mcp_servers(&path, "kiro")?);
     Ok(report)
 }
 
@@ -685,23 +774,12 @@ fn hermes_config_path() -> Result<PathBuf, String> {
 fn install_hermes_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("hermes", display_name("hermes"));
     let path = hermes_config_path()?;
-    let bin = ax_bin();
-    let block = "mcp_servers:\n  ax:\n    command: {bin}\n    args:\n      - serve\n      - --mcp\n    timeout: 120\n    connect_timeout: 60\n    enabled: true\nplatform_toolsets:\n  cli:\n    - mcp-ax\n"
-        .replace("{bin}", &bin);
     let content = if path.exists() {
         fs::read_to_string(&path).unwrap_or_default()
     } else {
         String::new()
     };
-    if content.contains("  ax:") && content.contains("mcp_servers:") {
-        report.push_file(path, FileAction::Unchanged);
-        return Ok(report);
-    }
-    let mut out = content;
-    if !out.ends_with('\n') && !out.is_empty() {
-        out.push('\n');
-    }
-    out.push_str(&block);
+    let out = replace_hermes_ax_block(&content, &hermes_ax_block(&ax_bin()));
     report.push_file(path.clone(), write_text_action(&path, &out)?);
     report.note("Start a new Hermes session for MCP changes to take effect.");
     Ok(report)
@@ -722,6 +800,8 @@ fn uninstall_hermes_mcp() -> Result<TargetReport, String> {
                 && !l.trim().starts_with("command:")
                 && !l.trim().starts_with("- serve")
                 && !l.trim().starts_with("- --mcp")
+                && !l.trim().starts_with("- --path")
+                && l.trim() != "cwd: ."
                 && l.trim() != "timeout: 120"
                 && l.trim() != "connect_timeout: 60"
                 && l.trim() != "enabled: true"
@@ -729,4 +809,54 @@ fn uninstall_hermes_mcp() -> Result<TargetReport, String> {
         .collect();
     report.push_file(path.clone(), write_text_action(&path, &(filtered.join("\n") + "\n"))?);
     Ok(report)
+}
+
+#[cfg(test)]
+mod mcp_path_tests {
+    use super::*;
+
+    #[test]
+    fn global_targets_use_workspace_tokens_not_fixed_paths() {
+        assert_eq!(mcp_path_token("cursor"), VS_WORKSPACE);
+        assert_eq!(mcp_path_token("kiro"), VS_WORKSPACE);
+        assert_eq!(mcp_path_token("gemini"), VS_WORKSPACE);
+        assert_eq!(mcp_path_token("antigravity"), VS_WORKSPACE);
+        assert_eq!(mcp_path_token("opencode"), VS_WORKSPACE);
+        assert_eq!(mcp_path_token("claude"), CLAUDE_WORKSPACE);
+        assert_eq!(mcp_path_token("codex"), PROCESS_CWD);
+        assert_eq!(mcp_path_token("hermes"), PROCESS_CWD);
+    }
+
+    #[test]
+    fn mcp_config_entry_never_embeds_install_cwd() {
+        let entry = mcp_config_entry("cursor");
+        let args = entry["args"].as_array().expect("args");
+        assert_eq!(args[2], "--path");
+        assert_eq!(args[3], VS_WORKSPACE);
+        assert_eq!(entry["cwd"], VS_WORKSPACE);
+        let serialized = serde_json::to_string(&entry).unwrap();
+        assert!(!serialized.contains("Temp"));
+        assert!(!serialized.contains("continue-smoke"));
+    }
+
+    #[test]
+    fn codex_block_upserts_with_process_cwd() {
+        let block = codex_ax_block("ax");
+        assert!(block.contains(r#"args = ["serve", "--mcp", "--path", "."]"#));
+        assert!(block.contains(r#"cwd = ".""#));
+        let merged = replace_toml_section(
+            "[other]\nkey = 1\n\n[mcp_servers.ax]\ncommand = \"old\"\n",
+            "[mcp_servers.ax]",
+            &block,
+        );
+        assert!(merged.contains("command = \"ax\""));
+        assert!(!merged.contains("command = \"old\""));
+    }
+
+    #[test]
+    fn hermes_block_includes_path_arg() {
+        let block = hermes_ax_block("ax");
+        assert!(block.contains("- --path"));
+        assert!(block.contains("cwd: ."));
+    }
 }

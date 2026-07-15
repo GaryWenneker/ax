@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { streamGraph, type GraphNode, type GraphEdge, type GraphStreamMeta } from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
 import { Spinner } from '../components/ui/Spinner';
+import { usePersistedNumber } from '../hooks/usePersistedState';
 
 interface SimNode extends GraphNode {
   x: number;
@@ -40,8 +41,55 @@ function dashFor(confidence?: string): number[] {
   }
 }
 
-const DEFAULT_LIMIT = 600;
-const MAX_ITERATIONS = 600;
+const GRAPH_NODE_STEPS = [50, 100, 150, 200, 300, 400, 600] as const;
+const DEFAULT_STEP_INDEX = 1; // 100 nodes
+
+/** Visual radius from graph degree — kept small to reduce overlap. */
+function nodeRadius(degree: number): number {
+  return Math.min(1.0 + Math.sqrt(degree) * 0.5, 7);
+}
+
+const LABEL_FONT = '8px var(--font-mono, monospace)';
+
+type GraphDetail = {
+  maxIterations: number;
+  maxEdgesDrawn: number;
+  showLabels: boolean;
+};
+
+function detailForNodeLimit(limit: number): GraphDetail {
+  if (limit <= 100) {
+    return { maxIterations: 220, maxEdgesDrawn: 350, showLabels: true };
+  }
+  if (limit <= 150) {
+    return { maxIterations: 280, maxEdgesDrawn: 500, showLabels: true };
+  }
+  if (limit <= 200) {
+    return { maxIterations: 340, maxEdgesDrawn: 700, showLabels: true };
+  }
+  if (limit <= 300) {
+    return { maxIterations: 420, maxEdgesDrawn: 1000, showLabels: false };
+  }
+  if (limit <= 400) {
+    return { maxIterations: 500, maxEdgesDrawn: 1400, showLabels: false };
+  }
+  return { maxIterations: 600, maxEdgesDrawn: 2000, showLabels: false };
+}
+
+const DEFAULT_LIMIT = GRAPH_NODE_STEPS[DEFAULT_STEP_INDEX];
+
+function useNarrowViewport(maxWidth = 768) {
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(`(max-width: ${maxWidth}px)`).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${maxWidth}px)`);
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [maxWidth]);
+  return narrow;
+}
 
 export default function GraphPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -62,12 +110,27 @@ export default function GraphPage() {
     lastY: 0,
   });
   const hoverRef = useRef<SimNode | null>(null);
+  const pinchRef = useRef<{ active: boolean; dist: number; midX: number; midY: number }>({
+    active: false,
+    dist: 0,
+    midX: 0,
+    midY: 0,
+  });
   // While true, each simulation frame recenters + zooms the view to fit the
   // whole graph. Any manual pan/zoom/drag turns it off so we don't fight the user.
   const autoFitRef = useRef(true);
   // Lowercased set of node ids matching the current search, or null when the
   // search box is empty (no filtering / everything at full opacity).
   const matchRef = useRef<Set<string> | null>(null);
+  const detailRef = useRef<GraphDetail>(detailForNodeLimit(DEFAULT_LIMIT));
+
+  const [stepIndex, setStepIndex] = usePersistedNumber(
+    'graph-node-step',
+    DEFAULT_STEP_INDEX,
+    0,
+    GRAPH_NODE_STEPS.length - 1,
+  );
+  const limit = GRAPH_NODE_STEPS[stepIndex];
 
   const [meta, setMeta] = useState<GraphStreamMeta | null>(null);
   const [loadedNodes, setLoadedNodes] = useState(0);
@@ -77,10 +140,14 @@ export default function GraphPage() {
   const [loadDone, setLoadDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
+  const isMobile = useNarrowViewport();
+
+  useEffect(() => {
+    detailRef.current = detailForNodeLimit(limit);
+  }, [limit]);
 
   function resetGraphState() {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
@@ -221,7 +288,7 @@ export default function GraphPage() {
 
     const pad = 48;
     let scale = Math.min((w - pad * 2) / (radius * 2), (h - pad * 2) / (radius * 2));
-    scale *= final ? 2.0 : 1.5;
+    scale *= final ? 1.1 : 0.9;
     scale = Math.max(0.1, Math.min(scale, 10));
 
     transformRef.current = {
@@ -291,9 +358,12 @@ export default function GraphPage() {
       const h = canvas.height / (window.devicePixelRatio || 1);
       const cx = w / 2;
       const cy = h / 2;
+      const maxIter = detailRef.current.maxIterations;
+      const isDragging = draggingRef.current.node != null;
 
-      if (iterationsRef.current < MAX_ITERATIONS && nodes.length > 0) {
-        const k = Math.sqrt((w * h) / Math.max(1, nodes.length));
+      const keepAlive = isDragging || iterationsRef.current < maxIter;
+      if (keepAlive && nodes.length > 0) {
+        const k = Math.sqrt((w * h) / Math.max(1, nodes.length)) * 1.8;
         const cell = Math.max(1, k);
 
         // Uniform spatial grid: only repel against nodes in the same and
@@ -346,7 +416,7 @@ export default function GraphPage() {
           }
         }
 
-        // Attraction along edges (springs).
+        // Attraction along edges (springs) — softer than repulsion for wider spacing.
         for (const e of edges) {
           const a = nodes[e.source];
           const b = nodes[e.target];
@@ -354,7 +424,7 @@ export default function GraphPage() {
           const dx = a.x - b.x;
           const dy = a.y - b.y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
-          const force = (dist * dist) / k;
+          const force = (dist * dist) / k * 0.6;
           const fx = (dx / dist) * force;
           const fy = (dy / dist) * force;
           a.vx -= fx;
@@ -364,11 +434,11 @@ export default function GraphPage() {
         }
 
         // Gravity toward center + integrate with cooling.
-        const cooling = 1 - iterationsRef.current / MAX_ITERATIONS;
-        const maxDisp = 30 * cooling + 1;
+        const cooling = isDragging ? 0.5 : 1 - iterationsRef.current / maxIter;
+        const maxDisp = isDragging ? 15 : 30 * cooling + 1;
         for (const n of nodes) {
-          n.vx += (cx - n.x) * 0.002;
-          n.vy += (cy - n.y) * 0.002;
+          n.vx += (cx - n.x) * 0.001;
+          n.vy += (cy - n.y) * 0.001;
           if (draggingRef.current.node === n) {
             n.vx = 0;
             n.vy = 0;
@@ -378,12 +448,12 @@ export default function GraphPage() {
           const limited = Math.min(disp, maxDisp);
           n.x += (n.vx / disp) * limited;
           n.y += (n.vy / disp) * limited;
-          n.vx *= 0.85;
-          n.vy *= 0.85;
+          n.vx *= isDragging ? 0.7 : 0.85;
+          n.vy *= isDragging ? 0.7 : 0.85;
         }
         iterationsRef.current++;
-        if (autoFitRef.current && iterationsRef.current > MAX_ITERATIONS - 80) {
-          fitView(iterationsRef.current >= MAX_ITERATIONS);
+        if (autoFitRef.current && iterationsRef.current > maxIter - 80) {
+          fitView(iterationsRef.current >= maxIter);
         }
         draw();
         rafRef.current = requestAnimationFrame(step);
@@ -433,18 +503,25 @@ export default function GraphPage() {
     const edges = simEdgesRef.current;
     const match = matchRef.current;
     const isMatch = (n: SimNode) => match == null || match.has(n.id);
+    const detail = detailRef.current;
+    const edgeStride =
+      edges.length > detail.maxEdgesDrawn
+        ? Math.ceil(edges.length / detail.maxEdgesDrawn)
+        : 1;
 
     // Edges. When a search is active, only edges touching a match stay lit.
-    ctx.lineWidth = 0.6;
-    for (const e of edges) {
+    ctx.lineWidth = 0.45;
+    for (let ei = 0; ei < edges.length; ei++) {
+      const e = edges[ei];
       const a = nodes[e.source];
       const b = nodes[e.target];
       if (!a || !b) continue;
-      ctx.beginPath();
-      ctx.setLineDash(dashFor(e.confidence));
       const highlight =
         hoverRef.current && (nodes[e.source] === hoverRef.current || nodes[e.target] === hoverRef.current);
       const dimmed = match != null && !isMatch(a) && !isMatch(b);
+      if (ei % edgeStride !== 0 && !highlight && !dimmed && match == null) continue;
+      ctx.beginPath();
+      ctx.setLineDash(dashFor(e.confidence));
       ctx.strokeStyle = dimmed
         ? 'rgba(140,140,160,0.04)'
         : highlight
@@ -458,7 +535,7 @@ export default function GraphPage() {
 
     // Nodes.
     for (const n of nodes) {
-      const r = Math.min(3 + Math.sqrt(n.degree) * 1.6, 22);
+      const r = nodeRadius(n.degree);
       const isDoc = n.kind === 'doc';
       const dimmed = !isMatch(n);
       ctx.globalAlpha = dimmed ? 0.12 : 1;
@@ -471,14 +548,18 @@ export default function GraphPage() {
       }
       ctx.fill();
       if (!dimmed && (n.id === selected || n === hoverRef.current)) {
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1.5;
         ctx.strokeStyle = '#fff';
         ctx.stroke();
       }
-      if (!dimmed && (r > 8 || n === hoverRef.current || n.id === selected || match != null)) {
-        ctx.fillStyle = 'rgba(230,230,230,0.9)';
-        ctx.font = '10px var(--font-mono, monospace)';
-        ctx.fillText(n.name, n.x + r + 2, n.y + 3);
+      const labelHub = detail.showLabels && r >= 7.5;
+      const labelFocus =
+        n === hoverRef.current || n.id === selected || (match != null && isMatch(n));
+      if (!dimmed && (labelFocus || labelHub)) {
+        const fontSize = Math.max(6, Math.min(11, 8 / scale));
+        ctx.fillStyle = 'rgba(230,230,230,0.85)';
+        ctx.font = `${fontSize}px var(--font-mono, monospace)`;
+        ctx.fillText(n.name, n.x + r + 1.5, n.y + 2);
       }
     }
     ctx.globalAlpha = 1;
@@ -528,41 +609,48 @@ export default function GraphPage() {
     return { x: (px - offsetX) / scale, y: (py - offsetY) / scale };
   }
 
-  function nodeAt(clientX: number, clientY: number): SimNode | null {
+  function nodeAt(clientX: number, clientY: number, extraSlop = 0): SimNode | null {
     const { x, y } = toWorld(clientX, clientY);
     const nodes = simNodesRef.current;
+    const { scale } = transformRef.current;
+    const slop = extraSlop / scale;
     for (let i = nodes.length - 1; i >= 0; i--) {
       const n = nodes[i];
-      const r = Math.min(3 + Math.sqrt(n.degree) * 1.6, 22) + 3;
+      const r = nodeRadius(n.degree) + 2 + slop;
       if ((n.x - x) ** 2 + (n.y - y) ** 2 <= r * r) return n;
     }
     return null;
   }
 
-  function onMouseDown(ev: React.MouseEvent) {
+  function onPointerDown(ev: React.PointerEvent) {
+    if (ev.button !== 0) return;
     autoFitRef.current = false;
-    const n = nodeAt(ev.clientX, ev.clientY);
-    if (n) {
-      draggingRef.current = { node: n, panning: false, lastX: ev.clientX, lastY: ev.clientY };
-    } else {
-      draggingRef.current = { node: null, panning: true, lastX: ev.clientX, lastY: ev.clientY };
-    }
+    ev.currentTarget.setPointerCapture(ev.pointerId);
+    const touchSlop = ev.pointerType === 'touch' ? 12 : 0;
+    const n = nodeAt(ev.clientX, ev.clientY, touchSlop);
+    draggingRef.current = {
+      node: n,
+      panning: !n,
+      lastX: ev.clientX,
+      lastY: ev.clientY,
+    };
+    if (n) ensureSimulation();
   }
 
-  function onMouseMove(ev: React.MouseEvent) {
+  function onPointerMove(ev: React.PointerEvent) {
     const drag = draggingRef.current;
     if (drag.node) {
       const { x, y } = toWorld(ev.clientX, ev.clientY);
       drag.node.x = x;
       drag.node.y = y;
-      requestDraw();
+      if (!runningRef.current) ensureSimulation();
     } else if (drag.panning) {
       transformRef.current.offsetX += ev.clientX - drag.lastX;
       transformRef.current.offsetY += ev.clientY - drag.lastY;
       drag.lastX = ev.clientX;
       drag.lastY = ev.clientY;
       requestDraw();
-    } else {
+    } else if (ev.pointerType === 'mouse') {
       const hit = nodeAt(ev.clientX, ev.clientY);
       if (hit !== hoverRef.current) {
         hoverRef.current = hit;
@@ -571,17 +659,21 @@ export default function GraphPage() {
     }
   }
 
-  function onMouseUp(ev: React.MouseEvent) {
+  function endPointerDrag(ev: React.PointerEvent) {
     const drag = draggingRef.current;
     if (drag.node) {
       const moved = Math.abs(ev.clientX - drag.lastX) + Math.abs(ev.clientY - drag.lastY);
-      if (moved < 4) setSelected(drag.node.id);
+      if (moved < (ev.pointerType === 'touch' ? 16 : 8)) setSelected(drag.node.id);
     }
     draggingRef.current = { node: null, panning: false, lastX: 0, lastY: 0 };
+    if (ev.currentTarget.hasPointerCapture(ev.pointerId)) {
+      ev.currentTarget.releasePointerCapture(ev.pointerId);
+    }
     requestDraw();
   }
 
   function onWheel(ev: React.WheelEvent) {
+    ev.preventDefault();
     autoFitRef.current = false;
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
@@ -594,6 +686,54 @@ export default function GraphPage() {
     t.offsetY = py - ((py - t.offsetY) * newScale) / t.scale;
     t.scale = newScale;
     requestDraw();
+  }
+
+  function onTouchStart(ev: React.TouchEvent) {
+    if (ev.touches.length === 2) {
+      ev.preventDefault();
+      const [a, b] = [ev.touches[0], ev.touches[1]];
+      pinchRef.current = {
+        active: true,
+        dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+        midX: (a.clientX + b.clientX) / 2,
+        midY: (a.clientY + b.clientY) / 2,
+      };
+      draggingRef.current = { node: null, panning: false, lastX: 0, lastY: 0 };
+    }
+  }
+
+  function onTouchMove(ev: React.TouchEvent) {
+    if (ev.touches.length === 2 && pinchRef.current.active) {
+      ev.preventDefault();
+      autoFitRef.current = false;
+      const [a, b] = [ev.touches[0], ev.touches[1]];
+      const newDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const midX = (a.clientX + b.clientX) / 2;
+      const midY = (a.clientY + b.clientY) / 2;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const px = midX - rect.left;
+      const py = midY - rect.top;
+      const t = transformRef.current;
+      const factor = newDist / (pinchRef.current.dist || 1);
+      const newScale = Math.min(10, Math.max(0.15, t.scale * factor));
+      t.offsetX = px - ((px - t.offsetX) * newScale) / t.scale;
+      t.offsetY = py - ((py - t.offsetY) * newScale) / t.scale;
+      t.offsetX += midX - pinchRef.current.midX;
+      t.offsetY += midY - pinchRef.current.midY;
+      t.scale = newScale;
+      pinchRef.current.dist = newDist;
+      pinchRef.current.midX = midX;
+      pinchRef.current.midY = midY;
+      requestDraw();
+    }
+  }
+
+  function onTouchEnd(ev: React.TouchEvent) {
+    if (ev.touches.length < 2) {
+      pinchRef.current.active = false;
+    }
   }
 
   const nodesShown = loadedNodes;
@@ -633,15 +773,22 @@ export default function GraphPage() {
           {matchCount != null && (
             <span className="graph-meta">{matchCount} match{matchCount === 1 ? '' : 'es'}</span>
           )}
-          <label className="graph-limit">
-            Nodes:
-            <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-              <option value={200}>200</option>
-              <option value={600}>600</option>
-              <option value={1200}>1200</option>
-              <option value={3000}>3000</option>
-            </select>
+          <label className="graph-density" title="Lower density loads fewer nodes and edges for smoother interaction">
+            <span className="graph-density-label">Density</span>
+            <input
+              type="range"
+              className="graph-density-slider"
+              min={0}
+              max={GRAPH_NODE_STEPS.length - 1}
+              step={1}
+              value={stepIndex}
+              onChange={(e) => setStepIndex(Number(e.target.value))}
+            />
+            <span className="graph-density-value">{limit} nodes</span>
           </label>
+          {stepIndex >= 5 && (
+            <span className="graph-meta graph-density-hint">High density — browser may lag</span>
+          )}
           <button
             type="button"
             className="btn-secondary"
@@ -664,11 +811,15 @@ export default function GraphPage() {
         <div
           className="graph-canvas-wrap"
           ref={wrapRef}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={onMouseUp}
+          style={{ touchAction: 'none' }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endPointerDrag}
+          onPointerCancel={endPointerDrag}
           onWheel={onWheel}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
         >
           <canvas ref={canvasRef} className="graph-canvas" />
           {loading && (
@@ -702,7 +853,7 @@ export default function GraphPage() {
         {selected && (
           <NodeDetailPanel
             nodeId={selected}
-            variant="blade"
+            variant={isMobile ? 'overlay' : 'blade'}
             onClose={() => setSelected(null)}
             onNavigate={(id) => setSelected(id)}
           />
