@@ -116,11 +116,6 @@ export default function GraphPage() {
     midX: 0,
     midY: 0,
   });
-  // While true, each simulation frame recenters + zooms the view to fit the
-  // whole graph. Any manual pan/zoom/drag turns it off so we don't fight the user.
-  const autoFitRef = useRef(true);
-  // Lowercased set of node ids matching the current search, or null when the
-  // search box is empty (no filtering / everything at full opacity).
   const matchRef = useRef<Set<string> | null>(null);
   const detailRef = useRef<GraphDetail>(detailForNodeLimit(DEFAULT_LIMIT));
 
@@ -142,6 +137,7 @@ export default function GraphPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState('');
+  const [communityFilter, setCommunityFilter] = useState('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
   const isMobile = useNarrowViewport();
 
@@ -160,7 +156,6 @@ export default function GraphPage() {
     idIndexRef.current = new Map();
     matchRef.current = null;
     transformRef.current = { scale: 1, offsetX: 0, offsetY: 0 };
-    autoFitRef.current = true;
     hoverRef.current = null;
   }
 
@@ -254,52 +249,7 @@ export default function GraphPage() {
     return Array.from(new Set(legendNodes.map((n) => n.kind))).sort();
   }, [legendNodes]);
 
-  // Center on the dense hub core (high-degree nodes) and zoom in so the
-  // important cluster fills the viewport instead of the scattered periphery.
-  function fitView(final = false) {
-    const canvas = canvasRef.current;
-    const nodes = simNodesRef.current;
-    if (!canvas || nodes.length === 0) return;
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.width / dpr;
-    const h = canvas.height / dpr;
-    if (w <= 0 || h <= 0) return;
-
-    const sorted = [...nodes].sort((a, b) => b.degree - a.degree);
-    const coreCount = Math.max(12, Math.ceil(nodes.length * 0.35));
-    const core = sorted.slice(0, coreCount);
-
-    let sumW = 0;
-    let sx = 0;
-    let sy = 0;
-    for (const n of core) {
-      const weight = n.degree + 1;
-      sumW += weight;
-      sx += n.x * weight;
-      sy += n.y * weight;
-    }
-    const gcx = sx / sumW;
-    const gcy = sy / sumW;
-
-    const dists = core.map((n) => Math.hypot(n.x - gcx, n.y - gcy)).sort((a, b) => a - b);
-    const pct = final ? 0.65 : 0.75;
-    const idx = Math.min(dists.length - 1, Math.floor(dists.length * pct));
-    const radius = Math.max(1, dists[idx]);
-
-    const pad = 48;
-    let scale = Math.min((w - pad * 2) / (radius * 2), (h - pad * 2) / (radius * 2));
-    scale *= final ? 1.1 : 0.9;
-    scale = Math.max(0.1, Math.min(scale, 10));
-
-    transformRef.current = {
-      scale,
-      offsetX: w / 2 - gcx * scale,
-      offsetY: h / 2 - gcy * scale,
-    };
-  }
-
-  // Recenter the viewport on a single node without changing zoom too much —
-  // used when a search narrows down to one strong match.
+  // Recenter the viewport on a single node without changing zoom too much.
   function centerOnNode(node: SimNode) {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -310,19 +260,21 @@ export default function GraphPage() {
     transformRef.current = { scale, offsetX: w / 2 - node.x * scale, offsetY: h / 2 - node.y * scale };
   }
 
-  function applySearch(term: string, kind: string) {
+  function applySearch(term: string, kind: string, community: string) {
     const q = term.trim().toLowerCase();
     const nodes = simNodesRef.current;
-    if (!q && !kind) {
+    if (!q && !kind && !community) {
       matchRef.current = null;
       setMatchCount(null);
       requestDraw();
       return;
     }
+    const communityId = community ? Number(community) : null;
     const matches = nodes.filter((n) => {
       const nameHit = !q || n.name.toLowerCase().includes(q) || n.id.toLowerCase().includes(q);
       const kindHit = !kind || n.kind === kind;
-      return nameHit && kindHit;
+      const communityHit = communityId == null || n.community_id === communityId;
+      return nameHit && kindHit && communityHit;
     });
     matchRef.current = new Set(matches.map((n) => n.id));
     setMatchCount(matches.length);
@@ -452,18 +404,9 @@ export default function GraphPage() {
           n.vy *= isDragging ? 0.7 : 0.85;
         }
         iterationsRef.current++;
-        if (autoFitRef.current && iterationsRef.current > maxIter - 80) {
-          fitView(iterationsRef.current >= maxIter);
-        }
         draw();
         rafRef.current = requestAnimationFrame(step);
       } else {
-        // Layout settled — one final aggressive zoom, then stop the loop so we
-        // don't burn CPU redrawing a static graph. Interactions redraw on demand.
-        if (autoFitRef.current) {
-          fitView(true);
-          autoFitRef.current = false;
-        }
         settledRef.current = true;
         runningRef.current = false;
         rafRef.current = null;
@@ -552,10 +495,9 @@ export default function GraphPage() {
         ctx.strokeStyle = '#fff';
         ctx.stroke();
       }
-      const labelHub = detail.showLabels && r >= 7.5;
       const labelFocus =
         n === hoverRef.current || n.id === selected || (match != null && isMatch(n));
-      if (!dimmed && (labelFocus || labelHub)) {
+      if (!dimmed && (detail.showLabels || labelFocus)) {
         const fontSize = Math.max(6, Math.min(11, 8 / scale));
         ctx.fillStyle = 'rgba(230,230,230,0.85)';
         ctx.font = `${fontSize}px var(--font-mono, monospace)`;
@@ -577,7 +519,6 @@ export default function GraphPage() {
       canvas.height = wrap.clientHeight * dpr;
       canvas.style.width = `${wrap.clientWidth}px`;
       canvas.style.height = `${wrap.clientHeight}px`;
-      if (autoFitRef.current) fitView();
       draw();
     };
     resize();
@@ -589,9 +530,9 @@ export default function GraphPage() {
 
   // Re-run the search when the term, kind filter, or completed dataset changes.
   useEffect(() => {
-    applySearch(search, kindFilter);
+    applySearch(search, kindFilter, communityFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, kindFilter, loadDone]);
+  }, [search, kindFilter, communityFilter, loadDone]);
 
   useEffect(() => {
     return () => {
@@ -624,7 +565,6 @@ export default function GraphPage() {
 
   function onPointerDown(ev: React.PointerEvent) {
     if (ev.button !== 0) return;
-    autoFitRef.current = false;
     ev.currentTarget.setPointerCapture(ev.pointerId);
     const touchSlop = ev.pointerType === 'touch' ? 12 : 0;
     const n = nodeAt(ev.clientX, ev.clientY, touchSlop);
@@ -674,7 +614,6 @@ export default function GraphPage() {
 
   function onWheel(ev: React.WheelEvent) {
     ev.preventDefault();
-    autoFitRef.current = false;
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
     const px = ev.clientX - rect.left;
@@ -699,13 +638,18 @@ export default function GraphPage() {
         midY: (a.clientY + b.clientY) / 2,
       };
       draggingRef.current = { node: null, panning: false, lastX: 0, lastY: 0 };
+    } else if (ev.touches.length === 1) {
+      ev.preventDefault();
+      const touch = ev.touches[0];
+      const n = nodeAt(touch.clientX, touch.clientY, 16);
+      draggingRef.current = { node: n, panning: !n, lastX: touch.clientX, lastY: touch.clientY };
+      if (n) ensureSimulation();
     }
   }
 
   function onTouchMove(ev: React.TouchEvent) {
     if (ev.touches.length === 2 && pinchRef.current.active) {
       ev.preventDefault();
-      autoFitRef.current = false;
       const [a, b] = [ev.touches[0], ev.touches[1]];
       const newDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       const midX = (a.clientX + b.clientX) / 2;
@@ -727,12 +671,40 @@ export default function GraphPage() {
       pinchRef.current.midX = midX;
       pinchRef.current.midY = midY;
       requestDraw();
+    } else if (ev.touches.length === 1 && !pinchRef.current.active) {
+      ev.preventDefault();
+      const touch = ev.touches[0];
+      const drag = draggingRef.current;
+      if (drag.node) {
+        const { x, y } = toWorld(touch.clientX, touch.clientY);
+        drag.node.x = x;
+        drag.node.y = y;
+        if (!runningRef.current) ensureSimulation();
+      } else if (drag.panning) {
+        transformRef.current.offsetX += touch.clientX - drag.lastX;
+        transformRef.current.offsetY += touch.clientY - drag.lastY;
+        drag.lastX = touch.clientX;
+        drag.lastY = touch.clientY;
+        requestDraw();
+      }
     }
   }
 
   function onTouchEnd(ev: React.TouchEvent) {
     if (ev.touches.length < 2) {
       pinchRef.current.active = false;
+    }
+    if (ev.touches.length === 0) {
+      const drag = draggingRef.current;
+      if (drag.node) {
+        const touch = ev.changedTouches[0];
+        if (touch) {
+          const moved = Math.abs(touch.clientX - drag.lastX) + Math.abs(touch.clientY - drag.lastY);
+          if (moved < 16) setSelected(drag.node.id);
+        }
+      }
+      draggingRef.current = { node: null, panning: false, lastX: 0, lastY: 0 };
+      requestDraw();
     }
   }
 
@@ -770,6 +742,15 @@ export default function GraphPage() {
               ))}
             </select>
           </label>
+          <label className="graph-limit">
+            Community:
+            <select value={communityFilter} onChange={(e) => setCommunityFilter(e.target.value)}>
+              <option value="">all</option>
+              {communityLegend.map((c) => (
+                <option key={c.id} value={c.id}>{c.label}</option>
+              ))}
+            </select>
+          </label>
           {matchCount != null && (
             <span className="graph-meta">{matchCount} match{matchCount === 1 ? '' : 'es'}</span>
           )}
@@ -789,18 +770,6 @@ export default function GraphPage() {
           {stepIndex >= 5 && (
             <span className="graph-meta graph-density-hint">High density — browser may lag</span>
           )}
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => {
-              autoFitRef.current = true;
-              fitView(true);
-              autoFitRef.current = false;
-              requestDraw();
-            }}
-          >
-            Zoom to core
-          </button>
           <button type="button" className="btn-secondary" onClick={() => load(true)}>
             Recompute communities
           </button>
@@ -835,7 +804,12 @@ export default function GraphPage() {
           <div className="graph-legend">
             <div className="graph-legend-title">Communities</div>
             {communityLegend.map((c) => (
-              <div key={c.id} className="graph-legend-row">
+              <div
+                key={c.id}
+                className={`graph-legend-row${communityFilter === String(c.id) ? ' active' : ''}`}
+                style={{ cursor: 'pointer' }}
+                onClick={() => setCommunityFilter((prev) => prev === String(c.id) ? '' : String(c.id))}
+              >
                 <span className="graph-legend-swatch" style={{ background: c.color }} />
                 <span className="graph-legend-label">{c.label}</span>
               </div>

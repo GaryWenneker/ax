@@ -1558,7 +1558,9 @@ body.blade-resizing .blade-resize-handle {
   pointer-events: none;
 }
 .graph-legend-title { font-weight: 600; margin-bottom: 4px; color: var(--text-dim); }
-.graph-legend-row { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+.graph-legend-row { display: flex; align-items: center; gap: 6px; padding: 1px 0; border-radius: 3px; padding: 2px 4px; }
+.graph-legend-row:hover { background: rgba(255,255,255,0.08); }
+.graph-legend-row.active { background: rgba(255,255,255,0.15); }
 .graph-legend-swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .graph-legend-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 .graph-legend-line { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--text-dim); flex-shrink: 0; }

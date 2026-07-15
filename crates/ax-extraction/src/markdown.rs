@@ -21,6 +21,16 @@ const SKIP_DIRS: &[&str] = &[
     ".fastembed_cache",
 ];
 
+const MARKDOWN_EXTENSIONS: &[&str] = &["md", "mdx"];
+
+/// Binary/opaque document types that appear as `Doc` nodes in the graph
+/// without content parsing.
+const OPAQUE_DOC_EXTENSIONS: &[&str] = &[
+    "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv", "tsv",
+    "odt", "ods", "odp", "rtf", "txt", "tex", "epub", "pages", "numbers",
+    "keynote", "json", "xml", "html", "htm",
+];
+
 /// Minimum length for an inline-code mention to be considered a code symbol.
 const MIN_MENTION_LEN: usize = 3;
 /// A mention that resolves to more than this many nodes is too ambiguous to link.
@@ -50,39 +60,44 @@ pub async fn index_markdown(
     queries: &QueryBuilder,
     exclude: &[String],
 ) -> Result<usize, ax_utils::errors::AxError> {
-    let files = scan_markdown_files(project_root, exclude);
+    let files = scan_doc_files(project_root, exclude);
     if files.is_empty() {
         queries.delete_doc_nodes().await?;
         return Ok(0);
     }
 
     let now = now_ms();
-    let mut parsed: Vec<ParsedDoc> = Vec::with_capacity(files.len());
-    for (rel, full) in &files {
-        let content = match ax_utils::read_text_file(full) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        parsed.push(parse_doc(rel.clone(), &content));
+    let mut parsed: Vec<ParsedDoc> = Vec::new();
+    let mut opaque_nodes: Vec<Node> = Vec::new();
+
+    for f in &files {
+        if f.is_markdown {
+            let content = match ax_utils::read_text_file(&f.full) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            parsed.push(parse_doc(f.rel.clone(), &content));
+        } else {
+            opaque_nodes.push(opaque_doc_node(&f.rel, now));
+        }
     }
 
-    // Refresh: drop the previous doc layer, then rewrite it wholesale.
     queries.delete_doc_nodes().await?;
 
-    let mut nodes: Vec<Node> = Vec::with_capacity(parsed.len());
+    let mut nodes: Vec<Node> = Vec::with_capacity(parsed.len() + opaque_nodes.len());
     let doc_paths: std::collections::HashSet<String> =
         parsed.iter().map(|d| d.rel_path.clone()).collect();
 
     for doc in &parsed {
         nodes.push(doc_node(doc, now));
     }
+    nodes.append(&mut opaque_nodes);
     queries.upsert_nodes(&nodes).await?;
 
     let mut edges: Vec<Edge> = Vec::new();
     for doc in &parsed {
         let source_id = doc_node_id(&doc.rel_path);
 
-        // doc -> doc relative links (read directly from source => Extracted).
         for (dest, line) in &doc.links {
             if let Some(target_rel) = resolve_doc_link(&doc.rel_path, dest, &doc_paths) {
                 edges.push(Edge {
@@ -98,7 +113,6 @@ pub async fn index_markdown(
             }
         }
 
-        // doc -> code symbol mentions (name match => Inferred).
         for (symbol, line) in &doc.mentions {
             let targets = queries
                 .get_node_ids_by_symbol(symbol, MAX_MENTION_TARGETS + 1)
@@ -153,6 +167,39 @@ fn doc_node(doc: &ParsedDoc, now: i64) -> Node {
         end_column: 0,
         docstring: doc.title.clone(),
         signature,
+        visibility: None,
+        is_exported: None,
+        is_async: None,
+        is_static: None,
+        is_abstract: None,
+        decorators: None,
+        type_parameters: None,
+        return_type: None,
+        updated_at: now,
+    }
+}
+
+/// Create a doc node for a non-markdown file (pdf, docx, xlsx, etc.).
+/// No content parsing — just registers the file's presence in the graph.
+fn opaque_doc_node(rel_path: &str, now: i64) -> Node {
+    let name = rel_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(rel_path)
+        .to_string();
+    Node {
+        id: doc_node_id(rel_path),
+        kind: NodeKind::Doc,
+        name,
+        qualified_name: rel_path.to_string(),
+        file_path: rel_path.to_string(),
+        language: Language::Unknown,
+        start_line: 1,
+        end_line: 1,
+        start_column: 0,
+        end_column: 0,
+        docstring: None,
+        signature: None,
         visibility: None,
         is_exported: None,
         is_async: None,
@@ -308,7 +355,13 @@ fn normalize_rel(path: &Path) -> String {
     parts.join("/")
 }
 
-fn scan_markdown_files(project_root: &Path, exclude: &[String]) -> Vec<(String, PathBuf)> {
+struct ScannedDoc {
+    rel: String,
+    full: PathBuf,
+    is_markdown: bool,
+}
+
+fn scan_doc_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedDoc> {
     let exclude_matcher = build_exclude_matcher(project_root, exclude);
     let walker = WalkBuilder::new(project_root)
         .hidden(true)
@@ -327,7 +380,9 @@ fn scan_markdown_files(project_root: &Path, exclude: &[String]) -> Vec<(String, 
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if ext != "md" && ext != "mdx" {
+        let is_markdown = MARKDOWN_EXTENSIONS.contains(&ext.as_str());
+        let is_opaque = OPAQUE_DOC_EXTENSIONS.contains(&ext.as_str());
+        if !is_markdown && !is_opaque {
             continue;
         }
         let rel = path
@@ -338,7 +393,7 @@ fn scan_markdown_files(project_root: &Path, exclude: &[String]) -> Vec<(String, 
         if should_skip_path(&rel, exclude_matcher.as_ref()) {
             continue;
         }
-        files.push((rel, path.to_path_buf()));
+        files.push(ScannedDoc { rel, full: path.to_path_buf(), is_markdown });
     }
     files
 }
