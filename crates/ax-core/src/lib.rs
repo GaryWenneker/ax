@@ -2,6 +2,7 @@
 
 mod project_config;
 pub mod report;
+pub mod stats_format;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -288,6 +289,27 @@ impl Ax {
         result
     }
 
+    /// Spawn a background task that watches the project and incrementally re-indexes changed files.
+    /// Coordinates with other index operations via the on-disk file lock.
+    pub fn spawn_background_watch(project_root: PathBuf) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut ax = match Ax::open(&project_root).await {
+                Ok(ax) => ax,
+                Err(e) => {
+                    tracing::warn!("background watch: could not open project: {}", e);
+                    return;
+                }
+            };
+            let opts = IndexOptions {
+                quiet: true,
+                ..IndexOptions::default()
+            };
+            if let Err(e) = ax.watch_and_sync(opts, None).await {
+                tracing::warn!("background watch stopped: {}", e);
+            }
+        })
+    }
+
     /// Debounced watch loop: re-index files after they stop changing (CG watcher sync).
     pub async fn watch_and_sync(
         &mut self,
@@ -297,7 +319,7 @@ impl Ax {
         if !self.is_watching().await {
             self.watch().await?;
         }
-        let debounce_ms = WatcherOptions::default().debounce_ms;
+        let debounce_ms = ax_sync::watcher::resolve_watch_debounce_ms();
         let poll_ms = 200u64;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;

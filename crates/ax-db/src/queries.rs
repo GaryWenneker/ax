@@ -849,6 +849,7 @@ impl QueryBuilder {
 
         let nodes_by_kind = self.count_grouped("nodes", "kind").await?;
         let edges_by_kind = self.count_grouped("edges", "kind").await?;
+        let docs_by_extension = self.count_doc_extensions().await?;
         let files_by_language = self.count_grouped("files", "language").await?;
 
         let last_updated: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(updated_at), 0) FROM nodes")
@@ -871,6 +872,7 @@ impl QueryBuilder {
             file_count,
             nodes_by_kind,
             edges_by_kind,
+            docs_by_extension,
             files_by_language,
             db_size_bytes: 0,
             last_updated,
@@ -887,6 +889,20 @@ impl QueryBuilder {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Doc nodes grouped by lowercase file extension (`md`, `pdf`, `docx`, …).
+    pub async fn count_doc_extensions(&self) -> Result<HashMap<String, i64>, AxError> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT LOWER(CASE \
+             WHEN instr(file_path, '.') > 0 THEN substr(file_path, instr(file_path, '.') + 1) \
+             ELSE '(no ext)' END) AS ext, COUNT(*) AS cnt \
+             FROM nodes WHERE kind = 'doc' GROUP BY ext",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         Ok(rows.into_iter().collect())
     }
 

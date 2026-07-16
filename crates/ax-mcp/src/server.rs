@@ -41,7 +41,10 @@ pub async fn run_stdio_server(explicit_root: Option<PathBuf>) -> Result<(), Box<
     let _liveness = install_main_thread_watchdog();
 
     let mut engine = match project_root {
-        Some(root) => McpEngine::with_project_root(root),
+        Some(root) => {
+            McpEngine::start_background_services(&root);
+            McpEngine::with_project_root(root)
+        }
         None => McpEngine::new(),
     };
     loop {
@@ -137,9 +140,18 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
             match &result {
                 Ok(value) => {
                     let text = tool_result_text(value);
+                    // Savings measurement always runs against the FULL value so
+                    // counterfactual file detection stays accurate even though the
+                    // wire payload below is leaner.
                     let est = estimate_savings(name, value, &text, project_root.as_deref());
-                    let wrapped = wrap_call_tool_result_with_hint(
-                        value.clone(),
+                    let structured = if render_full() {
+                        Some(value.clone())
+                    } else {
+                        lean_structured(name, value)
+                    };
+                    let wrapped = wrap_call_tool_result_parts(
+                        value,
+                        structured,
                         false,
                         token_budget_hint(name, est.response_tokens_est),
                     );
@@ -202,24 +214,132 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
 /// MCP `tools/call` must return `{ content: [{ type, text }], structuredContent?, isError? }`.
 /// Raw JSON objects are invisible in strict clients (VS Code / Antigravity) and may not reach the model.
 fn wrap_call_tool_result(value: Value, is_error: bool) -> Value {
-    wrap_call_tool_result_with_hint(value, is_error, None)
+    let structured = Some(value.clone());
+    wrap_call_tool_result_parts(&value, structured, is_error, None)
 }
 
-fn wrap_call_tool_result_with_hint(value: Value, is_error: bool, hint: Option<String>) -> Value {
-    let mut text = tool_result_text(&value);
+/// Build the MCP `tools/call` envelope from an explicit text source and an
+/// optional structured payload. `content.text` is what strict clients (and
+/// Cursor) feed the model; `structuredContent` is machine-readable metadata for
+/// clients that consume it. Passing `structured = None` omits it entirely so a
+/// text-authoritative response is not duplicated on the wire.
+fn wrap_call_tool_result_parts(
+    text_source: &Value,
+    structured: Option<Value>,
+    is_error: bool,
+    hint: Option<String>,
+) -> Value {
+    let mut text = tool_result_text(text_source);
     if let Some(hint) = hint {
         text.push_str("\n\n");
         text.push_str(&hint);
     }
-    json!({
+    let mut out = json!({
         "content": [{ "type": "text", "text": text }],
-        "structuredContent": value,
         "isError": is_error,
-    })
+    });
+    if let Some(structured) = structured {
+        out["structuredContent"] = structured;
+    }
+    out
+}
+
+/// Lean by default. Set `AX_MCP_FULL=1` (or `true`/`yes`) to restore the full
+/// structuredContent payload for clients that rely on it.
+fn render_full() -> bool {
+    std::env::var("AX_MCP_FULL")
+        .map(|v| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+/// Project a tool's full result down to a lean `structuredContent` payload that
+/// drops fields already carried verbatim in `content.text`. Returns `None` for
+/// text-authoritative data tools so `structuredContent` is omitted entirely.
+fn lean_structured(name: &str, value: &Value) -> Option<Value> {
+    match name {
+        // Numbered source, callers, and callees are already in content.text.
+        // Keep only a compact entry index for programmatic use.
+        "ax_explore" => Some(json!({
+            "query": value.get("query"),
+            "summary": value.get("summary"),
+            "blastRadius": value.get("blastRadius"),
+            "entries": explore_entries_compact(value),
+        })),
+        // The inject block (with full rule/skill/memory/index bodies) is in
+        // content.text. Keep only counts and machine-actionable fields.
+        "ax_preflight" => Some(json!({
+            "policyStatus": value.get("policyStatus"),
+            "matchedRules": value.get("matchedRules"),
+            "matchedSkills": value.get("matchedSkills"),
+            "matchedMemories": value.get("matchedMemories"),
+            "guardRequired": value.get("guardRequired"),
+            "mode": value.get("mode"),
+            "directiveDetected": value.get("directiveDetected"),
+            "captureProposal": value.get("captureProposal"),
+            "instruction": value.get("instruction"),
+            "indexStats": value.get("indexStats"),
+            "pendingFiles": value.get("pendingFiles"),
+        })),
+        // Summary text is in content.text; keep structured stats for scripts.
+        "ax_status" => Some(json!({
+            "stats": value.get("stats"),
+            "lastIndexedAt": value.get("lastIndexedAt"),
+            "pendingFiles": value.get("pendingFiles"),
+            "policy": value.get("policy"),
+        })),
+        // The markdown context is in content.text; drop the heavy graph payload.
+        "ax_context" => Some(json!({
+            "query": value.get("query"),
+            "summary": value.get("summary"),
+            "stats": value.get("stats"),
+            "relatedFiles": value.get("relatedFiles"),
+        })),
+        // The skill body is content.text; keep the metadata envelope.
+        "ax_skill" => {
+            let mut trimmed = value.clone();
+            if let Some(obj) = trimmed.as_object_mut() {
+                obj.remove("body");
+            }
+            Some(trimmed)
+        }
+        // Data tools carry a compact text projection; the JSON would only
+        // duplicate it, so omit structuredContent.
+        "ax_search" | "ax_node" | "ax_callers" | "ax_callees" | "ax_impact" | "ax_files"
+        | "ax_affected" => None,
+        // Everything else (status, index, rules, capture, remember, recall,
+        // insights, report) is already compact or machine-first — keep it.
+        _ => Some(value.clone()),
+    }
+}
+
+/// Reduce `entries[]` to `{name,file,startLine,endLine,score}` — dropping the
+/// duplicated `source`, `callers`, and `callees` that live in content.text.
+fn explore_entries_compact(value: &Value) -> Value {
+    let entries = value.get("entries").and_then(|v| v.as_array());
+    let compact: Vec<Value> = entries
+        .map(|arr| {
+            arr.iter()
+                .map(|e| {
+                    let node = e.get("node").unwrap_or(e);
+                    json!({
+                        "name": node.get("qualifiedName").or_else(|| node.get("name")),
+                        "file": node.get("filePath"),
+                        "startLine": node.get("startLine"),
+                        "endLine": node.get("endLine"),
+                        "score": e.get("score"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Value::Array(compact)
 }
 
 /// Above this size, nudge the agent toward narrower queries instead of a follow-up dump.
-const TOKEN_HINT_THRESHOLD: i64 = 4_000;
+const TOKEN_HINT_THRESHOLD: i64 = 3_000;
 
 /// One-line budget hint appended to large tool responses so agents self-correct
 /// (narrower depth/limit) instead of pulling ever-bigger contexts.
@@ -268,7 +388,8 @@ fn tool_result_text(value: &Value) -> String {
             return body.to_string();
         }
     }
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+    // Compact (not pretty) JSON: no gain from indentation whitespace for a model.
+    value.to_string()
 }
 
 fn is_policy_tool(name: &str) -> bool {
@@ -300,6 +421,110 @@ mod wrap_tests {
         let wrapped = wrap_call_tool_result(json!({ "error": "skill not found" }), true);
         assert_eq!(wrapped["isError"], true);
         assert!(wrapped["content"][0]["text"].as_str().unwrap().contains("skill not found"));
+    }
+
+    #[test]
+    fn lean_explore_drops_source_and_neighbors() {
+        let raw = json!({
+            "text": "# Explore: f\n...",
+            "query": "f",
+            "summary": "Found 1",
+            "blastRadius": "1 entry",
+            "entries": [{
+                "node": { "qualifiedName": "f", "filePath": "a.rs", "startLine": 1, "endLine": 9, "kind": "Function" },
+                "score": 0.9,
+                "source": "1\tfn f() {}",
+                "callers": [{ "qualifiedName": "c" }],
+                "callees": []
+            }]
+        });
+        let lean = lean_structured("ax_explore", &raw).expect("explore keeps structured");
+        assert!(lean.get("text").is_none(), "text must not be duplicated");
+        let entry = &lean["entries"][0];
+        assert_eq!(entry["name"], "f");
+        assert_eq!(entry["file"], "a.rs");
+        assert_eq!(entry["startLine"], 1);
+        assert!(entry.get("source").is_none(), "source lives in content.text");
+        assert!(entry.get("callers").is_none(), "callers live in content.text");
+    }
+
+    #[test]
+    fn lean_status_drops_text_keeps_stats() {
+        let raw = json!({
+            "text": "## ax Status\n\nDocs: 56 — 43 md, 10 json",
+            "stats": { "nodeCount": 100, "docsByExtension": { "md": 43 } },
+            "lastIndexedAt": 123,
+            "pendingFiles": [],
+        });
+        let lean = lean_structured("ax_status", &raw).expect("status keeps structured");
+        assert!(lean.get("text").is_none(), "text lives in content.text");
+        assert_eq!(lean["stats"]["nodeCount"], 100);
+    }
+
+    #[test]
+    fn lean_preflight_drops_bodies_keeps_actionable() {
+        let raw = json!({
+            "inject": "<ax_policy>huge bodies</ax_policy>",
+            "rules": [{ "body": "full rule body" }],
+            "skills": [{ "body": "full skill body" }],
+            "memories": [{ "body": "memory" }],
+            "matchedRules": 3,
+            "matchedSkills": 1,
+            "matchedMemories": 0,
+            "directiveDetected": true,
+            "captureProposal": { "questions": [] },
+            "guardRequired": true,
+            "mode": "enforce",
+            "instruction": "Apply CRITICAL rules",
+            "policyStatus": {}
+        });
+        let lean = lean_structured("ax_preflight", &raw).expect("preflight keeps structured");
+        assert!(lean.get("rules").is_none());
+        assert!(lean.get("skills").is_none());
+        assert!(lean.get("memories").is_none());
+        assert!(lean.get("inject").is_none());
+        assert_eq!(lean["directiveDetected"], true);
+        assert_eq!(lean["matchedRules"], 3);
+        assert!(lean.get("captureProposal").is_some());
+    }
+
+    #[test]
+    fn lean_data_tools_omit_structured() {
+        assert!(lean_structured("ax_search", &json!({ "results": [] })).is_none());
+        assert!(lean_structured("ax_node", &json!({ "nodes": [] })).is_none());
+        assert!(lean_structured("ax_impact", &json!({ "nodes": {} })).is_none());
+    }
+
+    #[test]
+    fn lean_context_drops_graph_payload() {
+        let raw = json!({
+            "text": "# Task Context",
+            "query": "q",
+            "summary": "s",
+            "stats": { "nodeCount": 1 },
+            "relatedFiles": ["a.rs"],
+            "subgraph": { "nodes": {}, "edges": [] },
+            "codeBlocks": [{ "content": "big" }]
+        });
+        let lean = lean_structured("ax_context", &raw).expect("context keeps structured");
+        assert!(lean.get("subgraph").is_none());
+        assert!(lean.get("codeBlocks").is_none());
+        assert_eq!(lean["relatedFiles"][0], "a.rs");
+    }
+
+    #[test]
+    fn wrap_parts_omits_structured_when_none() {
+        let raw = json!({ "text": "compact list" });
+        let wrapped = wrap_call_tool_result_parts(&raw, None, false, None);
+        assert!(wrapped.get("structuredContent").is_none());
+        assert_eq!(wrapped["content"][0]["text"], "compact list");
+    }
+
+    #[test]
+    fn wrap_parts_keeps_structured_when_some() {
+        let raw = json!({ "text": "t", "entries": [1, 2] });
+        let wrapped = wrap_call_tool_result_parts(&raw, Some(raw.clone()), false, None);
+        assert_eq!(wrapped["structuredContent"], raw);
     }
 }
 

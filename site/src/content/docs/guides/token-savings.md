@@ -38,6 +38,16 @@ saved(call) = max( counterfactual_tokens - response_tokens, 0 )
 
 Policy tools (`ax_preflight`, `ax_guard`) are logged but excluded from savings totals — they are not Read substitutes.
 
+### Lean responses by default
+
+Beyond replacing file reads, ax keeps its **own** responses lean so the returned context is small to begin with:
+
+- **No double payloads.** Each MCP reply carries the answer once in `content.text`; the `structuredContent` block is projected down to metadata that is not already in the text (compact `entries` for `ax_explore`, counts + actionable fields for `ax_preflight`, and so on). Set `AX_MCP_FULL=1` to opt back into full structured payloads.
+- **Markdown, not JSON dumps.** `ax_context` and the data tools (`ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`) return compact markdown / one-line-per-symbol text instead of pretty-printed object graphs.
+- **Strict source budgets.** `ax_explore` snippets default to 40 lines / 2000 chars each; `ax_context` to 6 blocks of 1200 chars. All four are tunable via env (see below), and explicit tool params still win per call.
+
+See the [MCP server reference](/reference/mcp-server/#lean-responses-token-savings) for the full per-tool projection table.
+
 ### What is measured vs estimated
 
 | Metric | Source |
@@ -246,6 +256,11 @@ ax savings import --claude-code     # Claude Code only
 | `AX_SAVINGS_CHARS_PER_TOKEN` | 4 | Fallback chars/token when BPE unavailable |
 | `AX_SAVINGS_TOKENS_PER_LINE` | 9 | Tokens per line for unreadable files |
 | `AX_SAVINGS_AVG_FILE_TOKENS` | 3500 | Fallback when no line count or path-only ref |
+| `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every MCP tool |
+| `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
+| `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
+| `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |
+| `AX_CONTEXT_MAX_BLOCK_CHARS` | 1200 | Max characters per `ax_context` code block |
 
 Data is stored in `~/.ax/usage.db` (local only — no query strings or response bodies are persisted).
 

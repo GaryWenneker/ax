@@ -3,9 +3,11 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.1.7](https://github.com/GaryWenneker/ax/releases/tag/v2.1.7)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v2.1.14](https://github.com/GaryWenneker/ax/releases/tag/v2.1.14)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, draft PRs) — one Rust binary, CLI + MCP.
+
+**v2.1.14** adds **document inventory** — Markdown (parsed), PDF, Office, and other doc types as `Doc` nodes; `stats.docsByExtension` in `ax status`; `<ax_index>` auto-injected on every `ax_preflight` turn.
 
 **v2.1.7** fixes **SonarQube dashboard responsiveness** in Command Center (iframe overlay, lighter dark-theme injection), improves **token savings counterfactuals** (line-range spans, related-file arrays, `AX_SAVINGS_CF_MODE`), and adds **running-state animations** across Ship, Savings, Sonar, and Settings.
 
@@ -107,7 +109,7 @@ CLI / MCP / markdown context for agents
 
 Native [tree-sitter](https://tree-sitter.github.io/) grammars parse source into ASTs. Language-specific extractors emit **nodes** and **edges**. Parsing runs in parallel (`AX_PARSE_WORKERS`, default: CPU count).
 
-Supported languages include Rust, TypeScript/JavaScript, Python, Go, Java, and 30+ file extensions via framework extractors (React, Angular, Django, Spring, etc.).
+Supported languages include Rust, TypeScript/JavaScript, Python, Go, Java, and 30+ file extensions via framework extractors (React, Angular, Django, Spring, etc.). **Documentation files** (Markdown, PDF, Office, and other opaque types) are indexed as `Doc` nodes — see [Languages](https://getax.wenneker.io/reference/languages/).
 
 ### 2. Storage
 
@@ -146,7 +148,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax index [--force] [--quiet]` | Full re-index with progress bar |
 | `ax sync [--watch] [--quiet]` | Incremental sync; `--watch` keeps running |
 | `ax watch [path]` | Alias for `ax sync --watch` |
-| `ax status [--json]` | Node/edge/file counts, last indexed time |
+| `ax status [--json]` | Node/edge/file counts, doc inventory by extension, pending sync |
 | `ax query <text> [--json]` | FTS symbol search |
 | `ax explore <query> [--json]` | Natural-language explore (same as MCP) |
 | `ax node [name]` | Symbol or file details |
@@ -213,7 +215,7 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 | `ax_explore` | Semantic search + graph traversal + numbered source |
 | `ax_node` | Single symbol or file details |
 | `ax_search` | FTS symbol lookup |
-| `ax_status` | Index stats and staleness |
+| `ax_status` | Index stats, doc breakdown by extension, staleness |
 | `ax_index` | Trigger incremental sync |
 | `ax_files` | Project file listing |
 | `ax_context` | Task-oriented markdown context |
@@ -230,7 +232,9 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 
 **Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read.
 
-**Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` — no need to read `.ax/policy/` files) and `ax_guard` before writes on guarded paths.
+**Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` plus an `<ax_index>` doc inventory snapshot — no need to read `.ax/policy/` files) and `ax_guard` before writes on guarded paths.
+
+**Lean by default:** responses never ship the answer twice — `content.text` is authoritative and `structuredContent` is projected down to metadata (no duplicated source/rule bodies). `ax_context` and the data tools return compact markdown / one-line-per-symbol text instead of pretty-JSON. Tune with `AX_MCP_FULL` (restore full structured payload), `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). See the [token savings guide](https://getax.wenneker.io/guides/token-savings/).
 
 ### Transport
 

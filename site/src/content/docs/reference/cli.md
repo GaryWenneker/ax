@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v2.1.7).
+description: Complete reference for every ax command, argument, and flag (v2.1.14).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -74,7 +74,9 @@ ax uninstall
 
 ### `ax init [path]`
 
-Initialize a project: create `.ax/` (database, lock, `ship.toml`), run a full index, install git hooks, then offer the agent installer.
+Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the project, install git hooks, then offer the agent installer.
+
+On **first init**, runs a full index. If `.ax/ax.db` already exists, runs an incremental `ax sync` instead — use `ax index` when you need a full rebuild.
 
 | Argument | Type | Description |
 |---|---|---|
@@ -149,12 +151,12 @@ ax watch --quiet
 
 ### `ax status [path]`
 
-Index statistics: node/edge/file counts, unresolved refs, last indexed time.
+Index statistics: node/edge/file counts, **document inventory by extension** (markdown, office, PDF, other opaque types), unresolved refs, pending sync, and last indexed time.
 
 | Argument / flag | Type | Description |
 |---|---|---|
 | `path` | optional | Project root |
-| `--json` | flag | Machine-readable JSON |
+| `--json` | flag | Machine-readable JSON (`stats.docsByExtension`, `pendingFiles`) |
 
 ```bash
 ax status

@@ -9,13 +9,31 @@ use ax_types::PendingFile;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::{mpsc, Mutex};
 
+pub const WATCH_DEBOUNCE_ENV: &str = "AX_WATCH_DEBOUNCE_MS";
+const DEFAULT_WATCH_DEBOUNCE_MS: u64 = 2000;
+const MIN_WATCH_DEBOUNCE_MS: u64 = 100;
+const MAX_WATCH_DEBOUNCE_MS: u64 = 60_000;
+
 pub struct WatcherOptions {
     pub debounce_ms: u64,
 }
 
 impl Default for WatcherOptions {
     fn default() -> Self {
-        Self { debounce_ms: 500 }
+        Self {
+            debounce_ms: resolve_watch_debounce_ms(),
+        }
+    }
+}
+
+/// Debounce window for file-watcher auto-sync (`AX_WATCH_DEBOUNCE_MS`, default 2000ms).
+pub fn resolve_watch_debounce_ms() -> u64 {
+    match std::env::var(WATCH_DEBOUNCE_ENV) {
+        Ok(s) if !s.trim().is_empty() => {
+            let parsed = s.trim().parse::<u64>().unwrap_or(DEFAULT_WATCH_DEBOUNCE_MS);
+            parsed.clamp(MIN_WATCH_DEBOUNCE_MS, MAX_WATCH_DEBOUNCE_MS)
+        }
+        _ => DEFAULT_WATCH_DEBOUNCE_MS,
     }
 }
 
@@ -219,6 +237,18 @@ mod tests {
         }
         w.stop().await;
         assert!(found, "watcher should record the new file as pending");
+    }
+
+    #[test]
+    fn watch_debounce_env_is_clamped() {
+        std::env::set_var(WATCH_DEBOUNCE_ENV, "50");
+        assert_eq!(resolve_watch_debounce_ms(), MIN_WATCH_DEBOUNCE_MS);
+        std::env::set_var(WATCH_DEBOUNCE_ENV, "999999");
+        assert_eq!(resolve_watch_debounce_ms(), MAX_WATCH_DEBOUNCE_MS);
+        std::env::set_var(WATCH_DEBOUNCE_ENV, "3000");
+        assert_eq!(resolve_watch_debounce_ms(), 3000);
+        std::env::remove_var(WATCH_DEBOUNCE_ENV);
+        assert_eq!(resolve_watch_debounce_ms(), DEFAULT_WATCH_DEBOUNCE_MS);
     }
 
     #[tokio::test]

@@ -54,17 +54,20 @@ Does not delete ~/.ax or project .ax/ indexes. Use `ax uninit` per project.
 Examples:
   ax uninstall             Remove ax from all detected agent configs";
 
-pub const INIT_LONG: &str = "Initialize ax in a project directory and build the full index.
+pub const INIT_LONG: &str = "Initialize ax in a project directory and build the index.
 
-Creates .ax/ (ax.db, ax.json, ship.toml, lock file), runs a full index, installs git hooks,
-then offers the interactive agent installer.
+Creates .ax/ (ax.db, ax.json, ship.toml, lock file), runs a full index on first init,
+installs git hooks, then offers the interactive agent installer.
+
+If the project is already initialized, runs an incremental sync instead of a full re-index.
+Use `ax index` or `ax index --force` when you need a full rebuild.
 
 Refuses home directory / filesystem roots unless you pass --force on index.
 
 Examples:
   ax init                  Init + index current directory
   ax init ./services/api   Init a subdirectory
-  ax init --force          Allow indexing a broad path (use carefully)";
+  ax index --force         Rebuild the index from scratch";
 
 pub const UNINIT_LONG: &str = "Remove ax from a project by deleting the .ax/ directory.
 

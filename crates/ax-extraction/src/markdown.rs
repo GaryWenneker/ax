@@ -21,11 +21,11 @@ const SKIP_DIRS: &[&str] = &[
     ".fastembed_cache",
 ];
 
-const MARKDOWN_EXTENSIONS: &[&str] = &["md", "mdx"];
+pub const MARKDOWN_EXTENSIONS: &[&str] = &["md", "mdx"];
 
 /// Binary/opaque document types that appear as `Doc` nodes in the graph
 /// without content parsing.
-const OPAQUE_DOC_EXTENSIONS: &[&str] = &[
+pub const OPAQUE_DOC_EXTENSIONS: &[&str] = &[
     "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv", "tsv",
     "odt", "ods", "odp", "rtf", "txt", "tex", "epub", "pages", "numbers",
     "keynote", "json", "xml", "html", "htm",

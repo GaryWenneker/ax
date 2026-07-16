@@ -781,6 +781,9 @@ pub struct GraphStats {
     pub file_count: i64,
     pub nodes_by_kind: HashMap<String, i64>,
     pub edges_by_kind: HashMap<String, i64>,
+    /// Doc nodes grouped by file extension (e.g. `md`, `pdf`, `docx`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub docs_by_extension: HashMap<String, i64>,
     pub files_by_language: HashMap<String, i64>,
     pub db_size_bytes: i64,
     pub last_updated: i64,
@@ -828,8 +831,9 @@ impl Default for BuildContextOptions {
     fn default() -> Self {
         Self {
             max_nodes: Some(50),
-            max_code_blocks: Some(10),
-            max_code_block_size: Some(2000),
+            // Token-strict defaults: fewer, shorter code blocks by default.
+            max_code_blocks: Some(6),
+            max_code_block_size: Some(1200),
             include_code: Some(true),
             format: Some(ContextFormat::Markdown),
             search_limit: Some(5),

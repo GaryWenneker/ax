@@ -8,6 +8,8 @@ ax turns source code into a queryable graph in four stages. **ax v2.0.0+** adds 
 ```
 files → Extraction (tree-sitter) → DB (nodes/edges/files, schema v7)
             ↓
+      Documentation pass (Markdown + opaque docs → Doc nodes)
+            ↓
       Resolution (imports, name-matching, framework patterns)
             ↓
       Graph queries (callers, callees, impact)
@@ -22,6 +24,10 @@ files → Extraction (tree-sitter) → DB (nodes/edges/files, schema v7)
 ## 1. Extraction
 
 Native [tree-sitter](https://tree-sitter.github.io/) parsers (Rust bindings) build ASTs. Language-specific queries extract **nodes** (functions, classes, methods, types…) and **edges** (calls, imports, extends, implements). Parsing runs in parallel via a Rayon worker pool (`AX_PARSE_WORKERS`).
+
+## 1b. Documentation pass
+
+After source extraction, a dedicated pass scans for documentation files (`.md`/`.mdx`, PDF, Office, and other opaque types). Markdown is parsed with pulldown-cmark; opaque files become `Doc` nodes without content extraction. See [Languages — Documentation files](/reference/languages/#documentation-files).
 
 ## 2. Storage
 

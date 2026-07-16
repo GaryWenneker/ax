@@ -31,7 +31,11 @@ Confidence is surfaced as a badge in the Command Center edge lists and in `ax_no
 
 ## Documentation nodes
 
-Markdown files (`.md` / `.mdx`) are indexed as `doc` nodes so READMEs, ADRs, and design notes are part of the graph — not invisible to it. Relative links between docs become `extracted` `references` edges; inline code spans that match a code symbol's name become `inferred` `references` edges from the doc to that symbol. Docs appear as distinct square nodes in the [graph visualization](/guides/architecture-insights/#visual-graph).
+Markdown files (`.md` / `.mdx`) are indexed as `doc` nodes so READMEs, ADRs, and design notes are part of the graph — not invisible to it. Relative links between docs become `extracted` `references` edges; inline code spans that match a code symbol's name become `inferred` `documents` edges from the doc to that symbol.
+
+**Opaque document types** (PDF, Office, CSV, HTML, etc.) also appear as `doc` nodes — ax registers their presence in the graph but does not extract their content. Supported opaque extensions include: `pdf`, `docx`, `doc`, `xlsx`, `xls`, `pptx`, `ppt`, `odt`, `ods`, `odp`, `csv`, `tsv`, `rtf`, `txt`, `tex`, `epub`, `json`, `xml`, `html`, `htm`, and Apple iWork formats.
+
+Doc inventory (counts by extension, grouped into markdown / office / PDF) is **auto-injected on every turn** via the `<ax_index>` block in `ax_preflight`, and available on demand via `ax status` or `ax_status`.
 
 ## Querying it
 

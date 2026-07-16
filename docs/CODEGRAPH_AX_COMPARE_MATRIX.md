@@ -248,8 +248,12 @@ Stack and infrastructure used by each tool — runtime, storage, parsing, transp
 | Query pool (off-thread) | Yes | `query_pool.rs` — read-tool concurrency (`AX_QUERY_POOL_SIZE`, default cores−1) | ✅ |
 | PPID / liveness watchdogs | Yes | PPID + liveness (`AX_PPID_POLL_MS`, `AX_HOST_PPID`, `AX_WATCHDOG_TIMEOUT_MS`, `AX_NO_WATCHDOG`) | ✅ |
 | Lazy init | Yes | `McpEngine` lazy init | ✅ |
+| Response envelope | `{ content:[{text}], structuredContent }` (full both) | **Lean by default** — `content.text` authoritative; `structuredContent` projected to metadata; data tools omit it (`AX_MCP_FULL=1` restores CG-style full). `server.rs` `lean_structured` | ➕ ax ahead — token-savings delta, no CG equivalent |
+| Response budgets | `mcp/tools.ts` explore caps | Stricter defaults + env knobs: `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). `explore.rs`, `formatter.rs` | ➕ ax ahead — no semantic change to graph output |
 
 CodeGraph: 8 default MCP tools. ax: 11 registered tools.
+
+**Delta (2026-07-15) — MCP token-savings rehaul:** ax now emits lean MCP responses (no `content`/`structuredContent` duplication), markdown/compact text projections for `ax_context` + data tools, and stricter env-tunable source budgets. This is an ax-forward optimization of the response envelope only; `ExploreResult`/graph semantics matched against `mcp/tools.ts` are unchanged. `AX_MCP_FULL=1` restores the CodeGraph-style full payload.
 
 ---
 

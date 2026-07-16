@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ax_context::directory::is_initialized;
 use ax_extraction::orchestrator::IndexOptions;
 use ax_reasoning::seed_offload_on_init;
 use ax_sync::git_hooks::install_git_sync_hooks;
@@ -16,12 +17,25 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
     let root = resolve_path(path);
     check_unsafe_root(&root)?;
 
+    let already_initialized = is_initialized(&root);
+
     println!();
-    println!(
-        "{}",
-        info_line(format!("Initializing ax in {}", tildify(&root)))
-    );
-    println!("  {}", dim("Large projects take several minutes — progress updates below."));
+    if already_initialized {
+        println!(
+            "{}",
+            info_line(format!("ax already initialized in {}", tildify(&root)))
+        );
+        println!(
+            "  {}",
+            dim("Running incremental sync — use `ax index` for a full re-index.")
+        );
+    } else {
+        println!(
+            "{}",
+            info_line(format!("Initializing ax in {}", tildify(&root)))
+        );
+        println!("  {}", dim("Large projects take several minutes — progress updates below."));
+    }
     println!();
 
     let ax_dir = root.join(".ax");
@@ -163,29 +177,52 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
         }
     }
 
-    let mut ax = ax_core::Ax::init(&root).await.map_err(|e| e.to_string())?;
+    let mut ax = if already_initialized {
+        ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?
+    } else {
+        ax_core::Ax::init(&root).await.map_err(|e| e.to_string())?
+    };
 
     let progress = index_progress_bar(false);
     let on_progress = progress
         .as_ref()
         .map(|pb| index_progress_callback(Arc::clone(pb)));
-    let result = ax
-        .index_all(IndexOptions::default(), on_progress)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = if already_initialized {
+        ax.sync(IndexOptions::default(), on_progress)
+            .await
+            .map_err(|e| e.to_string())?
+    } else {
+        ax.index_all(IndexOptions::default(), on_progress)
+            .await
+            .map_err(|e| e.to_string())?
+    };
     finish_progress_bar(progress);
 
-    println!(
-        "{}",
-        ok_line(format!(
-            "Indexed {} files in {}",
-            result.files_indexed,
-            format_duration_ms(result.duration_ms)
-        ))
-    );
+    if already_initialized {
+        let summary = if result.files_indexed == 0 {
+            ok_line("Already up to date")
+        } else {
+            ok_line(format!(
+                "Synced {} file(s) in {}",
+                result.files_indexed,
+                format_duration_ms(result.duration_ms)
+            ))
+        };
+        println!("{}", summary);
+    } else {
+        println!(
+            "{}",
+            ok_line(format!(
+                "Indexed {} files in {}",
+                result.files_indexed,
+                format_duration_ms(result.duration_ms)
+            ))
+        );
+    }
 
-    // Database policy mode keeps rules in SQLite — always import seeded .ax/policy/ files on init.
-    match ax.index_policy(true).await {
+    // Database policy mode keeps rules in SQLite — import seeded .ax/policy/ files on first init.
+    let force_policy = !already_initialized;
+    match ax.index_policy(force_policy).await {
         Ok(policy) => {
             if policy.rules_indexed > 0 || policy.skills_indexed > 0 {
                 println!(

@@ -21,7 +21,8 @@ pub fn format_tool_result(value: &Value) -> String {
             return body.to_string();
         }
     }
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+    // Compact (not pretty) JSON — parity with the stdio server's tool_result_text.
+    value.to_string()
 }
 
 fn is_policy_tool(name: &str) -> bool {

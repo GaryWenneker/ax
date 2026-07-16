@@ -1,10 +1,12 @@
 //! Shared MCP engine with lazy Ax initialization.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ax_context::directory::find_nearest_ax_root;
 use ax_core::Ax;
+use ax_extraction::orchestrator::IndexOptions;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
@@ -41,6 +43,7 @@ pub struct McpEngine {
     ax: Arc<Mutex<Option<Ax>>>,
     project_root: Option<PathBuf>,
     query_pool: Option<QueryPool>,
+    catch_up_done: Arc<AtomicBool>,
 }
 
 impl McpEngine {
@@ -49,6 +52,7 @@ impl McpEngine {
             ax: Arc::new(Mutex::new(None)),
             project_root: None,
             query_pool: None,
+            catch_up_done: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -63,7 +67,13 @@ impl McpEngine {
             ax: Arc::new(Mutex::new(None)),
             project_root: Some(project_root),
             query_pool,
+            catch_up_done: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Start the debounced file watcher and connect-time catch-up background services.
+    pub fn start_background_services(project_root: &Path) {
+        let _ = Ax::spawn_background_watch(project_root.to_path_buf());
     }
 
     pub fn query_pool(&self) -> Option<&QueryPool> {
@@ -84,7 +94,34 @@ impl McpEngine {
         let ax = Ax::open(&root).await.map_err(|e| e.to_string())?;
         seed_memories_if_empty(ax.db_pool(), &root).await;
         *self.ax.lock().await = Some(ax);
+        self.run_catch_up_sync().await;
         Ok(())
+    }
+
+    /// Filesystem reconciliation on first MCP session — catches edits made while the server was down.
+    async fn run_catch_up_sync(&self) {
+        if self.catch_up_done.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let mut guard = self.ax.lock().await;
+        let Some(ax) = guard.as_mut() else {
+            return;
+        };
+        let opts = IndexOptions {
+            quiet: true,
+            ..IndexOptions::default()
+        };
+        match ax.sync(opts, None).await {
+            Ok(result) if result.files_indexed > 0 => {
+                tracing::info!(
+                    "connect-time catch-up: synced {} file(s) in {}ms",
+                    result.files_indexed,
+                    result.duration_ms
+                );
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("connect-time catch-up failed: {}", e),
+        }
     }
 
     /// Fresh Ax handle + policy sync — avoids stale SQLite WAL in long-lived daemon.

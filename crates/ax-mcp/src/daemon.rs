@@ -441,6 +441,7 @@ async fn run_tcp_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(), 
 }
 
 async fn start_daemon_core(project_root: PathBuf, pid_path: PathBuf) -> Result<Arc<DaemonLifecycle>, Box<dyn std::error::Error>> {
+    McpEngine::start_background_services(&project_root);
     let lifecycle = DaemonLifecycle::new(project_root.clone(), Some(pid_path));
     lifecycle.spawn_watchers();
     lifecycle.arm_idle().await;

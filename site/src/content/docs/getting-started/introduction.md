@@ -18,6 +18,13 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v2.1.14
+
+- **Document inventory** — PDF, Office, Markdown, and other doc types indexed as `Doc` nodes. Counts by extension (`stats.docsByExtension`) in `ax status` / `ax_status`.
+- **Auto-injected index snapshot** — every `ax_preflight` response includes an `<ax_index>` block (doc totals, markdown/office/PDF breakdown, pending sync) so agents see what is indexed without a separate status call.
+
+See [Indexing](/guides/indexing/) and [Languages](/reference/languages/).
+
 ## What's new in v2.1.7
 
 - **SonarQube dashboard** — iframe loading overlay no longer blocks clicks; lighter dark-theme injection so the proxied UI stays responsive.

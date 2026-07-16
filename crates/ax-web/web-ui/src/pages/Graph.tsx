@@ -117,6 +117,7 @@ export default function GraphPage() {
     midY: 0,
   });
   const matchRef = useRef<Set<string> | null>(null);
+  const hideNonMatchesRef = useRef(false);
   const detailRef = useRef<GraphDetail>(detailForNodeLimit(DEFAULT_LIMIT));
 
   const [stepIndex, setStepIndex] = usePersistedNumber(
@@ -155,6 +156,7 @@ export default function GraphPage() {
     simEdgesRef.current = [];
     idIndexRef.current = new Map();
     matchRef.current = null;
+    hideNonMatchesRef.current = false;
     transformRef.current = { scale: 1, offsetX: 0, offsetY: 0 };
     hoverRef.current = null;
   }
@@ -277,6 +279,7 @@ export default function GraphPage() {
       return nameHit && kindHit && communityHit;
     });
     matchRef.current = new Set(matches.map((n) => n.id));
+    hideNonMatchesRef.current = !!kind || !!community;
     setMatchCount(matches.length);
     if (matches.length === 1) {
       setSelected(matches[0].id);
@@ -426,6 +429,11 @@ export default function GraphPage() {
     });
   }
 
+  function worldToScreen(wx: number, wy: number): { x: number; y: number } {
+    const { scale, offsetX, offsetY } = transformRef.current;
+    return { x: wx * scale + offsetX, y: wy * scale + offsetY };
+  }
+
   function draw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -439,12 +447,11 @@ export default function GraphPage() {
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    ctx.translate(offsetX, offsetY);
-    ctx.scale(scale, scale);
 
     const nodes = simNodesRef.current;
     const edges = simEdgesRef.current;
     const match = matchRef.current;
+    const hideNonMatches = hideNonMatchesRef.current;
     const isMatch = (n: SimNode) => match == null || match.has(n.id);
     const detail = detailRef.current;
     const edgeStride =
@@ -452,8 +459,10 @@ export default function GraphPage() {
         ? Math.ceil(edges.length / detail.maxEdgesDrawn)
         : 1;
 
-    // Edges. When a search is active, only edges touching a match stay lit.
-    ctx.lineWidth = 0.45;
+    // Edges scale with zoom (world space).
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(scale, scale);
+    ctx.lineWidth = 0.45 / scale;
     for (let ei = 0; ei < edges.length; ei++) {
       const e = edges[ei];
       const a = nodes[e.source];
@@ -461,10 +470,13 @@ export default function GraphPage() {
       if (!a || !b) continue;
       const highlight =
         hoverRef.current && (nodes[e.source] === hoverRef.current || nodes[e.target] === hoverRef.current);
-      const dimmed = match != null && !isMatch(a) && !isMatch(b);
+      const aMatch = isMatch(a);
+      const bMatch = isMatch(b);
+      if (hideNonMatches && match != null && (!aMatch || !bMatch)) continue;
+      const dimmed = !hideNonMatches && match != null && !aMatch && !bMatch;
       if (ei % edgeStride !== 0 && !highlight && !dimmed && match == null) continue;
       ctx.beginPath();
-      ctx.setLineDash(dashFor(e.confidence));
+      ctx.setLineDash(dashFor(e.confidence).map((d) => d / scale));
       ctx.strokeStyle = dimmed
         ? 'rgba(140,140,160,0.04)'
         : highlight
@@ -476,18 +488,22 @@ export default function GraphPage() {
     }
     ctx.setLineDash([]);
 
-    // Nodes.
+    // Nodes and labels stay fixed screen size regardless of zoom.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     for (const n of nodes) {
+      const { x: sx, y: sy } = worldToScreen(n.x, n.y);
       const r = nodeRadius(n.degree);
       const isDoc = n.kind === 'doc';
-      const dimmed = !isMatch(n);
+      const matched = isMatch(n);
+      if (hideNonMatches && match != null && !matched) continue;
+      const dimmed = !hideNonMatches && match != null && !matched;
       ctx.globalAlpha = dimmed ? 0.12 : 1;
       ctx.beginPath();
       ctx.fillStyle = isDoc ? '#e0b341' : colorFor(n.community_id);
       if (isDoc) {
-        ctx.rect(n.x - r, n.y - r, r * 2, r * 2);
+        ctx.rect(sx - r, sy - r, r * 2, r * 2);
       } else {
-        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
       }
       ctx.fill();
       if (!dimmed && (n.id === selected || n === hoverRef.current)) {
@@ -496,12 +512,12 @@ export default function GraphPage() {
         ctx.stroke();
       }
       const labelFocus =
-        n === hoverRef.current || n.id === selected || (match != null && isMatch(n));
+        n === hoverRef.current || n.id === selected || (match != null && matched);
       if (!dimmed && (detail.showLabels || labelFocus)) {
-        const fontSize = Math.max(6, Math.min(11, 8 / scale));
+        const fontSize = labelFocus ? 9 : 8;
         ctx.fillStyle = 'rgba(230,230,230,0.85)';
         ctx.font = `${fontSize}px var(--font-mono, monospace)`;
-        ctx.fillText(n.name, n.x + r + 1.5, n.y + 2);
+        ctx.fillText(n.name, sx + r + 1.5, sy + 2);
       }
     }
     ctx.globalAlpha = 1;
@@ -553,11 +569,14 @@ export default function GraphPage() {
   function nodeAt(clientX: number, clientY: number, extraSlop = 0): SimNode | null {
     const { x, y } = toWorld(clientX, clientY);
     const nodes = simNodesRef.current;
+    const match = matchRef.current;
+    const hideNonMatches = hideNonMatchesRef.current;
     const { scale } = transformRef.current;
-    const slop = extraSlop / scale;
+    const worldHit = (screenR: number) => (screenR + extraSlop) / scale;
     for (let i = nodes.length - 1; i >= 0; i--) {
       const n = nodes[i];
-      const r = nodeRadius(n.degree) + 2 + slop;
+      if (hideNonMatches && match != null && !match.has(n.id)) continue;
+      const r = worldHit(nodeRadius(n.degree) + 2);
       if ((n.x - x) ** 2 + (n.y - y) ** 2 <= r * r) return n;
     }
     return null;

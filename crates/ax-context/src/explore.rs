@@ -39,8 +39,15 @@ impl ExploreBuilder {
         let limit = opts.limit.unwrap_or(5);
         let depth = opts.depth.unwrap_or(2);
         let include_code = opts.include_code.unwrap_or(true);
-        let max_lines = opts.max_lines_per_snippet.unwrap_or(80) as usize;
-        let max_source_chars = opts.max_source_chars.unwrap_or(4000) as usize;
+        // Token-strict defaults; explicit params win, env overrides the default.
+        let max_lines = opts
+            .max_lines_per_snippet
+            .map(|n| n as usize)
+            .unwrap_or_else(|| env_usize("AX_EXPLORE_MAX_LINES", 40));
+        let max_source_chars = opts
+            .max_source_chars
+            .map(|n| n as usize)
+            .unwrap_or_else(|| env_usize("AX_EXPLORE_MAX_SOURCE_CHARS", 2000));
 
         let parsed = parse_query(query);
         let mut search_opts = SearchOptions {
@@ -147,6 +154,15 @@ impl ExploreBuilder {
             entries,
         })
     }
+}
+
+/// Read a positive `usize` from `name`, falling back to `default`.
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default)
 }
 
 fn numbered_snippet(root: &Path, node: &Node, max_lines: usize, max_chars: usize) -> String {

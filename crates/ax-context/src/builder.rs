@@ -55,8 +55,8 @@ impl ContextBuilder {
         let mut subgraph = ax_types::Subgraph::default();
         let mut edge_count = 0u32;
         let mut code_blocks = Vec::new();
-        let max_blocks = opts.max_code_blocks.unwrap_or(10) as usize;
-        let max_size = opts.max_code_block_size.unwrap_or(2000) as usize;
+        let max_blocks = opts.max_code_blocks.unwrap_or(6) as usize;
+        let max_size = opts.max_code_block_size.unwrap_or(1200) as usize;
 
         for node in &entry_points {
             related_files.insert(node.file_path.clone());

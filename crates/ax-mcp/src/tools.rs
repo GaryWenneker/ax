@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
-use ax_context::format_explore_text;
+use ax_context::{format_context_as_markdown, format_explore_text};
 use ax_policy::{detect_directive, finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, PolicyStore, RuleFrontmatter};
 use ax_reasoning::{maybe_synthesize_explore, ExploreOffloadMeta};
-use ax_types::{BuildContextOptions, ExploreOptions, SearchOptions, TaskInput};
+use ax_types::{BuildContextOptions, ExploreOptions, Node, SearchOptions, SearchResult, Subgraph, TaskInput};
 use serde_json::{json, Value};
 
 pub struct ToolHandler;
@@ -43,7 +43,8 @@ impl ToolHandler {
             "ax_search" => {
                 let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
                 let results = ax.search_nodes(query, &SearchOptions { limit: Some(20), ..Default::default() }).await.map_err(|e| e.to_string())?;
-                Ok(json!({ "results": results }))
+                let text = format_search_results_text(&format!("Search: {query}"), &results);
+                Ok(json!({ "text": text, "results": results }))
             }
             "ax_status" => status(ax).await,
             "ax_index" => {
@@ -53,16 +54,22 @@ impl ToolHandler {
             "ax_context" => {
                 let task = params.get("task").and_then(|v| v.as_str()).unwrap_or("");
                 let ctx = ax.build_context(TaskInput::Text(task.to_string()), BuildContextOptions::default()).await.map_err(|e| e.to_string())?;
-                Ok(json!(ctx))
+                let text = format_context_as_markdown(&ctx);
+                let mut value = serde_json::to_value(&ctx).map_err(|e| e.to_string())?;
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("text".to_string(), Value::String(text));
+                }
+                Ok(value)
             }
             "ax_callers" => {
                 let sym = params.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
                 let nodes = ax.search_nodes(sym, &SearchOptions { limit: Some(1), ..Default::default() }).await.map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let callers = ax.get_callers(&first.node.id, 3).await.map_err(|e| e.to_string())?;
-                    Ok(json!({ "callers": callers }))
+                    let text = format_nodes_text(&format!("Callers of '{sym}'"), &callers);
+                    Ok(json!({ "text": text, "callers": callers }))
                 } else {
-                    Ok(json!({ "callers": [] }))
+                    Ok(json!({ "text": format!("No symbol matching '{sym}'"), "callers": [] }))
                 }
             }
             "ax_callees" => {
@@ -70,9 +77,10 @@ impl ToolHandler {
                 let nodes = ax.search_nodes(sym, &SearchOptions { limit: Some(1), ..Default::default() }).await.map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let callees = ax.get_callees(&first.node.id, 3).await.map_err(|e| e.to_string())?;
-                    Ok(json!({ "callees": callees }))
+                    let text = format_nodes_text(&format!("Callees of '{sym}'"), &callees);
+                    Ok(json!({ "text": text, "callees": callees }))
                 } else {
-                    Ok(json!({ "callees": [] }))
+                    Ok(json!({ "text": format!("No symbol matching '{sym}'"), "callees": [] }))
                 }
             }
             "ax_impact" => {
@@ -80,9 +88,14 @@ impl ToolHandler {
                 let nodes = ax.search_nodes(sym, &SearchOptions { limit: Some(1), ..Default::default() }).await.map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
                     let sg = ax.get_impact_radius(&first.node.id, 3).await.map_err(|e| e.to_string())?;
-                    Ok(json!(sg))
+                    let text = format_subgraph_text(sym, &sg);
+                    let mut value = serde_json::to_value(&sg).map_err(|e| e.to_string())?;
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("text".to_string(), Value::String(text));
+                    }
+                    Ok(value)
                 } else {
-                    Ok(json!({}))
+                    Ok(json!({ "text": format!("No symbol matching '{sym}'") }))
                 }
             }
             "ax_files" => {
@@ -92,7 +105,8 @@ impl ToolHandler {
             "ax_node" => {
                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let nodes = ax.search_nodes(name, &SearchOptions { limit: Some(5), ..Default::default() }).await.map_err(|e| e.to_string())?;
-                Ok(json!({ "nodes": nodes }))
+                let text = format_search_results_text(&format!("Symbol(s) for '{name}'"), &nodes);
+                Ok(json!({ "text": text, "nodes": nodes }))
             }
             "ax_affected" => {
                 let files: Vec<String> = params
@@ -140,7 +154,9 @@ async fn status(ax: &mut Ax) -> Result<Value, String> {
     let stats = ax.get_stats().await.map_err(|e| e.to_string())?;
     let last = ax.get_last_indexed_at().await.map_err(|e| e.to_string())?;
     let pending = ax.get_pending_files().await;
+    let text = ax_core::stats_format::format_status_text(&stats, last, &pending);
     let mut out = json!({
+        "text": text,
         "stats": stats,
         "lastIndexedAt": last,
         "pendingFiles": pending,
@@ -165,14 +181,28 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let status = ax.policy_status().await.map_err(|e| e.to_string())?;
     let meta = ax_policy::build_preflight_meta(&status, &result);
 
+    // Index snapshot rides along with policy inject — failures must never
+    // break preflight; stats are additive context.
+    let index_stats = ax.get_stats().await.ok();
+    let pending = ax.get_pending_files().await;
+
     // Durable memories ride along with the policy inject. Failures here must
     // never break preflight — memories are additive context.
     let memories = ax_memory::recall_for_prompt(ax.db_pool(), &prompt, 3)
         .await
         .unwrap_or_default();
     let mut inject = result.inject.clone();
+    if let Some(ref stats) = index_stats {
+        let block = ax_core::stats_format::format_index_inject_block(stats, &pending);
+        if !block.is_empty() {
+            if !inject.is_empty() {
+                inject.push('\n');
+            }
+            inject.push_str(&block);
+        }
+    }
     if !memories.is_empty() {
-        let block = ax_memory::format_memories_inject_block(&memories, 6_000);
+        let block = ax_memory::format_memories_inject_block(&memories, 3_000);
         if !block.is_empty() {
             if !inject.is_empty() {
                 inject.push('\n');
@@ -223,6 +253,8 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "rules": result.rules,
         "skills": result.skills,
         "memories": memories,
+        "indexStats": index_stats,
+        "pendingFiles": pending,
         "inject": inject,
         "instruction": instruction,
     }))
@@ -490,6 +522,63 @@ fn string_array(v: Option<&Value>) -> Vec<String> {
     v.and_then(|a| a.as_array())
         .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
         .unwrap_or_default()
+}
+
+/// One compact line for a node: `qualifiedName — file:start-end (Kind)`.
+fn node_line(n: &Node) -> String {
+    format!(
+        "- {} — {}:{}-{} ({:?})",
+        n.qualified_name, n.file_path, n.start_line, n.end_line, n.kind
+    )
+}
+
+/// Compact node list — far cheaper than serializing full `Node` JSON per hit.
+fn format_nodes_text(header: &str, nodes: &[Node]) -> String {
+    if nodes.is_empty() {
+        return format!("{header}\n(none)");
+    }
+    let mut out = format!("{header} ({})\n", nodes.len());
+    for n in nodes {
+        out.push_str(&node_line(n));
+        out.push('\n');
+    }
+    out
+}
+
+/// Compact search-result list (node + relevance score).
+fn format_search_results_text(header: &str, results: &[SearchResult]) -> String {
+    if results.is_empty() {
+        return format!("{header}\n(no matches)");
+    }
+    let mut out = format!("{header} ({})\n", results.len());
+    for r in results {
+        let n = &r.node;
+        out.push_str(&format!(
+            "- {} — {}:{}-{} ({:?}) [score {:.2}]\n",
+            n.qualified_name, n.file_path, n.start_line, n.end_line, n.kind, r.score
+        ));
+    }
+    out
+}
+
+/// Compact impact summary: counts plus a stable (path-sorted) node list.
+fn format_subgraph_text(sym: &str, sg: &Subgraph) -> String {
+    let mut out = format!(
+        "Impact radius for '{sym}': {} node(s), {} edge(s)\n",
+        sg.nodes.len(),
+        sg.edges.len()
+    );
+    let mut nodes: Vec<&Node> = sg.nodes.values().collect();
+    nodes.sort_by(|a, b| {
+        a.file_path
+            .cmp(&b.file_path)
+            .then(a.start_line.cmp(&b.start_line))
+    });
+    for n in nodes {
+        out.push_str(&node_line(n));
+        out.push('\n');
+    }
+    out
 }
 
 fn explore_tool() -> Value {

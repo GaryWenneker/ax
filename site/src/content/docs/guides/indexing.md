@@ -10,7 +10,7 @@ cd your-project
 ax init      # creates .ax/ and builds the full graph — one step
 ```
 
-`ax init` creates the local `.ax/` directory and builds the full graph in the same step — one command, done. There's no separate index step to run afterward, and from here the graph [stays fresh automatically](#stay-fresh-automatically).
+`ax init` creates the local `.ax/` directory and builds the full graph in the same step — one command, done. Re-running `ax init` on an already-initialized project runs an incremental sync instead of a full re-index. From here the graph [stays fresh automatically](#stay-fresh-automatically).
 
 ## Full vs. incremental
 
@@ -38,7 +38,7 @@ agent writes src/Widget.ts
   → next agent query sees it
 ```
 
-**Tunable**: `ax_WATCH_DEBOUNCE_MS` overrides the default 2000ms, clamped to `[100ms, 60s]`. Useful when a build step or formatter writes many files in a tight burst — bump it to `5000` or `10000` so the watcher coalesces them into one sync.
+**Tunable**: `AX_WATCH_DEBOUNCE_MS` overrides the default 2000ms, clamped to `[100ms, 60s]`. Useful when a build step or formatter writes many files in a tight burst — bump it to `5000` or `10000` so the watcher coalesces them into one sync.
 
 ### 2. Per-file staleness banner — covers the debounce window
 
@@ -81,7 +81,7 @@ If `### Pending sync:` isn't in the response, nothing is in flight.
 
 Almost never. The edge cases:
 
-- **The watcher is disabled.** Sandboxes that block local fs watchers, or you've set `ax_NO_DAEMON=1` to opt out of the shared daemon. In those cases `ax sync` is the manual fallback.
+- **The watcher is disabled.** Sandboxes that block local fs watchers, or you've set `AX_NO_DAEMON=1` to opt out of the shared daemon. In those cases `ax sync` is the manual fallback.
 - **Pre-flight before a CI run.** If you're scripting against the index outside an agent session, a single `ax sync` at the start of the script guarantees the index reflects the current working tree.
 
 Otherwise: just use it. The watcher + banner + connect-sync covers the AI-assisted workflow end-to-end. If files are missed after the debounce window, [open an issue](https://github.com/GaryWenneker/ax/issues) with a reproduction.
@@ -96,7 +96,20 @@ Reports node/edge/file counts, the active SQLite backend, and the journal mode. 
 
 ![Graph Stats — index metrics, language distribution, and database size](/screenshots/cc-stats.png)
 
-## What gets indexed
+## Documentation files
+
+In addition to source code, ax indexes documentation files as `Doc` nodes:
+
+| Category | Extensions | Parsing |
+|---|---|---|
+| Markdown | `.md`, `.mdx` | Full — title, outline, links, inline `` `symbol` `` mentions → code edges |
+| Office | `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt`, `.odt`, `.ods`, `.odp`, `.pages`, `.numbers`, `.keynote` | Opaque — presence only |
+| PDF | `.pdf` | Opaque — presence only |
+| Other opaque | `.csv`, `.tsv`, `.rtf`, `.txt`, `.tex`, `.epub`, `.json`, `.xml`, `.html`, `.htm` | Opaque — presence only |
+
+Doc counts by extension appear automatically in every `ax_preflight` response (`<ax_index>` block) and in `ax status` / `ax_status` output (`stats.docsByExtension` in JSON).
+
+## What gets indexed (source code)
 
 ![Files — explorer tree with expanded crates, file index preview showing symbols, and language metadata](/screenshots/cc-files.png)
 

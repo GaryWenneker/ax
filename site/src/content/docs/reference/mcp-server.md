@@ -31,7 +31,7 @@ Seven more tools exist and stay fully functional, but are **unlisted by default*
 | `ax_callees` | Find what a function calls |
 | `ax_impact` | Analyze what code is affected by changing a symbol |
 | `ax_files` | Get the indexed file structure (faster than filesystem scanning) |
-| `ax_status` | Check index health and statistics |
+| `ax_status` | Check index health and statistics (includes doc counts by extension) |
 
 Re-enable any of them with the `ax_MCP_TOOLS` environment variable — a comma-separated allowlist of short names that replaces the default:
 
@@ -47,7 +47,7 @@ When `.ax/policy/` contains indexed rules or skills, the server also exposes:
 
 | Tool | Purpose |
 |---|---|
-| `ax_preflight` | Turn-start: matched rules + skills + `inject` (full markdown bodies from SQLite) |
+| `ax_preflight` | Turn-start: matched rules + skills + `inject` (full markdown bodies from SQLite) + auto-injected `<ax_index>` snapshot (doc counts by type) |
 | `ax_rules` | List all rules or match against a prompt |
 | `ax_skill` | Load the full markdown body of a skill by name |
 | `ax_guard` | Block or warn before writes that violate CRITICAL rules (UTF-8 BOM, secrets paths) |
@@ -71,11 +71,42 @@ The [memory vault](/guides/memory/) adds two tools:
 | `ax_remember` | Store a durable project memory (decision, fix, convention). Returns similar existing memories so contradictions get updated instead of duplicated. |
 | `ax_recall` | Hybrid search (full-text + vector similarity) over stored memories |
 
-`ax_preflight` also recalls memories relevant to the prompt and injects the top matches automatically, so agents rarely need to call `ax_recall` by hand.
+`ax_preflight` also recalls memories relevant to the prompt and injects the top matches automatically, so agents rarely need to call `ax_recall` by hand. It also injects an `<ax_index>` block with node/edge counts and **document inventory by extension** (markdown, office, PDF, other opaque types) on every turn — agents do not need a separate `ax_status` call to see what docs are indexed.
 
 Git hooks run `ax capture-git --quiet` on every commit — commit messages with real context become `kind: git` memories without agent action. Agents should still call `ax_remember` for durable decisions that commit messages do not capture.
 
-Responses larger than ~4k tokens carry a one-line `[ax] token budget` hint suggesting a narrower query or lower depth, nudging agents to keep context small.
+Responses larger than ~3k tokens carry a one-line `[ax] token budget` hint suggesting a narrower query or lower depth, nudging agents to keep context small.
+
+## Lean responses (token savings)
+
+Every `tools/call` reply is `{ content: [{ type: "text", text }], structuredContent?, isError }`. The `content.text` block is what strict clients and Cursor feed the model; `structuredContent` is machine-readable metadata for clients that consume it.
+
+By default ax runs **lean**: it never ships the same data twice. The authoritative payload lives in `content.text`, and `structuredContent` is projected down to just the fields not already present in the text:
+
+| Tool | `content.text` | Lean `structuredContent` |
+|---|---|---|
+| `ax_explore` | Numbered source + caller/callee spine | `query`, `summary`, `blastRadius`, compact `entries` (name/file/lines/score) — no source or neighbor duplication |
+| `ax_preflight` | `inject` block (full rule/skill/memory/index bodies) | counts + `directiveDetected`, `captureProposal`, `guardRequired`, `mode`, `instruction`, `indexStats`, `pendingFiles` — no body duplication |
+| `ax_status` | Markdown status summary + doc breakdown | `stats`, `lastIndexedAt`, `pendingFiles`, `policy` — no `text` duplication |
+| `ax_context` | Markdown task context | `query`, `summary`, `stats`, `relatedFiles` — no `subgraph`/`codeBlocks` duplication |
+| `ax_skill` | Skill body | metadata envelope (no `body`) |
+| `ax_search` / `ax_node` / `ax_callers` / `ax_callees` / `ax_impact` / `ax_files` / `ax_affected` | Compact one-line-per-symbol list | omitted (text is authoritative) |
+
+Savings measurement (`ax savings`) always runs against the full pre-projection payload, so the leaner wire format never distorts the numbers.
+
+Set `AX_MCP_FULL=1` to restore the full `structuredContent` for every tool (for clients that read only structured data).
+
+### Response budget environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every tool |
+| `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
+| `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
+| `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |
+| `AX_CONTEXT_MAX_BLOCK_CHARS` | 1200 | Max characters per `ax_context` code block |
+
+Explicit tool params (`maxLinesPerSnippet`, `maxSourceChars`) still override the env defaults per call.
 
 ## Architecture tools
 
@@ -86,7 +117,7 @@ For whole-graph understanding — subsystems, hot spots, and unexpected coupling
 | `ax_insights` | Leiden **communities** (subsystems), **god nodes** (most-connected concepts), and **surprising connections** (edges crossing both a community and a module boundary). Params: `resolution`, `godLimit`, `surprisingLimit`. |
 | `ax_report` | Full Markdown architecture report (god nodes, communities, surprising links, dead code, unresolved refs, suggested questions). Returns `{ markdown }`. Param: `resolution`. |
 
-Every edge also carries a **confidence** tag — `extracted` (read straight from the AST), `inferred` (resolved by a heuristic/name-matching pass), or `ambiguous` (one of several candidate targets was picked) — surfaced in `ax_node` / `ax_callers` / `ax_callees` output and the Command Center edge badges. Markdown docs (`.md`/`.mdx`) are indexed as `Doc` nodes, linked to each other and to the code symbols they mention.
+Every edge also carries a **confidence** tag — `extracted` (read straight from the AST), `inferred` (resolved by a heuristic/name-matching pass), or `ambiguous` (one of several candidate targets was picked) — surfaced in `ax_node` / `ax_callers` / `ax_callees` output and the Command Center edge badges. Markdown docs (`.md`/`.mdx`) are indexed as `Doc` nodes with full parsing; PDF, Office, and other opaque formats appear as `Doc` nodes (presence only, no content extraction). Counts by extension are auto-injected via `ax_preflight` and available in `ax status --json` as `stats.docsByExtension`.
 
 ## How agents should use it
 
