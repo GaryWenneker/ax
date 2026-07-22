@@ -85,4 +85,12 @@ impl StdioTransport {
             }),
         })
     }
+
+    /// Write a pre-formatted JSON-RPC notification line (already ends with `\n`).
+    pub fn send_notification_line(line: &str) -> Result<(), io::Error> {
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(line.as_bytes())?;
+        stdout.flush()?;
+        Ok(())
+    }
 }

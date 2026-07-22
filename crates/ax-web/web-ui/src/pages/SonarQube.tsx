@@ -12,6 +12,7 @@ import {
 import { Spinner } from '../components/ui/Spinner';
 import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG, SONAR_GUIDE_SECTIONS } from '../lib/sonarGuide';
+import type { SonarTab } from '../lib/routes';
 import {
   bootstrapSonar,
   discoverSonar,
@@ -39,7 +40,7 @@ const DEFAULT_CONFIG: ShipConfig = {
   },
   remote: { provider: 'azure_devops' },
   sonar: { ...DEFAULT_SONAR_CONFIG },
-  ui: { show_savings: true, show_agent_terminal: true },
+  ui: { show_savings: true, show_agent_terminal: true, verbose_mcp: false },
   reviewers: {},
 };
 
@@ -174,8 +175,13 @@ function GuideSection({ title, body }: { title: string; body: string }) {
   );
 }
 
-export default function SonarQubePage() {
-  const [tab, setTab] = useState<'dashboard' | 'setup'>('dashboard');
+export default function SonarQubePage({
+  tab,
+  onTabChange,
+}: {
+  tab: SonarTab;
+  onTabChange: (tab: SonarTab) => void;
+}) {
   const [iframeKey, setIframeKey] = useState(0);
   const [iframeState, setIframeState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [config, setConfig] = useState<ShipConfig>(DEFAULT_CONFIG);
@@ -555,7 +561,7 @@ export default function SonarQubePage() {
               role="tab"
               aria-selected={tab === 'dashboard'}
               className={`btn${tab === 'dashboard' ? ' primary' : ' btn-subtle'}`}
-              onClick={() => setTab('dashboard')}
+              onClick={() => onTabChange('dashboard')}
             >
               Dashboard
             </button>
@@ -564,7 +570,7 @@ export default function SonarQubePage() {
               role="tab"
               aria-selected={tab === 'setup'}
               className={`btn${tab === 'setup' ? ' primary' : ' btn-subtle'}`}
-              onClick={() => setTab('setup')}
+              onClick={() => onTabChange('setup')}
             >
               Setup
             </button>

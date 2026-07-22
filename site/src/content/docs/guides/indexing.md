@@ -20,7 +20,7 @@ ax index --force   # re-index from scratch
 ax sync            # incremental — only changed files
 ```
 
-`sync` is fast because it only reparses what changed — it's what the file watcher runs for you on every edit (see [Stay fresh automatically](#stay-fresh-automatically)). You rarely need to run it by hand.
+`sync` is fast because it only reparses what changed — it's what the file watcher runs for you on every edit (see [Stay fresh automatically](#stay-fresh-automatically)). Reference resolution is scoped the same way: only unresolved references from changed files are processed, not the entire project backlog. A full `ax index` still resolves everything. You rarely need to run `ax sync` by hand.
 
 ## Stay fresh automatically
 

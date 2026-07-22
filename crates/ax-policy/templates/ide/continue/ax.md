@@ -9,6 +9,8 @@ Call **`ax_preflight`** exactly once per turn **before all other work**. This is
 
 **Inject fallback:** If the response lacks team policy (no `<ax_policy>` in `inject`, or empty `rules`), call **`ax_skill("startup")`** once — then continue.
 
+**Explore before Grep/Read (CRITICAL):** For structural code questions, call **`ax_explore`** (or graph tools) **before** broad `Grep` / `Read`. Skipping this burns tokens and lowers MCP quality (`ExploreBeforeGrep`).
+
 **Directive capture:** When the user gives durable rules (`je moet`, `always`, `never`, `@rule`), call **`ax_policy_capture`** with `action: "propose"`, ask each question from `questions[]`, and save only after explicit confirmation (stored in ax.db).
 
 ## Capability discovery
@@ -26,7 +28,7 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Which tests are affected by changes | `ax_affected` |
 | Architecture overview: communities, god nodes, surprising links | `ax_insights` |
 | Full Markdown architecture report | `ax_report` |
-| Pre-write policy guard (when CRITICAL rules exist) | `ax_guard` |
+| Pre-write policy guard (when CRITICAL rules exist) | `ax_guard` (`path` + `operation`; also `paths[]` / `action`) |
 | Capture durable rules | `ax_policy_capture` |
 | Re-index after large changes | `ax_index` |
 | File context for a symbol | `ax_node` |

@@ -38,7 +38,7 @@ export const THEMES: ThemePreset[] = [
     text: '#cccccc',
     textDim: '#9d9d9d',
     textHi: '#ffffff',
-    statusbarBg: '#181818',
+    statusbarBg: '#0078d4',
   },
   {
     id: 'ember',
@@ -58,7 +58,7 @@ export const THEMES: ThemePreset[] = [
     text: '#cccccc',
     textDim: '#9d9d9d',
     textHi: '#ffffff',
-    statusbarBg: '#141414',
+    statusbarBg: '#e06c2b',
   },
   {
     id: 'emerald',
@@ -78,7 +78,7 @@ export const THEMES: ThemePreset[] = [
     text: '#cccccc',
     textDim: '#9d9d9d',
     textHi: '#ffffff',
-    statusbarBg: '#141614',
+    statusbarBg: '#2ea87a',
   },
   {
     id: 'nightfall',
@@ -98,7 +98,7 @@ export const THEMES: ThemePreset[] = [
     text: '#cccccc',
     textDim: '#9d9d9d',
     textHi: '#ffffff',
-    statusbarBg: '#14141c',
+    statusbarBg: '#8b5cf6',
   },
   {
     id: 'crimson',
@@ -118,7 +118,7 @@ export const THEMES: ThemePreset[] = [
     text: '#cccccc',
     textDim: '#9d9d9d',
     textHi: '#ffffff',
-    statusbarBg: '#161414',
+    statusbarBg: '#dc3545',
   },
   {
     id: 'ocean',
@@ -138,7 +138,7 @@ export const THEMES: ThemePreset[] = [
     text: '#cccccc',
     textDim: '#9d9d9d',
     textHi: '#ffffff',
-    statusbarBg: '#141618',
+    statusbarBg: '#22a2c8',
   },
 ];
 
@@ -179,11 +179,19 @@ export function applyTheme(theme: ThemePreset): void {
   root.style.setProperty('--text', theme.text);
   root.style.setProperty('--text-dim', theme.textDim);
   root.style.setProperty('--text-hi', theme.textHi);
-  root.style.setProperty('--statusbar-bg', theme.statusbarBg);
+  root.style.setProperty('--statusbar-bg', theme.accent);
+  root.dataset.axTheme = theme.id;
+  window.dispatchEvent(new CustomEvent(THEME_CHANGED, { detail: { id: theme.id, accent: theme.accent } }));
 }
+
+export const THEME_CHANGED = 'ax-theme-changed';
 
 export function initTheme(): string {
   const id = loadThemeId();
   applyTheme(themeById(id));
   return id;
+}
+
+export function currentThemeAccent(): string {
+  return themeById(loadThemeId()).accent;
 }

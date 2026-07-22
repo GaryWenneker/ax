@@ -11,6 +11,6 @@ pub mod resolver;
 pub mod strip_comments;
 pub mod types;
 
-pub use resolver::ReferenceResolver;
+pub use resolver::{ReferenceResolver, ResolutionScope};
 pub use cleanup::{prune_stale_unresolved_refs, UnresolvedCleanupStats};
 pub use types::*;

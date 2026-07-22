@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import AgentsSettingsSection from '../components/AgentsSettingsSection';
+import McpTraceLive from '../components/McpTraceLive';
 import { BusyLabel } from '../components/ui/PageLayout';
 import ThemeChooser from '../components/ThemeChooser';
 import { usePageContext } from '../context/UiContext';
@@ -17,7 +18,7 @@ const DEFAULT_CONFIG: ShipConfig = {
   },
   remote: { provider: 'azure_devops' },
   sonar: { ...DEFAULT_SONAR_CONFIG },
-  ui: { show_savings: true, show_agent_terminal: true },
+  ui: { show_savings: true, show_agent_terminal: true, verbose_mcp: false },
   reviewers: {},
 };
 
@@ -129,6 +130,33 @@ export default function SettingsPage() {
       setConfig((c) => ({
         ...c,
         ui: { ...(c.ui ?? {}), show_savings: !show_savings },
+      }));
+      setErr(String(e));
+    }
+  }
+
+  async function setUiVerboseMcp(verbose_mcp: boolean) {
+    const next = {
+      ...config,
+      ui: { ...(config.ui ?? {}), verbose_mcp },
+    };
+    setConfig(next);
+    setErr(null);
+    setMsg(null);
+    try {
+      await saveShipConfig(next);
+      window.dispatchEvent(
+        new CustomEvent('ax-ship-config-updated', { detail: { verbose_mcp } }),
+      );
+      setMsg(
+        verbose_mcp
+          ? 'Verbose MCP logging enabled — reconnect ax MCP, then open Logging from the status bar'
+          : 'Verbose MCP logging disabled',
+      );
+    } catch (e) {
+      setConfig((c) => ({
+        ...c,
+        ui: { ...(c.ui ?? {}), verbose_mcp: !verbose_mcp },
       }));
       setErr(String(e));
     }
@@ -279,6 +307,17 @@ export default function SettingsPage() {
               />
             </SettingRow>
 
+            <SettingRow
+              title="Verbose MCP logging"
+              description="Record inbound args, enrichment, and outbound MCP payloads to <project>/.ax/mcp-verbose.log and stream them live in the Logging page (per-project table). Off by default — never alters tool responses."
+            >
+              <Toggle
+                label="Verbose MCP logging"
+                checked={config.ui?.verbose_mcp ?? false}
+                onChange={setUiVerboseMcp}
+              />
+            </SettingRow>
+
             <div className="settings-divider" />
             <div className="settings-subsection-label">Pull requests</div>
 
@@ -361,6 +400,8 @@ export default function SettingsPage() {
             </button>
           </div>
         </section>
+
+        <McpTraceLive verboseEnabled={config.ui?.verbose_mcp ?? false} />
       </div>
     </div>
   );

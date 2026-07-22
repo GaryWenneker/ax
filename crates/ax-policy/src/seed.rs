@@ -53,6 +53,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/modal-forms.mdc"),
     },
     Template {
+        rel: "rules/explore-before-grep.mdc",
+        body: include_str!("../templates/rules/explore-before-grep.mdc"),
+    },
+    Template {
         rel: "skills/startup/SKILL.md",
         body: include_str!("../templates/skills/startup/SKILL.md"),
     },
@@ -180,6 +184,20 @@ pub fn verify_content(content: &str) -> Vec<String> {
     issues
 }
 
+/// Issues for a managed instruction file, including drift from the embedded init template
+/// when the file is required (not optional).
+fn managed_file_issues(rel: &str, content: &str, optional: bool) -> Vec<String> {
+    let mut issues = verify_content(content);
+    if !optional {
+        if let Some(t) = template_by_rel(rel) {
+            if content.trim() != t.body.trim() {
+                issues.push("drifted from embedded init template".into());
+            }
+        }
+    }
+    issues
+}
+
 /// Verify default instruction files match ax preflight workflow (Recall instruction-sync parity).
 pub fn verify_instructions(ax_dir: &Path) -> Vec<InstructionCheck> {
     let policy = ax_dir.join("policy");
@@ -206,7 +224,7 @@ pub fn verify_instructions(ax_dir: &Path) -> Vec<InstructionCheck> {
                 };
             }
             let content = std::fs::read_to_string(&path).unwrap_or_default();
-            let issues = verify_content(&content);
+            let issues = managed_file_issues(rel, &content, *optional);
             InstructionCheck {
                 label: (*label).to_string(),
                 path,
@@ -235,7 +253,7 @@ pub fn sync_instructions(ax_dir: &Path, fix: bool) -> std::io::Result<SyncResult
             String::new()
         };
         let issues = if path.exists() {
-            verify_content(&content)
+            managed_file_issues(rel, &content, *optional)
         } else {
             vec!["missing".into()]
         };
@@ -378,6 +396,35 @@ mod tests {
         let synced = sync_instructions(&ax, true).unwrap();
         assert!(!synced.fixed.is_empty());
         assert_eq!(synced.fail_count, 0);
+    }
+
+    #[test]
+    fn sync_fix_restores_drifted_startup_template() {
+        let dir = tempdir().unwrap();
+        let ax = dir.path().join(".ax");
+        seed_default_policy(&ax).unwrap();
+        let startup = skill_file(&skills_dir(&ax), "startup");
+        let mut body = std::fs::read_to_string(&startup).unwrap();
+        body.push_str("\n<!-- drifted -->\n");
+        std::fs::write(&startup, body).unwrap();
+        let synced = sync_instructions(&ax, true).unwrap();
+        assert!(
+            synced.fixed.iter().any(|r| r.contains("startup")),
+            "expected drifted startup skill to be restored from init template"
+        );
+        let restored = std::fs::read_to_string(&startup).unwrap();
+        assert!(restored.contains("paths"));
+        assert!(!restored.contains("<!-- drifted -->"));
+    }
+
+    #[test]
+    fn startup_template_documents_guard_aliases() {
+        let body = include_str!("../templates/skills/startup/SKILL.md");
+        assert!(body.contains("ax_guard"));
+        assert!(body.contains("\"path\""));
+        assert!(body.contains("\"operation\""));
+        assert!(body.contains("paths"));
+        assert!(body.contains("action"));
     }
 
     #[test]

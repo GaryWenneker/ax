@@ -6,6 +6,7 @@ import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/bebas-neue';
 import '../styles/theme.css';
 import LogoMark from '../components/LogoMark.astro';
+import { agents, agentIcons } from '../components/AgentIcons.astro';
 import { getStarsLabel } from '../lib/github';
 import { AX_VERSION } from '../lib/version';
 
@@ -58,7 +59,7 @@ const pillars = [
 	},
 	{
 		title: 'Command Center',
-		body: 'ax web — graph browser, policy editor, SonarQube proxy, token savings, and agent terminal in one UI.',
+		body: 'ax web — graph browser, MCP Logging / Quality, token savings, SonarQube proxy, policy editor, and agent terminal.',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 36V18l16-10 16 10v18"/><path d="M18 36V24h12v12M22 28h4"/></svg>`,
 	},
 	{
@@ -66,9 +67,12 @@ const pillars = [
 		body: 'Leiden communities, god nodes, and surprising connections — plus an interactive graph, a Markdown report, and confidence-tagged edges.',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="24" cy="12" r="5"/><circle cx="10" cy="36" r="5"/><circle cx="38" cy="36" r="5"/><circle cx="26" cy="30" r="3"/><path d="M22 16 12 32M27 15l9 18M22 13 15 34M28 27l7 6"/></svg>`,
 	},
+	{
+		title: 'MCP quality loop',
+		body: 'Verbose traces, live Logging, and a scored Quality slide-out that turns Explore-before-Grep waste into a Copy fixpack.',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 34V14h32v20"/><path d="M14 22h8M14 28h20M28 18l6 6-6 6"/></svg>`,
+	},
 ];
-
-const agents = ['Cursor', 'Claude Code', 'Codex CLI', 'Gemini CLI', 'OpenCode', 'Any MCP client'];
 
 const stats = [
 	{ value: '20+', label: 'Languages indexed' },
@@ -240,7 +244,10 @@ const stats = [
 					<div class="agents-marquee">
 						<div class="agents-track">
 							{[...agents, ...agents].map((name) => (
-								<span class="agent-chip">{name}</span>
+								<span class="agent-chip">
+									<span class="agent-logo" set:html={agentIcons[name]} />
+									{name}
+								</span>
 							))}
 						</div>
 					</div>
@@ -1058,6 +1065,9 @@ const stats = [
 			100% { transform: translateX(-50%); }
 		}
 		.agent-chip {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.55rem;
 			font-size: 0.92rem;
 			font-weight: 600;
 			padding: 0.5rem 1.25rem;
@@ -1066,6 +1076,24 @@ const stats = [
 			color: rgba(255, 255, 255, 0.5);
 			white-space: nowrap;
 			transition: all 0.3s;
+		}
+		.agent-logo {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			width: 1.05rem;
+			height: 1.05rem;
+			flex-shrink: 0;
+			opacity: 0.72;
+			transition: opacity 0.3s;
+		}
+		.agent-logo :global(svg) {
+			display: block;
+			width: 100%;
+			height: 100%;
+		}
+		.agent-chip:hover .agent-logo {
+			opacity: 1;
 		}
 		.agent-chip:hover {
 			background: rgba(201, 165, 92, 0.08);

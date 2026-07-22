@@ -395,6 +395,7 @@ dependencies = [
  "ax-types",
  "ax-usage",
  "ax-utils",
+ "dirs",
  "hex",
  "serde",
  "serde_json",
@@ -402,6 +403,7 @@ dependencies = [
  "sqlx",
  "sysinfo",
  "tokio",
+ "toml",
  "tracing",
  "uuid",
 ]

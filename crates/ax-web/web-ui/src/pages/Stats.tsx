@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchStats } from '../api';
+import { navigateRoute } from '../lib/routes';
 import {
   DataTable,
   DistBar,
@@ -23,7 +24,7 @@ function browseLanguage(language: string) {
   saveString('nodes-q', '');
   saveString('nodes-kind', '');
   saveString('nodes-offset', '0');
-  window.location.hash = 'nodes';
+  navigateRoute({ page: 'nodes', ruleId: null, skillName: null, kind: null, sonarTab: 'dashboard' });
 }
 
 function formatBytes(b: number) {

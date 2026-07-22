@@ -62,6 +62,12 @@ project_key = "your-project"
 token_env = "SONAR_TOKEN"
 scanner_path = "sonar-scanner"
 podman_container = "sonarqube"
+
+[ui]
+show_savings = true
+show_agent_terminal = true
+# Verbose MCP traces → Cursor Output (stderr). Off by default.
+verbose_mcp = false
 ```
 
 Set the PAT in your environment before draft PR or review commands:
@@ -75,17 +81,30 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
 ## Command Center pages (`ax web`)
 
+Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left-aligned content column** that scales by viewport: 720px → 800px → 960px → **1024px** (XXL). The column’s left edge aligns with the main pane next to the sidebar (not centered). Full-bleed pages (Files, Agent terminal, SonarQube, and open detail blades) stay unconstrained.
+
 | Page | Purpose |
 |---|---|
 | **Ship** | Quality-gate pipeline, SSE logs, git events |
 | **Graph** | Interactive force-directed graph — communities, god nodes, edge confidence, docs ([details](/guides/architecture-insights/#visual-graph)) |
 | **SonarQube** | Proxied dashboard with auto-login and dark theme |
 | **Memory** | Browse, search, compose memories (modal composer); capture from git |
-| **Savings** | Token and dollar savings from graph queries (real BPE counts, dollar estimates) |
+| **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
 | **Agent** | Terminal with MCP wired in (when enabled in Settings) |
+| **Logging** | Fullscreen table of the **active project** MCP verbose stream; **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **fluid columns** (Time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
 | **Policy** | View-first rule and skill editors |
 
+![MCP Logging — live verbose stream with kind filters, project switcher, and Call Inspector](/screenshots/cc-logging.png)
+
+![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality.png)
+
 Open with `ax web --open` or `ax ship --watch --open`.
+
+```bash
+ax web --open
+ax mcp audit                  # same quality engine as the Q chip
+ax savings hook install       # Cursor sessionStart → model + session tags
+```
 
 ### Project browser
 
@@ -139,7 +158,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 - **SonarQube** — auto-detect Podman/Docker, one-click install & start, admin auto-login, dark theme
 - **Command Center** — target branch, test runner, Azure DevOps / GitHub remote
-- **Interface** — theme chooser (accent/palette presets applied live), toggle Savings and Agent pages in the sidebar
+- **Interface** — theme chooser (accent/palette presets applied live, including the status bar), toggle Savings and Agent pages in the sidebar, and **Verbose MCP logging** (records MCP traces to `<project>/.ax/mcp-verbose.log`; Logging table uses theme colors for kind badges and JSON/XML syntax; off by default; never alters tool responses)
 
 ### SonarQube proxy
 

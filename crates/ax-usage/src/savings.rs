@@ -8,10 +8,17 @@ use serde::Serialize;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::cursor_state::{import_cursor_composer_state, normalize_cursor_model};
 use crate::period::{resolve_period, UsagePeriod};
 use crate::pricing::{input_cost_usd, price_for_model, pricing_info, reference_pricing, PricingInfo};
 use crate::store::{open_pool, usage_db_path};
-use crate::tokenizer::{count_file_line_range_tokens, count_file_tokens, count_tokens, tokenizer_available};
+use crate::tokenizer::{
+    count_file_line_range_tokens, count_file_tokens, count_tokens, tokenize_text,
+    tokenizer_available, truncate_utf8, TokenizeResult,
+};
+
+/// Max bytes stored per preview column for token-chip drill-down.
+pub const PREVIEW_MAX_BYTES: usize = 4096;
 
 const GRAPH_TOOLS: &[&str] = &[
     "ax_explore",
@@ -284,6 +291,61 @@ pub struct SavingsEstimate {
     pub response_tokens_est: i64,
     pub tokens_saved_est: i64,
     pub savings_eligible: bool,
+    /// Truncated MCP response text for token-chip visualization.
+    pub response_preview: Option<String>,
+    /// Truncated counterfactual file contents for token-chip visualization.
+    pub counterfactual_preview: Option<String>,
+}
+
+fn read_span_preview(path: &Path, span: &FileSpan) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    if span.has_line_span() {
+        let lines: Vec<&str> = text.lines().collect();
+        let start_idx = (span.min_start.saturating_sub(1)) as usize;
+        let end_idx = (span.max_end as usize).min(lines.len());
+        if start_idx < end_idx {
+            return Some(lines[start_idx..end_idx].join("\n"));
+        }
+    }
+    Some(text.into_owned())
+}
+
+fn build_counterfactual_preview(
+    files: &HashMap<String, FileSpan>,
+    project_root: Option<&Path>,
+) -> Option<String> {
+    if files.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    let mut paths: Vec<&String> = files.keys().collect();
+    paths.sort();
+    for file in paths {
+        if out.len() >= PREVIEW_MAX_BYTES {
+            break;
+        }
+        let Some(span) = files.get(file) else {
+            continue;
+        };
+        let resolved = resolve_file_path(file, project_root);
+        let Some(chunk) = read_span_preview(&resolved, span) else {
+            continue;
+        };
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        let remaining = PREVIEW_MAX_BYTES.saturating_sub(out.len());
+        if remaining == 0 {
+            break;
+        }
+        out.push_str(&truncate_utf8(&chunk, remaining));
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// Resolve a file path from a graph response against the project root.
@@ -313,11 +375,17 @@ pub fn estimate_savings(
 ) -> SavingsEstimate {
     let response_tokens_est = count_tokens(response_text) as i64;
     let savings_eligible = is_savings_eligible_tool(tool);
+    let response_preview = if response_text.is_empty() {
+        None
+    } else {
+        Some(truncate_utf8(response_text, PREVIEW_MAX_BYTES))
+    };
 
     if !savings_eligible {
         return SavingsEstimate {
             response_tokens_est,
             savings_eligible: false,
+            response_preview,
             ..Default::default()
         };
     }
@@ -340,6 +408,7 @@ pub fn estimate_savings(
 
     let counterfactual_files = files.len() as i64;
     let tokens_saved_est = (counterfactual_tokens_est - response_tokens_est).max(0);
+    let counterfactual_preview = build_counterfactual_preview(&files, project_root);
 
     SavingsEstimate {
         counterfactual_files,
@@ -348,6 +417,8 @@ pub fn estimate_savings(
         response_tokens_est,
         tokens_saved_est,
         savings_eligible: true,
+        response_preview,
+        counterfactual_preview,
     }
 }
 
@@ -364,6 +435,8 @@ pub struct McpCallRecord {
     pub duration_ms: Option<i64>,
     pub ok: bool,
     pub savings_eligible: bool,
+    pub response_preview: Option<String>,
+    pub counterfactual_preview: Option<String>,
 }
 
 pub async fn record_mcp_call(record: McpCallRecord) {
@@ -373,8 +446,9 @@ pub async fn record_mcp_call(record: McpCallRecord) {
             "INSERT INTO mcp_call_log
              (tool, project, response_chars, response_tokens_est, counterfactual_files,
               counterfactual_exact_files, counterfactual_tokens_est, tokens_saved_est,
-              duration_ms, ok, savings_eligible, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              duration_ms, ok, savings_eligible, response_preview, counterfactual_preview,
+              created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.tool)
         .bind(&record.project)
@@ -387,6 +461,8 @@ pub async fn record_mcp_call(record: McpCallRecord) {
         .bind(record.duration_ms)
         .bind(i64::from(record.ok))
         .bind(i64::from(record.savings_eligible))
+        .bind(&record.response_preview)
+        .bind(&record.counterfactual_preview)
         .bind(now)
         .execute(&pool)
         .await;
@@ -445,6 +521,26 @@ pub struct WeekdaySavingsRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct HourSavingsRow {
+    /// 0–23 local hour of day.
+    pub hour: i64,
+    pub label: String,
+    pub tokens_saved_est: i64,
+    pub calls: i64,
+    pub graph_calls: i64,
+}
+
+/// Hourly (or finer) savings buckets for navigable time charts.
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelineBucket {
+    /// Local timestamp label, e.g. `2026-07-21 14:00`.
+    pub bucket: String,
+    pub tokens_saved_est: i64,
+    pub calls: i64,
+    pub graph_calls: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ProjectSavingsRow {
     pub project: String,
     pub calls: i64,
@@ -453,8 +549,23 @@ pub struct ProjectSavingsRow {
     pub counterfactual_files: i64,
 }
 
+/// Savings and session spend grouped by agent model (from imported transcripts).
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelSavingsRow {
+    pub model: String,
+    pub sessions: i64,
+    pub session_input_tokens: i64,
+    pub tokens_saved_est: i64,
+    pub ax_calls: i64,
+    pub read_calls: i64,
+    pub grep_calls: i64,
+    pub session_cost_usd_est: f64,
+    pub cost_saved_usd_est: f64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RecentCallRow {
+    pub id: i64,
     pub tool: String,
     pub project: Option<String>,
     pub tokens_saved_est: i64,
@@ -465,6 +576,28 @@ pub struct RecentCallRow {
     pub savings_eligible: bool,
     pub duration_ms: Option<i64>,
     pub created_at: i64,
+    /// True when a response or counterfactual preview is stored for chip view.
+    pub has_preview: bool,
+}
+
+/// Per-call token-chip payload for the Savings detail blade.
+#[derive(Debug, Clone, Serialize)]
+pub struct CallTokenDetail {
+    pub id: i64,
+    pub tool: String,
+    pub project: Option<String>,
+    pub tokens_saved_est: i64,
+    pub counterfactual_tokens_est: i64,
+    pub response_tokens_est: i64,
+    pub counterfactual_files: i64,
+    pub ok: bool,
+    pub savings_eligible: bool,
+    pub duration_ms: Option<i64>,
+    pub created_at: i64,
+    pub response_preview: Option<String>,
+    pub counterfactual_preview: Option<String>,
+    pub response_tokens: TokenizeResult,
+    pub counterfactual_tokens: TokenizeResult,
 }
 
 /// Estimation constants in effect (defaults or `AX_SAVINGS_*` env overrides).
@@ -565,11 +698,117 @@ pub struct SavingsSummary {
     pub assumptions: SavingsAssumptions,
     pub by_tool: Vec<ToolSavingsRow>,
     pub by_project: Vec<ProjectSavingsRow>,
+    pub by_model: Vec<ModelSavingsRow>,
     pub by_weekday: Vec<WeekdaySavingsRow>,
+    pub by_hour: Vec<HourSavingsRow>,
+    pub timeline: Vec<TimelineBucket>,
     pub daily: Vec<DailySavings>,
     pub recent_calls: Vec<RecentCallRow>,
     pub agent_sessions: Vec<AgentSessionRow>,
     pub db_path: String,
+}
+
+fn session_model_label(model: &Option<String>) -> String {
+    model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn session_tuple_to_row(
+    (
+        agent,
+        session_id,
+        read_calls,
+        grep_calls,
+        ax_calls,
+        session_input_tokens,
+        session_output_tokens,
+        model,
+        started_at,
+        ended_at,
+        mcp_calls_in_window,
+        tokens_saved_in_window,
+    ): (
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        i64,
+    ),
+) -> AgentSessionRow {
+    let session_cost_usd_est = session_input_tokens.map(|tokens| {
+        let pricing = model
+            .as_deref()
+            .map(price_for_model)
+            .unwrap_or_else(reference_pricing);
+        input_cost_usd(tokens, pricing)
+    });
+    AgentSessionRow {
+        agent,
+        session_id,
+        read_calls,
+        grep_calls,
+        ax_calls,
+        session_input_tokens,
+        session_output_tokens,
+        model,
+        session_cost_usd_est,
+        mcp_calls_in_window,
+        tokens_saved_in_window,
+        started_at,
+        ended_at,
+    }
+}
+
+fn aggregate_sessions_by_model(sessions: &[AgentSessionRow]) -> Vec<ModelSavingsRow> {
+    let mut by_model: HashMap<String, ModelSavingsRow> = HashMap::new();
+    for s in sessions {
+        let model = session_model_label(&s.model);
+        let pricing = s
+            .model
+            .as_deref()
+            .map(price_for_model)
+            .unwrap_or_else(reference_pricing);
+        let session_cost = s.session_cost_usd_est.unwrap_or(0.0);
+        let cost_saved = input_cost_usd(s.tokens_saved_in_window, pricing);
+        let row = by_model.entry(model.clone()).or_insert_with(|| ModelSavingsRow {
+            model,
+            sessions: 0,
+            session_input_tokens: 0,
+            tokens_saved_est: 0,
+            ax_calls: 0,
+            read_calls: 0,
+            grep_calls: 0,
+            session_cost_usd_est: 0.0,
+            cost_saved_usd_est: 0.0,
+        });
+        row.sessions += 1;
+        row.session_input_tokens += s.session_input_tokens.unwrap_or(0);
+        row.tokens_saved_est += s.tokens_saved_in_window;
+        row.ax_calls += s.ax_calls;
+        row.read_calls += s.read_calls;
+        row.grep_calls += s.grep_calls;
+        row.session_cost_usd_est += session_cost;
+        row.cost_saved_usd_est += cost_saved;
+    }
+    let mut rows: Vec<ModelSavingsRow> = by_model.into_values().collect();
+    rows.sort_by(|a, b| {
+        b.tokens_saved_est
+            .cmp(&a.tokens_saved_est)
+            .then_with(|| b.session_input_tokens.cmp(&a.session_input_tokens))
+            .then_with(|| a.model.cmp(&b.model))
+    });
+    rows
 }
 
 pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, String> {
@@ -713,6 +952,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .collect();
 
     type RecentTuple = (
+        i64,
         String,
         Option<String>,
         Option<i64>,
@@ -723,10 +963,13 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         i64,
         Option<i64>,
         i64,
+        Option<String>,
+        Option<String>,
     );
     let recent_calls: Vec<RecentCallRow> = sqlx::query_as::<_, RecentTuple>(
-        "SELECT tool, project, tokens_saved_est, counterfactual_tokens_est, response_tokens_est,
-                counterfactual_files, ok, savings_eligible, duration_ms, created_at
+        "SELECT id, tool, project, tokens_saved_est, counterfactual_tokens_est, response_tokens_est,
+                counterfactual_files, ok, savings_eligible, duration_ms, created_at,
+                response_preview, counterfactual_preview
          FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
          ORDER BY created_at DESC LIMIT 40",
     )
@@ -738,6 +981,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .into_iter()
     .map(
         |(
+            id,
             tool,
             project,
             tokens_saved_est,
@@ -748,17 +992,27 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
             savings_eligible,
             duration_ms,
             created_at,
-        )| RecentCallRow {
-            tool,
-            project,
-            tokens_saved_est: tokens_saved_est.unwrap_or(0),
-            counterfactual_tokens_est: counterfactual_tokens_est.unwrap_or(0),
-            response_tokens_est,
-            counterfactual_files: counterfactual_files.unwrap_or(0),
-            ok: ok != 0,
-            savings_eligible: savings_eligible != 0,
-            duration_ms,
-            created_at,
+            response_preview,
+            counterfactual_preview,
+        )| {
+            let has_preview = response_preview
+                .as_ref()
+                .is_some_and(|s| !s.is_empty())
+                || counterfactual_preview.as_ref().is_some_and(|s| !s.is_empty());
+            RecentCallRow {
+                id,
+                tool,
+                project,
+                tokens_saved_est: tokens_saved_est.unwrap_or(0),
+                counterfactual_tokens_est: counterfactual_tokens_est.unwrap_or(0),
+                response_tokens_est,
+                counterfactual_files: counterfactual_files.unwrap_or(0),
+                ok: ok != 0,
+                savings_eligible: savings_eligible != 0,
+                duration_ms,
+                created_at,
+                has_preview,
+            }
         },
     )
     .collect();
@@ -794,6 +1048,61 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         })
         .collect();
 
+    type HourTuple = (i64, i64, i64, i64);
+    let hour_raw: Vec<HourTuple> = sqlx::query_as(
+        "SELECT CAST(strftime('%H', created_at / 1000, 'unixepoch', 'localtime') AS INTEGER) as hr,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0),
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0)
+         FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
+         GROUP BY hr ORDER BY hr",
+    )
+    .bind(range.from_ms)
+    .bind(range.to_ms)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut hour_map: std::collections::HashMap<i64, (i64, i64, i64)> = std::collections::HashMap::new();
+    for (hour, tokens_saved_est, calls, graph_calls) in hour_raw {
+        hour_map.insert(hour, (tokens_saved_est, calls, graph_calls));
+    }
+    let by_hour: Vec<HourSavingsRow> = (0..24)
+        .map(|hour| {
+            let (tokens_saved_est, calls, graph_calls) = hour_map.get(&hour).copied().unwrap_or((0, 0, 0));
+            HourSavingsRow {
+                hour,
+                label: format!("{hour:02}"),
+                tokens_saved_est,
+                calls,
+                graph_calls,
+            }
+        })
+        .collect();
+
+    type TimelineTuple = (String, i64, i64, i64);
+    let timeline: Vec<TimelineBucket> = sqlx::query_as::<_, TimelineTuple>(
+        "SELECT strftime('%Y-%m-%d %H:00', created_at / 1000, 'unixepoch', 'localtime') as bucket,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0),
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0)
+         FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
+         GROUP BY bucket ORDER BY bucket",
+    )
+    .bind(range.from_ms)
+    .bind(range.to_ms)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .into_iter()
+    .map(|(bucket, tokens_saved_est, calls, graph_calls)| TimelineBucket {
+        bucket,
+        tokens_saved_est,
+        calls,
+        graph_calls,
+    })
+    .collect();
+
     type SessionTuple = (
         String,
         String,
@@ -808,8 +1117,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         i64,
         i64,
     );
-    let agent_sessions: Vec<AgentSessionRow> = sqlx::query_as::<_, SessionTuple>(
-        "SELECT s.agent, s.session_id, s.read_calls, s.grep_calls, s.ax_calls,
+    const SESSIONS_SQL: &str = "SELECT s.agent, s.session_id, s.read_calls, s.grep_calls, s.ax_calls,
                 s.session_input_tokens, s.session_output_tokens, s.model,
                 s.started_at, s.ended_at,
                 (SELECT COUNT(*) FROM mcp_call_log m
@@ -821,54 +1129,20 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
                     AND m.created_at BETWEEN s.started_at AND s.ended_at)
          FROM agent_session_log s
          WHERE COALESCE(s.started_at, s.source_mtime) >= ? AND COALESCE(s.started_at, s.source_mtime) <= ?
-         ORDER BY COALESCE(s.started_at, s.source_mtime) DESC LIMIT 50",
-    )
-    .bind(range.from_ms)
-    .bind(range.to_ms)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| e.to_string())?
-    .into_iter()
-    .map(
-        |(
-            agent,
-            session_id,
-            read_calls,
-            grep_calls,
-            ax_calls,
-            session_input_tokens,
-            session_output_tokens,
-            model,
-            started_at,
-            ended_at,
-            mcp_calls_in_window,
-            tokens_saved_in_window,
-        )| {
-            let session_cost_usd_est = session_input_tokens.map(|tokens| {
-                let pricing = model
-                    .as_deref()
-                    .map(price_for_model)
-                    .unwrap_or_else(reference_pricing);
-                input_cost_usd(tokens, pricing)
-            });
-            AgentSessionRow {
-                agent,
-                session_id,
-                read_calls,
-                grep_calls,
-                ax_calls,
-                session_input_tokens,
-                session_output_tokens,
-                model,
-                session_cost_usd_est,
-                mcp_calls_in_window,
-                tokens_saved_in_window,
-                started_at,
-                ended_at,
-            }
-        },
-    )
-    .collect();
+         ORDER BY COALESCE(s.started_at, s.source_mtime) DESC";
+
+    let session_rows: Vec<AgentSessionRow> = sqlx::query_as::<_, SessionTuple>(SESSIONS_SQL)
+        .bind(range.from_ms)
+        .bind(range.to_ms)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(session_tuple_to_row)
+        .collect();
+
+    let by_model = aggregate_sessions_by_model(&session_rows);
+    let agent_sessions: Vec<AgentSessionRow> = session_rows.into_iter().take(50).collect();
 
     let (
         mcp_calls,
@@ -923,7 +1197,10 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         assumptions: current_assumptions(),
         by_tool,
         by_project,
+        by_model,
         by_weekday,
+        by_hour,
+        timeline,
         daily,
         recent_calls,
         agent_sessions,
@@ -931,10 +1208,166 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     })
 }
 
+/// Load one MCP call with tokenized preview chips for the Savings UI.
+pub async fn query_call_token_detail(id: i64) -> Result<CallTokenDetail, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    type DetailTuple = (
+        i64,
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        i64,
+        i64,
+        Option<i64>,
+        i64,
+        Option<String>,
+        Option<String>,
+    );
+    let row = sqlx::query_as::<_, DetailTuple>(
+        "SELECT id, tool, project, tokens_saved_est, counterfactual_tokens_est, response_tokens_est,
+                counterfactual_files, ok, savings_eligible, duration_ms, created_at,
+                response_preview, counterfactual_preview
+         FROM mcp_call_log WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| format!("call {id} not found"))?;
+
+    let (
+        id,
+        tool,
+        project,
+        tokens_saved_est,
+        counterfactual_tokens_est,
+        response_tokens_est,
+        counterfactual_files,
+        ok,
+        savings_eligible,
+        duration_ms,
+        created_at,
+        response_preview,
+        counterfactual_preview,
+    ) = row;
+
+    let response_tokens = tokenize_text(response_preview.as_deref().unwrap_or(""));
+    let counterfactual_tokens = tokenize_text(counterfactual_preview.as_deref().unwrap_or(""));
+
+    Ok(CallTokenDetail {
+        id,
+        tool,
+        project,
+        tokens_saved_est: tokens_saved_est.unwrap_or(0),
+        counterfactual_tokens_est: counterfactual_tokens_est.unwrap_or(0),
+        response_tokens_est,
+        counterfactual_files: counterfactual_files.unwrap_or(0),
+        ok: ok != 0,
+        savings_eligible: savings_eligible != 0,
+        duration_ms,
+        created_at,
+        response_preview,
+        counterfactual_preview,
+        response_tokens,
+        counterfactual_tokens,
+    })
+}
+
+fn cursor_hook_session_id(input: &Value) -> Option<String> {
+    for key in ["session_id", "conversation_id"] {
+        if let Some(id) = input.get(key).and_then(|v| v.as_str()) {
+            let id = id.trim();
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn cursor_hook_model_params(input: &Value) -> Vec<(String, String)> {
+    input
+        .get("model_params")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let id = item.get("id").and_then(|v| v.as_str())?.to_string();
+                    let value = item
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some((id, value))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Parse a Cursor hook stdin payload into `(session_id, model)` for sessionStart.
+pub fn parse_cursor_hook_model(input: &Value) -> Option<(String, String)> {
+    let event = input
+        .get("hook_event_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if event != "sessionStart" {
+        return None;
+    }
+    let session_id = cursor_hook_session_id(input)?;
+    let model_id = input
+        .get("model_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| input.get("model").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if model_id.is_empty() {
+        return None;
+    }
+    let model = normalize_cursor_model(&model_id, &cursor_hook_model_params(input));
+    if model.is_empty() {
+        return None;
+    }
+    Some((session_id, model))
+}
+
+/// Persist a model tag from a Cursor sessionStart hook without touching tool-call counts.
+pub async fn record_session_model_tag(
+    agent: &str,
+    session_id: &str,
+    model: &str,
+) -> Result<(), String> {
+    let model = model.trim();
+    let session_id = session_id.trim();
+    if model.is_empty() || session_id.is_empty() {
+        return Err("session_id and model are required".into());
+    }
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "INSERT INTO agent_session_log
+         (agent, session_id, read_calls, grep_calls, ax_calls, source_mtime, model)
+         VALUES (?, ?, 0, 0, 0, 0, ?)
+         ON CONFLICT(agent, session_id) DO UPDATE SET model = excluded.model",
+    )
+    .bind(agent)
+    .bind(session_id)
+    .bind(model)
+    .execute(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportResult {
     pub claude_sessions: usize,
     pub cursor_sessions: usize,
+    pub cursor_state_enriched: usize,
     pub skipped: usize,
 }
 
@@ -991,12 +1424,12 @@ async fn upsert_agent_session(
            read_calls = excluded.read_calls,
            grep_calls = excluded.grep_calls,
            ax_calls = excluded.ax_calls,
-           session_input_tokens = excluded.session_input_tokens,
-           session_output_tokens = excluded.session_output_tokens,
+           session_input_tokens = COALESCE(excluded.session_input_tokens, agent_session_log.session_input_tokens),
+           session_output_tokens = COALESCE(excluded.session_output_tokens, agent_session_log.session_output_tokens),
            model = COALESCE(excluded.model, agent_session_log.model),
            source_mtime = excluded.source_mtime,
-           started_at = excluded.started_at,
-           ended_at = excluded.ended_at
+           started_at = COALESCE(excluded.started_at, agent_session_log.started_at),
+           ended_at = COALESCE(excluded.ended_at, agent_session_log.ended_at)
          WHERE excluded.source_mtime >= agent_session_log.source_mtime",
     )
     .bind(agent)
@@ -1189,6 +1622,20 @@ fn cursor_projects_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".cursor").join("projects"))
 }
 
+/// Cursor stores one transcript per chat: `agent-transcripts/{id}/{id}.jsonl`.
+fn cursor_transcript_matches(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    if !path_str.contains("agent-transcripts") || path_str.contains("subagents") {
+        return false;
+    }
+    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        return false;
+    }
+    let parent_name = path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str());
+    let file_stem = path.file_stem().and_then(|s| s.to_str());
+    parent_name.is_some() && parent_name == file_stem
+}
+
 pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResult, String> {
     let mut claude_sessions = 0usize;
     let mut cursor_sessions = 0usize;
@@ -1228,18 +1675,7 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
                     .filter(|e| e.file_type().is_file())
                 {
                     let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                        continue;
-                    }
-                    if !path.to_string_lossy().contains("agent-transcripts") {
-                        continue;
-                    }
-                    if path.to_string_lossy().contains("subagents") {
-                        continue;
-                    }
-                    let parent_name = path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str());
-                    let file_name = path.file_name().and_then(|n| n.to_str());
-                    if parent_name != file_name {
+                    if !cursor_transcript_matches(path) {
                         continue;
                     }
                     match import_cursor_file(path).await {
@@ -1250,11 +1686,21 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
                 }
             }
         }
+
+        let (state_enriched, state_skipped) = import_cursor_composer_state().await.unwrap_or((0, 0));
+        skipped += state_skipped;
+        return Ok(ImportResult {
+            claude_sessions,
+            cursor_sessions,
+            cursor_state_enriched: state_enriched,
+            skipped,
+        });
     }
 
     Ok(ImportResult {
         claude_sessions,
         cursor_sessions,
+        cursor_state_enriched: 0,
         skipped,
     })
 }
@@ -1264,6 +1710,9 @@ mod tests {
     use super::*;
     use crate::tokenizer::count_file_tokens;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    static DB_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn long_response(chars: usize) -> String {
         "response text ".repeat(chars / 14 + 1)
@@ -1392,5 +1841,150 @@ mod tests {
         classify_claude_tool("mcp__ax__ax_explore", &mut acc);
         assert_eq!(acc.read_calls, 1);
         assert_eq!(acc.ax_calls, 1);
+    }
+
+    #[test]
+    fn cursor_transcript_path_filter() {
+        let ok = PathBuf::from(
+            r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\uuid.jsonl",
+        );
+        assert!(cursor_transcript_matches(&ok));
+        let bad_ext = PathBuf::from(
+            r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\uuid.txt",
+        );
+        assert!(!cursor_transcript_matches(&bad_ext));
+        let bad_name = PathBuf::from(
+            r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\other.jsonl",
+        );
+        assert!(!cursor_transcript_matches(&bad_name));
+    }
+
+    #[test]
+    fn normalize_cursor_model_composer_fast() {
+        let params = vec![("fast".to_string(), "true".to_string())];
+        assert_eq!(
+            normalize_cursor_model("composer-2.5", &params),
+            "composer-2.5-fast"
+        );
+    }
+
+    #[test]
+    fn parse_cursor_hook_payload() {
+        let input = json!({
+            "hook_event_name": "sessionStart",
+            "session_id": "218bb987-86eb-45f0-a8e7-eedae17f995c",
+            "model_id": "composer-2.5",
+            "model_params": [{ "id": "fast", "value": "true" }]
+        });
+        let (id, model) = parse_cursor_hook_model(&input).expect("parsed");
+        assert_eq!(id, "218bb987-86eb-45f0-a8e7-eedae17f995c");
+        assert_eq!(model, "composer-2.5-fast");
+    }
+
+    fn temp_usage_db_path(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("ax-usage-{label}-{n}.db"))
+    }
+
+    async fn session_counts(session_id: &str) -> (Option<String>, i64, i64, i64) {
+        let pool = open_pool().await.expect("pool");
+        sqlx::query_as::<_, (Option<String>, i64, i64, i64)>(
+            "SELECT model, read_calls, grep_calls, ax_calls
+             FROM agent_session_log WHERE agent = 'cursor' AND session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await
+        .expect("row")
+    }
+
+    #[tokio::test]
+    async fn tag_session_model_merge() {
+        let _guard = DB_TEST_LOCK.lock().unwrap();
+        let db = temp_usage_db_path("merge");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+
+        record_session_model_tag("cursor", "sess-1", "composer-2.5-fast")
+            .await
+            .expect("tag");
+        let acc = SessionAccum {
+            read_calls: 3,
+            grep_calls: 1,
+            ax_calls: 2,
+            ..SessionAccum::default()
+        };
+        upsert_agent_session("cursor", "sess-1", &acc, 1000)
+            .await
+            .expect("import");
+        let (model, read, grep, ax) = session_counts("sess-1").await;
+        assert_eq!(model.as_deref(), Some("composer-2.5-fast"));
+        assert_eq!((read, grep, ax), (3, 1, 2));
+
+        let acc2 = SessionAccum {
+            read_calls: 7,
+            grep_calls: 4,
+            ax_calls: 3,
+            ..SessionAccum::default()
+        };
+        upsert_agent_session("cursor", "sess-2", &acc2, 2000)
+            .await
+            .expect("import");
+        record_session_model_tag("cursor", "sess-2", "composer-2.5-fast")
+            .await
+            .expect("tag");
+        let (model2, read2, grep2, ax2) = session_counts("sess-2").await;
+        assert_eq!(model2.as_deref(), Some("composer-2.5-fast"));
+        assert_eq!((read2, grep2, ax2), (7, 4, 3));
+
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[tokio::test]
+    async fn transcript_import_does_not_wipe_state_tokens() {
+        let _guard = DB_TEST_LOCK.lock().unwrap();
+        let db = temp_usage_db_path("vscdb-merge");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+
+        let state_row = crate::cursor_state::ComposerStateRow {
+            session_id: "sess-vscdb".to_string(),
+            model: Some("composer-2.5-fast".to_string()),
+            input_tokens: Some(126_877),
+            started_at: Some(1_000),
+            ended_at: Some(2_000),
+        };
+        crate::cursor_state::upsert_composer_state_row(&state_row)
+            .await
+            .expect("state");
+
+        let acc = SessionAccum {
+            read_calls: 5,
+            grep_calls: 2,
+            ax_calls: 1,
+            ..SessionAccum::default()
+        };
+        upsert_agent_session("cursor", "sess-vscdb", &acc, 5000)
+            .await
+            .expect("transcript");
+
+        let pool = open_pool().await.expect("pool");
+        let (model, input, read): (Option<String>, Option<i64>, i64) = sqlx::query_as(
+            "SELECT model, session_input_tokens, read_calls
+             FROM agent_session_log WHERE agent = 'cursor' AND session_id = 'sess-vscdb'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("row");
+
+        assert_eq!(model.as_deref(), Some("composer-2.5-fast"));
+        assert_eq!(input, Some(126_877));
+        assert_eq!(read, 5);
+
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(db);
     }
 }

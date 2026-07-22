@@ -59,6 +59,24 @@ pub async fn run_stdio_proxy(project_root: &Path) -> Result<(), Box<dyn std::err
                 line.clear();
                 continue;
             }
+            // Verbose MCP traces (daemon side-channel): stderr only — never Cursor stdout.
+            if let Some(text) = crate::verbose::parse_ax_log_line(trimmed) {
+                eprintln!("{text}");
+                line.clear();
+                continue;
+            }
+            // Also mirror MCP logging notifications to stderr (Cursor Output often
+            // surfaces process stderr more reliably than notification traffic).
+            if trimmed.contains("\"notifications/message\"") && trimmed.contains("\"ax-mcp\"") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    if let Some(data) = v
+                        .pointer("/params/data")
+                        .and_then(|d| d.as_str())
+                    {
+                        eprintln!("{data}");
+                    }
+                }
+            }
             if stdout.write_all(line.as_bytes()).await.is_err() {
                 break;
             }

@@ -135,6 +135,9 @@ pub struct UiSection {
     /// Show the Agent terminal page in the sidebar.
     #[serde(default = "default_show_agent")]
     pub show_agent_terminal: bool,
+    /// Emit inbound/outbound/enrichment MCP traces to stderr (Cursor Output).
+    #[serde(default = "default_verbose_mcp")]
+    pub verbose_mcp: bool,
 }
 
 fn default_show_savings() -> bool {
@@ -145,11 +148,16 @@ fn default_show_agent() -> bool {
     true
 }
 
+fn default_verbose_mcp() -> bool {
+    false
+}
+
 impl Default for UiSection {
     fn default() -> Self {
         Self {
             show_savings: true,
             show_agent_terminal: true,
+            verbose_mcp: false,
         }
     }
 }

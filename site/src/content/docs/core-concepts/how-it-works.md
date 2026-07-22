@@ -3,7 +3,7 @@ title: How It Works
 description: The extraction, storage, resolution, and auto-sync pipeline.
 ---
 
-ax turns source code into a queryable graph in four stages. **ax v2.0.0+** adds **policy** (rules and skills indexed alongside the graph). **ax v2.1.6** adds a **memory vault** — durable project knowledge with hybrid recall and git auto-capture. **v2.1.7** improves SonarQube dashboard responsiveness and token-savings counterfactual accuracy.
+ax turns source code into a queryable graph in four stages. **ax v2.0.0+** adds **policy** (rules and skills indexed alongside the graph). **ax v2.1.6** adds a **memory vault** — durable project knowledge with hybrid recall and git auto-capture. **v2.1.7** improves SonarQube dashboard responsiveness and token-savings counterfactual accuracy. **v3.0.0** adds MCP Logging / Quality observability, Cursor session hooks, and an interactive architecture Graph in Command Center.
 
 ```
 files → Extraction (tree-sitter) → DB (nodes/edges/files, schema v7)

@@ -22,6 +22,7 @@ pub mod report;
 pub mod init;
 pub mod install;
 pub mod memory;
+pub mod mcp;
 pub mod node;
 pub mod query;
 pub mod status;
@@ -31,6 +32,7 @@ pub mod uninstall;
 pub mod daemon;
 pub mod policy;
 pub mod prompt_hook;
+pub mod session_hook;
 pub mod unlock;
 pub mod web;
 

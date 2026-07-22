@@ -44,13 +44,13 @@ Save writes to **ax.db** in database mode — not a disk-only file. Never auto-s
 
 ## SS-01 — Code context (after preflight)
 
-For structural questions — how code works, call paths, impact, dependencies:
+> **ABSOLUTE**: For structural questions — how code works, call paths, blast radius, architecture — call **`ax_explore`** (or `ax_search` / `ax_node` / graph tools) **before** broad `Grep` / `Read`. Do not open with repo-wide Grep/Read while ax MCP is available. Skipping explore burns tokens and fails MCP quality (`ExploreBeforeGrep`).
 
 ```json
 ax_explore({ "query": "<question or symbol names>" })
 ```
 
-Use `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact` for focused graph queries.
+Use `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact` for focused graph queries. Treat numbered explore source as already read — then `Read` / `Grep` only the files the graph already pointed to.
 
 For a whole-graph overview — subsystems (Leiden communities), god nodes, and surprising cross-community links — use `ax_insights`, or `ax_report` for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous), and Markdown docs are indexed as `Doc` nodes linked to the code they reference.
 
@@ -64,6 +64,15 @@ Before Write/StrReplace/Delete on project files when CRITICAL policy rules exist
 ax_guard({ "path": "<relative file path>", "operation": "write" })
 ```
 
+Preferred shape: **`path`** (string) + **`operation`** (`write` | `delete`).
+
+Also accepted (avoids `path required` retries):
+
+- `paths`: string array — guards each path
+- `file` / `filepath`: aliases for `path`
+- `action`: alias for `operation` (`edit` / `write` / `create` -> write; `delete` -> delete)
+
+Do **not** call `ax_guard({ "action": "edit", "paths": [...] })` without also satisfying `path`/`paths` — prefer one call per file with `path` + `operation`.
 ## SS-03 — Language rule (CRITICAL)
 
 - **All agent responses to the user MUST be in English.**

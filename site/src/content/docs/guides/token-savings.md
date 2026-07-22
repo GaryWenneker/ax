@@ -67,6 +67,56 @@ Set `AX_SAVINGS_CF_MODE` to choose the Read baseline per file:
 | `range` | Symbol line span BPE when start+end are known |
 | `max` | Per file: max(whole file, line span) |
 
+### Token view (Command Center)
+
+The **Savings** page includes a compact **TokenViz-style path graph**: log-scale weight by token position, a glowing green matched path (with ax), and grey alternate context paths. **Hover** a green node (or **long-press** on mobile) for token details; click/pin keeps the tooltip open.
+
+Per-call drill-down also shows color-coded o200k BPE chips for the truncated graph response versus the counterfactual file preview. New MCP graph calls store short local previews in `~/.ax/usage.db`; older rows use a synthetic count-based path until new calls arrive. The **Token playground** tokenizes arbitrary text the same way.
+
+**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate (`~/.ax/pricing.toml`). Run **Import sessions** on the Savings page (or `ax savings import --all`) first — MCP-only periods without imported transcripts have no model breakdown.
+
+**Agent vs model name:** The **Agent** column is the log source (`cursor` = Cursor Composer chats, `claude` = Claude Code CLI). The **Model** column is normally the provider API id from the transcript (e.g. `claude-opus-4-8`). Cursor Composer transcripts usually omit model metadata — install the **sessionStart hook** (below) so ax records labels like `composer-2.5-fast` when each chat starts.
+
+### Cursor model tagging
+
+Cursor knows your picker model (`Composer 2.5 Fast`, etc.) but does not write it into `agent-transcripts/*.jsonl`. ax can capture it via a Cursor **sessionStart** hook:
+
+```bash
+ax savings hook install
+```
+
+This copies a hook script into `~/.cursor/hooks/` and merges `sessionStart` into `~/.cursor/hooks.json`. The ax repo also ships project hooks under `.cursor/hooks/` for local development.
+
+Each new Composer chat runs the hook → `ax session-hook` (hidden) → `~/.ax/usage.db`. Then `ax savings import --all` merges transcript tool counts (read / grep / ax) without overwriting the tagged model.
+
+Manual tag (debug):
+
+```bash
+ax savings tag-session --session-id <uuid> --model composer-2.5-fast
+```
+
+**Limitation:** Input tokens come from Cursor's **context meter** (`promptTokenBreakdown.totalUsedTokens` in `state.vscdb`) — the same number shown in the Composer UI. It is a session snapshot, not a per-request sum, and may undercount versus the Cursor dashboard. Output tokens and exact billed USD are still unavailable locally; session cost in ax is estimated from input tokens × `pricing.toml`.
+
+### Cursor state.vscdb (automatic on import)
+
+When you run `ax savings import --cursor` or `--all`, ax also reads:
+
+`%APPDATA%/Cursor/User/globalStorage/state.vscdb` (macOS/Linux paths documented in [Token Use](https://tokenuse.app/docs/development/tools/cursor/))
+
+For each `composerData:{session_id}` row it merges:
+
+| Field | Source |
+|-------|--------|
+| Model | `modelConfig.modelName` + params (e.g. `composer-2.5-fast`) |
+| Input tokens | `promptTokenBreakdown.totalUsedTokens` or `contextTokensUsed` |
+| Timestamps | First/last bubble `createdAt` in the conversation |
+
+Transcript tool counts (read / grep / ax) are merged without overwriting model or tokens. Override the database path with `AX_CURSOR_STATE_VSCDB` if needed.
+
+Weights are derived from o200k token mass / rarity in saved previews — **not** model logits or sampling temperature.
+
+Command Center settings-style pages (including Savings) use a centered content column by breakpoint: **720 → 800 → 960 → 1024px** on XXL. Full-bleed pages (Files, Agent, Sonar, split blades) stay unconstrained.
+
 ---
 
 ## Token optimization playbook
@@ -224,12 +274,16 @@ At Opus 4.8 pricing, an agent session burning 100K tokens costs **$0.50 input + 
 The sidebar **Savings** tab (toggle visibility in Settings) shows:
 
 - **Hero stats** — tokens saved, cost reduction percentage, graph call count
-- **Heatmap** — daily activity over the past month
-- **Trends** — saved / reduction / compare / weekday / table views
+- **Savings over time** — hourly bar chart with day labels on X; 2 / 7 / 30 day windows and Older / Newer within the selected period; Y-axis auto-caps outliers so typical hours stay readable (hover a peak for the real value)
+- **Activity heatmap** — calendar for the selected period (empty days included), Tokens / All / Graph toggles, hover tooltips, streaks
+- **Period filter** — Apply scopes every card (timeline, heatmap, heroes, tables, sessions) to the same range
+- **Trends** — saved / reduction / compare / weekday / hour / table views
+- **Token path graph** — token-position illustration (not clock time); Alt slider redraws grey path count (including synthetic overview); Matched toggles the green path; Y fits the green path while alts stay visible in-band
 - **Tool audit** — which MCP tools generate the most savings
 - **By-project** — savings breakdown per indexed project
 - **Recent calls** — individual graph calls with counterfactual vs actual
 - **Agent sessions** — correlated with imported session logs
+- **MCP quality chip** — live score + tokens at risk; opens the Quality slide-out (correlation, enrichment, findings). Enable Verbose MCP logging; CLI: `ax mcp audit`. Scoring merges transcript `CallDynamicTool` graph calls, prefers the ax-heaviest recent transcript, correlates `session=` verbose tags when the sessionStart hook is installed (`ax savings hook install`), parses Cursor `<timestamp>` embeds for window alignment, drops untimed whole-session tails when verbose is idle in-window, ignores recovered MCP errors, and avoids false ExploreBeforeGrep megawaste from untimed full-session transcripts.
 
 ### Agent log import
 
@@ -257,6 +311,7 @@ ax savings import --claude-code     # Claude Code only
 | `AX_SAVINGS_TOKENS_PER_LINE` | 9 | Tokens per line for unreadable files |
 | `AX_SAVINGS_AVG_FILE_TOKENS` | 3500 | Fallback when no line count or path-only ref |
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every MCP tool |
+| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` logs inbound/enrichment/outbound MCP traces to stderr (Cursor Output); same as Settings → Verbose MCP logging |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
 | `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |

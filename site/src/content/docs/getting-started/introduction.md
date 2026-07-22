@@ -14,9 +14,22 @@ Four layers work together in every project:
 | **Knowledge graph** | Tree-sitter parsing → SQLite index of symbols, calls, imports, and routes |
 | **Memory vault** | Durable decisions, fixes, and conventions — hybrid recall, git auto-capture, preflight injection |
 | **Policy engine** | IDE-agnostic rules and skills in `.ax/policy/`, matched and injected per turn |
-| **Command Center** | Git watcher, quality gates, SonarQube, token savings, SSE dashboard, draft PRs |
+| **Command Center** | Git watcher, quality gates, SonarQube, token savings, MCP Logging / Quality, SSE dashboard, draft PRs |
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
+
+## What's new in v3.0.0
+
+- **MCP Logging** — live table of the active project's verbose MCP stream (`<project>/.ax/mcp-verbose.log`) with kind/tool filters, Call Inspector, and project switcher.
+- **MCP Quality loop** — status-bar **Q** chip + slide-out scores correlation, enrichment, Explore-before-Grep waste, and fixpacks. CLI: `ax mcp audit`.
+- **Cursor sessionStart hook** — `ax savings hook install` tags Composer chats with the picker model and session id for accurate savings + audit correlation.
+- **Savings dashboard** — activity heatmap, period filter, TokenViz path graph, by-model rollups, and import from Cursor / Claude Code transcripts.
+- **Architecture Graph** — interactive Leiden communities, god nodes, confidence-tagged edges, and doc nodes in Command Center.
+- **Document inventory** — PDF, Office, Markdown, and other docs as `Doc` nodes; `<ax_index>` auto-injected on every `ax_preflight`.
+
+![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging.png)
+
+See [Command Center](/guides/command-center/), [Token savings](/guides/token-savings/), and [MCP Server](/reference/mcp-server/).
 
 ## What's new in v2.1.14
 

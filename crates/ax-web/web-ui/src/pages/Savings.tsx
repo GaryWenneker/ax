@@ -1,8 +1,37 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import { fetchSavings, importSavingsSessions, type SavingsSummary, type DailySavingsRow, type ToolSavingsRow, type ProjectSavingsRow, type RecentCallRow, type WeekdaySavingsRow } from '../api';
+import {
+  fetchCallTokenDetail,
+  fetchSavings,
+  importSavingsSessions,
+  tokenizeText,
+  type CallTokenDetail,
+  type SavingsSummary,
+  type DailySavingsRow,
+  type ToolSavingsRow,
+  type ProjectSavingsRow,
+  type ModelSavingsRow,
+  type RecentCallRow,
+  type WeekdaySavingsRow,
+  type HourSavingsRow,
+  type TokenizeResult,
+} from '../api';
 import { computeInsights, dailyReductionPct, fmtTs, splitTools, toolCategory, type SavingsInsight } from './savingsMetrics';
 import { InfoHover } from '../components/ui/InfoHover';
+import { AbstractTokenRibbon, TokenChips } from '../components/TokenChips';
+import { TokenPathGraph } from '../components/TokenPathGraph';
+import { ActivityHeatmap } from '../components/ActivityHeatmap';
+import { SavingsTimeline } from '../components/SavingsTimeline';
+import { HoverTip } from '../components/HoverTip';
+import { ModelNameCell } from '../components/ModelProviderIcon';
+import { ResizableBlade } from '../components/BladeResize';
+import Codicon from '../components/Codicon';
+import {
+  emptyQualitySnapshot,
+  fetchMcpQuality,
+  openMcpQualitySlideout,
+  type QualitySnapshot,
+} from '../lib/mcpQuality';
 import {
   BusyLabel,
   DataTable,
@@ -99,96 +128,6 @@ function HeroStat({
       </span>
       <span className={`sv-hero-stat-value${tone ? ` sv-hero-stat-value--${tone}` : ''}`}>{value}</span>
       {sub && <span className="sv-hero-stat-sub">{sub}</span>}
-    </div>
-  );
-}
-
-/* ---- Contribution heatmap ---- */
-function buildHeatmap(daily: DailySavingsRow[]): { weeks: Array<Array<{ date: string; value: number; level: number }>>; max: number } {
-  if (daily.length === 0) return { weeks: [], max: 0 };
-
-  const map = new Map(daily.map((d) => [d.date, d.tokens_saved_est]));
-  const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date));
-  const start = new Date(sorted[0].date);
-  const end = new Date(sorted[sorted.length - 1].date);
-
-  start.setDate(start.getDate() - start.getDay());
-
-  const max = Math.max(...daily.map((d) => d.tokens_saved_est), 1);
-  const weeks: Array<Array<{ date: string; value: number; level: number }>> = [];
-  let week: Array<{ date: string; value: number; level: number }> = [];
-
-  const cur = new Date(start);
-  while (cur <= end || week.length > 0) {
-    const iso = cur.toISOString().slice(0, 10);
-    const val = map.get(iso) ?? 0;
-    const level = val === 0 ? 0 : val <= max * 0.25 ? 1 : val <= max * 0.5 ? 2 : val <= max * 0.75 ? 3 : 4;
-    week.push({ date: iso, value: val, level });
-    if (week.length === 7) {
-      weeks.push(week);
-      week = [];
-    }
-    cur.setDate(cur.getDate() + 1);
-    if (cur > end && week.length === 0) break;
-    if (cur > new Date(end.getTime() + 7 * 86400000)) break;
-  }
-  if (week.length > 0) weeks.push(week);
-  return { weeks, max };
-}
-
-function ContributionHeatmap({ daily }: { daily: DailySavingsRow[] }) {
-  const { weeks, max } = buildHeatmap(daily);
-  if (weeks.length === 0) return null;
-
-  const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date));
-  const months: Array<{ label: string; col: number }> = [];
-  let lastMonth = '';
-  weeks.forEach((week, i) => {
-    const first = week[0];
-    if (!first) return;
-    const m = first.date.slice(0, 7);
-    if (m !== lastMonth) {
-      const d = new Date(first.date);
-      months.push({ label: d.toLocaleString(undefined, { month: 'short' }), col: i });
-      lastMonth = m;
-    }
-  });
-
-  const activeDays = daily.filter((d) => d.tokens_saved_est > 0).length;
-  const totalDays = weeks.length * 7;
-
-  return (
-    <div className="sv-heatmap-section">
-      <div className="sv-heatmap-stats">
-        <span className="sv-heatmap-stat">{activeDays} active day{activeDays !== 1 ? 's' : ''}</span>
-        <span className="sv-heatmap-stat">{sorted[0]?.date} — {sorted[sorted.length - 1]?.date}</span>
-      </div>
-      <div className="sv-heatmap-wrap">
-        <div className="sv-heatmap-months">
-          {months.map((m) => (
-            <span key={m.col} className="sv-heatmap-month" style={{ gridColumn: m.col + 1 }}>{m.label}</span>
-          ))}
-        </div>
-        <div className="sv-heatmap-grid" style={{ gridTemplateColumns: `repeat(${weeks.length}, 1fr)` }}>
-          {weeks.map((week, wi) =>
-            week.map((day, di) => (
-              <div
-                key={day.date}
-                className={`sv-heatmap-cell sv-heatmap-cell--${day.level}`}
-                style={{ gridColumn: wi + 1, gridRow: di + 1 }}
-                title={`${day.date}: ${fmt(day.value)} tokens saved`}
-              />
-            ))
-          )}
-        </div>
-        <div className="sv-heatmap-legend">
-          <span className="sv-heatmap-legend-label">Less</span>
-          {[0, 1, 2, 3, 4].map((l) => (
-            <div key={l} className={`sv-heatmap-cell sv-heatmap-cell--${l} sv-heatmap-cell--legend`} />
-          ))}
-          <span className="sv-heatmap-legend-label">More</span>
-        </div>
-      </div>
     </div>
   );
 }
@@ -336,7 +275,53 @@ function ProjectTable({ rows }: { rows: ProjectSavingsRow[] }) {
   );
 }
 
-function RecentCallsTable({ rows }: { rows: RecentCallRow[] }) {
+function ModelTable({ rows }: { rows: ModelSavingsRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <DataTable>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Sessions</th>
+          <th>Input tokens</th>
+          <th>Tokens saved</th>
+          <th>Cost saved</th>
+          <th>Session cost</th>
+          <th>Ax</th>
+          <th>Read</th>
+          <th>Grep</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((m) => (
+          <tr key={m.model}>
+            <td className="mono">
+              <ModelNameCell model={m.model} />
+            </td>
+            <td className="num">{fmt(m.sessions)}</td>
+            <td className="num">{fmtCompact(m.session_input_tokens)}</td>
+            <td className="num">{m.tokens_saved_est > 0 ? fmtCompact(m.tokens_saved_est) : '—'}</td>
+            <td className="num">{m.cost_saved_usd_est > 0 ? fmtUsd(m.cost_saved_usd_est) : '—'}</td>
+            <td className="num">{m.session_cost_usd_est > 0 ? fmtUsd(m.session_cost_usd_est) : '—'}</td>
+            <td className="num">{fmt(m.ax_calls)}</td>
+            <td className="num">{fmt(m.read_calls)}</td>
+            <td className="num">{fmt(m.grep_calls)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </DataTable>
+  );
+}
+
+function RecentCallsTable({
+  rows,
+  selectedId,
+  onSelect,
+}: {
+  rows: RecentCallRow[];
+  selectedId: number | null;
+  onSelect: (row: RecentCallRow) => void;
+}) {
   if (rows.length === 0) return null;
   return (
     <DataTable>
@@ -355,9 +340,23 @@ function RecentCallsTable({ rows }: { rows: RecentCallRow[] }) {
       </thead>
       <tbody>
         {rows.map((r, i) => (
-          <tr key={`${r.created_at}-${r.tool}-${i}`} className={!r.ok ? 'sv-row-warn' : undefined}>
+          <tr
+            key={`${r.id}-${r.created_at}-${i}`}
+            className={[
+              !r.ok ? 'sv-row-warn' : '',
+              selectedId === r.id ? 'sv-row-selected' : '',
+              'sv-row-clickable',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            onClick={() => onSelect(r)}
+            title="Open token view"
+          >
             <td className="mono">{fmtTs(r.created_at)}</td>
-            <td className="mono">{r.tool}</td>
+            <td className="mono">
+              {r.tool}
+              {r.has_preview && <span className="sv-preview-dot" title="Has token preview" />}
+            </td>
             <td className="mono">{r.project ?? '—'}</td>
             <td className="num">{r.savings_eligible ? fmtCompact(r.counterfactual_tokens_est) : '—'}</td>
             <td className="num">{fmtCompact(r.response_tokens_est)}</td>
@@ -369,6 +368,184 @@ function RecentCallsTable({ rows }: { rows: RecentCallRow[] }) {
         ))}
       </tbody>
     </DataTable>
+  );
+}
+
+function CallTokenBlade({
+  detail,
+  loading,
+  error,
+  onClose,
+}: {
+  detail: CallTokenDetail | null;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+}) {
+  const savedPct =
+    detail && detail.counterfactual_tokens_est > 0
+      ? Math.round(
+          ((detail.counterfactual_tokens_est - detail.response_tokens_est) /
+            detail.counterfactual_tokens_est) *
+            100,
+        )
+      : 0;
+
+  return (
+    <ResizableBlade>
+      <div className="detail-panel detail-panel--blade" role="complementary" aria-label="Token view">
+        <div className="detail-header">
+          <span className="detail-title">
+            <Codicon name="symbol-string" className="detail-title-icon" />
+            {detail?.tool ?? 'Token view'}
+          </span>
+          <button type="button" className="detail-close" onClick={onClose} aria-label="Close">
+            <Codicon name="close" />
+          </button>
+        </div>
+        <div className="detail-body">
+          {loading && <PageLoading label="Tokenizing…" />}
+          {error && <PageEmpty title="Could not load call">{error}</PageEmpty>}
+          {!loading && !error && detail && (
+            <>
+              <div className="detail-meta">
+                <div className="detail-kv">
+                  <span className="detail-key">When</span>
+                  <span className="detail-val mono">{fmtTs(detail.created_at)}</span>
+                </div>
+                <div className="detail-kv">
+                  <span className="detail-key">Saved</span>
+                  <span className="detail-val">
+                    {fmtCompact(detail.tokens_saved_est)} tok
+                    {detail.counterfactual_tokens_est > 0 ? ` · ${savedPct}%` : ''}
+                  </span>
+                </div>
+                <div className="detail-kv">
+                  <span className="detail-key">Without / with</span>
+                  <span className="detail-val">
+                    {fmtCompact(detail.counterfactual_tokens_est)} / {fmtCompact(detail.response_tokens_est)}
+                  </span>
+                </div>
+                <div className="detail-kv">
+                  <span className="detail-key">Files</span>
+                  <span className="detail-val">{detail.counterfactual_files || '—'}</span>
+                </div>
+              </div>
+
+              <TokenPathGraph
+                title="Call path graph"
+                responseTokens={detail.response_tokens.tokens}
+                counterfactualTokens={detail.counterfactual_tokens.tokens}
+                responseTokenCount={detail.response_tokens_est}
+                counterfactualTokenCount={detail.counterfactual_tokens_est}
+              />
+
+              <div className="sv-token-compare">
+                <div className="sv-token-col">
+                  <div className="detail-section-title">Without ax</div>
+                  {detail.counterfactual_tokens.tokens.length > 0 ? (
+                    <TokenChips
+                      tokens={detail.counterfactual_tokens.tokens}
+                      count={detail.counterfactual_tokens.count}
+                      chars={detail.counterfactual_tokens.chars}
+                      truncated={detail.counterfactual_tokens.truncated}
+                    />
+                  ) : (
+                    <AbstractTokenRibbon
+                      label="Full file reads"
+                      tokens={detail.counterfactual_tokens_est}
+                      tone="without"
+                    />
+                  )}
+                </div>
+                <div className="sv-token-col">
+                  <div className="detail-section-title">With ax</div>
+                  {detail.response_tokens.tokens.length > 0 ? (
+                    <TokenChips
+                      tokens={detail.response_tokens.tokens}
+                      count={detail.response_tokens.count}
+                      chars={detail.response_tokens.chars}
+                      truncated={detail.response_tokens.truncated}
+                    />
+                  ) : (
+                    <AbstractTokenRibbon
+                      label="Graph response"
+                      tokens={detail.response_tokens_est}
+                      tone="with"
+                    />
+                  )}
+                </div>
+              </div>
+
+              {!detail.response_preview && !detail.counterfactual_preview && (
+                <p className="page-hint sv-token-hint">
+                  Older calls have no stored text preview. New MCP graph calls store a truncated
+                  o200k preview for this view.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </ResizableBlade>
+  );
+}
+
+function TokenPlayground() {
+  const [text, setText] = useState(
+    'fn main() {\n    println!("hello from ax token view");\n}\n',
+  );
+  const [result, setResult] = useState<TokenizeResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const run = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      setResult(await tokenizeText(text));
+    } catch (e) {
+      setErr(String(e));
+      setResult(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [text]);
+
+  return (
+    <div className="sv-playground">
+      <textarea
+        className="sv-playground-input"
+        rows={4}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        spellCheck={false}
+        aria-label="Text to tokenize"
+      />
+      <div className="sv-playground-actions">
+        <button type="button" className="btn primary" onClick={() => void run()} disabled={busy || !text.trim()}>
+          {busy ? 'Tokenizing…' : 'Tokenize (o200k)'}
+        </button>
+        {err && <span className="page-hint sv-playground-err">{err}</span>}
+      </div>
+      {result && (
+        <>
+          <TokenPathGraph
+            title="Playground path graph"
+            responseTokens={result.tokens}
+            counterfactualTokens={[]}
+            responseTokenCount={result.count}
+            counterfactualTokenCount={Math.round(result.count * 2.4)}
+          />
+          <TokenChips
+            tokens={result.tokens}
+            count={result.count}
+            chars={result.chars}
+            truncated={result.truncated}
+          />
+        </>
+      )}
+    </div>
   );
 }
 
@@ -465,6 +642,60 @@ function WeekdayBars({ rows }: { rows: WeekdaySavingsRow[] }) {
   );
 }
 
+function HourBars({ rows }: { rows: HourSavingsRow[] }) {
+  const max = Math.max(...rows.map((r) => r.tokens_saved_est), 1);
+  const peak = rows.reduce(
+    (best, r) => (r.tokens_saved_est > best.tokens_saved_est ? r : best),
+    rows[0] ?? { hour: 0, label: '00', tokens_saved_est: 0, calls: 0, graph_calls: 0 },
+  );
+
+  return (
+    <div className="sv-hour-wrap">
+      <p className="sv-hour-note">
+        Local hour of day for MCP calls in this period
+        {peak.tokens_saved_est > 0 ? (
+          <>
+            {' '}
+            · peak <strong>{peak.label}:00</strong> ({fmtCompact(peak.tokens_saved_est)} tok)
+          </>
+        ) : null}
+        . This is real clock time — not the token-path X axis.
+      </p>
+      <div className="sv-hour-bars" role="img" aria-label="Tokens saved by hour of day">
+        {rows.map((r) => {
+          const h = Math.round((r.tokens_saved_est / max) * 100);
+          return (
+            <HoverTip
+              key={r.hour}
+              tip={
+                <>
+                  <strong>{r.label}:00 – {r.label}:59</strong>
+                  <span>{fmt(r.tokens_saved_est)} tokens saved</span>
+                  <span>
+                    {r.calls} calls · {r.graph_calls} graph
+                  </span>
+                </>
+              }
+            >
+              <div className="sv-hour-col">
+                <div className="sv-hour-bar-wrap">
+                  <div
+                    className={`sv-hour-bar${r.hour === peak.hour && peak.tokens_saved_est > 0 ? ' sv-hour-bar--peak' : ''}`}
+                    style={{ height: `${Math.max(h, r.tokens_saved_est > 0 ? 6 : 0)}%` }}
+                  />
+                </div>
+                {(r.hour % 3 === 0 || r.hour === 23) && (
+                  <span className="sv-hour-label">{r.label}</span>
+                )}
+              </div>
+            </HoverTip>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ---- Daily comparison bars (redesigned) ---- */
 function DailyBars({ daily }: { daily: DailySavingsRow[] }) {
   const eligible = daily.filter(
@@ -534,8 +765,39 @@ export default function SavingsPage() {
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  const [dailyView, setDailyView] = useState<'saved' | 'reduction' | 'compare' | 'weekday' | 'table'>('saved');
+  const [dailyView, setDailyView] = useState<'saved' | 'reduction' | 'compare' | 'weekday' | 'hour' | 'table'>('saved');
   const [toolFilter, setToolFilter] = useState<'all' | 'graph' | 'policy'>('all');
+  const [selectedCallId, setSelectedCallId] = useState<number | null>(null);
+  const [callDetail, setCallDetail] = useState<CallTokenDetail | null>(null);
+  const [callLoading, setCallLoading] = useState(false);
+  const [callError, setCallError] = useState<string | null>(null);
+  const [quality, setQuality] = useState<QualitySnapshot>(emptyQualitySnapshot);
+
+  const openCallDetail = useCallback(async (row: RecentCallRow) => {
+    if (selectedCallId === row.id) {
+      setSelectedCallId(null);
+      setCallDetail(null);
+      setCallError(null);
+      return;
+    }
+    setSelectedCallId(row.id);
+    setCallLoading(true);
+    setCallError(null);
+    try {
+      setCallDetail(await fetchCallTokenDetail(row.id));
+    } catch (e) {
+      setCallDetail(null);
+      setCallError(String(e));
+    } finally {
+      setCallLoading(false);
+    }
+  }, [selectedCallId]);
+
+  const closeCallDetail = useCallback(() => {
+    setSelectedCallId(null);
+    setCallDetail(null);
+    setCallError(null);
+  }, []);
 
   const load = useCallback(async () => {
     if (period === 'custom' && !from) {
@@ -563,9 +825,16 @@ export default function SavingsPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    fetchMcpQuality()
+      .then(setQuality)
+      .catch(() => {});
+  }, []);
+
   const runImport = useCallback(async () => {
     setImporting(true);
     setImportMsg(null);
+    setError(null);
     try {
       const result = await importSavingsSessions();
       setImportMsg(
@@ -573,7 +842,8 @@ export default function SavingsPage() {
       );
       await load();
     } catch (e) {
-      setError(String(e));
+      setImportMsg(null);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setImporting(false);
     }
@@ -657,6 +927,21 @@ export default function SavingsPage() {
         }
       />
 
+      <button
+        type="button"
+        className="sv-quality-chip"
+        onClick={() => openMcpQualitySlideout()}
+        title="MCP quality score → savings reliability"
+      >
+        <span className="sv-quality-chip-score">
+          Q {quality.score || '—'} {quality.grade !== '—' ? quality.grade : ''}
+        </span>
+        <span className="sv-quality-chip-meta">
+          MCP quality → savings reliability
+          {quality.tokensAtRisk > 0 ? ` · ~${quality.tokensAtRisk.toLocaleString()} tokens at risk` : ''}
+        </span>
+      </button>
+
       <PageToasts err={error} />
       {importMsg && <div className="settings-toast settings-toast--ok">{importMsg}</div>}
 
@@ -664,6 +949,21 @@ export default function SavingsPage() {
 
       {data && (
         <div className="sv-dashboard">
+          <PageCard
+            title="Savings over time"
+            description="Hourly tokens saved in the selected period — navigate Older / Newer within that range."
+            info={
+              <InfoHover label="About the timeline">
+                X axis is real local date and time. Y is tokens saved that hour, fitted to the
+                visible window. Uses the same period filter as the rest of this page (Apply above).
+              </InfoHover>
+            }
+          >
+            <PageCardBody>
+              <SavingsTimeline timeline={data.timeline ?? []} />
+            </PageCardBody>
+          </PageCard>
+
           {/* ---- Hero stats strip ---- */}
           <div className="sv-hero-strip sv-hero-strip--wide">
             <HeroStat
@@ -744,23 +1044,59 @@ export default function SavingsPage() {
             </PageCard>
           )}
 
-          {/* ---- Activity heatmap ---- */}
-          {data.daily.length > 0 && (
-            <PageCard
-              title="Savings activity"
-              description={`${data.from} — ${data.to}`}
-              info={
-                <InfoHover label="About the heatmap">
-                  Each cell is one day. Darker cells mean more tokens saved that day.
-                  Only days with graph tool calls are colored.
-                </InfoHover>
-              }
-            >
-              <PageCardBody>
-                <ContributionHeatmap daily={data.daily} />
-              </PageCardBody>
-            </PageCard>
-          )}
+          {/* ---- Activity heatmap (same period as filter) ---- */}
+          <PageCard
+            title="Activity"
+            description="Full-year daily grid — empty days stay visible. Use ← → to browse other years."
+            info={
+              <InfoHover label="About the heatmap">
+                GitHub-style calendar for the selected year. Each square is one day — grey means
+                zero activity, green means more. Switch Tokens / All / Graph for intensity.
+                Navigate years with the arrows; data is loaded per calendar year.
+              </InfoHover>
+            }
+          >
+            <PageCardBody>
+              <ActivityHeatmap seedTo={data.to} />
+              {(data.by_hour ?? []).some((h) => h.calls > 0) && (
+                <div className="sv-hour-under-heat">
+                  <h4 className="sv-hour-under-heat-title">By hour of day (selected period)</h4>
+                  <HourBars rows={data.by_hour ?? []} />
+                </div>
+              )}
+            </PageCardBody>
+          </PageCard>
+
+          <PageCard
+            title="Token path graph"
+            description={
+              callDetail
+                ? `Matched path for ${callDetail.tool} — green = with ax, grey = alternate context paths.`
+                : 'Token-position illustration (not a timeline). Hover Alt / Matched for what those controls do.'
+            }
+            info={
+              <InfoHover label="About the path graph">
+                X is token index in the response stream — <strong>not</strong> clock time. Use{' '}
+                <strong>Savings over time</strong> above for dates and hours. Alt = how many grey
+                counterfactual paths to draw; Matched toggles the green path. Y scale fits the green
+                path only.
+              </InfoHover>
+            }
+          >
+            <PageCardBody>
+              <TokenPathGraph
+                title={callDetail ? `${callDetail.tool} matched path` : 'Period path overview'}
+                responseTokens={callDetail?.response_tokens.tokens ?? []}
+                counterfactualTokens={callDetail?.counterfactual_tokens.tokens ?? []}
+                responseTokenCount={
+                  callDetail?.response_tokens_est ?? data.graph_response_tokens_est
+                }
+                counterfactualTokenCount={
+                  callDetail?.counterfactual_tokens_est ?? data.counterfactual_tokens_est
+                }
+              />
+            </PageCardBody>
+          </PageCard>
 
           {/* ---- Trends (single card, tabbed — no duplicate charts elsewhere) ---- */}
           {data.daily.length > 0 && (
@@ -772,20 +1108,31 @@ export default function SavingsPage() {
                   <strong>Saved</strong>: tokens saved per day.
                   <strong> Reduction %</strong>: daily counterfactual vs response ratio.
                   <strong> Compare</strong>: side-by-side token volumes.
-                  <strong> Weekday</strong>: savings aggregated by day of week (Mon–Sun).
+                  <strong> Weekday</strong>: savings by day of week (Mon–Sun).
+                  <strong> Hour</strong>: savings by local clock hour (00–23) — real time, not token-path position.
                   <strong> Table</strong>: full numeric breakdown including cost.
                 </InfoHover>
               }
             >
               <div className="sv-tab-bar">
-                {(['saved', 'reduction', 'compare', 'weekday', 'table'] as const).map((v) => (
+                {(['saved', 'reduction', 'compare', 'weekday', 'hour', 'table'] as const).map((v) => (
                   <button
                     key={v}
                     type="button"
                     className={`sv-tab${dailyView === v ? ' sv-tab--active' : ''}`}
                     onClick={() => setDailyView(v)}
                   >
-                    {v === 'saved' ? 'Tokens saved' : v === 'reduction' ? 'Reduction %' : v === 'compare' ? 'Compare' : v === 'weekday' ? 'Weekday' : 'Table'}
+                    {v === 'saved'
+                      ? 'Tokens saved'
+                      : v === 'reduction'
+                        ? 'Reduction %'
+                        : v === 'compare'
+                          ? 'Compare'
+                          : v === 'weekday'
+                            ? 'Weekday'
+                            : v === 'hour'
+                              ? 'Hour'
+                              : 'Table'}
                   </button>
                 ))}
               </div>
@@ -804,6 +1151,7 @@ export default function SavingsPage() {
                     <PageEmpty title="No weekday data">Graph MCP activity will populate weekday aggregates.</PageEmpty>
                   )
                 )}
+                {dailyView === 'hour' && <HourBars rows={data.by_hour ?? []} />}
                 {dailyView === 'table' && (
                   <DataTable>
                     <thead>
@@ -953,17 +1301,75 @@ export default function SavingsPage() {
             </PageCard>
           )}
 
-          {data.recent_calls.length > 0 && (
+          {data.by_model.length > 0 && (
             <PageCard
-              title="Recent MCP calls"
-              description="Last 40 calls in this period — live audit trail."
-              info={<InfoHover label="About recent calls">Newest first. Failed calls highlighted. Only place with per-call timestamps.</InfoHover>}
+              title="By model"
+              description="Imported agent sessions grouped by model — savings attributed to each session's time window."
+              info={
+                <InfoHover label="About model breakdown">
+                  From Cursor / Claude Code transcripts after <strong>Import sessions</strong>.
+                  Cursor Composer rows get model + input tokens from{' '}
+                  <code>state.vscdb</code> on import (context meter). Install the sessionStart hook (
+                  <code>ax savings hook install</code>) if model still shows unknown.
+                  Tokens saved are graph MCP savings during each session's start–end window.
+                  Dollar columns use each model's price from <code>~/.ax/pricing.toml</code> when known.
+                </InfoHover>
+              }
             >
               <PageCardBody>
-                <RecentCallsTable rows={data.recent_calls} />
+                <ModelTable rows={data.by_model} />
               </PageCardBody>
             </PageCard>
           )}
+
+          {data.recent_calls.length > 0 && (
+            <PageCard
+              title="Recent MCP calls"
+              description="Last 40 calls — click a row for o200k token chips (without vs with ax)."
+              info={
+                <InfoHover label="About recent calls">
+                  Newest first. Failed calls highlighted. Click a row to open the token view —
+                  color-coded o200k BPE chips from a truncated response / counterfactual preview.
+                  Older calls without a stored preview show a count-only ribbon.
+                </InfoHover>
+              }
+            >
+              <PageCardBody>
+                <div className={`page-split${selectedCallId != null ? ' page-split--with-detail' : ''}`}>
+                  <div className="page-split-main">
+                    <RecentCallsTable
+                      rows={data.recent_calls}
+                      selectedId={selectedCallId}
+                      onSelect={(row) => void openCallDetail(row)}
+                    />
+                  </div>
+                  {selectedCallId != null && (
+                    <CallTokenBlade
+                      detail={callDetail}
+                      loading={callLoading}
+                      error={callError}
+                      onClose={closeCallDetail}
+                    />
+                  )}
+                </div>
+              </PageCardBody>
+            </PageCard>
+          )}
+
+          <PageCard
+            title="Token playground"
+            description="Paste any text to see how o200k BPE splits it into tokens."
+            info={
+              <InfoHover label="About token playground">
+                Same tokenizer ax uses for savings measurement (o200k_base). Useful to understand
+                why a short string can still cost many tokens.
+              </InfoHover>
+            }
+          >
+            <PageCardBody>
+              <TokenPlayground />
+            </PageCardBody>
+          </PageCard>
 
           {/* ---- Agent sessions ---- */}
           <PageCard
@@ -1033,7 +1439,9 @@ export default function SavingsPage() {
                       <tr key={`${s.agent}-${s.session_id}`}>
                         <td>{s.agent}</td>
                         <td className="mono">{s.session_id.slice(0, 8)}…</td>
-                        <td className="mono">{s.model ?? '—'}</td>
+                        <td className="mono">
+                          <ModelNameCell model={s.model ?? ''} />
+                        </td>
                         <td className="num">{fmt(s.read_calls)}</td>
                         <td className="num">{fmt(s.grep_calls)}</td>
                         <td className="num">{fmt(s.ax_calls)}</td>

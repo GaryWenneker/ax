@@ -9,6 +9,7 @@ use ax_db::queries::QueryBuilder;
 use ax_types::{Edge, EdgeKind, Node, NodeKind, Provenance};
 
 use crate::frameworks::extract::is_js_family;
+use crate::resolver::ResolutionScope;
 
 const EVENT_FANOUT_CAP: usize = 6;
 
@@ -23,6 +24,7 @@ impl CallbackSynthesizer {
         &self,
         project_root: &Path,
         queries: &QueryBuilder,
+        scope: ResolutionScope<'_>,
     ) -> Result<(), ax_utils::errors::AxError> {
         let on_re = Regex::new(
             r#"(?:\.|^)\s*(?:on|once|addListener)\(\s*['"]([^'"]+)['"]\s*,\s*(?:function\s+(\w+)|(?:this\.)?(\w+))"#,
@@ -32,7 +34,14 @@ impl CallbackSynthesizer {
             .expect("emit regex");
 
         let files = queries.get_all_files().await?;
+        let scoped: std::collections::HashSet<&str> = match scope {
+            Some(paths) => paths.iter().map(|s| s.as_str()).collect(),
+            None => std::collections::HashSet::new(),
+        };
         for file in files {
+            if !scoped.is_empty() && !scoped.contains(file.path.as_str()) {
+                continue;
+            }
             if !is_js_family(&file.path) {
                 continue;
             }
@@ -117,7 +126,7 @@ impl CallbackSynthesizer {
                 }
             }
         }
-        self.synthesize_jsx_render(project_root, queries).await?;
+        self.synthesize_jsx_render(project_root, queries, scope).await?;
         Ok(())
     }
 
@@ -126,12 +135,20 @@ impl CallbackSynthesizer {
         &self,
         project_root: &Path,
         queries: &QueryBuilder,
+        scope: ResolutionScope<'_>,
     ) -> Result<(), ax_utils::errors::AxError> {
         const MAX_JSX_CHILDREN: usize = 30;
         let tag_re = Regex::new(r"<([A-Z][A-Za-z0-9_]*)[\s/>]").expect("jsx tag");
 
         let files = queries.get_all_files().await?;
+        let scoped: std::collections::HashSet<&str> = match scope {
+            Some(paths) => paths.iter().map(|s| s.as_str()).collect(),
+            None => std::collections::HashSet::new(),
+        };
         for file in files {
+            if !scoped.is_empty() && !scoped.contains(file.path.as_str()) {
+                continue;
+            }
             if !is_js_family(&file.path) {
                 continue;
             }

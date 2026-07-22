@@ -20,6 +20,7 @@ use std::path::Path;
 use ax_db::queries::QueryBuilder;
 use ax_types::{EdgeKind, Provenance};
 
+use crate::resolver::ResolutionScope;
 use extract::{is_js_family, FrameworkExtractResult};
 
 pub struct FrameworkRegistry {
@@ -46,8 +47,13 @@ impl FrameworkRegistry {
         &self,
         project_root: &Path,
         queries: &QueryBuilder,
+        scope: ResolutionScope<'_>,
     ) -> Result<(), ax_utils::errors::AxError> {
         let files = queries.get_all_files().await?;
+        let scoped: std::collections::HashSet<&str> = match scope {
+            Some(paths) => paths.iter().map(|s| s.as_str()).collect(),
+            None => std::collections::HashSet::new(),
+        };
         let file_paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
         let express_active = express::detect(project_root);
         let react_active = react::detect(project_root);
@@ -67,6 +73,9 @@ impl FrameworkRegistry {
         }
 
         for file in files {
+            if !scoped.is_empty() && !scoped.contains(file.path.as_str()) {
+                continue;
+            }
             let full = project_root.join(&file.path);
             let content = std::fs::read_to_string(&full).unwrap_or_default();
             if content.is_empty() {

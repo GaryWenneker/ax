@@ -498,7 +498,7 @@ async fn serve_session(
         };
 
         let mut eng = engine.lock().await;
-        let result = handle_request(
+        let outcome = handle_request(
             &mut *eng,
             &req.method,
             req.params.unwrap_or(serde_json::Value::Null),
@@ -509,7 +509,7 @@ async fn serve_session(
             continue;
         }
         let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-        let response = match result {
+        let response = match outcome.result {
             Ok(value) => JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: Some(id),
@@ -529,6 +529,17 @@ async fn serve_session(
         };
         let out = serde_json::to_string(&response)? + "\n";
         session.write_bytes(out.as_bytes()).await?;
+        // Verbose traces: MCP logging notifications (Cursor Output via stdout) +
+        // ax_log side-channel (proxy → stderr) + local log file.
+        if !outcome.verbose_lines.is_empty() {
+            crate::verbose::append_verbose_log_file(&outcome.verbose_lines, Some(project_root));
+            for text in &outcome.verbose_lines {
+                let notif = crate::verbose::format_mcp_log_notification(text);
+                session.write_bytes(notif.as_bytes()).await?;
+                let log_line = crate::verbose::format_ax_log_line(text);
+                session.write_bytes(log_line.as_bytes()).await?;
+            }
+        }
         line.clear();
     }
     Ok(())

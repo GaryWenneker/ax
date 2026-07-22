@@ -180,6 +180,13 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let result = ax.match_policy(input).await.map_err(|e| e.to_string())?;
     let status = ax.policy_status().await.map_err(|e| e.to_string())?;
     let meta = ax_policy::build_preflight_meta(&status, &result);
+    crate::verbose::push_line(format!(
+        "enrich policy matched_rules={} matched_skills={} inject_chars={} mode={}",
+        meta.matched_rules,
+        meta.matched_skills,
+        result.inject.len(),
+        meta.mode
+    ));
 
     // Index snapshot rides along with policy inject — failures must never
     // break preflight; stats are additive context.
@@ -199,7 +206,16 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 inject.push('\n');
             }
             inject.push_str(&block);
+            crate::verbose::push_line(format!(
+                "enrich index block_chars={} pending_files={}",
+                block.len(),
+                pending.len()
+            ));
+        } else {
+            crate::verbose::push_line("enrich index skipped (empty block)");
         }
+    } else {
+        crate::verbose::push_line("enrich index skipped (stats unavailable)");
     }
     if !memories.is_empty() {
         let block = ax_memory::format_memories_inject_block(&memories, 3_000);
@@ -208,7 +224,14 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 inject.push('\n');
             }
             inject.push_str(&block);
+            crate::verbose::push_line(format!(
+                "enrich memories count={} block_chars={}",
+                memories.len(),
+                block.len()
+            ));
         }
+    } else {
+        crate::verbose::push_line("enrich memories none");
     }
 
     let has_directive = detect_directive(&prompt);
@@ -234,12 +257,21 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     }
     if has_directive {
         inject.push_str("<ax_capture_hint>Directive detected — a ready rule proposal is in captureProposal. Ask the user captureProposal.questions, then call ax_policy_capture({ action: \"save\", rule }) after they confirm.</ax_capture_hint>");
+        crate::verbose::push_line("enrich directive capture_hint appended");
+    } else {
+        crate::verbose::push_line("enrich directive none");
     }
 
     let mut instruction = "Apply CRITICAL rules before editing. If a skill matched, follow its workflow.".to_string();
     if has_directive {
         instruction.push_str(" DIRECTIVE DETECTED — captureProposal holds a ready rule. Ask the user the questions in captureProposal.questions, then call ax_policy_capture(action=\"save\", rule) after they say yes. This persists even in a project with no prior policy.");
     }
+
+    crate::verbose::push_line(format!(
+        "enrich done final_inject_chars={} directive={}",
+        inject.len(),
+        has_directive
+    ));
 
     Ok(json!({
         "policyStatus": meta.policy_status,
@@ -449,22 +481,98 @@ async fn skill(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let path_str = params.get("path").and_then(|v| v.as_str()).ok_or("path required")?;
+    let paths = guard_paths_from_params(&params)?;
+    let op = guard_op_from_params(&params);
+    if paths.len() == 1 {
+        let path_str = &paths[0];
+        let path = ax.project_root().join(path_str);
+        let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
+        let result = ax
+            .guard_operation(&path, op, content.as_ref().map(|v| v.as_slice()))
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(json!(result));
+    }
+    let mut all_allowed = true;
+    let mut violations = Vec::new();
+    let mut results = Vec::new();
+    for path_str in &paths {
+        let path = ax.project_root().join(path_str);
+        let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
+        let result = ax
+            .guard_operation(&path, op, content.as_ref().map(|v| v.as_slice()))
+            .await
+            .map_err(|e| e.to_string())?;
+        if !result.allowed {
+            all_allowed = false;
+        }
+        for v in &result.violations {
+            violations.push(json!({
+                "path": path_str,
+                "ruleId": v.rule_id,
+                "message": v.message,
+            }));
+        }
+        results.push(json!({
+            "path": path_str,
+            "allowed": result.allowed,
+            "violations": result.violations,
+        }));
+    }
+    Ok(json!({
+        "allowed": all_allowed,
+        "violations": violations,
+        "results": results,
+    }))
+}
+
+/// Accept `path`, `file`/`filepath`, or a non-empty `paths` array (common agent mistakes).
+fn guard_paths_from_params(params: &Value) -> Result<Vec<String>, String> {
+    if let Some(p) = params
+        .get("path")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(vec![p.to_string()]);
+    }
+    for key in ["file", "filepath", "filePath"] {
+        if let Some(p) = params
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(vec![p.to_string()]);
+        }
+    }
+    if let Some(arr) = params.get("paths").and_then(|v| v.as_array()) {
+        let paths: Vec<String> = arr
+            .iter()
+            .filter_map(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        if !paths.is_empty() {
+            return Ok(paths);
+        }
+    }
+    Err("path required".into())
+}
+
+fn guard_op_from_params(params: &Value) -> GuardOp {
     let op = params
         .get("operation")
+        .or_else(|| params.get("action"))
         .and_then(|v| v.as_str())
-        .unwrap_or("write");
-    let op = match op {
-        "delete" => GuardOp::Delete,
-        _ => GuardOp::Write,
-    };
-    let path = ax.project_root().join(path_str);
-    let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
-    let result = ax
-        .guard_operation(&path, op, content.as_ref().map(|v| v.as_slice()))
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(json!(result))
+        .unwrap_or("write")
+        .trim()
+        .to_ascii_lowercase();
+    match op.as_str() {
+        "delete" | "unlink" | "remove" => GuardOp::Delete,
+        _ => GuardOp::Write, // write / edit / create / update / …
+    }
 }
 
 fn guard_content_from_params(params: &Value) -> Option<Vec<u8>> {
@@ -667,12 +775,22 @@ fn skill_tool() -> Value {
 fn guard_tool() -> Value {
     json!({
         "name": "ax_guard",
-        "description": "Pre-write guard for CRITICAL policy rules",
+        "description": "Pre-write guard for CRITICAL policy rules. Prefer path+operation; also accepts paths[] and action=edit|write|delete.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": { "type": "string" },
+                "path": { "type": "string", "description": "Relative file path (preferred)" },
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Alternate to path — guard each path"
+                },
+                "file": { "type": "string", "description": "Alias for path" },
                 "operation": { "type": "string", "enum": ["write", "delete"] },
+                "action": {
+                    "type": "string",
+                    "description": "Alias for operation (edit/write → write, delete → delete)"
+                },
                 "content": { "type": "string", "description": "Proposed file content for new files (UTF-8 check)" },
                 "contentBase64": { "type": "string", "description": "Base64-encoded proposed content" }
             },

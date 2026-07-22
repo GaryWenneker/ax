@@ -13,7 +13,7 @@ priority: 95
 
 ```text
 1. ax_preflight(prompt, files)     [once per turn — inject has full rule/skill bodies]
-2. Work — CRITICAL rules binding; ax_guard before writes
+2. Work — CRITICAL rules binding; `ax_guard` (`path` + `operation`) before writes
 3. Code questions — ax_explore (not policy files on disk)
 ```
 

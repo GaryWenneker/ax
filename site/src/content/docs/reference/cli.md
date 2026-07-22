@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v2.1.14).
+description: Complete reference for every ax command, argument, and flag (v3.0.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -517,13 +517,13 @@ Self-update from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.
 
 | Argument / flag | Type | Description |
 |---|---|---|
-| `version` | optional | Pin a release tag (e.g. `v2.1.4`) |
+| `version` | optional | Pin a release tag (e.g. `v3.0.0`) |
 | `--check` | flag | Check for updates without installing |
 | `--local [archive]` | flag / path | Install from local `dist/ax-<platform>.zip` (maintainers); optional explicit archive path |
 
 ```bash
 ax upgrade
-ax upgrade v2.1.4
+ax upgrade v3.0.0
 ax upgrade --check
 ax upgrade --local
 ax upgrade --local dist/ax-win32-x64.zip
@@ -571,9 +571,45 @@ ax savings
 ax savings --period week --json
 ax savings import --all
 ax savings import --claude --cursor
+ax savings tag-session --session-id <uuid> --model composer-2.5-fast
+ax savings hook install
 ```
 
+| Subcommand | Description |
+|---|---|
+| `import --all` | Import Cursor + Claude Code session transcripts |
+| `tag-session` | Manually record model name for a session id |
+| `hook install` | Install Cursor sessionStart hook into `~/.cursor/hooks/` |
+
 The **Savings** page in `ax web` (enable in Settings) exposes the same filters. See [Token savings](/guides/token-savings/).
+
+### `ax mcp audit`
+
+Correlate `<project>/.ax/mcp-verbose.log` with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Same engine powers the Command Center **Quality** status-bar chip and slide-out. Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.
+
+Scoring notes:
+
+- Enrichment attaches `enrich` / `enrich done` lines (including `final_inject_chars`) to the open `ax_preflight` cluster so empty-inject false positives are avoided.
+- Cursor transcripts often lack JSON timestamps; the auditor parses embedded `<timestamp>…</timestamp>` markers and carries them onto following tool calls so the rolling window matches verbose activity.
+- Untimed transcripts (no embed/JSON ts) are capped and capacity-matched against the verbose window; when verbose is quiet in-window, the whole-session transcript tail is dropped so idle windows do not false-flag `UncorrelatedTool` / `VerboseGap`.
+- Tool mix prefers the richer of verbose vs transcript counts for explore/graph/preflight/guard (`CallDynamicTool` included).
+- Default session pick prefers the recent transcript with the most ax tool calls (avoids linking an empty newest chat).
+- Verbose lines may include `session=<uuid>` (from the Cursor sessionStart hook / `AX_CURSOR_SESSION_ID`) for tighter transcript↔log correlation — run `ax savings hook install` once per machine.
+- MCP error clusters that recover with a successful same-tool retry within 60s do not penalize the score.
+- When `.ax/mcp-verbose.log` exists but has no clusters in the window, `UncorrelatedTool` is medium (widen `--window-minutes` or pass `--session`) instead of critical "enable verbose".
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--session` | uuid \| path | latest transcript | Cursor session id or `.jsonl` path |
+| `--window-minutes` | number | `30` | Rolling window when no `--session` |
+| `--json` | flag | — | Machine-readable `QualitySnapshot` |
+
+```bash
+ax mcp audit
+ax mcp audit --window-minutes 60
+ax mcp audit --session <uuid>
+ax mcp audit --session path/to/transcript.jsonl --json
+```
 
 ---
 
@@ -794,17 +830,18 @@ ax policy test --json
 
 ### `ax policy sync [path]`
 
-Verify IDE bootstrap files (`.cursor/rules/ax.mdc`, `AGENTS.md`, etc.).
+Verify managed policy instruction files (`.ax/policy/skills/startup/SKILL.md`, …) and IDE bootstrap files (`.cursor/rules/ax.mdc`, `AGENTS.md`, etc.). Required managed files must match the embedded init templates; optional team copies only fail the basic preflight checks.
 
 | Flag | Description |
 |---|---|
-| `--fix` | Restore missing or drifted managed files from embedded templates |
+| `--fix` | Restore missing or drifted managed files from embedded init templates |
 
 ```bash
 ax policy sync
 ax policy sync --fix
 ```
 
+After `--fix` restores `.ax/policy/` files in database mode, run `ax policy import` so `ax.db` picks up the updated skill bodies.
 ### `ax policy capture <prompt> [path]`
 
 Propose or save a team rule from directive language (`always`, `you must`, `@rule`, …).

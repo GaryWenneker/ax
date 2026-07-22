@@ -38,6 +38,7 @@ import {
   parsePipelineFromLog,
   seedSonarProjects,
   applySonarProjectEvent,
+  asSonarProjectSteps,
   finalizeSonarProjectSteps,
   resolveSonarProjectCardStatus,
   type SonarProjectStep,
@@ -162,7 +163,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
   const sonarReachable = sonarDiscovery?.reachable === true;
   const canInstallSonar = !containerExists && !sonarBusy;
   const canStartSonar = containerExists && !containerRunning && !sonarBusy;
-  const repoProjects = sonarSetup?.repo_projects ?? [];
+  const repoProjects = Array.isArray(sonarSetup?.repo_projects) ? sonarSetup.repo_projects : [];
   const readyRepos = repoProjects.filter((p) => p.exists).length;
   const needsSonarSetup =
     sonarReachable &&
@@ -301,7 +302,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
           setSonarProjectSteps((prev) =>
             Array.from(
               applySonarProjectEvent(
-                new Map(prev.map((p) => [p.key, p])),
+                new Map(asSonarProjectSteps(prev).map((p) => [p.key, p])),
                 {
                   type: 'sonar_project_started',
                   project_key: payload.project_key,
@@ -318,7 +319,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
           setSonarProjectSteps((prev) =>
             Array.from(
               applySonarProjectEvent(
-                new Map(prev.map((p) => [p.key, p])),
+                new Map(asSonarProjectSteps(prev).map((p) => [p.key, p])),
                 {
                   type: 'sonar_project_finished',
                   project_key: payload.project_key,
@@ -333,7 +334,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
           setSonarProjectSteps((prev) =>
             Array.from(
               applySonarProjectEvent(
-                new Map(prev.map((p) => [p.key, p])),
+                new Map(asSonarProjectSteps(prev).map((p) => [p.key, p])),
                 {
                   type: 'sonar_project_skipped',
                   project_key: payload.project_key,
@@ -352,7 +353,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
           }
           if (payload.step === 'sonar' && !payload.ok) {
             setSonarProjectSteps((prev) =>
-              prev.map((p) =>
+              asSonarProjectSteps(prev).map((p) =>
                 p.status === 'pending' || p.status === 'active'
                   ? { ...p, status: 'skipped' as const }
                   : p,
@@ -444,7 +445,8 @@ export default function ShipPage({ onOpenSonar }: Props) {
     setLiveStep('sonar');
     setLiveSonarKey(projectKey);
     setSonarProjectSteps((prev) => {
-      const next = prev.length > 0 ? prev.map((p) =>
+      const steps = asSonarProjectSteps(prev);
+      const next = steps.length > 0 ? steps.map((p) =>
         p.key === projectKey ? { ...p, status: 'active' as const } : p,
       ) : [{ key: projectKey, name: projectName, status: 'active' as const }];
       return next;
@@ -460,13 +462,13 @@ export default function ShipPage({ onOpenSonar }: Props) {
         }
       });
       setSonarProjectSteps((prev) =>
-        prev.map((p) => p.key === projectKey ? { ...p, status: 'passed' as const } : p),
+        asSonarProjectSteps(prev).map((p) => p.key === projectKey ? { ...p, status: 'passed' as const } : p),
       );
       await refreshSonar();
     } catch (e) {
       setErr(String(e));
       setSonarProjectSteps((prev) =>
-        prev.map((p) => p.key === projectKey ? { ...p, status: 'failed' as const } : p),
+        asSonarProjectSteps(prev).map((p) => p.key === projectKey ? { ...p, status: 'failed' as const } : p),
       );
     } finally {
       setScanningProjectKey(null);
@@ -495,28 +497,28 @@ export default function ShipPage({ onOpenSonar }: Props) {
         if (startMatch) {
           setLiveSonarKey(startMatch[1]);
           setSonarProjectSteps((prev) =>
-            prev.map((p) => p.key === startMatch[1] ? { ...p, status: 'active' as const } : p),
+            asSonarProjectSteps(prev).map((p) => p.key === startMatch[1] ? { ...p, status: 'active' as const } : p),
           );
         }
         const doneMatch = line.match(/✓ ([\w.-]+) complete/);
         if (doneMatch) {
           setLiveSonarKey((prev) => prev === doneMatch[1] ? null : prev);
           setSonarProjectSteps((prev) =>
-            prev.map((p) => p.key === doneMatch[1] ? { ...p, status: 'passed' as const } : p),
+            asSonarProjectSteps(prev).map((p) => p.key === doneMatch[1] ? { ...p, status: 'passed' as const } : p),
           );
         }
         const failMatch = line.match(/✕ ([\w.-]+)/);
         if (failMatch) {
           setLiveSonarKey((prev) => prev === failMatch[1] ? null : prev);
           setSonarProjectSteps((prev) =>
-            prev.map((p) => p.key === failMatch[1] ? { ...p, status: 'failed' as const } : p),
+            asSonarProjectSteps(prev).map((p) => p.key === failMatch[1] ? { ...p, status: 'failed' as const } : p),
           );
         }
         const skipMatch = line.match(/– (.+?) skipped/);
         if (skipMatch) {
           const skippedName = skipMatch[1];
           setSonarProjectSteps((prev) =>
-            prev.map((p) =>
+            asSonarProjectSteps(prev).map((p) =>
               p.name === skippedName || p.key.endsWith(`-${skippedName}`)
                 ? { ...p, status: 'skipped' as const }
                 : p,

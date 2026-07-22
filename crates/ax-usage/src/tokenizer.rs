@@ -8,12 +8,29 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
+use serde::Serialize;
 use tiktoken_rs::CoreBPE;
 
 static BPE: OnceLock<Option<CoreBPE>> = OnceLock::new();
 
 /// Cap the file-token cache so a long-running daemon cannot grow unbounded.
 const FILE_CACHE_MAX_ENTRIES: usize = 8192;
+
+/// Max input bytes accepted by [`tokenize_text`] (UI / API protection).
+pub const TOKENIZE_MAX_INPUT_BYTES: usize = 32 * 1024;
+/// Max token chips returned by [`tokenize_text`].
+pub const TOKENIZE_MAX_TOKENS: usize = 4096;
+
+/// Result of splitting text into o200k BPE token strings for visualization.
+#[derive(Debug, Clone, Serialize)]
+pub struct TokenizeResult {
+    pub tokens: Vec<String>,
+    /// Full token count of the (possibly input-capped) text before chip truncation.
+    pub count: usize,
+    pub chars: usize,
+    /// True when input or chip list was truncated to stay within caps.
+    pub truncated: bool,
+}
 
 #[derive(Clone, Copy)]
 struct CachedFileTokens {
@@ -39,6 +56,72 @@ pub fn count_tokens(text: &str) -> usize {
     match bpe() {
         Some(enc) => enc.encode_ordinary(text).len(),
         None => text.len() / 4,
+    }
+}
+
+/// Truncate `text` to at most `max_bytes` on a UTF-8 char boundary.
+pub fn truncate_utf8(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+/// Split `text` into o200k token strings for chip visualization.
+///
+/// Caps input at [`TOKENIZE_MAX_INPUT_BYTES`] and returned chips at
+/// [`TOKENIZE_MAX_TOKENS`]. When the BPE encoder is unavailable, falls back to
+/// ~4-char chunks so the UI still has something to render.
+pub fn tokenize_text(text: &str) -> TokenizeResult {
+    let input_truncated = text.len() > TOKENIZE_MAX_INPUT_BYTES;
+    let slice = if input_truncated {
+        truncate_utf8(text, TOKENIZE_MAX_INPUT_BYTES)
+    } else {
+        text.to_string()
+    };
+    let chars = slice.chars().count();
+
+    match bpe() {
+        Some(enc) => {
+            let ids = enc.encode_ordinary(&slice);
+            let count = ids.len();
+            let chip_truncated = count > TOKENIZE_MAX_TOKENS;
+            let take = count.min(TOKENIZE_MAX_TOKENS);
+            let tokens: Vec<String> = ids[..take]
+                .iter()
+                .map(|id| match enc.decode_bytes(&[*id]) {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    Err(_) => format!("<{id}>"),
+                })
+                .collect();
+            TokenizeResult {
+                tokens,
+                count,
+                chars,
+                truncated: input_truncated || chip_truncated,
+            }
+        }
+        None => {
+            let chunks: Vec<String> = slice
+                .chars()
+                .collect::<Vec<_>>()
+                .chunks(4)
+                .map(|c| c.iter().collect::<String>())
+                .collect();
+            let count = chunks.len();
+            let chip_truncated = count > TOKENIZE_MAX_TOKENS;
+            let tokens = chunks.into_iter().take(TOKENIZE_MAX_TOKENS).collect();
+            TokenizeResult {
+                tokens,
+                count,
+                chars,
+                truncated: input_truncated || chip_truncated,
+            }
+        }
     }
 }
 
@@ -169,5 +252,33 @@ mod tests {
     #[test]
     fn missing_file_returns_none() {
         assert!(count_file_tokens(Path::new("Z:/definitely/not/here.rs")).is_none());
+    }
+
+    #[test]
+    fn tokenize_text_roundtrips_visible_tokens() {
+        assert!(tokenizer_available());
+        let r = tokenize_text("hello world");
+        assert!(r.count >= 2);
+        assert!(!r.tokens.is_empty());
+        assert!(!r.truncated);
+        let joined: String = r.tokens.concat();
+        assert!(joined.contains("hello") || joined.contains("hell"));
+    }
+
+    #[test]
+    fn tokenize_text_respects_token_cap() {
+        let big = "word ".repeat(TOKENIZE_MAX_TOKENS + 200);
+        let r = tokenize_text(&big);
+        assert!(r.truncated);
+        assert!(r.tokens.len() <= TOKENIZE_MAX_TOKENS);
+        assert!(r.count >= r.tokens.len());
+    }
+
+    #[test]
+    fn truncate_utf8_respects_char_boundary() {
+        let s = "café🚀";
+        let t = truncate_utf8(s, 5);
+        assert!(t.len() <= 5);
+        assert!(s.starts_with(&t));
     }
 }

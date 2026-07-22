@@ -192,10 +192,19 @@ export function applySonarProjectEvent(
   return next;
 }
 
-export function finalizeSonarProjectSteps(
-  projects: SonarProjectStep[],
+/** Coerce Map / corrupted state into a Sonar project step array. */
+export function asSonarProjectSteps(
+  projects: SonarProjectStep[] | Map<string, SonarProjectStep> | null | undefined,
 ): SonarProjectStep[] {
-  return projects.map((p) =>
+  if (!projects) return [];
+  if (projects instanceof Map) return Array.from(projects.values());
+  return Array.isArray(projects) ? projects : [];
+}
+
+export function finalizeSonarProjectSteps(
+  projects: SonarProjectStep[] | Map<string, SonarProjectStep> | null | undefined,
+): SonarProjectStep[] {
+  return asSonarProjectSteps(projects).map((p) =>
     p.status === 'pending' ? { ...p, status: 'skipped' as const } : p,
   );
 }

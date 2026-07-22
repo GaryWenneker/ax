@@ -2,6 +2,8 @@
 
 mod agent;
 mod agent_pty;
+mod mcp_quality;
+mod mcp_trace;
 mod memory;
 mod policy;
 mod queries;
@@ -279,7 +281,7 @@ async fn handle_unresolved_reconcile(State(hub): State<WebHub>) -> impl IntoResp
         Err(e) => return api_err(e.to_string()).into_response(),
     };
     let mut resolver = ReferenceResolver::new(&ws.project_root);
-    let resolution = match resolver.resolve_all(&queries, None).await {
+    let resolution = match resolver.resolve_all(&queries, None, None).await {
         Ok(r) => r,
         Err(e) => return api_err(e.to_string()).into_response(),
     };

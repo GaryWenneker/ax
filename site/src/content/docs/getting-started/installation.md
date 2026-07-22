@@ -1,18 +1,18 @@
 ---
 title: Installation
-description: Install ax v2.1.4 and configure your AI coding agents.
+description: Install ax v3.0.0 and configure your AI coding agents.
 ---
 
 ## Current version
 
-**Latest release: v2.1.4** — install scripts and `ax upgrade` resolve the tag from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Check your install:
+**Latest release: v3.0.0** — install scripts and `ax upgrade` resolve the tag from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Check your install:
 
 ```bash
 ax version
-# ax 2.1.4
+# ax 3.0.0
 ```
 
-Pin a specific release with `AX_VERSION=v2.1.4` when running `install.sh` / `install.ps1`.
+Pin a specific release with `AX_VERSION=v3.0.0` when running `install.sh` / `install.ps1`.
 
 ### Local dev upgrade (maintainers)
 

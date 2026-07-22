@@ -308,4 +308,22 @@ Examples:
   ax savings
   ax savings --period week --json
   ax savings import --all
-  ax savings import --claude --cursor";
+  ax savings import --claude --cursor
+  ax savings tag-session --session-id <uuid> --model composer-2.5-fast
+  ax savings hook install";
+
+pub const MCP_LONG: &str = "Audit MCP quality by correlating Cursor transcripts with .ax/mcp-verbose.log.
+
+Scores preflight/enrichment/policy-tool usage and estimates token waste when agents
+fall back to Read/Grep instead of ax graph tools. Same engine powers the Command Center
+Quality slide-out (status-bar Q chip).
+
+Enable Verbose MCP logging in Settings → Interface (or AX_MCP_VERBOSE=1) first.
+
+Exit code 2 when critical findings are present (CI-friendly).
+
+Examples:
+  ax mcp audit
+  ax mcp audit --window-minutes 60
+  ax mcp audit --session <uuid>
+  ax mcp audit --session path/to/transcript.jsonl --json";

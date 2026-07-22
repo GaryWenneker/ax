@@ -151,7 +151,7 @@ export default function MemoryPage() {
   const manualCount = memories.filter((m) => m.source !== 'git').length;
 
   return (
-    <PageShell>
+    <PageShell className="memory-page">
       <PageHero
         title="Memory"
         subtitle={

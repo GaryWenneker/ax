@@ -19,24 +19,35 @@ import {
 } from '../components/ui/PageLayout';
 import { usePersistedString } from '../hooks/usePersistedState';
 import { usePageContext } from '../context/UiContext';
+import type { RouteState } from '../lib/routes';
 import type { UnresolvedRow, UnresolvedSummary } from '../types';
 
 const LIMIT = 50;
 
 const KIND_OPTIONS = ['', 'calls', 'imports', 'references', 'function_ref', 'extends', 'implements'];
 
-function parseInitialKind(): string {
-  const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '');
-  return params.get('kind') ?? '';
+function parseInitialKind(route: RouteState): string {
+  return route.kind ?? '';
 }
 
-export default function UnresolvedPage() {
+export default function UnresolvedPage({
+  route,
+  onRouteChange,
+}: {
+  route: RouteState;
+  onRouteChange: (next: RouteState, replace?: boolean) => void;
+}) {
   const [refs, setRefs] = useState<UnresolvedRow[]>([]);
   const [summary, setSummary] = useState<UnresolvedSummary | null>(null);
   const [total, setTotal] = useState(0);
   const [q, setQ] = usePersistedString('unresolved-q', '');
-  const [kind, setKind] = usePersistedString('unresolved-kind', parseInitialKind());
+  const [kind, setKind] = usePersistedString('unresolved-kind', parseInitialKind(route));
   const [selectedNodeId, setSelectedNodeId] = useState('');
+
+  useEffect(() => {
+    const fromUrl = route.kind ?? '';
+    if (fromUrl !== kind) setKind(fromUrl);
+  }, [route.kind, kind, setKind]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [reconciling, setReconciling] = useState(false);
@@ -209,7 +220,11 @@ export default function UnresolvedPage() {
             <select
               className="settings-select"
               value={kind}
-              onChange={(e) => setKind(e.target.value)}
+              onChange={(e) => {
+                const nextKind = e.target.value;
+                setKind(nextKind);
+                onRouteChange({ ...route, kind: nextKind || null }, true);
+              }}
               aria-label="Filter by reference kind"
             >
               <option value="">All kinds</option>

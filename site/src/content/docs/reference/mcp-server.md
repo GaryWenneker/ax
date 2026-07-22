@@ -96,11 +96,32 @@ Savings measurement (`ax savings`) always runs against the full pre-projection p
 
 Set `AX_MCP_FULL=1` to restore the full `structuredContent` for every tool (for clients that read only structured data).
 
+### Verbose MCP logging (Cursor Output)
+
+To watch what each tool receives, how preflight enrichment builds the inject block, and what ax sends back on the wire — without changing agent-facing payloads:
+
+1. Enable **Settings → Interface → Verbose MCP logging** in Command Center (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
+2. Reconnect / restart the ax MCP server in Cursor.
+3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table that tails `<project>/.ax/mcp-verbose.log` for the active workspace. On that page the status bar shows live buffer stats (in / out / prev / err / events) and a **project switcher** for recent workspaces. Filter the table with **kind chips**, a **tool** dropdown, and **text search**; click status-bar in/out/prev/err (or a Buffer breakdown row) to toggle kinds; click a Kind badge or Tool cell in a row to filter that value. Kind badges follow the UI theme; **error** rows color the tool name in danger red. The Call Inspector pretty-prints JSON/XML and formats `key=value` fields with VS Code Dark+–style tokens in a fixed-size pane. Tap a row for the inspector.
+
+![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging.png)
+
+4. Open the status-bar **Q** (Quality) chip for a live metrics slide-out: correlation, enrichment (inject p50/p95), tool mix, findings with token-waste estimates, and actions to run a full session audit or **Copy fixpack** (Markdown brief you paste into an agent chat to improve ax from those findings). The Logging page also shows a compact quality strip that opens the same slide-out. CLI equivalent: `ax mcp audit`. The auditor attaches enrich side-channel lines to preflight clusters, merges `CallDynamicTool` graph usage from transcripts, prefers the transcript with the most ax activity (not just newest empty chat), tags verbose lines with `session=` when the Cursor sessionStart hook recorded `~/.ax/active-cursor-session`, parses Cursor `<timestamp>` embeds for window alignment, drops untimed whole-session tails when the verbose window is idle (avoids false UncorrelatedTool), softens Read/Grep megawaste from untimed chats, and ignores MCP errors that recovered with a successful same-tool retry within 60s. Install the hook once with `ax savings hook install`.
+
+![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality.png)
+
+5. Optionally also use **View → Output → ax / MCP Logs**, or open the log file directly.
+
+Lines are prefixed with `[ax-mcp]`. They are written to the log file (and optionally Cursor Output). They never append debug text to `content.text` or `structuredContent`. When a Cursor session id is known, lines also include `session=<uuid>` so `ax mcp audit --session <uuid>` can filter the verbose log.
+
+`ax_guard` accepts the documented `path` + `operation` shape and common aliases (`paths[]`, `file`, `action=edit|write|delete`) so agents do not burn retries on `path required` validation errors.
+
 ### Response budget environment variables
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every tool |
+| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` emits inbound/enrichment/outbound traces to stderr (Cursor Output); same as Settings → Verbose MCP logging |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
 | `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |

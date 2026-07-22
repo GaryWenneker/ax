@@ -1,6 +1,6 @@
 # ax
 
-> **ABSOLUTE**: Every turn starts with `ax_preflight`. Team policy lives in `.ax/policy/` and is delivered via MCP — do not Read policy files on disk when MCP policy tools are available.
+> **ABSOLUTE**: Every turn starts with `ax_preflight` — mandatory whenever the ax MCP server is available. Team policy lives in `.ax/policy/` and is delivered via MCP — do not Read policy files on disk when MCP policy tools are available.
 
 ## Turn order
 
@@ -12,12 +12,38 @@
 
 > **Run preflight exactly once per turn.** If you already called `ax_preflight` this turn, skip it and continue work.
 
-For a whole-graph overview use `ax_insights` (communities, god nodes, surprising links) or `ax_report` (full Markdown architecture report). Edges carry a confidence tag (extracted / inferred / ambiguous); Markdown docs are indexed as `Doc` nodes.
+**Inject fallback:** If step 1 returns no `<ax_policy>` inject (empty `rules`), call `ax_skill("startup")` once before other work.
+
+## Directive capture
+
+When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` sets `directiveDetected` and returns a ready `captureProposal` (rule + `questions`). Ask each question, then call `ax_policy_capture(action="save", rule)` after the user confirms. This works even if the project has no policy yet — the first save bootstraps it. Never silently ignore such a directive.
+
+## Capability discovery
+
+ax is actively developed. **Do not rely on cached knowledge of ax features.** `ax_preflight` returns the latest matched rules, skills, and capabilities every call. When preflight returns tools or rules you haven't seen before, use them.
+
+## Tool reference
+
+| When | Call |
+|---|---|
+| Start of turn (always) | `ax_preflight` |
+| Session start / version check | `ax_status` |
+| Code architecture, how something works | `ax_explore`, `ax_search`, `ax_node` |
+| Impact analysis before changes | `ax_impact`, `ax_callers`, `ax_callees` |
+| Which tests are affected by changes | `ax_affected` |
+| Architecture overview: communities, god nodes, surprising links | `ax_insights` |
+| Full Markdown architecture report | `ax_report` |
+| Pre-write policy guard (CRITICAL rules) | `ax_guard` (`path` + `operation`; also `paths[]` / `action`) |
+| Capture durable rules | `ax_policy_capture` |
+| Re-index after large changes | `ax_index` |
+| Build task context | `ax_context` |
 
 ## Hard rules
 
-- Never skip step 1 on a new user message when `.ax/policy/` is indexed.
+- Never skip step 1 on a new user message.
+- **Run preflight exactly once per turn** — do not re-call after the startup skill.
 - MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`, do not proceed silently.
-- For structural code questions (how X works, call paths, blast radius) call `ax_explore` first — not policy tools.
+- For structural code questions (how X works, call paths, blast radius) call `ax_explore` **before** broad Grep/Read — not policy tools and not a Grep-first sweep.
+- If `ax_status` reports a stale index or outdated version, warn immediately and suggest `ax upgrade` or re-index.
 
 Full guide: [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).

@@ -41,6 +41,7 @@ export const PAGE_LABELS: Record<string, string> = {
   sonar: 'SonarQube',
   agent: 'Agent',
   settings: 'Settings',
+  logging: 'Logging',
   'policy-rules': 'Rules',
   'policy-rule-edit': 'Rule editor',
   'policy-skills': 'Skills',

@@ -39,6 +39,8 @@ export interface UiConfig {
   /** @deprecated use show_savings */
   show_tokens?: boolean;
   show_agent_terminal?: boolean;
+  /** Emit MCP inbound/outbound/enrichment traces to Cursor MCP Output (stderr). */
+  verbose_mcp?: boolean;
 }
 
 export interface ShipConfig {

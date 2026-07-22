@@ -53,9 +53,16 @@ const MIGRATION_ADD_COLUMNS: &[&str] = &[
     "ALTER TABLE mcp_call_log ADD COLUMN counterfactual_exact_files INTEGER",
     "ALTER TABLE agent_session_log ADD COLUMN session_output_tokens INTEGER",
     "ALTER TABLE agent_session_log ADD COLUMN model TEXT",
+    "ALTER TABLE mcp_call_log ADD COLUMN response_preview TEXT",
+    "ALTER TABLE mcp_call_log ADD COLUMN counterfactual_preview TEXT",
 ];
 
 pub fn usage_db_path() -> PathBuf {
+    if let Ok(path) = std::env::var("AX_USAGE_DB") {
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
     dirs::home_dir()
         .map(|h| h.join(".ax").join(USAGE_DB_FILENAME))
         .unwrap_or_else(|| PathBuf::from(".ax").join(USAGE_DB_FILENAME))

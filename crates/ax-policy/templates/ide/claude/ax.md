@@ -33,7 +33,7 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Which tests are affected by changes | `ax_affected` |
 | Architecture overview: communities, god nodes, surprising links | `ax_insights` |
 | Full Markdown architecture report | `ax_report` |
-| Pre-write policy guard (CRITICAL rules) | `ax_guard` |
+| Pre-write policy guard (CRITICAL rules) | `ax_guard` (`path` + `operation`; also `paths[]` / `action`) |
 | Capture durable rules | `ax_policy_capture` |
 | Re-index after large changes | `ax_index` |
 | Build task context | `ax_context` |
@@ -41,8 +41,9 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 ## Hard rules
 
 - Never skip step 1 on a new user message.
+- **Run preflight exactly once per turn** — do not re-call after the startup skill.
 - MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`, do not proceed silently.
-- For structural code questions (how X works, call paths, blast radius) call `ax_explore` first — not policy tools.
+- For structural code questions (how X works, call paths, blast radius) call `ax_explore` **before** broad Grep/Read — not policy tools and not a Grep-first sweep.
 - If `ax_status` reports a stale index or outdated version, warn immediately and suggest `ax upgrade` or re-index.
 
 Full guide: [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).

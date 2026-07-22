@@ -82,6 +82,7 @@ You already have ax installed but `ax version` shows an old release (e.g. **2.0.
 | `ax upgrade --check` shows `2.0.10 → 2.0.14` but install still picks 2.0.10 | Same — asset probe failed on your network; use schema 2 script or pin `AX_VERSION` |
 | Multiple paths under “Synced local instances” | Normal on Windows — see [Which binary is active](#which-binary-is-active) |
 | `cargo install` build overwritten after `install.ps1` | Installer syncs to `~/.cargo/bin/ax` by default |
+| `cargo install` → **Access is denied** replacing `ax.exe` | Cursor MCP / `ax web` respawned during the long rebuild — use `.\scripts\release-local.ps1` (copy-sync; no second cargo install) |
 
 ### Which binary is active
 
@@ -176,7 +177,7 @@ $env:AX_KEEP_CARGO_BIN = '1'
 irm https://getax.wenneker.io/install.ps1 | iex
 ```
 
-Use `cargo install` or `.\scripts\reinstall-cli.ps1` for ax repo development; use `install.ps1` for the released binary under `%LOCALAPPDATA%\ax`.
+Use `.\scripts\release-local.ps1` (build + copy-sync) or `.\scripts\reinstall-cli.ps1` (copy-sync only) for ax repo development — these avoid a second `cargo install` that often hits **Access is denied** when Cursor MCP respawns `ax.exe`. Use `install.ps1` for the released binary under `%LOCALAPPDATA%\ax`.
 
 ### Still stuck?
 

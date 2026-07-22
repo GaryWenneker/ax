@@ -178,6 +178,7 @@ impl Ax {
                     &self.db,
                     &self.project_root,
                     &index_opts.exclude,
+                    None,
                     &mut on_progress,
                 )
                 .await?;
@@ -223,6 +224,7 @@ impl Ax {
                         &self.db,
                         &self.project_root,
                         &index_opts.exclude,
+                        Some(&sync.affected_files),
                         &mut on_progress,
                     )
                     .await?;
@@ -278,6 +280,7 @@ impl Ax {
                     &self.db,
                     &self.project_root,
                     &index_opts.exclude,
+                    Some(paths),
                     on_progress,
                 )
                 .await?;
@@ -585,11 +588,12 @@ async fn finalize_after_extract(
     db: &Database,
     project_root: &Path,
     exclude: &[String],
+    scope: ax_resolution::ResolutionScope<'_>,
     on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
 ) -> Result<(), ax_utils::errors::AxError> {
     let _ = ax_resolution::prune_stale_unresolved_refs(queries).await?;
     let resolution = resolver
-        .resolve_all(queries, on_progress.as_mut())
+        .resolve_all(queries, scope, on_progress.as_mut())
         .await?;
     if let Some(cb) = on_progress.as_mut() {
         cb(IndexProgress {

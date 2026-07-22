@@ -61,11 +61,19 @@ Report checked paths + hash prefix in handoff. Do **not** skip this step.
 
 ## Reinstall command
 
-**Windows (preferred — kills all ax.exe processes first):**
+**Windows (preferred — kills all ax.exe, then copy-syncs; does not run cargo install):**
 
 ```powershell
 .\scripts\reinstall-cli.ps1
 ```
+
+**Full local release build + sync:**
+
+```powershell
+.\scripts\release-local.ps1
+```
+
+Avoid bare `cargo install --path crates/ax-cli --force` on Windows while Cursor MCP is connected — the rebuild window lets MCP respawn `ax.exe` and replace fails with Access denied.
 
 **macOS / Linux:**
 

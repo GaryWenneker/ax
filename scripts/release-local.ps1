@@ -1,16 +1,23 @@
-# Hard-stop ax, force a clean release build, install to ~/.cargo/bin
+# Hard-stop ax, force a clean release build, sync ax.exe to all install paths.
+#
+# Install prefers copying target-dev/release/ax.exe (fast, no re-lock race).
+# `cargo install` rebuilds for minutes and lets Cursor MCP respawn ax.exe mid-way,
+# which causes "Access is denied" when replacing ~/.cargo/bin/ax.exe — avoid it
+# unless -UseCargoInstall is set.
 #
 # Usage:
-#   .\scripts\release-local.ps1                 # kill + clean + build + install
-#   .\scripts\release-local.ps1 -SkipClean      # kill + build + install (no cargo clean)
+#   .\scripts\release-local.ps1                 # kill + clean + build + copy-sync
+#   .\scripts\release-local.ps1 -SkipClean      # kill + build + copy-sync
 #   .\scripts\release-local.ps1 -SkipInstall    # kill + clean + build only
-#   .\scripts\release-local.ps1 -SkipBuild      # kill + install only (same as reinstall-cli.ps1)
+#   .\scripts\release-local.ps1 -SkipBuild      # kill + copy-sync only (reinstall-cli.ps1)
+#   .\scripts\release-local.ps1 -UseCargoInstall  # also run cargo install (slow; may fail if MCP respawns)
 #
 param(
     [switch]$SkipBuild,
     [switch]$SkipClean,
     [switch]$SkipInstall,
-    [switch]$SkipKill
+    [switch]$SkipKill,
+    [switch]$UseCargoInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,7 +67,8 @@ function Resolve-AxCommand {
 
 function Stop-AllAxProcesses {
     param(
-        [string]$Reason = 'shutdown'
+        [string]$Reason = 'shutdown',
+        [switch]$AllowRemaining
     )
 
     if ($Reason -eq 'shutdown') {
@@ -107,14 +115,20 @@ function Stop-AllAxProcesses {
             Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
         }
 
-    Start-Sleep -Milliseconds 400
+    # Belt-and-suspenders: taskkill by image name (covers races Get-Process misses).
+    & taskkill.exe /F /IM ax.exe 2>$null | Out-Null
+
+    Start-Sleep -Milliseconds 500
 
     $remaining = @(Get-Process -Name ax -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $selfPid })
     if ($remaining.Count -gt 0) {
-        throw "Could not stop ax (still running: $($remaining.Id -join ', ')). Close Cursor MCP manually and retry."
-    }
-
-    if ($Reason -eq 'shutdown') {
+        $msg = "Could not stop ax (still running: $($remaining.Id -join ', ')). Close Cursor MCP manually and retry."
+        if ($AllowRemaining) {
+            Write-Host "  WARN: $msg" -ForegroundColor Yellow
+        } else {
+            throw $msg
+        }
+    } elseif ($Reason -eq 'shutdown') {
         Write-Host "All ax processes stopped." -ForegroundColor Green
     }
 }
@@ -123,22 +137,68 @@ function Copy-AxReleaseBinary {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $true)][string]$Destination,
-        [int]$MaxAttempts = 5
+        [int]$MaxAttempts = 8
     )
+
+    $destDir = Split-Path -Parent $Destination
+    if ($destDir -and -not (Test-Path $destDir)) {
+        New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+    }
 
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         try {
+            # Rename-away staging: Windows often allows renaming a locked exe even when
+            # overwrite/copy fails (MCP/watchdog can respawn between kill and copy).
+            if (Test-Path -LiteralPath $Destination) {
+                $old = "$Destination.old"
+                Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+                try {
+                    Move-Item -LiteralPath $Destination -Destination $old -Force -ErrorAction Stop
+                } catch {
+                    # Fall through to Copy-Item; unlock pass below if needed.
+                }
+            }
             Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+            Remove-Item -LiteralPath "$Destination.old" -Force -ErrorAction SilentlyContinue
             return
         } catch {
             if ($attempt -ge $MaxAttempts) {
                 throw "Could not copy ax.exe to $Destination after $MaxAttempts attempts: $($_.Exception.Message)"
             }
-            Write-Host "  Locked: $Destination (attempt $attempt/$MaxAttempts)" -ForegroundColor Yellow
-            Stop-AllAxProcesses -Reason "unlock copy target (attempt $attempt)"
-            Start-Sleep -Milliseconds (400 * $attempt)
+            Write-Host "  Locked: $Destination (attempt $attempt/$MaxAttempts) — $($_.Exception.Message)" -ForegroundColor Yellow
+            Stop-AllAxProcesses -Reason "unlock copy target (attempt $attempt)" -AllowRemaining
+            Start-Sleep -Milliseconds (500 * $attempt)
         }
     }
+}
+
+function Sync-AxInstallCopies {
+    param(
+        [Parameter(Mandatory = $true)][string]$Built
+    )
+
+    $appDataRoot = Join-Path $env:LOCALAPPDATA 'ax\current'
+    $targets = @(
+        (Join-Path $env:USERPROFILE '.cargo\bin\ax.exe')
+        (Join-Path $appDataRoot 'bin\ax.exe')
+        (Join-Path $appDataRoot 'ax.exe')
+    )
+
+    foreach ($dest in $targets) {
+        $parent = Split-Path $dest -Parent
+        if (-not (Test-Path $parent)) {
+            if ($dest -like '*\ax\current\*') {
+                New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            } else {
+                Write-Host "  skip (missing parent): $dest" -ForegroundColor DarkYellow
+                continue
+            }
+        }
+        Write-Step "Sync release build -> $dest"
+        Copy-AxReleaseBinary -Source $Built -Destination $dest
+    }
+
+    return $targets
 }
 
 function Use-BuildPath {
@@ -219,50 +279,40 @@ if (-not $SkipBuild) {
 }
 
 if (-not $SkipInstall) {
-    # MCP / ax web can respawn during the long cargo build - kill again before install/copy.
+    $built = Join-Path $root 'target-dev\release\ax.exe'
+    if (-not (Test-Path $built)) {
+        throw "No release binary at $built — run without -SkipBuild first."
+    }
+
+    # MCP / ax web can respawn during a long cargo build — kill again right before replace.
     Stop-AllAxProcesses -Reason 'pre-install sync'
 
-    Write-Step 'cargo install --path crates/ax-cli --force'
-    Use-BuildPath
-    cargo install --path crates/ax-cli --force
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-    $built = Join-Path $root 'target-dev\release\ax.exe'
-    $appDataRoot = Join-Path $env:LOCALAPPDATA 'ax\current'
-    $appDataBin = Join-Path $appDataRoot 'bin\ax.exe'
-    $appDataExe = Join-Path $appDataRoot 'ax.exe'
-    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin\ax.exe'
-    if (Test-Path $built) {
-        foreach ($pair in @(
-            @{ Label = $appDataBin; Path = $appDataBin; NeedParent = $true }
-            @{ Label = $appDataExe; Path = $appDataExe; NeedParent = $false }
-            @{ Label = $cargoBin; Path = $cargoBin; NeedParent = $true }
-        )) {
-            $dest = $pair.Path
-            $parentOk = if ($pair.NeedParent) { Test-Path (Split-Path $dest -Parent) } else { Test-Path $appDataRoot }
-            if ($parentOk) {
-                Write-Step "Sync release build -> $dest"
-                Copy-AxReleaseBinary -Source $built -Destination $dest
-            }
+    if ($UseCargoInstall) {
+        Write-Step 'cargo install --path crates/ax-cli --force (optional; slow)'
+        Write-Host '  Note: cargo install rebuilds; Cursor MCP may respawn ax.exe and lock ~/.cargo/bin.' -ForegroundColor Yellow
+        Use-BuildPath
+        cargo install --path crates/ax-cli --force
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "cargo install failed (exit $LASTEXITCODE) — falling back to copy-sync from $built" -ForegroundColor Yellow
+            Stop-AllAxProcesses -Reason 'post-cargo-install fallback' -AllowRemaining
+        } else {
+            # cargo install may have written a different artifact; re-copy our known-good release build.
+            Stop-AllAxProcesses -Reason 'post-cargo-install sync' -AllowRemaining
         }
     }
 
+    $targets = Sync-AxInstallCopies -Built $built
+
     $bin = Resolve-AxCommand
     if (-not $bin) {
-        throw 'cargo install finished but ax is not on PATH. Open a new shell or add ~/.cargo/bin to PATH.'
+        throw 'Install finished but ax is not on PATH. Open a new shell or add ~/.cargo/bin to PATH.'
     }
     $ver = & $bin --version
     Write-Host $ver -ForegroundColor Green
     Write-Host "Installed: $bin" -ForegroundColor Green
 
-    if (Test-Path $built) {
-        Write-Step 'Verify all ax.exe copies match release build'
-        Verify-AxBinarySync -Source $built -Targets @(
-            $cargoBin
-            $appDataBin
-            $appDataExe
-        )
-    }
+    Write-Step 'Verify all ax.exe copies match release build'
+    Verify-AxBinarySync -Source $built -Targets $targets
 }
 
 Write-Host ""

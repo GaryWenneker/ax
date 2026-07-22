@@ -3,9 +3,18 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v2.1.14](https://github.com/GaryWenneker/ax/releases/tag/v2.1.14)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v3.0.0](https://github.com/GaryWenneker/ax/releases/tag/v3.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
-**ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, draft PRs) — one Rust binary, CLI + MCP.
+**ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+
+**v3.0.0** is a major release focused on **agent observability and savings accuracy**:
+
+- **MCP Logging** — live Command Center table for `<project>/.ax/mcp-verbose.log` (kind/tool filters, Call Inspector, project switcher).
+- **MCP Quality** — status-bar **Q** chip + slide-out; CLI `ax mcp audit` scores correlation, enrichment, and Explore-before-Grep waste; **Copy fixpack** for agent-ready briefs.
+- **Cursor sessionStart hook** — `ax savings hook install` tags Composer chats with picker model + session id for savings and audit correlation.
+- **Savings dashboard** — activity heatmap, period filter, TokenViz path graph, by-model rollups.
+- **Architecture Graph** — interactive Leiden communities, god nodes, confidence-tagged edges, doc nodes.
+- **Document inventory** — PDF / Office / Markdown as `Doc` nodes; `<ax_index>` on every `ax_preflight`.
 
 **v2.1.14** adds **document inventory** — Markdown (parsed), PDF, Office, and other doc types as `Doc` nodes; `stats.docsByExtension` in `ax status`; `<ax_index>` auto-injected on every `ax_preflight` turn.
 
@@ -160,7 +169,8 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax remember <text>` | Store a durable project memory (decision, fix, convention) |
 | `ax recall <query>` | Hybrid search (FTS + vectors) over project memories |
 | `ax capture-git` | Mine recent git commits into memories |
-| `ax savings` | Context-token and cost savings summary |
+| `ax savings` | Context-token and cost savings summary (`import`, `tag-session`, `hook install`) |
+| `ax mcp audit` | MCP quality audit (verbose log ↔ Cursor transcript; Quality slide-out engine) |
 | `ax cursor auth …` | Save/restore Cursor subscription sessions (`status`, `save`, `use`, `list`) |
 | `ax affected <files…>` | Tests affected by file changes |
 | `ax diff --base main` | Git diff symbol blast radius |
@@ -235,6 +245,8 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 **Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` plus an `<ax_index>` doc inventory snapshot — no need to read `.ax/policy/` files) and `ax_guard` before writes on guarded paths.
 
 **Lean by default:** responses never ship the answer twice — `content.text` is authoritative and `structuredContent` is projected down to metadata (no duplicated source/rule bodies). `ax_context` and the data tools return compact markdown / one-line-per-symbol text instead of pretty-JSON. Tune with `AX_MCP_FULL` (restore full structured payload), `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). See the [token savings guide](https://getax.wenneker.io/guides/token-savings/).
+
+**Verbose MCP logging:** enable **Settings → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project `<project>/.ax/mcp-verbose.log`; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
 
 ### Transport
 

@@ -12,8 +12,34 @@ use crate::ppid_watchdog::spawn_ppid_watchdog;
 use crate::proxy::attach_or_spawn;
 use crate::tools::{server_instructions, ToolHandler};
 use crate::transport::{is_notification, StdioTransport, PARSE_ERROR, METHOD_NOT_FOUND};
+use crate::verbose::{
+    deliver_local, format_mcp_log_notification, push_error, push_inbound, push_internal,
+    push_outbound, verbose_enabled, with_trace_buffer,
+};
 use ax_telemetry::telemetry;
 use ax_usage::{estimate_savings, spawn_record_mcp_call, McpCallRecord};
+
+/// Result of one MCP JSON-RPC request, plus optional verbose stderr lines.
+pub struct RequestOutcome {
+    pub result: Result<Value, String>,
+    pub verbose_lines: Vec<String>,
+}
+
+impl RequestOutcome {
+    fn ok(value: Value) -> Self {
+        Self {
+            result: Ok(value),
+            verbose_lines: Vec::new(),
+        }
+    }
+
+    fn err(msg: String) -> Self {
+        Self {
+            result: Err(msg),
+            verbose_lines: Vec::new(),
+        }
+    }
+}
 
 /// Resolve indexed project root for MCP: explicit `--path` first, then cwd walk-up.
 pub fn resolve_mcp_project_root(explicit: Option<PathBuf>) -> Option<PathBuf> {
@@ -50,14 +76,24 @@ pub async fn run_stdio_server(explicit_root: Option<PathBuf>) -> Result<(), Box<
     loop {
         match StdioTransport::read_request() {
             Ok(req) => {
-                let result = handle_request(&mut engine, &req.method, req.params.unwrap_or(Value::Null)).await;
+                let outcome =
+                    handle_request(&mut engine, &req.method, req.params.unwrap_or(Value::Null))
+                        .await;
                 if is_notification(&req.id) {
                     continue;
                 }
                 let id = req.id.clone().unwrap_or(Value::Null);
-                match result {
+                match outcome.result {
                     Ok(value) => StdioTransport::send_result(id, value)?,
                     Err(msg) => StdioTransport::send_error(Some(id), METHOD_NOT_FOUND, &msg)?,
+                }
+                // Embedded stdio path (no daemon proxy): stderr + log file +
+                // MCP logging notifications on stdout for Cursor Output.
+                deliver_local(&outcome.verbose_lines, engine.project_root().map(|p| p.as_path()));
+                for text in &outcome.verbose_lines {
+                    let _ = StdioTransport::send_notification_line(&format_mcp_log_notification(
+                        text,
+                    ));
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
@@ -75,7 +111,7 @@ fn resolve_request_project_root(engine: &McpEngine) -> Option<PathBuf> {
         .or_else(|| resolve_mcp_project_root(None))
 }
 
-pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value) -> Result<Value, String> {
+pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value) -> RequestOutcome {
     let project_root = resolve_request_project_root(engine);
     let has_policy = project_root
         .as_ref()
@@ -83,131 +119,180 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
         .unwrap_or(false);
 
     match method {
-        "initialize" => Ok(json!({
+        "initialize" => RequestOutcome::ok(json!({
             "protocolVersion": "2024-11-05",
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "ax", "version": env!("CARGO_PKG_VERSION") },
             "instructions": server_instructions(has_policy),
         })),
-        "tools/list" => Ok(ToolHandler::list_tools(has_policy).await),
+        "tools/list" => RequestOutcome::ok(ToolHandler::list_tools(has_policy).await),
         "tools/call" => {
-            let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-            if is_policy_tool(name) {
-                engine.ensure_policy_fresh().await?;
-            } else {
-                engine.ensure_initialized().await?;
-                engine.reopen_if_replaced().await?;
-            }
-            let started = std::time::Instant::now();
-            let result = if let Some(pool) = engine.query_pool() {
-                if pool.healthy() && crate::query_pool::is_read_tool(name) {
-                    pool
-                        .run(|| async {
-                            let mut guard = engine.lock_ax().await;
-                            if let Some(ax) = guard.as_mut() {
-                                ToolHandler::call_tool(ax, name, args).await
-                            } else {
-                                Err("ax not initialized".to_string())
-                            }
-                        })
-                        .await
-                } else {
-                    let mut guard = engine.lock_ax().await;
-                    if let Some(ax) = guard.as_mut() {
-                        ToolHandler::call_tool(ax, name, args).await
-                    } else {
-                        Err("ax not initialized".to_string())
-                    }
+            let verbose = verbose_enabled(project_root.as_deref());
+            if verbose {
+                let (result, verbose_lines) = with_trace_buffer(async {
+                    call_tool_and_wrap(engine, &name, args, project_root.as_deref(), true).await
+                })
+                .await;
+                RequestOutcome {
+                    result,
+                    verbose_lines,
                 }
             } else {
+                let result =
+                    call_tool_and_wrap(engine, &name, args, project_root.as_deref(), false).await;
+                RequestOutcome {
+                    result,
+                    verbose_lines: Vec::new(),
+                }
+            }
+        }
+        "notifications/initialized" => RequestOutcome::ok(Value::Null),
+        _ => RequestOutcome::err(format!("method not found: {}", method)),
+    }
+}
+
+async fn call_tool_and_wrap(
+    engine: &mut McpEngine,
+    name: &str,
+    args: Value,
+    project_root: Option<&std::path::Path>,
+    verbose: bool,
+) -> Result<Value, String> {
+    if is_policy_tool(name) {
+        engine.ensure_policy_fresh().await?;
+    } else {
+        engine.ensure_initialized().await?;
+        engine.reopen_if_replaced().await?;
+    }
+    if verbose {
+        push_inbound(name, &args);
+    }
+    let started = std::time::Instant::now();
+    let result = if let Some(pool) = engine.query_pool() {
+        if pool.healthy() && crate::query_pool::is_read_tool(name) {
+            pool.run(|| async {
                 let mut guard = engine.lock_ax().await;
                 if let Some(ax) = guard.as_mut() {
                     ToolHandler::call_tool(ax, name, args).await
                 } else {
                     Err("ax not initialized".to_string())
                 }
-            };
-            if let Ok(mut t) = telemetry().lock() {
-                t.record_usage("mcp_tool", name, result.is_ok(), None);
-                t.persist_sync();
-            }
-            ax_telemetry::trigger_background_flush();
-            let duration_ms = started.elapsed().as_millis() as i64;
-            let project = project_root
-                .as_ref()
-                .map(|p| p.display().to_string());
-            match &result {
-                Ok(value) => {
-                    let text = tool_result_text(value);
-                    // Savings measurement always runs against the FULL value so
-                    // counterfactual file detection stays accurate even though the
-                    // wire payload below is leaner.
-                    let est = estimate_savings(name, value, &text, project_root.as_deref());
-                    let structured = if render_full() {
-                        Some(value.clone())
-                    } else {
-                        lean_structured(name, value)
-                    };
-                    let wrapped = wrap_call_tool_result_parts(
-                        value,
-                        structured,
-                        false,
-                        token_budget_hint(name, est.response_tokens_est),
-                    );
-                    spawn_record_mcp_call(McpCallRecord {
-                        tool: name.to_string(),
-                        project,
-                        response_chars: text.len() as i64,
-                        response_tokens_est: est.response_tokens_est,
-                        counterfactual_files: if est.savings_eligible {
-                            Some(est.counterfactual_files)
-                        } else {
-                            None
-                        },
-                        counterfactual_exact_files: if est.savings_eligible {
-                            Some(est.counterfactual_exact_files)
-                        } else {
-                            None
-                        },
-                        counterfactual_tokens_est: if est.savings_eligible {
-                            Some(est.counterfactual_tokens_est)
-                        } else {
-                            None
-                        },
-                        tokens_saved_est: if est.savings_eligible {
-                            Some(est.tokens_saved_est)
-                        } else {
-                            None
-                        },
-                        duration_ms: Some(duration_ms),
-                        ok: true,
-                        savings_eligible: est.savings_eligible,
-                    });
-                    Ok(wrapped)
-                }
-                Err(msg) => {
-                    let err_val = json!({ "error": msg });
-                    let text = tool_result_text(&err_val);
-                    spawn_record_mcp_call(McpCallRecord {
-                        tool: name.to_string(),
-                        project,
-                        response_chars: text.len() as i64,
-                        response_tokens_est: ax_usage::count_tokens(&text) as i64,
-                        counterfactual_files: None,
-                        counterfactual_exact_files: None,
-                        counterfactual_tokens_est: None,
-                        tokens_saved_est: None,
-                        duration_ms: Some(duration_ms),
-                        ok: false,
-                        savings_eligible: false,
-                    });
-                    Ok(wrap_call_tool_result(err_val, true))
-                }
+            })
+            .await
+        } else {
+            let mut guard = engine.lock_ax().await;
+            if let Some(ax) = guard.as_mut() {
+                ToolHandler::call_tool(ax, name, args).await
+            } else {
+                Err("ax not initialized".to_string())
             }
         }
-        "notifications/initialized" => Ok(Value::Null),
-        _ => Err(format!("method not found: {}", method)),
+    } else {
+        let mut guard = engine.lock_ax().await;
+        if let Some(ax) = guard.as_mut() {
+            ToolHandler::call_tool(ax, name, args).await
+        } else {
+            Err("ax not initialized".to_string())
+        }
+    };
+    if let Ok(mut t) = telemetry().lock() {
+        t.record_usage("mcp_tool", name, result.is_ok(), None);
+        t.persist_sync();
+    }
+    ax_telemetry::trigger_background_flush();
+    let duration_ms = started.elapsed().as_millis() as i64;
+    let project = project_root.map(|p| p.display().to_string());
+    match &result {
+        Ok(value) => {
+            if verbose {
+                push_internal(name, value);
+            }
+            let text = tool_result_text(value);
+            // Savings measurement always runs against the FULL value so
+            // counterfactual file detection stays accurate even though the
+            // wire payload below is leaner.
+            let est = estimate_savings(name, value, &text, project_root);
+            let full = render_full();
+            let structured = if full {
+                Some(value.clone())
+            } else {
+                lean_structured(name, value)
+            };
+            let wrapped = wrap_call_tool_result_parts(
+                value,
+                structured,
+                false,
+                token_budget_hint(name, est.response_tokens_est),
+            );
+            if verbose {
+                push_outbound(name, &wrapped, full, duration_ms);
+            }
+            spawn_record_mcp_call(McpCallRecord {
+                tool: name.to_string(),
+                project,
+                response_chars: text.len() as i64,
+                response_tokens_est: est.response_tokens_est,
+                counterfactual_files: if est.savings_eligible {
+                    Some(est.counterfactual_files)
+                } else {
+                    None
+                },
+                counterfactual_exact_files: if est.savings_eligible {
+                    Some(est.counterfactual_exact_files)
+                } else {
+                    None
+                },
+                counterfactual_tokens_est: if est.savings_eligible {
+                    Some(est.counterfactual_tokens_est)
+                } else {
+                    None
+                },
+                tokens_saved_est: if est.savings_eligible {
+                    Some(est.tokens_saved_est)
+                } else {
+                    None
+                },
+                duration_ms: Some(duration_ms),
+                ok: true,
+                savings_eligible: est.savings_eligible,
+                response_preview: est.response_preview.clone(),
+                counterfactual_preview: est.counterfactual_preview.clone(),
+            });
+            Ok(wrapped)
+        }
+        Err(msg) => {
+            if verbose {
+                push_error(name, msg);
+            }
+            let err_val = json!({ "error": msg });
+            let text = tool_result_text(&err_val);
+            spawn_record_mcp_call(McpCallRecord {
+                tool: name.to_string(),
+                project,
+                response_chars: text.len() as i64,
+                response_tokens_est: ax_usage::count_tokens(&text) as i64,
+                counterfactual_files: None,
+                counterfactual_exact_files: None,
+                counterfactual_tokens_est: None,
+                tokens_saved_est: None,
+                duration_ms: Some(duration_ms),
+                ok: false,
+                savings_eligible: false,
+                response_preview: if text.is_empty() {
+                    None
+                } else {
+                    Some(ax_usage::truncate_utf8(&text, ax_usage::PREVIEW_MAX_BYTES))
+                },
+                counterfactual_preview: None,
+            });
+            Ok(wrap_call_tool_result(err_val, true))
+        }
     }
 }
 
@@ -557,6 +642,7 @@ mod policy_integration {
             json!({ "name": "ax_rules", "arguments": {} }),
         )
         .await
+        .result
         .expect("ax_rules call");
         let structured = result
             .get("structuredContent")
@@ -584,6 +670,7 @@ mod policy_integration {
             json!({ "name": "ax_status", "arguments": {} }),
         )
         .await
+        .result
         .expect("ax_status call");
         let structured = result
             .get("structuredContent")

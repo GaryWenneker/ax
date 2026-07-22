@@ -434,6 +434,18 @@ export interface ProjectSavingsRow {
   counterfactual_files: number;
 }
 
+export interface ModelSavingsRow {
+  model: string;
+  sessions: number;
+  session_input_tokens: number;
+  tokens_saved_est: number;
+  ax_calls: number;
+  read_calls: number;
+  grep_calls: number;
+  session_cost_usd_est: number;
+  cost_saved_usd_est: number;
+}
+
 export interface WeekdaySavingsRow {
   weekday: number;
   label: string;
@@ -442,7 +454,23 @@ export interface WeekdaySavingsRow {
   graph_calls: number;
 }
 
+export interface HourSavingsRow {
+  hour: number;
+  label: string;
+  tokens_saved_est: number;
+  calls: number;
+  graph_calls: number;
+}
+
+export interface TimelineBucket {
+  bucket: string;
+  tokens_saved_est: number;
+  calls: number;
+  graph_calls: number;
+}
+
 export interface RecentCallRow {
+  id: number;
   tool: string;
   project: string | null;
   tokens_saved_est: number;
@@ -453,6 +481,32 @@ export interface RecentCallRow {
   savings_eligible: boolean;
   duration_ms: number | null;
   created_at: number;
+  has_preview: boolean;
+}
+
+export interface TokenizeResult {
+  tokens: string[];
+  count: number;
+  chars: number;
+  truncated: boolean;
+}
+
+export interface CallTokenDetail {
+  id: number;
+  tool: string;
+  project: string | null;
+  tokens_saved_est: number;
+  counterfactual_tokens_est: number;
+  response_tokens_est: number;
+  counterfactual_files: number;
+  ok: boolean;
+  savings_eligible: boolean;
+  duration_ms: number | null;
+  created_at: number;
+  response_preview: string | null;
+  counterfactual_preview: string | null;
+  response_tokens: TokenizeResult;
+  counterfactual_tokens: TokenizeResult;
 }
 
 export interface AgentSessionRow {
@@ -512,11 +566,34 @@ export interface SavingsSummary {
   assumptions: SavingsAssumptions;
   by_tool: ToolSavingsRow[];
   by_project: ProjectSavingsRow[];
+  by_model: ModelSavingsRow[];
   by_weekday: WeekdaySavingsRow[];
+  by_hour: HourSavingsRow[];
+  timeline: TimelineBucket[];
   daily: DailySavingsRow[];
   recent_calls: RecentCallRow[];
   agent_sessions: AgentSessionRow[];
   db_path: string;
+}
+
+function asArray<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** Normalize API payloads so UI never calls .map on null/object fields. */
+export function normalizeSavingsSummary(raw: SavingsSummary): SavingsSummary {
+  return {
+    ...raw,
+    by_tool: asArray(raw.by_tool),
+    by_project: asArray(raw.by_project),
+    by_model: asArray(raw.by_model),
+    by_weekday: asArray(raw.by_weekday),
+    by_hour: asArray(raw.by_hour),
+    timeline: asArray(raw.timeline),
+    daily: asArray(raw.daily),
+    recent_calls: asArray(raw.recent_calls),
+    agent_sessions: asArray(raw.agent_sessions),
+  };
 }
 
 export function fetchSavings(params: {
@@ -527,7 +604,7 @@ export function fetchSavings(params: {
   const sp = new URLSearchParams({ period: params.period });
   if (params.from) sp.set('from', params.from);
   if (params.to) sp.set('to', params.to);
-  return get<SavingsSummary>(`/usage/savings?${sp}`);
+  return get<SavingsSummary>(`/usage/savings?${sp}`).then(normalizeSavingsSummary);
 }
 
 export interface SavingsImportResult {
@@ -538,4 +615,12 @@ export interface SavingsImportResult {
 
 export function importSavingsSessions(): Promise<SavingsImportResult> {
   return post<SavingsImportResult>('/usage/savings/import', {});
+}
+
+export function fetchCallTokenDetail(id: number): Promise<CallTokenDetail> {
+  return get<CallTokenDetail>(`/usage/savings/call/${id}`);
+}
+
+export function tokenizeText(text: string): Promise<TokenizeResult> {
+  return post<TokenizeResult>('/usage/tokenize', { text });
 }

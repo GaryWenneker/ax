@@ -6,6 +6,8 @@ use ax_db::queries::QueryBuilder;
 use ax_types::{Edge, EdgeKind, NodeKind, Provenance};
 use regex::Regex;
 
+use crate::resolver::ResolutionScope;
+
 const C_CPP_EXT: &[&str] = &[
     ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx", ".cppm", ".ipp", ".inl", ".tcc",
 ];
@@ -21,10 +23,18 @@ impl CFnptrSynthesizer {
         &self,
         project_root: &Path,
         queries: &QueryBuilder,
+        scope: ResolutionScope<'_>,
     ) -> Result<(), ax_utils::errors::AxError> {
         let assign_re = Regex::new(r"(?:\.(\w+)|(\w+))\s*=\s*(\w+)\s*;").unwrap();
         let files = queries.get_all_files().await?;
+        let scoped: std::collections::HashSet<&str> = match scope {
+            Some(paths) => paths.iter().map(|s| s.as_str()).collect(),
+            None => std::collections::HashSet::new(),
+        };
         for file in files {
+            if !scoped.is_empty() && !scoped.contains(file.path.as_str()) {
+                continue;
+            }
             if !is_c_cpp(&file.path) {
                 continue;
             }

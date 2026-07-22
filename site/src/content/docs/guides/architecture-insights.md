@@ -5,6 +5,8 @@ description: Communities, god nodes, surprising connections, the architecture re
 
 **ax v2.1.8+** turns the knowledge graph into a map of your architecture. One analysis engine powers three surfaces: the `ax insights` / `ax report` CLI commands, the `ax_insights` / `ax_report` MCP tools, and the Command Center **Graph** page. It works entirely on your local index — no LLM calls required.
 
+![Interactive Graph — Leiden communities, god nodes, confidence-tagged edges, and doc nodes](/screenshots/cc-graph.png)
+
 ## What it computes
 
 ### Communities (subsystems)

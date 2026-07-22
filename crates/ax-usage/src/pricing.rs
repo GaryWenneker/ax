@@ -63,6 +63,7 @@ fn default_models() -> HashMap<String, ModelPricing> {
     m.insert("gpt-4.1", ModelPricing { input_per_mtok: 2.0, output_per_mtok: 8.0 });
     m.insert("gemini-2.5-pro", ModelPricing { input_per_mtok: 1.25, output_per_mtok: 10.0 });
     m.insert("gemini", ModelPricing { input_per_mtok: 0.30, output_per_mtok: 2.5 });
+    // Cursor Composer labels (e.g. composer-2.5-fast) match via substring "composer".
     m.insert("composer", ModelPricing { input_per_mtok: 1.25, output_per_mtok: 10.0 });
     m.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }

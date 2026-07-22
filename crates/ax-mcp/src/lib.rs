@@ -13,6 +13,7 @@ pub mod proxy;
 pub mod server;
 pub mod tools;
 pub mod transport;
+pub mod verbose;
 
 pub use daemon::run_daemon;
 pub use engine::McpEngine;

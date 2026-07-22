@@ -13,6 +13,9 @@ use crate::import_resolver::ImportResolver;
 use crate::name_matcher::NameMatcher;
 use crate::types::{ResolvedBy, ResolvedRef, ResolutionResult, ResolutionStats, UnresolvedRef};
 
+/// Which unresolved references to process. `None` = full pass (e.g. `ax index`).
+pub type ResolutionScope<'a> = Option<&'a [String]>;
+
 pub struct ReferenceResolver {
     import_resolver: ImportResolver,
     name_matcher: NameMatcher,
@@ -35,20 +38,36 @@ impl ReferenceResolver {
     pub async fn resolve_all(
         &mut self,
         queries: &QueryBuilder,
+        scope: ResolutionScope<'_>,
         mut on_progress: Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> Result<ResolutionResult, ax_utils::errors::AxError> {
         self.frameworks
-            .run_post_extract(self.import_resolver.project_root(), queries)
+            .run_post_extract(
+                self.import_resolver.project_root(),
+                queries,
+                scope,
+            )
             .await?;
 
-        let refs = queries.get_unresolved_refs().await?;
+        let refs = match scope {
+            Some(files) if !files.is_empty() => {
+                queries.get_unresolved_refs_by_files(files).await?
+            }
+            _ => queries.get_unresolved_refs().await?,
+        };
         let total = refs.len() as u32;
         if let Some(ref mut cb) = on_progress {
+            let label = match scope {
+                Some(files) if !files.is_empty() => {
+                    format!("{total} references to resolve in {} file(s)", files.len())
+                }
+                _ => format!("{total} references to resolve"),
+            };
             cb(IndexProgress {
                 phase: IndexPhase::Resolving,
                 current: 0,
                 total,
-                file_path: Some(format!("{total} references to resolve")),
+                file_path: Some(label),
             });
         }
         let import_map = build_import_map(&refs, &self.import_resolver);
@@ -144,11 +163,11 @@ impl ReferenceResolver {
         }
 
         self.callback_synth
-            .synthesize(self.import_resolver.project_root(), queries)
+            .synthesize(self.import_resolver.project_root(), queries, scope)
             .await?;
 
         self.c_fnptr_synth
-            .synthesize(self.import_resolver.project_root(), queries)
+            .synthesize(self.import_resolver.project_root(), queries, scope)
             .await?;
 
         Ok(result)
@@ -158,34 +177,9 @@ impl ReferenceResolver {
         &mut self,
         queries: &QueryBuilder,
         files: &[String],
+        on_progress: Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
     ) -> Result<ResolutionResult, ax_utils::errors::AxError> {
-        let refs = queries.get_unresolved_refs_by_files(files).await?;
-        let import_map = build_import_map(&refs, &self.import_resolver);
-        let mut result = ResolutionResult {
-            resolved: vec![],
-            unresolved: vec![],
-            stats: ResolutionStats::default(),
-        };
-        for db_ref in refs {
-            let ref_ = unresolved_from_db(&db_ref);
-            result.stats.total += 1;
-            let resolved = if let Some(target_file) = import_map.get(&(ref_.file_path.clone(), ref_.reference_name.clone())) {
-                self.name_matcher.resolve_in_file(queries, &ref_, target_file).await
-            } else {
-                self.name_matcher.resolve_ref(queries, &ref_).await
-            };
-            if let Some(r) = resolved {
-                result.stats.resolved += 1;
-                result.resolved.push(r);
-                if let Err(e) = queries.delete_unresolved_ref(&db_ref).await {
-                    tracing::warn!("failed to delete resolved ref: {}", e);
-                }
-            } else {
-                result.stats.unresolved += 1;
-                result.unresolved.push(ref_);
-            }
-        }
-        Ok(result)
+        self.resolve_all(queries, Some(files), on_progress).await
     }
 
     async fn resolve_import_ref(&self, queries: &QueryBuilder, ref_: &UnresolvedRef) -> Option<ResolvedRef> {

@@ -266,6 +266,12 @@ enum Commands {
         #[arg(long, help = "JSON output")]
         json: bool,
     },
+    /// MCP quality audit (verbose log ↔ Cursor transcript)
+    #[command(long_about = help_text::MCP_LONG)]
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
     /// Explore reasoning offload configuration
     #[command(long_about = help_text::OFFLOAD_LONG)]
     Offload {
@@ -295,6 +301,9 @@ enum Commands {
     /// Claude UserPromptSubmit hook (hidden; reads {prompt,cwd} JSON on stdin)
     #[command(hide = true, name = "prompt-hook")]
     PromptHook,
+    /// Cursor sessionStart hook (hidden; reads hook JSON on stdin)
+    #[command(hide = true, name = "session-hook")]
+    SessionHook,
     /// Hidden liveness watchdog child (spawned by ax MCP/daemon)
     #[command(hide = true, name = "watchdog-child")]
     WatchdogChild {
@@ -333,6 +342,40 @@ enum SavingsAction {
         #[arg(long, help = "Import both Claude and Cursor logs")]
         all: bool,
     },
+    /// Record the model name for an agent session (debug / manual tagging)
+    TagSession {
+        #[arg(long, default_value = "cursor", help = "Agent source (cursor or claude)")]
+        agent: String,
+        #[arg(long, help = "Session / conversation id")]
+        session_id: String,
+        #[arg(long, help = "Model label (e.g. composer-2.5-fast)")]
+        model: String,
+    },
+    /// Install or manage Cursor hooks for savings tracking
+    Hook {
+        #[command(subcommand)]
+        action: SavingsHookAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpAction {
+    /// Correlate .ax/mcp-verbose.log with a Cursor transcript and score quality
+    Audit {
+        path: Option<String>,
+        #[arg(long, value_name = "UUID|PATH", help = "Cursor session id or transcript .jsonl path")]
+        session: Option<String>,
+        #[arg(long, value_name = "MIN", help = "Rolling window minutes when no --session (default 30)")]
+        window_minutes: Option<u64>,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SavingsHookAction {
+    /// Copy sessionStart hook into ~/.cursor/hooks/
+    Install,
 }
 
 #[derive(Subcommand)]
@@ -742,6 +785,7 @@ async fn async_main() {
             },
         },
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
+        Some(Commands::SessionHook) => commands::session_hook::run().await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
             ax_mcp::run_watchdog_child(parent_pid, timeout_ms);
             Ok(())
@@ -761,7 +805,23 @@ async fn async_main() {
             Some(SavingsAction::Import { claude, cursor, all }) => {
                 commands::savings::run_import(claude, cursor, all).await
             }
+            Some(SavingsAction::TagSession {
+                agent,
+                session_id,
+                model,
+            }) => commands::savings::run_tag_session(agent, session_id, model).await,
+            Some(SavingsAction::Hook { action }) => match action {
+                SavingsHookAction::Install => commands::savings::run_hook_install(),
+            },
             None => commands::savings::run_summary(period, from, to, json).await,
+        },
+        Some(Commands::Mcp { action }) => match action {
+            McpAction::Audit {
+                path,
+                session,
+                window_minutes,
+                json,
+            } => commands::mcp::run(path, session, window_minutes, json),
         },
         Some(Commands::Offload { action }) => match action {
             Some(OffloadCommands::Status) => commands::offload::run(Some("status".into()), None, None),
@@ -806,6 +866,7 @@ fn should_notify_update(cmd: &Option<Commands>) -> bool {
     match cmd {
         Some(Commands::Serve { .. })
         | Some(Commands::PromptHook)
+        | Some(Commands::SessionHook)
         | Some(Commands::WatchdogChild { .. })
         | Some(Commands::UpgradeApply { .. })
         | Some(Commands::Upgrade { .. })
@@ -852,11 +913,13 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Upgrade { .. }) => Some("upgrade".into()),
         Some(Commands::Telemetry { .. }) => Some("telemetry".into()),
         Some(Commands::Savings { .. }) => Some("savings".into()),
+        Some(Commands::Mcp { .. }) => Some("mcp".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),
         Some(Commands::Cursor { .. }) => Some("cursor".into()),
         Some(Commands::Policy { .. }) => Some("policy".into()),
         Some(Commands::PromptHook) => None,
+        Some(Commands::SessionHook) => None,
         Some(Commands::WatchdogChild { .. }) => None,
         Some(Commands::UpgradeApply { .. }) => None,
         Some(Commands::Serve { .. }) => Some("serve".into()),

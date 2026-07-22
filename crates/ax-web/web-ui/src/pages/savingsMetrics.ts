@@ -42,6 +42,19 @@ export function computeInsights(data: SavingsSummary): SavingsInsight[] {
     });
   }
 
+  const topModel = data.by_model[0];
+  if (topModel && (topModel.tokens_saved_est > 0 || topModel.session_input_tokens > 0)) {
+    insights.push({
+      id: 'top-model',
+      label: 'Top model',
+      value: topModel.model,
+      detail:
+        topModel.tokens_saved_est > 0
+          ? `${topModel.tokens_saved_est.toLocaleString()} tokens saved · ${topModel.sessions} session(s)`
+          : `${topModel.session_input_tokens.toLocaleString()} input tokens · ${topModel.sessions} session(s)`,
+    });
+  }
+
   if (data.clamp_tokens_absorbed !== 0) {
     insights.push({
       id: 'clamp',

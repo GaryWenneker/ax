@@ -272,9 +272,13 @@ impl ExtractionOrchestrator {
                 .files_indexed
         };
 
+        let mut affected_files = changed;
+        affected_files.extend(deleted.clone());
+
         Ok(SyncResult {
             files_indexed: indexed_count,
             files_removed: removed,
+            affected_files,
             duration_ms: start.elapsed().as_millis() as u64,
         })
     }
@@ -410,6 +414,8 @@ pub struct IndexResult {
 pub struct SyncResult {
     pub files_indexed: u32,
     pub files_removed: u32,
+    /// Project-relative paths that were added, modified, or deleted this sync.
+    pub affected_files: Vec<String>,
     pub duration_ms: u64,
 }
 

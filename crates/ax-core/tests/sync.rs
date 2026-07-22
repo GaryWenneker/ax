@@ -150,3 +150,75 @@ async fn sync_reindexes_everything_on_extractor_version_change() {
 
     ax.destroy().await.unwrap();
 }
+
+#[tokio::test]
+async fn sync_resolves_only_affected_files() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/alpha.ts",
+        r#"
+import { useState } from "react";
+export function alpha() {
+  console.log("a");
+  useState(0);
+  fetch("/api");
+  JSON.parse("{}");
+}
+"#,
+    );
+    write(
+        dir.path(),
+        "src/beta.ts",
+        r#"
+import { useEffect } from "react";
+export function beta() {
+  console.log("b");
+  useEffect(() => {});
+  Math.random();
+  Promise.resolve(1);
+}
+"#,
+    );
+    let mut ax = Ax::init(dir.path()).await.unwrap();
+    ax.index_all(quiet_opts(), None).await.unwrap();
+
+    let beta_before = ax
+        .queries()
+        .get_unresolved_refs_by_files(&["src/beta.ts".into()])
+        .await
+        .unwrap()
+        .len();
+    assert!(
+        beta_before > 0,
+        "beta.ts should have unresolved refs after full index"
+    );
+
+    write(
+        dir.path(),
+        "src/alpha.ts",
+        r#"
+import { useState } from "react";
+export function alphaRenamed() {
+  console.log("a2");
+  useState(1);
+  fetch("/api/v2");
+  JSON.parse("[]");
+}
+"#,
+    );
+    ax.sync(quiet_opts(), None).await.unwrap();
+
+    let beta_after = ax
+        .queries()
+        .get_unresolved_refs_by_files(&["src/beta.ts".into()])
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(
+        beta_after, beta_before,
+        "unchanged file's unresolved backlog must not be reprocessed on incremental sync"
+    );
+
+    ax.destroy().await.unwrap();
+}

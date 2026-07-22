@@ -16,7 +16,7 @@ triggers: ["Task tool", "subagent", "background agent", "run_in_background"]
 
 ```text
 1. ax_preflight [prompt + files — inject has matched rules/skills]
-2. Work — respect loaded CRITICAL rules; call ax_guard before writes
+2. Work — respect loaded CRITICAL rules; call `ax_guard` (`path` + `operation`) before writes
 3. For code structure: ax_explore (not policy files on disk)
 ```
 

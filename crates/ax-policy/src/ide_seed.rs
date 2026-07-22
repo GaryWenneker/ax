@@ -38,13 +38,15 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Inject fallback:** If preflight lacks `<ax_policy>` (empty inject/rules), call `ax_skill("startup")` once.
 
+**Explore before Grep/Read:** For structural code questions, call `ax_explore` (or graph tools) before broad Grep/Read.
+
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
 
 **Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.
 
-**Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_insights`/`ax_report` for whole-graph architecture (communities, god nodes, surprising links), `ax_guard` before writes when CRITICAL rules exist, `ax_policy_capture` for durable rules, `ax_context` for task context.
+**Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_insights`/`ax_report` for whole-graph architecture (communities, god nodes, surprising links), `ax_guard` (`path` + `operation`; also `paths[]` / `action`) before writes when CRITICAL rules exist, `ax_policy_capture` for durable rules, `ax_context` for task context.
 
 Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
 <!-- AX_END -->"#;
@@ -260,7 +262,9 @@ fn seed_continue_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::i
 fn write_if_missing_or_stale(path: &Path, body: &str, rel: &str, result: &mut IdeSeedResult) -> std::io::Result<()> {
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        if crate::seed::verify_content(&content).is_empty() {
+        let stale = !crate::seed::verify_content(&content).is_empty()
+            || content.trim() != body.trim();
+        if !stale {
             result.record_skipped(rel);
             return Ok(());
         }
@@ -466,6 +470,31 @@ fn verify_continue_bootstrap(project_root: &Path) -> InstructionCheck {
     }
 }
 
+fn verify_claude_rule_bootstrap(project_root: &Path) -> InstructionCheck {
+    let path = project_root.join(".claude").join("rules").join(CLAUDE_RULE_FILE);
+    let label = format!(".claude/rules/{CLAUDE_RULE_FILE}");
+    let issues = verify_dedicated_file(&path);
+    if path.exists() {
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        if content.trim() != CLAUDE_RULE_BODY.trim() {
+            return InstructionCheck {
+                label,
+                path,
+                ok: false,
+                issues: vec!["bootstrap content drifts from embedded template".into()],
+                optional: false,
+            };
+        }
+    }
+    InstructionCheck {
+        label,
+        path,
+        ok: issues.is_empty(),
+        issues,
+        optional: false,
+    }
+}
+
 fn check_instruction(label: impl Into<String>, path: PathBuf, issues: Vec<String>, optional: bool) -> InstructionCheck {
     InstructionCheck {
         label: label.into(),
@@ -478,7 +507,6 @@ fn check_instruction(label: impl Into<String>, path: PathBuf, issues: Vec<String
 
 /// Verify per-IDE bootstrap instruction files (Cursor, Claude, Codex/opencode, Gemini, Copilot, Windsurf, Cline).
 pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
-    let claude_rule = project_root.join(".claude").join("rules").join(CLAUDE_RULE_FILE);
     let claude_md = project_root.join(".claude").join("CLAUDE.md");
     let agents_md = project_root.join("AGENTS.md");
     let gemini_md = project_root.join("GEMINI.md");
@@ -489,12 +517,7 @@ pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
     vec![
         verify_cursor_bootstrap(project_root),
         verify_continue_bootstrap(project_root),
-        check_instruction(
-            format!(".claude/rules/{CLAUDE_RULE_FILE}"),
-            claude_rule.clone(),
-            verify_dedicated_file(&claude_rule),
-            false,
-        ),
+        verify_claude_rule_bootstrap(project_root),
         check_instruction(
             ".claude/CLAUDE.md",
             claude_md.clone(),
@@ -544,7 +567,9 @@ pub fn sync_ide_bootstrap(project_root: &Path, fix: bool) -> std::io::Result<Syn
         .filter(|c| !c.ok && !c.optional)
         .count();
 
-    if fix && result.fail_count > 0 {
+    if fix {
+        // Always re-seed on --fix so template drift is repaired even when
+        // basic verify_content checks still pass (e.g. customized Claude rule).
         let seed = seed_ide_agent_workflow(project_root)?;
         result.fixed.extend(seed.created);
         result.fixed.extend(seed.updated);

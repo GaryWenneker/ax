@@ -19,7 +19,8 @@
   flex-direction: column;
 }
 
-.main > .page.settings-page.agent-page {
+.main > .page.settings-page.agent-page,
+.workspace > .container > .page.settings-page.agent-page {
   flex: 1;
   min-height: 0;
 }
@@ -44,15 +45,19 @@
 
 body.agent-maximized-active .titlebar,
 body.agent-maximized-active .sidebar,
-body.agent-maximized-active .statusbar {
+body.agent-maximized-active .sidebar-resize-handle,
+body.agent-maximized-active .statusbar,
+body.agent-maximized-active .status-bar {
   display: none;
 }
 
-body.agent-maximized-active .workbench {
+body.agent-maximized-active .app {
   grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: "workspace";
 }
 
-body.agent-maximized-active .main {
+body.agent-maximized-active .workspace > .container {
   padding: 0;
 }
 
