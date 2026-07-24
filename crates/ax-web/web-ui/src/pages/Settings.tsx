@@ -7,6 +7,7 @@ import ThemeChooser from '../components/ThemeChooser';
 import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
 import { loadThemeId } from '../lib/themes';
+import { TIMEZONE_OPTIONS, browserTimeZone } from '../lib/timeZone';
 import { fetchShipConfig, saveShipConfig, type ShipConfig } from '../shipApi';
 
 const DEFAULT_CONFIG: ShipConfig = {
@@ -18,7 +19,12 @@ const DEFAULT_CONFIG: ShipConfig = {
   },
   remote: { provider: 'azure_devops' },
   sonar: { ...DEFAULT_SONAR_CONFIG },
-  ui: { show_savings: true, show_agent_terminal: true, verbose_mcp: false },
+  ui: {
+    show_savings: true,
+    show_agent_terminal: true,
+    verbose_mcp: false,
+    timezone: '',
+  },
   reviewers: {},
 };
 
@@ -157,6 +163,34 @@ export default function SettingsPage() {
       setConfig((c) => ({
         ...c,
         ui: { ...(c.ui ?? {}), verbose_mcp: !verbose_mcp },
+      }));
+      setErr(String(e));
+    }
+  }
+
+  async function setUiTimezone(timezone: string) {
+    const prev = config.ui?.timezone ?? '';
+    const next = {
+      ...config,
+      ui: { ...(config.ui ?? {}), timezone },
+    };
+    setConfig(next);
+    setErr(null);
+    setMsg(null);
+    try {
+      await saveShipConfig(next);
+      window.dispatchEvent(
+        new CustomEvent('ax-ship-config-updated', { detail: { timezone } }),
+      );
+      const label =
+        !timezone || timezone === 'local'
+          ? `Browser local (${browserTimeZone()})`
+          : timezone;
+      setMsg(`Logging timezone set to ${label}`);
+    } catch (e) {
+      setConfig((c) => ({
+        ...c,
+        ui: { ...(c.ui ?? {}), timezone: prev },
       }));
       setErr(String(e));
     }
@@ -309,13 +343,38 @@ export default function SettingsPage() {
 
             <SettingRow
               title="Verbose MCP logging"
-              description="Record inbound args, enrichment, and outbound MCP payloads to <project>/.ax/mcp-verbose.log and stream them live in the Logging page (per-project table). Off by default — never alters tool responses."
+              description="Record inbound args, enrichment, and outbound MCP payloads to <project>/.ax/mcp-verbose-YYYY-MM-DD.log (one file per day in Settings timezone) and stream them live in the Logging page (per-project table). Off by default — never alters tool responses."
             >
               <Toggle
                 label="Verbose MCP logging"
                 checked={config.ui?.verbose_mcp ?? false}
                 onChange={setUiVerboseMcp}
               />
+            </SettingRow>
+
+            <SettingRow
+              title="Timezone"
+              description={`Display Logging Date/time in this zone and rotate daily log files at midnight here. Line timestamps in files stay UTC. Browser local is currently ${browserTimeZone()}.`}
+            >
+              <select
+                className="settings-select"
+                value={config.ui?.timezone ?? ''}
+                disabled={!!busy || !configLoaded}
+                aria-label="Timezone for Logging timestamps"
+                onChange={(e) => void setUiTimezone(e.target.value)}
+              >
+                {TIMEZONE_OPTIONS.map((opt) => (
+                  <option key={opt.value || 'local'} value={opt.value}>
+                    {opt.value === ''
+                      ? `${opt.label} (${browserTimeZone()})`
+                      : opt.label}
+                  </option>
+                ))}
+                {config.ui?.timezone &&
+                  !TIMEZONE_OPTIONS.some((o) => o.value === config.ui?.timezone) && (
+                    <option value={config.ui.timezone}>{config.ui.timezone}</option>
+                  )}
+              </select>
             </SettingRow>
 
             <div className="settings-divider" />

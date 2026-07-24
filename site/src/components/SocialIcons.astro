@@ -1,9 +1,10 @@
 ---
 // Docs-header right cluster: Docs + Languages text links, Starlight's default
-// social icons (the GitHub link), and a live star-count pill — same order as
-// the landing nav (Docs · Languages · GitHub · Star). Done here, in the slot we
-// already own, to avoid a full header rebuild that could break search/mobile.
+// social icons (the GitHub link), star-count pill, and motion pause — same
+// order as the landing nav. Done here, in the slot we already own, to avoid a
+// full header rebuild that could break search/mobile.
 import Default from '@astrojs/starlight/components/SocialIcons.astro';
+import MotionControl from './MotionControl.astro';
 import { getStarsLabel } from '../lib/github';
 
 const stars = await getStarsLabel();
@@ -19,10 +20,11 @@ const repo = 'https://github.com/GaryWenneker/ax';
 	href={`${repo}/stargazers`}
 	target="_blank"
 	rel="noopener noreferrer"
-	aria-label={`${stars} GitHub stars`}
+	aria-label={stars ? `${stars} GitHub stars` : 'GitHub stars'}
 >
 	<span class="cg-star-glyph" aria-hidden="true">★</span>{stars}
 </a>
+<MotionControl />
 
 <style>
 	.cg-navlink {
@@ -41,9 +43,12 @@ const repo = 'https://github.com/GaryWenneker/ax';
 	.cg-star {
 		display: inline-flex;
 		align-items: center;
+		justify-content: center;
 		gap: 0.35rem;
 		border: 1px solid var(--cg-rule);
 		padding: 0.32rem 0.6rem;
+		min-height: 24px;
+		min-width: 24px;
 		font-family: var(--sl-font);
 		font-size: 0.85rem;
 		font-weight: 600;
@@ -60,7 +65,8 @@ const repo = 'https://github.com/GaryWenneker/ax';
 	.cg-star-glyph {
 		font-size: 0.85em;
 	}
-	/* Keep the compact mobile header clean — the sidebar covers navigation there. */
+	/* Keep the compact mobile header clean — the sidebar covers navigation there.
+	   Motion pause stays visible (WCAG 2.2.2). */
 	@media (max-width: 50rem) {
 		.cg-navlink,
 		.cg-star {

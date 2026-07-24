@@ -45,12 +45,17 @@
 [functions."admin-telemetry"]
   timeout = 26
 
-# Serve version pointer as static file (must come before GitHub redirect).
+# Version pointer: HTML (lang + title) for browsers; plain text for installers.
+# Must come before the GitHub /releases/:version/* redirect.
 [[redirects]]
   from = "/releases/latest.txt"
-  to = "/releases/latest.txt"
+  to = "/.netlify/functions/latest-release"
   status = 200
-  force = false
+  force = true
+
+[functions."latest-release"]
+  timeout = 5
+  included_files = ["public/releases/latest.txt"]
 
 # Legacy /releases/:version/* CDN URLs redirect to GitHub Releases (binaries no longer mirrored on Netlify).
 [[redirects]]

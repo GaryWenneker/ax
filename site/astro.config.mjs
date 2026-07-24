@@ -48,6 +48,54 @@ export default defineConfig({
   });
 })();`,
 				},
+				{
+					tag: 'script',
+					content: `(function(){
+  function axFocusableCode(){
+    document.querySelectorAll('.expressive-code pre').forEach(function(pre){
+      if(!pre.hasAttribute('tabindex')) pre.setAttribute('tabindex','0');
+    });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',axFocusableCode);
+  else axFocusableCode();
+  document.addEventListener('astro:page-load',axFocusableCode);
+})();`,
+				},
+				{
+					tag: 'script',
+					content: `(function(){
+  function axStripPagefindTitle(root){
+    (root||document).querySelectorAll('.pagefind-ui__search-input[title], input.pagefind-ui__search-input').forEach(function(el){
+      var t=el.getAttribute('title');
+      if(!t) return;
+      if(!el.getAttribute('aria-label')){
+        el.setAttribute('aria-label', el.getAttribute('placeholder')||t||'Search');
+      }
+      el.removeAttribute('title');
+    });
+  }
+  function axWatchPagefind(){
+    axStripPagefindTitle();
+    if(window.__axPagefindTitleWatch) return;
+    window.__axPagefindTitleWatch=true;
+    var obs=new MutationObserver(function(muts){
+      for(var i=0;i<muts.length;i++){
+        var m=muts[i];
+        if(m.type==='attributes'&&m.attributeName==='title'&&m.target&&m.target.removeAttribute){
+          if(m.target.classList&&m.target.classList.contains('pagefind-ui__search-input')){
+            axStripPagefindTitle(m.target.parentElement||document);
+          }
+        }
+        if(m.addedNodes&&m.addedNodes.length) axStripPagefindTitle();
+      }
+    });
+    obs.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['title']});
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',axWatchPagefind);
+  else axWatchPagefind();
+  document.addEventListener('astro:page-load',function(){window.__axPagefindTitleWatch=false;axWatchPagefind();});
+})();`,
+				},
 			],
 			social: [
 				{
@@ -65,6 +113,7 @@ export default defineConfig({
 				'./src/styles/theme.css',
 			],
 			components: {
+				Header: './src/components/Header.astro',
 				SiteTitle: './src/components/SiteTitle.astro',
 				SocialIcons: './src/components/SocialIcons.astro',
 			},
@@ -107,6 +156,7 @@ export default defineConfig({
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },
 						{ label: 'Affected Tests in CI', slug: 'guides/affected-tests' },
 						{ label: 'Command Center', slug: 'guides/command-center' },
+						{ label: 'MCP Logging & Quality', slug: 'guides/mcp-quality' },
 						{ label: 'Agent Terminal', slug: 'guides/agent-terminal' },
 						{ label: 'Memory Vault', slug: 'guides/memory' },
 						{ label: 'Token Savings', slug: 'guides/token-savings' },

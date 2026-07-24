@@ -11,10 +11,11 @@ use ax_remote::{build_provider, DraftPrRequest, ShipConfig};
 use ax_tia::{affected_files_from_changes, TiaOptions};
 
 use crate::advanced::{check_business_rules, detect_breaking_changes, find_affected_routes};
+use crate::auto_commit::{self, Checkpoint};
 use crate::events::{ShipEvent, ShipEventBus};
 use crate::git_root::{diff_all_repos, resolve_git_root, resolve_git_roots};
 use crate::run_log::RunLogger;
-use crate::state::{GateStepStatus, QualityGateSummary, ShipReport};
+use crate::state::{AutoCommitOutcome, GateStepStatus, QualityGateSummary, ShipReport};
 
 #[derive(Debug, Clone)]
 pub struct PipelineResult {
@@ -26,6 +27,7 @@ pub struct PipelineResult {
     pub breaking_warnings: Vec<crate::state::BreakingWarning>,
     pub business_rule_warnings: Vec<crate::state::BusinessRuleWarning>,
     pub affected_routes: Vec<String>,
+    pub auto_commit: Option<AutoCommitOutcome>,
 }
 
 pub struct ShipPipeline {
@@ -88,6 +90,26 @@ impl ShipPipeline {
         logger.step_ok("index", index_detail.as_deref());
 
         let git_roots = resolve_git_roots(&self.project_root, &self.config)?;
+
+        let mut checkpoint_roots: Vec<(PathBuf, Checkpoint)> = Vec::new();
+        if self.config.auto_commit.enabled {
+            logger.line("Auto-commit enabled — checkpointing uncommitted changes before the gate runs");
+            for root in &git_roots {
+                let label = root
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("repo")
+                    .to_string();
+                match auto_commit::create_checkpoint(root, &label, &self.config.auto_commit.message) {
+                    Ok(Some(cp)) => {
+                        logger.line(format!("Checkpoint committed in {label}: {}", &cp.sha[..cp.sha.len().min(12)]));
+                        checkpoint_roots.push((root.clone(), cp));
+                    }
+                    Ok(None) => {}
+                    Err(e) => logger.line(format!("Checkpoint skipped in {label}: {e}")),
+                }
+            }
+        }
 
         self.step_start("diff");
         logger.step_start("diff");
@@ -194,18 +216,11 @@ impl ShipPipeline {
                 repo_names.len().max(1),
                 if repo_names.len() == 1 { "y" } else { "ies" }
             ));
-            if !ax_quality::sonar_reachable(&self.config.sonar.host).await {
-                let detail = format!(
-                    "SonarQube offline at {} — install and start from the SonarQube page",
-                    self.config.sonar.host
-                );
-                self.step_fail("sonar", &detail);
-                logger.step_fail("sonar", &detail);
-                (
-                    "failed".to_string(),
-                    Some(detail),
-                    None,
-                )
+            if let Err(e) = sonar.ensure_running().await {
+                // No container / start failed after retries — surface the offline guidance.
+                self.step_fail("sonar", &e);
+                logger.step_fail("sonar", &e);
+                ("failed".to_string(), Some(e), None)
             } else if let Err(e) = ax_quality::ensure_sonar_ready_for_scan(
                 &self.config.sonar,
                 &self.project_root,
@@ -336,6 +351,12 @@ impl ShipPipeline {
 
         let passed = tests_ok && sonar_passed;
 
+        let auto_commit_outcome = if self.config.auto_commit.enabled {
+            Some(self.resolve_auto_commit_outcome(&checkpoint_roots, passed, &mut logger))
+        } else {
+            None
+        };
+
         let result = PipelineResult {
             git: multi.context,
             changed_files,
@@ -349,6 +370,7 @@ impl ShipPipeline {
             breaking_warnings,
             business_rule_warnings,
             affected_routes,
+            auto_commit: auto_commit_outcome,
         };
 
         logger.line(if passed {
@@ -379,6 +401,63 @@ impl ShipPipeline {
                 draft: true,
             })
             .await
+    }
+
+    /// Decide what to do with this run's checkpoints once pass/fail is known,
+    /// and act on it (revert is the only destructive-looking action, and it
+    /// only ever un-commits — see `auto_commit::revert_checkpoint`).
+    fn resolve_auto_commit_outcome(
+        &self,
+        checkpoint_roots: &[(PathBuf, Checkpoint)],
+        passed: bool,
+        logger: &mut RunLogger,
+    ) -> AutoCommitOutcome {
+        let checkpoints: Vec<Checkpoint> = checkpoint_roots.iter().map(|(_, cp)| cp.clone()).collect();
+        if checkpoints.is_empty() {
+            return AutoCommitOutcome {
+                status: "clean".into(),
+                checkpoints: Vec::new(),
+                detail: "No uncommitted changes to checkpoint".into(),
+            };
+        }
+        if passed {
+            logger.line("Quality gate passed — checkpoint(s) kept");
+            return AutoCommitOutcome {
+                status: "committed".into(),
+                checkpoints,
+                detail: format!("{} checkpoint(s) committed and kept", checkpoint_roots.len()),
+            };
+        }
+        if !self.config.auto_commit.revert_on_fail {
+            logger.line("Quality gate failed — checkpoint(s) kept (revert_on_fail is disabled)");
+            return AutoCommitOutcome {
+                status: "kept-failing".into(),
+                checkpoints,
+                detail: "Quality gate failed — checkpoint(s) committed anyway (revert_on_fail disabled)".into(),
+            };
+        }
+        let mut errors = Vec::new();
+        for (root, cp) in checkpoint_roots.iter().rev() {
+            if let Err(e) = auto_commit::revert_checkpoint(root, cp) {
+                errors.push(e);
+            }
+        }
+        if errors.is_empty() {
+            logger.line("Quality gate failed — checkpoint(s) reverted (changes kept, uncommitted)");
+            AutoCommitOutcome {
+                status: "reverted".into(),
+                checkpoints,
+                detail: "Quality gate failed — checkpoint(s) reverted; changes remain on disk uncommitted".into(),
+            }
+        } else {
+            let detail = format!("Revert failed: {}", errors.join("; "));
+            logger.line(&detail);
+            AutoCommitOutcome {
+                status: "revert-failed".into(),
+                checkpoints,
+                detail,
+            }
+        }
     }
 
     fn step_start(&self, step: &str) {
@@ -522,5 +601,6 @@ fn empty_report() -> ShipReport {
         breaking_warnings: vec![],
         business_rule_warnings: vec![],
         affected_routes: vec![],
+        auto_commit: None,
     })
 }

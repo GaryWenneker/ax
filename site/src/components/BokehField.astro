@@ -1,0 +1,224 @@
+---
+/**
+ * Focus Features-style soft bokeh disks — shared by landing + Starlight docs.
+ * Styles live in theme.css (:global) so moving the node to body never loses paint.
+ * Always animates (including mobile) — ambient drift is intentionally slow.
+ * prefers-reduced-motion only slows it further; it does not freeze (iOS often has
+ * Reduce Motion on, which previously left a static field).
+ */
+---
+
+<div class="bokeh-field" data-ax-bokeh aria-hidden="true">
+	<canvas class="bokeh-canvas"></canvas>
+</div>
+
+<script>
+	(() => {
+		const win = window;
+		if (win.__axBokehStarted) return;
+
+		const field = document.querySelector('[data-ax-bokeh]');
+		if (!field) return;
+		win.__axBokehStarted = true;
+
+		if (field.parentElement !== document.body) {
+			document.body.prepend(field);
+		}
+
+		const canvas = field.querySelector('canvas');
+		if (!canvas) return;
+		const ctx = canvas.getContext('2d', { alpha: true });
+		if (!ctx) return;
+
+		const palette = [
+			[22, 98, 112],
+			[36, 128, 132],
+			[48, 142, 148],
+			[18, 72, 92],
+			[12, 58, 78],
+			[168, 132, 78],
+			[186, 152, 92],
+			[128, 96, 52],
+			[152, 120, 70],
+			[28, 88, 108],
+			[40, 118, 126],
+			[146, 108, 58],
+		];
+
+		const rand = (a, b) => a + Math.random() * (b - a);
+		const isNarrow = () => window.matchMedia('(max-width: 768px)').matches;
+		const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+		const pickR = (vh) => {
+			const r = Math.random();
+			if (r < 0.28) return vh * rand(0.05, 0.1);
+			if (r < 0.62) return vh * rand(0.1, 0.18);
+			if (r < 0.88) return vh * rand(0.18, 0.28);
+			return vh * rand(0.28, 0.38);
+		};
+
+		let width = 0;
+		let height = 0;
+		let orbs = [];
+		let raf = 0;
+		let running = false;
+
+		const spawn = () => {
+			const areaDiv = isNarrow() ? 16000 : 22000;
+			const count = Math.min(
+				isNarrow() ? 36 : 58,
+				Math.max(isNarrow() ? 22 : 40, Math.round((width * height) / areaDiv)),
+			);
+			orbs = [];
+			for (let i = 0; i < count; i++) {
+				const rgb = palette[(i + Math.floor(rand(0, palette.length))) % palette.length];
+				const radius = pickR(height);
+				orbs.push({
+					x: rand(-radius * 0.2, width + radius * 0.2),
+					y: rand(-radius * 0.2, height + radius * 0.2),
+					r: radius,
+					vx: rand(-0.01, 0.01),
+					vy: rand(-0.008, 0.008),
+					tx: rand(0, width),
+					ty: rand(0, height),
+					rgb,
+					a: radius > height * 0.24 ? rand(0.14, 0.24) : rand(0.18, 0.34),
+				});
+			}
+		};
+
+		const drawOrb = (o) => {
+			const [cr, cg, cb] = o.rgb;
+			const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r);
+			g.addColorStop(0, `rgba(${cr},${cg},${cb},${o.a})`);
+			g.addColorStop(0.62, `rgba(${cr},${cg},${cb},${o.a * 0.95})`);
+			g.addColorStop(0.82, `rgba(${cr},${cg},${cb},${o.a * 0.4})`);
+			g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+			ctx.fillStyle = g;
+			ctx.beginPath();
+			ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+			ctx.fill();
+		};
+
+		const paint = () => {
+			ctx.clearRect(0, 0, width, height);
+			ctx.globalCompositeOperation = 'source-over';
+			for (const o of orbs) drawOrb(o);
+		};
+
+		const resize = () => {
+			const prevW = width || window.innerWidth;
+			const prevH = height || window.innerHeight;
+			// Cap DPR on phones for fill-rate; still crisp enough for soft disks
+			const dpr = Math.min(window.devicePixelRatio || 1, isNarrow() ? 1.5 : 2);
+			width = window.innerWidth;
+			height = window.innerHeight;
+			canvas.width = Math.floor(width * dpr);
+			canvas.height = Math.floor(height * dpr);
+			canvas.style.width = `${width}px`;
+			canvas.style.height = `${height}px`;
+			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+			if (!orbs.length) {
+				spawn();
+			} else {
+				const sx = width / prevW;
+				const sy = height / prevH;
+				const s = (sx + sy) / 2;
+				for (const o of orbs) {
+					o.x *= sx;
+					o.y *= sy;
+					o.tx *= sx;
+					o.ty *= sy;
+					o.r *= s;
+				}
+			}
+			paint();
+		};
+
+		const isPaused = () =>
+			document.documentElement.dataset.axMotion === 'paused';
+
+		const startLoop = () => {
+			if (running) return;
+			running = true;
+			let last = performance.now();
+			const tick = (now) => {
+				if (!running) return;
+				if (isPaused()) {
+					raf = requestAnimationFrame(tick);
+					return;
+				}
+				const dt = Math.min(48, now - last);
+				last = now;
+				// Always animate; Reduce Motion only slows (iOS often has it on)
+				const slow = reduceMotion() ? 0.45 : 1;
+				const max = (isNarrow() ? 0.028 : 0.02) * slow;
+				const pull = 0.0000035 * slow;
+				const retarget = 0.0009 * slow;
+
+				for (const o of orbs) {
+					if (Math.random() < retarget) {
+						o.tx = rand(o.r * 0.15, width - o.r * 0.15);
+						o.ty = rand(o.r * 0.15, height - o.r * 0.15);
+					}
+					o.vx = (o.vx + (o.tx - o.x) * pull * dt) * 0.999;
+					o.vy = (o.vy + (o.ty - o.y) * pull * dt) * 0.999;
+					o.vx = Math.max(-max, Math.min(max, o.vx));
+					o.vy = Math.max(-max, Math.min(max, o.vy));
+					o.x += o.vx * dt;
+					o.y += o.vy * dt;
+					const pad = o.r * 0.4;
+					if (o.x < -pad) {
+						o.x = -pad;
+						o.vx = Math.abs(o.vx);
+						o.tx = rand(width * 0.3, width * 0.9);
+					} else if (o.x > width + pad) {
+						o.x = width + pad;
+						o.vx = -Math.abs(o.vx);
+						o.tx = rand(width * 0.1, width * 0.7);
+					}
+					if (o.y < -pad) {
+						o.y = -pad;
+						o.vy = Math.abs(o.vy);
+						o.ty = rand(height * 0.3, height * 0.9);
+					} else if (o.y > height + pad) {
+						o.y = height + pad;
+						o.vy = -Math.abs(o.vy);
+						o.ty = rand(height * 0.1, height * 0.7);
+					}
+				}
+				paint();
+				raf = requestAnimationFrame(tick);
+			};
+			raf = requestAnimationFrame(tick);
+		};
+
+		const onVisibility = () => {
+			if (document.hidden) {
+				running = false;
+				cancelAnimationFrame(raf);
+			} else {
+				startLoop();
+			}
+		};
+
+		resize();
+		startLoop();
+
+		window.addEventListener('resize', resize, { passive: true });
+		// iOS address-bar show/hide changes visual viewport without a full resize
+		if (window.visualViewport) {
+			window.visualViewport.addEventListener('resize', resize, { passive: true });
+		}
+		document.addEventListener('visibilitychange', onVisibility);
+		window.addEventListener('ax:motion', () => {
+			/* tick loop already reads data-ax-motion each frame */
+			if (!isPaused()) paint();
+		});
+		document.addEventListener('astro:before-swap', () => {
+			running = false;
+			cancelAnimationFrame(raf);
+			win.__axBokehStarted = false;
+		});
+	})();
+</script>

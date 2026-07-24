@@ -21,6 +21,8 @@ pub struct ShipConfig {
     #[serde(default)]
     pub ui: UiSection,
     #[serde(default)]
+    pub auto_commit: AutoCommitSection,
+    #[serde(default)]
     pub reviewers: HashMap<String, String>,
 }
 
@@ -32,7 +34,39 @@ impl Default for ShipConfig {
             remote: RemoteConfig::default(),
             sonar: SonarConfig::default(),
             ui: UiSection::default(),
+            auto_commit: AutoCommitSection::default(),
             reviewers: HashMap::new(),
+        }
+    }
+}
+
+/// Opt-in Aider-style checkpointing around `ax ship --evaluate`. Disabled by
+/// default — this is a deliberate automation feature, not a silent behavior
+/// change. When enabled, uncommitted working-tree changes are committed
+/// before the quality gate runs (so diff/TIA/Sonar see them as part of
+/// history); on failure with `revert_on_fail`, that specific commit is undone
+/// via `git reset --mixed` — never `--hard` — so file contents are never
+/// discarded, only un-committed.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AutoCommitSection {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_auto_commit_message")]
+    pub message: String,
+    #[serde(default)]
+    pub revert_on_fail: bool,
+}
+
+fn default_auto_commit_message() -> String {
+    "ax: auto-checkpoint before quality gate".into()
+}
+
+impl Default for AutoCommitSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            message: default_auto_commit_message(),
+            revert_on_fail: false,
         }
     }
 }
@@ -138,6 +172,10 @@ pub struct UiSection {
     /// Emit inbound/outbound/enrichment MCP traces to stderr (Cursor Output).
     #[serde(default = "default_verbose_mcp")]
     pub verbose_mcp: bool,
+    /// IANA timezone for Logging Date/time display (e.g. `Europe/Amsterdam`).
+    /// Empty / `local` = browser local timezone in the Command Center UI.
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
 }
 
 fn default_show_savings() -> bool {
@@ -152,12 +190,17 @@ fn default_verbose_mcp() -> bool {
     false
 }
 
+fn default_timezone() -> String {
+    String::new()
+}
+
 impl Default for UiSection {
     fn default() -> Self {
         Self {
             show_savings: true,
             show_agent_terminal: true,
             verbose_mcp: false,
+            timezone: String::new(),
         }
     }
 }
@@ -165,24 +208,10 @@ impl Default for UiSection {
 pub fn load_ship_config(project_root: &Path) -> ShipConfig {
     let path = crate::config::config_path(project_root);
     let mut config = if !path.exists() {
-        ShipConfig {
-            ship: ShipSection::default(),
-            quality_gate: QualityGateSection::default(),
-            remote: RemoteConfig::default(),
-            sonar: SonarConfig::default(),
-            ui: UiSection::default(),
-            reviewers: HashMap::new(),
-        }
+        ShipConfig::default()
     } else {
         let text = std::fs::read_to_string(&path).unwrap_or_default();
-        toml::from_str(&text).unwrap_or_else(|_| ShipConfig {
-            ship: ShipSection::default(),
-            quality_gate: QualityGateSection::default(),
-            remote: RemoteConfig::default(),
-            sonar: SonarConfig::default(),
-            ui: UiSection::default(),
-            reviewers: HashMap::new(),
-        })
+        toml::from_str(&text).unwrap_or_else(|_| ShipConfig::default())
     };
 
     // Migrate legacy single git_root into git_roots when the list is empty.
@@ -201,4 +230,55 @@ pub fn save_ship_config(project_root: &Path, config: &ShipConfig) -> Result<(), 
     let path = crate::config::config_path(project_root);
     let text = toml::to_string_pretty(config).map_err(|e| e.to_string())?;
     std::fs::write(&path, text + "\n").map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_commit_is_opt_in_by_default() {
+        let config = ShipConfig::default();
+        assert!(!config.auto_commit.enabled, "auto-commit must default to disabled");
+        assert!(!config.auto_commit.revert_on_fail);
+        assert!(!config.auto_commit.message.is_empty());
+    }
+
+    #[test]
+    fn auto_commit_survives_toml_round_trip() {
+        let mut config = ShipConfig::default();
+        config.auto_commit.enabled = true;
+        config.auto_commit.revert_on_fail = true;
+        config.auto_commit.message = "checkpoint!".into();
+
+        let text = toml::to_string_pretty(&config).unwrap();
+        let parsed: ShipConfig = toml::from_str(&text).unwrap();
+        assert!(parsed.auto_commit.enabled);
+        assert!(parsed.auto_commit.revert_on_fail);
+        assert_eq!(parsed.auto_commit.message, "checkpoint!");
+    }
+
+    #[test]
+    fn missing_auto_commit_section_in_older_toml_defaults_to_disabled() {
+        // Simulates an existing ship.toml written before this feature existed.
+        let text = "[ship]\ntarget_branch = \"main\"\n";
+        let parsed: ShipConfig = toml::from_str(text).unwrap();
+        assert!(!parsed.auto_commit.enabled);
+    }
+
+    #[test]
+    fn missing_timezone_in_older_toml_defaults_to_empty_local() {
+        let text = "[ui]\nverbose_mcp = true\n";
+        let parsed: ShipConfig = toml::from_str(text).unwrap();
+        assert!(parsed.ui.timezone.is_empty());
+    }
+
+    #[test]
+    fn timezone_survives_toml_round_trip() {
+        let mut config = ShipConfig::default();
+        config.ui.timezone = "Europe/Amsterdam".into();
+        let text = toml::to_string_pretty(&config).unwrap();
+        let parsed: ShipConfig = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.ui.timezone, "Europe/Amsterdam");
+    }
 }

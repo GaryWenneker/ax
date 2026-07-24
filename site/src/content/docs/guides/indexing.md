@@ -107,10 +107,10 @@ In addition to source code, ax indexes documentation files as `Doc` nodes:
 | PDF | `.pdf` | Opaque — presence only |
 | Other opaque | `.csv`, `.tsv`, `.rtf`, `.txt`, `.tex`, `.epub`, `.json`, `.xml`, `.html`, `.htm` | Opaque — presence only |
 
-Doc counts by extension appear automatically in every `ax_preflight` response (`<ax_index>` block) and in `ax status` / `ax_status` output (`stats.docsByExtension` in JSON).
+Doc counts by extension appear automatically in every `ax_preflight` response (`<ax_index>` block) and in `ax status` / `ax_status` output (`stats.docsByExtension` in JSON). The Command Center **Stats** and **Graph** pages surface doc nodes alongside code (doc nodes render as squares on the Graph).
 
 ## What gets indexed (source code)
 
 ![Files — explorer tree with expanded crates, file index preview showing symbols, and language metadata](/screenshots/cc-files.png)
 
-Every file whose extension maps to a [supported language](/ax/reference/languages/), minus dependency/build directories excluded by default (`node_modules`, `vendor`, `dist`, …), anything your `.gitignore` excludes, and files over 1 MB. See [Configuration](/ax/getting-started/configuration/).
+Every file whose extension maps to a [supported language](/reference/languages/), minus dependency/build directories excluded by default (`node_modules`, `vendor`, `dist`, …), anything your `.gitignore` excludes, and files over 1 MB. See [Configuration](/getting-started/configuration/).

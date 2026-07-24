@@ -1,4 +1,4 @@
-//! Live `tail -f` of `<project>/.ax/mcp-verbose.log` for Command Center.
+//! Live `tail -f` of daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for Command Center.
 
 use std::convert::Infallible;
 use std::io::SeekFrom;
@@ -6,22 +6,24 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     response::sse::{Event, KeepAlive, Sse},
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
+use chrono::{NaiveDate, Utc};
 use futures_util::stream::Stream;
+use serde::Deserialize;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::workspace_state::WebHub;
 
-const SEED_LINES: usize = 250;
+const BATCH_LINES: usize = 400;
 const POLL_MS: u64 = 350;
 
 pub fn mcp_verbose_log_path(project_root: &Path) -> PathBuf {
-    project_root.join(".ax").join("mcp-verbose.log")
+    ax_usage::current_log_path(Some(project_root))
 }
 
 fn project_label(project_root: &Path) -> String {
@@ -33,25 +35,28 @@ fn project_label(project_root: &Path) -> String {
 }
 
 fn project_meta(hub_root: &Path, log_path: &Path) -> serde_json::Value {
+    let today = ax_usage::rotation_calendar_date(Some(hub_root), Utc::now());
     json!({
         "path": log_path.display().to_string(),
         "projectRoot": hub_root.display().to_string(),
         "projectLabel": project_label(hub_root),
         "scope": "project",
+        "logDay": today.format("%Y-%m-%d").to_string(),
+        "logPattern": "mcp-verbose-YYYY-MM-DD.log",
     })
 }
 
 pub fn router(hub: WebHub) -> Router {
     Router::new()
         .route("/mcp-trace/events", get(handle_mcp_trace_events))
-        .route("/mcp-trace/clear", post(handle_mcp_trace_clear))
+        .route("/mcp-trace/chunk", get(handle_mcp_trace_chunk))
         .route("/mcp-trace/path", get(handle_mcp_trace_path))
         .with_state(hub)
 }
 
-async fn active_log_path(hub: &WebHub) -> PathBuf {
+async fn hub_project(hub: &WebHub) -> PathBuf {
     let ws = hub.read().await;
-    mcp_verbose_log_path(&ws.project_root)
+    ws.project_root.clone()
 }
 
 async fn handle_mcp_trace_path(State(hub): State<WebHub>) -> Json<serde_json::Value> {
@@ -60,15 +65,38 @@ async fn handle_mcp_trace_path(State(hub): State<WebHub>) -> Json<serde_json::Va
     Json(project_meta(&ws.project_root, &path))
 }
 
-async fn handle_mcp_trace_clear(State(hub): State<WebHub>) -> Json<serde_json::Value> {
-    let path = active_log_path(&hub).await;
-    if let Some(parent) = path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    match tokio::fs::write(&path, b"").await {
-        Ok(()) => Json(json!({ "ok": true, "path": path.display().to_string() })),
-        Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
-    }
+#[derive(Debug, Deserialize)]
+struct ChunkQuery {
+    day: String,
+}
+
+async fn handle_mcp_trace_chunk(
+    State(hub): State<WebHub>,
+    Query(q): Query<ChunkQuery>,
+) -> Json<serde_json::Value> {
+    let root = hub_project(&hub).await;
+    let day = match NaiveDate::parse_from_str(q.day.trim(), "%Y-%m-%d") {
+        Ok(d) => d,
+        Err(_) => {
+            return Json(json!({
+                "ok": false,
+                "error": "invalid day (use YYYY-MM-DD)",
+            }));
+        }
+    };
+    let text = ax_usage::read_log_for_day(&root, day);
+    let lines: Vec<String> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    let has_older = ax_usage::has_older_log_day(&root, day);
+    Json(json!({
+        "ok": true,
+        "day": day.format("%Y-%m-%d").to_string(),
+        "lines": lines,
+        "hasOlder": has_older,
+    }))
 }
 
 async fn handle_mcp_trace_events(
@@ -77,8 +105,9 @@ async fn handle_mcp_trace_events(
     let stream = async_stream::stream! {
         let mut offset: u64 = 0;
         let mut pending = String::new();
-        let mut following = String::new();
-        let mut seeded = false;
+        let mut following_path = String::new();
+        let mut seeded_path = String::new();
+        let mut project_following = String::new();
 
         loop {
             let (path, root) = {
@@ -86,28 +115,41 @@ async fn handle_mcp_trace_events(
                 (mcp_verbose_log_path(&ws.project_root), ws.project_root.clone())
             };
             let path_key = path.display().to_string();
+            let root_key = root.display().to_string();
 
-            if path_key != following {
-                following = path_key.clone();
+            if root_key != project_following {
+                project_following = root_key.clone();
+                following_path.clear();
+                seeded_path.clear();
                 offset = 0;
                 pending.clear();
-                seeded = false;
-                yield Ok(Event::default().event("reset").data(format!("project {path_key}")));
+                yield Ok(Event::default().event("reset").data(format!("project {root_key}")));
+            }
+
+            if path_key != following_path {
+                let is_rotation = !following_path.is_empty() && seeded_path == following_path;
+                following_path = path_key.clone();
+                offset = 0;
+                pending.clear();
+                seeded_path.clear();
                 yield Ok(Event::default().event("path").data(path_key.clone()));
                 yield Ok(
                     Event::default()
                         .event("project")
                         .data(project_meta(&root, &path).to_string()),
                 );
+                if is_rotation {
+                    yield Ok(Event::default().event("rotate").data(path_key.clone()));
+                }
             }
 
-            if !seeded {
-                seeded = true;
+            if seeded_path != path_key {
+                seeded_path = path_key.clone();
                 if let Ok(text) = tokio::fs::read_to_string(&path).await {
-                    let lines: Vec<&str> = text.lines().collect();
-                    let start = lines.len().saturating_sub(SEED_LINES);
-                    for line in &lines[start..] {
-                        yield Ok(Event::default().event("line").data((*line).to_string()));
+                    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+                    for chunk in lines.chunks(BATCH_LINES) {
+                        let payload = serde_json::to_string(chunk).unwrap_or_else(|_| "[]".into());
+                        yield Ok(Event::default().event("batch").data(payload));
                     }
                     offset = tokio::fs::metadata(&path)
                         .await
@@ -127,7 +169,7 @@ async fn handle_mcp_trace_events(
             if len < offset {
                 offset = 0;
                 pending.clear();
-                yield Ok(Event::default().event("reset").data("log cleared"));
+                yield Ok(Event::default().event("resync").data("log truncated"));
             }
             if len <= offset {
                 continue;
@@ -155,7 +197,7 @@ async fn handle_mcp_trace_events(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-async fn read_new_chunk(path: &std::path::Path, offset: u64) -> Result<(String, u64), std::io::Error> {
+async fn read_new_chunk(path: &Path, offset: u64) -> Result<(String, u64), std::io::Error> {
     let mut file = tokio::fs::File::open(path).await?;
     file.seek(SeekFrom::Start(offset)).await?;
     let mut buf = Vec::new();
@@ -171,10 +213,9 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn log_path_is_under_project_ax() {
+    fn log_path_is_dated_under_project_ax() {
         let p = mcp_verbose_log_path(Path::new(r"C:\gary\ax"));
-        assert!(p.ends_with("mcp-verbose.log"));
+        assert!(p.to_string_lossy().contains("mcp-verbose-"));
         assert!(p.to_string_lossy().contains(".ax"));
-        assert!(p.to_string_lossy().contains("gary"));
     }
 }

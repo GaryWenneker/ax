@@ -381,8 +381,32 @@ pub async fn wait_for_sonar(host: &str, timeout_secs: u64) -> Result<(), String>
     }
 }
 
+const START_CONTAINER_ATTEMPTS: u32 = 3;
+const START_CONTAINER_RETRY_SECS: u64 = 2;
+
 pub fn start_container(runtime: ContainerRuntime, name: &str) -> Result<(), String> {
-    info!("Starting container {name} via {}", runtime.cli());
+    let mut last_err = String::new();
+    for attempt in 1..=START_CONTAINER_ATTEMPTS {
+        info!(
+            "Starting container {name} via {} (attempt {attempt}/{START_CONTAINER_ATTEMPTS})",
+            runtime.cli()
+        );
+        match start_container_once(runtime, name) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = e;
+                if attempt < START_CONTAINER_ATTEMPTS {
+                    std::thread::sleep(Duration::from_secs(START_CONTAINER_RETRY_SECS));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "{last_err} (after {START_CONTAINER_ATTEMPTS} start attempts)"
+    ))
+}
+
+fn start_container_once(runtime: ContainerRuntime, name: &str) -> Result<(), String> {
     let status = Command::new(runtime.cli())
         .args(["start", name])
         .status()
@@ -747,10 +771,12 @@ pub async fn ensure_sonar_live_with_log(
             log.push(SONAR_POSTGRES_UPGRADE_HINT.to_string());
             remove_container_logged(runtime, container_name, log)?;
             create_sonar_container_logged(runtime, container_name, host_port, log).await?;
-        } else if !existing.running {
-            start_sonar_stack(runtime, container_name, log)?;
         } else {
-            log.push("Container already running.");
+            // Always attempt start when the container exists (idempotent if already up; 3 retries).
+            if existing.running {
+                log.push("Container reported running — ensuring stack is started…");
+            }
+            start_sonar_stack(runtime, container_name, log)?;
         }
     } else {
         log.push(format!(
@@ -802,11 +828,11 @@ pub async fn start_sonar_container_with_log(
         log.push(format!("ERROR: {msg}"));
         return Err(msg);
     }
-    if !existing.running {
-        start_sonar_stack(runtime, container_name, log)?;
-    } else {
-        log.push("Container already running.");
+    // Always attempt start when the container exists (idempotent if already up; 3 retries).
+    if existing.running {
+        log.push("Container reported running — ensuring stack is started…");
     }
+    start_sonar_stack(runtime, container_name, log)?;
 
     if !sonar_reachable_sync(host) {
         log.push(format!("Waiting for SonarQube API at {host}…"));

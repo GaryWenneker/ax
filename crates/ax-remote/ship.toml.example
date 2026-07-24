@@ -46,6 +46,21 @@ show_agent_terminal = true
 # Write inbound args, enrichment steps, and outbound MCP payloads to the
 # ax MCP Output channel (stderr). Off by default — never alters tool responses.
 verbose_mcp = false
+# IANA timezone for Logging Date/time (e.g. "Europe/Amsterdam").
+# Empty / "local" = browser local timezone in Command Center.
+timezone = ""
+
+# Opt-in Aider-style checkpointing around `ax ship --evaluate`. Disabled by
+# default — this is a deliberate automation feature, not a silent behavior
+# change. When enabled, uncommitted working-tree changes are committed before
+# the quality gate runs (so diff/TIA/Sonar see them as part of history).
+# CLI flags `--auto-commit` / `--revert-on-fail` override this for a single run.
+[auto_commit]
+enabled = false
+message = "ax: auto-checkpoint before quality gate"
+# On gate failure, undo the checkpoint commit via `git reset --mixed`
+# (never `--hard` — file contents are never discarded, only un-committed).
+revert_on_fail = false
 
 # Map git blame emails to AzDO reviewer identities (email or user GUID)
 # [reviewers]

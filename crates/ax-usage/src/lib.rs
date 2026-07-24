@@ -2,6 +2,7 @@
 
 mod cursor_state;
 mod mcp_audit;
+mod mcp_verbose_log;
 mod period;
 mod pricing;
 mod savings;
@@ -21,8 +22,14 @@ pub use cursor_state::{
 };
 pub use mcp_audit::{
     audit_project, cursor_project_slug, find_cursor_transcripts, format_markdown_report,
-    latest_snapshot_path, load_latest_snapshot, mcp_verbose_log_path, persist_snapshot,
-    AuditOptions, EnrichmentMetrics, Finding, QualitySnapshot, ToolMix, DEFAULT_WINDOW_MINUTES,
+    latest_snapshot_path, load_latest_snapshot, persist_snapshot, AuditOptions, EnrichmentMetrics,
+    Finding, QualitySnapshot, ToolMix, DEFAULT_WINDOW_MINUTES,
+};
+pub use mcp_verbose_log::{
+    append_verbose_log, current_log_path, has_older_log_day, list_dated_log_files,
+    mcp_verbose_log_path, migrate_legacy_log, path_for_date, previous_calendar_day,
+    read_log_for_day, read_merged_verbose_log, read_ship_timezone, rotation_calendar_date,
+    LEGACY_LOG_NAME,
 };
 pub use savings::{
     current_assumptions, estimate_savings, import_agent_logs, is_savings_eligible_tool,

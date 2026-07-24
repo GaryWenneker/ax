@@ -8,11 +8,17 @@ pub async fn run(
     title: Option<String>,
     port: u16,
     open: bool,
+    auto_commit: bool,
+    revert_on_fail: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
 
     if evaluate {
-        let report = ax_ship::evaluate_project(root).await?;
+        let overrides = ax_ship::AutoCommitOverride {
+            enabled: if auto_commit { Some(true) } else { None },
+            revert_on_fail: if revert_on_fail { Some(true) } else { None },
+        };
+        let report = ax_ship::evaluate_project_with_overrides(root, overrides).await?;
         println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
         return Ok(());
     }

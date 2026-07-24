@@ -50,17 +50,29 @@ When `.ax/policy/` contains indexed rules or skills, the server also exposes:
 | `ax_preflight` | Turn-start: matched rules + skills + `inject` (full markdown bodies from SQLite) + auto-injected `<ax_index>` snapshot (doc counts by type) |
 | `ax_rules` | List all rules or match against a prompt |
 | `ax_skill` | Load the full markdown body of a skill by name |
-| `ax_guard` | Block or warn before writes that violate CRITICAL rules (UTF-8 BOM, secrets paths) |
+| `ax_guard` | Block or warn before writes that violate CRITICAL rules. Built-in checks: UTF-8 BOM/encoding, secrets paths. **Generic gate (v3.1+):** any CRITICAL rule can opt in without code changes by adding a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, or `guard: require-content: "<substring or /regex/>"` line to its body (the last is scoped to files matching that rule's `globs`). |
 
 Agents should **not** read `.ax/policy/` files when these tools are available — policy is indexed locally and returned in MCP responses.
 
 **Cursor:** call `ax_preflight` at turn start (MCP pull only — no prompt-hook).
 
-**Claude Code:** prompt-hook may auto-inject `<ax_policy>…</ax_policy>` before the model sees the prompt, in addition to MCP tools.
+**Claude Code:** prompt-hook may auto-inject `<ax_policy>…</ax_policy>` before the model sees the prompt, in addition to MCP tools. A `Stop`/`SubagentStop` hook (`ax stop-hook`) also runs a lightweight post-flight check on turn end — see [Turn-end post-flight (Claude Code)](#turn-end-post-flight-claude-code) below.
 
 Call `ax_guard` with the target file path before editing project files. See [Policy Engine](/guides/policy-engine/) for flow diagrams and delivery channels.
 
 **Not policy:** `ax_context` builds code-graph task context. Use `ax_preflight` for rules and skills.
+
+### Turn-end post-flight (Claude Code)
+
+`ax install` wires two more Claude Code hooks alongside the existing `UserPromptSubmit` prompt-hook: `Stop` and `SubagentStop`, both running `ax stop-hook`. On turn end it scans the working-tree files changed since the last commit (`git status --porcelain`) through the same `ax_guard` checks described above, and — only on a CRITICAL violation — returns `{"decision": "block", "reason": "…"}` so Claude fixes the issue before actually finishing. It always honors `stop_hook_active` to avoid looping, and no-ops entirely when there's no `.ax/policy/` or the project isn't indexed. Disable with `AX_NO_STOP_HOOK=1`.
+
+### Diagnostics bridge: `ax_diagnostics`
+
+ax has no way to read editor/LSP state itself. `ax_diagnostics` closes that gap from the agent side: pass in diagnostics you already gathered (Cursor's Problems panel / `ReadLints`, `tsc`, `ruff`, `eslint`, …) and get back graph-correlated context — which files intersect CRITICAL-guarded paths, and which tests `ax_affected` says are impacted by those same files. Always listed, regardless of whether policy is indexed (the guard/test correlation just degrades to empty).
+
+```json
+ax_diagnostics({ "diagnostics": [{ "path": "src/lib.rs", "line": 42, "severity": "error", "message": "…", "source": "rustc" }] })
+```
 
 ## Memory tools
 
@@ -98,15 +110,15 @@ Set `AX_MCP_FULL=1` to restore the full `structuredContent` for every tool (for 
 
 ### Verbose MCP logging (Cursor Output)
 
-To watch what each tool receives, how preflight enrichment builds the inject block, and what ax sends back on the wire — without changing agent-facing payloads:
+To watch what each tool receives, how preflight enrichment builds the inject block, and what ax sends back on the wire — without changing agent-facing payloads — follow the full guide: **[MCP Logging & Quality](/guides/mcp-quality/)**. Short version:
 
 1. Enable **Settings → Interface → Verbose MCP logging** in Command Center (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
 2. Reconnect / restart the ax MCP server in Cursor.
-3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table that tails `<project>/.ax/mcp-verbose.log` for the active workspace. On that page the status bar shows live buffer stats (in / out / prev / err / events) and a **project switcher** for recent workspaces. Filter the table with **kind chips**, a **tool** dropdown, and **text search**; click status-bar in/out/prev/err (or a Buffer breakdown row) to toggle kinds; click a Kind badge or Tool cell in a row to filter that value. Kind badges follow the UI theme; **error** rows color the tool name in danger red. The Call Inspector pretty-prints JSON/XML and formats `key=value` fields with VS Code Dark+–style tokens in a fixed-size pane. Tap a row for the inspector.
+3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table that tails today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (scroll up for earlier days; logs are not cleared from the UI).
 
 ![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging.png)
 
-4. Open the status-bar **Q** (Quality) chip for a live metrics slide-out: correlation, enrichment (inject p50/p95), tool mix, findings with token-waste estimates, and actions to run a full session audit or **Copy fixpack** (Markdown brief you paste into an agent chat to improve ax from those findings). The Logging page also shows a compact quality strip that opens the same slide-out. CLI equivalent: `ax mcp audit`. The auditor attaches enrich side-channel lines to preflight clusters, merges `CallDynamicTool` graph usage from transcripts, prefers the transcript with the most ax activity (not just newest empty chat), tags verbose lines with `session=` when the Cursor sessionStart hook recorded `~/.ax/active-cursor-session`, parses Cursor `<timestamp>` embeds for window alignment, drops untimed whole-session tails when the verbose window is idle (avoids false UncorrelatedTool), softens Read/Grep megawaste from untimed chats, and ignores MCP errors that recovered with a successful same-tool retry within 60s. Install the hook once with `ax savings hook install`.
+4. Open the status-bar **Q** (Quality) chip for the metrics slide-out (correlation, enrichment, findings, **Copy fixpack**). CLI: `ax mcp audit`. Install `ax savings hook install` for `session=` tags.
 
 ![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality.png)
 

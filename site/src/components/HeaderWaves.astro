@@ -1,0 +1,198 @@
+---
+/**
+ * Animated CSS waves (adapted from https://codepen.io/goodkatz/pen/LYPGxQz).
+ * Hangs below the header so the crest is wavy (not a flat clip edge).
+ * Azure / teal fills match the cinematic bokeh orbs.
+ *
+ * Mobile: keep the parallax shift inside this box (overflow hidden) so
+ * html/body overflow-x:hidden and iOS fixed-header clipping do not erase the crest.
+ */
+interface Props {
+	/** `nav` = landing sticky bar; `docs` = Starlight header */
+	variant?: 'nav' | 'docs';
+}
+
+const { variant = 'nav' } = Astro.props;
+const uid = `gentle-wave-${variant}`;
+---
+
+<div class:list={['ax-waves', `ax-waves--${variant}`]} aria-hidden="true">
+	<svg
+		class="ax-waves__svg"
+		xmlns="http://www.w3.org/2000/svg"
+		xmlns:xlink="http://www.w3.org/1999/xlink"
+		viewBox="0 24 150 28"
+		preserveAspectRatio="none"
+		shape-rendering="auto"
+	>
+		<defs>
+			<path
+				id={uid}
+				d="M-160 44c30 0 58-18 88-18s 58 18 88 18 58-18 88-18 58 18 88 18 v44h-352z"
+			></path>
+		</defs>
+		<g class="ax-waves__parallax">
+			<use href={`#${uid}`} xlink:href={`#${uid}`} x="48" y="0"></use>
+			<use href={`#${uid}`} xlink:href={`#${uid}`} x="48" y="3"></use>
+			<use href={`#${uid}`} xlink:href={`#${uid}`} x="48" y="5"></use>
+			<use href={`#${uid}`} xlink:href={`#${uid}`} x="48" y="7"></use>
+		</g>
+	</svg>
+</div>
+
+<style>
+	.ax-waves {
+		/* Azure / teal — same family as homepage bokeh orbs */
+		--ax-wave-1: rgba(60, 200, 210, 0.55);
+		--ax-wave-2: rgba(30, 150, 165, 0.4);
+		--ax-wave-3: rgba(20, 100, 140, 0.3);
+		--ax-wave-4: rgba(20, 80, 120, 0.18);
+
+		position: absolute;
+		left: 0;
+		right: 0;
+		/* Anchor under the bar, then pull crest UP flush with nav links */
+		top: 100%;
+		bottom: auto;
+		width: 100%;
+		height: clamp(3.25rem, 8vw, 5.25rem);
+		min-height: 2.75rem;
+		margin: 0;
+		padding: 0;
+		/* Clip horizontal parallax here — do not let it trip body overflow-x clipping */
+		overflow: hidden;
+		pointer-events: none;
+		z-index: 0;
+		line-height: 0;
+		transform: translateY(-72%);
+		/* Bright crest under nav; only feather downward into the page */
+		-webkit-mask-image: linear-gradient(
+			to bottom,
+			#000 0%,
+			#000 38%,
+			rgba(0, 0, 0, 0.45) 62%,
+			transparent 100%
+		);
+		mask-image: linear-gradient(
+			to bottom,
+			#000 0%,
+			#000 38%,
+			rgba(0, 0, 0, 0.45) 62%,
+			transparent 100%
+		);
+	}
+
+	.ax-waves--nav {
+		height: clamp(3.5rem, 9vw, 5.75rem);
+		min-height: 3.25rem;
+		transform: translateY(-78%);
+	}
+
+	.ax-waves--docs {
+		height: clamp(3rem, 7vw, 4.75rem);
+		min-height: 2.75rem;
+		transform: translateY(-74%);
+	}
+
+	.ax-waves__svg {
+		display: block;
+		/* Extra width so translateX parallax stays inside the overflow:hidden box */
+		width: 220%;
+		max-width: none;
+		height: 100%;
+		margin-left: -60%;
+		/* Soften the SVG edge so it reads as a glow, not a hard fill */
+		filter: blur(0.8px);
+	}
+
+	.ax-waves__parallax > use:nth-child(1) {
+		fill: var(--ax-wave-1);
+	}
+	.ax-waves__parallax > use:nth-child(2) {
+		fill: var(--ax-wave-2);
+	}
+	.ax-waves__parallax > use:nth-child(3) {
+		fill: var(--ax-wave-3);
+	}
+	.ax-waves__parallax > use:nth-child(4) {
+		fill: var(--ax-wave-4);
+	}
+
+	/* alternate = seamless ping-pong — never snap/reset at loop boundary */
+	.ax-waves__parallax > use {
+		animation: ax-wave-move 25s ease-in-out infinite alternate;
+	}
+	.ax-waves__parallax > use:nth-child(1) {
+		animation-delay: -2s;
+		animation-duration: 14s;
+	}
+	.ax-waves__parallax > use:nth-child(2) {
+		animation-delay: -3s;
+		animation-duration: 20s;
+	}
+	.ax-waves__parallax > use:nth-child(3) {
+		animation-delay: -4s;
+		animation-duration: 26s;
+	}
+	.ax-waves__parallax > use:nth-child(4) {
+		animation-delay: -5s;
+		animation-duration: 34s;
+	}
+
+	@keyframes ax-wave-move {
+		0% {
+			transform: translate3d(-36px, 0, 0);
+		}
+		100% {
+			transform: translate3d(36px, 0, 0);
+		}
+	}
+
+	@media (max-width: 768px) {
+		.ax-waves--nav {
+			height: 3.5rem;
+			min-height: 3.5rem;
+			transform: translateY(-76%);
+		}
+		.ax-waves--docs {
+			height: 3.15rem;
+			min-height: 3.15rem;
+			transform: translateY(-72%);
+		}
+	}
+
+	@media (max-width: 480px) {
+		.ax-waves--nav,
+		.ax-waves--docs {
+			height: 3rem;
+			min-height: 3rem;
+			transform: translateY(-74%);
+		}
+	}
+
+	@media (max-height: 420px) and (orientation: landscape) {
+		.ax-waves--nav,
+		.ax-waves--docs {
+			height: 2.5rem;
+			min-height: 2.5rem;
+			transform: translateY(-70%);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.ax-waves__parallax > use {
+			animation: none;
+		}
+	}
+
+	:global(html[data-ax-motion='paused']) .ax-waves__parallax > use {
+		animation: none !important;
+	}
+
+	:global(html[data-theme='light']) .ax-waves {
+		--ax-wave-1: rgba(9, 105, 218, 0.28);
+		--ax-wave-2: rgba(20, 120, 140, 0.22);
+		--ax-wave-3: rgba(30, 80, 160, 0.16);
+		--ax-wave-4: rgba(9, 105, 218, 0.1);
+	}
+</style>

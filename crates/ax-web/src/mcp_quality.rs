@@ -63,13 +63,24 @@ fn file_mtime_ms(path: &std::path::Path) -> i64 {
         .unwrap_or(0)
 }
 
+fn latest_verbose_log_mtime_ms(root: &std::path::Path) -> i64 {
+    let mut max = file_mtime_ms(&ax_usage::current_log_path(Some(root)));
+    for (_day, path) in ax_usage::list_dated_log_files(root) {
+        max = max.max(file_mtime_ms(&path));
+    }
+    let legacy = root.join(".ax").join(ax_usage::LEGACY_LOG_NAME);
+    if legacy.is_file() {
+        max = max.max(file_mtime_ms(&legacy));
+    }
+    max
+}
+
 async fn refresh_snapshot(hub: &WebHub, state: &QualityState, force: bool) -> QualitySnapshot {
     let root = {
         let ws = hub.read().await;
         ws.project_root.clone()
     };
-    let log_path = root.join(".ax").join("mcp-verbose.log");
-    let mtime = file_mtime_ms(&log_path);
+    let mtime = latest_verbose_log_mtime_ms(&root);
 
     {
         let cache = state.cache.read().await;
@@ -115,7 +126,7 @@ fn empty_error_snap(root: &std::path::Path, err: &str) -> QualitySnapshot {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "project".into()),
-        log_path: root.join(".ax").join("mcp-verbose.log").display().to_string(),
+        log_path: ax_usage::current_log_path(Some(root)).display().to_string(),
         mode: "verbose_only".into(),
         window_minutes: DEFAULT_WINDOW_MINUTES,
         updated_at_ms: 0,

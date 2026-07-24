@@ -312,7 +312,7 @@ export default function StatusBar() {
                 <div className="status-panel-title">Project log</div>
                 <p className="status-panel-text">
                   Switch the active workspace to follow another project&apos;s{' '}
-                  <code>.ax/mcp-verbose.log</code>.
+                  <code>.ax/mcp-verbose-YYYY-MM-DD.log</code>.
                 </p>
                 <LoggingProjectSwitch
                   currentPath={logStats.projectRoot}

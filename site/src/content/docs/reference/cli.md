@@ -47,7 +47,7 @@ See [Configuration](/getting-started/configuration/) for the full schema.
 
 ### `ax` / `ax install`
 
-Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini, Kiro, etc.). Does **not** index a project.
+Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed). Does **not** index a project. VS Code, Windsurf, and Zed are MCP-config-only targets (no prompt-hook or stop-hook — those are Claude Code-specific). See [Integrations](/reference/integrations/) for per-agent details.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -470,12 +470,30 @@ Git-aware quality gates, SSE dashboard, draft PRs. See [Command Center](/guides/
 | `--title` | string | — | PR title |
 | `--port` | number | `7070` | Dashboard port |
 | `--open` | flag | — | Open browser |
+| `--auto-commit` | flag | — | Force-enable Aider-style checkpoint commit before this evaluation, overriding `.ax/ship.toml` `[auto_commit]` for this run only |
+| `--revert-on-fail` | flag | — | With `--auto-commit`, `git reset --mixed` the checkpoint if the quality gate fails (file contents stay on disk, uncommitted) |
 
 ```bash
 ax ship --watch --open
 ax ship --evaluate
+ax ship --evaluate --auto-commit --revert-on-fail
 ax ship --draft --title "feat: memory vault"
 ax web --open                    # Command Center without git watch
+```
+
+---
+
+### `ax stop-hook`
+
+Claude Code `Stop` / `SubagentStop` hook target — internal command wired automatically by `ax install` for Claude Code, not meant to be run manually. Reads Claude's JSON payload on stdin, runs `ax_guard`-equivalent checks against every uncommitted file (`git status --porcelain`), and on a CRITICAL violation prints `{"decision": "block", "reason": "..."}` so Claude fixes the issue before the turn actually ends. Honors `stop_hook_active` to avoid infinite loops and no-ops when there's no indexed policy.
+
+| Env var | Effect |
+|---|---|
+| `AX_NO_STOP_HOOK=1` | Disable — hook exits immediately without checking |
+
+```bash
+# Wired automatically:
+ax install                       # adds Stop + SubagentStop hooks for Claude Code
 ```
 
 ---
@@ -585,7 +603,7 @@ The **Savings** page in `ax web` (enable in Settings) exposes the same filters. 
 
 ### `ax mcp audit`
 
-Correlate `<project>/.ax/mcp-verbose.log` with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Same engine powers the Command Center **Quality** status-bar chip and slide-out. Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.
+Correlate `<project>/.ax/mcp-verbose-*.log` (daily files) with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Same engine powers the Command Center **Quality** status-bar chip and slide-out. Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.
 
 Scoring notes:
 
@@ -596,7 +614,7 @@ Scoring notes:
 - Default session pick prefers the recent transcript with the most ax tool calls (avoids linking an empty newest chat).
 - Verbose lines may include `session=<uuid>` (from the Cursor sessionStart hook / `AX_CURSOR_SESSION_ID`) for tighter transcript↔log correlation — run `ax savings hook install` once per machine.
 - MCP error clusters that recover with a successful same-tool retry within 60s do not penalize the score.
-- When `.ax/mcp-verbose.log` exists but has no clusters in the window, `UncorrelatedTool` is medium (widen `--window-minutes` or pass `--session`) instead of critical "enable verbose".
+- When verbose log files exist but have no clusters in the window, `UncorrelatedTool` is medium (widen `--window-minutes` or pass `--session`) instead of critical "enable verbose".
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -800,7 +818,7 @@ ax policy skill release
 
 ### `ax policy guard <file>`
 
-Pre-write CRITICAL guard check (UTF-8, secrets paths, etc.).
+Pre-write CRITICAL guard check. Built-in: UTF-8/BOM encoding, secrets paths. Generic: any CRITICAL rule can add a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, or `guard: require-content: "<substring or /regex/>"` directive line to its body to opt into this check without code changes — no separate flag needed, directives are picked up automatically from indexed policy.
 
 | Argument / flag | Type | Description |
 |---|---|---|

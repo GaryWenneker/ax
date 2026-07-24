@@ -240,6 +240,59 @@ static CATALOG: &[CliCatalogEntry] = &[
         auth: None,
         runnable: false,
     },
+    CliCatalogEntry {
+        id: "vscode",
+        display_name: "VS Code (Copilot Chat)",
+        bin: "code",
+        npm: None,
+        install: InstallSpec {
+            method: CliInstallMethod::Manual,
+            native_url_unix: None,
+            native_url_windows: None,
+            npm_package: None,
+            manual_url: Some("https://code.visualstudio.com/"),
+            manual_hint: Some(
+                "Install VS Code, then enable GitHub Copilot Chat's Agent mode for MCP tools.",
+            ),
+        },
+        headless: None,
+        auth: None,
+        runnable: false,
+    },
+    CliCatalogEntry {
+        id: "windsurf",
+        display_name: "Windsurf (Cascade)",
+        bin: "windsurf",
+        npm: None,
+        install: InstallSpec {
+            method: CliInstallMethod::Manual,
+            native_url_unix: None,
+            native_url_windows: None,
+            npm_package: None,
+            manual_url: Some("https://windsurf.com"),
+            manual_hint: Some("Install Windsurf, then add MCP servers via the Cascade panel."),
+        },
+        headless: None,
+        auth: None,
+        runnable: false,
+    },
+    CliCatalogEntry {
+        id: "zed",
+        display_name: "Zed",
+        bin: "zed",
+        npm: None,
+        install: InstallSpec {
+            method: CliInstallMethod::Manual,
+            native_url_unix: Some("https://zed.dev/install.sh"),
+            native_url_windows: None,
+            npm_package: None,
+            manual_url: Some("https://zed.dev"),
+            manual_hint: Some("Install Zed, then add context servers under `context_servers` in settings.json."),
+        },
+        headless: None,
+        auth: None,
+        runnable: false,
+    },
 ];
 
 pub fn catalog() -> &'static [CliCatalogEntry] {
@@ -739,8 +792,19 @@ mod tests {
     fn catalog_covers_all_targets() {
         for id in [
             "claude", "cursor", "codex", "opencode", "hermes", "gemini", "antigravity", "kiro",
+            "vscode", "windsurf", "zed",
         ] {
             assert!(catalog_entry(id).is_some(), "missing catalog entry for {id}");
+        }
+    }
+
+    #[test]
+    fn ide_only_targets_are_not_runnable() {
+        for id in ["vscode", "windsurf", "zed"] {
+            assert!(
+                !catalog_entry(id).unwrap().runnable,
+                "{id} should not be marked runnable (IDE-only, no headless CLI)"
+            );
         }
     }
 

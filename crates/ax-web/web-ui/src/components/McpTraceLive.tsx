@@ -6,20 +6,27 @@ import LoggingProjectSwitch from './LoggingProjectSwitch';
 import {
   classifyFieldValue,
   colorizeTraceMessage,
+  entryHasQueryPayload,
   entryHeadline,
   entryMeta,
   extractFields,
   extractPayloadJson,
   findCallCluster,
   flattenPayload,
-  MCP_TRACE_CLEAR_URL,
+  fetchMcpTraceChunk,
+  isTraceLogLine,
   MCP_TRACE_EVENTS_URL,
   MCP_TRACE_PATH_URL,
   parseTraceEntry,
+  previousCalendarDay,
   prettyPayload,
+  reformatTraceEntry,
+  setTraceTimeZone,
+  traceEntriesFromLines,
   type TraceEntry,
   type TraceKind,
 } from '../lib/mcpTrace';
+import { fetchShipConfig } from '../shipApi';
 import {
   computeMcpTraceStats,
   filterTraceEntries,
@@ -37,8 +44,6 @@ import {
 import { McpQualityStrip } from './McpQualitySlideout';
 import { detectStructuredLang, highlightStructured } from '../lib/mcpSyntax';
 import { navigateRoute } from '../lib/routes';
-
-const MAX_ENTRIES = 1500;
 
 const KIND_LABELS: Record<TraceKind, string> = {
   inbound: 'Inbound',
@@ -274,7 +279,7 @@ async function exitBrowserFullscreen() {
 }
 
 /**
- * Linux-style `tail -f` of `<project>/.ax/mcp-verbose.log` via SSE.
+ * Linux-style `tail -f` of daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` via SSE.
  * Table layout; tap a row for the compact Call Inspector.
  */
 export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: Props) {
@@ -286,16 +291,24 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   const [browserFs, setBrowserFs] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cursorId, setCursorId] = useState<string | null>(null);
-  const [path, setPath] = useState('<project>/.ax/mcp-verbose.log');
+  const [path, setPath] = useState('<project>/.ax/mcp-verbose-YYYY-MM-DD.log');
+  const [logDay, setLogDay] = useState('');
+  const [oldestLoadedDay, setOldestLoadedDay] = useState('');
+  const [historyExhausted, setHistoryExhausted] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [projectLabel, setProjectLabel] = useState('…');
   const [projectRoot, setProjectRoot] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [quality, setQuality] = useState<QualitySnapshot>(emptyQualitySnapshot);
   const [kindFilter, setKindFilter] = useState<Set<TraceKind>>(() => new Set());
+  const [dateFilter, setDateFilter] = useState('');
   const [toolFilter, setToolFilter] = useState('');
   const [query, setQuery] = useState('');
+  /** Keep only rows whose JSON payload has a top-level `query` property. */
+  const [hasQueryFilter, setHasQueryFilter] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const maxHostRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
@@ -305,8 +318,14 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     path?: string;
     projectRoot?: string;
     projectLabel?: string;
+    logDay?: string;
   }) {
     if (d.path) setPath(d.path);
+    if (d.logDay) {
+      setLogDay(d.logDay);
+      setOldestLoadedDay(d.logDay);
+      setHistoryExhausted(false);
+    }
     if (d.projectRoot) setProjectRoot(d.projectRoot);
     if (d.projectLabel) setProjectLabel(d.projectLabel);
     else if (d.projectRoot) {
@@ -316,11 +335,35 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   }
 
   const visibleEntries = useMemo(
-    () => filterTraceEntries(entries, { kinds: kindFilter, tool: toolFilter, q: query }),
-    [entries, kindFilter, toolFilter, query],
+    () =>
+      filterTraceEntries(entries, {
+        kinds: kindFilter,
+        tool: toolFilter,
+        q: query,
+        date: dateFilter,
+        hasQuery: hasQueryFilter,
+      }),
+    [entries, kindFilter, toolFilter, query, dateFilter, hasQueryFilter],
   );
   const filtersActive =
-    kindFilter.size > 0 || toolFilter.trim().length > 0 || query.trim().length > 0;
+    kindFilter.size > 0 ||
+    dateFilter.trim().length > 0 ||
+    toolFilter.trim().length > 0 ||
+    query.trim().length > 0 ||
+    hasQueryFilter;
+
+  const queryPayloadCount = useMemo(
+    () => entries.reduce((n, e) => n + (entryHasQueryPayload(e) ? 1 : 0), 0),
+    [entries],
+  );
+
+  const dateOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of entries) {
+      if (e.day) set.add(e.day);
+    }
+    return [...set].sort((a, b) => b.localeCompare(a));
+  }, [entries]);
 
   const toolOptions = useMemo(() => {
     const set = new Set<string>();
@@ -379,8 +422,10 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
   function clearFilters() {
     setKindFilter(new Set());
+    setDateFilter('');
     setToolFilter('');
     setQuery('');
+    setHasQueryFilter(false);
   }
 
   useEffect(() => {
@@ -394,8 +439,10 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       if (!detail) return;
       if (detail.clear) {
         setKindFilter(new Set());
+        setDateFilter('');
         setToolFilter('');
         setQuery('');
+        setHasQueryFilter(false);
         return;
       }
       if (detail.kinds) {
@@ -410,8 +457,10 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
           return next;
         });
       }
+      if (typeof detail.date === 'string') setDateFilter(detail.date);
       if (typeof detail.tool === 'string') setToolFilter(detail.tool);
       if (typeof detail.q === 'string') setQuery(detail.q);
+      if (typeof detail.hasQuery === 'boolean') setHasQueryFilter(detail.hasQuery);
     }
     window.addEventListener(MCP_TRACE_FILTER, onFilter);
     return () => window.removeEventListener(MCP_TRACE_FILTER, onFilter);
@@ -444,12 +493,54 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     let cancelled = false;
     fetch(MCP_TRACE_PATH_URL)
       .then((r) => r.json())
-      .then((d: { path?: string; projectRoot?: string; projectLabel?: string }) => {
+      .then((d: {
+        path?: string;
+        projectRoot?: string;
+        projectLabel?: string;
+        logDay?: string;
+      }) => {
         if (!cancelled) applyProjectMeta(d);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Logging Date/time follows Settings → Interface → Timezone (default: browser local).
+  useEffect(() => {
+    let cancelled = false;
+
+    function applyTimezone(configured?: string | null) {
+      setTraceTimeZone(configured);
+      setEntries((prev) => prev.map((e) => reformatTraceEntry(e)));
+    }
+
+    fetchShipConfig()
+      .then((d) => {
+        if (!cancelled) applyTimezone(d.config.ui?.timezone);
+      })
+      .catch(() => {
+        if (!cancelled) applyTimezone('');
+      });
+
+    function onConfig(ev: Event) {
+      const detail = (ev as CustomEvent<{ timezone?: string }>).detail;
+      if (detail && typeof detail.timezone === 'string') {
+        applyTimezone(detail.timezone);
+        return;
+      }
+      fetchShipConfig()
+        .then((d) => {
+          if (!cancelled) applyTimezone(d.config.ui?.timezone);
+        })
+        .catch(() => {});
+    }
+
+    window.addEventListener('ax-ship-config-updated', onConfig);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('ax-ship-config-updated', onConfig);
     };
   }, []);
 
@@ -486,6 +577,12 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     let disposed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+    function ingestLines(lines: string[]) {
+      const batch = traceEntriesFromLines(lines);
+      if (batch.length === 0) return;
+      setEntries((prev) => [...prev, ...batch]);
+    }
+
     function connect() {
       if (disposed) return;
       es = new EventSource(MCP_TRACE_EVENTS_URL);
@@ -494,20 +591,17 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
       es.addEventListener('line', (ev) => {
         const data = ((ev as MessageEvent).data as string) ?? '';
-        if (!data.trim()) return;
-        if (
-          !data.includes('[ax-mcp]') &&
-          !data.includes('ts=') &&
-          !/^\d{4}-\d{2}-\d{2}T/.test(data)
-        ) {
-          return;
+        ingestLines([data]);
+      });
+
+      es.addEventListener('batch', (ev) => {
+        const raw = ((ev as MessageEvent).data as string) ?? '[]';
+        try {
+          const lines = JSON.parse(raw) as string[];
+          if (Array.isArray(lines)) ingestLines(lines);
+        } catch {
+          // ignore malformed batch
         }
-        const entry = parseTraceEntry(data);
-        setEntries((prev) => {
-          const next = prev.length >= MAX_ENTRIES ? prev.slice(-(MAX_ENTRIES - 1)) : prev.slice();
-          next.push(entry);
-          return next;
-        });
       });
 
       es.addEventListener('path', (ev) => {
@@ -519,11 +613,14 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         const raw = ((ev as MessageEvent).data as string) ?? '';
         if (!raw) return;
         try {
-          applyProjectMeta(JSON.parse(raw) as {
-            path?: string;
-            projectRoot?: string;
-            projectLabel?: string;
-          });
+          applyProjectMeta(
+            JSON.parse(raw) as {
+              path?: string;
+              projectRoot?: string;
+              projectLabel?: string;
+              logDay?: string;
+            },
+          );
         } catch {
           // ignore malformed project events
         }
@@ -533,6 +630,12 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         setEntries([]);
         setSelectedId(null);
         setCursorId(null);
+        setHistoryExhausted(false);
+        setOldestLoadedDay('');
+      });
+
+      es.addEventListener('rotate', () => {
+        // Day rolled over: keep buffer; tail follows the new file via server.
       });
 
       es.addEventListener('ready', () => {
@@ -593,6 +696,55 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     window.addEventListener(MCP_QUALITY_FINDING, onFinding);
     return () => window.removeEventListener(MCP_QUALITY_FINDING, onFinding);
   }, []);
+
+  useEffect(() => {
+    if (logDay && !oldestLoadedDay) setOldestLoadedDay(logDay);
+  }, [logDay, oldestLoadedDay]);
+
+  const loadOlderDayRef = useRef<() => void>(() => {});
+  loadOlderDayRef.current = () => {
+    if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
+    const prevDay = previousCalendarDay(oldestLoadedDay);
+    setLoadingHistory(true);
+    void fetchMcpTraceChunk(prevDay)
+      .then((res) => {
+        if (!res.ok || !res.lines?.length) {
+          if (!res.hasOlder) setHistoryExhausted(true);
+          return;
+        }
+        const el = scrollerRef.current;
+        const prevHeight = el?.scrollHeight ?? 0;
+        const older = traceEntriesFromLines(res.lines);
+        if (older.length === 0) {
+          if (!res.hasOlder) setHistoryExhausted(true);
+          return;
+        }
+        setFollow(false);
+        setEntries((e) => [...older, ...e]);
+        setOldestLoadedDay(prevDay);
+        if (!res.hasOlder) setHistoryExhausted(true);
+        requestAnimationFrame(() => {
+          const sc = scrollerRef.current;
+          if (sc) sc.scrollTop += sc.scrollHeight - prevHeight;
+        });
+      })
+      .catch(() => {})
+      .finally(() => setLoadingHistory(false));
+  };
+
+  useEffect(() => {
+    const root = scrollerRef.current;
+    const sentinel = topSentinelRef.current;
+    if (!root || !sentinel) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadOlderDayRef.current();
+      },
+      { root, rootMargin: '120px', threshold: 0 },
+    );
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+  }, [maximized, isPage, entries.length]);
 
   useLayoutEffect(() => {
     if (!followRef.current) return;
@@ -750,17 +902,6 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     if (el) el.scrollTop = el.scrollHeight;
   }
 
-  async function clearLog() {
-    try {
-      await fetch(MCP_TRACE_CLEAR_URL, { method: 'POST' });
-      setEntries([]);
-      setSelectedId(null);
-      setCursorId(null);
-    } catch (e) {
-      setErr(String(e));
-    }
-  }
-
   async function copySelected() {
     if (!selected) return;
     try {
@@ -833,93 +974,86 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       }${!live ? ' mcp-trace-shell--offline' : ''}`}
       aria-busy={!live || undefined}
     >
-      <div className="mcp-trace-toolbar">
-        <div className="mcp-trace-toolbar-left">
-          {isPage && (
+      <div className="mcp-trace-chrome">
+        <div className="mcp-trace-toolbar">
+          <div className="mcp-trace-toolbar-left">
+            <span className="mcp-trace-title">Trace</span>
+            <span className="mcp-trace-project-chip" title={projectRoot || path}>
+              <span className="mcp-trace-project-chip-label">Project</span>
+              <strong className="mcp-trace-project-chip-name">{projectLabel}</strong>
+            </span>
+            {live ? (
+              <span className="settings-log-live">live</span>
+            ) : (
+              <span className="settings-log-live settings-log-live--err">offline</span>
+            )}
+            <span className="mcp-trace-count" title="Visible / total events in buffer">
+              {filtersActive
+                ? `${visibleEntries.length.toLocaleString()} / ${entries.length.toLocaleString()}`
+                : entries.length.toLocaleString()}
+            </span>
+            <span className="mcp-trace-keys" title="Keyboard: ↑↓ move · Enter open · Esc close · j/k · b back">
+              ↑↓ Enter Esc
+            </span>
+          </div>
+          <div className="mcp-trace-header-actions">
+            {isPage && (
+              <button
+                type="button"
+                className="btn btn-compact mcp-trace-icon-btn mcp-trace-back-btn"
+                title="Back to Command Center"
+                aria-label="Back to Command Center"
+                onClick={() => void backToApp()}
+              >
+                <Codicon name="arrow-left" />
+                <span className="mcp-trace-btn-label">Back</span>
+              </button>
+            )}
             <button
               type="button"
-              className="btn btn-compact mcp-trace-icon-btn mcp-trace-back-btn"
-              title="Back to Command Center"
-              aria-label="Back to Command Center"
-              onClick={() => void backToApp()}
-            >
-              <Codicon name="arrow-left" />
-              <span className="mcp-trace-btn-label">Back</span>
-            </button>
-          )}
-          <span className="mcp-trace-title">Trace</span>
-          <span className="mcp-trace-project-chip" title={projectRoot || path}>
-            <span className="mcp-trace-project-chip-label">Project</span>
-            <strong className="mcp-trace-project-chip-name">{projectLabel}</strong>
-          </span>
-          {live ? (
-            <span className="settings-log-live">live</span>
-          ) : (
-            <span className="settings-log-live settings-log-live--err">offline</span>
-          )}
-          <span className="mcp-trace-count" title="Visible / total events in buffer">
-            {filtersActive
-              ? `${visibleEntries.length.toLocaleString()} / ${entries.length.toLocaleString()}`
-              : entries.length.toLocaleString()}
-          </span>
-          <span className="mcp-trace-keys" title="Keyboard: ↑↓ move · Enter open · Esc close · j/k · b back">
-            ↑↓ Enter Esc
-          </span>
-        </div>
-        <div className="mcp-trace-header-actions">
-          {!follow && (
-            <button
-              type="button"
-              className="btn btn-compact mcp-trace-icon-btn"
-              title="Follow tail"
-              aria-label="Follow tail"
-              onClick={jumpToBottom}
+              className={`btn btn-compact mcp-trace-icon-btn${!follow ? ' mcp-trace-icon-btn--active' : ''}`}
+              title={follow ? 'Following tail (click to pause)' : 'Follow tail'}
+              aria-label={follow ? 'Following tail' : 'Follow tail'}
+              aria-pressed={follow}
+              onClick={() => {
+                if (follow) setFollow(false);
+                else jumpToBottom();
+              }}
             >
               <Codicon name="arrow-down" />
               <span className="mcp-trace-btn-label">Follow</span>
             </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-compact mcp-trace-icon-btn"
-            title={
-              browserFs || document.fullscreenElement
-                ? 'Exit fullscreen (Esc)'
-                : 'Fullscreen (browser)'
-            }
-            aria-label={
-              browserFs || document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen'
-            }
-            aria-pressed={maximized || browserFs}
-            onClick={() => void toggleMaximize()}
-          >
-            <Codicon name={browserFs || document.fullscreenElement ? 'screen-normal' : 'screen-full'} />
-            <span className="mcp-trace-btn-label">
-              {browserFs || document.fullscreenElement ? 'Exit' : 'Full'}
-            </span>
-          </button>
-          <button
-            type="button"
-            className="btn btn-compact mcp-trace-icon-btn"
-            title="Clear log"
-            aria-label="Clear log"
-            onClick={() => void clearLog()}
-          >
-            <Codicon name="clear-all" />
-            <span className="mcp-trace-btn-label">Clear</span>
-          </button>
+            <button
+              type="button"
+              className="btn btn-compact mcp-trace-icon-btn"
+              title={
+                browserFs || document.fullscreenElement
+                  ? 'Exit fullscreen (Esc)'
+                  : 'Fullscreen (browser)'
+              }
+              aria-label={
+                browserFs || document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen'
+              }
+              aria-pressed={maximized || browserFs}
+              onClick={() => void toggleMaximize()}
+            >
+              <Codicon name={browserFs || document.fullscreenElement ? 'screen-normal' : 'screen-full'} />
+              <span className="mcp-trace-btn-label">
+                {browserFs || document.fullscreenElement ? 'Exit' : 'Full'}
+              </span>
+            </button>
+          </div>
         </div>
+
+        {!verboseEnabled && (
+          <div className="settings-toast settings-toast--ok mcp-trace-hint">
+            Enable <strong>Verbose MCP logging</strong> in Settings to record new tool calls. History
+            below still tails the project log file.
+          </div>
+        )}
+
+        {isPage && <McpQualityStrip snap={quality} />}
       </div>
-
-      {!verboseEnabled && (
-        <div className="settings-toast settings-toast--ok mcp-trace-hint">
-          Enable <strong>Verbose MCP logging</strong> in Settings to record new tool calls. History
-          below still tails the project log file.
-        </div>
-      )}
-
-      {isPage && <McpQualityStrip snap={quality} />}
-
       <div className="mcp-trace-project-banner" title={projectRoot || undefined}>
         <div className="mcp-trace-project-banner-main">
           <span className="mcp-trace-project-banner-kicker">Viewing MCP log for</span>
@@ -976,8 +1110,43 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
               </button>
             );
           })}
+          {(queryPayloadCount > 0 || hasQueryFilter) && (
+            <button
+              type="button"
+              className={`mcp-trace-filter-chip mcp-trace-filter-chip--query${
+                hasQueryFilter ? ' mcp-trace-filter-chip--on' : ''
+              }`}
+              aria-pressed={hasQueryFilter}
+              title={
+                hasQueryFilter
+                  ? 'Show all events (clear query-payload filter)'
+                  : 'Show only events whose JSON payload has a top-level query property'
+              }
+              onClick={() => setHasQueryFilter((v) => !v)}
+            >
+              <span className="mcp-trace-badge mcp-trace-badge--query">QRY</span>
+              <span className="mcp-trace-filter-chip-label">Has query</span>
+              <span className="mcp-trace-filter-chip-count">{queryPayloadCount}</span>
+            </button>
+          )}
         </div>
         <div className="mcp-trace-filter-controls">
+          <label className="mcp-trace-filter-field">
+            <span className="mcp-trace-filter-field-label">Date</span>
+            <select
+              className="mcp-trace-filter-select"
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              aria-label="Filter by date"
+            >
+              <option value="">All dates</option>
+              {dateOptions.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="mcp-trace-filter-field">
             <span className="mcp-trace-filter-field-label">Tool</span>
             <select
@@ -1027,6 +1196,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         aria-label="MCP trace log. Use arrow keys to move, Enter to open, Escape to close."
         aria-activedescendant={cursorId ? `mcp-row-${cursorId}` : undefined}
       >
+        <div ref={topSentinelRef} className="mcp-trace-top-sentinel" aria-hidden="true" />
         {entries.length === 0 ? (
           <div className="mcp-trace-empty">
             Waiting for MCP tool calls… (enable verbose + reconnect ax MCP)
@@ -1042,7 +1212,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
           <table className="mcp-trace-table">
             <thead>
               <tr>
-                <th className="mcp-col-time">Time</th>
+                <th className="mcp-col-time">Date / time</th>
                 <th className="mcp-col-kind">Kind</th>
                 <th className="mcp-col-tool">Tool</th>
                 <th className="mcp-col-summary">Summary</th>
@@ -1053,6 +1223,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
               {visibleEntries.map((e) => {
                 const headline = entryHeadline(e);
                 const meta = entryMeta(e);
+                const hasQuery = entryHasQueryPayload(e);
                 const isCursor = cursorId === e.id;
                 const isOpen = selectedId === e.id;
                 return (
@@ -1063,12 +1234,16 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
                     role="option"
                     aria-selected={isCursor || isOpen}
                     className={`mcp-trace-row mcp-trace-row--${e.kind}${
-                      isOpen ? ' mcp-trace-row--selected' : ''
-                    }${isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''}`}
+                      hasQuery ? ' mcp-trace-row--has-query' : ''
+                    }${isOpen ? ' mcp-trace-row--selected' : ''}${
+                      isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
+                    }`}
                     title={e.raw}
                     onClick={() => openEntry(e.id)}
                   >
-                    <td className="mcp-col-time">{e.time}</td>
+                    <td className="mcp-col-time" title={e.raw.match(/^\S+/)?.[0] ?? e.time}>
+                      {e.time}
+                    </td>
                     <td className="mcp-col-kind">
                       <button
                         type="button"
@@ -1100,7 +1275,22 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
                       )}
                     </td>
                     <td className="mcp-col-summary">
-                      <SummaryCell text={headline || '—'} />
+                      <span className="mcp-trace-summary-wrap">
+                        {hasQuery && (
+                          <button
+                            type="button"
+                            className="mcp-trace-badge mcp-trace-badge--query mcp-trace-badge--btn"
+                            title="JSON payload has query — click to filter"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              setHasQueryFilter(true);
+                            }}
+                          >
+                            query
+                          </button>
+                        )}
+                        <SummaryCell text={headline || '—'} />
+                      </span>
                     </td>
                     <td className="mcp-col-meta">{meta || '—'}</td>
                   </tr>
@@ -1141,6 +1331,14 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
                   <span className={`mcp-trace-badge mcp-trace-badge--${selected.kind}`}>
                     {selected.badge}
                   </span>
+                  {entryHasQueryPayload(selected) && (
+                    <span
+                      className="mcp-trace-badge mcp-trace-badge--query"
+                      title="JSON payload includes a top-level query property"
+                    >
+                      query
+                    </span>
+                  )}
                   <div className="mcp-inspect-title-block">
                     <h2 className="mcp-inspect-title">
                       {cluster.tool ?? selected.tool ?? 'Log event'}
@@ -1254,16 +1452,21 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       : null;
 
   if (maximized) {
+    // Portal to body so fixed overlay is not trapped under
+    // `.workspace { isolation: isolate; z-index: 1 }` beneath the titlebar.
     return (
       <>
-        <div
-          ref={maxHostRef}
-          className="mcp-trace-max-overlay"
-          role="dialog"
-          aria-label="MCP logging maximized"
-        >
-          {panel}
-        </div>
+        {createPortal(
+          <div
+            ref={maxHostRef}
+            className="mcp-trace-max-overlay"
+            role="dialog"
+            aria-label="MCP logging maximized"
+          >
+            {panel}
+          </div>,
+          document.body,
+        )}
         {inspector}
       </>
     );

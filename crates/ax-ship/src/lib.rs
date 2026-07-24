@@ -1,5 +1,6 @@
 //! Autonomous Git Command Center daemon.
 
+mod auto_commit;
 mod config;
 mod events;
 mod git_root;
@@ -9,6 +10,7 @@ mod run_log;
 mod state;
 mod advanced;
 
+pub use auto_commit::Checkpoint;
 pub use ax_remote::{seed_ship_config, ShipSeedResult};
 pub use config::ShipDaemonConfig;
 pub use events::{ShipEvent, ShipEventBus};
@@ -91,8 +93,19 @@ impl ShipDaemon {
     }
 
     pub async fn evaluate(&self) -> Result<ShipReport, String> {
+        self.evaluate_with(|_| {}).await
+    }
+
+    /// Like `evaluate`, but lets the caller adjust the freshly-reloaded config
+    /// for this single run only (e.g. CLI `--auto-commit` / `--revert-on-fail`
+    /// flags) without persisting the override to `ship.toml`.
+    pub async fn evaluate_with(
+        &self,
+        apply_overrides: impl FnOnce(&mut ax_remote::ShipConfig),
+    ) -> Result<ShipReport, String> {
         self.reload_config().await;
-        let cfg = self.config.lock().await.clone();
+        let mut cfg = self.config.lock().await.clone();
+        apply_overrides(&mut cfg);
         let pipeline = ShipPipeline::new(self.project_root.clone(), cfg, self.bus.clone());
         let report = pipeline.run_evaluate().await?;
         *self.state.lock().await = ShipState::from_report(&report);
@@ -110,4 +123,28 @@ impl ShipDaemon {
 
 pub async fn evaluate_project(project_root: PathBuf) -> Result<ShipReport, String> {
     ShipDaemon::new(project_root).evaluate().await
+}
+
+/// Single-run auto-commit override for `ax ship --evaluate`'s CLI flags —
+/// `None` means "leave `ship.toml` as-is" for that field.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AutoCommitOverride {
+    pub enabled: Option<bool>,
+    pub revert_on_fail: Option<bool>,
+}
+
+pub async fn evaluate_project_with_overrides(
+    project_root: PathBuf,
+    auto_commit: AutoCommitOverride,
+) -> Result<ShipReport, String> {
+    ShipDaemon::new(project_root)
+        .evaluate_with(|cfg| {
+            if let Some(v) = auto_commit.enabled {
+                cfg.auto_commit.enabled = v;
+            }
+            if let Some(v) = auto_commit.revert_on_fail {
+                cfg.auto_commit.revert_on_fail = v;
+            }
+        })
+        .await
 }

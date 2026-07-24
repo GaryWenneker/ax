@@ -41,6 +41,11 @@ export interface UiConfig {
   show_agent_terminal?: boolean;
   /** Emit MCP inbound/outbound/enrichment traces to Cursor MCP Output (stderr). */
   verbose_mcp?: boolean;
+  /**
+   * IANA timezone for Logging Date/time (e.g. `Europe/Amsterdam`).
+   * Empty / `local` = browser local timezone.
+   */
+  timezone?: string;
 }
 
 export interface ShipConfig {

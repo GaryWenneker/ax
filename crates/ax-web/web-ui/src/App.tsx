@@ -20,11 +20,13 @@ import SavingsPage from './pages/Savings';
 import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
+import HeaderWaves from './components/HeaderWaves';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
 import { initBladeWidth } from './components/BladeResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
 import { UiProvider } from './context/UiContext';
 import { initTheme } from './lib/themes';
+import { AX_FULL_NAME } from './lib/brand';
 import {
   FULL_BLEED_PAGES,
   migrateLegacyHash,
@@ -199,29 +201,35 @@ function AppShell() {
 
       <div className="app">
         <header className="titlebar">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
-              className="hamburger"
-              type="button"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              aria-label="Toggle menu"
-              aria-expanded={sidebarOpen}
-            >
-              <i className="codicon codicon-menu" aria-hidden="true" />
-            </button>
-            <span className="titlebar-brand">
-              ax <span>/ graph + policy</span>
-            </span>
+          <div className="titlebar-inner">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                className="hamburger"
+                type="button"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                aria-label="Toggle menu"
+                aria-expanded={sidebarOpen}
+              >
+                <i className="codicon codicon-menu" aria-hidden="true" />
+              </button>
+              <span className="titlebar-brand" title={AX_FULL_NAME}>
+                <abbr className="titlebar-brand-ax" title={AX_FULL_NAME}>
+                  ax
+                </abbr>{' '}
+                <span>/ graph + policy</span>
+              </span>
+            </div>
+            <div className="font-ctrl">
+              <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">
+                <i className="codicon codicon-remove" aria-hidden="true" />
+              </button>
+              <span className="font-size-lbl">{Math.round(fontScale * 100)}%</span>
+              <button type="button" className="font-btn" onClick={() => adjFont(SCALE_STEP)} title="Larger text" aria-label="Larger text">
+                <i className="codicon codicon-add" aria-hidden="true" />
+              </button>
+            </div>
           </div>
-          <div className="font-ctrl">
-            <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">
-              <i className="codicon codicon-remove" aria-hidden="true" />
-            </button>
-            <span className="font-size-lbl">{Math.round(fontScale * 100)}%</span>
-            <button type="button" className="font-btn" onClick={() => adjFont(SCALE_STEP)} title="Larger text" aria-label="Larger text">
-              <i className="codicon codicon-add" aria-hidden="true" />
-            </button>
-          </div>
+          <HeaderWaves />
         </header>
 
         <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">

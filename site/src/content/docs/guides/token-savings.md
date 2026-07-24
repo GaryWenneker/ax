@@ -283,7 +283,7 @@ The sidebar **Savings** tab (toggle visibility in Settings) shows:
 - **By-project** — savings breakdown per indexed project
 - **Recent calls** — individual graph calls with counterfactual vs actual
 - **Agent sessions** — correlated with imported session logs
-- **MCP quality chip** — live score + tokens at risk; opens the Quality slide-out (correlation, enrichment, findings). Enable Verbose MCP logging; CLI: `ax mcp audit`. Scoring merges transcript `CallDynamicTool` graph calls, prefers the ax-heaviest recent transcript, correlates `session=` verbose tags when the sessionStart hook is installed (`ax savings hook install`), parses Cursor `<timestamp>` embeds for window alignment, drops untimed whole-session tails when verbose is idle in-window, ignores recovered MCP errors, and avoids false ExploreBeforeGrep megawaste from untimed full-session transcripts.
+- **MCP quality chip** — live score + tokens at risk; opens the Quality slide-out. Full loop (Logging, checks, fixpack, session hook): [MCP Logging & Quality](/guides/mcp-quality/). CLI: `ax mcp audit`.
 
 ### Agent log import
 

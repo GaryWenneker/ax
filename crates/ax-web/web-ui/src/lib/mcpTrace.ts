@@ -1,8 +1,13 @@
 /** Shared helpers for MCP verbose log streaming. */
 
+import {
+  formatInstantInZone,
+  resolveTimeZone,
+} from './timeZone';
+
 export const MCP_TRACE_EVENTS_URL = '/api/usage/mcp-trace/events';
-export const MCP_TRACE_CLEAR_URL = '/api/usage/mcp-trace/clear';
 export const MCP_TRACE_PATH_URL = '/api/usage/mcp-trace/path';
+export const MCP_TRACE_CHUNK_URL = '/api/usage/mcp-trace/chunk';
 
 export type TraceKind =
   | 'inbound'
@@ -16,8 +21,12 @@ export type TraceKind =
 export interface TraceEntry {
   id: string;
   raw: string;
-  /** Display timestamp (ISO or formatted from legacy ts=). */
+  /** Display timestamp with date in the active timezone. */
   time: string;
+  /** Calendar day `YYYY-MM-DD` (in active timezone) for date filtering. */
+  day: string | null;
+  /** UTC epoch ms for the log line; null when the line had no parseable time. */
+  instantMs: number | null;
   kind: TraceKind;
   /** Short kind badge label. */
   badge: string;
@@ -25,6 +34,32 @@ export interface TraceEntry {
   message: string;
   /** Optional tool name for highlighting. */
   tool: string | null;
+}
+
+/** Active IANA zone for Logging Date/time (resolved; never empty). */
+let activeTimeZone = resolveTimeZone('');
+
+/** Apply Settings → Interface → Timezone (empty/local = browser). */
+export function setTraceTimeZone(configured?: string | null): string {
+  activeTimeZone = resolveTimeZone(configured);
+  return activeTimeZone;
+}
+
+export function getTraceTimeZone(): string {
+  return activeTimeZone;
+}
+
+/** Recompute `time` / `day` for an entry after the timezone setting changes. */
+export function reformatTraceEntry(
+  entry: TraceEntry,
+  timeZone?: string,
+): TraceEntry {
+  if (entry.instantMs == null) return entry;
+  const { time, day } = formatInstantInZone(
+    entry.instantMs,
+    timeZone ?? activeTimeZone,
+  );
+  return { ...entry, time, day: day || null };
 }
 
 export type TraceMsgPart =
@@ -165,6 +200,23 @@ export function extractPayloadJson(entry: TraceEntry): unknown | null {
   }
   if (!candidate) return null;
   return tryParseJson(candidate);
+}
+
+/**
+ * True when a parsed JSON payload is an object that owns a `query` property
+ * (top-level). Nested keys like `params.query` do not count — MCP tool args
+ * put the search string at the root (`{ "query": "…" }`).
+ */
+export function payloadHasQueryProp(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  return Object.prototype.hasOwnProperty.call(value, 'query');
+}
+
+/** True when this log line's JSON payload includes a top-level `query` field. */
+export function entryHasQueryPayload(entry: TraceEntry): boolean {
+  return payloadHasQueryProp(extractPayloadJson(entry));
 }
 
 function formatScalar(v: unknown, maxStr = 48): string {
@@ -310,13 +362,16 @@ export function entryMeta(entry: TraceEntry): string {
     }
     case 'preview': {
       const payload = extractPayloadJson(entry);
-      if (payload !== null) return 'json';
+      if (payload !== null) {
+        return payloadHasQueryProp(payload) ? 'json · query' : 'json';
+      }
       const t = msg.match(/\btext=(.+)$/)?.[1];
       return t ? `${t.length}ch` : '';
     }
     case 'inbound': {
       const payload = extractPayloadJson(entry);
-      return payload !== null ? 'json' : '';
+      if (payload === null) return '';
+      return payloadHasQueryProp(payload) ? 'json · query' : 'json';
     }
     case 'error':
       return 'error';
@@ -394,18 +449,18 @@ function classify(body: string): { kind: TraceKind; badge: string } {
   return { kind: 'other', badge: 'LOG' };
 }
 
-function formatLegacyTs(secs: number): string {
-  try {
-    return new Date(secs * 1000).toISOString().replace('T', ' ').replace('Z', ' UTC');
-  } catch {
-    return `ts=${secs}`;
+function parseInstantMs(isoOrLegacy: {
+  iso?: string;
+  epochSecs?: number;
+}): number | null {
+  if (isoOrLegacy.iso) {
+    const ms = Date.parse(isoOrLegacy.iso);
+    return Number.isNaN(ms) ? null : ms;
   }
-}
-
-function formatIsoForDisplay(iso: string): string {
-  // 2026-07-21T19:07:03.142Z → 19:07:03.142 (keep date on hover via full string in title)
-  const m = iso.match(/T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/);
-  return m ? m[1] : iso;
+  if (typeof isoOrLegacy.epochSecs === 'number') {
+    return isoOrLegacy.epochSecs * 1000;
+  }
+  return null;
 }
 
 /** Parse a raw log line into a structured UI entry. */
@@ -413,21 +468,26 @@ export function parseTraceEntry(raw: string): TraceEntry {
   entrySeq += 1;
   const id = `e${entrySeq}-${raw.length}`;
   let rest = raw.trim();
+  let instantMs: number | null = null;
   let time = '';
+  let day: string | null = null;
 
   const iso = rest.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+(.*)$/);
   if (iso) {
-    time = formatIsoForDisplay(iso[1]);
+    instantMs = parseInstantMs({ iso: iso[1] });
     rest = iso[2];
   } else {
     const legacy = rest.match(/^ts=(\d+)\s+(.*)$/);
     if (legacy) {
-      time = formatLegacyTs(Number(legacy[1]));
-      // Prefer clock portion for compact UI
-      const clock = time.match(/(\d{2}:\d{2}:\d{2})/);
-      time = clock ? `${clock[1]} UTC` : time;
+      instantMs = parseInstantMs({ epochSecs: Number(legacy[1]) });
       rest = legacy[2];
     }
+  }
+
+  if (instantMs != null) {
+    const formatted = formatInstantInZone(instantMs, activeTimeZone);
+    time = formatted.time;
+    day = formatted.day || null;
   }
 
   rest = rest.replace(/^\[ax-mcp\]\s*/, '');
@@ -437,9 +497,56 @@ export function parseTraceEntry(raw: string): TraceEntry {
     id,
     raw,
     time: time || '—',
+    day,
+    instantMs,
     kind,
     badge,
     message,
     tool: extractTool(message),
   };
+}
+
+/** Whether a raw log line should appear in the trace table. */
+export function isTraceLogLine(data: string): boolean {
+  const s = data.trim();
+  if (!s) return false;
+  return (
+    s.includes('[ax-mcp]') ||
+    s.includes('ts=') ||
+    /^\d{4}-\d{2}-\d{2}T/.test(s)
+  );
+}
+
+export function traceEntriesFromLines(lines: string[]): TraceEntry[] {
+  const out: TraceEntry[] = [];
+  for (const data of lines) {
+    if (!isTraceLogLine(data)) continue;
+    out.push(parseTraceEntry(data));
+  }
+  return out;
+}
+
+/** Previous calendar day `YYYY-MM-DD` (UTC date math on the day string). */
+export function previousCalendarDay(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return dt.toISOString().slice(0, 10);
+}
+
+export async function fetchMcpTraceChunk(day: string): Promise<{
+  ok: boolean;
+  day?: string;
+  lines?: string[];
+  hasOlder?: boolean;
+  error?: string;
+}> {
+  const r = await fetch(`${MCP_TRACE_CHUNK_URL}?day=${encodeURIComponent(day)}`);
+  return r.json() as Promise<{
+    ok: boolean;
+    day?: string;
+    lines?: string[];
+    hasOlder?: boolean;
+    error?: string;
+  }>;
 }

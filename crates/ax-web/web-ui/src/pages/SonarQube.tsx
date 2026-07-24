@@ -40,7 +40,12 @@ const DEFAULT_CONFIG: ShipConfig = {
   },
   remote: { provider: 'azure_devops' },
   sonar: { ...DEFAULT_SONAR_CONFIG },
-  ui: { show_savings: true, show_agent_terminal: true, verbose_mcp: false },
+  ui: {
+    show_savings: true,
+    show_agent_terminal: true,
+    verbose_mcp: false,
+    timezone: '',
+  },
   reviewers: {},
 };
 

@@ -62,7 +62,14 @@ The Command Center **Graph** page renders the graph as an interactive force-dire
 - **Docs = squares** — `.md`/`.mdx` files stand apart from code (circles).
 - Click any node to open the existing detail panel; pan, zoom, and drag to explore.
 
-Open it with `ax web --open` and pick **Graph** in the sidebar. Use the node-count selector to cap large graphs and **Recompute communities** to re-run detection.
+Open it with `ax web --open` and pick **Graph** in the sidebar. Controls:
+
+- **Search / Kind / Community** filters — focus a subsystem or symbol kind
+- **Density** slider — tighten or loosen the force layout
+- **Node-count selector** — cap large graphs (e.g. 100 of N nodes)
+- **Recompute communities** — re-run Leiden detection after index changes
+
+![Interactive Graph — Leiden communities, god nodes, confidence-tagged edges, and doc nodes](/screenshots/cc-graph.png)
 
 ### Portable export
 

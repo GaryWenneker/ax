@@ -21,6 +21,18 @@ pub struct ShipReport {
     pub breaking_warnings: Vec<BreakingWarning>,
     pub business_rule_warnings: Vec<BusinessRuleWarning>,
     pub affected_routes: Vec<String>,
+    #[serde(default)]
+    pub auto_commit: Option<AutoCommitOutcome>,
+}
+
+/// Result of the opt-in Aider-style checkpoint/rollback around this run —
+/// present only when `[auto_commit] enabled = true` in `ship.toml`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AutoCommitOutcome {
+    /// "committed" | "reverted" | "kept-failing" | "clean" (nothing to commit)
+    pub status: String,
+    pub checkpoints: Vec<crate::auto_commit::Checkpoint>,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -72,6 +84,7 @@ impl ShipReport {
             breaking_warnings: result.breaking_warnings,
             business_rule_warnings: result.business_rule_warnings,
             affected_routes: result.affected_routes,
+            auto_commit: result.auto_commit,
         }
     }
 }

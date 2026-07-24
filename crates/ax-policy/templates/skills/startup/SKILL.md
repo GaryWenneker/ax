@@ -73,6 +73,17 @@ Also accepted (avoids `path required` retries):
 - `action`: alias for `operation` (`edit` / `write` / `create` -> write; `delete` -> delete)
 
 Do **not** call `ax_guard({ "action": "edit", "paths": [...] })` without also satisfying `path`/`paths` — prefer one call per file with `path` + `operation`.
+
+Any CRITICAL rule can opt into a static check without code changes by adding a directive line to its body: `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, or `guard: require-content: "<substring or /regex/>"` (the last is scoped to files matching that rule's `globs`).
+
+## SS-02b — Diagnostics correlation
+
+ax cannot read editor/LSP state itself. If the IDE surfaces linter/compiler diagnostics (e.g. a Problems panel or lint tool output) for files you touched, feed them in to get graph-correlated context — which files intersect CRITICAL-guarded paths, and which tests the graph says are impacted:
+
+```json
+ax_diagnostics({ "diagnostics": [{ "path": "<relative path>", "line": 42, "severity": "error", "message": "<text>", "source": "<tool name>" }] })
+```
+
 ## SS-03 — Language rule (CRITICAL)
 
 - **All agent responses to the user MUST be in English.**

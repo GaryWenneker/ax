@@ -236,70 +236,14 @@ pub fn emit_stderr(lines: &[String]) {
     }
 }
 
-/// Append traces to `<project>/.ax/mcp-verbose.log` (falls back to `~/.ax/` when no project).
+/// Append traces to the active daily log under `<project>/.ax/` (falls back to `~/.ax/`).
 pub fn append_verbose_log_file(lines: &[String], project_root: Option<&Path>) {
-    if lines.is_empty() {
-        return;
-    }
-    let Some(path) = verbose_log_path(project_root) else {
-        return;
-    };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let ts = iso_timestamp_utc();
-        for line in lines {
-            let body = sanitize_one_line(line);
-            let _ = writeln!(f, "{ts} {body}");
-        }
-    }
+    ax_usage::append_verbose_log(lines, project_root);
 }
 
-/// Per-project log: `<root>/.ax/mcp-verbose.log`. Without a project root, `~/.ax/mcp-verbose.log`.
+/// Active daily log path for the project.
 pub fn verbose_log_path(project_root: Option<&Path>) -> Option<std::path::PathBuf> {
-    if let Some(root) = project_root {
-        let root = strip_verbatim_prefix(root);
-        return Some(ax_context::get_ax_dir(&root).join("mcp-verbose.log"));
-    }
-    dirs::home_dir().map(|h| h.join(".ax").join("mcp-verbose.log"))
-}
-
-/// UTC timestamp for log lines, e.g. `2026-07-21T19:07:03.142Z`.
-fn iso_timestamp_utc() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = dur.as_secs() as i64;
-    let millis = dur.subsec_millis();
-    let days = secs.div_euclid(86_400);
-    let day_secs = secs.rem_euclid(86_400) as u32;
-    let (y, m, d) = civil_from_days(days);
-    let hh = day_secs / 3600;
-    let mm = (day_secs % 3600) / 60;
-    let ss = day_secs % 60;
-    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{millis:03}Z")
-}
-
-/// Howard Hinnant civil_from_days (UTC Gregorian).
-fn civil_from_days(z: i64) -> (i32, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as i32, m as u32, d as u32)
+    Some(ax_usage::current_log_path(project_root))
 }
 
 /// Deliver verbose lines on every path: stderr, log file, and (for callers) MCP notifs.
@@ -392,23 +336,6 @@ mod tests {
     #[test]
     fn sanitize_collapses_newlines() {
         assert_eq!(sanitize_one_line("a\nb\rc"), "a⏎b⏎c");
-    }
-
-    #[test]
-    fn iso_timestamp_shape() {
-        let ts = iso_timestamp_utc();
-        assert!(
-            regex_lite_iso(&ts),
-            "unexpected timestamp: {ts}"
-        );
-    }
-
-    fn regex_lite_iso(s: &str) -> bool {
-        s.len() >= 24
-            && s.as_bytes()[4] == b'-'
-            && s.as_bytes()[7] == b'-'
-            && s.as_bytes()[10] == b'T'
-            && s.ends_with('Z')
     }
 
     #[test]

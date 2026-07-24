@@ -28,6 +28,8 @@
   --statusbar-bg: #0078d4;
 
   --titlebar-h: 30px;
+  /* Reserved band under the titlebar for hanging azure waves (keeps page controls clear) */
+  --titlebar-wave-h: 36px;
   --statusbar-h: 22px;
   --sidebar-w: 200px;
 
@@ -98,7 +100,7 @@ html, body {
   min-height: 100dvh;
   overflow: hidden;
   grid-template-columns: var(--sidebar-w) 4px minmax(0, 1fr);
-  grid-template-rows: var(--titlebar-h) minmax(0, 1fr) var(--statusbar-h);
+  grid-template-rows: calc(var(--titlebar-h) + var(--titlebar-wave-h)) minmax(0, 1fr) var(--statusbar-h);
   grid-template-areas:
     "titlebar titlebar titlebar"
     "sidebar sizer workspace"
@@ -124,6 +126,9 @@ html, body {
 
 /* Workspace — only place for .container (never wrap sidebar) */
 .workspace {
+  position: relative;
+  isolation: isolate;
+  z-index: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -168,7 +173,7 @@ html, body {
 @media (max-width: 899px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--titlebar-h) minmax(0, 1fr) var(--statusbar-h);
+    grid-template-rows: calc(var(--titlebar-h) + var(--titlebar-wave-h)) minmax(0, 1fr) var(--statusbar-h);
     grid-template-areas:
       "titlebar"
       "workspace"
@@ -193,18 +198,39 @@ html, body {
 
 /* ---- Title bar ---- */
 .titlebar {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  height: calc(var(--titlebar-h) + var(--titlebar-wave-h));
+  min-height: calc(var(--titlebar-h) + var(--titlebar-wave-h));
+  padding: 0;
+  /* Transparent hang band — waves fill it (no empty dark gap, no overlay on page controls) */
+  background: transparent;
+  border-bottom: 1px solid transparent;
+  flex-shrink: 0;
+  user-select: none;
+  z-index: 5;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.titlebar-inner {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   height: var(--titlebar-h);
   min-height: var(--titlebar-h);
   padding: 0 8px;
-  background: var(--bg-side);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
   gap: 8px;
-  user-select: none;
-  z-index: 50;
+  flex-shrink: 0;
+  background: var(--bg-side);
+  pointer-events: auto;
 }
 
 .titlebar-brand {
@@ -214,9 +240,135 @@ html, body {
   letter-spacing: 0;
 }
 
+.titlebar-brand-ax {
+  text-decoration: none;
+  cursor: help;
+  border-bottom: none;
+  font-weight: inherit;
+  color: inherit;
+}
+
 .titlebar-brand span {
   color: var(--text-dim);
   font-weight: 400;
+}
+
+/* Azure waves — crest sits low in the hang band (not a thin line under the brand) */
+.cc-waves {
+  --cc-wave-1: rgba(60, 200, 210, 0.55);
+  --cc-wave-2: rgba(20, 120, 140, 0.48);
+  --cc-wave-3: rgba(30, 80, 160, 0.38);
+  --cc-wave-4: rgba(20, 100, 130, 0.26);
+
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--titlebar-h);
+  bottom: auto;
+  width: 100%;
+  height: calc(var(--titlebar-wave-h) + 8px);
+  min-height: calc(var(--titlebar-wave-h) + 8px);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  line-height: 0;
+  /* Keep the crest inside the visible band — pulling it further up hides the
+     wavy top edge entirely and leaves only the fading tail, which reads as a
+     fuzzy blob instead of a wave. */
+  transform: translateY(-4%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 72%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 72%, transparent 100%);
+}
+
+.cc-waves--panel {
+  --cc-wave-1: rgba(60, 200, 210, 0.5);
+  --cc-wave-2: rgba(20, 120, 140, 0.42);
+  --cc-wave-3: rgba(30, 80, 160, 0.32);
+  --cc-wave-4: rgba(20, 100, 130, 0.2);
+
+  top: var(--titlebar-h);
+  bottom: auto;
+  height: calc(var(--titlebar-wave-h) + 6px);
+  min-height: calc(var(--titlebar-wave-h) + 6px);
+  transform: translateY(-4%);
+  overflow: hidden;
+}
+
+.cc-waves--workspace {
+  display: none;
+}
+
+.cc-waves__svg {
+  display: block;
+  width: 220%;
+  max-width: none;
+  height: 100%;
+  min-width: 0;
+  margin-left: -60%;
+  overflow: hidden;
+}
+
+.cc-waves__parallax > use:nth-child(1) {
+  fill: var(--cc-wave-1);
+}
+.cc-waves__parallax > use:nth-child(2) {
+  fill: var(--cc-wave-2);
+}
+.cc-waves__parallax > use:nth-child(3) {
+  fill: var(--cc-wave-3);
+}
+.cc-waves__parallax > use:nth-child(4) {
+  fill: var(--cc-wave-4);
+}
+
+/* alternate = seamless ping-pong — never snap/reset at loop boundary */
+.cc-waves__parallax > use {
+  animation: cc-wave-move 25s ease-in-out infinite alternate;
+}
+.cc-waves__parallax > use:nth-child(1) {
+  animation-delay: -2s;
+  animation-duration: 14s;
+}
+.cc-waves__parallax > use:nth-child(2) {
+  animation-delay: -3s;
+  animation-duration: 20s;
+}
+.cc-waves__parallax > use:nth-child(3) {
+  animation-delay: -4s;
+  animation-duration: 26s;
+}
+.cc-waves__parallax > use:nth-child(4) {
+  animation-delay: -5s;
+  animation-duration: 34s;
+}
+
+@keyframes cc-wave-move {
+  0% {
+    transform: translate3d(-36px, 0, 0);
+  }
+  100% {
+    transform: translate3d(36px, 0, 0);
+  }
+}
+
+@media (max-width: 899px) {
+  :root {
+    --titlebar-wave-h: 40px;
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --titlebar-wave-h: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-waves__parallax > use {
+    animation: none;
+  }
 }
 
 .font-ctrl {
@@ -2157,7 +2309,7 @@ body.blade-resizing .blade-resize-handle {
   .sidebar {
     position: fixed;
     left: -100%;
-    top: var(--titlebar-h);
+    top: calc(var(--titlebar-h) + var(--titlebar-wave-h));
     bottom: calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
     z-index: 200;
     background: var(--bg-side);
@@ -3111,20 +3263,17 @@ body.blade-resizing .blade-resize-handle {
   padding-top: 0;
 }
 
-.mcp-trace-header-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
-  flex-shrink: 0;
-}
-
 .mcp-trace-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
   white-space: nowrap;
+}
+
+.mcp-trace-icon-btn--active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
 .mcp-trace-icon-btn .codicon {
@@ -3186,23 +3335,48 @@ body.blade-resizing .blade-resize-handle {
 
 .mcp-trace-max-overlay {
   position: fixed;
-  top: 0;
+  /*
+   * Sit below the app titlebar + wave hang band. The overlay is portaled to
+   * document.body so it is not trapped under `.workspace { isolation; z-index:1 }`
+   * (which previously hid Back/Follow/Full/Clear as thin border lines in the hang band).
+   */
+  top: calc(var(--titlebar-h) + var(--titlebar-wave-h));
   left: 0;
   right: 0;
   /* Leave room for the app status bar (logging stats + project switch) */
   bottom: var(--statusbar-h);
-  z-index: 80;
+  z-index: 90;
   padding: 0;
   background: var(--bg, #181818);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .mcp-trace-max-overlay:fullscreen,
 .mcp-trace-max-overlay:-webkit-full-screen {
+  top: 0;
+  left: 0;
+  right: 0;
   width: 100%;
   height: 100%;
   bottom: 0;
+  background: var(--bg, #181818);
+}
+
+/* When the documentElement is fullscreen (Logging page default), still clear the titlebar. */
+html:fullscreen .mcp-trace-max-overlay,
+html:-webkit-full-screen .mcp-trace-max-overlay {
+  top: calc(var(--titlebar-h) + var(--titlebar-wave-h));
+}
+
+.mcp-trace-chrome {
+  position: relative;
+  isolation: isolate;
+  flex-shrink: 0;
+  z-index: 20;
+  padding-bottom: 0;
+  overflow: visible;
   background: var(--bg, #181818);
 }
 
@@ -3211,9 +3385,13 @@ body.blade-resizing .blade-resize-handle {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px;
+  padding: 8px 14px;
+  min-height: 44px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  position: relative;
+  z-index: 30;
+  background: var(--bg, #181818);
 }
 
 .mcp-trace-toolbar-left {
@@ -3221,6 +3399,62 @@ body.blade-resizing .blade-resize-handle {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+}
+
+.mcp-trace-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+  position: relative;
+  z-index: 40;
+  isolation: isolate;
+  background: var(--bg, #181818);
+}
+
+.mcp-trace-header-actions .btn,
+.mcp-trace-back-btn {
+  position: relative;
+  z-index: 41;
+  opacity: 1;
+  visibility: visible;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  min-width: 2.25rem;
+  padding: 4px 10px;
+  color: var(--text);
+  background: var(--bg-input, #252526);
+  border: 1px solid var(--border-hi, var(--border));
+  line-height: 1.2;
+}
+
+.mcp-trace-header-actions .btn:hover,
+.mcp-trace-back-btn:hover {
+  background: var(--bg-hover, #2a2d2e);
+  color: var(--text-hi, var(--text));
+}
+
+.mcp-trace-header-actions .mcp-trace-btn-label {
+  display: inline;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: inherit;
+}
+
+.mcp-trace-header-actions .codicon {
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  opacity: 1;
 }
 
 .mcp-trace-title {
@@ -3543,6 +3777,41 @@ body.blade-resizing .blade-resize-handle {
   min-width: 1.1ch;
 }
 
+.mcp-trace-filter-chip--query.mcp-trace-filter-chip--on {
+  border-color: color-mix(in srgb, var(--accent) 70%, #3b82f6);
+  background: color-mix(in srgb, #3b82f6 18%, transparent);
+}
+
+.mcp-trace-badge--query {
+  background: color-mix(in srgb, #3b82f6 28%, transparent);
+  color: #93c5fd;
+  border: 1px solid color-mix(in srgb, #3b82f6 45%, transparent);
+  letter-spacing: 0.02em;
+}
+
+.mcp-trace-row--has-query td:first-child {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, #3b82f6 75%, transparent);
+}
+
+.mcp-trace-row--has-query .mcp-col-summary {
+  color: var(--text);
+}
+
+.mcp-trace-summary-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.mcp-trace-summary-wrap .mcp-trace-badge--query {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  padding: 0.05rem 0.35rem;
+  text-transform: lowercase;
+}
+
 .mcp-trace-filter-controls {
   display: flex;
   flex-wrap: wrap;
@@ -3610,6 +3879,12 @@ body.blade-resizing .blade-resize-handle {
 .mcp-trace-tool-btn:hover {
   color: var(--accent);
   text-decoration: underline;
+}
+
+.mcp-trace-top-sentinel {
+  height: 1px;
+  width: 100%;
+  pointer-events: none;
 }
 
 .mcp-trace-scroller {
@@ -3693,7 +3968,8 @@ body.blade-resizing .blade-resize-handle {
 
 /* Fluid column share — all columns stay visible and scale with viewport */
 .mcp-col-time {
-  width: 10%;
+  width: 16%;
+  min-width: 9.5rem;
 }
 
 .mcp-col-kind {
@@ -3701,21 +3977,22 @@ body.blade-resizing .blade-resize-handle {
 }
 
 .mcp-col-tool {
-  width: 14%;
+  width: 13%;
 }
 
 .mcp-col-summary {
-  width: 50%;
+  width: 46%;
 }
 
 .mcp-col-meta {
-  width: 20%;
+  width: 19%;
 }
 
 .mcp-trace-table .mcp-col-time {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   font-size: 11px;
+  letter-spacing: -0.01em;
 }
 
 .mcp-trace-table .mcp-col-tool {
@@ -4571,7 +4848,9 @@ button.linkish {
 
   /* Keep every column visible — rebalance shares on narrow viewports */
   .mcp-col-time {
-    width: 12%;
+    width: 22%;
+    min-width: 7.5rem;
+    font-size: 10px;
   }
 
   .mcp-col-kind {
@@ -9314,7 +9593,7 @@ button.linkish {
   width: 100%;
   padding: 6px 12px;
   border: 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid transparent;
   background: var(--bg-side);
   color: inherit;
   cursor: pointer;

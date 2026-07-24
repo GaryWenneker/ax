@@ -18,9 +18,22 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v3.1.0
+
+- **Diagnostics bridge** — `ax_diagnostics` correlates editor/LSP/compiler findings (Cursor Problems panel, `tsc`, `ruff`, `eslint`, …) with the graph: which files intersect CRITICAL-guarded paths, and which tests `ax_affected` says are impacted.
+- **Generic guard directives** — any CRITICAL rule can opt into a static check without code changes via a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, or `guard: require-content: "<substring or /regex/>"` line in its body.
+- **Claude Code Stop hook** — `ax install` wires `Stop`/`SubagentStop` to `ax stop-hook`, re-running `ax_guard` on every uncommitted file at turn end and blocking only on a CRITICAL violation. Disable with `AX_NO_STOP_HOOK=1`.
+- **`ax ship` auto-commit** — opt-in Aider-style checkpointing (`[auto_commit]` in `ship.toml`, or `--auto-commit`/`--revert-on-fail` for one run): commit the working tree before the quality gate runs, and safely `git reset --mixed` the checkpoint (never `--hard`) if it fails.
+- **MCP Logging** — daily log rotation (`mcp-verbose-YYYY-MM-DD.log`) in the Settings timezone, a **Has query** filter, a date picker, and scroll-up history that seamlessly loads prior days.
+- **SonarQube resilience** — the quality gate now retries `podman start` (up to 3x) on an existing-but-stopped container before failing.
+- **New integrations** — VS Code (Copilot Chat), Windsurf (Cascade), and Zed join the interactive installer as MCP-only targets.
+- **Command Center polish** — crisper title-bar wave chrome (tighter fade, no clipped Back/Follow/Full/Clear controls) and a cinematic bokeh/wave refresh on the marketing site.
+
+See [MCP Logging & Quality](/guides/mcp-quality/), [Command Center](/guides/command-center/), and [MCP Server](/reference/mcp-server/).
+
 ## What's new in v3.0.0
 
-- **MCP Logging** — live table of the active project's verbose MCP stream (`<project>/.ax/mcp-verbose.log`) with kind/tool filters, Call Inspector, and project switcher.
+- **MCP Logging** — live table of the active project's verbose MCP stream (`<project>/.ax/mcp-verbose-YYYY-MM-DD.log`, one file per calendar day in Settings timezone) with kind/tool filters, Call Inspector, scroll-up history, and project switcher.
 - **MCP Quality loop** — status-bar **Q** chip + slide-out scores correlation, enrichment, Explore-before-Grep waste, and fixpacks. CLI: `ax mcp audit`.
 - **Cursor sessionStart hook** — `ax savings hook install` tags Composer chats with the picker model and session id for accurate savings + audit correlation.
 - **Savings dashboard** — activity heatmap, period filter, TokenViz path graph, by-model rollups, and import from Cursor / Claude Code transcripts.
@@ -36,7 +49,7 @@ See [Command Center](/guides/command-center/), [Token savings](/guides/token-sav
 - **Document inventory** — PDF, Office, Markdown, and other doc types indexed as `Doc` nodes. Counts by extension (`stats.docsByExtension`) in `ax status` / `ax_status`.
 - **Auto-injected index snapshot** — every `ax_preflight` response includes an `<ax_index>` block (doc totals, markdown/office/PDF breakdown, pending sync) so agents see what is indexed without a separate status call.
 
-See [Indexing](/guides/indexing/) and [Languages](/reference/languages/).
+See [MCP Logging & Quality](/guides/mcp-quality/), [Indexing](/guides/indexing/), and [Languages](/reference/languages/).
 
 ## What's new in v2.1.7
 
@@ -92,3 +105,5 @@ Extraction is **deterministic** — derived from the AST, never LLM-summarized.
 No data leaves your machine. No API keys, no cloud index — just SQLite in `.ax/`.
 
 Ready to try it? Head to the [Quickstart](/getting-started/quickstart/).
+
+<sub>ax · Aero Xecution</sub>

@@ -7,8 +7,12 @@ import '@fontsource/bebas-neue';
 import '../styles/theme.css';
 import LogoMark from '../components/LogoMark.astro';
 import { agents, agentIcons } from '../components/AgentIcons.astro';
+import HeaderWaves from '../components/HeaderWaves.astro';
+import BokehField from '../components/BokehField.astro';
+import MotionControl from '../components/MotionControl.astro';
 import { getStarsLabel } from '../lib/github';
 import { AX_VERSION } from '../lib/version';
+import { AX_FULL_NAME } from '../lib/brand';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const repo = 'https://github.com/GaryWenneker/ax';
@@ -45,31 +49,37 @@ const pillars = [
 	{
 		title: 'Knowledge graph',
 		body: 'MCP tools replace hundreds of greps — explore call paths, impact, and architecture in one shot.',
+		href: '/core-concepts/knowledge-graph',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="19" y="4" width="10" height="10"/><rect x="4" y="34" width="10" height="10"/><rect x="34" y="34" width="10" height="10"/><path d="M24 14v10M9 34v-10h30v10M24 24v10"/></svg>`,
 	},
 	{
 		title: 'Memory vault',
 		body: 'Decisions, fixes, and conventions with hybrid search. Editable in Command Center, injected at preflight.',
+		href: '/guides/memory',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 10h24v28H12z"/><path d="M18 18h12M18 26h8M18 34h10"/></svg>`,
 	},
 	{
 		title: 'Policy engine',
 		body: 'IDE-agnostic rules and skills in .ax/policy/. Matched per turn, captured from directives, enforced before writes.',
+		href: '/guides/policy-engine',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="8" width="36" height="32"/><path d="M14 18h20M14 26h14M14 34h18"/></svg>`,
 	},
 	{
 		title: 'Command Center',
 		body: 'ax web — graph browser, MCP Logging / Quality, token savings, SonarQube proxy, policy editor, and agent terminal.',
+		href: '/guides/command-center',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 36V18l16-10 16 10v18"/><path d="M18 36V24h12v12M22 28h4"/></svg>`,
 	},
 	{
 		title: 'Architecture insights',
 		body: 'Leiden communities, god nodes, and surprising connections — plus an interactive graph, a Markdown report, and confidence-tagged edges.',
+		href: '/guides/architecture-insights',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="24" cy="12" r="5"/><circle cx="10" cy="36" r="5"/><circle cx="38" cy="36" r="5"/><circle cx="26" cy="30" r="3"/><path d="M22 16 12 32M27 15l9 18M22 13 15 34M28 27l7 6"/></svg>`,
 	},
 	{
 		title: 'MCP quality loop',
 		body: 'Verbose traces, live Logging, and a scored Quality slide-out that turns Explore-before-Grep waste into a Copy fixpack.',
+		href: '/guides/mcp-quality',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 34V14h32v20"/><path d="M14 22h8M14 28h20M28 18l6 6-6 6"/></svg>`,
 	},
 ];
@@ -99,44 +109,36 @@ const stats = [
 		<meta name="theme-color" content="#0a0a0f" />
 	</head>
 	<body>
-		<!-- cinematic bokeh layer — fixed behind everything -->
-		<div class="bokeh-field" aria-hidden="true">
-			<div class="bokeh b1"></div>
-			<div class="bokeh b2"></div>
-			<div class="bokeh b3"></div>
-			<div class="bokeh b4"></div>
-			<div class="bokeh b5"></div>
-			<div class="bokeh b6"></div>
-			<div class="bokeh b7"></div>
-			<div class="bokeh b8"></div>
-			<div class="bokeh b9"></div>
-			<div class="bokeh b10"></div>
-			<div class="bokeh b11"></div>
-			<div class="bokeh b12"></div>
-		</div>
+		{/* The quiet expansion of ax — hover the wordmark. */}
+		<!-- Aero Xecution -->
+		<BokehField />
 
 		<header class="nav">
-			<a class="wordmark" href={`${base}/`}>
+			<div class="nav-bar">
+			<a class="wordmark" href={`${base}/`} aria-label={`${AX_FULL_NAME} home`}>
 				<LogoMark size="md" />
+				<span class="sr-only">{AX_FULL_NAME}</span>
 			</a>
-			<nav class="nav-links">
-				<a href={`${base}/getting-started/introduction`}>Docs</a>
-				<a class="opt" href={`${base}/reference/languages`}>Languages</a>
-				<a href={repo}>GitHub</a>
-				<a class="star" href={`${repo}/stargazers`}>
-					<span class="star-glyph" aria-hidden="true">&#9733;</span>{stars}
-				</a>
-			</nav>
+				<nav class="nav-links">
+					<a href={`${base}/getting-started/introduction`}>Docs</a>
+					<a class="opt" href={`${base}/reference/languages`}>Languages</a>
+					<a href={repo}>GitHub</a>
+					<a
+						class="star"
+						href={`${repo}/stargazers`}
+						aria-label={stars ? `${stars} GitHub stars` : 'GitHub stars'}
+					>
+						<span class="star-glyph" aria-hidden="true">&#9733;</span>{stars}
+					</a>
+					<MotionControl />
+				</nav>
+			</div>
+			<HeaderWaves variant="nav" />
 		</header>
 
 		<main>
 			<!-- ===== HERO ===== -->
 			<section class="hero" id="hero">
-				<div class="hero-bg" aria-hidden="true">
-					<div class="hero-bokeh hb1"></div>
-					<div class="hero-bokeh hb2"></div>
-					<div class="hero-bokeh hb3"></div>
-				</div>
 				<div class="hero-content reveal">
 					<div class="hero-meta">
 						<span class="release-tag">{AX_VERSION}</span>
@@ -227,12 +229,12 @@ const stats = [
 				</header>
 				<div class="feature-grid">
 					{pillars.map((p, i) => (
-						<article class="feature-card reveal" style={`--delay: ${i * 0.1}s`}>
+						<a class="feature-card reveal" href={`${base}${p.href}`} style={`--delay: ${i * 0.1}s`}>
 							<div class="feature-card-glow" aria-hidden="true"></div>
 							<div class="feature-icon" set:html={p.icon} />
 							<h3>{p.title}</h3>
 							<p>{p.body}</p>
-						</article>
+						</a>
 					))}
 				</div>
 			</section>
@@ -267,12 +269,13 @@ const stats = [
 		</main>
 
 		<footer class="foot">
-			<span class="foot-mark"><LogoMark size="sm" /></span>
+			<span class="foot-mark" aria-hidden="true"><LogoMark size="sm" /></span>
 			<nav class="foot-links">
 				<a href={`${base}/getting-started/introduction`}>Docs</a>
 				<a href={repo}>GitHub</a>
 				<a href={`${repo}/blob/main/LICENSE`}>MIT</a>
 			</nav>
+			<span class="foot-whisper" aria-hidden="true">ax</span>
 		</footer>
 
 		<script>
@@ -305,25 +308,6 @@ const stats = [
 			);
 			reveals.forEach((el) => io.observe(el));
 
-			// Parallax bokeh on mouse move
-			const bokehs = document.querySelectorAll('.bokeh-field .bokeh');
-			if (bokehs.length) {
-				let ticking = false;
-				window.addEventListener('mousemove', (e) => {
-					if (ticking) return;
-					ticking = true;
-					requestAnimationFrame(() => {
-						const cx = (e.clientX / window.innerWidth - 0.5) * 2;
-						const cy = (e.clientY / window.innerHeight - 0.5) * 2;
-						bokehs.forEach((b, i) => {
-							const depth = 0.5 + (i % 4) * 0.5;
-							(b as HTMLElement).style.transform =
-								`translate(${cx * depth * 18}px, ${cy * depth * 12}px)`;
-						});
-						ticking = false;
-					});
-				});
-			}
 		</script>
 
 	<style>
@@ -346,171 +330,9 @@ const stats = [
 		:global(*, *::before, *::after) {
 			box-sizing: border-box;
 		}
-
-		/* ================================================================
-		   CINEMATIC BOKEH FIELD — fixed, parallax on mouse
-		   ================================================================ */
-		.bokeh-field {
-			position: fixed;
-			inset: 0;
-			z-index: 0;
-			pointer-events: none;
-			overflow: hidden;
-			background: radial-gradient(ellipse 120% 80% at 50% 50%, #0c1520 0%, #060610 100%);
-			width: 100vw;
-			max-width: 100%;
-		}
-		.bokeh {
-			position: absolute;
-			border-radius: 50%;
-			will-change: transform;
-			transition: transform 0.4s ease-out;
-		}
-
-		/* large teal — hero center */
-		.b1 {
-			width: 700px; height: 700px;
-			background: radial-gradient(circle, rgba(20, 120, 140, 0.55) 0%, rgba(20, 120, 140, 0) 70%);
-			top: 5%; left: 25%;
-			filter: blur(90px);
-			animation: bkFloat1 22s ease-in-out infinite;
-		}
-		/* deep blue — right */
-		.b2 {
-			width: 550px; height: 550px;
-			background: radial-gradient(circle, rgba(30, 80, 160, 0.5) 0%, transparent 70%);
-			top: -5%; right: 5%;
-			filter: blur(80px);
-			animation: bkFloat2 18s ease-in-out infinite;
-		}
-		/* warm amber — left hero */
-		.b3 {
-			width: 500px; height: 500px;
-			background: radial-gradient(circle, rgba(190, 140, 50, 0.4) 0%, transparent 70%);
-			top: 20%; left: -8%;
-			filter: blur(100px);
-			animation: bkFloat3 20s ease-in-out infinite;
-		}
-		/* cyan highlight — top */
-		.b4 {
-			width: 350px; height: 350px;
-			background: radial-gradient(circle, rgba(60, 200, 210, 0.35) 0%, transparent 70%);
-			top: -10%; left: 55%;
-			filter: blur(70px);
-			animation: bkFloat1 16s ease-in-out infinite reverse;
-		}
-		/* dark navy fill — massive */
-		.b5 {
-			width: 900px; height: 900px;
-			background: radial-gradient(circle, rgba(15, 35, 70, 0.6) 0%, transparent 65%);
-			top: 30%; left: 30%;
-			filter: blur(120px);
-			animation: bkFloat2 26s ease-in-out infinite;
-		}
-		/* gold accent — mid */
-		.b6 {
-			width: 400px; height: 400px;
-			background: radial-gradient(circle, rgba(201, 165, 92, 0.3) 0%, transparent 70%);
-			top: 50%; right: 15%;
-			filter: blur(80px);
-			animation: bkFloat3 15s ease-in-out infinite;
-		}
-		/* teal bottom */
-		.b7 {
-			width: 600px; height: 600px;
-			background: radial-gradient(circle, rgba(20, 100, 130, 0.4) 0%, transparent 70%);
-			bottom: -10%; left: 10%;
-			filter: blur(100px);
-			animation: bkFloat1 19s ease-in-out infinite;
-		}
-		/* blue-purple — bottom right */
-		.b8 {
-			width: 500px; height: 500px;
-			background: radial-gradient(circle, rgba(50, 60, 150, 0.35) 0%, transparent 70%);
-			bottom: 5%; right: -5%;
-			filter: blur(90px);
-			animation: bkFloat2 21s ease-in-out infinite reverse;
-		}
-		/* small bright teal spot */
-		.b9 {
-			width: 250px; height: 250px;
-			background: radial-gradient(circle, rgba(40, 180, 180, 0.4) 0%, transparent 70%);
-			top: 35%; left: 60%;
-			filter: blur(60px);
-			animation: bkFloat3 14s ease-in-out infinite;
-		}
-		/* warm edge — bottom left */
-		.b10 {
-			width: 450px; height: 450px;
-			background: radial-gradient(circle, rgba(160, 110, 40, 0.3) 0%, transparent 70%);
-			bottom: 20%; left: -5%;
-			filter: blur(90px);
-			animation: bkFloat1 17s ease-in-out infinite reverse;
-		}
-		/* pale cyan — center float */
-		.b11 {
-			width: 300px; height: 300px;
-			background: radial-gradient(circle, rgba(80, 200, 220, 0.25) 0%, transparent 70%);
-			top: 60%; left: 40%;
-			filter: blur(70px);
-			animation: bkFloat2 13s ease-in-out infinite;
-		}
-		/* deep blue — far background fill */
-		.b12 {
-			width: 800px; height: 800px;
-			background: radial-gradient(circle, rgba(10, 30, 60, 0.5) 0%, transparent 60%);
-			top: 10%; right: 20%;
-			filter: blur(130px);
-			animation: bkFloat3 28s ease-in-out infinite;
-		}
-
-		@keyframes bkFloat1 {
-			0%, 100% { transform: translate(0, 0) scale(1); }
-			25% { transform: translate(40px, -30px) scale(1.06); }
-			50% { transform: translate(-20px, 50px) scale(0.97); }
-			75% { transform: translate(30px, 20px) scale(1.04); }
-		}
-		@keyframes bkFloat2 {
-			0%, 100% { transform: translate(0, 0) scale(1); }
-			33% { transform: translate(-50px, 40px) scale(1.08); }
-			66% { transform: translate(35px, -35px) scale(0.95); }
-		}
-		@keyframes bkFloat3 {
-			0%, 100% { transform: translate(0, 0) scale(1); }
-			40% { transform: translate(45px, -55px) scale(1.1); }
-			80% { transform: translate(-30px, 25px) scale(0.98); }
-		}
-
-		/* hero-local bokeh accents (on top of fixed field) */
-		.hero-bg {
-			position: absolute;
-			inset: 0;
-			z-index: 0;
-		}
-		.hero-bokeh {
-			position: absolute;
-			border-radius: 50%;
-		}
-		.hb1 {
-			width: 500px; height: 500px;
-			background: radial-gradient(circle, rgba(30, 150, 170, 0.3) 0%, transparent 65%);
-			top: 10%; left: 40%;
-			filter: blur(80px);
-			animation: bkFloat1 12s ease-in-out infinite;
-		}
-		.hb2 {
-			width: 350px; height: 350px;
-			background: radial-gradient(circle, rgba(201, 165, 92, 0.2) 0%, transparent 70%);
-			top: 50%; left: 15%;
-			filter: blur(70px);
-			animation: bkFloat3 10s ease-in-out infinite;
-		}
-		.hb3 {
-			width: 400px; height: 400px;
-			background: radial-gradient(circle, rgba(50, 80, 180, 0.2) 0%, transparent 70%);
-			bottom: -5%; right: 10%;
-			filter: blur(90px);
-			animation: bkFloat2 14s ease-in-out infinite;
+		main {
+			position: relative;
+			z-index: 1;
 		}
 
 		/* ================================================================
@@ -537,14 +359,36 @@ const stats = [
 			left: 0;
 			right: 0;
 			z-index: 100;
+			isolation: isolate;
+			/* Must stay visible so waves hang; no backdrop here (iOS clips fixed+blur) */
+			overflow: visible;
+			padding: 0;
+			background: transparent;
+			border-bottom: 1px solid transparent;
+			-webkit-backdrop-filter: none;
+			backdrop-filter: none;
+			pointer-events: none;
+		}
+		.nav-bar {
+			position: relative;
+			z-index: 1;
 			display: flex;
 			align-items: center;
 			justify-content: space-between;
-			padding: 1.25rem 2.5rem;
-			background: rgba(6, 6, 16, 0.45);
-			-webkit-backdrop-filter: blur(24px) saturate(160%);
-			backdrop-filter: blur(24px) saturate(160%);
-			border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+			padding: 1.1rem 2.5rem 0.85rem;
+			width: 100%;
+			pointer-events: auto;
+			/* Light glass only — wave supplies the bottom edge */
+			background: linear-gradient(
+				to bottom,
+				rgba(7, 11, 16, 0.55) 0%,
+				rgba(7, 11, 16, 0.22) 70%,
+				transparent 100%
+			);
+			-webkit-backdrop-filter: blur(16px) saturate(140%);
+			backdrop-filter: blur(16px) saturate(140%);
+			-webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 78%, transparent 100%);
+			mask-image: linear-gradient(to bottom, #000 0%, #000 78%, transparent 100%);
 		}
 		.wordmark {
 			display: inline-flex;
@@ -555,6 +399,15 @@ const stats = [
 			display: flex;
 			align-items: center;
 			gap: 1.75rem;
+		}
+		.nav-links :global(.ax-motion-toggle) {
+			color: #9ca0a4;
+			border-color: rgba(255, 255, 255, 0.14);
+		}
+		.nav-links :global(.ax-motion-toggle:hover),
+		.nav-links :global(.ax-motion-toggle:focus-visible) {
+			color: #f3f1ea;
+			border-color: #c9a55c;
 		}
 		.nav-links a {
 			color: #f3f1ea;
@@ -568,9 +421,12 @@ const stats = [
 		.star {
 			display: inline-flex;
 			align-items: center;
+			justify-content: center;
 			gap: 0.35rem;
 			background: rgba(255, 255, 255, 0.06);
 			padding: 0.35rem 0.75rem;
+			min-height: 24px;
+			min-width: 24px;
 			font-variant-numeric: tabular-nums;
 			font-size: 0.9rem;
 			transition: background 0.15s;
@@ -741,7 +597,8 @@ const stats = [
 			font-weight: 700;
 			text-transform: uppercase;
 			letter-spacing: 0.06em;
-			color: rgba(255, 255, 255, 0.35);
+			/* ≥4.5:1 on hero install strip (~#11151a) */
+			color: #9ca0a4;
 			flex-shrink: 0;
 		}
 		.install code {
@@ -973,6 +830,7 @@ const stats = [
 		}
 		.feature-card {
 			position: relative;
+			display: block;
 			padding: 2.5rem;
 			background: rgba(255, 255, 255, 0.03);
 			border: 1px solid rgba(255, 255, 255, 0.05);
@@ -980,6 +838,8 @@ const stats = [
 			backdrop-filter: blur(12px);
 			overflow: hidden;
 			transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+			text-decoration: none;
+			color: inherit;
 		}
 		.feature-card:hover {
 			background: rgba(255, 255, 255, 0.07);
@@ -1142,6 +1002,7 @@ const stats = [
 			display: flex;
 			align-items: center;
 			justify-content: space-between;
+			gap: 1rem;
 			padding: 1.5rem 2.5rem;
 			border-top: 1px solid rgba(255, 255, 255, 0.04);
 		}
@@ -1154,13 +1015,34 @@ const stats = [
 			gap: 1.5rem;
 		}
 		.foot-links a {
-			color: rgba(255, 255, 255, 0.3);
+			/* ≥4.5:1 on footer (~#070b10) */
+			color: #9ca0a4;
 			text-decoration: none;
 			font-size: 0.9rem;
 			transition: color 0.15s;
 		}
 		.foot-links a:hover {
 			color: #f3f1ea;
+		}
+		.foot-whisper {
+			font-family: var(--sl-font-mono);
+			font-size: 0.65rem;
+			letter-spacing: 0.12em;
+			text-transform: lowercase;
+			/* ≥4.5:1 on footer (~#070b10); decorative but still painted */
+			color: #9ca0a4;
+			user-select: none;
+		}
+		.sr-only {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			padding: 0;
+			margin: -1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+			white-space: nowrap;
+			border: 0;
 		}
 
 		/* ================================================================
@@ -1204,7 +1086,7 @@ const stats = [
 				overflow-x: hidden;
 			}
 
-			.nav {
+			.nav-bar {
 				padding: 0.75rem 1rem;
 			}
 			.nav-links {
@@ -1386,7 +1268,7 @@ const stats = [
 			.foot {
 				padding: 1rem 0.85rem;
 			}
-			.nav {
+			.nav-bar {
 				padding: 0.65rem 0.85rem;
 			}
 			.nav-links {
@@ -1399,8 +1281,6 @@ const stats = [
 		   REDUCED MOTION
 		   ================================================================ */
 		@media (prefers-reduced-motion: reduce) {
-			.bokeh,
-			.hero-bokeh,
 			.agents-track,
 			.scroll-line {
 				animation: none !important;

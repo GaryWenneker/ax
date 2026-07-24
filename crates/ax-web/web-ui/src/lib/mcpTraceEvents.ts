@@ -1,4 +1,4 @@
-import type { TraceEntry, TraceKind } from './mcpTrace';
+import { entryHasQueryPayload, type TraceEntry, type TraceKind } from './mcpTrace';
 
 export const MCP_TRACE_STATS = 'ax-mcp-trace-stats';
 export const MCP_TRACE_FILTER = 'ax-mcp-trace-filter';
@@ -10,8 +10,15 @@ export type McpTraceFilterDetail = {
   toggleKind?: TraceKind;
   /** Exact tool name, or '' to clear. */
   tool?: string;
+  /** Calendar day `YYYY-MM-DD`, or '' to clear. */
+  date?: string;
   /** Free-text query, or '' to clear. */
   q?: string;
+  /**
+   * When true, keep only lines whose JSON payload has a top-level `query`
+   * property. When false / omit, do not filter on that flag.
+   */
+  hasQuery?: boolean;
   /** Reset all filters. */
   clear?: boolean;
 };
@@ -105,18 +112,29 @@ export function emptyMcpTraceStats(): McpTraceStats {
   };
 }
 
-/** Apply Logging table filters (kind multi-select + tool + text). */
+/** Apply Logging table filters (kind multi-select + date + tool + text + query-payload). */
 export function filterTraceEntries(
   entries: TraceEntry[],
-  opts: { kinds: ReadonlySet<TraceKind>; tool: string; q: string },
+  opts: {
+    kinds: ReadonlySet<TraceKind>;
+    tool: string;
+    q: string;
+    date?: string;
+    /** Keep only entries with a JSON payload that owns a top-level `query` key. */
+    hasQuery?: boolean;
+  },
 ): TraceEntry[] {
   const tool = opts.tool.trim();
+  const date = (opts.date ?? '').trim();
   const needle = opts.q.trim().toLowerCase();
   const kindsActive = opts.kinds.size > 0;
-  if (!kindsActive && !tool && !needle) return entries;
+  const hasQuery = Boolean(opts.hasQuery);
+  if (!kindsActive && !tool && !needle && !date && !hasQuery) return entries;
   return entries.filter((e) => {
     if (kindsActive && !opts.kinds.has(e.kind)) return false;
+    if (date && e.day !== date) return false;
     if (tool && e.tool !== tool) return false;
+    if (hasQuery && !entryHasQueryPayload(e)) return false;
     if (needle) {
       const hay = `${e.raw}\n${e.tool ?? ''}\n${e.message}`.toLowerCase();
       if (!hay.includes(needle)) return false;

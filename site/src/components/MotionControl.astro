@@ -1,0 +1,68 @@
+---
+/**
+ * Visible pause/resume control for decorative auto-motion (WCAG 2.2.2).
+ * Toggles html[data-ax-motion] — HeaderWaves, bokeh, and homepage marquee listen.
+ */
+---
+
+<button
+	type="button"
+	class="ax-motion-toggle"
+	data-ax-motion-toggle
+	aria-pressed="false"
+	aria-label="Pause animations"
+>
+	Pause motion
+</button>
+
+<script>
+	(() => {
+		const KEY = 'ax-motion';
+		const reduce = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+		const apply = (paused) => {
+			document.documentElement.dataset.axMotion = paused ? 'paused' : 'running';
+			try {
+				localStorage.setItem(KEY, paused ? 'paused' : 'running');
+			} catch {
+				/* private mode */
+			}
+			document.querySelectorAll('[data-ax-motion-toggle]').forEach((btn) => {
+				btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+				btn.setAttribute('aria-label', paused ? 'Resume animations' : 'Pause animations');
+				btn.textContent = paused ? 'Play motion' : 'Pause motion';
+			});
+			window.dispatchEvent(
+				new CustomEvent('ax:motion', { detail: { paused } }),
+			);
+		};
+
+		const initial = () => {
+			try {
+				const stored = localStorage.getItem(KEY);
+				if (stored === 'paused' || stored === 'running') return stored === 'paused';
+			} catch {
+				/* ignore */
+			}
+			return reduce();
+		};
+
+		const bind = () => {
+			document.querySelectorAll('[data-ax-motion-toggle]').forEach((btn) => {
+				if (btn.dataset.bound) return;
+				btn.dataset.bound = '1';
+				btn.addEventListener('click', () => {
+					const paused = document.documentElement.dataset.axMotion !== 'paused';
+					apply(paused);
+				});
+			});
+		};
+
+		apply(initial());
+		bind();
+		document.addEventListener('astro:page-load', () => {
+			apply(document.documentElement.dataset.axMotion === 'paused');
+			bind();
+		});
+	})();
+</script>

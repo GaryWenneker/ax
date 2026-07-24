@@ -205,6 +205,10 @@ enum Commands {
         port: u16,
         #[arg(long, help = "Open browser")]
         open: bool,
+        #[arg(long, help = "Auto-commit uncommitted changes before the gate runs (this run only; see [auto_commit] in ship.toml to persist)")]
+        auto_commit: bool,
+        #[arg(long, help = "With --auto-commit: undo the checkpoint commit (git reset --mixed, never --hard) if the gate fails (this run only)")]
+        revert_on_fail: bool,
     },
     /// Affected tests
     #[command(long_about = help_text::AFFECTED_LONG)]
@@ -304,6 +308,9 @@ enum Commands {
     /// Cursor sessionStart hook (hidden; reads hook JSON on stdin)
     #[command(hide = true, name = "session-hook")]
     SessionHook,
+    /// Claude Stop/SubagentStop hook (hidden; reads hook JSON on stdin, may block via decision JSON)
+    #[command(hide = true, name = "stop-hook")]
+    StopHook,
     /// Hidden liveness watchdog child (spawned by ax MCP/daemon)
     #[command(hide = true, name = "watchdog-child")]
     WatchdogChild {
@@ -701,7 +708,9 @@ async fn async_main() {
             title,
             port,
             open,
-        }) => commands::ship::run(path, watch, evaluate, draft, title, port, open).await,
+            auto_commit,
+            revert_on_fail,
+        }) => commands::ship::run(path, watch, evaluate, draft, title, port, open, auto_commit, revert_on_fail).await,
         Some(Commands::Unlock { path }) => commands::unlock::run(path).await,
         Some(Commands::Daemon { path, action }) => {
             let act = match action {
@@ -786,6 +795,7 @@ async fn async_main() {
         },
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::SessionHook) => commands::session_hook::run().await,
+        Some(Commands::StopHook) => commands::stop_hook::run().await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
             ax_mcp::run_watchdog_child(parent_pid, timeout_ms);
             Ok(())
@@ -865,8 +875,9 @@ async fn async_main() {
 fn should_notify_update(cmd: &Option<Commands>) -> bool {
     match cmd {
         Some(Commands::Serve { .. })
-        | Some(Commands::PromptHook)
+        |         Some(Commands::PromptHook)
         | Some(Commands::SessionHook)
+        | Some(Commands::StopHook)
         | Some(Commands::WatchdogChild { .. })
         | Some(Commands::UpgradeApply { .. })
         | Some(Commands::Upgrade { .. })
@@ -920,6 +931,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Policy { .. }) => Some("policy".into()),
         Some(Commands::PromptHook) => None,
         Some(Commands::SessionHook) => None,
+        Some(Commands::StopHook) => None,
         Some(Commands::WatchdogChild { .. }) => None,
         Some(Commands::UpgradeApply { .. }) => None,
         Some(Commands::Serve { .. }) => Some("serve".into()),

@@ -1,4 +1,4 @@
-//! MCP quality audit: correlate Cursor transcripts with `.ax/mcp-verbose.log`.
+//! MCP quality audit: correlate Cursor transcripts with daily `.ax/mcp-verbose-*.log` files.
 //!
 //! Scores policy-tool usage (preflight, explore-before-grep, enrichment) and
 //! estimates token waste when agents fall back to Read/Grep instead of graph tools.
@@ -149,10 +149,6 @@ pub fn cursor_project_slug(project_root: &Path) -> String {
         }
     }
     out.trim_matches('-').to_string()
-}
-
-pub fn mcp_verbose_log_path(project_root: &Path) -> PathBuf {
-    project_root.join(".ax").join("mcp-verbose.log")
 }
 
 pub fn audit_dir(project_root: &Path) -> PathBuf {
@@ -1022,7 +1018,7 @@ fn score_and_findings(
                 check: "UncorrelatedTool".into(),
                 severity: "medium".into(),
                 title: "Transcript ax calls outside verbose window".into(),
-                detail: "`.ax/mcp-verbose.log` exists but has no clusters in this window. Widen `--window-minutes`, pass `--session <uuid>`, or ensure the sessionStart hook tags `session=` and MCP was restarted after enabling verbose."
+                detail: "Verbose log files exist but have no clusters in this window. Widen `--window-minutes`, pass `--session <uuid>`, or ensure the sessionStart hook tags `session=` and MCP was restarted after enabling verbose."
                     .into(),
                 waste_hint: "Window mismatch blocks enrichment measurement for this slice.".into(),
                 tokens_est: 0,
@@ -1241,8 +1237,8 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
         now_ms().saturating_sub((window as i64) * 60_000)
     };
 
-    let log_path = mcp_verbose_log_path(project_root);
-    let verbose_text = fs::read_to_string(&log_path).unwrap_or_default();
+    let log_path = crate::mcp_verbose_log::current_log_path(Some(project_root));
+    let verbose_text = crate::mcp_verbose_log::read_merged_verbose_log(project_root);
     let verbose_present = !verbose_text.trim().is_empty();
     let (_lines, mut clusters) = parse_verbose_log(&verbose_text, since_ms);
 

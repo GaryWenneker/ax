@@ -23,6 +23,15 @@ Current builds use SQLite WAL mode via sqlx; concurrent reads should not block w
 
 Your agent starts the server itself. Verify the project is indexed (`ax status`) and re-run `ax install` to rewrite MCP config if needed.
 
+## MCP Logging empty / Quality score stuck
+
+1. Enable **Settings → Interface → Verbose MCP logging** (or `AX_MCP_VERBOSE=1`) and reconnect MCP.
+2. Confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows after an agent turn.
+3. Open Command Center **Logging**; use the project switcher if you are on the wrong workspace.
+4. Install `ax savings hook install` so sessions tag `session=` for tighter `ax mcp audit` correlation.
+
+Full playbook: [MCP Logging & Quality](/guides/mcp-quality/#troubleshooting).
+
 ## Missing symbols
 
 The MCP server auto-syncs on save (wait a couple of seconds). Run `ax sync` manually if needed. Check that the file's language is [supported](/reference/languages/) and isn't excluded via `.gitignore`, built-in skip dirs (`node_modules`, `target`, …), or `ax.json` `exclude`.

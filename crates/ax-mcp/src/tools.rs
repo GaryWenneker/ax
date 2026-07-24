@@ -40,6 +40,7 @@ impl ToolHandler {
             "ax_skill" => skill(ax, params).await,
             "ax_policy_capture" => policy_capture(ax, params).await,
             "ax_guard" => guard(ax, params).await,
+            "ax_diagnostics" => diagnostics(ax, params).await,
             "ax_search" => {
                 let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
                 let results = ax.search_nodes(query, &SearchOptions { limit: Some(20), ..Default::default() }).await.map_err(|e| e.to_string())?;
@@ -526,6 +527,143 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
     }))
 }
 
+/// Diagnostics bridge — the agent gathers LSP/linter/compiler diagnostics from its
+/// own host (Cursor's Problems panel, `tsc`, `ruff`, …) and feeds them in here.
+/// ax has no way to read editor/IDE state itself, so this tool exists to receive
+/// that state and correlate it with graph data ax *does* own: which CRITICAL-guarded
+/// paths are affected, and which tests the graph says are impacted by those files.
+async fn diagnostics(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let entries = diagnostics_from_params(&params);
+    if entries.is_empty() {
+        return Ok(json!({
+            "text": "No diagnostics provided — pass diagnostics: [{ path, line?, severity?, message, source? }].",
+            "files": [],
+        }));
+    }
+
+    let mut by_path: std::collections::BTreeMap<String, Vec<&DiagnosticEntry>> = std::collections::BTreeMap::new();
+    for d in &entries {
+        by_path.entry(d.path.clone()).or_default().push(d);
+    }
+
+    let error_count = entries.iter().filter(|d| d.severity == "error").count();
+    let warning_count = entries.iter().filter(|d| d.severity == "warning").count();
+
+    let paths: Vec<String> = by_path.keys().cloned().collect();
+    let affected = ax.get_affected_files(&paths).await.unwrap_or_default();
+
+    let mut guarded_paths = Vec::new();
+    for path_str in &paths {
+        let abs = ax.project_root().join(path_str);
+        let content = std::fs::read(&abs).ok();
+        if let Ok(result) = ax
+            .guard_operation(&abs, GuardOp::Write, content.as_deref())
+            .await
+        {
+            if !result.allowed {
+                guarded_paths.push(json!({
+                    "path": path_str,
+                    "violations": result.violations,
+                }));
+            }
+        }
+    }
+
+    let mut lines = vec![format!(
+        "# Diagnostics: {} error(s), {} warning(s) across {} file(s)",
+        error_count,
+        warning_count,
+        by_path.len()
+    )];
+    for (path, ds) in &by_path {
+        lines.push(format!("\n## {path}"));
+        for d in ds.iter() {
+            let loc = match d.line {
+                Some(l) => format!(":{l}"),
+                None => String::new(),
+            };
+            let src = d
+                .source
+                .as_ref()
+                .map(|s| format!(" ({s})"))
+                .unwrap_or_default();
+            lines.push(format!("- [{}]{loc} {}{src}", d.severity, d.message));
+        }
+    }
+    if !guarded_paths.is_empty() {
+        lines.push("\n## CRITICAL policy overlap".to_string());
+        lines.push("These diagnostic files are also guarded by CRITICAL rules — check ax_guard before writing a fix:".to_string());
+        for g in &guarded_paths {
+            lines.push(format!("- {}", g["path"]));
+        }
+    }
+    if !affected.is_empty() {
+        lines.push("\n## Affected tests (run after fixing)".to_string());
+        for t in &affected {
+            lines.push(format!("- {t}"));
+        }
+    }
+
+    Ok(json!({
+        "text": lines.join("\n"),
+        "errorCount": error_count,
+        "warningCount": warning_count,
+        "files": paths,
+        "guardedPaths": guarded_paths,
+        "affectedTests": affected,
+    }))
+}
+
+struct DiagnosticEntry {
+    path: String,
+    line: Option<u64>,
+    severity: String,
+    message: String,
+    source: Option<String>,
+}
+
+fn diagnostics_from_params(params: &Value) -> Vec<DiagnosticEntry> {
+    params
+        .get("diagnostics")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|d| {
+                    let path = d
+                        .get("path")
+                        .or_else(|| d.get("file"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())?
+                        .to_string();
+                    let message = d
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no message)")
+                        .to_string();
+                    let severity = d
+                        .get("severity")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("error")
+                        .to_ascii_lowercase();
+                    let line = d.get("line").and_then(|v| v.as_u64());
+                    let source = d
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    Some(DiagnosticEntry {
+                        path,
+                        line,
+                        severity,
+                        message,
+                        source,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Accept `path`, `file`/`filepath`, or a non-empty `paths` array (common agent mistakes).
 fn guard_paths_from_params(params: &Value) -> Result<Vec<String>, String> {
     if let Some(p) = params
@@ -775,7 +913,7 @@ fn skill_tool() -> Value {
 fn guard_tool() -> Value {
     json!({
         "name": "ax_guard",
-        "description": "Pre-write guard for CRITICAL policy rules. Prefer path+operation; also accepts paths[] and action=edit|write|delete.",
+        "description": "Pre-write guard for CRITICAL policy rules. Prefer path+operation; also accepts paths[] and action=edit|write|delete. Checks built-in encoding/secrets rules, plus any CRITICAL rule whose body contains a `guard: forbid-path: \"<glob>\"`, `guard: forbid-content: \"<substring or /regex/>\"`, or `guard: require-content: \"<substring or /regex/>\"` (scoped by that rule's globs) directive line.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -833,6 +971,31 @@ fn extra_tools() -> Vec<Value> {
             }
         }),
         json!({ "name": "ax_affected", "description": "Affected test files", "inputSchema": { "type": "object", "properties": { "files": { "type": "array", "items": { "type": "string" } } } } }),
+        json!({
+            "name": "ax_diagnostics",
+            "description": "Diagnostics bridge: feed in LSP/linter/compiler diagnostics gathered by the agent (e.g. Cursor's Problems panel / ReadLints, tsc, ruff) and get back graph-correlated context — which of those files intersect CRITICAL-guarded paths, and which tests the graph says are impacted. ax cannot read editor state itself; call this after gathering diagnostics client-side.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "diagnostics": {
+                        "type": "array",
+                        "description": "One entry per diagnostic",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": { "type": "string", "description": "Relative file path" },
+                                "line": { "type": "number" },
+                                "severity": { "type": "string", "enum": ["error", "warning", "info"] },
+                                "message": { "type": "string" },
+                                "source": { "type": "string", "description": "Origin, e.g. tsc, eslint, ruff, rustc" }
+                            },
+                            "required": ["path", "message"]
+                        }
+                    }
+                },
+                "required": ["diagnostics"]
+            }
+        }),
         json!({
             "name": "ax_remember",
             "description": "Store a durable project memory (decision, bug fix, architecture choice, convention). Recalled automatically in future ax_preflight calls and searchable via ax_recall.",
@@ -947,5 +1110,38 @@ mod tests {
         assert!(s.contains("ax_preflight"));
         assert!(s.contains("Directive capture"));
         assert!(s.contains("ax_policy_capture"));
+    }
+
+    #[tokio::test]
+    async fn ax_diagnostics_always_advertised_regardless_of_policy() {
+        // Diagnostics correlation (affected tests) is useful even with no policy —
+        // guardedPaths degrades to empty rather than gating the whole tool.
+        for has_policy in [false, true] {
+            let names = tool_names(&ToolHandler::list_tools(has_policy).await);
+            assert!(names.contains(&"ax_diagnostics".to_string()));
+        }
+    }
+
+    #[test]
+    fn diagnostics_from_params_parses_entries_and_defaults_severity() {
+        let params = json!({
+            "diagnostics": [
+                { "path": "src/lib.rs", "line": 42, "severity": "warning", "message": "unused import", "source": "rustc" },
+                { "file": "src/main.rs", "message": "missing semicolon" },
+                { "message": "no path — should be dropped" }
+            ]
+        });
+        let entries = diagnostics_from_params(&params);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "src/lib.rs");
+        assert_eq!(entries[0].severity, "warning");
+        assert_eq!(entries[0].line, Some(42));
+        assert_eq!(entries[1].path, "src/main.rs");
+        assert_eq!(entries[1].severity, "error"); // default
+    }
+
+    #[test]
+    fn diagnostics_from_params_empty_without_diagnostics_key() {
+        assert!(diagnostics_from_params(&json!({})).is_empty());
     }
 }

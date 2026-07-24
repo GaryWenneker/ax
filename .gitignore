@@ -57,6 +57,7 @@ Thumbs.db
 
 # Local Netlify folder
 .netlify
+site/deploy-*.zip
 
 # Release binaries mirrored on getax.wenneker.io (CI deploy — do not commit zips)
 site/public/releases/*/ax-*

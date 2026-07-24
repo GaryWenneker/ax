@@ -16,6 +16,7 @@ ax init                          # creates .ax/ship.toml if missing
 # Edit .ax/ship.toml — set org/project/repo_id for your AzDO repo
 
 ax ship --evaluate               # one-shot quality gate (index → diff → TIA → tests → policy)
+ax ship --evaluate --auto-commit --revert-on-fail  # opt-in checkpoint for this run only
 ax ship --watch --port 7070      # dashboard + git watcher at http://localhost:7070
 ax ship --draft --title "feat: …"  # draft PR after quality gate passes (needs PAT)
 ```
@@ -68,7 +69,33 @@ show_savings = true
 show_agent_terminal = true
 # Verbose MCP traces → Cursor Output (stderr). Off by default.
 verbose_mcp = false
+# IANA timezone for Logging Date/time (e.g. "Europe/Amsterdam").
+# Empty / "local" = browser local timezone in Command Center.
+timezone = ""
+
+[auto_commit]
+# Opt-in Aider-style checkpointing — disabled by default. When enabled,
+# uncommitted working-tree changes are committed before the gate runs (so
+# diff/TIA/Sonar evaluate them as part of history).
+enabled = false
+message = "ax: auto-checkpoint before quality gate"
+# On failure, undo *only* that checkpoint commit via `git reset --mixed`
+# (never --hard) — file contents stay on disk, just uncommitted again.
+revert_on_fail = false
 ```
+
+### Auto-commit / rollback (`[auto_commit]`)
+
+Off by default — a deliberate automation feature, not a silent behavior change. With `enabled = true`, every `ax ship --evaluate` commits the current uncommitted diff as a checkpoint before running index/diff/TIA/tests/Sonar/policy, across every git root under this workspace. If the gate passes, the checkpoint stays. If it fails and `revert_on_fail = true`, ax undoes *that exact commit* with `git reset --mixed HEAD~1` — never `--hard` — so the edits remain on disk, uncommitted, for the agent or user to fix and re-run. Rollback refuses if `HEAD` has moved since the checkpoint (e.g. something else was committed in between), rather than resetting the wrong commit.
+
+Override for a single run without touching `ship.toml`:
+
+```bash
+ax ship --evaluate --auto-commit                  # force-enable for this run
+ax ship --evaluate --auto-commit --revert-on-fail # + rollback on failure
+```
+
+The report's `auto_commit` field (`ax ship --evaluate` JSON output) reports `status`: `clean` (nothing to commit), `committed`, `kept-failing` (failed but `revert_on_fail` is off), `reverted`, or `revert-failed`.
 
 Set the PAT in your environment before draft PR or review commands:
 
@@ -91,14 +118,18 @@ Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left
 | **Memory** | Browse, search, compose memories (modal composer); capture from git |
 | **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
 | **Agent** | Terminal with MCP wired in (when enabled in Settings) |
-| **Logging** | Fullscreen table of the **active project** MCP verbose stream; **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **fluid columns** (Time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
+| **Logging** | Fullscreen table of the **active project** MCP verbose stream; **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), **Has query** chip (JSON payloads with a top-level `query` — badge + blue row mark), **date** dropdown (`YYYY-MM-DD`), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **Date / time** column shows full calendar day + clock; **fluid columns** (Date/time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
 | **Policy** | View-first rule and skill editors |
 
 ![MCP Logging — live verbose stream with kind filters, project switcher, and Call Inspector](/screenshots/cc-logging.png)
 
 ![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality.png)
 
+Full walkthrough: [MCP Logging & Quality](/guides/mcp-quality/).
+
 Open with `ax web --open` or `ax ship --watch --open`.
+
+The title bar uses the same **azure CSS waves** as the marketing site (soft fade under the crest, matching the cinematic bokeh orbs). Waves sit in a reserved hang band under the chrome; the Logging overlay is portaled below that band so **Back / Follow / Full / Clear** stay fully visible and clickable (never clipped under the titlebar).
 
 ```bash
 ax web --open
@@ -133,7 +164,7 @@ When you run `ax ship --evaluate` (or when git hooks trigger evaluation), ax run
 2. **diff** — changed files and dirty symbols vs `target_branch`
 3. **tia** — test-impact analysis via `Covers` edges in the graph
 4. **tests** — runs impacted tests (when any are found)
-5. **sonar** — optional SonarQube scan + quality gate (when enabled)
+5. **sonar** — optional SonarQube scan + quality gate (when enabled). If SonarQube is offline but a Podman container already exists, the gate **always tries to start it** (up to **3** `podman start` retries, then waits for the API) before failing.
 6. **policy** — business-rule and breaking-change warnings
 
 Results stream to the dashboard via SSE (`/api/ship/events`).
@@ -158,7 +189,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 - **SonarQube** — auto-detect Podman/Docker, one-click install & start, admin auto-login, dark theme
 - **Command Center** — target branch, test runner, Azure DevOps / GitHub remote
-- **Interface** — theme chooser (accent/palette presets applied live, including the status bar), toggle Savings and Agent pages in the sidebar, and **Verbose MCP logging** (records MCP traces to `<project>/.ax/mcp-verbose.log`; Logging table uses theme colors for kind badges and JSON/XML syntax; off by default; never alters tool responses)
+- **Interface** — theme chooser (accent/palette presets applied live, including the status bar), toggle Savings and Agent pages in the sidebar, **Timezone** for Logging Date/time and **daily log rotation** (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC), and **Verbose MCP logging** (records MCP traces to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; Logging loads the full current day and seamlessly prepends older days when you scroll up; no clear/delete in the UI; off by default; never alters tool responses)
 
 ### SonarQube proxy
 

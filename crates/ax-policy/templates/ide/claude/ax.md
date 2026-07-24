@@ -34,6 +34,7 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Architecture overview: communities, god nodes, surprising links | `ax_insights` |
 | Full Markdown architecture report | `ax_report` |
 | Pre-write policy guard (CRITICAL rules) | `ax_guard` (`path` + `operation`; also `paths[]` / `action`) |
+| Correlate editor/linter diagnostics with the graph | `ax_diagnostics` (pass `diagnostics[]` gathered from the IDE) |
 | Capture durable rules | `ax_policy_capture` |
 | Re-index after large changes | `ax_index` |
 | Build task context | `ax_context` |

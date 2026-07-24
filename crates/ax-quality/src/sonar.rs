@@ -175,16 +175,9 @@ impl SonarClient {
             .unwrap_or("sonarqube");
         let Some(container) = find_container_any(container_name) else {
             return Err(format!(
-                "SonarQube is not reachable at {host}. Install & start from Command Center."
+                "SonarQube offline at {host} — install and start from the SonarQube page"
             ));
         };
-
-        if container.running {
-            return Err(format!(
-                "SonarQube container '{}' is running but the API at {host} is not responding.",
-                container.name
-            ));
-        }
 
         let pref = if self.config.container_runtime == "auto" {
             None
@@ -192,9 +185,22 @@ impl SonarClient {
             Some(self.config.container_runtime.as_str())
         };
         let runtime = resolve_runtime(pref)?;
-        info!("Starting SonarQube container {container_name} via {}", runtime.cli());
-        start_sonar_stack(runtime, container_name, &InstallLog::new())?;
-        crate::container::wait_for_sonar(host, 120).await
+        let log = InstallLog::new();
+        // Always try to start when a container exists (idempotent if already running).
+        // `start_container` retries up to 3 times.
+        info!(
+            "SonarQube offline — starting existing container '{}' ({}) via {}",
+            container.name,
+            container.status,
+            runtime.cli()
+        );
+        start_sonar_stack(runtime, container_name, &log)?;
+        crate::container::wait_for_sonar(host, 120).await.map_err(|e| {
+            format!(
+                "SonarQube container '{}' started but API at {host} is not responding: {e}",
+                container.name
+            )
+        })
     }
 
     pub fn run_platform_scan(

@@ -25,6 +25,7 @@ ax-git = { workspace = true }
 ax-quality = { workspace = true }
 ax-remote = { workspace = true }
 ax-usage = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ax-installer = { workspace = true }
 ax-agent = { workspace = true }
 ax-reasoning = { workspace = true }

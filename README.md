@@ -3,13 +3,22 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v3.0.0](https://github.com/GaryWenneker/ax/releases/tag/v3.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v3.1.0](https://github.com/GaryWenneker/ax/releases/tag/v3.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
 
-**v3.0.0** is a major release focused on **agent observability and savings accuracy**:
+**v3.1.0** focuses on **agent-side diagnostics, safer auto-commit, and policy flexibility**:
 
-- **MCP Logging** — live Command Center table for `<project>/.ax/mcp-verbose.log` (kind/tool filters, Call Inspector, project switcher).
+- **Diagnostics bridge** — `ax_diagnostics` correlates editor/LSP/compiler findings with the graph (guarded paths + `ax_affected` impacted tests).
+- **Generic guard directives** — any CRITICAL rule can add `guard: forbid-path` / `forbid-content` / `require-content` without code changes.
+- **Claude Code Stop hook** — `ax stop-hook` re-checks uncommitted files against `ax_guard` at turn end, blocking only on a CRITICAL violation.
+- **`ax ship` auto-commit** — opt-in Aider-style checkpoint before the quality gate, with safe `git reset --mixed` rollback on failure.
+- **MCP Logging** — daily log rotation, **Has query** filter, date picker, and scroll-up history across days.
+- **New integrations** — VS Code (Copilot Chat), Windsurf (Cascade), Zed.
+
+**v3.0.0** was a major release focused on **agent observability and savings accuracy**:
+
+- **MCP Logging** — live Command Center table for `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` (daily rotation; kind/date/tool filters, Call Inspector, scroll-up history, project switcher).
 - **MCP Quality** — status-bar **Q** chip + slide-out; CLI `ax mcp audit` scores correlation, enrichment, and Explore-before-Grep waste; **Copy fixpack** for agent-ready briefs.
 - **Cursor sessionStart hook** — `ax savings hook install` tags Composer chats with picker model + session id for savings and audit correlation.
 - **Savings dashboard** — activity heatmap, period filter, TokenViz path graph, by-model rollups.
@@ -36,10 +45,10 @@
 
 - **100% local** — no source code leaves your machine
 - **Deterministic** — graph data comes from AST extraction, not LLM summaries
-- **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Kiro, and more
+- **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed, and more
 - **Native Rust** — single binary, no Node.js runtime required
 
-Docs: [getax.wenneker.io](https://getax.wenneker.io)
+Docs: [getax.wenneker.io](https://getax.wenneker.io) — MCP loop: [MCP Logging & Quality](https://getax.wenneker.io/guides/mcp-quality/)
 
 ---
 
@@ -175,7 +184,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax affected <files…>` | Tests affected by file changes |
 | `ax diff --base main` | Git diff symbol blast radius |
 | `ax test-impact --base main` | Test-function impact via graph |
-| `ax ship --evaluate` | Command Center quality gate |
+| `ax ship --evaluate` | Command Center quality gate (`--auto-commit`/`--revert-on-fail` for opt-in Aider-style checkpointing) |
 | `ax ship --watch` | Ship dashboard + git watcher |
 | `ax ship --draft` | Draft PR after quality gate |
 | `ax unlock [path]` | Remove stale `ax.lock` |
@@ -186,7 +195,8 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax policy index` | Index `.ax/policy/` rules and skills |
 | `ax policy match <text>` | Test which rules/skills match a prompt |
 | `ax policy rules` / `skills` | List indexed policy |
-| `ax policy guard` | Pre-write CRITICAL checks (encoding, secrets paths) |
+| `ax policy guard` | Pre-write CRITICAL checks (encoding, secrets paths, plus any rule-defined `guard:` directive) |
+| `ax stop-hook` | Claude Code `Stop`/`SubagentStop` post-flight — blocks turn end on a CRITICAL guard violation |
 | `ax web [--open]` | Local web UI — graph browser + policy editor + Command Center |
 
 Run `ax help <command>` for detailed help with examples.
@@ -238,15 +248,18 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 | `ax_preflight` | Turn-start policy: matched rules + skills (when `.ax/policy/` exists) |
 | `ax_rules` | List or match policy rules |
 | `ax_skill` | Load a skill by name |
-| `ax_guard` | Pre-write guard for CRITICAL rules |
+| `ax_guard` | Pre-write guard for CRITICAL rules — built-in (encoding, secrets) plus generic `guard: forbid-path/forbid-content/require-content` directives declared in any rule body |
+| `ax_diagnostics` | Diagnostics bridge — feed in editor/LSP/compiler findings (Cursor Problems panel, `tsc`, `eslint`, ...), get back guarded-path and `ax_affected` test correlation |
 
 **Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read.
 
 **Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` plus an `<ax_index>` doc inventory snapshot — no need to read `.ax/policy/` files) and `ax_guard` before writes on guarded paths.
 
+**Turn-end post-flight (Claude Code):** `ax install` also wires `Stop`/`SubagentStop` hooks (`ax stop-hook`) so ax gets a say at the *end* of a turn too, not just the start — it re-checks every uncommitted file against `ax_guard` and blocks (`{"decision": "block", ...}`) only on a CRITICAL violation. Disable with `AX_NO_STOP_HOOK=1`.
+
 **Lean by default:** responses never ship the answer twice — `content.text` is authoritative and `structuredContent` is projected down to metadata (no duplicated source/rule bodies). `ax_context` and the data tools return compact markdown / one-line-per-symbol text instead of pretty-JSON. Tune with `AX_MCP_FULL` (restore full structured payload), `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). See the [token savings guide](https://getax.wenneker.io/guides/token-savings/).
 
-**Verbose MCP logging:** enable **Settings → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project `<project>/.ax/mcp-verbose.log`; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
+**Verbose MCP logging:** enable **Settings → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; full current day on load; scroll up for prior days; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
 
 ### Transport
 
@@ -411,3 +424,6 @@ See [docs/PRODUCTION.md](docs/PRODUCTION.md) for GitHub Releases, Netlify docs s
 ## License
 
 See repository license file. ax is local intelligence for AI agents — knowledge graph, policy engine, and Command Center in one Rust binary.
+
+<!-- ax = Aero Xecution -->
+<sub><abbr title="Aero Xecution">ax</abbr> · Aero Xecution</sub>
