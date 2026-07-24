@@ -708,29 +708,36 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     setLoadingHistory(true);
     void fetchMcpTraceChunk(prevDay)
       .then((res) => {
-        if (!res.ok || !res.lines?.length) {
-          if (!res.hasOlder) setHistoryExhausted(true);
-          return;
+        if (!res.ok) return;
+        const older = res.lines?.length ? traceEntriesFromLines(res.lines) : [];
+        if (older.length > 0) {
+          const el = scrollerRef.current;
+          const prevHeight = el?.scrollHeight ?? 0;
+          setFollow(false);
+          setEntries((e) => [...older, ...e]);
+          requestAnimationFrame(() => {
+            const sc = scrollerRef.current;
+            if (sc) sc.scrollTop += sc.scrollHeight - prevHeight;
+          });
         }
-        const el = scrollerRef.current;
-        const prevHeight = el?.scrollHeight ?? 0;
-        const older = traceEntriesFromLines(res.lines);
-        if (older.length === 0) {
-          if (!res.hasOlder) setHistoryExhausted(true);
-          return;
-        }
-        setFollow(false);
-        setEntries((e) => [...older, ...e]);
+        // Always advance past this day (even when it had no lines) so a run of
+        // empty days doesn't re-fetch the same day forever.
         setOldestLoadedDay(prevDay);
         if (!res.hasOlder) setHistoryExhausted(true);
-        requestAnimationFrame(() => {
-          const sc = scrollerRef.current;
-          if (sc) sc.scrollTop += sc.scrollHeight - prevHeight;
-        });
       })
       .catch(() => {})
       .finally(() => setLoadingHistory(false));
   };
+
+  // Today's dated log file is often empty (nothing run yet today, or the
+  // daemon just rotated). Don't leave the page looking broken — pull in
+  // whatever history exists automatically, same as scrolling up would.
+  useEffect(() => {
+    if (!live) return;
+    if (entries.length > 0) return;
+    if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
+    loadOlderDayRef.current();
+  }, [live, entries.length, loadingHistory, historyExhausted, oldestLoadedDay]);
 
   useEffect(() => {
     const root = scrollerRef.current;
@@ -1199,7 +1206,22 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         <div ref={topSentinelRef} className="mcp-trace-top-sentinel" aria-hidden="true" />
         {entries.length === 0 ? (
           <div className="mcp-trace-empty">
-            Waiting for MCP tool calls… (enable verbose + reconnect ax MCP)
+            {loadingHistory ? (
+              'Loading earlier history…'
+            ) : historyExhausted ? (
+              'Waiting for MCP tool calls… (enable verbose + reconnect ax MCP)'
+            ) : (
+              <>
+                Nothing logged for {logDay || 'today'} yet.{' '}
+                <button
+                  type="button"
+                  className="linkish"
+                  onClick={() => loadOlderDayRef.current()}
+                >
+                  Show previous day
+                </button>
+              </>
+            )}
           </div>
         ) : visibleEntries.length === 0 ? (
           <div className="mcp-trace-empty">

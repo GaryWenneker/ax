@@ -2,7 +2,7 @@
 #
 # Install prefers copying target-dev/release/ax.exe (fast, no re-lock race).
 # `cargo install` rebuilds for minutes and lets Cursor MCP respawn ax.exe mid-way,
-# which causes "Access is denied" when replacing ~/.cargo/bin/ax.exe — avoid it
+# which causes "Access is denied" when replacing ~/.cargo/bin/ax.exe - avoid it
 # unless -UseCargoInstall is set.
 #
 # Usage:
@@ -87,7 +87,14 @@ function Stop-AllAxProcesses {
     ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
     foreach ($axPath in $axCandidates) {
-        & $axPath daemon stop 2>$null
+        # Native-command stderr becomes a terminating error under $ErrorActionPreference
+        # = 'Stop', even when redirected to $null — wrap so a noisy "daemon stop" on one
+        # candidate path can't abort the whole reinstall.
+        try {
+            & $axPath daemon stop 2>&1 | Out-Null
+        } catch {
+            Write-Host "  (ignored) $axPath daemon stop: $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
     }
     Start-Sleep -Milliseconds 400
 
@@ -116,7 +123,13 @@ function Stop-AllAxProcesses {
         }
 
     # Belt-and-suspenders: taskkill by image name (covers races Get-Process misses).
-    & taskkill.exe /F /IM ax.exe 2>$null | Out-Null
+    # "not found" on stderr is the expected/success case once everything is already
+    # dead — don't let it become a terminating error under $ErrorActionPreference = 'Stop'.
+    try {
+        & taskkill.exe /F /IM ax.exe 2>&1 | Out-Null
+    } catch {
+        # ignore
+    }
 
     Start-Sleep -Milliseconds 500
 
@@ -165,7 +178,7 @@ function Copy-AxReleaseBinary {
             if ($attempt -ge $MaxAttempts) {
                 throw "Could not copy ax.exe to $Destination after $MaxAttempts attempts: $($_.Exception.Message)"
             }
-            Write-Host "  Locked: $Destination (attempt $attempt/$MaxAttempts) — $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "  Locked: $Destination (attempt $attempt/$MaxAttempts) - $($_.Exception.Message)" -ForegroundColor Yellow
             Stop-AllAxProcesses -Reason "unlock copy target (attempt $attempt)" -AllowRemaining
             Start-Sleep -Milliseconds (500 * $attempt)
         }
@@ -281,10 +294,10 @@ if (-not $SkipBuild) {
 if (-not $SkipInstall) {
     $built = Join-Path $root 'target-dev\release\ax.exe'
     if (-not (Test-Path $built)) {
-        throw "No release binary at $built — run without -SkipBuild first."
+        throw "No release binary at $built - run without -SkipBuild first."
     }
 
-    # MCP / ax web can respawn during a long cargo build — kill again right before replace.
+    # MCP / ax web can respawn during a long cargo build - kill again right before replace.
     Stop-AllAxProcesses -Reason 'pre-install sync'
 
     if ($UseCargoInstall) {
@@ -293,7 +306,7 @@ if (-not $SkipInstall) {
         Use-BuildPath
         cargo install --path crates/ax-cli --force
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "cargo install failed (exit $LASTEXITCODE) — falling back to copy-sync from $built" -ForegroundColor Yellow
+            Write-Host "cargo install failed (exit $LASTEXITCODE) - falling back to copy-sync from $built" -ForegroundColor Yellow
             Stop-AllAxProcesses -Reason 'post-cargo-install fallback' -AllowRemaining
         } else {
             # cargo install may have written a different artifact; re-copy our known-good release build.
