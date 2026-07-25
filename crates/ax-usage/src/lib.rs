@@ -27,9 +27,9 @@ pub use mcp_audit::{
 };
 pub use mcp_verbose_log::{
     append_verbose_log, current_log_path, has_older_log_day, list_dated_log_files,
-    mcp_verbose_log_path, migrate_legacy_log, path_for_date, previous_calendar_day,
-    read_log_for_day, read_merged_verbose_log, read_ship_timezone, rotation_calendar_date,
-    LEGACY_LOG_NAME,
+    mcp_verbose_log_path, migrate_legacy_log, nearest_dated_log_before, path_for_date,
+    previous_calendar_day, read_log_for_day, read_merged_verbose_log, read_ship_timezone,
+    rotation_calendar_date, LEGACY_LOG_NAME,
 };
 pub use savings::{
     current_assumptions, estimate_savings, import_agent_logs, is_savings_eligible_tool,

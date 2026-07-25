@@ -138,6 +138,24 @@ pub fn has_older_log_day(project_root: &Path, day: NaiveDate) -> bool {
     path_for_date(&ax_dir_for(Some(project_root)), prev).is_file()
 }
 
+/// Nearest existing dated log file strictly before `before`, skipping gaps
+/// (a day with verbose logging off, or a historical rotation bug) instead of
+/// dead-ending on the very next calendar day like `has_older_log_day` does.
+/// Returns the found day plus whether an even-older dated file exists beyond it.
+pub fn nearest_dated_log_before(
+    project_root: &Path,
+    before: NaiveDate,
+) -> Option<(NaiveDate, bool)> {
+    let older: Vec<NaiveDate> = list_dated_log_files(project_root)
+        .into_iter()
+        .map(|(d, _)| d)
+        .filter(|d| *d < before)
+        .collect();
+    let &day = older.last()?;
+    let has_older = older.len() > 1;
+    Some((day, has_older))
+}
+
 /// Merge all verbose logs (dated + any unmigrated legacy) for audit windows.
 pub fn read_merged_verbose_log(project_root: &Path) -> String {
     let _ = migrate_legacy_log(Some(project_root));
@@ -313,6 +331,30 @@ mod tests {
         assert!(ax.join("mcp-verbose-2026-07-20.log").exists());
         migrate_legacy_log(Some(&dir)).unwrap();
         assert!(!ax.join(LEGACY_LOG_NAME).exists());
+    }
+
+    #[test]
+    fn nearest_dated_log_before_skips_gaps() {
+        let dir = tempfile_dir();
+        let ax = dir.join(".ax");
+        fs::create_dir_all(&ax).unwrap();
+        // Gap between 07-22 and 07-25: no 07-23 / 07-24 files (mirrors a stale
+        // daemon that mixed real activity into the wrong dated file for two days).
+        fs::write(ax.join("mcp-verbose-2026-07-22.log"), "line\n").unwrap();
+        fs::write(ax.join("mcp-verbose-2026-07-20.log"), "line\n").unwrap();
+
+        let before = NaiveDate::from_ymd_opt(2026, 7, 25).unwrap();
+        let (day, has_older) = nearest_dated_log_before(&dir, before).unwrap();
+        assert_eq!(day, NaiveDate::from_ymd_opt(2026, 7, 22).unwrap());
+        assert!(has_older, "07-20 exists before 07-22");
+
+        let before2 = NaiveDate::from_ymd_opt(2026, 7, 22).unwrap();
+        let (day2, has_older2) = nearest_dated_log_before(&dir, before2).unwrap();
+        assert_eq!(day2, NaiveDate::from_ymd_opt(2026, 7, 20).unwrap());
+        assert!(!has_older2, "nothing before 07-20");
+
+        let before3 = NaiveDate::from_ymd_opt(2026, 7, 20).unwrap();
+        assert!(nearest_dated_log_before(&dir, before3).is_none());
     }
 
     fn tempfile_dir() -> PathBuf {

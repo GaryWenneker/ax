@@ -18,7 +18,6 @@ import {
   MCP_TRACE_EVENTS_URL,
   MCP_TRACE_PATH_URL,
   parseTraceEntry,
-  previousCalendarDay,
   prettyPayload,
   reformatTraceEntry,
   setTraceTimeZone,
@@ -704,11 +703,17 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   const loadOlderDayRef = useRef<() => void>(() => {});
   loadOlderDayRef.current = () => {
     if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
-    const prevDay = previousCalendarDay(oldestLoadedDay);
     setLoadingHistory(true);
-    void fetchMcpTraceChunk(prevDay)
+    // Server walks back past gaps (a day with no verbose activity, or a
+    // history-mangling bug) to find the nearest real dated file before
+    // `oldestLoadedDay` — it may jump back several calendar days at once.
+    void fetchMcpTraceChunk(oldestLoadedDay)
       .then((res) => {
         if (!res.ok) return;
+        if (!res.day) {
+          setHistoryExhausted(true);
+          return;
+        }
         const older = res.lines?.length ? traceEntriesFromLines(res.lines) : [];
         if (older.length > 0) {
           const el = scrollerRef.current;
@@ -720,9 +725,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
             if (sc) sc.scrollTop += sc.scrollHeight - prevHeight;
           });
         }
-        // Always advance past this day (even when it had no lines) so a run of
-        // empty days doesn't re-fetch the same day forever.
-        setOldestLoadedDay(prevDay);
+        setOldestLoadedDay(res.day);
         if (!res.hasOlder) setHistoryExhausted(true);
       })
       .catch(() => {})

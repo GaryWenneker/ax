@@ -75,7 +75,7 @@ async fn handle_mcp_trace_chunk(
     Query(q): Query<ChunkQuery>,
 ) -> Json<serde_json::Value> {
     let root = hub_project(&hub).await;
-    let day = match NaiveDate::parse_from_str(q.day.trim(), "%Y-%m-%d") {
+    let before = match NaiveDate::parse_from_str(q.day.trim(), "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => {
             return Json(json!({
@@ -84,13 +84,24 @@ async fn handle_mcp_trace_chunk(
             }));
         }
     };
+    // `day` is an exclusive upper bound: find the nearest existing dated file
+    // strictly before it, skipping gaps (verbose logging off for a stretch,
+    // or a stale daemon that rotated late) instead of dead-ending on the very
+    // next calendar day and reporting "no history" when older data exists.
+    let Some((day, has_older)) = ax_usage::nearest_dated_log_before(&root, before) else {
+        return Json(json!({
+            "ok": true,
+            "day": serde_json::Value::Null,
+            "lines": Vec::<String>::new(),
+            "hasOlder": false,
+        }));
+    };
     let text = ax_usage::read_log_for_day(&root, day);
     let lines: Vec<String> = text
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| l.to_string())
         .collect();
-    let has_older = ax_usage::has_older_log_day(&root, day);
     Json(json!({
         "ok": true,
         "day": day.format("%Y-%m-%d").to_string(),

@@ -534,17 +534,23 @@ export function previousCalendarDay(ymd: string): string {
   return dt.toISOString().slice(0, 10);
 }
 
-export async function fetchMcpTraceChunk(day: string): Promise<{
+/**
+ * Fetch the nearest dated log strictly before `beforeDay` (exclusive). The
+ * server walks back past gaps (a day with no verbose activity, or a stale
+ * daemon that mis-rotated) instead of only checking `beforeDay - 1`, so the
+ * returned `day` may be several calendar days earlier than requested.
+ */
+export async function fetchMcpTraceChunk(beforeDay: string): Promise<{
   ok: boolean;
-  day?: string;
+  day?: string | null;
   lines?: string[];
   hasOlder?: boolean;
   error?: string;
 }> {
-  const r = await fetch(`${MCP_TRACE_CHUNK_URL}?day=${encodeURIComponent(day)}`);
+  const r = await fetch(`${MCP_TRACE_CHUNK_URL}?day=${encodeURIComponent(beforeDay)}`);
   return r.json() as Promise<{
     ok: boolean;
-    day?: string;
+    day?: string | null;
     lines?: string[];
     hasOlder?: boolean;
     error?: string;
