@@ -1,4 +1,6 @@
-//! ax remember / ax recall — memory vault CLI.
+//! ax remember / ax recall / ax memory export|import — memory vault CLI.
+
+use std::path::PathBuf;
 
 use crate::commands::resolve_path;
 
@@ -109,4 +111,54 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+pub async fn run_export(
+    tag: Option<String>,
+    out: Option<String>,
+    quiet: bool,
+) -> Result<(), String> {
+    let root = resolve_path(None);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let tag = tag.unwrap_or_else(|| "shared".into());
+    let out_path = out.map(PathBuf::from);
+    let result = ax_memory::export_shared(
+        ax.db_pool(),
+        ax.project_root(),
+        &tag,
+        out_path.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    if !quiet {
+        println!(
+            "Exported {} memor{} tagged \"{}\" → {}",
+            result.written,
+            if result.written == 1 { "y" } else { "ies" },
+            tag,
+            result.path.display()
+        );
+    }
+    Ok(())
+}
+
+pub async fn run_import(path: Option<String>, quiet: bool) -> Result<(), String> {
+    let root = resolve_path(None);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let path = path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ax_memory::default_shared_path(ax.project_root()));
+    let result = ax_memory::import_shared(ax.db_pool(), &path)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !quiet {
+        println!(
+            "Imported memories from {}: {} new, {} updated, {} skipped",
+            path.display(),
+            result.inserted,
+            result.updated,
+            result.skipped
+        );
+    }
+    Ok(())
 }

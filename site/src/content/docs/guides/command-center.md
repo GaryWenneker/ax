@@ -16,9 +16,11 @@ ax init                          # creates .ax/ship.toml if missing
 # Edit .ax/ship.toml — set org/project/repo_id for your AzDO repo
 
 ax ship --evaluate               # one-shot quality gate (index → diff → TIA → tests → policy)
+ax ship --ci                     # headless CI: JSON on stdout, exit 1 if gate failed
 ax ship --evaluate --auto-commit --revert-on-fail  # opt-in checkpoint for this run only
 ax ship --watch --port 7070      # dashboard + git watcher at http://localhost:7070
 ax ship --draft --title "feat: …"  # draft PR after quality gate passes (needs PAT)
+ax share --open                  # LAN share with token (read-only) — see Share guide
 ```
 
 ## Commands
@@ -29,8 +31,10 @@ ax ship --draft --title "feat: …"  # draft PR after quality gate passes (needs
 | `ax test-impact --base main` | Git diff + reverse reachability to test functions |
 | `ax affected [files…]` | Find test files affected by changed sources (`--stdin`, `--depth`, `--filter`) |
 | `ax ship --evaluate` | Run the full quality-gate pipeline once |
+| `ax ship --ci` | Headless CI mode — JSON report, non-zero exit on failure |
 | `ax ship --watch` | Start web dashboard + git event watcher |
 | `ax ship --draft` | Create a draft PR via configured remote provider |
+| `ax share` | Share Command Center on the LAN with a token |
 
 ## Configuration (`.ax/ship.toml`)
 
@@ -223,6 +227,19 @@ If the server restarts while an evaluation is in progress (e.g. `ax web` crashes
 | `ax test-impact` | Git diff → dirty symbols → reverse BFS on `Covers` edges → test **functions** |
 
 Use `ax test-impact` when tests are mapped in the graph (Rust `#[test]`, Vitest/Jest, pytest patterns). Use `ax affected` for file-level CI filtering when graph coverage is incomplete.
+
+## CI mode (`ax ship --ci`)
+
+Headless evaluation for pipelines: prints the quality-gate JSON on stdout, a one-line summary on stderr, and exits **1** when the gate fails. Impacted tests are executed via cargo / pytest / jest / vitest / go runners when the TIA step is enabled.
+
+```bash
+ax sync
+ax ship --ci
+```
+
+Workflow snippets: [GitHub](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/github-actions-ship.yml) · [GitLab](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/gitlab-ci-ship.yml) · [Azure Pipelines](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/azure-pipelines-ship.yml).
+
+See also [Share Command Center](/guides/share/) for LAN/PWA collaboration.
 
 ## Azure DevOps (default)
 

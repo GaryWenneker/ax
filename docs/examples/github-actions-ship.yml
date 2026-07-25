@@ -1,0 +1,25 @@
+# Example: run ax quality gate in CI (copy into .github/workflows/)
+name: ax-ship
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ax
+        shell: bash
+        run: |
+          curl -fsSL https://getax.wenneker.io/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Index + ship CI
+        run: |
+          ax sync
+          ax ship --ci

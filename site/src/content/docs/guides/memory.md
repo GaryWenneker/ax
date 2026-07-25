@@ -62,7 +62,7 @@ The query is tokenized, stop words are removed (English and Dutch), and each rem
 
 ### Step 2 — Vector similarity (semantic leg)
 
-The query is embedded using a local feature-hashing model — no API calls, no model download, fully deterministic. Each token is hashed (FNV-1a) into a fixed 256-dimensional vector, with character trigrams added at lower weight for typo tolerance. Stored embeddings are compared via cosine similarity (pre-normalized, so the dot product suffices). Matches below 0.1 similarity are discarded.
+The query is embedded locally into a fixed 256-dimensional vector. **Default:** feature hashing (FNV-1a tokens + character trigrams) — no API calls, no model download. **Optional:** build with `--features onnx` and place a MiniLM `.onnx` at `AX_ONNX_MODEL` or `~/.ax/models/all-MiniLM-L6-v2.onnx` for dense neural embeddings (projected to 256-d for storage compatibility). Stored embeddings are compared via cosine similarity. Matches below 0.1 similarity are discarded. Legs are fused with weighted RRF (vector 0.5 / FTS 0.3 / graph reserved 0.2).
 
 ### Step 3 — Reciprocal Rank Fusion (RRF)
 
@@ -150,7 +150,7 @@ The embedding model is entirely local — no API calls, no model files to downlo
 - **Sign randomization:** A second hash bit determines the sign of each feature, reducing collision bias.
 - **L2 normalization:** The final vector is normalized to unit length, so cosine similarity equals the dot product.
 
-This is not a neural embedding — it gives deterministic, typo-tolerant similarity that fuses well with FTS5. A real transformer model could replace `embed_text()` later without changing the storage format (the 256-dim blob column stays the same).
+Feature-hash embeddings give deterministic, typo-tolerant similarity that fuses well with FTS5. Optional ONNX dense embeddings replace `embed_text()` without changing the storage format (the 256-dim blob column stays the same). See [`docs/ONNX.md`](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/ONNX.md).
 
 ## Storage schema
 

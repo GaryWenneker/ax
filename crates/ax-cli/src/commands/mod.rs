@@ -36,6 +36,8 @@ pub mod session_hook;
 pub mod stop_hook;
 pub mod unlock;
 pub mod web;
+pub mod lsp;
+pub mod share;
 
 use std::path::{Path, PathBuf};
 

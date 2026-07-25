@@ -377,6 +377,8 @@ pub enum Provenance {
     TreeSitter,
     Scip,
     Heuristic,
+    /// Resolved via an external language server (rust-analyzer, pyright, …).
+    Lsp,
 }
 
 /// How confident ax is that an edge is correct.
@@ -384,19 +386,25 @@ pub enum Provenance {
 /// - `Extracted`: read directly from the source via tree-sitter AST (or SCIP).
 /// - `Inferred`: resolved by a heuristic / name-matching / framework pass.
 /// - `Ambiguous`: multiple candidate targets existed and one was picked.
+/// - `Exact`: confirmed by an LSP definition/type query.
+/// - `Synthesized`: produced by an LLM / enrich pass (isolated layer).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeConfidence {
     Extracted,
     Inferred,
     Ambiguous,
+    Exact,
+    Synthesized,
 }
 
 impl EdgeConfidence {
-    pub const ALL: [EdgeConfidence; 3] = [
+    pub const ALL: [EdgeConfidence; 5] = [
         EdgeConfidence::Extracted,
         EdgeConfidence::Inferred,
         EdgeConfidence::Ambiguous,
+        EdgeConfidence::Exact,
+        EdgeConfidence::Synthesized,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -404,6 +412,8 @@ impl EdgeConfidence {
             EdgeConfidence::Extracted => "extracted",
             EdgeConfidence::Inferred => "inferred",
             EdgeConfidence::Ambiguous => "ambiguous",
+            EdgeConfidence::Exact => "exact",
+            EdgeConfidence::Synthesized => "synthesized",
         }
     }
 
@@ -412,19 +422,22 @@ impl EdgeConfidence {
             "extracted" => Some(EdgeConfidence::Extracted),
             "inferred" => Some(EdgeConfidence::Inferred),
             "ambiguous" => Some(EdgeConfidence::Ambiguous),
+            "exact" => Some(EdgeConfidence::Exact),
+            "synthesized" => Some(EdgeConfidence::Synthesized),
             _ => None,
         }
     }
 
     /// Deterministic mapping from edge provenance to a baseline confidence.
     ///
-    /// Direct AST/SCIP edges are `Extracted`; heuristic edges are `Inferred`.
-    /// Callers that know a resolution was ambiguous should override with
-    /// `EdgeConfidence::Ambiguous` explicitly.
+    /// Direct AST/SCIP edges are `Extracted`; heuristic edges are `Inferred`;
+    /// LSP edges are `Exact`. Callers that know a resolution was ambiguous
+    /// should override with `EdgeConfidence::Ambiguous` explicitly.
     pub fn from_provenance(provenance: Option<Provenance>) -> Option<Self> {
         match provenance {
             Some(Provenance::TreeSitter) | Some(Provenance::Scip) => Some(EdgeConfidence::Extracted),
             Some(Provenance::Heuristic) => Some(EdgeConfidence::Inferred),
+            Some(Provenance::Lsp) => Some(EdgeConfidence::Exact),
             None => None,
         }
     }

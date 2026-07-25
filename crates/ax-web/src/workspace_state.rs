@@ -82,14 +82,20 @@ impl WebHub {
             old.close().await;
             let _ = ax_agent::config::touch_recent_project(&new_root, true);
             self.sonar_proxy.lock().await.invalidate();
-            Ok(SwitchInfo {
+            let info = SwitchInfo {
                 path: new_root.to_string_lossy().into_owned(),
                 label: new_root
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("project")
                     .to_string(),
-            })
+            };
+            crate::actions::publish(
+                "workspace",
+                format!("switched to {}", info.label),
+                Some(serde_json::json!({ "path": info.path })),
+            );
+            Ok(info)
         }
         .await;
         self.switching.store(false, Ordering::SeqCst);
@@ -106,8 +112,10 @@ impl WebHub {
             .nest("/api/usage", crate::savings::router(hub.clone()))
             .nest("/api/memory", crate::memory::router_hub(hub.clone()))
             .nest("/api/workspace", workspace::router_hub(hub.clone()))
-            .nest("/api/agent", agent::router_hub(hub))
+            .nest("/api/agent", agent::router_hub(hub.clone()))
+            .nest("/api/actions", crate::actions::router_hub(hub))
             .fallback(crate::handle_spa)
+            .layer(axum::middleware::from_fn(crate::share_auth::share_token_middleware))
             .layer(cors)
     }
 }

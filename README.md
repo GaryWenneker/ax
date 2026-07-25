@@ -161,10 +161,12 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 |---------|-------------|
 | `ax` / `ax install` | Interactive MCP installer for detected agents |
 | `ax uninstall` | Remove ax from agent configs |
-| `ax init [path]` | Create `.ax/`, full index, git hooks, offer installer |
+| `ax init [path] [--workspace]` | Create `.ax/`, full index, git hooks; `--workspace` discovers monorepo members |
 | `ax uninit [path]` | Delete `.ax/` directory |
-| `ax index [--force] [--quiet]` | Full re-index with progress bar |
-| `ax sync [--watch] [--quiet]` | Incremental sync; `--watch` keeps running |
+| `ax index [--force] [--quiet] [--all]` | Full re-index; `--all` indexes every `ax.json` workspace member |
+| `ax sync [--watch] [--quiet] [--all]` | Incremental sync; `--all` syncs every workspace member |
+| `ax export graph --format …` | Export graph (`json`/`dot`/`graphml`/`gexf`/`cypher`/`mermaid`/`plantuml`/`html`) |
+| `ax policy pull <git-url>` | Pull shared policy rules/skills from a git registry |
 | `ax watch [path]` | Alias for `ax sync --watch` |
 | `ax status [--json]` | Node/edge/file counts, doc inventory by extension, pending sync |
 | `ax query <text> [--json]` | FTS symbol search |
@@ -178,6 +180,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax remember <text>` | Store a durable project memory (decision, fix, convention) |
 | `ax recall <query>` | Hybrid search (FTS + vectors) over project memories |
 | `ax capture-git` | Mine recent git commits into memories |
+| `ax memory export\|import` | Shared memory JSONL sync for teams (`memorySync` in `ax.json`) |
 | `ax savings` | Context-token and cost savings summary (`import`, `tag-session`, `hook install`) |
 | `ax mcp audit` | MCP quality audit (verbose log ↔ Cursor transcript; Quality slide-out engine) |
 | `ax cursor auth …` | Save/restore Cursor subscription sessions (`status`, `save`, `use`, `list`) |
@@ -185,8 +188,11 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax diff --base main` | Git diff symbol blast radius |
 | `ax test-impact --base main` | Test-function impact via graph |
 | `ax ship --evaluate` | Command Center quality gate (`--auto-commit`/`--revert-on-fail` for opt-in Aider-style checkpointing) |
+| `ax ship --ci` | Headless quality gate for CI — JSON on stdout, exit 1 if failed |
 | `ax ship --watch` | Ship dashboard + git watcher |
 | `ax ship --draft` | Draft PR after quality gate |
+| `ax share [--open]` | Share Command Center on the LAN with a token (read-only) |
+| `ax lsp status\|enrich` | Optional LSP bridge — Exact edges via rust-analyzer / tsserver / pyright / gopls |
 | `ax unlock [path]` | Remove stale `ax.lock` |
 | `ax daemon [status\|stop]` | MCP daemon control |
 | `ax upgrade [tag]` | Self-update from GitHub releases |
@@ -221,6 +227,8 @@ Environment:
 | `AX_PARSE_WORKERS` | Parallel parse thread count |
 | `AX_QUERY_POOL_SIZE` | MCP query pool size |
 | `AX_GITHUB_REPO` | Override repo for `ax upgrade` (default `GaryWenneker/ax`) |
+| `AX_SHARE_TOKEN` | Require this token for `ax web` / `ax share` (query / Bearer / cookie) |
+| `AX_ONNX_MODEL` | Path to ONNX embedding model (requires `--features onnx` build) |
 
 ---
 

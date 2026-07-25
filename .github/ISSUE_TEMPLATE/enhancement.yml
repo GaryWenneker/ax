@@ -1,0 +1,32 @@
+name: Enhancement
+description: Request a new feature or capability
+title: "[enhancement] "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: pillar
+    attributes:
+      label: Roadmap pillar
+      options:
+        - monorepo
+        - plugin
+        - performance
+        - ux
+        - documentation
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should ax gain?
+    validations:
+      required: true
+  - type: textarea
+    id: mvp
+    attributes:
+      label: MVP scope
+      description: Smallest useful slice (in / out).
+    validations:
+      required: true

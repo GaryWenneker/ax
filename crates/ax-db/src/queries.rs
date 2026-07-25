@@ -94,6 +94,7 @@ impl QueryBuilder {
             Provenance::TreeSitter => "tree-sitter",
             Provenance::Scip => "scip",
             Provenance::Heuristic => "heuristic",
+            Provenance::Lsp => "lsp",
         }))
         .bind(edge_confidence_str(edge))
         .execute(&self.pool)
@@ -202,6 +203,7 @@ impl QueryBuilder {
                         Provenance::TreeSitter => "tree-sitter",
                         Provenance::Scip => "scip",
                         Provenance::Heuristic => "heuristic",
+                        Provenance::Lsp => "lsp",
                     }))
                     .push_bind(edge_confidence_str(edge));
             });
@@ -1141,6 +1143,7 @@ impl EdgeRow {
             "tree-sitter" => Some(Provenance::TreeSitter),
             "scip" => Some(Provenance::Scip),
             "heuristic" => Some(Provenance::Heuristic),
+            "lsp" => Some(Provenance::Lsp),
             _ => None,
         });
         // Prefer the stored value; older rows written before v11 fall back to a

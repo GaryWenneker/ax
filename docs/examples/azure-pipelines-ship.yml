@@ -1,0 +1,25 @@
+# Example: Azure Pipelines step for ax ship --ci
+# Paste into azure-pipelines.yml or a template.
+
+trigger:
+  - main
+
+pr:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: self
+
+  - bash: |
+      curl -fsSL https://getax.wenneker.io/install.sh | bash
+      echo "##vso[task.prependpath]$HOME/.local/bin"
+      echo "##vso[task.prependpath]$HOME/.cargo/bin"
+    displayName: Install ax
+
+  - bash: |
+      ax sync
+      ax ship --ci
+    displayName: ax quality gate

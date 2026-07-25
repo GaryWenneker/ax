@@ -4,6 +4,7 @@ pub async fn run(
     path: Option<String>,
     watch: bool,
     evaluate: bool,
+    ci: bool,
     draft: bool,
     title: Option<String>,
     port: u16,
@@ -13,13 +14,37 @@ pub async fn run(
 ) -> Result<(), String> {
     let root = resolve_path(path);
 
-    if evaluate {
+    if evaluate || ci {
         let overrides = ax_ship::AutoCommitOverride {
             enabled: if auto_commit { Some(true) } else { None },
             revert_on_fail: if revert_on_fail { Some(true) } else { None },
         };
         let report = ax_ship::evaluate_project_with_overrides(root, overrides).await?;
-        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        let json = serde_json::to_string_pretty(&report).unwrap_or_default();
+        if ci {
+            // Machine-readable single line summary on stderr; full report on stdout.
+            let status = if report.quality_gate.passed {
+                "passed"
+            } else {
+                "failed"
+            };
+            eprintln!(
+                "ax-ship-ci: status={status} steps={} sonar={}",
+                report.quality_gate.steps.len(),
+                report
+                    .quality_gate
+                    .sonar
+                    .as_ref()
+                    .map(|s| if s.passed { "passed" } else { "failed" })
+                    .unwrap_or("n/a")
+            );
+            println!("{json}");
+            if !report.quality_gate.passed {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        println!("{json}");
         return Ok(());
     }
 
@@ -41,5 +66,5 @@ pub async fn run(
         return ax_web::serve(root, port, open).await;
     }
 
-    Err("usage: ax ship watch | --evaluate | --draft".into())
+    Err("usage: ax ship --watch | --evaluate | --ci | --draft".into())
 }

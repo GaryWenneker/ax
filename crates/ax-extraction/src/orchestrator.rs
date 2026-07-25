@@ -49,12 +49,54 @@ impl ExtractionOrchestrator {
         Self { project_root, parse_pool: ParsePool::new() }
     }
 
+    /// Run out-of-tree plugins first, then tree-sitter parse pool.
+    fn parse_with_plugins(
+        &self,
+        tasks: Vec<ParseTask>,
+        on_progress: &mut Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
+    ) -> (Vec<(String, Result<ExtractionResult, String>)>, u32) {
+        let plugins = ax_plugins::load_plugins(&self.project_root);
+        let mut results: Vec<(String, Result<ExtractionResult, String>)> =
+            Vec::with_capacity(tasks.len());
+        let mut remaining = Vec::new();
+        for task in tasks {
+            if !plugins.is_empty() {
+                if let Some(plugin_res) = plugins.extract(&task.file_path, &task.content) {
+                    results.push((task.file_path, plugin_res.map_err(|e| e.to_string())));
+                    continue;
+                }
+            }
+            remaining.push(task);
+        }
+        let mut tasks = remaining;
+        let parse_total = (results.len() + tasks.len()) as u32;
+        const PARSE_CHUNK: usize = 48;
+        let mut parsed_count = results.len() as u32;
+        while !tasks.is_empty() {
+            let chunk_len = PARSE_CHUNK.min(tasks.len());
+            let chunk: Vec<ParseTask> = tasks.drain(..chunk_len).collect();
+            let parsed = self.parse_pool.parse_batch(chunk);
+            parsed_count += parsed.len() as u32;
+            if let Some(ref mut cb) = on_progress {
+                cb(IndexProgress {
+                    phase: IndexPhase::Parsing,
+                    current: parsed_count,
+                    total: parse_total.max(1),
+                    file_path: None,
+                });
+            }
+            results.extend(parsed);
+        }
+        (results, parse_total)
+    }
+
     pub async fn scan_files(&self, opts: &IndexOptions) -> Result<Vec<PathBuf>, ax_utils::errors::AxError> {
         let mut files = Vec::new();
         let exclude_matcher = build_exclude_matcher(&self.project_root, &opts.exclude);
         let walker = WalkBuilder::new(&self.project_root)
             .hidden(true).git_ignore(true).git_global(true).git_exclude(true).build();
         let ext_map = extension_map();
+        let plugin_exts = ax_plugins::load_plugins(&self.project_root).extensions();
         for entry in walker {
             let entry = entry.map_err(|e| ax_utils::errors::AxError::File(ax_utils::errors::FileError::new(e.to_string())))?;
             if !entry.file_type().is_some_and(|t| t.is_file()) { continue; }
@@ -70,7 +112,12 @@ impl ExtractionOrchestrator {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let dotted = format!(".{}", ext);
             let lang = opts.custom_extensions.get(&dotted).copied().or_else(|| language_for_extension(&dotted));
-            if lang.is_some() || ext_map.contains_key(&dotted) { files.push(path.to_path_buf()); }
+            let plugin_hit = plugin_exts.iter().any(|e| {
+                e.eq_ignore_ascii_case(&dotted) || e.eq_ignore_ascii_case(ext)
+            });
+            if lang.is_some() || ext_map.contains_key(&dotted) || plugin_hit {
+                files.push(path.to_path_buf());
+            }
         }
         Ok(files)
     }
@@ -99,25 +146,7 @@ impl ExtractionOrchestrator {
             tasks.push(ParseTask { file_path: rel, content, language: lang });
         }
 
-        let parse_total = tasks.len() as u32;
-        const PARSE_CHUNK: usize = 48;
-        let mut results: Vec<(String, Result<ExtractionResult, String>)> = Vec::with_capacity(tasks.len());
-        let mut parsed_count = 0u32;
-        while !tasks.is_empty() {
-            let chunk_len = PARSE_CHUNK.min(tasks.len());
-            let chunk: Vec<ParseTask> = tasks.drain(..chunk_len).collect();
-            let parsed = self.parse_pool.parse_batch(chunk);
-            parsed_count += parsed.len() as u32;
-            if let Some(ref mut cb) = on_progress {
-                cb(IndexProgress {
-                    phase: IndexPhase::Parsing,
-                    current: parsed_count,
-                    total: parse_total,
-                    file_path: None,
-                });
-            }
-            results.extend(parsed);
-        }
+        let (results, parse_total) = self.parse_with_plugins(tasks, &mut on_progress);
 
         for (i, (file_path, parse_result)) in results.into_iter().enumerate() {
             if let Some(ref mut cb) = on_progress {
@@ -314,27 +343,7 @@ impl ExtractionOrchestrator {
             tasks.push(ParseTask { file_path: rel, content, language: lang });
         }
 
-        let parse_total = tasks.len() as u32;
-        const PARSE_CHUNK: usize = 48;
-        let mut results: Vec<(String, Result<ExtractionResult, String>)> = Vec::with_capacity(tasks.len());
-        let mut parsed_count = 0u32;
-        while !tasks.is_empty() {
-            let chunk_len = PARSE_CHUNK.min(tasks.len());
-            let chunk: Vec<ParseTask> = tasks.drain(..chunk_len).collect();
-            let parsed = self.parse_pool.parse_batch(chunk);
-            parsed_count += parsed.len() as u32;
-            if let Some(ref mut cb) = on_progress {
-                cb(IndexProgress {
-                    phase: IndexPhase::Parsing,
-                    current: parsed_count,
-                    total: parse_total,
-                    file_path: None,
-                });
-            }
-            results.extend(parsed);
-        }
-
-        let batch_total = results.len() as u32;
+        let (results, batch_total) = self.parse_with_plugins(tasks, &mut on_progress);
         for (i, (file_path, parse_result)) in results.into_iter().enumerate() {
             if let Some(ref mut cb) = on_progress {
                 cb(IndexProgress {

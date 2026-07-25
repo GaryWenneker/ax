@@ -1,12 +1,16 @@
-//! Local, dependency-free text embeddings for hybrid recall.
+//! Local text embeddings for hybrid recall.
 //!
-//! Uses feature hashing over word tokens and character trigrams into a fixed
-//! 256-dim vector (L2-normalized). This is not a neural embedding — it gives
-//! deterministic, typo- and morphology-tolerant similarity that fuses with
-//! FTS5 rankings via RRF. A real model can replace `embed_text` later without
-//! changing the storage format.
+//! Default: feature hashing over word tokens and character trigrams into a
+//! fixed 256-dim vector (L2-normalized). With `--features onnx` and a model at
+//! `AX_ONNX_MODEL` or `~/.ax/models/all-MiniLM-L6-v2.onnx`, prefers ONNX dense
+//! embeddings (projected to 256-d for storage compatibility).
 
 pub const EMBED_DIM: usize = 256;
+
+/// Hybrid retrieval weights (vector / FTS / graph proximity).
+pub const WEIGHT_VECTOR: f64 = 0.5;
+pub const WEIGHT_FTS: f64 = 0.3;
+pub const WEIGHT_GRAPH: f64 = 0.2;
 
 /// FNV-1a — stable across platforms and runs (unlike `DefaultHasher`).
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -27,6 +31,15 @@ fn add_feature(vec: &mut [f32; EMBED_DIM], feature: &[u8], weight: f32) {
 }
 
 pub fn embed_text(text: &str) -> Vec<f32> {
+    if let Some(v) = crate::onnx::try_onnx_embed(text) {
+        if v.len() == EMBED_DIM {
+            return v;
+        }
+    }
+    embed_text_hash(text)
+}
+
+fn embed_text_hash(text: &str) -> Vec<f32> {
     let mut vec = [0.0f32; EMBED_DIM];
     let lower = text.to_lowercase();
 

@@ -1,7 +1,6 @@
 //! Quality gate pipeline orchestration.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 use ax_core::Ax;
 use ax_extraction::IndexOptions;
@@ -483,19 +482,7 @@ impl ShipPipeline {
 }
 
 fn run_impacted_tests(config: &ShipConfig, tia: &ax_tia::TiaResult) -> bool {
-    if tia.tests.is_empty() {
-        return true;
-    }
-    let names: Vec<&str> = tia.tests.iter().map(|t| t.name.as_str()).collect();
-    let filter = names.join("|");
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(format!(
-            "{} -- {} -- --exact",
-            config.quality_gate.tests.runner, filter
-        ))
-        .status();
-    matches!(status, Ok(s) if s.success())
+    crate::runners::run_impacted_tests(config, tia)
 }
 
 fn dispatch_sonar_progress(

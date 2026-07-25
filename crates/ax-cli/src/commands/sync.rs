@@ -4,14 +4,49 @@ use ax_extraction::orchestrator::IndexOptions;
 
 use crate::commands::resolve_path;
 use crate::ui::{
-    finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, info_line, ok_line,
+    finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, info_line,
+    ok_line,
 };
 
-pub async fn run(path: Option<String>, quiet: bool, watch: bool) -> Result<(), String> {
+pub async fn run(
+    path: Option<String>,
+    quiet: bool,
+    watch: bool,
+    all_members: bool,
+) -> Result<(), String> {
     let root = resolve_path(path);
+
+    if all_members {
+        if watch {
+            return Err("ax sync --all cannot be combined with --watch".into());
+        }
+        let members = ax_core::member_roots(&root);
+        if members.len() == 1 && members[0] == root {
+            // No workspace config — fall through to single-root sync.
+        } else {
+            for member in &members {
+                if !quiet {
+                    println!("{}", info_line(format!("Syncing {}", member.display())));
+                }
+                sync_one(member, quiet, false).await?;
+            }
+            if !quiet {
+                println!(
+                    "{}",
+                    ok_line(format!("Synced {} workspace member(s)", members.len()))
+                );
+            }
+            return Ok(());
+        }
+    }
+
+    sync_one(&root, quiet, watch).await
+}
+
+async fn sync_one(root: &std::path::Path, quiet: bool, watch: bool) -> Result<(), String> {
     // Idempotent — adds capture-git to hooks when missing (post-init upgrade path).
-    let _ = ax_sync::install_git_sync_hooks(&root);
-    let mut ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let _ = ax_sync::install_git_sync_hooks(root);
+    let mut ax = ax_core::Ax::open(root).await.map_err(|e| e.to_string())?;
     let opts = IndexOptions {
         force: false,
         quiet,

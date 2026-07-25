@@ -1,0 +1,21 @@
+[package]
+name = "ax-plugins"
+version = "3.1.0"
+edition = "2021"
+description = "ax out-of-tree extractor plugins (process host + optional wasmtime)"
+
+[features]
+default = []
+wasm = ["wasmtime"]
+
+[dependencies]
+ax-types = { workspace = true }
+ax-utils = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"
+tracing = { workspace = true }
+wasmtime = { version = "25", optional = true, default-features = true }
+
+[dev-dependencies]
+tempfile = "3"

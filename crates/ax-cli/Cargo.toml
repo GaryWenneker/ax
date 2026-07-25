@@ -7,6 +7,13 @@ edition = "2021"
 name = "ax"
 path = "src/main.rs"
 
+[features]
+default = []
+## Enable wasmtime extractor plugins (`.ax/plugins/*/plugin.toml` with `wasm =`).
+plugins-wasm = ["ax-extraction/plugins-wasm"]
+## Enable ONNX Runtime dense memory embeddings (`AX_ONNX_MODEL` or `~/.ax/models/`).
+onnx = ["ax-memory/onnx"]
+
 [dependencies]
 ax-types = { workspace = true }
 ax-utils = { workspace = true }
@@ -27,6 +34,8 @@ ax-tia = { workspace = true }
 ax-ship = { workspace = true }
 ax-installer = { workspace = true }
 ax-agent = { workspace = true }
+ax-lsp = { workspace = true }
+uuid = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

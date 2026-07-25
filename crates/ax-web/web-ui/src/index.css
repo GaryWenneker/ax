@@ -9689,3 +9689,32 @@ button.linkish {
   color: var(--text-dim);
 }
 
+/* Live action stream (above status bar) */
+.action-stream {
+  position: fixed;
+  right: 12px;
+  bottom: calc(var(--statusbar-h) + 10px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(360px, 90vw);
+  pointer-events: none;
+}
+.action-stream__item {
+  background: color-mix(in srgb, var(--bg-panel, #222) 92%, transparent);
+  border: 1px solid var(--border, #333);
+  padding: 6px 10px;
+  font-size: calc(var(--fs-sm) * var(--ui-scale, 1));
+  color: var(--text, #ddd);
+}
+.action-stream__kind {
+  font-weight: 600;
+  margin-right: 8px;
+  color: var(--accent, #8ab4f8);
+  text-transform: lowercase;
+}
+.action-stream__msg {
+  color: var(--text-dim, #aaa);
+}
+

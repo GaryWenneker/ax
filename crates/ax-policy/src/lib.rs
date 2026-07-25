@@ -2,6 +2,7 @@ pub mod capture;
 pub mod config;
 pub mod format;
 pub mod guard;
+pub mod hierarchy;
 pub mod index;
 pub mod matcher;
 pub mod migrate;
@@ -22,6 +23,7 @@ pub use config::{
 };
 pub use format::{build_preflight_meta, format_inject_block};
 pub use guard::{guard_operation, guard_with_context};
+pub use hierarchy::{find_workspace_root, policy_layer_dirs};
 pub use index::{
     ensure_policy_ready, export_policy_to_files, get_rule, get_skill, import_policy_from_files,
     index_policy, list_rules, list_skills, policy_exists, policy_exists_filesystem,

@@ -3,12 +3,45 @@ use std::sync::Arc;
 use ax_extraction::orchestrator::IndexOptions;
 
 use crate::commands::{check_unsafe_root, resolve_path};
-use crate::ui::{finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, ok_line};
+use crate::ui::{
+    finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, info_line,
+    ok_line,
+};
 
-pub async fn run(path: Option<String>, force: bool, quiet: bool, _verbose: bool) -> Result<(), String> {
+pub async fn run(
+    path: Option<String>,
+    force: bool,
+    quiet: bool,
+    _verbose: bool,
+    all_members: bool,
+) -> Result<(), String> {
     let root = resolve_path(path);
-    check_unsafe_root(&root)?;
-    let mut ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+
+    if all_members {
+        let members = ax_core::member_roots(&root);
+        if members.len() > 1 || (members.len() == 1 && members[0] != root) {
+            for member in &members {
+                if !quiet {
+                    println!("{}", info_line(format!("Indexing {}", member.display())));
+                }
+                index_one(member, force, quiet).await?;
+            }
+            if !quiet {
+                println!(
+                    "{}",
+                    ok_line(format!("Indexed {} workspace member(s)", members.len()))
+                );
+            }
+            return Ok(());
+        }
+    }
+
+    index_one(&root, force, quiet).await
+}
+
+async fn index_one(root: &std::path::Path, force: bool, quiet: bool) -> Result<(), String> {
+    check_unsafe_root(root)?;
+    let mut ax = ax_core::Ax::open(root).await.map_err(|e| e.to_string())?;
     if force {
         ax.clear().await.map_err(|e| e.to_string())?;
     }
@@ -23,7 +56,10 @@ pub async fn run(path: Option<String>, force: bool, quiet: bool, _verbose: bool)
         .as_ref()
         .map(|pb| index_progress_callback(Arc::clone(pb)));
 
-    let result = ax.index_all(opts, on_progress).await.map_err(|e| e.to_string())?;
+    let result = ax
+        .index_all(opts, on_progress)
+        .await
+        .map_err(|e| e.to_string())?;
 
     finish_progress_bar(progress);
 

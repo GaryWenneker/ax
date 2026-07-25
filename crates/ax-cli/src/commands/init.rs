@@ -13,9 +13,54 @@ use crate::ui::{
     ok_line,
 };
 
-pub async fn run(path: Option<String>) -> Result<(), String> {
+pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
     let root = resolve_path(path);
     check_unsafe_root(&root)?;
+
+    if workspace {
+        let members = ax_core::discover_members(&root);
+        if members.is_empty() {
+            return Err(
+                "no workspace members discovered — add nested .ax/ dirs or a Cargo workspace"
+                    .into(),
+            );
+        }
+        let cfg = ax_core::WorkspaceConfig {
+            members: members.clone(),
+        };
+        ax_core::write_workspace_config(&root, &cfg)?;
+        println!(
+            "{}",
+            ok_line(format!(
+                "Wrote {} workspace member(s) to ax.json",
+                members.len()
+            ))
+        );
+        for m in &members {
+            let label = m.name.as_deref().unwrap_or("(unnamed)");
+            println!("  {} — {}", dim(&m.path), label);
+        }
+        println!();
+        // Initialize each member project (creates .ax/ + index).
+        for m in &members {
+            let member_root = root.join(&m.path);
+            if !member_root.is_dir() {
+                eprintln!("{}", dim(format!("skip missing member: {}", m.path)));
+                continue;
+            }
+            println!(
+                "{}",
+                info_line(format!("Initializing member {}", tildify(&member_root)))
+            );
+            Box::pin(run(
+                Some(member_root.to_string_lossy().to_string()),
+                false,
+            ))
+            .await?;
+            println!();
+        }
+        return Ok(());
+    }
 
     let already_initialized = is_initialized(&root);
 

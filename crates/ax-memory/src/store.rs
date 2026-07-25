@@ -145,14 +145,18 @@ pub async fn recall(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<
         return Ok(Vec::new());
     }
 
-    // Reciprocal Rank Fusion across both legs.
+    // Weighted Reciprocal Rank Fusion (vector / FTS). Graph proximity can be
+    // layered later via WEIGHT_GRAPH when entity links are available.
     let mut fused: HashMap<String, f64> = HashMap::new();
     for (rank, id) in fts_ranked.iter().enumerate() {
-        *fused.entry(id.clone()).or_default() += crate::embed::rrf_score(rank);
+        *fused.entry(id.clone()).or_default() +=
+            crate::embed::WEIGHT_FTS * crate::embed::rrf_score(rank);
     }
     for (rank, (id, _)) in vector_scored.iter().enumerate() {
-        *fused.entry(id.clone()).or_default() += crate::embed::rrf_score(rank);
+        *fused.entry(id.clone()).or_default() +=
+            crate::embed::WEIGHT_VECTOR * crate::embed::rrf_score(rank);
     }
+    let _ = crate::embed::WEIGHT_GRAPH; // reserved for entity-linked boost
 
     let ids: Vec<String> = fused.keys().cloned().collect();
     let now = now_ms();

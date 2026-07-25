@@ -1,5 +1,6 @@
 //! ax-web: local HTTP server exposing the ax code graph + policy editor.
 
+mod actions;
 mod agent;
 mod agent_pty;
 mod mcp_quality;
@@ -7,12 +8,14 @@ mod mcp_trace;
 mod memory;
 mod policy;
 mod queries;
+mod share_auth;
 mod ship;
 mod sonar_proxy;
 mod savings;
 mod workspace;
 mod workspace_state;
 
+pub use actions::{publish as publish_action, ActionEvent};
 pub use workspace_state::WebHub;
 
 use std::path::PathBuf;
@@ -552,10 +555,47 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ServeOptions {
+    pub root: PathBuf,
+    pub port: u16,
+    pub open: bool,
+    /// Bind address (default `127.0.0.1`). Use `0.0.0.0` for LAN/`ax share`.
+    pub bind: String,
+    /// When set, requires `?token=` / Bearer / cookie (also sets `AX_SHARE_TOKEN`).
+    pub share_token: Option<String>,
+}
+
+impl Default for ServeOptions {
+    fn default() -> Self {
+        Self {
+            root: PathBuf::from("."),
+            port: 7070,
+            open: false,
+            bind: "127.0.0.1".into(),
+            share_token: None,
+        }
+    }
+}
+
 pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
-    let readonly = std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1");
-    let hub = WebHub::open(root.clone(), readonly, port).await?;
-    let _ = ax_agent::config::touch_recent_project(&root, true);
+    serve_with(ServeOptions {
+        root,
+        port,
+        open,
+        ..ServeOptions::default()
+    })
+    .await
+}
+
+pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
+    if let Some(token) = &opts.share_token {
+        std::env::set_var("AX_SHARE_TOKEN", token);
+    }
+    let readonly = std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1")
+        || opts.share_token.is_some();
+    let hub = WebHub::open(opts.root.clone(), readonly, opts.port).await?;
+    let _ = ax_agent::config::touch_recent_project(&opts.root, true);
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -564,22 +604,48 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
 
     let app = hub.nest_routers(cors);
 
-    let addr = format!("127.0.0.1:{port}");
-    let listener = bind_web_listener(&addr, port).await?;
+    let addr = format!("{}:{}", opts.bind, opts.port);
+    let listener = bind_web_listener(&addr, opts.port).await?;
 
-    let url = format!("http://localhost:{port}");
-    eprintln!("ax web  {url}");
-    eprintln!("  Graph + policy: {}", root.display());
+    let local_url = format!("http://localhost:{}", opts.port);
+    eprintln!("ax web  {local_url}");
+    if opts.bind != "127.0.0.1" && opts.bind != "localhost" {
+        if let Some(ip) = guess_lan_ip() {
+            let mut share = format!("http://{ip}:{}", opts.port);
+            if let Some(token) = &opts.share_token {
+                share.push_str(&format!("?token={token}"));
+            }
+            eprintln!("ax share {share}");
+        }
+    }
+    if let Some(token) = &opts.share_token {
+        eprintln!("  Share token: {token}");
+        eprintln!("  Mode: read-only (share session)");
+    }
+    eprintln!("  Graph + policy: {}", opts.root.display());
     eprintln!("  Press Ctrl+C to stop.");
 
-    if open {
-        open_browser(&url);
+    if opts.open {
+        let mut open_url = local_url.clone();
+        if let Some(token) = &opts.share_token {
+            open_url.push_str(&format!("?token={token}"));
+        }
+        open_browser(&open_url);
     }
+
+    actions::publish("web", "server started", None);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| e.to_string())
+}
+
+fn guess_lan_ip() -> Option<String> {
+    use std::net::UdpSocket;
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    Some(socket.local_addr().ok()?.ip().to_string())
 }
 
 async fn bind_web_listener(addr: &str, port: u16) -> Result<tokio::net::TcpListener, String> {

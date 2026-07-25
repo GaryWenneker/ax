@@ -5,7 +5,10 @@ use ax_utils::errors::{AxError, DatabaseError};
 
 use crate::config::{load_policy_config, PolicyStorage};
 use crate::parse::{parse_rule_file, parse_skill_file, serialize_rule, serialize_skill};
-use crate::paths::{ensure_policy_dirs, rule_file, rules_dir, skill_file, skills_dir, ax_dir_from_project};
+use crate::paths::{
+    ax_dir_from_project, ensure_policy_dirs, policy_root, rule_file, rules_dir, skill_file,
+    skills_dir,
+};
 use crate::types::{
     PolicyIndexResult, PolicyRuleDoc, PolicyRuleRow, PolicySkillDoc, PolicySkillRow,
     RuleFrontmatter, SkillFrontmatter,
@@ -58,7 +61,49 @@ pub async fn import_policy_from_files(
     let mut seen_rules = Vec::new();
     let mut seen_skills = Vec::new();
 
-    let rules_path = rules_dir(&ax_dir);
+    // Hierarchical merge: global → workspace → member (later upserts win).
+    let layers = crate::hierarchy::policy_layer_dirs(project_root);
+    let layer_list = if layers.is_empty() {
+        vec![policy_root(&ax_dir)]
+    } else {
+        layers
+    };
+
+    for policy_dir in &layer_list {
+        let (r, s, mut rule_ids, mut skill_ids) =
+            import_one_policy_dir(pool, policy_dir).await?;
+        rules_indexed += r;
+        skills_indexed += s;
+        seen_rules.append(&mut rule_ids);
+        seen_skills.append(&mut skill_ids);
+    }
+
+    if mode == ImportMode::Replace {
+        // Only prune against the highest-precedence (member) layer set.
+        seen_rules.sort();
+        seen_rules.dedup();
+        seen_skills.sort();
+        seen_skills.dedup();
+        prune_rules(pool, &seen_rules).await?;
+        prune_skills(pool, &seen_skills).await?;
+    }
+
+    Ok(PolicyIndexResult {
+        rules_indexed,
+        skills_indexed,
+    })
+}
+
+async fn import_one_policy_dir(
+    pool: &SqlitePool,
+    policy_dir: &Path,
+) -> Result<(u32, u32, Vec<String>, Vec<String>), AxError> {
+    let mut rules_indexed = 0u32;
+    let mut skills_indexed = 0u32;
+    let mut seen_rules = Vec::new();
+    let mut seen_skills = Vec::new();
+
+    let rules_path = policy_dir.join(crate::paths::RULES_DIR);
     if rules_path.is_dir() {
         for entry in walkdir::WalkDir::new(&rules_path)
             .min_depth(1)
@@ -82,7 +127,7 @@ pub async fn import_policy_from_files(
         }
     }
 
-    let skills_path = skills_dir(&ax_dir);
+    let skills_path = policy_dir.join(crate::paths::SKILLS_DIR);
     if skills_path.is_dir() {
         for entry in walkdir::WalkDir::new(&skills_path)
             .min_depth(1)
@@ -108,15 +153,7 @@ pub async fn import_policy_from_files(
         }
     }
 
-    if mode == ImportMode::Replace {
-        prune_rules(pool, &seen_rules).await?;
-        prune_skills(pool, &seen_skills).await?;
-    }
-
-    Ok(PolicyIndexResult {
-        rules_indexed,
-        skills_indexed,
-    })
+    Ok((rules_indexed, skills_indexed, seen_rules, seen_skills))
 }
 
 pub async fn export_policy_to_files(

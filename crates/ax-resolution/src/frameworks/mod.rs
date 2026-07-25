@@ -2,7 +2,7 @@
 
 pub mod angular;
 pub mod extract;
-mod cargo_workspace;
+pub mod cargo_workspace;
 mod express;
 pub mod go;
 pub mod flask;

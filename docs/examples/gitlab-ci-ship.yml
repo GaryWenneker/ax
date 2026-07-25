@@ -1,0 +1,20 @@
+# Example: GitLab CI job for ax ship --ci
+# Copy into .gitlab-ci.yml or include as a template.
+
+stages:
+  - quality
+
+ax-ship:
+  stage: quality
+  image: rust:1-bookworm
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  before_script:
+    - curl -fsSL https://getax.wenneker.io/install.sh | bash
+    - export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  script:
+    - ax sync
+    - ax ship --ci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

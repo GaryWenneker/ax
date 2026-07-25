@@ -7,8 +7,11 @@ mod git_root;
 mod git_watcher;
 mod pipeline;
 mod run_log;
+mod runners;
 mod state;
 mod advanced;
+
+pub use runners::run_impacted_tests;
 
 pub use auto_commit::Checkpoint;
 pub use ax_remote::{seed_ship_config, ShipSeedResult};

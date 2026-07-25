@@ -78,13 +78,15 @@ Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the pro
 
 On **first init**, runs a full index. If `.ax/ax.db` already exists, runs an incremental `ax sync` instead — use `ax index` when you need a full rebuild.
 
-| Argument | Type | Description |
+| Argument / flag | Type | Description |
 |---|---|---|
 | `path` | optional | Project root (default: current directory) |
+| `--workspace` | flag | Discover monorepo members (Cargo workspace + nested `.ax/`), write `members` to `ax.json`, and init each member |
 
 ```bash
 ax init
 ax init ./services/api
+ax init --workspace
 ```
 
 ### `ax uninit [path]`
@@ -110,11 +112,13 @@ Full re-index from scratch (scan → extract → resolve). Use when the watcher 
 | `--force` | flag | Clear the database before indexing |
 | `--quiet` | flag | No progress bar or summary |
 | `--verbose` | flag | Reserved for extra diagnostics |
+| `--all` | flag | Index every workspace member listed in root `ax.json` |
 
 ```bash
 ax index
 ax index ./services/api --force
 ax index --quiet
+ax index --all
 ```
 
 ### `ax sync [path]`
@@ -126,6 +130,7 @@ Incremental update — re-parses only changed files.
 | `path` | optional | Project root |
 | `--quiet` | flag | No progress bar or summary |
 | `--watch` | flag | Watch filesystem and auto-sync until Ctrl+C |
+| `--all` | flag | Sync every workspace member listed in root `ax.json` |
 
 Also refreshes git hooks when the memory-capture line is missing (idempotent upgrade path).
 
@@ -133,6 +138,7 @@ Also refreshes git hooks when the memory-capture line is missing (idempotent upg
 ax sync
 ax sync --quiet
 ax sync --watch
+ax sync --all
 ```
 
 ### `ax watch [path]`
@@ -329,6 +335,25 @@ ax report --out docs/ARCHITECTURE.md
 ax report --stdout
 ```
 
+### `ax export graph [path]`
+
+Export the knowledge graph for external tools. Includes Leiden community ids, degree, and god-node flags.
+
+| Argument / flag | Type | Description |
+|---|---|---|
+| `path` | optional | Project root |
+| `--format` | string | `html` \| `json` \| `dot` \| `graphml` \| `gexf` \| `cypher` \| `mermaid` \| `plantuml` (default: `json`) |
+| `--out` | path | Output file (default depends on format) |
+| `--resolution` | float | Cluster granularity (default: `1.0`) |
+| `--limit` | int | Max nodes by degree (default: `3000`) |
+
+```bash
+ax export graph --format json
+ax export graph --format graphml --out graph.graphml
+ax export graph --format cypher --out import.cypher
+ax export graph --format mermaid --out graph.mmd
+```
+
 ### `ax export graph-html [path]`
 
 Export the graph as a single self-contained, interactive HTML file (inline JSON + a small force-directed renderer) — portable, no server required. Node color = community, node size = degree, docs render as distinct squares.
@@ -402,6 +427,31 @@ ax capture-git --limit 50
 ax capture-git --limit 1 --quiet    # same as the post-commit hook
 ```
 
+### `ax memory export`
+
+Export memories that carry a tag (default: `shared`) to `.ax/memory/shared.jsonl` for team git sync.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--tag` | `shared` | Only export memories with this tag |
+| `--out` | `.ax/memory/shared.jsonl` | Output path |
+| `--quiet` | off | No summary (for git hooks) |
+
+```bash
+ax remember "Adopt GraphQL federation" --kind decision --tag shared
+ax memory export
+ax memory export --tag team --out ./shared-memories.jsonl
+```
+
+### `ax memory import`
+
+Import JSONL memories (upsert by id). Used after `git pull` or via the post-merge hook when `"memorySync": true` is set in `ax.json`.
+
+```bash
+ax memory import
+ax memory import --path ./shared-memories.jsonl
+```
+
 ---
 
 ## Git & testing
@@ -466,6 +516,7 @@ Git-aware quality gates, SSE dashboard, draft PRs. See [Command Center](/guides/
 | `path` | optional | cwd | Project root |
 | `--watch` | flag | — | Watch git events and open dashboard |
 | `--evaluate` | flag | — | Run one quality-gate evaluation |
+| `--ci` | flag | — | Headless CI: evaluate, print JSON on stdout, summary on stderr, **exit 1** if the gate failed |
 | `--draft` | flag | — | Create draft PR after quality gate |
 | `--title` | string | — | PR title |
 | `--port` | number | `7070` | Dashboard port |
@@ -476,9 +527,44 @@ Git-aware quality gates, SSE dashboard, draft PRs. See [Command Center](/guides/
 ```bash
 ax ship --watch --open
 ax ship --evaluate
+ax ship --ci                     # CI / GitHub Actions
 ax ship --evaluate --auto-commit --revert-on-fail
 ax ship --draft --title "feat: memory vault"
 ax web --open                    # Command Center without git watch
+```
+
+Example workflows:
+
+- [GitHub Actions](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/github-actions-ship.yml)
+- [GitLab CI](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/gitlab-ci-ship.yml)
+- [Azure Pipelines](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/azure-pipelines-ship.yml)
+
+---
+
+### `ax share [path]`
+
+Share Command Center on the LAN with a bearer token (read-only session).
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `path` | optional | cwd | Project root |
+| `--port` | number | `7070` | Listen port |
+| `--bind` | string | `0.0.0.0` | Bind address |
+| `--open` | flag | — | Open browser with token URL |
+| `--token` | string | random | Share token |
+
+```bash
+ax share --open
+```
+
+### `ax lsp status` / `ax lsp enrich`
+
+Optional Language Server enrichment. `enrich` calls `textDocument/definition` on
+unresolved refs and writes edges with confidence `exact`.
+
+```bash
+ax lsp status
+ax lsp enrich --limit 100
 ```
 
 ---
@@ -748,6 +834,20 @@ Import `.mdc` / `SKILL.md` from disk into database (merge — keeps DB-only rows
 ```bash
 ax policy import
 ax policy import ./my-project
+```
+
+### `ax policy pull <git-url> [path]`
+
+Clone a remote git policy registry into `.ax/policy/vendored/<name>/`, copy `rules/` and `skills/` into the project policy tree, and re-index.
+
+| Argument / flag | Type | Description |
+|---|---|---|
+| `git-url` | required | HTTPS or SSH git URL |
+| `--name` | string | Vendor subdirectory name (default: repo name) |
+
+```bash
+ax policy pull https://github.com/acme/ax-org-policy.git
+ax policy pull git@github.com:acme/ax-org-policy.git --name org
 ```
 
 ### `ax policy export [path]`

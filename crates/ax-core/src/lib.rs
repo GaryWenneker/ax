@@ -3,6 +3,7 @@
 mod project_config;
 pub mod report;
 pub mod stats_format;
+pub mod workspace;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,6 +29,10 @@ use ax_utils::file_lock::FileLock;
 use ax_utils::mutex::AsyncMutex;
 
 pub use project_config::ProjectConfig;
+pub use workspace::{
+    discover_members, find_workspace_root, load_workspace_config, member_roots,
+    write_workspace_config, WorkspaceConfig, WorkspaceMember,
+};
 
 pub struct Ax {
     db: Database,
@@ -616,6 +621,11 @@ async fn finalize_after_extract(
         ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
     queries
         .set_metadata("docs_indexed", &docs_indexed.to_string())
+        .await?;
+    let contracts_indexed =
+        ax_extraction::contracts::index_contracts(project_root, queries, exclude).await?;
+    queries
+        .set_metadata("contracts_indexed", &contracts_indexed.to_string())
         .await?;
     db.run_maintenance().await?;
     queries

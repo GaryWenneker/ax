@@ -72,3 +72,7 @@ test-smoke/.ax/
 test-smoke-go/.ax/
 test-smoke-rust/.ax/
 
+# Accidental cargo target under web-ui
+crates/ax-web/web-ui/target-dev/
+crates/ax-web/web-ui/target/
+

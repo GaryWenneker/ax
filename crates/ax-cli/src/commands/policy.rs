@@ -48,6 +48,139 @@ pub async fn run_import(path: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
+/// Clone a remote git policy registry into `.ax/policy/vendored/<name>/` and re-index.
+pub async fn run_pull(
+    url: String,
+    path: Option<String>,
+    name: Option<String>,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax_dir = root.join(".ax");
+    if !ax_dir.is_dir() {
+        return Err("project not initialized — run ax init first".into());
+    }
+
+    let vendor_name = name.unwrap_or_else(|| {
+        url.trim_end_matches('/')
+            .trim_end_matches(".git")
+            .rsplit(['/', ':'])
+            .next()
+            .unwrap_or("remote-policy")
+            .to_string()
+    });
+    let vendor_name = vendor_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if vendor_name.is_empty() {
+        return Err("could not derive vendor name — pass --name".into());
+    }
+
+    let dest = root.join(".ax/policy/vendored").join(&vendor_name);
+    if dest.exists() {
+        std::fs::remove_dir_all(&dest)
+            .map_err(|e| format!("failed to clear {}: {e}", dest.display()))?;
+    }
+    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+
+    let status = std::process::Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--quiet",
+            &url,
+            &dest.to_string_lossy(),
+        ])
+        .status()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !status.success() {
+        return Err(format!("git clone failed for {url}"));
+    }
+
+    // Prefer nested .ax/policy or top-level rules/skills; otherwise copy whole tree.
+    let policy_src = if dest.join(".ax/policy").is_dir() {
+        dest.join(".ax/policy")
+    } else if dest.join("rules").is_dir() || dest.join("policy").is_dir() {
+        if dest.join("policy").is_dir() {
+            dest.join("policy")
+        } else {
+            dest.clone()
+        }
+    } else {
+        dest.clone()
+    };
+
+    // Flatten into .ax/policy/rules and skills when the clone has those dirs.
+    let rules_src = policy_src.join("rules");
+    let skills_src = policy_src.join("skills");
+    let rules_dst = root.join(".ax/policy/rules");
+    let skills_dst = root.join(".ax/policy/skills");
+    std::fs::create_dir_all(&rules_dst).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&skills_dst).map_err(|e| e.to_string())?;
+
+    let mut copied_rules = 0usize;
+    let mut copied_skills = 0usize;
+    if rules_src.is_dir() {
+        for entry in std::fs::read_dir(&rules_src).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("mdc") {
+                let dest_file = rules_dst.join(entry.file_name());
+                std::fs::copy(&path, &dest_file).map_err(|e| e.to_string())?;
+                copied_rules += 1;
+            }
+        }
+    }
+    if skills_src.is_dir() {
+        for entry in std::fs::read_dir(&skills_src).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_dir() {
+                let dest_skill = skills_dst.join(entry.file_name());
+                copy_dir_recursive(&path, &dest_skill)?;
+                copied_skills += 1;
+            }
+        }
+    }
+
+    println!(
+        "Pulled policy from {url} → .ax/policy/vendored/{vendor_name}/ (copied {copied_rules} rules, {copied_skills} skills)"
+    );
+
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let result = ax
+        .index_policy(true)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!(
+        "Re-indexed policy: {} rules, {} skills",
+        result.rules_indexed, result.skills_indexed
+    );
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn run_export(path: Option<String>, out: String) -> Result<(), String> {
     let root = resolve_path(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;

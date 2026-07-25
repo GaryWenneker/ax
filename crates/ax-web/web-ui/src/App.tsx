@@ -19,6 +19,7 @@ import SonarQubePage from './pages/SonarQube';
 import SavingsPage from './pages/Savings';
 import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
+import ActionStream from './components/ActionStream';
 import { McpQualityHost } from './components/McpQualitySlideout';
 import HeaderWaves from './components/HeaderWaves';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
@@ -313,6 +314,7 @@ function AppShell() {
           </main>
         </div>
 
+        <ActionStream />
         <StatusBar />
         <McpQualityHost />
       </div>

@@ -25,6 +25,8 @@ members = [
     "crates/ax-remote",
     "crates/ax-installer",
     "crates/ax-agent",
+    "crates/ax-plugins",
+    "crates/ax-lsp",
 ]
 resolver = "2"
 
@@ -92,4 +94,6 @@ ax-ship = { path = "crates/ax-ship" }
 ax-quality = { path = "crates/ax-quality" }
 ax-remote = { path = "crates/ax-remote" }
 ax-installer = { path = "crates/ax-installer" }
+ax-plugins = { path = "crates/ax-plugins" }
+ax-lsp = { path = "crates/ax-lsp" }
 ax-agent = { path = "crates/ax-agent" }

@@ -1,0 +1,24 @@
+name: Performance
+description: Indexing, MCP latency, or large-repo bottlenecks
+title: "[performance] "
+labels: ["performance"]
+body:
+  - type: input
+    id: scale
+    attributes:
+      label: Approximate LOC / file count
+    validations:
+      required: true
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: Wall time, DB size, RSS, MCP tool latency, lock contention, …
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+    validations:
+      required: true

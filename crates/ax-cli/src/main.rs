@@ -42,7 +42,11 @@ enum Commands {
     Uninstall,
     /// Initialize project and index
     #[command(long_about = help_text::INIT_LONG)]
-    Init { path: Option<String> },
+    Init {
+        path: Option<String>,
+        #[arg(long, help = "Discover monorepo members and write ax.json members[]")]
+        workspace: bool,
+    },
     /// Remove .ax directory
     #[command(long_about = help_text::UNINIT_LONG)]
     Uninit { path: Option<String> },
@@ -56,6 +60,8 @@ enum Commands {
         quiet: bool,
         #[arg(long)]
         verbose: bool,
+        #[arg(long = "all", help = "Index every workspace member from ax.json")]
+        all_members: bool,
     },
     /// Incremental sync
     #[command(long_about = help_text::SYNC_LONG)]
@@ -65,6 +71,8 @@ enum Commands {
         quiet: bool,
         #[arg(long, help = "Watch for changes and auto-sync (debounced)")]
         watch: bool,
+        #[arg(long = "all", help = "Sync every workspace member from ax.json")]
+        all_members: bool,
     },
     /// Watch for file changes and auto-sync (alias for sync --watch)
     #[command(long_about = help_text::WATCH_LONG)]
@@ -125,6 +133,11 @@ enum Commands {
         quiet: bool,
         #[arg(long)]
         json: bool,
+    },
+    /// Shared memory vault export/import for team git sync
+    Memory {
+        #[command(subcommand)]
+        action: MemoryCommands,
     },
     /// Node details (same as ax_node MCP tool)
     #[command(long_about = help_text::NODE_LONG)]
@@ -197,6 +210,8 @@ enum Commands {
         watch: bool,
         #[arg(long, help = "Run one quality gate evaluation")]
         evaluate: bool,
+        #[arg(long, help = "Headless CI mode: evaluate, print JSON, exit 1 if gate failed")]
+        ci: bool,
         #[arg(long, help = "Create draft PR after quality gate")]
         draft: bool,
         #[arg(long, help = "PR title")]
@@ -290,6 +305,23 @@ enum Commands {
         port: u16,
         #[arg(long, help = "Open the browser automatically after starting")]
         open: bool,
+    },
+    /// Share Command Center on the LAN with a token (read-only)
+    Share {
+        path: Option<String>,
+        #[arg(long, default_value = "7070", help = "Port to listen on")]
+        port: u16,
+        #[arg(long, default_value = "0.0.0.0", help = "Bind address")]
+        bind: String,
+        #[arg(long, help = "Open the browser automatically after starting")]
+        open: bool,
+        #[arg(long, help = "Share token (default: random)")]
+        token: Option<String>,
+    },
+    /// Language Server bridge — enrich unresolved refs with Exact edges
+    Lsp {
+        #[command(subcommand)]
+        action: LspCommands,
     },
     /// Policy rules and skills
     Policy {
@@ -386,11 +418,60 @@ enum SavingsHookAction {
 }
 
 #[derive(Subcommand)]
+enum MemoryCommands {
+    /// Export memories tagged for team sync (default tag: shared)
+    Export {
+        #[arg(long, default_value = "shared", help = "Only export memories with this tag")]
+        tag: String,
+        #[arg(long, help = "Output path (default: .ax/memory/shared.jsonl)")]
+        out: Option<String>,
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Import shared memories from JSONL (default: .ax/memory/shared.jsonl)
+    Import {
+        #[arg(long, help = "Input path (default: .ax/memory/shared.jsonl)")]
+        path: Option<String>,
+        #[arg(long)]
+        quiet: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum LspCommands {
+    /// Show which language servers are available on PATH
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve unresolved refs via LSP definition → Exact edges
+    Enrich {
+        path: Option<String>,
+        #[arg(long, default_value_t = 200, help = "Max unresolved refs to examine")]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ExportCommands {
     /// Self-contained interactive HTML graph (portable, no server needed)
     GraphHtml {
         path: Option<String>,
         #[arg(long, help = "Output file (default: graph.html at project root)")]
+        out: Option<String>,
+        #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
+        resolution: f64,
+        #[arg(long, default_value_t = 3000, help = "Max nodes to include (top by degree)")]
+        limit: usize,
+    },
+    /// Export the knowledge graph (html|json|dot|graphml|gexf|cypher|mermaid|plantuml)
+    Graph {
+        path: Option<String>,
+        #[arg(long, default_value = "json", help = "html|json|dot|graphml|gexf|cypher|mermaid|plantuml")]
+        format: String,
+        #[arg(long, help = "Output file (default depends on format)")]
         out: Option<String>,
         #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
         resolution: f64,
@@ -480,6 +561,14 @@ enum PolicyCommands {
     /// Import .mdc / SKILL.md from disk into database (merge; keeps DB-only rows)
     Import {
         path: Option<String>,
+    },
+    /// Pull shared policy rules/skills from a git repository URL
+    Pull {
+        /// Git URL (https or ssh) of a policy registry repo
+        url: String,
+        path: Option<String>,
+        #[arg(long, help = "Vendor subdirectory name under .ax/policy/vendored/")]
+        name: Option<String>,
     },
     /// Export database policy to .mdc / SKILL.md files
     Export {
@@ -640,13 +729,24 @@ async fn async_main() {
             commands::install::run(yes, all)
         }
         Some(Commands::Uninstall) => commands::uninstall::run(),
-        Some(Commands::Init { path }) => commands::init::run(path).await,
+        Some(Commands::Init { path, workspace }) => commands::init::run(path, workspace).await,
         Some(Commands::Uninit { path }) => commands::uninit::run(path).await,
-        Some(Commands::Index { path, force, quiet, verbose }) => {
-            commands::index::run(path, force, quiet, verbose).await
+        Some(Commands::Index {
+            path,
+            force,
+            quiet,
+            verbose,
+            all_members,
+        }) => commands::index::run(path, force, quiet, verbose, all_members).await,
+        Some(Commands::Sync {
+            path,
+            quiet,
+            watch,
+            all_members,
+        }) => commands::sync::run(path, quiet, watch, all_members).await,
+        Some(Commands::Watch { path, quiet }) => {
+            commands::sync::run(path, quiet, true, false).await
         }
-        Some(Commands::Sync { path, quiet, watch }) => commands::sync::run(path, quiet, watch).await,
-        Some(Commands::Watch { path, quiet }) => commands::sync::run(path, quiet, true).await,
         Some(Commands::Status { path, json }) => commands::status::run(path, json).await,
         Some(Commands::Query { text, kind, limit, json }) => {
             commands::query::run(text, kind, limit, json).await
@@ -661,6 +761,14 @@ async fn async_main() {
         Some(Commands::CaptureGit { limit, quiet, json }) => {
             commands::memory::run_capture_git(limit, quiet, json).await
         }
+        Some(Commands::Memory { action }) => match action {
+            MemoryCommands::Export { tag, out, quiet } => {
+                commands::memory::run_export(Some(tag), out, quiet).await
+            }
+            MemoryCommands::Import { path, quiet } => {
+                commands::memory::run_import(path, quiet).await
+            }
+        },
         Some(Commands::Node { name }) => commands::node::run(name).await,
         Some(Commands::Files { format, json }) => commands::files::run(format, json).await,
         Some(Commands::Context { task }) => commands::context::run(task).await,
@@ -674,9 +782,19 @@ async fn async_main() {
             commands::report::run(path, out, resolution, stdout).await
         }
         Some(Commands::Export { action }) => match action {
-            ExportCommands::GraphHtml { path, out, resolution, limit } => {
-                commands::export::run_graph_html(path, out, resolution, limit).await
-            }
+            ExportCommands::GraphHtml {
+                path,
+                out,
+                resolution,
+                limit,
+            } => commands::export::run_graph_html(path, out, resolution, limit).await,
+            ExportCommands::Graph {
+                path,
+                format,
+                out,
+                resolution,
+                limit,
+            } => commands::export::run_graph(path, out, &format, resolution, limit).await,
         },
         Some(Commands::Affected {
             files,
@@ -704,13 +822,28 @@ async fn async_main() {
             path,
             watch,
             evaluate,
+            ci,
             draft,
             title,
             port,
             open,
             auto_commit,
             revert_on_fail,
-        }) => commands::ship::run(path, watch, evaluate, draft, title, port, open, auto_commit, revert_on_fail).await,
+        }) => {
+            commands::ship::run(
+                path,
+                watch,
+                evaluate,
+                ci,
+                draft,
+                title,
+                port,
+                open,
+                auto_commit,
+                revert_on_fail,
+            )
+            .await
+        }
         Some(Commands::Unlock { path }) => commands::unlock::run(path).await,
         Some(Commands::Daemon { path, action }) => {
             let act = match action {
@@ -720,6 +853,19 @@ async fn async_main() {
             commands::daemon::run(path, act).await
         }
         Some(Commands::Web { path, port, open }) => commands::web::run(path, port, open).await,
+        Some(Commands::Share {
+            path,
+            port,
+            bind,
+            open,
+            token,
+        }) => commands::share::run(path, port, bind, open, token).await,
+        Some(Commands::Lsp { action }) => match action {
+            LspCommands::Status { json } => commands::lsp::run_status(json).await,
+            LspCommands::Enrich { path, limit, json } => {
+                commands::lsp::run_enrich(path, limit, json).await
+            }
+        },
         Some(Commands::Cursor { action }) => match action {
             CursorCommands::Auth { action } => match action {
                 CursorAuthCommands::Status { json } => commands::cursor::run_status(json),
@@ -750,6 +896,9 @@ async fn async_main() {
         Some(Commands::Policy { action }) => match action {
             PolicyCommands::Index { path, force } => commands::policy::run_index(path, force).await,
             PolicyCommands::Import { path } => commands::policy::run_import(path).await,
+            PolicyCommands::Pull { url, path, name } => {
+                commands::policy::run_pull(url, path, name).await
+            }
             PolicyCommands::Export { path, out } => commands::policy::run_export(path, out).await,
             PolicyCommands::Match { prompt, path, file, json } => {
                 commands::policy::run_match(path, prompt, file, json).await
@@ -905,6 +1054,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Remember { .. }) => Some("remember".into()),
         Some(Commands::Recall { .. }) => Some("recall".into()),
         Some(Commands::CaptureGit { .. }) => Some("capture-git".into()),
+        Some(Commands::Memory { .. }) => Some("memory".into()),
         Some(Commands::Node { .. }) => Some("node".into()),
         Some(Commands::Files { .. }) => Some("files".into()),
         Some(Commands::Context { .. }) => Some("context".into()),
@@ -927,6 +1077,8 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Mcp { .. }) => Some("mcp".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),
+        Some(Commands::Share { .. }) => Some("share".into()),
+        Some(Commands::Lsp { .. }) => Some("lsp".into()),
         Some(Commands::Cursor { .. }) => Some("cursor".into()),
         Some(Commands::Policy { .. }) => Some("policy".into()),
         Some(Commands::PromptHook) => None,

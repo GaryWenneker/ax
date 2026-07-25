@@ -124,11 +124,16 @@ fn runner_hint_for(node: &ax_types::Node) -> String {
     let path = &node.file_path;
     if path.ends_with(".rs") {
         format!("cargo test {} -- --exact", node.name)
-    } else if path.ends_with(".ts") || path.ends_with(".tsx") || path.ends_with(".js") {
-        format!("npx vitest run -t {}", node.name)
+    } else if path.ends_with(".ts") || path.ends_with(".tsx") || path.ends_with(".js") || path.ends_with(".jsx") {
+        // Prefer jest when the path looks like a Jest suite; otherwise Vitest.
+        if path.contains("__tests__") || path.contains(".test.") || path.contains(".spec.") {
+            format!("npx jest -t {}", node.name)
+        } else {
+            format!("npx vitest run -t {}", node.name)
+        }
     } else if path.ends_with(".py") {
         format!("pytest -k {}", node.name)
-    } else if path.ends_with("_test.go") {
+    } else if path.ends_with("_test.go") || path.ends_with(".go") {
         format!("go test -run {}", node.name)
     } else {
         node.name.clone()

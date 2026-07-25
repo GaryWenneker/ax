@@ -1,5 +1,6 @@
 //! Tree-sitter extraction engine for ax.
 
+pub mod contracts;
 pub mod extraction_version;
 pub mod function_ref;
 pub mod generated_detection;
