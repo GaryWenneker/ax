@@ -204,7 +204,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "ax-agent"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-installer",
  "ax-mcp",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "ax-cli"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-agent",
  "ax-context",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "ax-context"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-db",
  "ax-graph",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "ax-core"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-context",
  "ax-db",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "ax-db"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "ax-extraction"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "ax-db",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "ax-git"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "ax-graph"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "ax-installer"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "dirs",
  "serde",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "ax-lsp"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "ax-mcp"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "async-trait",
  "ax-context",
@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "ax-memory"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-db",
  "ax-utils",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "ax-plugins"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -479,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "ax-policy"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-utils",
  "blake3",
@@ -497,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "ax-quality"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -511,7 +511,7 @@ dependencies = [
 
 [[package]]
 name = "ax-reasoning"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "dirs",
  "reqwest",
@@ -523,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "ax-remote"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "async-trait",
  "ax-git",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "ax-resolution"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "async-trait",
  "ax-db",
@@ -559,7 +559,7 @@ dependencies = [
 
 [[package]]
 name = "ax-ship"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "async-stream",
  "ax-core",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "ax-smoke-tests"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "ax-sync"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "ax-telemetry"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "dirs",
  "reqwest",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "ax-tia"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-db",
  "ax-git",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "ax-types"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "ax-usage"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "ax-utils",
  "chrono",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "ax-utils"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "ax-web"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "async-stream",
