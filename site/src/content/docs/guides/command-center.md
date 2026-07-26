@@ -114,15 +114,17 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
 Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left-aligned content column** that scales by viewport: 720px → 800px → 960px → **1024px** (XXL). The column’s left edge aligns with the main pane next to the sidebar (not centered). Full-bleed pages (Files, Agent terminal, SonarQube, and open detail blades) stay unconstrained.
 
+**Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging table scrolls horizontally instead of crushing columns, project browser does not autofocus the filter, modals become bottom sheets. Graph and Agent are still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
+
 | Page | Purpose |
 |---|---|
 | **Ship** | Quality-gate pipeline, SSE logs, git events |
-| **Graph** | Interactive force-directed graph — communities, god nodes, edge confidence, docs ([details](/guides/architecture-insights/#visual-graph)) |
+| **Graph** | Interactive force-directed graph — communities, god nodes, edge confidence, docs; toolbar **Export / Download** for JSON · DOT · GraphML · GEXF · Cypher · Mermaid · PlantUML ([details](/guides/architecture-insights/#visual-graph)) |
 | **SonarQube** | Proxied dashboard with auto-login and dark theme |
 | **Memory** | Browse, search, compose memories (modal composer); capture from git |
 | **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
 | **Agent** | Terminal with MCP wired in (when enabled in Settings) |
-| **Logging** | Fullscreen table of the **active project** MCP verbose stream; **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), **Has query** chip (JSON payloads with a top-level `query` — badge + blue row mark), **date** dropdown (`YYYY-MM-DD`), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **Date / time** column shows full calendar day + clock; **fluid columns** (Date/time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
+| **Logging** | Fullscreen table of the **active project** MCP verbose stream (**newest at top**; **Scroll to new** when you leave the top); **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), **Has query** chip (JSON payloads with a top-level `query` — badge + blue row mark), **date** dropdown (`YYYY-MM-DD`), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **Date / time** column shows full calendar day + clock; **fluid columns** (Date/time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
 | **Policy** | View-first rule and skill editors |
 
 ![MCP Logging — live verbose stream with kind filters, project switcher, and Call Inspector](/screenshots/cc-logging.png)
@@ -133,7 +135,7 @@ Full walkthrough: [MCP Logging & Quality](/guides/mcp-quality/).
 
 Open with `ax web --open` or `ax ship --watch --open`.
 
-The title bar uses the same **azure CSS waves** as the marketing site (soft fade under the crest, matching the cinematic bokeh orbs). Waves sit in a reserved hang band under the chrome; the Logging overlay is portaled below that band so **Back / Follow / Full / Clear** stay fully visible and clickable (never clipped under the titlebar).
+The title bar uses the same **azure CSS waves** as the marketing site (soft fade under the crest, matching the cinematic bokeh orbs). Waves sit in a reserved hang band under the chrome; the Logging overlay is portaled below that band so **Back / Newest · To new / Full / Clear** stay fully visible and clickable (never clipped under the titlebar).
 
 ```bash
 ax web --open
@@ -193,7 +195,10 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 - **SonarQube** — auto-detect Podman/Docker, one-click install & start, admin auto-login, dark theme
 - **Command Center** — target branch, test runner, Azure DevOps / GitHub remote
-- **Interface** — theme chooser (accent/palette presets applied live, including the status bar), toggle Savings and Agent pages in the sidebar, **Timezone** for Logging Date/time and **daily log rotation** (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC), and **Verbose MCP logging** (records MCP traces to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; Logging loads the full current day and seamlessly prepends older days when you scroll up; no clear/delete in the UI; off by default; never alters tool responses)
+- **Interface** — theme chooser (default **ax Mint** `#3ee4b2`; accent/palette presets applied live, including the status bar), toggle Savings and Agent pages in the sidebar, **Timezone** for Logging Date/time and **daily log rotation** (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC), and **Verbose MCP logging** (records MCP traces to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; Logging shows **newest events at the top** and loads older days when you scroll down; **Scroll to new** jumps back to the live top; no clear/delete in the UI; off by default; never alters tool responses)
+- **Sharing** — live share status card (badge, port, copy URL), How to share, Enable PWA / Install / show hint again
+- **Plugins** — live extractor table from `GET /api/plugins` (name, mode, extensions, entry) with Refresh
+- **Embeddings** — memory embed backend (`hash` / `onnx` / …), onnx Cargo feature, model + tokenizer paths from `GET /api/memory/embed-status` with Re-probe
 
 ### SonarQube proxy
 
@@ -203,9 +208,13 @@ The SonarQube page reverse-proxies your local SonarQube instance through the Com
 
 - Injects admin credentials (no login screen)
 - Forces **dark theme** via CSS overrides, localStorage/sessionStorage keys, user-preference API patching, and a MutationObserver that prevents theme resets
-- Rewrites asset URLs and API paths so SonarQube works behind the `/api/ship/sonar/ui` prefix
+- Rewrites asset URLs and **API paths** (`/api/…`) so SonarQube works behind the `/api/ship/sonar/ui` prefix — including an early `fetch`/`XHR` patch, because Sonar’s axios treats leading-slash URLs as host-absolute and ignores `data-base-url`
+- Scopes `Set-Cookie` `Path=/` to the proxy prefix (needed for HTTPS Cloudflare tunnels)
+- Strips tunnel `Origin` / `Referer` / `X-Forwarded-*` / `CF-*` request headers that confuse Sonar CSRF
 - Caches credentials per session (no health-check probe per request)
 - Falls back to `127.0.0.1` / `localhost` when the configured hostname is unreachable
+
+Works the same on `http://127.0.0.1:7070` and via a Cloudflare tunnel to that port — the browser always talks to ax-web; Sonar stays on localhost on the host.
 
 ## Git hooks
 
@@ -237,7 +246,7 @@ ax sync
 ax ship --ci
 ```
 
-Workflow snippets: [GitHub](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/github-actions-ship.yml) · [GitLab](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/gitlab-ci-ship.yml) · [Azure Pipelines](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/azure-pipelines-ship.yml).
+Workflow snippets: [GitHub](https://github.com/GaryWenneker/ax/blob/main/docs/examples/github-actions-ship.yml) · [GitLab](https://github.com/GaryWenneker/ax/blob/main/docs/examples/gitlab-ci-ship.yml) · [Azure Pipelines](https://github.com/GaryWenneker/ax/blob/main/docs/examples/azure-pipelines-ship.yml).
 
 See also [Share Command Center](/guides/share/) for LAN/PWA collaboration.
 

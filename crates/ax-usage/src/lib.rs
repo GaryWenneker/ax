@@ -1,6 +1,7 @@
 //! Context-token savings metrics stored in `~/.ax/usage.db`.
 
 mod cursor_state;
+mod domain_log;
 mod mcp_audit;
 mod mcp_verbose_log;
 mod period;
@@ -31,9 +32,13 @@ pub use mcp_verbose_log::{
     previous_calendar_day, read_log_for_day, read_merged_verbose_log, read_ship_timezone,
     rotation_calendar_date, LEGACY_LOG_NAME,
 };
+pub use domain_log::{
+    log_action, log_domain_event, log_embed, log_lsp, log_plugin, log_share, log_ship_ci,
+    log_workspace,
+};
 pub use savings::{
     current_assumptions, estimate_savings, import_agent_logs, is_savings_eligible_tool,
-    parse_cursor_hook_model, query_call_token_detail,
+    parse_cursor_hook_model, parse_cursor_hook_session_id, query_call_token_detail,
     query_savings_summary, record_mcp_call, record_session_model_tag, spawn_record_mcp_call,
     CallTokenDetail, ImportResult, McpCallRecord, SavingsAssumptions, SavingsEstimate,
     SavingsQuery, SavingsSummary, PREVIEW_MAX_BYTES,

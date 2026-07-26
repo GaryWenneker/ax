@@ -1,6 +1,21 @@
 import Codicon from './Codicon';
 
-type NavId = 'stats' | 'nodes' | 'graph' | 'files' | 'search' | 'memory' | 'savings' | 'ship' | 'sonar' | 'agent' | 'settings' | 'policy-rules' | 'policy-skills';
+type NavId =
+  | 'stats'
+  | 'nodes'
+  | 'graph'
+  | 'files'
+  | 'search'
+  | 'memory'
+  | 'unresolved'
+  | 'savings'
+  | 'ship'
+  | 'sonar'
+  | 'agent'
+  | 'settings'
+  | 'logging'
+  | 'policy-rules'
+  | 'policy-skills';
 
 export type { NavId };
 
@@ -11,11 +26,13 @@ const NAV_CODICONS: Record<NavId, string> = {
   files: 'files',
   search: 'search',
   memory: 'lightbulb',
+  unresolved: 'warning',
   savings: 'dashboard',
   ship: 'rocket',
   sonar: 'shield',
   agent: 'terminal',
   settings: 'settings-gear',
+  logging: 'output',
   'policy-rules': 'law',
   'policy-skills': 'mortar-board',
 };

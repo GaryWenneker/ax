@@ -73,14 +73,17 @@ Open it with `ax web --open` and pick **Graph** in the sidebar. Controls:
 
 ### Portable export
 
-For sharing outside the Command Center — a PR attachment, a wiki, or a committed artifact — export a single self-contained HTML file:
+**Command Center → Graph:** use the toolbar **Export** format + **Download** (and **Copy** for Mermaid / PlantUML / DOT / Cypher text) to save the current density slice as JSON, DOT, GraphML, GEXF, Cypher, Mermaid, or PlantUML (`GET /api/graph/export?format=…&limit=…`). The control shows node/edge counts and notes when the slice is truncated vs the full CLI HTML export.
+
+For a self-contained interactive HTML file (PR attachment, wiki, or committed artifact) use the CLI:
 
 ```bash
 ax export graph-html --out graph.html
 ax export graph-html --limit 1500 --resolution 1.2
+ax export graph --format graphml --out graph.graphml
 ```
 
-The file inlines the graph data and a small renderer, so it opens in any browser with no server.
+The HTML export inlines the graph data and a small renderer, so it opens in any browser with no server.
 
 ## Edge confidence
 

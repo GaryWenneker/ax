@@ -29,6 +29,32 @@ Copy fixpack → paste into agent chat to improve policy / habits
 
 Traces **never** alter agent-facing tool responses (`content.text` / `structuredContent`). Logging is side-channel only.
 
+## v4 domain events
+
+When Verbose MCP logging is on, the same daily log also receives domain lines for:
+
+| Prefix | Source |
+|--------|--------|
+| `plugin` | Extractor plugins during index/sync |
+| `lsp` | `ax lsp enrich` / Unresolved → Enrich with LSP |
+| `ship-ci` | `ax ship --ci` |
+| `share` | `ax share` / token gate |
+| `workspace` | workspace switch / sync-all |
+| `embed` | memory embedding backend |
+| `action` | Command Center live activity bus |
+
+Filter these on the Logging page kind chips (also via `/logging?kind=lsp`). Quality / `ax mcp audit` can raise:
+
+| Check | When |
+|-------|------|
+| `ShipCiFailed` | `ship-ci status=failed` in window |
+| `PluginExtractErrors` | `plugin … fail` lines |
+| `LspAvailableUnused` | Runnable language server on PATH (`--version` ok), no `lsp enrich` while MCP is active |
+| `ShareReadonlyWrite` | Mutating API blocked in share/read-only |
+| `EmbedBackend` | Informational: `embed backend=…` line |
+
+Activity StatusBar rows deep-link to Logging with the matching kind filter.
+
 ## 1. Enable verbose logging
 
 Pick one:
@@ -53,18 +79,20 @@ Open via the status-bar **Logging** chip, or navigate to `/logging`.
 
 | Control | Purpose |
 |---|---|
-| **Kind chips** | Filter Inbound / Outbound / Preview / Error / Internal / Enrich |
+| **Kind chips** | Filter Inbound / Outbound / Preview / Error / Internal / Enrich / plugin / lsp / ship / share / workspace / embed / action |
 | **Has query chip** | Show only events whose JSON payload has a top-level `query` property (e.g. `ax_search` / `ax_explore` args). Matching rows get a blue left edge + a **query** badge in Summary; Meta shows `json · query`. Click the badge or the chip to filter. |
 | **Date dropdown** | Filter by calendar day (`YYYY-MM-DD` in the configured timezone); Time column shows date + clock |
 | **Timezone** | Set under **Settings → Interface → Timezone** (IANA, e.g. `Europe/Amsterdam`). Controls Logging Date/time display **and** daily log file rotation (midnight boundary). Timestamps inside log lines stay UTC. Default: browser local. |
 | **Tool dropdown** | Filter by tool name (`ax_preflight`, `ax_explore`, …) |
 | **Text search** | Free-text over summary / meta |
-| **Project switcher** | Tail another recent workspace’s verbose log |
+| **Project switcher** | Switch to another recent workspace’s verbose log |
+| **Newest / Scroll to new** | Table is **newest-first**. Stay pinned to the top for live updates, or use **Scroll to new** (toolbar + floating chip) after scrolling into history |
+| **Older days** | Scroll toward the bottom to load previous dated log files |
 | **Status bar** | Live in / out / prev / err / event counts; muted danger tint when offline |
 | **Header waves** | Azure CSS waves under the title bar on every page (same language as the site nav) |
 | **Call Inspector** | Tap a row (or Enter) for pretty-printed JSON/XML and `key=value` fields |
 
-Keyboard: `↑↓` / `j` `k` to move, Enter to inspect, Esc / `b` to back.
+Keyboard: `↑↓` / `j` `k` to move (down = older), Home = newest, End = oldest, Enter to inspect, Esc / `b` to back.
 
 Offline / reconnecting: log text is **blurred** until the SSE stream is live again.
 
@@ -102,9 +130,12 @@ ax savings hook install
 
 This installs hooks under `~/.cursor/hooks/` and merges `sessionStart` into `~/.cursor/hooks.json`. Each new Composer chat runs `ax session-hook` (hidden) so:
 
+- `~/.ax/active-cursor-session` is written **even when Cursor omits the model** (required for `session=` on verbose lines)
 - Verbose lines can carry `session=<uuid>`
-- `ax savings import --all` keeps the tagged model for by-model rollups
+- `ax savings import --all` keeps the tagged model for by-model rollups (when model is present)
 - `ax mcp audit` prefers the ax-heaviest transcript and aligns windows more accurately
+
+If correlation stays near 0%: confirm the hook ran (`type %USERPROFILE%\.ax\active-cursor-session`), reconnect ax MCP after enabling verbose, and pass `--session <uuid>` when auditing a specific chat.
 
 Manual debug tag:
 
@@ -121,12 +152,12 @@ Score starts at **100** and drops when findings fire. Main checks:
 | **PreflightOnce** | critical / low | No `ax_preflight` in a window with MCP traffic; or preflight spam |
 | **EnrichPresent** | high | Preflight/enrich clusters with empty or missing inject |
 | **RulesInjected** | medium | Low `matched_rules` rate on preflight enrichments |
-| **ExploreBeforeGrep** | high / medium | Read/Grep without graph tools, or heavy Read/Grep vs `ax_explore` |
+| **ExploreBeforeGrep** | high / medium | Read/Grep without graph tools while MCP inbound is active (skipped in DEGRADED / quiet MCP) |
 | **GuardBeforeWrite** | low | Busy ax traffic with no `ax_guard` |
-| **UncorrelatedTool** | high / medium | Transcript ax tools that do not line up with verbose clusters |
-| **VerboseGap** | high / medium | Weak correlation or missing verbose coverage for transcript activity |
+| **UncorrelatedTool** | high / medium / info | Transcript ax tools that do not line up with verbose clusters; **info** (no score hit) when verbose logging is enabled but MCP wrote nothing in-window |
+| **VerboseGap** | high / medium | Weak correlation when MCP clusters exist but don't match transcript calls |
 
-Auditor softens false positives when possible: recovered MCP errors (same-tool success within 60s), untimed whole-session Read/Grep tails while verbose is idle, enrich side-channels attached to preflight clusters, and preferring the transcript with the most ax activity (not the newest empty chat).
+Auditor softens false positives when possible: recovered MCP errors (same-tool success within 60s), untimed whole-session Read/Grep tails while verbose is idle, enrich side-channels attached to preflight clusters, domain `[ax] workspace|lsp|…` lines (not counted as MCP tool clusters), preferring the transcript with the most ax activity (not the newest empty chat), and skipping ExploreBeforeGrep / LspAvailableUnused when there is no MCP inbound in the window.
 
 ## 6. Copy fixpack
 
@@ -160,6 +191,8 @@ Related surfaces:
 |---|---|
 | Logging empty | Enable verbose logging; reconnect MCP; confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows |
 | Q score stuck / muted | Need inbound traffic + verbose file; open Logging and trigger a preflight |
-| ExploreBeforeGrep false alarm | Install session hook; prefer timed transcripts; re-run audit after a real ax-heavy chat |
-| Correlation near 0% | Wrong project selected; verbose off; or audit without matching transcript — pass `--session` |
+| ExploreBeforeGrep false alarm | Install session hook; prefer timed transcripts; re-run audit after a real ax-heavy chat; quiet/DEGRADED MCP should not flag this |
+| Correlation near 0% | Wrong project; verbose off; MCP disconnected; missing `session=` (reinstall hook / restart MCP); or audit without matching transcript — pass `--session` |
+| UncorrelatedTool (medium) while verbose is on | Usually ax MCP is offline after a reinstall — reconnect MCP; live rolling audits no longer score-penalize this when `verbose_mcp=true` |
+| LspAvailableUnused | Run `ax lsp enrich` (or Unresolved → Enrich with LSP) while MCP is active; domain-only windows no longer false-flag |
 | Fixpack empty | No findings in window — widen `--window-minutes` or run a fuller agent turn first |

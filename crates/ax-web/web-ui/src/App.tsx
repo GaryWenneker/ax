@@ -19,7 +19,6 @@ import SonarQubePage from './pages/SonarQube';
 import SavingsPage from './pages/Savings';
 import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
-import ActionStream from './components/ActionStream';
 import { McpQualityHost } from './components/McpQualitySlideout';
 import HeaderWaves from './components/HeaderWaves';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
@@ -46,6 +45,7 @@ const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
   { id: 'files', label: 'Files' },
   { id: 'search', label: 'Search' },
   { id: 'memory', label: 'Memory' },
+  { id: 'unresolved', label: 'Unresolved' },
   { id: 'savings', label: 'Savings' },
   { id: 'ship', label: 'Command Center' },
   { id: 'sonar', label: 'SonarQube' },
@@ -54,6 +54,7 @@ const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
 
 const NAV_CONFIG: Array<{ id: NavId; label: string }> = [
   { id: 'settings', label: 'Settings' },
+  { id: 'logging', label: 'Logging' },
 ];
 
 const NAV_POLICY: Array<{ id: NavId; label: string }> = [
@@ -126,6 +127,20 @@ function AppShell() {
     window.addEventListener(WORKSPACE_SWITCHED, onWorkspaceSwitched);
     return () => window.removeEventListener(WORKSPACE_SWITCHED, onWorkspaceSwitched);
   }, []);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setSidebarOpen(false);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [sidebarOpen]);
 
   useEffect(() => {
     if (page === 'savings' && !showSavings) {
@@ -314,7 +329,6 @@ function AppShell() {
           </main>
         </div>
 
-        <ActionStream />
         <StatusBar />
         <McpQualityHost />
       </div>

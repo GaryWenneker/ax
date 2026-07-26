@@ -2,6 +2,16 @@ import { entryHasQueryPayload, type TraceEntry, type TraceKind } from './mcpTrac
 
 export const MCP_TRACE_STATS = 'ax-mcp-trace-stats';
 export const MCP_TRACE_FILTER = 'ax-mcp-trace-filter';
+/** Commands from StatusBar → Logging page (e.g. jump to newest). */
+export const MCP_TRACE_ACTION = 'ax-mcp-trace-action';
+
+export type McpTraceActionDetail = {
+  jumpToNew?: boolean;
+};
+
+export function publishMcpTraceAction(detail: McpTraceActionDetail) {
+  window.dispatchEvent(new CustomEvent(MCP_TRACE_ACTION, { detail }));
+}
 
 export type McpTraceFilterDetail = {
   /** Replace kind multi-select (empty / omit = all kinds). */
@@ -45,6 +55,13 @@ const EMPTY_COUNTS: Record<TraceKind, number> = {
   error: 0,
   internal: 0,
   enrich: 0,
+  plugin: 0,
+  lsp: 0,
+  ship: 0,
+  share: 0,
+  workspace: 0,
+  embed: 0,
+  action: 0,
   other: 0,
 };
 
@@ -55,6 +72,13 @@ export const TRACE_KIND_ORDER: TraceKind[] = [
   'error',
   'internal',
   'enrich',
+  'plugin',
+  'lsp',
+  'ship',
+  'share',
+  'workspace',
+  'embed',
+  'action',
   'other',
 ];
 

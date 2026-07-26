@@ -26,4 +26,4 @@ mod manifest;
 mod wasm_host;
 
 pub use host::{load_plugins, PluginHost, PluginRunError};
-pub use manifest::PluginManifest;
+pub use manifest::{discover_plugins, PluginManifest};

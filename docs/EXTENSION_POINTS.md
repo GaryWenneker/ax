@@ -70,4 +70,4 @@ Where future plugins and federation layers attach. Prefer extending these hooks 
 | Hook | Location | Notes |
 |------|----------|-------|
 | Insights | `ax-graph` Leiden + god-nodes | Already persisted |
-| Export | `ax export graph --format …` | html, json, dot, graphml, gexf, cypher, mermaid, plantuml |
+| Export | `ax export graph --format …` · `GET /api/graph/export` (Command Center Graph Download) | html (CLI), json, dot, graphml, gexf, cypher, mermaid, plantuml |

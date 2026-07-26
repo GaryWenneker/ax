@@ -10,9 +10,9 @@ import {
 import { fetchShipConfig } from '../shipApi';
 
 /**
- * Full-page real-time MCP verbose log — follows <project>/.ax/mcp-verbose.log
- * while Cursor (or other clients) call ax MCP tools. Opens maximized above the
- * status bar (logging stats + project switch live there).
+ * Full-page real-time MCP verbose log for <project>/.ax/mcp-verbose-*.log
+ * (newest at top). Opens maximized above the status bar (logging stats +
+ * project switch live there).
  */
 export default function LoggingPage() {
   const [verboseEnabled, setVerboseEnabled] = useState(false);

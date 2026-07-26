@@ -67,7 +67,7 @@ Use `.\scripts\release-tag.ps1 -Bump patch|minor|major`:
 
 Never document or pin a version (`AX_VERSION`, docs, README) until the GitHub release tag exists with all six platform assets.
 
-Current Command Center release: **v3.0.0**.
+Current Command Center release: **v4.0.0**.
 
 ## Install / upgrade pitfalls
 

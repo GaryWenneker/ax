@@ -28,6 +28,10 @@ pub async fn run(
                 if !quiet {
                     println!("{}", info_line(format!("Syncing {}", member.display())));
                 }
+                ax_usage::log_workspace(
+                    Some(&root),
+                    format!("sync-all member={}", member.display()),
+                );
                 sync_one(member, quiet, false).await?;
             }
             if !quiet {

@@ -76,3 +76,8 @@ test-smoke-rust/.ax/
 crates/ax-web/web-ui/target-dev/
 crates/ax-web/web-ui/target/
 
+# Playwright (Command Center mobile smoke)
+crates/ax-web/web-ui/test-results/
+crates/ax-web/web-ui/playwright-report/
+crates/ax-web/web-ui/blob-report/
+

@@ -18,6 +18,19 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.0.0
+
+- **Monorepo workspaces** — `ax init --workspace`, `ax index --all` / `ax sync --all`, Command Center workspace switcher, and `ax policy pull` for federated policy.
+- **Multi-format graph export** — CLI plus Graph → Export (Download + Copy) for JSON, GraphML, DOT, Mermaid, PlantUML, Cypher, and HTML, with node/edge summary.
+- **Extractor plugins** — process plugin host (optional WASM via `plugins-wasm`); Settings → Plugins lists discovered extractors.
+- **Optional ONNX embeddings** — dense memory vectors behind the `onnx` Cargo feature; Settings → Embeddings shows backend and model paths.
+- **`ax ship --ci`** — headless quality gate (JSON + non-zero exit) and reusable [`.github/workflows/ax-ship.yml`](https://github.com/GaryWenneker/ax/blob/main/.github/workflows/ax-ship.yml).
+- **LSP bridge** — Exact call edges via `ax-lsp`; Unresolved → enrich with limit, PATH server checklist, and post-run report.
+- **Share + PWA** — `ax share` LAN token gate, Settings → Sharing status card, opt-in PWA (`?pwa=1` / Enable PWA), and StatusBar Activity chip over `/api/actions/events`.
+- **ax Mint default theme** — `#3ee4b2` accent as the product default; project-browser tokens follow `--accent`.
+
+See [Workspaces](/guides/workspaces/), [Share](/guides/share/), [Plugins](/guides/plugins/), [LSP](/guides/lsp/), and [Command Center](/guides/command-center/).
+
 ## What's new in v3.1.0
 
 - **Diagnostics bridge** — `ax_diagnostics` correlates editor/LSP/compiler findings (Cursor Problems panel, `tsc`, `ruff`, `eslint`, …) with the graph: which files intersect CRITICAL-guarded paths, and which tests `ax_affected` says are impacted.

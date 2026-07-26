@@ -35,9 +35,9 @@ ax affected --base main --stdin               # compare against base branch
 
 Prefer `ax ship --ci` when you want the full gate. Workflow snippets:
 
-- [GitHub Actions](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/github-actions-ship.yml)
-- [GitLab CI](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/gitlab-ci-ship.yml)
-- [Azure Pipelines](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/azure-pipelines-ship.yml)
+- [GitHub Actions](https://github.com/GaryWenneker/ax/blob/main/docs/examples/github-actions-ship.yml)
+- [GitLab CI](https://github.com/GaryWenneker/ax/blob/main/docs/examples/gitlab-ci-ship.yml)
+- [Azure Pipelines](https://github.com/GaryWenneker/ax/blob/main/docs/examples/azure-pipelines-ship.yml)
 
 Or run only affected test files:
 

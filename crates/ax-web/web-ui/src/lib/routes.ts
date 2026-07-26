@@ -145,6 +145,7 @@ export function buildPath(state: Partial<RouteState> & Pick<RouteState, 'page'>)
   if (state.page === 'policy-rule-edit' && state.ruleId) params.set('id', state.ruleId);
   if (state.page === 'policy-skill-edit' && state.skillName) params.set('name', state.skillName);
   if (state.page === 'unresolved' && state.kind) params.set('kind', state.kind);
+  if (state.page === 'logging' && state.kind) params.set('kind', state.kind);
   if (state.page === 'sonar' && state.sonarTab === 'setup') params.set('tab', 'setup');
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;

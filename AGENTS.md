@@ -5,7 +5,7 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Inject fallback:** If preflight lacks `<ax_policy>` (empty inject/rules), call `ax_skill("startup")` once.
 
-**Explore before Grep/Read (CRITICAL):** For structural code questions (how X works, call paths, blast radius, architecture), call `ax_explore` (or `ax_search` / `ax_node` / graph tools) **before** broad Grep/Read. Treat explore source as already read — then open only the files the graph pointed to. Skipping this burns tokens and lowers MCP quality (`ExploreBeforeGrep`).
+**Explore before Grep/Read (CRITICAL):** For structural code questions (how X works, call paths, blast radius, architecture), call `ax_explore` (or `ax_search` / `ax_node` / graph tools) **before** broad Grep/Read. Treat explore source as already read — then open only the files the graph pointed to. `GetMcpTools` is not explore. Skipping this burns tokens and lowers MCP quality (`ExploreBeforeGrep`).
 
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 

@@ -20,9 +20,28 @@ For remote collaborators, wrap localhost with a tunnel:
 cloudflared tunnel --url http://127.0.0.1:7070
 ```
 
+## Command Center UI
+
+- **Settings → Sharing** — live session badge, port, copy base URL / CLI tip, How to share modal, Refresh/Retry
+- Status-bar **Shared / Read-only** badge when a share token or read-only mode is active
+- Themed HTML token gate (brand “ax”) when the token is missing
+- **Install as app (PWA)** — Enable PWA, then Install / Add to Home Screen; dismissible with “Show hint again”
+
 ## PWA
 
-The web UI ships a web app manifest and service worker so mobile browsers can install Command Center as a standalone app against your local or `ax share` URL.
+Manifest + icons (`/icon-192.png`, `/icon-512.png`). Service worker is **opt-in** via Settings → Sharing → **Enable PWA**, `?pwa=1`, `localStorage ax-pwa-optin=1`, or an installed standalone window — so normal `ax web` always uses live APIs until you opt in.
+
+`ax web --open` uses `http://127.0.0.1:PORT`. If `localhost` still shows empty pages from an old cached service worker, open `http://localhost:PORT/api/reset-client-cache` once, then reload.
+
+### Mobile / phone
+
+Narrow viewports: hamburger drawer, safe-area insets, status bar keeps **Project**, **Logging**, and **Activity**. After UI changes, run:
+
+```powershell
+.\scripts\web-ui-mobile-smoke.ps1
+```
+
+Screenshots: `crates/ax-web/web-ui/test-results/mobile-shots/`.
 
 ## Live action stream
 
@@ -31,9 +50,10 @@ The web UI ships a web app manifest and service worker so mobile browsers can in
 | `GET /api/actions/events` | SSE feed of workspace / agent events |
 | `POST /api/actions/publish` | `{ "kind", "message", "meta?" }` |
 
-The UI shows a small live strip for recent events.
+Events appear in the StatusBar **Activity** chip (not a floating strip). With Verbose MCP on, the same events dual-write to Logging as `action` lines.
 
 ## Further reading
 
 - [Command Center](/guides/command-center/)
-- Repo docs: [`docs/SHARE.md`](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/SHARE.md)
+- [MCP Logging & Quality](/guides/mcp-quality/)
+- Repo docs: [`docs/SHARE.md`](https://github.com/GaryWenneker/ax/blob/main/docs/SHARE.md)

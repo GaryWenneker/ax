@@ -29,6 +29,7 @@ import { fetchShipConfig } from '../shipApi';
 import {
   computeMcpTraceStats,
   filterTraceEntries,
+  MCP_TRACE_ACTION,
   MCP_TRACE_FILTER,
   publishMcpTraceStats,
   TRACE_KIND_ORDER,
@@ -38,6 +39,7 @@ import {
   emptyQualitySnapshot,
   fetchMcpQuality,
   MCP_QUALITY_FINDING,
+  openMcpQualitySlideout,
   type QualitySnapshot,
 } from '../lib/mcpQuality';
 import { McpQualityStrip } from './McpQualitySlideout';
@@ -51,6 +53,13 @@ const KIND_LABELS: Record<TraceKind, string> = {
   error: 'Error',
   internal: 'Internal',
   enrich: 'Enrich',
+  plugin: 'Plugin',
+  lsp: 'LSP',
+  ship: 'Ship',
+  share: 'Share',
+  workspace: 'Workspace',
+  embed: 'Embed',
+  action: 'Action',
   other: 'Other',
 };
 
@@ -278,12 +287,14 @@ async function exitBrowserFullscreen() {
 }
 
 /**
- * Linux-style `tail -f` of daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` via SSE.
+ * Live SSE view of daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`.
+ * Newest events render at the top; scroll down for older days.
  * Table layout; tap a row for the compact Call Inspector.
  */
 export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: Props) {
   const [entries, setEntries] = useState<TraceEntry[]>([]);
   const [live, setLive] = useState(false);
+  /** When true, keep the viewport pinned to the newest rows (top). */
   const [follow, setFollow] = useState(true);
   const isPage = variant === 'page';
   const [maximized, setMaximized] = useState(isPage);
@@ -300,14 +311,41 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [quality, setQuality] = useState<QualitySnapshot>(emptyQualitySnapshot);
-  const [kindFilter, setKindFilter] = useState<Set<TraceKind>>(() => new Set());
+  const [kindFilter, setKindFilter] = useState<Set<TraceKind>>(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('kind');
+    const valid: TraceKind[] = [
+      'inbound',
+      'enrich',
+      'internal',
+      'outbound',
+      'preview',
+      'error',
+      'plugin',
+      'lsp',
+      'ship',
+      'share',
+      'workspace',
+      'embed',
+      'action',
+      'other',
+    ];
+    if (fromUrl && valid.includes(fromUrl as TraceKind)) {
+      return new Set([fromUrl as TraceKind]);
+    }
+    return new Set();
+  });
   const [dateFilter, setDateFilter] = useState('');
   const [toolFilter, setToolFilter] = useState('');
   const [query, setQuery] = useState('');
   /** Keep only rows whose JSON payload has a top-level `query` property. */
   const [hasQueryFilter, setHasQueryFilter] = useState(false);
+  /** On phone, filters start collapsed so the log table owns the viewport. */
+  const [filtersOpen, setFiltersOpen] = useState(() =>
+    typeof window !== 'undefined' ? !window.matchMedia('(max-width: 899px)').matches : true,
+  );
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const topSentinelRef = useRef<HTMLDivElement>(null);
+  /** Intersection target at the bottom — load older history when reached. */
+  const historySentinelRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const maxHostRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
@@ -344,12 +382,28 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       }),
     [entries, kindFilter, toolFilter, query, dateFilter, hasQueryFilter],
   );
+  /** Newest first for the table / keyboard navigation. `entries` stays chronological. */
+  const displayEntries = useMemo(
+    () => [...visibleEntries].reverse(),
+    [visibleEntries],
+  );
   const filtersActive =
     kindFilter.size > 0 ||
     dateFilter.trim().length > 0 ||
     toolFilter.trim().length > 0 ||
     query.trim().length > 0 ||
     hasQueryFilter;
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 899px)');
+    function onChange() {
+      // Desktop/tablet wide: always show filters. Narrow: leave user toggle as-is
+      // when entering mobile; expand when leaving mobile.
+      if (!mq.matches) setFiltersOpen(true);
+    }
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   const queryPayloadCount = useMemo(
     () => entries.reduce((n, e) => n + (entryHasQueryPayload(e) ? 1 : 0), 0),
@@ -380,6 +434,13 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       error: 0,
       internal: 0,
       enrich: 0,
+      plugin: 0,
+      lsp: 0,
+      ship: 0,
+      share: 0,
+      workspace: 0,
+      embed: 0,
+      action: 0,
       other: 0,
     };
     for (const e of entries) counts[e.kind] += 1;
@@ -391,8 +452,8 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     [entries, selectedId],
   );
   const cursorIndex = useMemo(
-    () => (cursorId ? visibleEntries.findIndex((e) => e.id === cursorId) : -1),
-    [visibleEntries, cursorId],
+    () => (cursorId ? displayEntries.findIndex((e) => e.id === cursorId) : -1),
+    [displayEntries, cursorId],
   );
   const selected = selectedIndex >= 0 ? entries[selectedIndex] : null;
   const cluster = useMemo(
@@ -466,6 +527,15 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   }, []);
 
   useEffect(() => {
+    function onAction(ev: Event) {
+      const detail = (ev as CustomEvent<{ jumpToNew?: boolean }>).detail;
+      if (detail?.jumpToNew) jumpToNew();
+    }
+    window.addEventListener(MCP_TRACE_ACTION, onAction);
+    return () => window.removeEventListener(MCP_TRACE_ACTION, onAction);
+  }, []);
+
+  useEffect(() => {
     if (visibleEntries.length === 0) {
       setCursorId(null);
       return;
@@ -484,7 +554,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
   useEffect(() => {
     if (!isPage) return;
-    // Let arrow keys work immediately without an extra click.
+    // Desktop: focus the listbox for keyboard nav. Mobile: skip — focusing
+    // on open steals taps and can surface the soft keyboard on some browsers.
+    if (window.matchMedia('(max-width: 899px)').matches) return;
     scrollerRef.current?.focus({ preventScroll: true });
   }, [isPage, maximized]);
 
@@ -716,14 +788,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         }
         const older = res.lines?.length ? traceEntriesFromLines(res.lines) : [];
         if (older.length > 0) {
-          const el = scrollerRef.current;
-          const prevHeight = el?.scrollHeight ?? 0;
-          setFollow(false);
+          // Older rows append at the visual bottom (newest-first). Viewport
+          // stays put; keep follow so first paint / live top remain pinned.
           setEntries((e) => [...older, ...e]);
-          requestAnimationFrame(() => {
-            const sc = scrollerRef.current;
-            if (sc) sc.scrollTop += sc.scrollHeight - prevHeight;
-          });
         }
         setOldestLoadedDay(res.day);
         if (!res.hasOlder) setHistoryExhausted(true);
@@ -734,7 +801,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
   // Today's dated log file is often empty (nothing run yet today, or the
   // daemon just rotated). Don't leave the page looking broken — pull in
-  // whatever history exists automatically, same as scrolling up would.
+  // whatever history exists automatically, same as scrolling down would.
   useEffect(() => {
     if (!live) return;
     if (entries.length > 0) return;
@@ -744,7 +811,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
   useEffect(() => {
     const root = scrollerRef.current;
-    const sentinel = topSentinelRef.current;
+    const sentinel = historySentinelRef.current;
     if (!root || !sentinel) return;
     const obs = new IntersectionObserver(
       (entries) => {
@@ -760,7 +827,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     if (!followRef.current) return;
     const el = scrollerRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    el.scrollTop = 0;
   }, [entries, maximized]);
 
   useEffect(() => {
@@ -805,8 +872,8 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         }
         if (e.key === 'Home') {
           e.preventDefault();
-          if (visibleEntries.length) {
-            const id = visibleEntries[0].id;
+          if (displayEntries.length) {
+            const id = displayEntries[0].id;
             setSelectedId(id);
             setCursorId(id);
           }
@@ -814,8 +881,8 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         }
         if (e.key === 'End') {
           e.preventDefault();
-          if (visibleEntries.length) {
-            const id = visibleEntries[visibleEntries.length - 1].id;
+          if (displayEntries.length) {
+            const id = displayEntries[displayEntries.length - 1].id;
             setSelectedId(id);
             setCursorId(id);
           }
@@ -824,7 +891,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         return;
       }
 
-      // Table browsing
+      // Table browsing (display order: newest at top)
       if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J') {
         e.preventDefault();
         moveCursor(1);
@@ -847,18 +914,17 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       }
       if (e.key === 'Home') {
         e.preventDefault();
-        if (visibleEntries.length) setCursorId(visibleEntries[0].id);
+        if (displayEntries.length) setCursorId(displayEntries[0].id);
         return;
       }
       if (e.key === 'End') {
         e.preventDefault();
-        if (visibleEntries.length) setCursorId(visibleEntries[visibleEntries.length - 1].id);
+        if (displayEntries.length) setCursorId(displayEntries[displayEntries.length - 1].id);
         return;
       }
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        const id =
-          cursorId ?? (visibleEntries.length ? visibleEntries[visibleEntries.length - 1].id : null);
+        const id = cursorId ?? (displayEntries.length ? displayEntries[0].id : null);
         if (id) {
           setCursorId(id);
           setSelectedId(id);
@@ -897,19 +963,20 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     isPage,
     entries,
     visibleEntries,
+    displayEntries,
   ]);
 
   function onScroll() {
     const el = scrollerRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-    setFollow(atBottom);
+    const atTop = el.scrollTop < 48;
+    setFollow(atTop);
   }
 
-  function jumpToBottom() {
+  function jumpToNew() {
     setFollow(true);
     const el = scrollerRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) el.scrollTop = 0;
   }
 
   async function copySelected() {
@@ -924,25 +991,26 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   }
 
   function moveCursor(delta: number) {
-    if (visibleEntries.length === 0) return;
-    const idx = cursorIndex >= 0 ? cursorIndex : visibleEntries.length - 1;
-    const next = Math.max(0, Math.min(visibleEntries.length - 1, idx + delta));
-    setCursorId(visibleEntries[next].id);
+    if (displayEntries.length === 0) return;
+    const idx = cursorIndex >= 0 ? cursorIndex : 0;
+    const next = Math.max(0, Math.min(displayEntries.length - 1, idx + delta));
+    setCursorId(displayEntries[next].id);
     setFollow(false);
   }
 
   function selectNeighbor(delta: number) {
     if (selectedIndex < 0) return;
-    // Prefer navigating within the visible (filtered) list when possible.
-    const visIdx = visibleEntries.findIndex((e) => e.id === selectedId);
+    // Prefer navigating within the displayed (filtered, newest-first) list.
+    const visIdx = displayEntries.findIndex((e) => e.id === selectedId);
     if (visIdx >= 0) {
       const next = visIdx + delta;
-      if (next < 0 || next >= visibleEntries.length) return;
-      const id = visibleEntries[next].id;
+      if (next < 0 || next >= displayEntries.length) return;
+      const id = displayEntries[next].id;
       setSelectedId(id);
       setCursorId(id);
       return;
     }
+    // Fallback: chronological neighbors in the full buffer.
     const next = selectedIndex + delta;
     if (next < 0 || next >= entries.length) return;
     const id = entries[next].id;
@@ -981,7 +1049,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       ref={shellRef}
       className={`mcp-trace-shell${maximized ? ' mcp-trace-shell--max' : ''}${
         isPage ? ' mcp-trace-shell--page' : ''
-      }${!live ? ' mcp-trace-shell--offline' : ''}`}
+      }${!live ? ' mcp-trace-shell--offline' : ''}${
+        filtersOpen ? '' : ' mcp-trace-shell--filters-collapsed'
+      }`}
       aria-busy={!live || undefined}
     >
       <div className="mcp-trace-chrome">
@@ -1021,21 +1091,50 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
             )}
             <button
               type="button"
+              className={`btn btn-compact mcp-trace-icon-btn mcp-trace-filters-toggle${
+                filtersOpen ? ' mcp-trace-icon-btn--active' : ''
+              }${filtersActive ? ' mcp-trace-filters-toggle--lit' : ''}`}
+              title={filtersOpen ? 'Hide filters' : 'Show filters'}
+              aria-label={filtersOpen ? 'Hide filters' : 'Show filters'}
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((v) => !v)}
+            >
+              <Codicon name="filter" />
+              <span className="mcp-trace-btn-label">Filters</span>
+            </button>
+            {isPage && (
+              <button
+                type="button"
+                className="btn btn-compact mcp-trace-icon-btn"
+                title="MCP quality — Copy fixpack & metrics"
+                aria-label="Open MCP quality"
+                onClick={() => openMcpQualitySlideout()}
+              >
+                <Codicon name="shield" />
+                <span className="mcp-trace-btn-label">Quality</span>
+              </button>
+            )}
+            <button
+              type="button"
               className={`btn btn-compact mcp-trace-icon-btn${!follow ? ' mcp-trace-icon-btn--active' : ''}`}
-              title={follow ? 'Following tail (click to pause)' : 'Follow tail'}
-              aria-label={follow ? 'Following tail' : 'Follow tail'}
+              title={
+                follow
+                  ? 'Pinned to newest (click to pause)'
+                  : 'Scroll to new'
+              }
+              aria-label={follow ? 'Pinned to newest' : 'Scroll to new'}
               aria-pressed={follow}
               onClick={() => {
                 if (follow) setFollow(false);
-                else jumpToBottom();
+                else jumpToNew();
               }}
             >
-              <Codicon name="arrow-down" />
-              <span className="mcp-trace-btn-label">Follow</span>
+              <Codicon name="arrow-up" />
+              <span className="mcp-trace-btn-label">{follow ? 'Newest' : 'To new'}</span>
             </button>
             <button
               type="button"
-              className="btn btn-compact mcp-trace-icon-btn"
+              className="btn btn-compact mcp-trace-icon-btn mcp-trace-full-btn"
               title={
                 browserFs || document.fullscreenElement
                   ? 'Exit fullscreen (Esc)'
@@ -1064,6 +1163,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
         {isPage && <McpQualityStrip snap={quality} />}
       </div>
+      {filtersOpen && (
       <div className="mcp-trace-project-banner" title={projectRoot || undefined}>
         <div className="mcp-trace-project-banner-main">
           <span className="mcp-trace-project-banner-kicker">Viewing MCP log for</span>
@@ -1082,7 +1182,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
           <code className="mcp-trace-project-banner-file">{path}</code>
         </div>
       </div>
+      )}
 
+      {filtersOpen && (
       <div className="mcp-trace-filters" role="search" aria-label="Filter MCP log">
         <div className="mcp-trace-filter-kinds" role="group" aria-label="Filter by kind">
           {TRACE_KIND_ORDER.map((kind) => {
@@ -1196,17 +1298,28 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
           )}
         </div>
       </div>
+      )}
 
+      <div className="mcp-trace-scroller-wrap">
+        {!follow && entries.length > 0 ? (
+          <button
+            type="button"
+            className="mcp-trace-scroll-new"
+            onClick={jumpToNew}
+          >
+            <Codicon name="arrow-up" />
+            Scroll to new
+          </button>
+        ) : null}
       <div
         ref={scrollerRef}
         className="mcp-trace-scroller"
         onScroll={onScroll}
         role="listbox"
         tabIndex={0}
-        aria-label="MCP trace log. Use arrow keys to move, Enter to open, Escape to close."
+        aria-label="MCP trace log. Newest at top. Use arrow keys to move, Enter to open, Escape to close."
         aria-activedescendant={cursorId ? `mcp-row-${cursorId}` : undefined}
       >
-        <div ref={topSentinelRef} className="mcp-trace-top-sentinel" aria-hidden="true" />
         {entries.length === 0 ? (
           <div className="mcp-trace-empty">
             {loadingHistory ? (
@@ -1245,7 +1358,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
               </tr>
             </thead>
             <tbody>
-              {visibleEntries.map((e) => {
+              {displayEntries.map((e) => {
                 const headline = entryHeadline(e);
                 const meta = entryMeta(e);
                 const hasQuery = entryHasQueryPayload(e);
@@ -1324,6 +1437,16 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
             </tbody>
           </table>
         )}
+        <div ref={historySentinelRef} className="mcp-trace-history-sentinel" aria-hidden="true" />
+        {loadingHistory && entries.length > 0 ? (
+          <div className="mcp-trace-history-status">Loading earlier history…</div>
+        ) : null}
+        {historyExhausted && entries.length > 0 ? (
+          <div className="mcp-trace-history-status mcp-trace-history-status--end">
+            End of available history
+          </div>
+        ) : null}
+      </div>
       </div>
       {err && <div className="settings-row-desc mcp-trace-err">{err}</div>}
     </div>
@@ -1504,7 +1627,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
           <div className="settings-card-header">
             <h2>MCP verbose trace</h2>
             <p>
-              Live follow of <code>{path}</code>. Or open the full{' '}
+              Newest events at the top from <code>{path}</code>. Or open the full{' '}
               <button
                 type="button"
                 className="linkish"

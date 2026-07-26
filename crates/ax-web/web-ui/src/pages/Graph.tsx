@@ -20,7 +20,7 @@ interface SimEdge {
 
 // Distinct, high-contrast palette; community id is mapped modulo length.
 const COMMUNITY_COLORS = [
-  '#4ec9b0', '#569cd6', '#c586c0', '#dcdcaa', '#ce9178', '#9cdcfe',
+  '#3ee4b2', '#4ec9b0', '#c586c0', '#dcdcaa', '#ce9178', '#9cdcfe',
   '#d7ba7d', '#4fc1ff', '#b5cea8', '#f48771', '#c8c8c8', '#e2c08d',
   '#6a9955', '#d16969', '#808080', '#7ca4cb',
 ];
@@ -140,7 +140,107 @@ export default function GraphPage() {
   const [kindFilter, setKindFilter] = useState('');
   const [communityFilter, setCommunityFilter] = useState('');
   const [matchCount, setMatchCount] = useState<number | null>(null);
+  const [exportFormat, setExportFormat] = useState('json');
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportErr, setExportErr] = useState<string | null>(null);
+  const [exportSummary, setExportSummary] = useState<string | null>(null);
+  const [exportCopied, setExportCopied] = useState(false);
   const isMobile = useNarrowViewport();
+
+  const EXPORT_FORMATS = [
+    { id: 'json', label: 'JSON' },
+    { id: 'dot', label: 'DOT' },
+    { id: 'graphml', label: 'GraphML' },
+    { id: 'gexf', label: 'GEXF' },
+    { id: 'cypher', label: 'Cypher' },
+    { id: 'mermaid', label: 'Mermaid' },
+    { id: 'plantuml', label: 'PlantUML' },
+  ] as const;
+
+  const textExportFormats = new Set(['mermaid', 'plantuml', 'cypher', 'dot']);
+
+  async function fetchExportBlob(): Promise<{
+    blob: Blob;
+    text: string | null;
+    filename: string;
+    summary: string;
+  }> {
+    const url = `/api/graph/export?format=${encodeURIComponent(exportFormat)}&limit=${limit}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      let msg = `Export failed (${res.status})`;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) msg = body.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    const nodes = res.headers.get('x-ax-export-nodes');
+    const edges = res.headers.get('x-ax-export-edges');
+    const truncated = res.headers.get('x-ax-export-truncated') === '1';
+    const summaryParts: string[] = [];
+    if (nodes != null && edges != null) {
+      summaryParts.push(`${nodes} nodes · ${edges} edges`);
+    } else if (loadedNodes || edgeCount) {
+      summaryParts.push(`canvas ~${loadedNodes} nodes · ${edgeCount} edges`);
+    }
+    summaryParts.push(`density limit ${limit}`);
+    if (truncated) summaryParts.push('truncated');
+    if (kindFilter || communityFilter || search.trim()) {
+      summaryParts.push('export is density slice (canvas filters not applied)');
+    }
+    const cd = res.headers.get('Content-Disposition') ?? '';
+    const match = /filename="([^"]+)"/.exec(cd);
+    const filename = match?.[1] ?? `graph.${exportFormat}`;
+    const blob = await res.blob();
+    const text = textExportFormats.has(exportFormat) ? await blob.text() : null;
+    return {
+      blob: text != null ? new Blob([text], { type: blob.type || 'text/plain' }) : blob,
+      text,
+      filename,
+      summary: summaryParts.join(' · '),
+    };
+  }
+
+  async function downloadExport() {
+    setExportBusy(true);
+    setExportErr(null);
+    setExportCopied(false);
+    try {
+      const { blob, filename, summary } = await fetchExportBlob();
+      setExportSummary(summary);
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(href);
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
+  async function copyExport() {
+    setExportBusy(true);
+    setExportErr(null);
+    setExportCopied(false);
+    try {
+      const { text, summary } = await fetchExportBlob();
+      if (text == null) throw new Error('Copy is only available for Mermaid, PlantUML, Cypher, and DOT');
+      await navigator.clipboard.writeText(text);
+      setExportSummary(summary);
+      setExportCopied(true);
+      window.setTimeout(() => setExportCopied(false), 2000);
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : 'Copy failed');
+    } finally {
+      setExportBusy(false);
+    }
+  }
 
   useEffect(() => {
     detailRef.current = detailForNodeLimit(limit);
@@ -789,11 +889,55 @@ export default function GraphPage() {
           {stepIndex >= 5 && (
             <span className="graph-meta graph-density-hint">High density — browser may lag</span>
           )}
+          <label
+            className="graph-limit graph-export"
+            title="Exports the density slice (top nodes by degree, same limit as the canvas). Kind/community/search filters are canvas-only. Full interactive HTML: ax export graph --format html"
+          >
+            Export:
+            <select
+              value={exportFormat}
+              onChange={(e) => setExportFormat(e.target.value)}
+              disabled={exportBusy}
+            >
+              {EXPORT_FORMATS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {textExportFormats.has(exportFormat) && (
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={exportBusy || loading}
+              onClick={() => void copyExport()}
+              title="Copy export text to clipboard"
+            >
+              {exportCopied ? 'Copied' : 'Copy'}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={exportBusy || loading}
+            onClick={() => void downloadExport()}
+          >
+            {exportBusy ? 'Exporting…' : 'Download'}
+          </button>
           <button type="button" className="btn-secondary" onClick={() => load(true)}>
             Recompute communities
           </button>
         </div>
       </div>
+      {(exportErr || exportSummary) && (
+        <div
+          className={`graph-export-err${exportErr ? '' : ' graph-export-summary'}`}
+          role={exportErr ? 'alert' : 'status'}
+        >
+          {exportErr ?? exportSummary}
+        </div>
+      )}
 
       <div className="graph-body">
         <div

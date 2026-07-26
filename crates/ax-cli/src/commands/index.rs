@@ -24,6 +24,10 @@ pub async fn run(
                 if !quiet {
                     println!("{}", info_line(format!("Indexing {}", member.display())));
                 }
+                ax_usage::log_workspace(
+                    Some(&root),
+                    format!("index-all member={}", member.display()),
+                );
                 index_one(member, force, quiet).await?;
             }
             if !quiet {

@@ -103,6 +103,9 @@ struct VerboseLine {
     inject_chars: Option<i64>,
     matched_rules: Option<bool>,
     session_id: Option<String>,
+    /// True for `[ax-mcp] …` tool traces. Domain `[ax] lsp|workspace|…` lines are
+    /// kept for quality checks but must not form tool clusters (false VerboseGap).
+    is_mcp: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -288,6 +291,8 @@ fn parse_verbose_line(raw: &str) -> Option<VerboseLine> {
     }
     let (ts_part, after_ts) = raw.split_once(' ')?;
     let ts_ms = parse_iso_ms(ts_part).unwrap_or(0);
+    let after_ts = after_ts.trim();
+    let is_mcp = after_ts.starts_with("[ax-mcp]");
     let body = after_ts
         .strip_prefix("[ax-mcp] ")
         .or_else(|| after_ts.strip_prefix("[ax-mcp]"))
@@ -318,12 +323,17 @@ fn parse_verbose_line(raw: &str) -> Option<VerboseLine> {
         inject_chars,
         matched_rules,
         session_id: extract_kv(body, "session"),
+        is_mcp,
     })
 }
 
 fn cluster_verbose_lines(lines: &[VerboseLine]) -> Vec<VerboseCluster> {
     let mut clusters: Vec<VerboseCluster> = Vec::new();
     for line in lines {
+        // Domain `[ax] workspace|lsp|…` lines are quality signals, not tool clusters.
+        if !line.is_mcp {
+            continue;
+        }
         let is_inbound = line.kind == "inbound";
         // Enrich side-channel lines have no tool= — keep them on the open preflight cluster.
         let is_enrich = line.kind == "enrich" || line.body.starts_with("enrich ");
@@ -373,6 +383,14 @@ fn cluster_verbose_lines(lines: &[VerboseLine]) -> Vec<VerboseCluster> {
         }
     }
     clusters
+}
+
+fn domain_blob_from(lines: &[VerboseLine]) -> String {
+    lines
+        .iter()
+        .map(|l| l.body.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn parse_verbose_log(text: &str, since_ms: i64) -> (Vec<VerboseLine>, Vec<VerboseCluster>) {
@@ -745,7 +763,8 @@ fn correlate(
         .filter(|e| e.kind == TranscriptKind::AxTool)
         .collect();
     if ax_events.is_empty() {
-        return (0, 0, 0.0, Vec::new());
+        // Nothing to correlate — healthy idle (not a 0% gap).
+        return (0, 0, 100.0, Vec::new());
     }
     let mut used = vec![false; clusters.len()];
     let mut matched = 0usize;
@@ -815,6 +834,8 @@ fn score_and_findings(
     correlation_pct: f64,
     mode: &str,
     verbose_present: bool,
+    verbose_enabled: bool,
+    domain_blob: &str,
 ) -> (u8, Vec<Finding>, i64) {
     let mut findings = Vec::new();
     let mut score: i32 = 100;
@@ -912,8 +933,9 @@ fn score_and_findings(
         tokens_at_risk += 1_000;
     }
 
-    // ExploreBeforeGrep
-    if mix.read + mix.grep > 0 && mix.explore == 0 && mix.graph == 0 {
+    // ExploreBeforeGrep — skip when MCP is quiet/unreachable (DEGRADED agents must Grep/Read).
+    if enrichment.inbound_count > 0 && mix.read + mix.grep > 0 && mix.explore == 0 && mix.graph == 0
+    {
         let tokens = mix.read as i64 * WASTE_READ_TOKENS + mix.grep as i64 * WASTE_GREP_TOKENS;
         tokens_at_risk += tokens;
         score -= 20;
@@ -933,7 +955,10 @@ fn score_and_findings(
             ts_ms: None,
             log_line_hint: None,
         });
-    } else if mix.read + mix.grep > mix.graph.saturating_mul(4).max(4) && mix.graph > 0 {
+    } else if enrichment.inbound_count > 0
+        && mix.read + mix.grep > mix.graph.saturating_mul(4).max(4)
+        && mix.graph > 0
+    {
         let excess = (mix.read + mix.grep).saturating_sub(mix.graph * 2);
         let tokens = excess as i64 * 600;
         tokens_at_risk += tokens;
@@ -977,13 +1002,116 @@ fn score_and_findings(
         tokens_at_risk += 500;
     }
 
+    // v4 domain lines (workspace/lsp/ship-ci/…) — scanned separately from MCP clusters
+    let joined = domain_blob;
+    if joined.contains("ship-ci") && joined.contains("status=failed") {
+        score -= 15;
+        findings.push(Finding {
+            id: "ship-ci-failed".into(),
+            check: "ShipCiFailed".into(),
+            severity: "critical".into(),
+            title: "ax ship --ci failed in window".into(),
+            detail: "Verbose log shows ship-ci status=failed.".into(),
+            waste_hint: "Fix quality gate failures before merging.".into(),
+            tokens_est: 0,
+            tool: None,
+            ts_ms: None,
+            log_line_hint: Some("ship-ci status=failed".into()),
+        });
+    }
+    if joined.contains("plugin") && joined.contains("fail") {
+        score -= 8;
+        findings.push(Finding {
+            id: "plugin-extract-errors".into(),
+            check: "PluginExtractErrors".into(),
+            severity: "medium".into(),
+            title: "Extractor plugin failures".into(),
+            detail: "Verbose log contains plugin extract failures.".into(),
+            waste_hint: "Fix .ax/plugins/*/plugin.toml or the extractor process.".into(),
+            tokens_est: 200,
+            tool: None,
+            ts_ms: None,
+            log_line_hint: Some("plugin".into()),
+        });
+        tokens_at_risk += 200;
+    }
+
+    // LspAvailableUnused — only when MCP is active (not domain-only noise)
+    let lsp_on_path = ["rust-analyzer", "typescript-language-server", "pyright-langserver", "gopls"]
+        .iter()
+        .any(|bin| command_on_path(bin));
+    if lsp_on_path && enrichment.inbound_count > 0 && !joined.contains("lsp enrich") {
+        score -= 5;
+        findings.push(Finding {
+            id: "lsp-available-unused".into(),
+            check: "LspAvailableUnused".into(),
+            severity: "low".into(),
+            title: "LSP on PATH but unused".into(),
+            detail: "A language server is available, but no `lsp enrich` ran in this window. Run `ax lsp enrich` or Unresolved → Enrich with LSP."
+                .into(),
+            waste_hint: "Unresolved refs stay expensive for agents without Exact LSP edges.".into(),
+            tokens_est: 300,
+            tool: None,
+            ts_ms: None,
+            log_line_hint: Some("lsp enrich".into()),
+        });
+        tokens_at_risk += 300;
+    }
+
+    // ShareReadonlyWrite
+    if joined.contains("readonly write denied") {
+        score -= 4;
+        findings.push(Finding {
+            id: "share-readonly-write".into(),
+            check: "ShareReadonlyWrite".into(),
+            severity: "medium".into(),
+            title: "Write attempted in share/read-only session".into(),
+            detail: "A mutating API was blocked while sharing or AX_WEB_READONLY=1.".into(),
+            waste_hint: "Use a local non-share session for edits.".into(),
+            tokens_est: 0,
+            tool: None,
+            ts_ms: None,
+            log_line_hint: Some("readonly write denied".into()),
+        });
+    }
+
+    // EmbedBackend — informational only
+    if let Some(backend_line) = joined.lines().find(|l| l.contains("embed backend=")) {
+        let backend = backend_line
+            .split("backend=")
+            .nth(1)
+            .unwrap_or("unknown")
+            .split_whitespace()
+            .next()
+            .unwrap_or("unknown");
+        findings.push(Finding {
+            id: "embed-backend".into(),
+            check: "EmbedBackend".into(),
+            severity: "info".into(),
+            title: format!("Memory embed backend: {backend}"),
+            detail: format!(
+                "Verbose log reports embed backend={backend}. Place tokenizer.json beside the ONNX model (or set AX_ONNX_TOKENIZER) for production recall."
+            ),
+            waste_hint: String::new(),
+            tokens_est: 0,
+            tool: None,
+            ts_ms: None,
+            log_line_hint: Some("embed backend=".into()),
+        });
+    }
+
     // Correlation / verbose gap
     let ax_event_count = events
         .iter()
         .filter(|e| e.kind == TranscriptKind::AxTool)
         .count();
     let transcripts_have_ts = events.iter().any(|e| e.ts_ms > 0);
-    if mode == "transcript_linked" && ax_event_count > 0 && correlation_pct < 50.0 {
+    // When MCP clusters are empty, UncorrelatedTool covers the gap — avoid double-counting.
+    if mode == "transcript_linked"
+        && ax_event_count > 0
+        && correlation_pct < 50.0
+        && !clusters.is_empty()
+    {
         // Untimed Cursor transcripts inflate the denominator; treat as medium unless
         // correlation is near-zero (likely wrong project / verbose off).
         let (penalty, severity) = if !transcripts_have_ts && correlation_pct >= 25.0 {
@@ -1011,21 +1139,39 @@ fn score_and_findings(
 
     if clusters.is_empty() && events.iter().any(|e| e.kind == TranscriptKind::AxTool) {
         if verbose_present {
-            // Log file exists but nothing fell in this window — not "verbose off".
-            score -= 10;
-            findings.push(Finding {
-                id: "uncorrelated-tool".into(),
-                check: "UncorrelatedTool".into(),
-                severity: "medium".into(),
-                title: "Transcript ax calls outside verbose window".into(),
-                detail: "Verbose log files exist but have no clusters in this window. Widen `--window-minutes`, pass `--session <uuid>`, or ensure the sessionStart hook tags `session=` and MCP was restarted after enabling verbose."
-                    .into(),
-                waste_hint: "Window mismatch blocks enrichment measurement for this slice.".into(),
-                tokens_est: 0,
-                tool: None,
-                ts_ms: None,
-                log_line_hint: None,
-            });
+            if verbose_enabled {
+                // Verbose logging is on; MCP simply produced no traffic in-window
+                // (disconnected after reinstall, idle, or restart pending). Not a defect.
+                findings.push(Finding {
+                    id: "uncorrelated-tool".into(),
+                    check: "UncorrelatedTool".into(),
+                    severity: "info".into(),
+                    title: "No MCP verbose clusters in window".into(),
+                    detail: "Verbose logging is enabled but the MCP server wrote no tool clusters in this window — usually ax MCP is disconnected or was restarted. Reconnect MCP in the agent; CallMcpTool failures while offline do not count against quality."
+                        .into(),
+                    waste_hint: String::new(),
+                    tokens_est: 0,
+                    tool: None,
+                    ts_ms: None,
+                    log_line_hint: None,
+                });
+            } else {
+                // Log file exists (maybe from another day) but verbose is off now.
+                score -= 10;
+                findings.push(Finding {
+                    id: "uncorrelated-tool".into(),
+                    check: "UncorrelatedTool".into(),
+                    severity: "medium".into(),
+                    title: "Transcript ax calls outside verbose window".into(),
+                    detail: "Verbose log files exist but have no clusters in this window. Widen `--window-minutes`, pass `--session <uuid>`, or enable Verbose MCP logging and restart MCP."
+                        .into(),
+                    waste_hint: "Window mismatch blocks enrichment measurement for this slice.".into(),
+                    tokens_est: 0,
+                    tool: None,
+                    ts_ms: None,
+                    log_line_hint: None,
+                });
+            }
         } else {
             score -= 20;
             findings.push(Finding {
@@ -1136,6 +1282,28 @@ fn truncate_hint(s: &str, max_chars: usize) -> String {
     format!("{trimmed}…")
 }
 
+fn command_on_path(bin: &str) -> bool {
+    #[cfg(windows)]
+    let lookup = format!("{bin}.exe");
+    #[cfg(not(windows))]
+    let lookup = bin.to_string();
+    let Some(path) = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(&lookup))
+            .find(|p| p.is_file())
+    }) else {
+        return false;
+    };
+    // rustup shims exist on PATH but exit non-zero until `rustup component add …`.
+    std::process::Command::new(&path)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn grade_for(score: u8) -> String {
     match score {
         90..=100 => "A".into(),
@@ -1237,10 +1405,12 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
         now_ms().saturating_sub((window as i64) * 60_000)
     };
 
+    let verbose_enabled = verbose_enabled_for(project_root);
     let log_path = crate::mcp_verbose_log::current_log_path(Some(project_root));
     let verbose_text = crate::mcp_verbose_log::read_merged_verbose_log(project_root);
     let verbose_present = !verbose_text.trim().is_empty();
-    let (_lines, mut clusters) = parse_verbose_log(&verbose_text, since_ms);
+    let (lines, mut clusters) = parse_verbose_log(&verbose_text, since_ms);
+    let domain_blob = domain_blob_from(&lines);
 
     let session_path = resolve_session_path(opts, project_root);
     let mut events = Vec::new();
@@ -1260,6 +1430,13 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
     let transcripts_timed = events.iter().any(|e| e.ts_ms > 0);
     if !explicit_session && since_ms > 0 && !transcripts_timed && clusters.is_empty() {
         events.clear();
+    }
+
+    // Rolling window + verbose on + no MCP clusters: timed CallMcpTool rows are often
+    // failed "Not connected" attempts after reinstall/restart. Drop them so the live
+    // Q chip doesn't false-flag UncorrelatedTool while logging is correctly configured.
+    if !explicit_session && since_ms > 0 && clusters.is_empty() && verbose_enabled {
+        events.retain(|e| e.kind != TranscriptKind::AxTool);
     }
 
     // When verbose lines carry session=, keep only clusters for the audited session.
@@ -1296,6 +1473,8 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
         correlation_pct,
         mode,
         verbose_present,
+        verbose_enabled,
+        &domain_blob,
     );
     let critical_count = findings
         .iter()
@@ -1320,7 +1499,7 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
         findings,
         tokens_at_risk,
         critical_count,
-        verbose_enabled: verbose_enabled_for(project_root),
+        verbose_enabled,
         verbose_present,
         session_id,
         session_path: session_path.map(|p| p.display().to_string()),
@@ -1434,7 +1613,7 @@ mod tests {
         let mix = tool_mix_from(&clusters, &[]);
         let enrichment = enrichment_from(&clusters);
         let (score, findings, _) =
-            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, "verbose_only", true);
+            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, "verbose_only", true, true, "");
         assert!(score < 100);
         assert!(findings.iter().any(|f| f.check == "PreflightOnce"));
     }
@@ -1505,7 +1684,7 @@ mod tests {
         let mix = tool_mix_from(&clusters, &[]);
         let enrichment = enrichment_from(&clusters);
         let (_score, findings, _) =
-            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, "verbose_only", true);
+            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, "verbose_only", true, true, "");
         assert!(
             !findings.iter().any(|f| f.id == "mcp-errors"),
             "recovered ax_guard error should not create VerboseGap finding"
@@ -1556,6 +1735,7 @@ mod tests {
         }];
         let mix = ToolMix::default();
         let enrichment = EnrichmentMetrics::default();
+        // verbose present but not enabled → medium
         let (_score, findings, _) = score_and_findings(
             &[],
             &events,
@@ -1564,6 +1744,8 @@ mod tests {
             0.0,
             "transcript_linked",
             true,
+            false,
+            "",
         );
         let f = findings
             .iter()
@@ -1571,6 +1753,102 @@ mod tests {
             .expect("finding");
         assert_eq!(f.severity, "medium");
         assert!(f.detail.contains("window"));
+    }
+
+    #[test]
+    fn uncorrelated_is_info_when_verbose_enabled() {
+        let events = vec![TranscriptEvent {
+            ts_ms: 1,
+            kind: TranscriptKind::AxTool,
+            name: "ax_preflight".into(),
+            ax_tool: Some("ax_preflight".into()),
+        }];
+        let mix = ToolMix::default();
+        let enrichment = EnrichmentMetrics::default();
+        let (score, findings, _) = score_and_findings(
+            &[],
+            &events,
+            &mix,
+            &enrichment,
+            0.0,
+            "transcript_linked",
+            true,
+            true,
+            "",
+        );
+        assert_eq!(score, 100, "verbose-enabled idle MCP must not penalize score");
+        let f = findings
+            .iter()
+            .find(|f| f.id == "uncorrelated-tool")
+            .expect("info finding");
+        assert_eq!(f.severity, "info");
+    }
+
+    #[test]
+    fn domain_lines_do_not_form_tool_clusters() {
+        let text = "\
+2026-07-26T13:02:14.805Z [ax] workspace switch path=C:\\gary\\ax\n\
+2026-07-26T13:02:15.000Z [ax] lsp enrich start limit=200\n";
+        let (lines, clusters) = parse_verbose_log(text, 0);
+        assert_eq!(clusters.len(), 0, "domain lines must not create MCP clusters");
+        let blob = domain_blob_from(&lines);
+        assert!(blob.contains("lsp enrich"));
+        assert!(blob.contains("workspace switch"));
+    }
+
+    #[test]
+    fn quiet_mcp_skips_explore_before_grep_and_verbose_gap() {
+        let events = vec![
+            TranscriptEvent {
+                ts_ms: 1,
+                kind: TranscriptKind::AxTool,
+                name: "ax_preflight".into(),
+                ax_tool: Some("ax_preflight".into()),
+            },
+            TranscriptEvent {
+                ts_ms: 2,
+                kind: TranscriptKind::Read,
+                name: "Read".into(),
+                ax_tool: None,
+            },
+            TranscriptEvent {
+                ts_ms: 3,
+                kind: TranscriptKind::Grep,
+                name: "Grep".into(),
+                ax_tool: None,
+            },
+        ];
+        let mix = ToolMix {
+            preflight: 1,
+            read: 1,
+            grep: 1,
+            ..ToolMix::default()
+        };
+        let enrichment = EnrichmentMetrics::default(); // inbound_count = 0
+        let (_score, findings, _) = score_and_findings(
+            &[],
+            &events,
+            &mix,
+            &enrichment,
+            0.0,
+            "transcript_linked",
+            true,
+            true,
+            "[ax] workspace switch path=x",
+        );
+        assert!(
+            !findings.iter().any(|f| f.id == "explore-before-grep"),
+            "DEGRADED/quiet MCP must not flag ExploreBeforeGrep"
+        );
+        assert!(
+            !findings.iter().any(|f| f.id == "verbose-gap"),
+            "empty MCP clusters should not also fire VerboseGap"
+        );
+        assert!(
+            !findings.iter().any(|f| f.id == "lsp-available-unused"),
+            "domain-only window must not flag LspAvailableUnused"
+        );
+        assert!(findings.iter().any(|f| f.id == "uncorrelated-tool"));
     }
 
     #[test]

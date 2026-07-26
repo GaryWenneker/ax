@@ -221,6 +221,41 @@ export default function SonarQubePage({
   }, [tab]);
 
   useEffect(() => {
+    if (tab !== 'dashboard') return;
+    let cancelled = false;
+    setErr(null);
+    // Probe the proxied Sonar API — catches 502 / tunnel misconfig before the iframe spins forever.
+    void fetch('/api/ship/sonar/ui/api/system/status', { credentials: 'same-origin' })
+      .then(async (r) => {
+        if (cancelled) return;
+        if (!r.ok) {
+          setIframeState('error');
+          setErr(`SonarQube proxy error (HTTP ${r.status}). Is Sonar running on the host?`);
+          return;
+        }
+        try {
+          const body = (await r.json()) as { status?: string };
+          if (body.status && body.status !== 'UP') {
+            setIframeState('error');
+            setErr(`SonarQube status is ${body.status} — wait for startup, then Reload.`);
+          }
+        } catch {
+          setIframeState('error');
+          setErr('SonarQube proxy returned a non-JSON status — check Setup / container.');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIframeState('error');
+          setErr('Cannot reach SonarQube through the proxy (network error).');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, iframeKey]);
+
+  useEffect(() => {
     if (tab !== 'dashboard' || iframeState !== 'loading') {
       if (iframeLoadTimer.current) {
         clearTimeout(iframeLoadTimer.current);
@@ -228,10 +263,11 @@ export default function SonarQubePage({
       }
       return;
     }
-    // Dismiss loading overlay quickly — iframe stays interactive underneath (pointer-events: none on overlay).
+    // Dismiss loading overlay after a short grace — iframe stays interactive underneath.
+    // Longer timeout for Cloudflare tunnels (cold JS chunks).
     iframeLoadTimer.current = setTimeout(() => {
       setIframeState((s) => (s === 'loading' ? 'loaded' : s));
-    }, 600);
+    }, 2500);
     return () => {
       if (iframeLoadTimer.current) {
         clearTimeout(iframeLoadTimer.current);

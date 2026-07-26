@@ -61,7 +61,25 @@ impl ExtractionOrchestrator {
         let mut remaining = Vec::new();
         for task in tasks {
             if !plugins.is_empty() {
-                if let Some(plugin_res) = plugins.extract(&task.file_path, &task.content) {
+                if let Some((plugin_name, plugin_res)) = plugins.extract(&task.file_path, &task.content) {
+                    let ok = plugin_res.is_ok();
+                    let ext = std::path::Path::new(&task.file_path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    let status = if ok { "ok" } else { "fail" };
+                    ax_usage::log_plugin(
+                        Some(&self.project_root),
+                        format!(
+                            "extract name={plugin_name} ext=.{ext} path={} {status}",
+                            task.file_path
+                        ),
+                    );
+                    tracing::debug!(
+                        path = %task.file_path,
+                        ok,
+                        "plugin extract"
+                    );
                     results.push((task.file_path, plugin_res.map_err(|e| e.to_string())));
                     continue;
                 }

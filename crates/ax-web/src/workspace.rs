@@ -218,7 +218,7 @@ async fn handle_switch(
             "path": info.path,
             "label": info.label,
             "switched": true,
-            "url": format!("http://localhost:{}", hub.port),
+            "url": format!("http://127.0.0.1:{}", hub.port),
         }))
         .into_response(),
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e })).into_response(),

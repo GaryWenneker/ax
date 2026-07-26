@@ -95,6 +95,10 @@ impl WebHub {
                 format!("switched to {}", info.label),
                 Some(serde_json::json!({ "path": info.path })),
             );
+            ax_usage::log_workspace(
+                Some(&new_root),
+                format!("switch path={}", info.path),
+            );
             Ok(info)
         }
         .await;
@@ -105,15 +109,24 @@ impl WebHub {
     pub fn nest_routers(&self, cors: tower_http::cors::CorsLayer) -> Router {
         let hub = self.clone();
         let graph = graph_router(hub.clone());
+        // Specific `/api/...` nests MUST be registered before the catch-all `.nest("/api", graph)`.
+        // Otherwise paths like `/api/memory/` are swallowed by the graph nest and fall through to the SPA shell.
         Router::new()
-            .nest("/api", graph)
+            .route(
+                "/api/reset-client-cache",
+                axum::routing::get(crate::handle_reset_client_cache),
+            )
             .nest("/api/policy", policy::router_hub(hub.clone()))
             .nest("/api/ship", ship::router_hub(hub.clone()))
             .nest("/api/usage", crate::savings::router(hub.clone()))
             .nest("/api/memory", crate::memory::router_hub(hub.clone()))
             .nest("/api/workspace", workspace::router_hub(hub.clone()))
             .nest("/api/agent", agent::router_hub(hub.clone()))
-            .nest("/api/actions", crate::actions::router_hub(hub))
+            .nest("/api/actions", crate::actions::router_hub(hub.clone()))
+            .nest("/api/share", crate::share_api::router_hub(hub.clone()))
+            .nest("/api/lsp", crate::lsp_api::router_hub(hub.clone()))
+            .nest("/api/plugins", crate::plugins_api::router_hub(hub.clone()))
+            .nest("/api", graph)
             .fallback(crate::handle_spa)
             .layer(axum::middleware::from_fn(crate::share_auth::share_token_middleware))
             .layer(cors)
@@ -270,6 +283,7 @@ fn graph_router(hub: WebHub) -> Router {
         .route("/node/{id}", get(crate::handle_node))
         .route("/graph", get(crate::handle_graph))
         .route("/graph/stream", get(crate::handle_graph_stream))
+        .route("/graph/export", get(crate::graph_export::handle_export))
         .route("/insights", get(crate::handle_insights))
         .route("/files", get(crate::handle_files))
         .route("/files/roots", get(crate::handle_file_roots))

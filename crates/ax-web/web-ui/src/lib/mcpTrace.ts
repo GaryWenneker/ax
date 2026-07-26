@@ -16,6 +16,13 @@ export type TraceKind =
   | 'outbound'
   | 'preview'
   | 'error'
+  | 'plugin'
+  | 'lsp'
+  | 'ship'
+  | 'share'
+  | 'workspace'
+  | 'embed'
+  | 'action'
   | 'other';
 
 export interface TraceEntry {
@@ -446,6 +453,14 @@ function classify(body: string): { kind: TraceKind; badge: string } {
   if (body.includes('outbound preview')) return { kind: 'preview', badge: 'PREV' };
   if (body.includes('outbound tool=')) return { kind: 'outbound', badge: 'OUT' };
   if (body.includes('error tool=')) return { kind: 'error', badge: 'ERR' };
+  // v4 domain lines: `[ax] plugin …` / `plugin extract …`
+  if (/\bplugin\b/.test(body)) return { kind: 'plugin', badge: 'PLG' };
+  if (/\blsp\b/.test(body)) return { kind: 'lsp', badge: 'LSP' };
+  if (/\bship-ci\b/.test(body) || /\bship ci\b/.test(body)) return { kind: 'ship', badge: 'SHIP' };
+  if (/\bshare\b/.test(body)) return { kind: 'share', badge: 'SHR' };
+  if (/\bworkspace\b/.test(body)) return { kind: 'workspace', badge: 'WS' };
+  if (/\bembed\b/.test(body)) return { kind: 'embed', badge: 'EMB' };
+  if (/\baction\b/.test(body)) return { kind: 'action', badge: 'ACT' };
   return { kind: 'other', badge: 'LOG' };
 }
 

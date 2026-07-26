@@ -85,6 +85,11 @@ const MANAGED: &[(&str, &str, bool)] = &[
         false,
     ),
     (
+        ".ax/policy/rules/explore-before-grep.mdc",
+        "rules/explore-before-grep.mdc",
+        false,
+    ),
+    (
         ".ax/policy/rules/subagents.mdc",
         "rules/subagents.mdc",
         true,

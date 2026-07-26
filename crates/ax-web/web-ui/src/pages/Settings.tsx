@@ -1,6 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import AgentsSettingsSection from '../components/AgentsSettingsSection';
+import EmbedSettingsSection from '../components/EmbedSettingsSection';
+import PluginsSettingsSection from '../components/PluginsSettingsSection';
+import SharingSettingsSection from '../components/SharingSettingsSection';
 import McpTraceLive from '../components/McpTraceLive';
 import { BusyLabel } from '../components/ui/PageLayout';
 import ThemeChooser from '../components/ThemeChooser';
@@ -343,7 +346,7 @@ export default function SettingsPage() {
 
             <SettingRow
               title="Verbose MCP logging"
-              description="Record inbound args, enrichment, and outbound MCP payloads to <project>/.ax/mcp-verbose-YYYY-MM-DD.log (one file per day in Settings timezone) and stream them live in the Logging page (per-project table). Off by default — never alters tool responses."
+              description="Record inbound args, enrichment, outbound MCP payloads, and v4 domain events (plugin/lsp/ship-ci/share/workspace/embed/action) to <project>/.ax/mcp-verbose-YYYY-MM-DD.log and stream them in Logging. Off by default — never alters tool responses."
             >
               <Toggle
                 label="Verbose MCP logging"
@@ -457,6 +460,36 @@ export default function SettingsPage() {
             <button type="button" className="btn primary" disabled={!!busy} onClick={() => void save()}>
               {busy === 'save' ? <BusyLabel label="Saving…" /> : 'Save settings'}
             </button>
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <h2>Sharing</h2>
+            <p>LAN share session, token gate, and optional PWA install.</p>
+          </div>
+          <div className="settings-card-body">
+            <SharingSettingsSection />
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <h2>Plugins</h2>
+            <p>Process / WASM extractors discovered under <code>.ax/plugins</code>.</p>
+          </div>
+          <div className="settings-card-body">
+            <PluginsSettingsSection />
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <h2>Embeddings</h2>
+            <p>Memory embed backend (feature-hash or ONNX dense vectors).</p>
+          </div>
+          <div className="settings-card-body">
+            <EmbedSettingsSection />
           </div>
         </section>
 

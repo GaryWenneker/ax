@@ -58,15 +58,39 @@ pub fn discover_servers() -> Vec<ServerStatus> {
         .iter()
         .map(|s| {
             let path = which::which(s.command).ok();
+            let available = path
+                .as_ref()
+                .map(|p| server_binary_works(p))
+                .unwrap_or(false);
             ServerStatus {
                 id: s.id.into(),
                 command: s.command.into(),
-                available: path.is_some(),
+                available,
                 path: path.map(|p| p.display().to_string()),
                 languages: vec![format!("{:?}", s.language).to_ascii_lowercase()],
             }
         })
         .collect()
+}
+
+/// True when the binary runs (`--version` exits 0). Catches rustup shims that
+/// exist on PATH but need `rustup component add rust-analyzer`.
+pub fn server_binary_works(path: &std::path::Path) -> bool {
+    std::process::Command::new(path)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// True when this server's command is on PATH and actually runnable.
+pub fn server_available(spec: &ServerSpec) -> bool {
+    which::which(spec.command)
+        .ok()
+        .map(|p| server_binary_works(&p))
+        .unwrap_or(false)
 }
 
 pub fn spec_for_extension(ext: &str) -> Option<&'static ServerSpec> {

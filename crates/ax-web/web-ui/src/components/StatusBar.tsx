@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { fetchStats, fetchVersion } from '../api';
 import { useMcpTraceStatus } from '../hooks/useMcpTraceStatus';
+import ActivityStatusChip from './ActivityStatusChip';
 import Codicon from './Codicon';
 import LoggingProjectSwitch from './LoggingProjectSwitch';
 import ProjectBrowserModal from './ProjectBrowserModal';
@@ -15,6 +16,7 @@ import { useUiContext } from '../context/UiContext';
 import {
   emptyMcpTraceStats,
   MCP_TRACE_STATS,
+  publishMcpTraceAction,
   publishMcpTraceFilter,
   type McpTraceStats,
 } from '../lib/mcpTraceEvents';
@@ -26,7 +28,7 @@ import type { Stats } from '../types';
 
 function IconNodes() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <circle cx="4" cy="8" r="2" />
       <circle cx="12" cy="4" r="2" />
       <circle cx="12" cy="12" r="2" />
@@ -37,7 +39,7 @@ function IconNodes() {
 
 function IconLink() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d="M6.5 9.5L9.5 6.5M5 11a3 3 0 010-4.2l1.8-1.8a3 3 0 014.2 4.2l-.3.3M11 5a3 3 0 010 4.2l-1.8 1.8a3 3 0 01-4.2-4.2l.3-.3" stroke="currentColor" strokeWidth="1.2" fill="none" />
     </svg>
   );
@@ -45,7 +47,7 @@ function IconLink() {
 
 function IconFile() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d="M4 2h5l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1zm4 0v3h3" fill="none" stroke="currentColor" strokeWidth="1" />
     </svg>
   );
@@ -53,7 +55,7 @@ function IconFile() {
 
 function IconCode() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d="M5 4L1 8l4 4M11 4l4 4-4 4" stroke="currentColor" strokeWidth="1.2" fill="none" />
     </svg>
   );
@@ -61,15 +63,15 @@ function IconCode() {
 
 function IconShield() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M8 1l5 2v4c0 3.5-2.5 5.5-5 6-2.5-.5-5-2.5-5-6V3l5-2z" fill="none" stroke="currentColor" strokeWidth="1" />
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 1l5 2v4c0 3.5-2.5 5.5-5 6-2.5-.5-5-2.5-5-6V3l5-2z" fill="none" stroke="currentColor" strokeWidth="1.2" />
     </svg>
   );
 }
 
 function IconWarn() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d="M8 1L1 14h14L8 1zm0 4v4M8 11v1" stroke="currentColor" strokeWidth="1.2" fill="none" />
     </svg>
   );
@@ -77,30 +79,30 @@ function IconWarn() {
 
 function IconClock() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1" />
-      <path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1" fill="none" />
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.2" fill="none" />
     </svg>
   );
 }
 
 function IconDb() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <ellipse cx="8" cy="4" rx="5" ry="2" fill="none" stroke="currentColor" strokeWidth="1" />
-      <path d="M3 4v4c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8v4c0 1.1 2.2 2 5 2s5-.9 5-2V8" fill="none" stroke="currentColor" strokeWidth="1" />
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <ellipse cx="8" cy="4" rx="5" ry="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M3 4v4c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8v4c0 1.1 2.2 2 5 2s5-.9 5-2V8" fill="none" stroke="currentColor" strokeWidth="1.2" />
     </svg>
   );
 }
 
 function IconLog() {
   return (
-    <svg className="status-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <svg className="status-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path
         d="M3 2.5h10v11H3zM5 5h6M5 7.5h6M5 10h4"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.1"
+        strokeWidth="1.2"
       />
     </svg>
   );
@@ -197,6 +199,38 @@ function PanelLink({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
+function ShareReadonlyBadge() {
+  const [sharing, setSharing] = useState(false);
+  const [readonly, setReadonly] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/share/status')
+      .then((r) => r.json())
+      .then((d: { sharing?: boolean; readonly?: boolean }) => {
+        setSharing(!!d.sharing);
+        setReadonly(!!d.readonly);
+      })
+      .catch(() => {});
+  }, []);
+
+  if (!sharing && !readonly) return null;
+  return (
+    <>
+      <span
+        className="status-item status-readonly"
+        title={sharing ? 'Shared session (read-only)' : 'Read-only mode'}
+        aria-label={sharing ? 'Shared session (read-only)' : 'Read-only mode'}
+      >
+        <Codicon name={sharing ? 'link-external' : 'lock'} />
+        <span className="status-lbl">{sharing ? 'shared' : 'read-only'}</span>
+      </span>
+      <span className="status-sep" aria-hidden="true">
+        |
+      </span>
+    </>
+  );
+}
+
 export default function StatusBar() {
   const { pageContext } = useUiContext();
   const isLogging = pageContext.view === 'Logging';
@@ -207,6 +241,7 @@ export default function StatusBar() {
   const [openPanel, setOpenPanel] = useState<string | null>(null);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [accent, setAccent] = useState(() => currentThemeAccent());
+  const [themeId, setThemeId] = useState(() => document.documentElement.dataset.axTheme ?? 'ax');
   const barRef = useRef<HTMLElement>(null);
   const mcpTrace = useMcpTraceStatus();
   const offline = isLogging && !logStats.live;
@@ -233,12 +268,15 @@ export default function StatusBar() {
 
   useEffect(() => {
     function onTheme(ev: Event) {
-      const detail = (ev as CustomEvent<{ accent?: string }>).detail;
+      const detail = (ev as CustomEvent<{ id?: string; accent?: string }>).detail;
       if (detail?.accent) setAccent(detail.accent);
       else setAccent(currentThemeAccent());
+      if (detail?.id) setThemeId(detail.id);
+      else setThemeId(document.documentElement.dataset.axTheme ?? 'ax');
     }
     window.addEventListener(THEME_CHANGED, onTheme);
     setAccent(currentThemeAccent());
+    setThemeId(document.documentElement.dataset.axTheme ?? 'ax');
     return () => window.removeEventListener(THEME_CHANGED, onTheme);
   }, []);
 
@@ -278,7 +316,7 @@ export default function StatusBar() {
   const qTone = gradeTone(quality.score);
   const qualityActive = quality.verbosePresent || quality.verboseEnabled || quality.score > 0;
 
-  // Inline accent so the bar cannot fall back to a grey UA / cascade color.
+  // Solid accent bar for every theme (mint green on ax Mint).
   const barStyle = offline
     ? {
         backgroundColor: `color-mix(in srgb, ${accent} 35%, #6b3030)`,
@@ -298,6 +336,7 @@ export default function StatusBar() {
       ref={barRef}
       style={barStyle}
       data-accent={accent}
+      data-theme={themeId}
     >
       {isLogging ? (
         <div className="statusbar-left">
@@ -553,6 +592,12 @@ export default function StatusBar() {
       )}
 
       <div className="statusbar-right">
+        <ActivityStatusChip openPanel={openPanel} onTogglePanel={setOpenPanel} />
+        <span className="status-sep" aria-hidden="true">
+          |
+        </span>
+        <ShareReadonlyBadge />
+        {/* Always show Q on Logging; elsewhere when quality data exists. */}
         {(isLogging || qualityActive) && (
           <>
             <button
@@ -560,8 +605,8 @@ export default function StatusBar() {
               className={`status-item status-item--clickable status-quality status-quality--${qTone}${
                 quality.criticalCount > 0 ? ' status-quality--crit' : ''
               }`}
-              title="MCP quality loop — open metrics slide-out"
-              aria-label={`MCP quality score ${quality.score}`}
+              title="MCP quality — Copy fixpack & metrics"
+              aria-label={`MCP quality score ${quality.score || 'open'}`}
               onClick={() => openMcpQualitySlideout()}
             >
               <IconShield />
@@ -578,9 +623,78 @@ export default function StatusBar() {
         )}
         {isLogging ? (
           <>
-            <span
-              className={`status-item status-logging${logStats.live ? ' status-logging--hot' : ''}`}
-              title={logStats.live ? 'SSE connected' : 'Stream offline / reconnecting'}
+            <StatusChip
+              id="logging"
+              title={
+                logStats.live
+                  ? 'Logging live — filters, scroll to new, quality'
+                  : 'Logging offline — filters, scroll to new, quality'
+              }
+              openPanel={openPanel}
+              onTogglePanel={setOpenPanel}
+              className={`status-logging${logStats.live ? ' status-logging--hot' : ''}`}
+              panel={
+                <>
+                  <div className="status-panel-title">Logging</div>
+                  <p className="status-panel-text">
+                    Stream is <strong>{logStats.live ? 'live' : 'offline'}</strong>
+                    {logStats.total > 0 ? ` · ${logStats.total.toLocaleString()} events` : ''}.
+                  </p>
+                  <ul className="status-panel-list">
+                    {(
+                      [
+                        ['inbound', 'Inbound', logStats.inbound],
+                        ['outbound', 'Outbound', logStats.outbound],
+                        ['preview', 'Preview', logStats.preview],
+                        ['error', 'Error', logStats.error],
+                        ['internal', 'Internal', logStats.internal],
+                        ['enrich', 'Enrich', logStats.enrich],
+                        ['other', 'Other', logStats.other],
+                      ] as const
+                    ).map(([kind, label, count]) => (
+                      <li key={kind}>
+                        <button
+                          type="button"
+                          className="status-panel-list-btn"
+                          onClick={() => {
+                            publishMcpTraceFilter({ toggleKind: kind as TraceKind });
+                            setOpenPanel(null);
+                          }}
+                        >
+                          <span>{label}</span>
+                          <span className="status-panel-list-val">{count.toLocaleString()}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <PanelLink
+                    label="Scroll to newest"
+                    onClick={() => {
+                      publishMcpTraceAction({ jumpToNew: true });
+                      setOpenPanel(null);
+                    }}
+                  />
+                  <PanelLink
+                    label="Clear filters"
+                    onClick={() => {
+                      publishMcpTraceFilter({ clear: true });
+                      setOpenPanel(null);
+                    }}
+                  />
+                  <PanelLink
+                    label="Open quality (Q)"
+                    onClick={() => {
+                      setOpenPanel(null);
+                      openMcpQualitySlideout();
+                    }}
+                  />
+                  {logStats.path && (
+                    <p className="status-panel-muted mono" title={logStats.path}>
+                      {logStats.path}
+                    </p>
+                  )}
+                </>
+              }
             >
               <IconLog />
               <span className="status-lbl">Logging</span>
@@ -591,7 +705,7 @@ export default function StatusBar() {
               >
                 {logStats.live ? 'live' : 'offline'}
               </span>
-            </span>
+            </StatusChip>
             <span className="status-sep" aria-hidden="true">
               |
             </span>

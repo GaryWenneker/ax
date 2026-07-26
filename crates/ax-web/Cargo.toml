@@ -11,7 +11,7 @@ anyhow = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "normalize-path"] }
 include_dir = "0.7"
 mime_guess = "2"
 ax-utils = { workspace = true }
@@ -29,6 +29,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 ax-installer = { workspace = true }
 ax-agent = { workspace = true }
 ax-reasoning = { workspace = true }
+ax-lsp = { workspace = true }
+ax-plugins = { workspace = true }
+toml = { workspace = true }
 dirs = { workspace = true }
 reqwest = { workspace = true }
 futures-util = { workspace = true }

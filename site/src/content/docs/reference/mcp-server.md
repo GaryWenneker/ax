@@ -114,7 +114,7 @@ To watch what each tool receives, how preflight enrichment builds the inject blo
 
 1. Enable **Settings → Interface → Verbose MCP logging** in Command Center (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
 2. Reconnect / restart the ax MCP server in Cursor.
-3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table that tails today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (scroll up for earlier days; logs are not cleared from the UI).
+3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI).
 
 ![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging.png)
 

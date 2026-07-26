@@ -917,12 +917,10 @@ export default function SavingsPage() {
                 <input className="settings-input settings-input--narrow" type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To date" />
               </>
             )}
-            <button type="button" className="btn primary" onClick={() => void load()} disabled={loading}>
-              {loading ? <BusyLabel label="Loading…" /> : 'Apply'}
-            </button>
             <button type="button" className="btn" onClick={() => void runImport()} disabled={importing} title="Import Cursor / Claude Code session transcripts">
               {importing ? <BusyLabel label="Importing…" /> : 'Import sessions'}
             </button>
+            {loading && <span className="page-hint" aria-live="polite">Loading…</span>}
           </div>
         }
       />
@@ -955,7 +953,7 @@ export default function SavingsPage() {
             info={
               <InfoHover label="About the timeline">
                 X axis is real local date and time. Y is tokens saved that hour, fitted to the
-                visible window. Uses the same period filter as the rest of this page (Apply above).
+                visible window. Uses the same period filter as the rest of this page (selector above).
               </InfoHover>
             }
           >

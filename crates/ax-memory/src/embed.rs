@@ -31,11 +31,23 @@ fn add_feature(vec: &mut [f32; EMBED_DIM], feature: &[u8], weight: f32) {
 }
 
 pub fn embed_text(text: &str) -> Vec<f32> {
+    static LOGGED: std::sync::Once = std::sync::Once::new();
     if let Some(v) = crate::onnx::try_onnx_embed(text) {
         if v.len() == EMBED_DIM {
+            LOGGED.call_once(|| {
+                tracing::info!(backend = "onnx", "embed backend selected");
+            });
             return v;
         }
     }
+    LOGGED.call_once(|| {
+        let backend = if crate::onnx::onnx_model_configured() {
+            "onnx_unconfigured"
+        } else {
+            "hash"
+        };
+        tracing::info!(backend, "embed backend selected");
+    });
     embed_text_hash(text)
 }
 

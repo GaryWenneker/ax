@@ -150,7 +150,7 @@ The embedding model is entirely local — no API calls, no model files to downlo
 - **Sign randomization:** A second hash bit determines the sign of each feature, reducing collision bias.
 - **L2 normalization:** The final vector is normalized to unit length, so cosine similarity equals the dot product.
 
-Feature-hash embeddings give deterministic, typo-tolerant similarity that fuses well with FTS5. Optional ONNX dense embeddings replace `embed_text()` without changing the storage format (the 256-dim blob column stays the same). See [`docs/ONNX.md`](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/ONNX.md).
+Feature-hash embeddings give deterministic, typo-tolerant similarity that fuses well with FTS5. Optional ONNX dense embeddings replace `embed_text()` without changing the storage format (the 256-dim blob column stays the same). Command Center **Settings → Embeddings** shows the live backend (`hash` / `onnx` / `onnx_unconfigured`), Cargo feature flag, and model / tokenizer paths (`GET /api/memory/embed-status`). See [`docs/ONNX.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ONNX.md).
 
 ## Storage schema
 

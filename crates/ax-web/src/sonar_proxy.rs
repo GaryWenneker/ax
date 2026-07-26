@@ -20,8 +20,53 @@ pub const SONAR_UI_PUBLIC_PREFIX: &str = "/api/ship/sonar/ui";
 /// Route prefix on the ship router (nested under `/api/ship`).
 const SONAR_UI_ROUTE_PREFIX: &str = "/sonar/ui";
 
+/// Patch fetch/XHR so absolute `/api/…` (and static assets) stay on the proxy.
+/// SonarQube's axios treats leading-slash paths as host-absolute and ignores
+/// `data-base-url` — that breaks the iframe locally and via Cloudflare tunnels.
+const PROXY_PATH_PATCH: &str = r#"<script id="ax-sonar-proxy-path">(function(){
+  var P='/api/ship/sonar/ui';
+  function needs(u){
+    return u.charAt(0)==='/' && u.indexOf(P+'/')!==0 && u!==P && (
+      u.indexOf('/api/')===0 || u.indexOf('/js/')===0 || u.indexOf('/css/')===0 ||
+      u.indexOf('/static/')===0 || u.indexOf('/fonts/')===0 || u.indexOf('/images/')===0 ||
+      u.indexOf('/webfonts/')===0 || u.indexOf('/batch_bootstrap')===0
+    );
+  }
+  function fix(u){
+    if(typeof u!=='string'||!u) return u;
+    if(needs(u)) return P+u;
+    if(u.indexOf('http')===0){
+      try{
+        var a=document.createElement('a'); a.href=u;
+        if(a.origin===location.origin){
+          var path=a.pathname+(a.search||'')+(a.hash||'');
+          if(needs(a.pathname)) return P+path;
+        }
+      }catch(e){}
+    }
+    return u;
+  }
+  var _f=window.fetch;
+  window.fetch=function(input, init){
+    try{
+      if(typeof input==='string') input=fix(input);
+      else if(input && typeof Request!=='undefined' && input instanceof Request){
+        var nu=fix(input.url);
+        if(nu!==input.url) input=new Request(nu, input);
+      }
+    }catch(e){}
+    return _f.call(this, input, init);
+  };
+  var xo=XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open=function(method, url){
+    if(typeof url==='string') arguments[1]=fix(url);
+    return xo.apply(this, arguments);
+  };
+})();</script>"#;
+
 const DARK_THEME_INJECT: &str = r#"<meta name="color-scheme" content="dark"><script id="ax-sonar-theme">(function(){
   var T={
+    'ax':{a:'#3ee4b2',bg:'#1e1e1e',bs:'#181818',bi:'#313131',bh:'#252826',ba:'#2e3532',bd:'#2b2b2b',bH:'#454545',t:'#cccccc',td:'#9d9d9d',th:'#ffffff',ok:'#3fb950',dg:'#f14c4c',wn:'#cca700'},
     'vscode-dark':{a:'#0078d4',bg:'#1f1f1f',bs:'#181818',bi:'#313131',bh:'#2a2d2e',ba:'#37373d',bd:'#2b2b2b',bH:'#454545',t:'#cccccc',td:'#9d9d9d',th:'#ffffff',ok:'#3fb950',dg:'#f14c4c',wn:'#cca700'},
     'ember':{a:'#e06c2b',bg:'#1a1a1a',bs:'#141414',bi:'#2a2a2a',bh:'#2c2420',ba:'#3a2e26',bd:'#2a2420',bH:'#4a3a30',t:'#cccccc',td:'#9d9d9d',th:'#ffffff',ok:'#3fb950',dg:'#f14c4c',wn:'#e0a030'},
     'emerald':{a:'#2ea87a',bg:'#1a1c1a',bs:'#141614',bi:'#262e28',bh:'#222e26',ba:'#2a3a2e',bd:'#222e24',bH:'#3a4a3e',t:'#cccccc',td:'#9d9d9d',th:'#ffffff',ok:'#3fb950',dg:'#f14c4c',wn:'#cca700'},
@@ -29,7 +74,7 @@ const DARK_THEME_INJECT: &str = r#"<meta name="color-scheme" content="dark"><scr
     'crimson':{a:'#dc3545',bg:'#1c1a1a',bs:'#161414',bi:'#302828',bh:'#2e2424',ba:'#3e2e2e',bd:'#2c2222',bH:'#4a3535',t:'#cccccc',td:'#9d9d9d',th:'#ffffff',ok:'#3fb950',dg:'#f14c4c',wn:'#cca700'},
     'ocean':{a:'#22a2c8',bg:'#1a1c1e',bs:'#141618',bi:'#262e34',bh:'#222e34',ba:'#2a3842',bd:'#222830',bH:'#364450',t:'#cccccc',td:'#9d9d9d',th:'#ffffff',ok:'#3fb950',dg:'#f14c4c',wn:'#cca700'}
   };
-  function get(){try{return T[localStorage.getItem('ax-theme')]||T['vscode-dark'];}catch(e){return T['vscode-dark'];}}
+  function get(){try{return T[localStorage.getItem('ax-theme')]||T['ax'];}catch(e){return T['ax'];}}
   function vars(th){
     var s=document.documentElement.style;
     s.setProperty('--ax-a',th.a);s.setProperty('--ax-bg',th.bg);s.setProperty('--ax-bs',th.bs);
@@ -459,12 +504,24 @@ pub async fn handle_sonar_ui_proxy(
         if n.eq_ignore_ascii_case("location") {
             if let Ok(v) = value.to_str() {
                 if let Some(rewritten) = rewrite_location(v, &sonar_host) {
-                    out_headers.insert(header::LOCATION, HeaderValue::from_str(&rewritten).unwrap_or_else(|_| value.clone()));
+                    out_headers.insert(
+                        header::LOCATION,
+                        HeaderValue::from_str(&rewritten).unwrap_or_else(|_| value.clone()),
+                    );
                     continue;
                 }
             }
         }
-        out_headers.insert(name.clone(), value.clone());
+        if n.eq_ignore_ascii_case("set-cookie") {
+            if let Ok(v) = value.to_str() {
+                let rewritten = rewrite_set_cookie(v);
+                if let Ok(hv) = HeaderValue::from_str(&rewritten) {
+                    out_headers.append(header::SET_COOKIE, hv);
+                    continue;
+                }
+            }
+        }
+        out_headers.append(name.clone(), value.clone());
     }
 
     if !out_headers.contains_key(header::CONTENT_TYPE) {
@@ -566,6 +623,17 @@ fn should_skip_request_header(name: &str) -> bool {
             | "content-length"
             | "transfer-encoding"
             | "accept-encoding"
+            // Tunnel / browser Origin+Referer confuse Sonar CSRF and absolute redirects.
+            | "origin"
+            | "referer"
+            | "cf-connecting-ip"
+            | "cf-ray"
+            | "cf-visitor"
+            | "cdn-loop"
+            | "true-client-ip"
+            | "x-forwarded-for"
+            | "x-forwarded-proto"
+            | "x-forwarded-host"
     )
 }
 
@@ -666,8 +734,14 @@ fn slash_starts_route_path(chars: &[char], slash_i: usize) -> bool {
     should_rewrite_js_asset_path(&rest)
 }
 
-/// Paths safe to prefix in minified JS (not `/api/*` or SPA routes joined via `J()`).
+/// Paths safe to prefix in minified JS / HTML.
+/// Includes `/api/*` — axios treats leading-slash URLs as host-absolute and
+/// ignores Sonar’s `data-base-url`, so they must be rewritten for the proxy.
 fn should_rewrite_js_asset_path(path: &str) -> bool {
+    if path.starts_with("api/") {
+        // Already under our public prefix (e.g. after a prior rewrite pass).
+        return !path.starts_with("api/ship/sonar/ui");
+    }
     const PREFIXES: &[&str] = &[
         "js/",
         "css/",
@@ -678,6 +752,7 @@ fn should_rewrite_js_asset_path(path: &str) -> bool {
         "apple-touch",
         "favicon",
         "mstile",
+        "batch_bootstrap",
     ];
     PREFIXES.iter().any(|p| path.starts_with(p))
 }
@@ -772,16 +847,42 @@ fn rewrite_quoted_root_paths(text: &str, prefix: &str) -> String {
 
 fn inject_dark_theme_html(html: &str) -> String {
     let mut out = rewrite_sonar_base_url(html, SONAR_UI_PUBLIC_PREFIX);
+    // Path patch MUST run before Sonar scripts so early module fetches are fixed.
+    let inject = format!("{PROXY_PATH_PATCH}{DARK_THEME_INJECT}");
 
     if let Some(insert_at) = head_content_start(&out) {
-        out.insert_str(insert_at, DARK_THEME_INJECT);
+        out.insert_str(insert_at, &inject);
     } else if let Some(pos) = out.to_lowercase().find("</head>") {
-        out.insert_str(pos, DARK_THEME_INJECT);
+        out.insert_str(pos, &inject);
     } else {
-        out = format!("{DARK_THEME_INJECT}{out}");
+        out = format!("{inject}{out}");
     }
 
     out
+}
+
+/// Rewrite `Path=/` on Set-Cookie so session cookies stay under the proxy prefix
+/// (required for HTTPS tunnels where the browser origin is the tunnel host).
+fn rewrite_set_cookie(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    let Some(idx) = lower.find("path=/") else {
+        return value.to_string();
+    };
+    let after = idx + "path=/".len();
+    let rest = &value[after..];
+    let ends_at_root = rest.is_empty()
+        || rest.starts_with(';')
+        || rest.starts_with(',')
+        || rest.starts_with(' ');
+    if !ends_at_root {
+        return value.to_string();
+    }
+    format!(
+        "{}Path={}/{}",
+        &value[..idx],
+        SONAR_UI_PUBLIC_PREFIX.trim_end_matches('/'),
+        rest
+    )
 }
 
 /// Insert immediately after `<head>` or `<head …>` — Sonar uses attributes on `<head>`.
@@ -870,16 +971,40 @@ mod tests {
     fn rewrite_fetch_api_paths() {
         let js = r#"fetch("/api/navigation/navigation")"#;
         let out = rewrite_quoted_root_paths(js, SONAR_UI_PUBLIC_PREFIX);
-        assert_eq!(out, js, "API paths are joined via J()+path, not rewritten in JS");
+        assert_eq!(
+            out,
+            format!(r#"fetch("{SONAR_UI_PUBLIC_PREFIX}/api/navigation/navigation")"#)
+        );
     }
 
     #[test]
-    fn rewrite_js_asset_paths_only() {
+    fn rewrite_js_api_and_asset_paths() {
         let js = r#"fetch("/api/foo");import("/js/main.js");"/sessions""#;
         let out = rewrite_quoted_root_paths(js, SONAR_UI_PUBLIC_PREFIX);
         assert!(out.contains(&format!("{SONAR_UI_PUBLIC_PREFIX}/js/main.js")));
-        assert!(out.contains(r#"fetch("/api/foo")"#));
+        assert!(out.contains(&format!(r#"fetch("{SONAR_UI_PUBLIC_PREFIX}/api/foo")"#)));
+        // SPA client routes stay unprefixed (React Router basename handles them).
         assert!(out.contains(r#""/sessions""#));
+    }
+
+    #[test]
+    fn rewrite_set_cookie_root_path() {
+        let out = rewrite_set_cookie("JWT-SESSION=abc; Path=/; HttpOnly; SameSite=Lax");
+        assert!(out.contains(&format!("Path={SONAR_UI_PUBLIC_PREFIX}/")));
+        assert!(out.contains("HttpOnly"));
+        let nested = rewrite_set_cookie("X=1; Path=/api/ship/sonar/ui/; Secure");
+        assert_eq!(nested, "X=1; Path=/api/ship/sonar/ui/; Secure");
+    }
+
+    #[test]
+    fn inject_includes_proxy_path_patch() {
+        let html = r#"<!doctype html><html><head></head><body></body></html>"#;
+        let out = inject_dark_theme_html(html);
+        assert!(out.contains("ax-sonar-proxy-path"));
+        assert!(out.contains("ax-sonar-theme"));
+        let patch_pos = out.find("ax-sonar-proxy-path").unwrap();
+        let theme_pos = out.find("ax-sonar-theme").unwrap();
+        assert!(patch_pos < theme_pos, "path patch must precede theme script");
     }
 
     #[test]
@@ -986,7 +1111,13 @@ mod tests {
     fn rewrite_still_prefixes_api_paths() {
         let js = r#"fetch("/api/navigation/global")"#;
         let out = rewrite_quoted_root_paths(js, SONAR_UI_PUBLIC_PREFIX);
-        assert_eq!(out, js);
+        assert_eq!(
+            out,
+            format!(r#"fetch("{SONAR_UI_PUBLIC_PREFIX}/api/navigation/global")"#)
+        );
+        // Idempotent — already-proxied paths must not double-prefix.
+        let again = rewrite_quoted_root_paths(&out, SONAR_UI_PUBLIC_PREFIX);
+        assert_eq!(again, out);
     }
 
     #[test]

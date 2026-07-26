@@ -21,6 +21,26 @@ export interface ThemePreset {
 
 export const THEMES: ThemePreset[] = [
   {
+    id: 'ax',
+    label: 'ax Mint',
+    accent: '#3ee4b2',
+    ok: '#3fb950',
+    danger: '#f14c4c',
+    warn: '#cca700',
+    bg: '#1e1e1e',
+    bgSide: '#181818',
+    bgInput: '#313131',
+    bgHover: '#252826',
+    bgActive: '#2e3532',
+    bgPanel: '#1e1e1e',
+    border: '#2b2b2b',
+    borderHi: '#454545',
+    text: '#cccccc',
+    textDim: '#9d9d9d',
+    textHi: '#ffffff',
+    statusbarBg: '#3ee4b2',
+  },
+  {
     id: 'vscode-dark',
     label: 'VS Code Dark Modern',
     accent: '#0078d4',
@@ -143,18 +163,36 @@ export const THEMES: ThemePreset[] = [
 ];
 
 const STORAGE_KEY = 'ax-theme';
+const MIGRATE_KEY = 'ax-theme-mint-v2';
+
+/** Force Open-project mint as the product look (re-migrate legacy blues). */
+function migrateLegacyDefaultTheme(): void {
+  try {
+    if (localStorage.getItem(MIGRATE_KEY) === '1') return;
+    const current = localStorage.getItem(STORAGE_KEY);
+    // Pull anyone still on the old default blue onto ax Mint.
+    if (current == null || current === 'vscode-dark') {
+      localStorage.setItem(STORAGE_KEY, 'ax');
+    }
+    localStorage.setItem(MIGRATE_KEY, '1');
+  } catch {
+    /* ignore */
+  }
+}
 
 export function loadThemeId(): string {
   try {
-    return localStorage.getItem(STORAGE_KEY) ?? 'vscode-dark';
+    migrateLegacyDefaultTheme();
+    return localStorage.getItem(STORAGE_KEY) ?? 'ax';
   } catch {
-    return 'vscode-dark';
+    return 'ax';
   }
 }
 
 export function saveThemeId(id: string): void {
   try {
     localStorage.setItem(STORAGE_KEY, id);
+    localStorage.setItem(MIGRATE_KEY, '1');
   } catch {}
 }
 
@@ -179,7 +217,20 @@ export function applyTheme(theme: ThemePreset): void {
   root.style.setProperty('--text', theme.text);
   root.style.setProperty('--text-dim', theme.textDim);
   root.style.setProperty('--text-hi', theme.textHi);
-  root.style.setProperty('--statusbar-bg', theme.accent);
+  root.style.setProperty('--statusbar-bg', theme.statusbarBg);
+  root.style.setProperty('--ax-project-accent', theme.accent);
+  root.style.setProperty(
+    '--ax-project-bg',
+    `color-mix(in srgb, ${theme.accent} 10%, transparent)`,
+  );
+  root.style.setProperty(
+    '--ax-project-border',
+    `color-mix(in srgb, ${theme.accent} 45%, transparent)`,
+  );
+  root.style.setProperty(
+    '--ax-project-glow',
+    `color-mix(in srgb, ${theme.accent} 20%, transparent)`,
+  );
   root.dataset.axTheme = theme.id;
   window.dispatchEvent(new CustomEvent(THEME_CHANGED, { detail: { id: theme.id, accent: theme.accent } }));
 }

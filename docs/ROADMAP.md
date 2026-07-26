@@ -1,8 +1,6 @@
 # ax v4 — Missing Features Roadmap (2026–2027)
 
-This roadmap covers **net-new** capabilities only. It does not rebuild shipped features (Leiden, god-nodes, incremental sync, `ax affected` / `ax test-impact`, HTML export, FTS5, in-tree extractors).
-
-Branch: **`ax-v4`**.
+This roadmap covers **net-new** capabilities shipped in **v4.0.0** (branch `ax-v4`, merged to `main`).
 
 ## Timeline
 
@@ -10,52 +8,55 @@ Branch: **`ax-v4`**.
 |--------|----------------|
 | **Q3 2026** | Monorepo workspace federation + `ax policy pull`; multi-format graph export |
 | **Q4 2026** | WASM plugin host; ONNX dense vectors; `ax ship --ci` + test runners |
-| **Q1 2027** | LSP bridge (`ax-lsp`); Command Center share / PWA / live stream |
+| **Q1 2027** | LSP bridge; Command Center share / PWA / live stream |
 
-## Q3 status (shipped on `ax-v4`)
+## Q3–Q1 MVP status (released in v4.0.0)
 
-### 1. Monorepo workspace federation
+Federation, export formats, plugins, `--ci`, LSP CLI, share/PWA/actions, harden UI, and pro polish (ax Mint + Settings cards) are in **v4.0.0**.
 
-- [x] `members` in `ax.json` / `.ax.json`
-- [x] `ax init --workspace` discovery (Cargo workspace + nested `.ax/`)
-- [x] `ax sync --all` / `ax index --all`
-- [x] `ax policy pull <git-url>`
-- [x] Cross-service contract edges (OpenAPI / Protobuf / GraphQL → `contract:…` routes)
-- [x] Hierarchical policy merge (`~/.ax/global_policy` → workspace → member)
-- [x] Shared memory git sync (`ax memory export|import`, opt-in `memorySync` hooks)
+## Harden & Extend
 
-### 2. Multi-format graph export
+UI, Logging/Quality, and deepen thin MVPs:
 
-- [x] `ax export graph --format json|dot|graphml|gexf|cypher|mermaid|plantuml|html`
-- [x] Leiden community + god-node degree fields in payloads
-- [ ] PDF report export (deferred)
+- [x] StatusBar Activity chip (replace floating ActionStream)
+- [x] Share Settings + themed token gate + badge
+- [x] PWA icons + network-first SW + dismissible install hint
+- [x] Unresolved → LSP enrich (ModalShell + `/api/lsp/enrich`)
+- [x] ONNX tokenizer path + embed-status API
+- [x] Plugins list API + Settings note
+- [x] Reusable `.github/workflows/ax-ship.yml`
+- [x] Verbose domain lines + Logging kind filters + Quality checks (plugin/lsp/ship-ci/…)
+- [x] Site docs updated for harden surface
 
-## Q4 status (in progress on `ax-v4`)
+## UI maturity (post-harden)
 
-- [x] `ax ship --ci` — JSON report on stdout, exit 1 if gate failed
-- [x] Multi-runner TIA execution (cargo / pytest / jest / vitest / go)
-- [x] Process plugin host (`.ax/plugins/*/plugin.toml`) — see [PLUGINS.md](./PLUGINS.md)
-- [x] Optional WASM host (`--features plugins-wasm`, wasmtime)
-- [x] Optional ONNX dense embeddings (`--features onnx`) — see [ONNX.md](./ONNX.md)
-- [x] Weighted hybrid recall (vector 0.5 / FTS 0.3 / graph reserved 0.2)
-- [x] CI example workflow — [examples/github-actions-ship.yml](./examples/github-actions-ship.yml)
+Thin MVPs that still need a real Command Center surface:
 
-## Q1 status (shipped on `ax-v4`)
+- [x] Multi-format graph export on Graph page (`GET /api/graph/export` + Download)
+- [x] Plugins list as its own Settings subsection (`GET /api/plugins` table)
+- [x] ONNX / embed-status as its own Settings subsection (paths + feature flag)
 
-- [x] LSP bridge (`ax-lsp`) — `ax lsp status|enrich`, Exact/`lsp` edges — [LSP.md](./LSP.md)
-- [x] `ax share` token gate + LAN bind (read-only) — [SHARE.md](./SHARE.md)
-- [x] Command Center PWA manifest + service worker
-- [x] Live action stream (`/api/actions/events`)
-- [x] Site guides + CI snippets (GitHub / GitLab / Azure Pipelines)
+## Mobile maturity
 
-## Reality notes
+Phone / tablet Command Center (share + PWA path). Agent runs Playwright smoke with screenshots — no manual phone check required.
 
-| Topic | Already shipped | Net-new |
-|-------|-----------------|---------|
-| Edge confidence | `extracted` / `inferred` / `ambiguous` | LSP `exact`, LLM `synthesized` |
-| Memory hybrid search | FTS5 + feature-hash vectors | Neural ONNX embeddings |
-| Test impact | Graph selection | CI mode + runner execution |
-| Config file | `ax.json` | `.ax.json` alias + `members` |
+- [x] Fix hamburger dead zone (769–899px) — drawer + menu button align at `--bp-md`
+- [x] Status bar: Project + Logging + Activity (+ Share when active) on ≤899px
+- [x] Safe-area titlebar/modals; drawer body scroll lock
+- [x] Logging / Settings / tables usable at ~390px
+- [x] Modal sheets on narrow viewports
+- [x] Playwright mobile smoke + `scripts/web-ui-mobile-smoke.ps1` (screenshots for agent)
+- [x] Share / Command Center docs: mobile + smoke loop
+
+## Pro polish (post-MVP UI)
+
+- [x] Default **ax Mint** theme (`#3ee4b2`); project-browser tokens track `--accent`
+- [x] Unresolved → LSP enrich: limit, server checklist, report panel
+- [x] Graph export: node/edge headers, Copy for text formats, density-slice messaging
+- [x] Sharing status card + PWA Enable / Install coherence
+- [x] Activity chip: relative time, unread, kind badges, meta expand
+- [x] Settings: Sharing / Plugins / Embeddings as dedicated cards with Refresh
+- [x] **Global mint chrome** — buttons, nav, cards, tables, filters, status bar, share gate, agent terminal all use Open-project outlined mint style
 
 ## Extension points
 

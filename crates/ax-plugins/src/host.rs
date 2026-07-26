@@ -43,6 +43,10 @@ impl PluginHost {
         }
     }
 
+    pub fn manifests(&self) -> Vec<&crate::manifest::PluginManifest> {
+        self.plugins.iter().map(|p| &p.manifest).collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.plugins.is_empty()
     }
@@ -60,13 +64,18 @@ impl PluginHost {
     }
 
     /// Extract via the first matching plugin for `path`'s extension.
-    pub fn extract(&self, path: &str, content: &str) -> Option<Result<ExtractionResult, PluginRunError>> {
+    /// Returns `(plugin_name, result)`.
+    pub fn extract(
+        &self,
+        path: &str,
+        content: &str,
+    ) -> Option<(String, Result<ExtractionResult, PluginRunError>)> {
         let ext = Path::new(path)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
         let plugin = self.plugins.iter().find(|p| p.matches_ext(ext))?;
-        Some(run_plugin(plugin, path, content))
+        Some((plugin.manifest.name.clone(), run_plugin(plugin, path, content)))
     }
 }
 

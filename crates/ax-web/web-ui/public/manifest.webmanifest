@@ -4,14 +4,20 @@
   "description": "Local code graph, policy, and quality gates",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#181818",
-  "theme_color": "#181818",
+  "background_color": "#1e1e1e",
+  "theme_color": "#1e1e1e",
   "lang": "en",
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='24' fill='%181818'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-family='Georgia,serif' font-size='64' fill='%23e8e6e3'%3Eax%3C/text%3E%3C/svg%3E",
-      "sizes": "128x128",
-      "type": "image/svg+xml",
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     }
   ]

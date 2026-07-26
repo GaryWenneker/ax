@@ -26,7 +26,7 @@ cp -r examples/plugins/echo .ax/plugins/echo
 ax sync
 ```
 
-See the repo example at [`examples/plugins/echo`](https://github.com/GaryWenneker/ax/tree/ax-v4/examples/plugins/echo).
+See the repo example at [`examples/plugins/echo`](https://github.com/GaryWenneker/ax/tree/main/examples/plugins/echo).
 
 ## WASM plugin (optional build)
 
@@ -40,7 +40,14 @@ wasm = "extractor.wasm"
 
 Guest exports: `memory`, `alloc(i32) -> i32`, `extract(i32, i32) -> i64` (hi = out ptr, lo = out len). Same JSON contract as process plugins.
 
+## Visibility
+
+- `GET /api/plugins/` lists loaded manifests (name, extensions, mode, command/wasm)
+- Command Center **Settings → Plugins** shows the live table (and empty-state hint)
+- With Verbose MCP logging, index/sync writes `plugin extract name=… ok|fail` lines (filter Logging → plugin)
+
 ## Further reading
 
-- Repo docs: [`docs/PLUGINS.md`](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/PLUGINS.md)
+- Repo docs: [`docs/PLUGINS.md`](https://github.com/GaryWenneker/ax/blob/main/docs/PLUGINS.md)
+- [MCP Logging & Quality](/guides/mcp-quality/)
 - [CLI reference](/reference/cli/)

@@ -32,13 +32,28 @@ fn bus() -> &'static broadcast::Sender<ActionEvent> {
 }
 
 pub fn publish(kind: impl Into<String>, message: impl Into<String>, meta: Option<serde_json::Value>) {
+    publish_for(None, kind, message, meta);
+}
+
+/// Publish to the SSE bus and dual-write a verbose domain line when `project_root` is set.
+pub fn publish_for(
+    project_root: Option<&std::path::Path>,
+    kind: impl Into<String>,
+    message: impl Into<String>,
+    meta: Option<serde_json::Value>,
+) {
+    let kind = kind.into();
+    let message = message.into();
     let event = ActionEvent {
         ts: chrono::Utc::now().timestamp_millis(),
-        kind: kind.into(),
-        message: message.into(),
+        kind: kind.clone(),
+        message: message.clone(),
         meta,
     };
     let _ = bus().send(event);
+    if kind != "stream" {
+        ax_usage::log_action(project_root, format!("kind={kind} message={message}"));
+    }
 }
 
 pub fn router_hub(hub: WebHub) -> Router {
@@ -49,10 +64,11 @@ pub fn router_hub(hub: WebHub) -> Router {
 }
 
 async fn handle_events(
-    State(_hub): State<WebHub>,
+    State(hub): State<WebHub>,
 ) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
     let mut rx = bus().subscribe();
-    publish("stream", "client connected", None);
+    let root = hub.read().await.project_root.clone();
+    publish_for(Some(&root), "stream", "client connected", None);
     let s = async_stream::stream! {
         loop {
             match rx.recv().await {
@@ -84,6 +100,7 @@ async fn handle_publish(
     if hub.readonly {
         return Json(serde_json::json!({ "ok": false, "error": "read-only" }));
     }
-    publish(body.kind, body.message, body.meta);
+    let root = hub.read().await.project_root.clone();
+    publish_for(Some(&root), body.kind, body.message, body.meta);
     Json(serde_json::json!({ "ok": true }))
 }

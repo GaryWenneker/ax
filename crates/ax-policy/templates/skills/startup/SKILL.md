@@ -44,7 +44,7 @@ Save writes to **ax.db** in database mode — not a disk-only file. Never auto-s
 
 ## SS-01 — Code context (after preflight)
 
-> **ABSOLUTE**: For structural questions — how code works, call paths, blast radius, architecture — call **`ax_explore`** (or `ax_search` / `ax_node` / graph tools) **before** broad `Grep` / `Read`. Do not open with repo-wide Grep/Read while ax MCP is available. Skipping explore burns tokens and fails MCP quality (`ExploreBeforeGrep`).
+> **ABSOLUTE**: For structural questions — how code works, call paths, blast radius, architecture — call **`ax_explore`** (or `ax_search` / `ax_node` / graph tools) **before** broad `Grep` / `Read`. Do not open with repo-wide Grep/Read while ax MCP is available. `GetMcpTools` / schema lookup is **not** explore. Skipping explore burns tokens and fails MCP quality (`ExploreBeforeGrep`).
 
 ```json
 ax_explore({ "query": "<question or symbol names>" })

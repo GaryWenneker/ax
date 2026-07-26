@@ -3,11 +3,15 @@
 mod actions;
 mod agent;
 mod agent_pty;
+mod graph_export;
+mod lsp_api;
 mod mcp_quality;
 mod mcp_trace;
 mod memory;
+mod plugins_api;
 mod policy;
 mod queries;
+mod share_api;
 mod share_auth;
 mod ship;
 mod sonar_proxy;
@@ -271,6 +275,7 @@ async fn handle_unresolved(
 
 async fn handle_unresolved_reconcile(State(hub): State<WebHub>) -> impl IntoResponse {
     if hub.readonly {
+        ax_usage::log_share(None, "readonly write denied");
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "read-only mode (AX_WEB_READONLY=1)" })),
@@ -517,21 +522,101 @@ async fn handle_version() -> impl IntoResponse {
     )
 }
 
+/// One-shot recovery for a poisoned browser origin (stale immutable `sw.js` / Cache Storage).
+/// Open `http://localhost:PORT/api/reset-client-cache` once, then reload — browsers treat
+/// `localhost` and `127.0.0.1` as separate origins, so only the origin you hit is cleared.
+pub async fn handle_reset_client_cache() -> impl IntoResponse {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .header("Cache-Control", "no-store, no-cache, must-revalidate")
+        .header("Clear-Site-Data", "\"cache\", \"storage\"")
+        .body(Body::from(
+            r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="1;url=/">
+<title>ax — client cache cleared</title>
+</head>
+<body>
+<p>Cleared Command Center cache and service workers for this origin. Redirecting…</p>
+<script>
+(async function () {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (_) {}
+  location.replace('/');
+})();
+</script>
+</body>
+</html>"#,
+        ))
+        .unwrap()
+}
+
 async fn handle_spa(uri: Uri) -> impl IntoResponse {
-    let path = uri.path().trim_start_matches('/');
+    let raw_path = uri.path();
+    let path = raw_path.trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
+
+    // Axum nests like `/api/memory` do not match `/api/memory/`. Redirect so clients
+    // (and `fetch`) land on the real JSON route instead of a blank SPA/HTML body.
+    if (path == "api" || path.starts_with("api/")) && raw_path.ends_with('/') && raw_path.len() > 1 {
+        let trimmed = raw_path.trim_end_matches('/');
+        let loc = match uri.query() {
+            Some(q) => format!("{trimmed}?{q}"),
+            None => trimmed.to_string(),
+        };
+        return Response::builder()
+            .status(StatusCode::PERMANENT_REDIRECT)
+            .header("Location", loc)
+            .header("Cache-Control", "no-cache")
+            .body(Body::empty())
+            .unwrap();
+    }
+
+    // Never serve the SPA shell for missed API routes.
+    if path == "api" || path.starts_with("api/") {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header("Content-Type", "application/json; charset=utf-8")
+            .header("Cache-Control", "no-cache")
+            .body(Body::from(r#"{"error":"not found"}"#))
+            .unwrap();
+    }
 
     if let Some(file) = WEB_DIST.get_file(path) {
         let mime = mime_guess::from_path(path).first_or_text_plain();
         let cache = if path == "index.html" {
-            "no-cache"
-        } else {
+            "no-cache, no-store, must-revalidate"
+        } else if path.starts_with("assets/") {
+            // Vite content-hashes filenames under assets/, so it is safe to cache
+            // these forever: a changed file gets a new URL.
             "public, max-age=31536000, immutable"
+        } else {
+            // sw.js, manifest.webmanifest, icons, etc. keep stable filenames across
+            // builds. Caching these as immutable poisons the browser's HTTP cache
+            // for a year and prevents the service worker from ever picking up
+            // fixes (see: localhost stuck on a stale sw.js while 127.0.0.1 worked).
+            "no-cache, no-store, must-revalidate"
         };
-        Response::builder()
+        let mut builder = Response::builder()
             .status(200)
             .header("Content-Type", mime.as_ref())
-            .header("Cache-Control", cache)
+            .header("Cache-Control", cache);
+        // Extra belt for SW updates: never let intermediaries treat sw.js as immutable.
+        if path == "sw.js" {
+            builder = builder.header("Service-Worker-Allowed", "/");
+        }
+        builder
             .body(Body::from(file.contents().to_vec()))
             .unwrap()
     } else if path.starts_with("assets/") || path.contains('.') {
@@ -607,8 +692,15 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     let addr = format!("{}:{}", opts.bind, opts.port);
     let listener = bind_web_listener(&addr, opts.port).await?;
 
-    let local_url = format!("http://localhost:{}", opts.port);
+    // Prefer 127.0.0.1 over localhost: browsers treat them as separate origins, and
+    // a poisoned localhost service-worker/HTTP cache can leave pages empty forever
+    // while 127.0.0.1 stays healthy.
+    let local_url = format!("http://127.0.0.1:{}", opts.port);
     eprintln!("ax web  {local_url}");
+    eprintln!(
+        "         (also http://localhost:{} — if that origin shows empty pages, open http://localhost:{}/api/reset-client-cache once)",
+        opts.port, opts.port
+    );
     if opts.bind != "127.0.0.1" && opts.bind != "localhost" {
         if let Some(ip) = guess_lan_ip() {
             let mut share = format!("http://{ip}:{}", opts.port);
@@ -619,6 +711,7 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
         }
     }
     if let Some(token) = &opts.share_token {
+        ax_usage::log_share(Some(&opts.root), "session start readonly=true");
         eprintln!("  Share token: {token}");
         eprintln!("  Mode: read-only (share session)");
     }

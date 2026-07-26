@@ -329,7 +329,7 @@ export default function McpQualitySlideout({ open, onClose, highlightFindingId }
           <section className="mcp-q-section mcp-q-actions">
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn primary"
               title="Copy an agent-ready Markdown fixpack from these findings"
               onClick={() => void copyFixpack()}
             >

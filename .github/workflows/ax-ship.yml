@@ -1,0 +1,24 @@
+# Reusable ax quality gate (workflow_call + dispatch)
+name: ax-ship
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ax
+        shell: bash
+        run: |
+          curl -fsSL https://getax.wenneker.io/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Index + ship CI
+        run: |
+          ax sync
+          ax ship --ci

@@ -16,6 +16,7 @@ pub fn router_hub(hub: WebHub) -> Router {
     Router::new()
         .route("/", get(handle_list).post(handle_create))
         .route("/recall", get(handle_recall))
+        .route("/embed-status", get(handle_embed_status))
         .route("/capture-git", post(handle_capture_git))
         .route("/{id}", get(handle_get).put(handle_update).delete(handle_delete))
         .with_state(hub)
@@ -26,7 +27,38 @@ fn err(status: StatusCode, msg: impl Into<String>) -> axum::response::Response {
 }
 
 fn forbidden_readonly() -> axum::response::Response {
+    ax_usage::log_share(None, "readonly write denied");
     err(StatusCode::FORBIDDEN, "read-only mode (AX_WEB_READONLY=1)")
+}
+
+async fn handle_embed_status() -> Json<serde_json::Value> {
+    let backend = if ax_memory::onnx::onnx_available() {
+        "onnx"
+    } else if ax_memory::onnx::onnx_model_configured() {
+        "onnx_unconfigured"
+    } else {
+        "hash"
+    };
+    let tokenizer = ax_memory::onnx::onnx_tokenizer_configured();
+    let feature = ax_memory::onnx::onnx_feature_enabled();
+    let model_path = ax_memory::onnx::onnx_model_path()
+        .map(|p| p.to_string_lossy().into_owned());
+    let tokenizer_path = ax_memory::onnx::onnx_tokenizer_path()
+        .map(|p| p.to_string_lossy().into_owned());
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    LOGGED.call_once(|| {
+        ax_usage::log_embed(
+            None,
+            format!("backend={backend} tokenizer={tokenizer} feature={feature}"),
+        );
+    });
+    Json(serde_json::json!({
+        "backend": backend,
+        "tokenizer": tokenizer,
+        "feature": feature,
+        "modelPath": model_path,
+        "tokenizerPath": tokenizer_path,
+    }))
 }
 
 #[derive(Deserialize)]

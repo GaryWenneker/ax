@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
@@ -40,8 +40,6 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-
   const loadBrowse = useCallback(async (path: string) => {
     setErr(null);
     const data = await browseWorkspace(path);
@@ -64,7 +62,8 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
       }
       if (data.recent) setRecent(data.recent);
     })();
-    searchRef.current?.focus();
+    // Do not autofocus the filter — on mobile that opens the keyboard and
+    // steals attention from Recent / browse. Users tap the field when needed.
   }, []);
 
   useEffect(() => {
@@ -210,7 +209,6 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
             </div>
             <div className="project-browser-filters">
               <input
-                ref={searchRef}
                 type="search"
                 className="settings-input project-browser-search"
                 placeholder="Filter folders…"

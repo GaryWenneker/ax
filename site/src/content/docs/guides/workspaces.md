@@ -82,6 +82,6 @@ ax export graph --format cypher --out import.cypher
 
 See the [CLI reference](/reference/cli/) for all formats.
 
-## Roadmap
+## Further reading
 
-Monorepo federation, `ship --ci`, plugins, optional ONNX, LSP enrich, and `ax share` land on branch `ax-v4`. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/ROADMAP.md).
+Monorepo federation, `ship --ci`, plugins, optional ONNX, LSP enrich, and `ax share` shipped in **v4.0.0**. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).

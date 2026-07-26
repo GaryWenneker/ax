@@ -3,18 +3,22 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v3.1.0](https://github.com/GaryWenneker/ax/releases/tag/v3.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v4.0.0](https://github.com/GaryWenneker/ax/releases/tag/v4.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
 
-**v3.1.0** focuses on **agent-side diagnostics, safer auto-commit, and policy flexibility**:
+**v4.0.0** is the **federation, share, and Command Center maturity** release:
 
-- **Diagnostics bridge** — `ax_diagnostics` correlates editor/LSP/compiler findings with the graph (guarded paths + `ax_affected` impacted tests).
-- **Generic guard directives** — any CRITICAL rule can add `guard: forbid-path` / `forbid-content` / `require-content` without code changes.
-- **Claude Code Stop hook** — `ax stop-hook` re-checks uncommitted files against `ax_guard` at turn end, blocking only on a CRITICAL violation.
-- **`ax ship` auto-commit** — opt-in Aider-style checkpoint before the quality gate, with safe `git reset --mixed` rollback on failure.
-- **MCP Logging** — daily log rotation, **Has query** filter, date picker, and scroll-up history across days.
-- **New integrations** — VS Code (Copilot Chat), Windsurf (Cascade), Zed.
+- **Monorepo workspaces** — `ax init --workspace`, `ax index --all` / `ax sync --all`, workspace switcher, `ax policy pull`.
+- **Multi-format graph export** — CLI + Graph page Download/Copy (JSON, GraphML, DOT, Mermaid, PlantUML, Cypher, HTML).
+- **Extractor plugins** — process host (optional WASM); Settings → Plugins.
+- **Optional ONNX embeddings** — dense vectors behind the `onnx` feature; Settings → Embeddings.
+- **`ax ship --ci`** — headless quality gate + reusable `.github/workflows/ax-ship.yml`.
+- **LSP bridge** — Exact edges via `ax-lsp`; Unresolved → enrich (limit, server checklist, report).
+- **`ax share` + PWA** — LAN token gate, Settings → Sharing, opt-in install, Activity chip (SSE).
+- **ax Mint default** — `#3ee4b2` Command Center theme; project browser tracks `--accent`.
+
+**v3.1.0** focused on **agent-side diagnostics, safer auto-commit, and policy flexibility** (diagnostics bridge, generic guard directives, Stop hook, ship auto-commit, MCP Logging polish, VS Code / Windsurf / Zed).
 
 **v3.0.0** was a major release focused on **agent observability and savings accuracy**:
 

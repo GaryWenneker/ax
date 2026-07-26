@@ -19,15 +19,21 @@ pub async fn run(
             enabled: if auto_commit { Some(true) } else { None },
             revert_on_fail: if revert_on_fail { Some(true) } else { None },
         };
-        let report = ax_ship::evaluate_project_with_overrides(root, overrides).await?;
+        let report = ax_ship::evaluate_project_with_overrides(root.clone(), overrides).await?;
         let json = serde_json::to_string_pretty(&report).unwrap_or_default();
         if ci {
-            // Machine-readable single line summary on stderr; full report on stdout.
             let status = if report.quality_gate.passed {
                 "passed"
             } else {
                 "failed"
             };
+            ax_usage::log_ship_ci(
+                Some(&root),
+                format!(
+                    "status={status} steps={}",
+                    report.quality_gate.steps.len()
+                ),
+            );
             eprintln!(
                 "ax-ship-ci: status={status} steps={} sonar={}",
                 report.quality_gate.steps.len(),

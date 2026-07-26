@@ -10,10 +10,28 @@
     <title>ax — local graph viewer</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>ax</text></svg>" />
-    <script type="module" crossorigin src="/assets/index-B1yuEMTU.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-x2sD7yJw.css">
+    <script type="module" crossorigin src="/assets/index-BtQIt4zh.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-D9jqVIWv.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"></div>
+    <!-- Runs before the app bundle: drop stale SWs so localhost cannot stay stuck. -->
+    <script>
+      (function () {
+        if (!('serviceWorker' in navigator)) return;
+        var enable =
+          new URLSearchParams(location.search).has('pwa') ||
+          window.matchMedia('(display-mode: standalone)').matches;
+        if (enable) return;
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (r) { return r.unregister(); }));
+        }).then(function () {
+          if (!('caches' in window)) return;
+          return caches.keys().then(function (keys) {
+            return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+          });
+        }).catch(function () {});
+      })();
+    </script>
   </body>
 </html>

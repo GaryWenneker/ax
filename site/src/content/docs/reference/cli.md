@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v3.0.0).
+description: Complete reference for every ax command, argument, and flag (v4.0.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -337,7 +337,7 @@ ax report --stdout
 
 ### `ax export graph [path]`
 
-Export the knowledge graph for external tools. Includes Leiden community ids, degree, and god-node flags.
+Export the knowledge graph for external tools. Includes Leiden community ids, degree, and god-node flags. Command Center **Graph** can download the same formats (except interactive HTML) via **Export → Download**.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -535,9 +535,9 @@ ax web --open                    # Command Center without git watch
 
 Example workflows:
 
-- [GitHub Actions](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/github-actions-ship.yml)
-- [GitLab CI](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/gitlab-ci-ship.yml)
-- [Azure Pipelines](https://github.com/GaryWenneker/ax/blob/ax-v4/docs/examples/azure-pipelines-ship.yml)
+- [GitHub Actions](https://github.com/GaryWenneker/ax/blob/main/docs/examples/github-actions-ship.yml)
+- [GitLab CI](https://github.com/GaryWenneker/ax/blob/main/docs/examples/gitlab-ci-ship.yml)
+- [Azure Pipelines](https://github.com/GaryWenneker/ax/blob/main/docs/examples/azure-pipelines-ship.yml)
 
 ---
 

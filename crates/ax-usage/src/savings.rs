@@ -1288,6 +1288,18 @@ fn cursor_hook_session_id(input: &Value) -> Option<String> {
     None
 }
 
+/// Extract Cursor `session_id` from a sessionStart hook payload (model optional).
+pub fn parse_cursor_hook_session_id(input: &Value) -> Option<String> {
+    let event = input
+        .get("hook_event_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if event != "sessionStart" {
+        return None;
+    }
+    cursor_hook_session_id(input)
+}
+
 fn cursor_hook_model_params(input: &Value) -> Vec<(String, String)> {
     input
         .get("model_params")
@@ -1879,6 +1891,22 @@ mod tests {
         let (id, model) = parse_cursor_hook_model(&input).expect("parsed");
         assert_eq!(id, "218bb987-86eb-45f0-a8e7-eedae17f995c");
         assert_eq!(model, "composer-2.5-fast");
+    }
+
+    #[test]
+    fn parse_cursor_hook_session_without_model() {
+        let input = json!({
+            "hook_event_name": "sessionStart",
+            "session_id": "9805fda6-d881-438e-9221-88a0342bdf7a"
+        });
+        assert_eq!(
+            parse_cursor_hook_session_id(&input).as_deref(),
+            Some("9805fda6-d881-438e-9221-88a0342bdf7a")
+        );
+        assert!(
+            parse_cursor_hook_model(&input).is_none(),
+            "model-less payload should not parse as model tag"
+        );
     }
 
     fn temp_usage_db_path(label: &str) -> PathBuf {
