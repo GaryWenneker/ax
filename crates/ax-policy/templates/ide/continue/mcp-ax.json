@@ -1,0 +1,6 @@
+{
+  "name": "ax",
+  "type": "stdio",
+  "command": "ax",
+  "args": ["serve", "--mcp", "--path", "."]
+}

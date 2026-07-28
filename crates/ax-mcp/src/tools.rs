@@ -48,10 +48,11 @@ impl ToolHandler {
                 Ok(json!({ "text": text, "results": results }))
             }
             "ax_status" => status(ax).await,
-            "ax_index" => {
-                let result = ax.sync(IndexOptions::default(), None).await.map_err(|e| e.to_string())?;
-                Ok(json!({ "filesIndexed": result.files_indexed, "durationMs": result.duration_ms }))
-            }
+            "ax_index" => index_tool(ax, params).await,
+            "ax_sync" => sync_tool(ax).await,
+            "ax_lsp" => lsp_tool(ax, params).await,
+            "ax_ship" => ship_tool(ax, params).await,
+            "ax_policy_index" => policy_index_tool(ax, params).await,
             "ax_context" => {
                 let task = params.get("task").and_then(|v| v.as_str()).unwrap_or("");
                 let ctx = ax.build_context(TaskInput::Text(task.to_string()), BuildContextOptions::default()).await.map_err(|e| e.to_string())?;
@@ -167,6 +168,228 @@ async fn status(ax: &mut Ax) -> Result<Value, String> {
         out["policy"] = serde_json::to_value(policy).unwrap_or(Value::Null);
     }
     Ok(out)
+}
+
+async fn sync_tool(ax: &mut Ax) -> Result<Value, String> {
+    let root = ax.project_root().to_path_buf();
+    ax_usage::log_workspace(Some(&root), "sync start via=mcp");
+    let result = match ax.sync(IndexOptions::default(), None).await {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_workspace(Some(&root), "sync fail via=mcp");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_workspace(
+        Some(&root),
+        format!(
+            "sync ok files={} duration_ms={} via=mcp",
+            result.files_indexed, result.duration_ms
+        ),
+    );
+    Ok(json!({
+        "text": format!(
+            "Synced {} file(s) in {}ms",
+            result.files_indexed, result.duration_ms
+        ),
+        "filesIndexed": result.files_indexed,
+        "durationMs": result.duration_ms,
+    }))
+}
+
+async fn index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let root = ax.project_root().to_path_buf();
+    if !force {
+        return sync_tool(ax).await;
+    }
+    ax_usage::log_workspace(Some(&root), "index start force=1 via=mcp");
+    if let Err(e) = ax.clear().await {
+        ax_usage::log_workspace(Some(&root), "index fail stage=clear via=mcp");
+        return Err(e.to_string());
+    }
+    let opts = IndexOptions {
+        force: true,
+        quiet: true,
+        ..IndexOptions::default()
+    };
+    let result = match ax.index_all(opts, None).await {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_workspace(Some(&root), "index fail stage=index via=mcp");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_workspace(
+        Some(&root),
+        format!(
+            "index ok files={} duration_ms={} force=1 via=mcp",
+            result.files_indexed, result.duration_ms
+        ),
+    );
+    Ok(json!({
+        "text": format!(
+            "Indexed {} files in {}ms (force)",
+            result.files_indexed, result.duration_ms
+        ),
+        "filesIndexed": result.files_indexed,
+        "durationMs": result.duration_ms,
+        "force": true,
+    }))
+}
+
+async fn lsp_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let action = params
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("status");
+    let root = ax.project_root().to_path_buf();
+    match action {
+        "status" => {
+            let servers = ax_lsp::discover_servers();
+            let text = {
+                let mut lines = vec!["LSP servers:".to_string()];
+                for s in &servers {
+                    let mark = if s.available { "ok" } else { "--" };
+                    let path = s.path.as_deref().unwrap_or("(not found)");
+                    lines.push(format!("  [{mark}] {} {path}", s.id));
+                }
+                lines.join("\n")
+            };
+            Ok(json!({ "text": text, "servers": servers, "action": "status" }))
+        }
+        "enrich" => {
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(200)
+                .min(5_000) as usize;
+            ax_usage::log_lsp(Some(&root), format!("enrich start limit={limit} via=mcp"));
+            let report = match ax_lsp::enrich_project(&root, ax.queries(), limit).await {
+                Ok(r) => r,
+                Err(e) => {
+                    ax_usage::log_lsp(Some(&root), format!("enrich fail via=mcp"));
+                    return Err(e.to_string());
+                }
+            };
+            ax_usage::log_lsp(
+                Some(&root),
+                format!(
+                    "enrich examined={} resolved={} no_server={} no_def={} errors={} via=mcp",
+                    report.examined,
+                    report.resolved,
+                    report.skipped_no_server,
+                    report.skipped_no_definition,
+                    report.errors.len()
+                ),
+            );
+            Ok(json!({
+                "text": format!(
+                    "LSP enrich: examined={} resolved={} errors={}",
+                    report.examined,
+                    report.resolved,
+                    report.errors.len()
+                ),
+                "action": "enrich",
+                "report": report,
+            }))
+        }
+        other => Err(format!("ax_lsp action must be status or enrich, got {other}")),
+    }
+}
+
+async fn ship_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let mode = params
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("evaluate");
+    if mode != "ci" && mode != "evaluate" {
+        return Err(format!("ax_ship mode must be ci or evaluate, got {mode}"));
+    }
+    let root = ax.project_root().to_path_buf();
+    if mode == "ci" {
+        ax_usage::log_ship_ci(Some(&root), "start via=mcp");
+    } else {
+        ax_usage::log_ship(Some(&root), "start mode=evaluate via=mcp");
+    }
+    let report = match ax_ship::evaluate_project(root.clone()).await {
+        Ok(r) => r,
+        Err(e) => {
+            if mode == "ci" {
+                ax_usage::log_ship_ci(Some(&root), "fail stage=evaluate via=mcp");
+            } else {
+                ax_usage::log_ship(Some(&root), "fail mode=evaluate via=mcp");
+            }
+            return Err(e);
+        }
+    };
+    let passed = report.quality_gate.passed;
+    let status = if passed { "passed" } else { "failed" };
+    if mode == "ci" {
+        ax_usage::log_ship_ci(
+            Some(&root),
+            format!(
+                "status={status} steps={} via=mcp",
+                report.quality_gate.steps.len()
+            ),
+        );
+    } else {
+        ax_usage::log_ship(
+            Some(&root),
+            format!(
+                "ok mode=evaluate passed={} via=mcp",
+                if passed { "1" } else { "0" }
+            ),
+        );
+    }
+    let text = format!(
+        "ax ship --{mode}: status={status} steps={}",
+        report.quality_gate.steps.len()
+    );
+    // Soft error for CI gate failure — never process::exit from MCP.
+    let is_error = mode == "ci" && !passed;
+    Ok(json!({
+        "text": text,
+        "mode": mode,
+        "passed": passed,
+        "isError": is_error,
+        "report": report,
+    }))
+}
+
+async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let root = ax.project_root().to_path_buf();
+    ax_usage::log_policy(
+        Some(&root),
+        format!(
+            "index start force={} via=mcp",
+            if force { "1" } else { "0" }
+        ),
+    );
+    let result = match ax.index_policy(force).await {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "index fail via=mcp");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_policy(
+        Some(&root),
+        format!(
+            "index ok rules={} skills={} via=mcp",
+            result.rules_indexed, result.skills_indexed
+        ),
+    );
+    Ok(json!({
+        "text": format!(
+            "Policy indexed: {} rules, {} skills (force={force})",
+            result.rules_indexed, result.skills_indexed
+        ),
+        "rulesIndexed": result.rules_indexed,
+        "skillsIndexed": result.skills_indexed,
+        "force": force,
+    }))
 }
 
 async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -942,7 +1165,52 @@ fn extra_tools() -> Vec<Value> {
         json!({ "name": "ax_node", "description": "Get symbol or file details", "inputSchema": { "type": "object", "properties": { "name": { "type": "string" } } } }),
         json!({ "name": "ax_search", "description": "FTS symbol search", "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } }),
         json!({ "name": "ax_status", "description": "Index stats and staleness", "inputSchema": { "type": "object", "properties": {} } }),
-        json!({ "name": "ax_index", "description": "Trigger re-index", "inputSchema": { "type": "object", "properties": {} } }),
+        json!({
+            "name": "ax_index",
+            "description": "Re-index the project. Default is incremental sync (same as ax_sync). Pass force=true to clear and full-index.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "force": { "type": "boolean", "description": "When true, clear the index and rebuild from scratch" }
+                }
+            }
+        }),
+        json!({
+            "name": "ax_sync",
+            "description": "Incremental index sync (changed files only). Prefer this after local edits; use ax_index with force=true for a full rebuild.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_lsp",
+            "description": "Language server bridge: action=status lists discovered LSP servers; action=enrich resolves Exact edges via language servers (same as ax lsp enrich).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["status", "enrich"], "description": "Default status" },
+                    "limit": { "type": "number", "description": "Max unresolved refs to enrich (enrich only, default 200)" }
+                }
+            }
+        }),
+        json!({
+            "name": "ax_ship",
+            "description": "Run the quality-gate pipeline (same as ax ship --evaluate / --ci). Returns the ShipReport JSON. For mode=ci, isError is set when the gate fails — never exits the MCP process.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mode": { "type": "string", "enum": ["evaluate", "ci"], "description": "Default evaluate" }
+                }
+            }
+        }),
+        json!({
+            "name": "ax_policy_index",
+            "description": "Re-index / import policy rules and skills from .ax/policy/ into the project store (same as ax policy index). Always available so empty DB projects can bootstrap after files exist.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "force": { "type": "boolean", "description": "Force re-import from filesystem into database mode" }
+                }
+            }
+        }),
         json!({ "name": "ax_files", "description": "Project file listing", "inputSchema": { "type": "object", "properties": {} } }),
         json!({ "name": "ax_context", "description": "Build task context", "inputSchema": { "type": "object", "properties": { "task": { "type": "string" } }, "required": ["task"] } }),
         json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
@@ -1066,6 +1334,13 @@ pub fn server_instructions(has_policy: bool) -> String {
          Use ax_search for quick symbol lookup. Use ax_node for one symbol's file context. Use ax_callers / ax_callees / ax_impact for focused graph queries.\n\n\
          Whole-graph understanding: call ax_insights for Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Call ax_report for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous) and Markdown docs are indexed as Doc nodes linked to the code they reference.\n\n\
          Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
+         Ops (prefer MCP — do NOT shell ax CLI when MCP is connected):\n\
+         - ax_sync after local edits that should refresh the graph\n\
+         - ax_index with force=true for a full rebuild\n\
+         - ax_lsp action=status|enrich for language-server Exact edges\n\
+         - ax_ship mode=evaluate|ci for the quality gate (never process::exit)\n\
+         - ax_policy_index to refresh rules/skills from .ax/policy/\n\
+         Shell CLI only when MCP is unreachable (DEGRADED) or for install/upgrade/web/share/ship --watch.\n\n\
          Pass projectPath when cwd is not the indexed project root (monorepos). Prefer ax over grep/read for code structure.",
     );
     s
@@ -1104,6 +1379,16 @@ mod tests {
     }
 
     #[test]
+    fn server_instructions_prefer_mcp_ops_over_shell() {
+        let s = server_instructions(true);
+        assert!(s.contains("ax_sync"));
+        assert!(s.contains("ax_lsp"));
+        assert!(s.contains("ax_ship"));
+        assert!(s.contains("ax_policy_index"));
+        assert!(s.contains("do NOT shell") || s.contains("Do NOT shell") || s.contains("Shell CLI only"));
+    }
+
+    #[test]
     fn server_instructions_always_mention_directive_capture() {
         // Even with no policy, agents must be told to capture directives.
         let s = server_instructions(false);
@@ -1119,6 +1404,19 @@ mod tests {
         for has_policy in [false, true] {
             let names = tool_names(&ToolHandler::list_tools(has_policy).await);
             assert!(names.contains(&"ax_diagnostics".to_string()));
+        }
+    }
+
+    #[tokio::test]
+    async fn operational_tools_always_advertised() {
+        for has_policy in [false, true] {
+            let names = tool_names(&ToolHandler::list_tools(has_policy).await);
+            for expected in ["ax_sync", "ax_lsp", "ax_ship", "ax_policy_index", "ax_index"] {
+                assert!(
+                    names.contains(&expected.to_string()),
+                    "missing {expected} (has_policy={has_policy})"
+                );
+            }
         }
     }
 

@@ -6,14 +6,23 @@ mod mcp_audit;
 mod mcp_verbose_log;
 mod period;
 mod pricing;
+mod pricing_fetch;
+mod pricing_sync;
 mod savings;
 mod store;
 mod tokenizer;
 
 pub use period::{resolve_period, UsagePeriod};
 pub use pricing::{
-    input_cost_usd, price_for_model, pricing_config_path, pricing_info, reference_pricing,
-    ModelPricing, PricingInfo,
+    input_cost_usd, invalidate_price_cache, price_as_of, price_for_model,
+    price_for_model_with_source, pricing_config_path, pricing_info, reference_pricing,
+    reference_pricing_with_source, refresh_price_cache_from_db, ModelPricing, PricingInfo,
+};
+pub use pricing_fetch::{aa_api_key, SOURCE_ARTIFICIAL_ANALYSIS, SOURCE_CODING_AGENTS, SOURCE_OPENROUTER};
+pub use pricing_sync::{
+    ensure_daily_pricing_sync, list_coding_agents, list_latest_prices, price_history,
+    pricing_status, spawn_ensure_daily_pricing_sync, sync_pricing, CodingAgentRow,
+    PricingCatalogRow, PricingHistoryPoint, PricingStatus, PricingSyncReport, SourceSyncStatus,
 };
 pub use cursor_state::{
     active_cursor_session_path, cursor_state_vscdb_path, import_cursor_composer_state,
@@ -30,11 +39,11 @@ pub use mcp_verbose_log::{
     append_verbose_log, current_log_path, has_older_log_day, list_dated_log_files,
     mcp_verbose_log_path, migrate_legacy_log, nearest_dated_log_before, path_for_date,
     previous_calendar_day, read_log_for_day, read_merged_verbose_log, read_ship_timezone,
-    rotation_calendar_date, LEGACY_LOG_NAME,
+    rotation_calendar_date, verbose_enabled, LEGACY_LOG_NAME,
 };
 pub use domain_log::{
-    log_action, log_domain_event, log_embed, log_lsp, log_plugin, log_share, log_ship_ci,
-    log_workspace,
+    log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,
+    log_share, log_ship, log_ship_ci, log_workspace,
 };
 pub use savings::{
     current_assumptions, estimate_savings, import_agent_logs, is_savings_eligible_tool,

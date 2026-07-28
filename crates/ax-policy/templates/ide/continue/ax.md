@@ -30,9 +30,16 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Full Markdown architecture report | `ax_report` |
 | Pre-write policy guard (when CRITICAL rules exist) | `ax_guard` (`path` + `operation`; also `paths[]` / `action`) |
 | Capture durable rules | `ax_policy_capture` |
-| Re-index after large changes | `ax_index` |
+| Incremental re-index after edits | `ax_sync` |
+| Full index rebuild | `ax_index({ "force": true })` |
+| LSP status / Exact-edge enrich | `ax_lsp` (`action`: `status` \| `enrich`) |
+| Quality gate / CI evaluate | `ax_ship` (`mode`: `evaluate` \| `ci`) |
+| Refresh policy from `.ax/policy/` | `ax_policy_index` |
+| Store / search memories | `ax_remember` / `ax_recall` |
 | File context for a symbol | `ax_node` |
 | Build task context | `ax_context` |
+
+**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** shell `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index`. Shell CLI is only for DEGRADED mode or ops with no MCP tool.
 
 ## Version freshness
 

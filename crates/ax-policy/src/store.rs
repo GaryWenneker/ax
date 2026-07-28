@@ -5,14 +5,15 @@ use ax_utils::errors::AxError;
 use crate::types::ValidationError;
 
 use crate::config::{load_policy_config, PolicyStorage};
+use crate::hierarchy::{ensure_scope_dirs, policy_dir_for_scope};
 use crate::index::{
     delete_rule_by_id, delete_skill_by_name, export_policy_to_files, import_policy_from_files,
     rule_row_to_doc, skill_row_to_doc, upsert_rule_doc, upsert_skill_doc, ImportMode,
 };
 use crate::parse::{parse_rule_file, parse_skill_file, serialize_rule, serialize_skill};
-use crate::paths::{ensure_scaffold, rule_file, rules_dir, skill_file, skills_dir, ax_dir_from_project};
+use crate::paths::{rule_file, skill_file};
 use crate::types::{
-    PolicyRuleDoc, PolicySkillDoc, RuleFrontmatter, SkillFrontmatter,
+    PolicyRuleDoc, PolicyScope, PolicySkillDoc, RuleFrontmatter, SkillFrontmatter,
 };
 
 pub struct PolicyStore {
@@ -56,59 +57,83 @@ impl PolicyStore {
     }
 
     pub async fn get_rule_doc(&self, id: &str) -> Result<Option<PolicyRuleDoc>, AxError> {
-        if self.storage == PolicyStorage::Database {
-            let row = crate::index::get_rule(&self.pool, id).await?;
-            return Ok(row.map(|r| rule_row_to_doc(&r, &self.project_root)));
+        if let Some(row) = crate::index::get_rule(&self.pool, id).await? {
+            return Ok(Some(rule_row_to_doc(&row, &self.project_root)));
         }
-        let ax_dir = ax_dir_from_project(&self.project_root);
-        let path = rule_file(&rules_dir(&ax_dir), id);
-        if !path.is_file() {
+        if self.storage == PolicyStorage::Database {
             return Ok(None);
         }
-        let raw = std::fs::read_to_string(&path).map_err(|e| AxError::Other(e.to_string()))?;
-        let doc = parse_rule_file(&path, &raw).map_err(|e| AxError::Other(e.error))?;
-        Ok(Some(doc))
+        // Fallback: search layer dirs by filename.
+        for layer in crate::hierarchy::policy_layers(&self.project_root) {
+            let path = rule_file(&layer.dir.join("rules"), id);
+            if path.is_file() {
+                let raw =
+                    std::fs::read_to_string(&path).map_err(|e| AxError::Other(e.to_string()))?;
+                let mut doc = parse_rule_file(&path, &raw).map_err(|e| AxError::Other(e.error))?;
+                doc.frontmatter.scope = layer.scope.as_str().into();
+                return Ok(Some(doc));
+            }
+        }
+        Ok(None)
     }
 
     pub async fn get_skill_doc(&self, name: &str) -> Result<Option<PolicySkillDoc>, AxError> {
-        if self.storage == PolicyStorage::Database {
-            let row = crate::index::get_skill(&self.pool, name).await?;
-            return Ok(row.map(|r| skill_row_to_doc(&r, &self.project_root)));
+        if let Some(row) = crate::index::get_skill(&self.pool, name).await? {
+            return Ok(Some(skill_row_to_doc(&row, &self.project_root)));
         }
-        let ax_dir = ax_dir_from_project(&self.project_root);
-        let path = skill_file(&skills_dir(&ax_dir), name);
-        if !path.is_file() {
+        if self.storage == PolicyStorage::Database {
             return Ok(None);
         }
-        let raw = std::fs::read_to_string(&path).map_err(|e| AxError::Other(e.to_string()))?;
-        let doc = parse_skill_file(&path, &raw).map_err(|e| AxError::Other(e.error))?;
-        Ok(Some(doc))
+        for layer in crate::hierarchy::policy_layers(&self.project_root) {
+            let path = skill_file(&layer.dir.join("skills"), name);
+            if path.is_file() {
+                let raw =
+                    std::fs::read_to_string(&path).map_err(|e| AxError::Other(e.to_string()))?;
+                let mut doc = parse_skill_file(&path, &raw).map_err(|e| AxError::Other(e.error))?;
+                doc.frontmatter.scope = layer.scope.as_str().into();
+                return Ok(Some(doc));
+            }
+        }
+        Ok(None)
     }
 
     pub async fn save_rule(
         &self,
-        frontmatter: RuleFrontmatter,
+        mut frontmatter: RuleFrontmatter,
         body: String,
     ) -> Result<PolicyRuleDoc, ValidationError> {
-        let path = rule_file(
-            &rules_dir(&ax_dir_from_project(&self.project_root)),
-            &frontmatter.id,
-        );
+        let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
+        frontmatter.scope = scope.as_str().into();
+
+        let policy_dir = if self.storage == PolicyStorage::Files {
+            ensure_scope_dirs(&self.project_root, scope).map_err(|e| ValidationError {
+                error: e.to_string(),
+                fields: Default::default(),
+            })?
+        } else {
+            policy_dir_for_scope(&self.project_root, scope)
+        };
+
+        let path = rule_file(&policy_dir.join("rules"), &frontmatter.id);
         let raw = serialize_rule(&frontmatter, &body);
         let doc = parse_rule_file(&path, &raw)?;
 
         if self.storage == PolicyStorage::Database {
-            upsert_rule_doc(&self.pool, &doc).await.map_err(|e| ValidationError {
-                error: e.to_string(),
-                fields: Default::default(),
-            })?;
+            upsert_rule_doc(&self.pool, &doc)
+                .await
+                .map_err(|e| ValidationError {
+                    error: e.to_string(),
+                    fields: Default::default(),
+                })?;
             return Ok(doc);
         }
 
-        ensure_scaffold(&ax_dir_from_project(&self.project_root)).map_err(|e| ValidationError {
-            error: e.to_string(),
-            fields: Default::default(),
-        })?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| ValidationError {
+                error: e.to_string(),
+                fields: Default::default(),
+            })?;
+        }
         write_utf8(&path, &raw).map_err(|e| ValidationError {
             error: e,
             fields: Default::default(),
@@ -124,31 +149,37 @@ impl PolicyStore {
 
     pub async fn save_skill(
         &self,
-        frontmatter: SkillFrontmatter,
+        mut frontmatter: SkillFrontmatter,
         body: String,
     ) -> Result<PolicySkillDoc, ValidationError> {
-        let path = skill_file(
-            &skills_dir(&ax_dir_from_project(&self.project_root)),
-            &frontmatter.name,
-        );
+        let scope = PolicyScope::parse(&frontmatter.scope).unwrap_or(PolicyScope::Project);
+        frontmatter.scope = scope.as_str().into();
+
+        let policy_dir = if self.storage == PolicyStorage::Files {
+            ensure_scope_dirs(&self.project_root, scope).map_err(|e| ValidationError {
+                error: e.to_string(),
+                fields: Default::default(),
+            })?
+        } else {
+            policy_dir_for_scope(&self.project_root, scope)
+        };
+
+        let skills = policy_dir.join("skills");
+        let path = skill_file(&skills, &frontmatter.name);
         let raw = serialize_skill(&frontmatter, &body);
         let doc = parse_skill_file(&path, &raw)?;
 
         if self.storage == PolicyStorage::Database {
-            upsert_skill_doc(&self.pool, &doc).await.map_err(|e| ValidationError {
-                error: e.to_string(),
-                fields: Default::default(),
-            })?;
+            upsert_skill_doc(&self.pool, &doc)
+                .await
+                .map_err(|e| ValidationError {
+                    error: e.to_string(),
+                    fields: Default::default(),
+                })?;
             return Ok(doc);
         }
 
-        let ax_dir = ax_dir_from_project(&self.project_root);
-        ensure_scaffold(&ax_dir).map_err(|e| ValidationError {
-            error: e.to_string(),
-            fields: Default::default(),
-        })?;
-        let dir = skills_dir(&ax_dir).join(&frontmatter.name);
-        std::fs::create_dir_all(&dir).map_err(|e| ValidationError {
+        std::fs::create_dir_all(skills.join(&frontmatter.name)).map_err(|e| ValidationError {
             error: e.to_string(),
             fields: Default::default(),
         })?;
@@ -169,32 +200,40 @@ impl PolicyStore {
         if self.storage == PolicyStorage::Database {
             return delete_rule_by_id(&self.pool, id).await;
         }
-        let ax_dir = ax_dir_from_project(&self.project_root);
-        let path = rule_file(&rules_dir(&ax_dir), id);
-        if !path.is_file() {
-            return Ok(false);
+        if let Some(doc) = self.get_rule_doc(id).await? {
+            let scope = PolicyScope::parse(&doc.frontmatter.scope).unwrap_or(PolicyScope::Project);
+            let path = rule_file(
+                &policy_dir_for_scope(&self.project_root, scope).join("rules"),
+                id,
+            );
+            if path.is_file() {
+                std::fs::remove_file(&path).map_err(|e| AxError::Other(e.to_string()))?;
+                crate::index::index_policy(&self.pool, &self.project_root, false).await?;
+                return Ok(true);
+            }
         }
-        std::fs::remove_file(&path).map_err(|e| AxError::Other(e.to_string()))?;
-        crate::index::index_policy(&self.pool, &self.project_root, false).await?;
-        Ok(true)
+        Ok(false)
     }
 
     pub async fn delete_skill(&self, name: &str) -> Result<bool, AxError> {
         if self.storage == PolicyStorage::Database {
             return delete_skill_by_name(&self.pool, name).await;
         }
-        let ax_dir = ax_dir_from_project(&self.project_root);
-        let dir = skills_dir(&ax_dir).join(name);
-        let path = skill_file(&skills_dir(&ax_dir), name);
-        if !path.is_file() {
-            return Ok(false);
+        if let Some(doc) = self.get_skill_doc(name).await? {
+            let scope = PolicyScope::parse(&doc.frontmatter.scope).unwrap_or(PolicyScope::Project);
+            let skills = policy_dir_for_scope(&self.project_root, scope).join("skills");
+            let path = skill_file(&skills, name);
+            let dir = skills.join(name);
+            if path.is_file() {
+                std::fs::remove_file(&path).map_err(|e| AxError::Other(e.to_string()))?;
+                if dir.is_dir() {
+                    let _ = std::fs::remove_dir(&dir);
+                }
+                crate::index::index_policy(&self.pool, &self.project_root, false).await?;
+                return Ok(true);
+            }
         }
-        std::fs::remove_file(&path).map_err(|e| AxError::Other(e.to_string()))?;
-        if dir.is_dir() {
-            let _ = std::fs::remove_dir(&dir);
-        }
-        crate::index::index_policy(&self.pool, &self.project_root, false).await?;
-        Ok(true)
+        Ok(false)
     }
 
     pub async fn import_from_files(&self) -> Result<crate::types::PolicyIndexResult, AxError> {
@@ -206,6 +245,25 @@ impl PolicyStore {
         out_dir: &Path,
     ) -> Result<crate::index::ExportResult, AxError> {
         export_policy_to_files(&self.pool, &self.project_root, out_dir).await
+    }
+
+    /// Enable or disable a rule or skill by id/name (writes frontmatter + DB).
+    pub async fn set_enabled(&self, id_or_name: &str, enabled: bool) -> Result<bool, AxError> {
+        if let Some(mut doc) = self.get_rule_doc(id_or_name).await? {
+            doc.frontmatter.enabled = enabled;
+            self.save_rule(doc.frontmatter, doc.body)
+                .await
+                .map_err(|e| AxError::Other(e.error))?;
+            return Ok(true);
+        }
+        if let Some(mut doc) = self.get_skill_doc(id_or_name).await? {
+            doc.frontmatter.enabled = enabled;
+            self.save_skill(doc.frontmatter, doc.body)
+                .await
+                .map_err(|e| AxError::Other(e.error))?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

@@ -12,19 +12,25 @@ function cmpNum(a: number, b: number) {
   return a - b;
 }
 
+function scopeOf(scope?: string) {
+  return (scope || 'project').toLowerCase();
+}
+
 export function filterRules(
   rules: PolicyRuleRow[],
-  { q, level, always }: { q: string; level: string; always: string },
+  { q, level, always, scope }: { q: string; level: string; always: string; scope?: string },
 ) {
   const needle = q.trim().toLowerCase();
   return rules.filter((r) => {
     if (level && r.level !== level) return false;
+    if (scope && scopeOf(r.scope) !== scope) return false;
     if (always === 'yes' && !r.alwaysApply) return false;
     if (always === 'no' && r.alwaysApply) return false;
     if (!needle) return true;
     const hay = [
       r.id,
       r.level,
+      scopeOf(r.scope),
       r.tags.join(' '),
       r.triggers.join(' '),
       r.globs.join(' '),
@@ -33,7 +39,7 @@ export function filterRules(
   });
 }
 
-export type RuleSortKey = 'id' | 'level' | 'priority' | 'globs' | 'triggers';
+export type RuleSortKey = 'id' | 'level' | 'scope' | 'priority' | 'globs' | 'triggers';
 
 export function sortRules(rules: PolicyRuleRow[], key: RuleSortKey, dir: SortDir) {
   const sorted = [...rules].sort((a, b) => {
@@ -44,6 +50,9 @@ export function sortRules(rules: PolicyRuleRow[], key: RuleSortKey, dir: SortDir
         break;
       case 'level':
         c = cmpNum(LEVEL_RANK[a.level] ?? 9, LEVEL_RANK[b.level] ?? 9);
+        break;
+      case 'scope':
+        c = cmpStr(scopeOf(a.scope), scopeOf(b.scope));
         break;
       case 'priority':
         c = cmpNum(a.priority, b.priority);
@@ -62,17 +71,24 @@ export function sortRules(rules: PolicyRuleRow[], key: RuleSortKey, dir: SortDir
 
 export function filterSkills(
   skills: PolicySkillRow[],
-  { q }: { q: string },
+  { q, scope }: { q: string; scope?: string },
 ) {
   const needle = q.trim().toLowerCase();
   return skills.filter((s) => {
+    if (scope && scopeOf(s.scope) !== scope) return false;
     if (!needle) return true;
-    const hay = [s.name, s.description, s.tags.join(' '), s.triggers.join(' ')].join(' ').toLowerCase();
+    const hay = [
+      s.name,
+      s.description,
+      scopeOf(s.scope),
+      s.tags.join(' '),
+      s.triggers.join(' '),
+    ].join(' ').toLowerCase();
     return hay.includes(needle);
   });
 }
 
-export type SkillSortKey = 'name' | 'priority' | 'triggers';
+export type SkillSortKey = 'name' | 'scope' | 'priority' | 'triggers';
 
 export function sortSkills(skills: PolicySkillRow[], key: SkillSortKey, dir: SortDir) {
   const sorted = [...skills].sort((a, b) => {
@@ -80,6 +96,9 @@ export function sortSkills(skills: PolicySkillRow[], key: SkillSortKey, dir: Sor
     switch (key) {
       case 'name':
         c = cmpStr(a.name, b.name);
+        break;
+      case 'scope':
+        c = cmpStr(scopeOf(a.scope), scopeOf(b.scope));
         break;
       case 'priority':
         c = cmpNum(a.priority, b.priority);

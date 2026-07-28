@@ -91,19 +91,15 @@ export default function FilesPage() {
 
 
   const loadRoots = useCallback(async () => {
-
     const page = await fetchFileRoots();
-
     setRoots(page.roots);
-
+    const rootFiles = Array.isArray(page.files) ? page.files : [];
     if (!filterActive) {
-
-      setTotal(page.roots.reduce((sum, r) => sum + r.count, 0));
-
+      setFiles(rootFiles);
+      setLoadedPrefixes(new Set(['']));
+      setTotal(page.roots.reduce((sum, r) => sum + r.count, 0) + rootFiles.length);
     }
-
     return page.roots;
-
   }, [filterActive]);
 
 
@@ -207,17 +203,11 @@ export default function FilesPage() {
 
 
   function loadBrowseMode() {
-
     setLoading(false);
-
     setError(null);
-
     setFiles([]);
-
     setLoadedPrefixes(new Set());
-
     loadRoots().catch(() => {});
-
   }
 
 
@@ -245,39 +235,21 @@ export default function FilesPage() {
 
 
   const refreshTree = useCallback(async () => {
-
     setError(null);
-
-    const prefixes = [...loadedPrefixesRef.current];
-
+    const prefixes = [...loadedPrefixesRef.current].filter((p) => p !== '');
     try {
-
-      await loadRoots();
-
       if (filterActive) {
-
+        await loadRoots();
         loadFiltered(q, lang);
-
         return;
-
       }
-
-      setFiles([]);
-
-      setLoadedPrefixes(new Set());
-
+      await loadRoots();
       for (const prefix of prefixes) {
-
         await loadPrefix(prefix);
-
       }
-
     } catch (e) {
-
       setError(e instanceof Error ? e.message : 'Refresh failed');
-
     }
-
   }, [filterActive, q, lang, loadRoots, loadPrefix]);
 
 

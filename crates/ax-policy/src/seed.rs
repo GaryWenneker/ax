@@ -57,6 +57,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/explore-before-grep.mdc"),
     },
     Template {
+        rel: "rules/prefer-mcp-ops.mdc",
+        body: include_str!("../templates/rules/prefer-mcp-ops.mdc"),
+    },
+    Template {
         rel: "skills/startup/SKILL.md",
         body: include_str!("../templates/skills/startup/SKILL.md"),
     },
@@ -88,6 +92,11 @@ const MANAGED: &[(&str, &str, bool)] = &[
         ".ax/policy/rules/explore-before-grep.mdc",
         "rules/explore-before-grep.mdc",
         false,
+    ),
+    (
+        ".ax/policy/rules/prefer-mcp-ops.mdc",
+        "rules/prefer-mcp-ops.mdc",
+        true, // ops mapping — not a preflight instruction file
     ),
     (
         ".ax/policy/rules/subagents.mdc",

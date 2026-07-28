@@ -285,6 +285,12 @@ enum Commands {
         #[arg(long, help = "JSON output")]
         json: bool,
     },
+    /// Daily model price sync (OpenRouter + Artificial Analysis)
+    #[command(long_about = help_text::PRICING_LONG)]
+    Pricing {
+        #[command(subcommand)]
+        action: PricingAction,
+    },
     /// MCP quality audit (verbose log ↔ Cursor transcript)
     #[command(long_about = help_text::MCP_LONG)]
     Mcp {
@@ -305,6 +311,15 @@ enum Commands {
         port: u16,
         #[arg(long, help = "Open the browser automatically after starting")]
         open: bool,
+    },
+    /// Native wgpu Command Center (embeds ax-web in-process)
+    #[command(long_about = help_text::DESKTOP_LONG)]
+    Desktop {
+        path: Option<String>,
+        #[arg(long, default_value = "7070", help = "Port for the embedded ax-web server")]
+        port: u16,
+        #[arg(long, default_value = "127.0.0.1", help = "Bind address for the embedded server")]
+        bind: String,
     },
     /// Share Command Center on the LAN with a token (read-only)
     Share {
@@ -367,6 +382,37 @@ enum Commands {
         daemon: bool,
         #[arg(long, hide = true)]
         path: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PricingAction {
+    /// Fetch today's prices into ~/.ax/usage.db
+    Sync {
+        #[arg(long, help = "Re-fetch even if already synced today")]
+        force: bool,
+    },
+    /// Show last sync status per source
+    Status {
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+    /// List latest synced model rates
+    List {
+        #[arg(long, value_name = "SOURCE", help = "Filter by source (default: openrouter)")]
+        source: Option<String>,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+    /// Daily rate history for a model id/substring
+    History {
+        model: String,
+        #[arg(long, value_name = "SOURCE", help = "Filter by source (default: all, UI uses openrouter)")]
+        source: Option<String>,
+        #[arg(long, default_value = "30", help = "Max days of history")]
+        days: i64,
+        #[arg(long, help = "JSON output")]
+        json: bool,
     },
 }
 
@@ -641,6 +687,97 @@ enum PolicyCommands {
         #[command(subcommand)]
         action: PolicyStorageCommands,
     },
+    /// Per-project shared pack export/import (git team sync)
+    Pack {
+        #[command(subcommand)]
+        action: PolicyPackCommands,
+    },
+    /// Review pending pack-imported rules/skills
+    Review {
+        #[command(subcommand)]
+        action: PolicyReviewCommands,
+    },
+    /// Enable a rule or skill (matcher/preflight include it)
+    Enable {
+        /// Rule id or skill name
+        id: String,
+        path: Option<String>,
+    },
+    /// Disable a rule or skill (kept on disk/DB, skipped by matcher)
+    Disable {
+        /// Rule id or skill name
+        id: String,
+        path: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyPackCommands {
+    /// Export shareable rules/skills (tag `shared`) to `.ax/policy/shared/`
+    Export {
+        path: Option<String>,
+        #[arg(long, default_value = "shared")]
+        tag: String,
+        #[arg(long, help = "Output pack directory (default: .ax/policy/shared)")]
+        out: Option<String>,
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Import pack into local policy (respects policy.requireReview)
+    Import {
+        path: Option<String>,
+        #[arg(long, help = "Pack directory (default: .ax/policy/shared)")]
+        pack: Option<String>,
+        #[arg(long, help = "Overwrite conflicting local items without staging pending")]
+        force: bool,
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Show local vs pack status
+    Status {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install a built-in pack (e.g. azdo-fullstack) into project policy
+    Install {
+        /// Pack name (see `ax policy pack install --list`)
+        name: Option<String>,
+        path: Option<String>,
+        #[arg(long, help = "Overwrite existing rules/skills with the same id/name")]
+        force: bool,
+        #[arg(long, help = "List available built-in packs")]
+        list: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyReviewCommands {
+    /// List pending rules/skills
+    List {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show pending item + local diff
+    Show {
+        id: String,
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Approve a pending item into active policy
+    Approve {
+        id: String,
+        path: Option<String>,
+    },
+    /// Reject and drop a pending item
+    Reject {
+        id: String,
+        path: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -684,6 +821,13 @@ enum DaemonCommands {
 }
 
 fn main() {
+    // `ax desktop` must run on the OS main thread — winit panics on Windows if
+    // EventLoop is created from the ax-main worker (see EventLoopBuilderExtWindows).
+    if std::env::args().nth(1).as_deref() == Some("desktop") {
+        run_desktop_on_os_main_thread();
+        return;
+    }
+
     // Windows main threads get 1 MB of stack; the combined command future is
     // large enough to overflow it in unoptimized builds. Run everything on a
     // worker thread with a roomier stack instead.
@@ -700,6 +844,35 @@ fn main() {
         })
         .expect("failed to spawn main thread");
     if child.join().is_err() {
+        std::process::exit(1);
+    }
+}
+
+fn run_desktop_on_os_main_thread() {
+    ui::init_terminal();
+    commands::upgrade::apply_pending_upgrade();
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive("ax=info".parse().unwrap()))
+        .with_writer(std::io::stderr)
+        .try_init();
+
+    let mut cmd = Cli::command();
+    ui::configure_clap(&mut cmd);
+    let matches = cmd.get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+
+    let result = match cli.command {
+        Some(Commands::Desktop { path, port, bind }) => {
+            commands::desktop::run(path, port, bind)
+        }
+        _ => Err("internal: expected `ax desktop`".into()),
+    };
+
+    if let Err(e) = result {
+        if !e.is_empty() {
+            eprintln!("{e}");
+        }
         std::process::exit(1);
     }
 }
@@ -853,6 +1026,9 @@ async fn async_main() {
             commands::daemon::run(path, act).await
         }
         Some(Commands::Web { path, port, open }) => commands::web::run(path, port, open).await,
+        Some(Commands::Desktop { .. }) => Err(
+            "internal: `ax desktop` must run on the OS main thread (handled in main())".into(),
+        ),
         Some(Commands::Share {
             path,
             port,
@@ -941,6 +1117,43 @@ async fn async_main() {
                     .await
                 }
             },
+            PolicyCommands::Pack { action } => match action {
+                PolicyPackCommands::Export { path, tag, out, quiet } => {
+                    commands::policy::run_pack_export(path, tag, out, quiet).await
+                }
+                PolicyPackCommands::Import {
+                    path,
+                    pack,
+                    force,
+                    quiet,
+                } => commands::policy::run_pack_import(path, pack, force, quiet).await,
+                PolicyPackCommands::Status { path, json } => {
+                    commands::policy::run_pack_status(path, json).await
+                }
+                PolicyPackCommands::Install {
+                    name,
+                    path,
+                    force,
+                    list,
+                    json,
+                } => commands::policy::run_pack_install(path, name, force, list, json).await,
+            },
+            PolicyCommands::Review { action } => match action {
+                PolicyReviewCommands::List { path, json } => {
+                    commands::policy::run_review_list(path, json).await
+                }
+                PolicyReviewCommands::Show { id, path, json } => {
+                    commands::policy::run_review_show(path, id, json).await
+                }
+                PolicyReviewCommands::Approve { id, path } => {
+                    commands::policy::run_review_approve(path, id).await
+                }
+                PolicyReviewCommands::Reject { id, path } => {
+                    commands::policy::run_review_reject(path, id).await
+                }
+            },
+            PolicyCommands::Enable { id, path } => commands::policy::run_enable(path, id).await,
+            PolicyCommands::Disable { id, path } => commands::policy::run_disable(path, id).await,
         },
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::SessionHook) => commands::session_hook::run().await,
@@ -973,6 +1186,19 @@ async fn async_main() {
                 SavingsHookAction::Install => commands::savings::run_hook_install(),
             },
             None => commands::savings::run_summary(period, from, to, json).await,
+        },
+        Some(Commands::Pricing { action }) => match action {
+            PricingAction::Sync { force } => commands::pricing::run_sync(force).await,
+            PricingAction::Status { json } => commands::pricing::run_status(json).await,
+            PricingAction::List { source, json } => {
+                commands::pricing::run_list(source, json).await
+            }
+            PricingAction::History {
+                model,
+                source,
+                days,
+                json,
+            } => commands::pricing::run_history(model, source, days, json).await,
         },
         Some(Commands::Mcp { action }) => match action {
             McpAction::Audit {
@@ -1074,9 +1300,11 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Upgrade { .. }) => Some("upgrade".into()),
         Some(Commands::Telemetry { .. }) => Some("telemetry".into()),
         Some(Commands::Savings { .. }) => Some("savings".into()),
+        Some(Commands::Pricing { .. }) => Some("pricing".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),
+        Some(Commands::Desktop { .. }) => Some("desktop".into()),
         Some(Commands::Share { .. }) => Some("share".into()),
         Some(Commands::Lsp { .. }) => Some("lsp".into()),
         Some(Commands::Cursor { .. }) => Some("cursor".into()),

@@ -10,13 +10,24 @@ pub async fn run(
     stdout: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    ax_usage::log_cli(Some(&root), "cmd=report start");
     let resolution = if resolution > 0.0 { resolution } else { 1.0 };
 
     let markdown = {
         let _spinner = SpinnerGuard::new("Building architecture report...".to_string(), stdout);
         let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-        ax.architecture_report(resolution).await.map_err(|e| e.to_string())?
+        match ax.architecture_report(resolution).await {
+            Ok(m) => m,
+            Err(e) => {
+                ax_usage::log_cli(Some(&root), "cmd=report fail");
+                return Err(e.to_string());
+            }
+        }
     };
+    ax_usage::log_cli(
+        Some(&root),
+        format!("cmd=report ok bytes={}", markdown.len()),
+    );
 
     if stdout {
         print!("{markdown}");

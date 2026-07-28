@@ -9,13 +9,16 @@ type NavId =
   | 'memory'
   | 'unresolved'
   | 'savings'
+  | 'prices'
   | 'ship'
   | 'sonar'
   | 'agent'
   | 'settings'
   | 'logging'
   | 'policy-rules'
-  | 'policy-skills';
+  | 'policy-skills'
+  | 'policy-review'
+  | 'policy-sync';
 
 export type { NavId };
 
@@ -28,6 +31,7 @@ const NAV_CODICONS: Record<NavId, string> = {
   memory: 'lightbulb',
   unresolved: 'warning',
   savings: 'dashboard',
+  prices: 'tag',
   ship: 'rocket',
   sonar: 'shield',
   agent: 'terminal',
@@ -35,6 +39,8 @@ const NAV_CODICONS: Record<NavId, string> = {
   logging: 'output',
   'policy-rules': 'law',
   'policy-skills': 'mortar-board',
+  'policy-review': 'checklist',
+  'policy-sync': 'sync',
 };
 
 export function NavIcon({ id }: { id: NavId }) {
@@ -54,6 +60,7 @@ export const PAGE_LABELS: Record<string, string> = {
   memory: 'Memory',
   unresolved: 'Unresolved',
   savings: 'Savings',
+  prices: 'Prices',
   ship: 'Command Center',
   sonar: 'SonarQube',
   agent: 'Agent',
@@ -64,6 +71,8 @@ export const PAGE_LABELS: Record<string, string> = {
   'policy-skills': 'Skills',
   'policy-skill-edit': 'Skill editor',
   'policy-match': 'Match test',
+  'policy-review': 'Review',
+  'policy-sync': 'Sync',
 };
 
 const SCALE_KEY = 'ax-web-ui-scale';

@@ -7,7 +7,7 @@ import {
   MCP_TRACE_STATS,
   type McpTraceStats,
 } from '../lib/mcpTraceEvents';
-import { fetchShipConfig } from '../shipApi';
+import { fetchShipConfig, saveShipConfig } from '../shipApi';
 
 /**
  * Full-page real-time MCP verbose log for <project>/.ax/mcp-verbose-*.log
@@ -16,6 +16,7 @@ import { fetchShipConfig } from '../shipApi';
  */
 export default function LoggingPage() {
   const [verboseEnabled, setVerboseEnabled] = useState(false);
+  const [verboseBusy, setVerboseBusy] = useState(false);
   const [stats, setStats] = useState<McpTraceStats>(emptyMcpTraceStats);
 
   const detail =
@@ -60,8 +61,48 @@ export default function LoggingPage() {
     };
   }, []);
 
+  async function setVerboseMcp(verbose_mcp: boolean) {
+    setVerboseBusy(true);
+    setVerboseEnabled(verbose_mcp);
+    try {
+      const d = await fetchShipConfig();
+      await saveShipConfig({
+        ...d.config,
+        ui: { ...(d.config.ui ?? {}), verbose_mcp },
+      });
+      window.dispatchEvent(
+        new CustomEvent('ax-ship-config-updated', { detail: { verbose_mcp } }),
+      );
+    } catch {
+      setVerboseEnabled(!verbose_mcp);
+    } finally {
+      setVerboseBusy(false);
+    }
+  }
+
   return (
     <div className="logging-page logging-page--immersive">
+      <div className="logging-verbose-bar">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={verboseEnabled}
+          aria-label="Verbose MCP logging"
+          disabled={verboseBusy}
+          className={`settings-toggle${verboseEnabled ? ' on' : ''}${verboseBusy ? ' disabled' : ''}`}
+          onClick={() => void setVerboseMcp(!verboseEnabled)}
+        >
+          <span className="settings-toggle-thumb" />
+        </button>
+        <div className="logging-verbose-bar-copy">
+          <span className="logging-verbose-bar-title">Verbose MCP logging</span>
+          <span className="logging-verbose-bar-desc">
+            Record tool calls to{' '}
+            <code>.ax/mcp-verbose-YYYY-MM-DD.log</code>. Reconnect ax MCP after
+            enabling. Off by default — never alters tool responses.
+          </span>
+        </div>
+      </div>
       <McpTraceLive verboseEnabled={verboseEnabled} variant="page" />
     </div>
   );

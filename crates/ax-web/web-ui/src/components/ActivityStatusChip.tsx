@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import Codicon from './Codicon';
 import { navigateRoute } from '../lib/routes';
 
@@ -48,18 +49,20 @@ export default function ActivityStatusChip({ openPanel, onTogglePanel }: Props) 
   openRef.current = isOpen;
 
   useEffect(() => {
-    const es = new EventSource('/api/actions/events');
-    es.addEventListener('action', (ev) => {
-      try {
-        const data = JSON.parse((ev as MessageEvent).data) as ActionEvent;
-        if (data.kind === 'stream') return;
-        setEvents((prev) => [data, ...prev].slice(0, MAX));
-        if (!openRef.current) setUnread((n) => n + 1);
-      } catch {
-        /* ignore */
-      }
+    return subscribeSharedEventSource('/api/actions/events', {
+      events: {
+        action: (ev) => {
+          try {
+            const data = JSON.parse((ev as MessageEvent).data) as ActionEvent;
+            if (data.kind === 'stream') return;
+            setEvents((prev) => [data, ...prev].slice(0, MAX));
+            if (!openRef.current) setUnread((n) => n + 1);
+          } catch {
+            /* ignore */
+          }
+        },
+      },
     });
-    return () => es.close();
   }, []);
 
   useEffect(() => {

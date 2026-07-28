@@ -1,0 +1,23 @@
+---
+id: azdo-pr-policies
+level: CRITICAL
+alwaysApply: false
+globs: []
+triggers: ["merge", "approve PR", "branch policy", "PR comments", "build validation"]
+tags: ["azdo", "pr", "shared"]
+priority: 85
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# AZDO Branch Policies
+
+Before merge:
+
+1. Minimum required reviewer approvals (team policy: 1–2)
+2. CI / build validation on the PR branch is green
+3. All PR comments are resolved
+4. Azure DevOps work item is linked to the PR
+
+Do not merge with failing CI or unresolved blocking comments.

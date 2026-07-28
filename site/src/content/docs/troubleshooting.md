@@ -25,7 +25,7 @@ Your agent starts the server itself. Verify the project is indexed (`ax status`)
 
 ## MCP Logging empty / Quality score stuck
 
-1. Enable **Settings → Interface → Verbose MCP logging** (or `AX_MCP_VERBOSE=1`) and reconnect MCP.
+1. Enable **Logging → Verbose MCP logging** (or `AX_MCP_VERBOSE=1`) and reconnect MCP.
 2. Confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows after an agent turn.
 3. Open Command Center **Logging**; use the project switcher if you are on the wrong workspace.
 4. Install `ax savings hook install` so sessions tag `session=` for tighter `ax mcp audit` correlation.

@@ -1,4 +1,5 @@
 //! Policy storage mode — filesystem (default) or database-first.
+//! Also reads `requireReview` and project-level `policySync`.
 
 use std::path::{Path, PathBuf};
 
@@ -36,17 +37,22 @@ impl PolicyStorage {
 struct PolicyConfigFile {
     #[serde(default)]
     storage: Option<PolicyStorage>,
+    #[serde(default)]
+    require_review: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PolicyConfig {
     pub storage: PolicyStorage,
+    /// When true, pack import (and capture when configured) lands as pending.
+    pub require_review: bool,
 }
 
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
             storage: PolicyStorage::Files,
+            require_review: false,
         }
     }
 }
@@ -60,7 +66,77 @@ pub fn load_policy_config(project_root: &Path) -> PolicyConfig {
             .storage
             .or(global.storage)
             .unwrap_or(PolicyStorage::Files),
+        require_review: local
+            .require_review
+            .or(global.require_review)
+            .unwrap_or(false),
     }
+}
+
+/// True when project `ax.json` has `"policySync": true`.
+pub fn policy_sync_enabled(project_root: &Path) -> bool {
+    read_root_bool(project_root, "policySync")
+}
+
+/// Read / write top-level `policySync` in project ax.json.
+pub fn write_project_policy_sync(project_root: &Path, enabled: bool) -> Result<PathBuf, String> {
+    let path = project_root.join(CONFIG_FILENAME);
+    write_root_bool_at(&path, "policySync", enabled)?;
+    Ok(path)
+}
+
+pub fn write_project_require_review(project_root: &Path, enabled: bool) -> Result<PathBuf, String> {
+    let path = project_root.join(CONFIG_FILENAME);
+    write_policy_bool_at(&path, "requireReview", enabled)?;
+    Ok(path)
+}
+
+fn read_root_bool(project_root: &Path, key: &str) -> bool {
+    for name in [CONFIG_FILENAME, ".ax.json"] {
+        let path = project_root.join(name);
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+            if v.get(key).and_then(|x| x.as_bool()) == Some(true) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn write_root_bool_at(path: &Path, key: &str, value: bool) -> Result<(), String> {
+    let mut root: serde_json::Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "config root must be a JSON object".to_string())?;
+    obj.insert(key.into(), serde_json::Value::Bool(value));
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
+    std::fs::write(path, text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn write_policy_bool_at(path: &Path, key: &str, value: bool) -> Result<(), String> {
+    let mut root: serde_json::Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let policy = root
+        .as_object_mut()
+        .ok_or_else(|| "config root must be a JSON object".to_string())?;
+    let mut policy_obj = policy
+        .remove("policy")
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    policy_obj.insert(key.into(), serde_json::Value::Bool(value));
+    policy.insert("policy".into(), serde_json::Value::Object(policy_obj));
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
+    std::fs::write(path, text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn read_policy_section(path: &Path) -> PolicyConfigFile {
@@ -108,6 +184,8 @@ pub struct PolicyStorageStatus {
     pub global_config_path: String,
     pub project_value: Option<String>,
     pub global_value: Option<String>,
+    pub require_review: bool,
+    pub policy_sync: bool,
 }
 
 /// Resolved storage mode and which config layer set it.
@@ -115,6 +193,7 @@ pub fn policy_storage_status(project_root: &Path) -> PolicyStorageStatus {
     let global = read_policy_section(&global_config_path());
     let project_path = project_root.join(CONFIG_FILENAME);
     let local = read_policy_section(&project_path);
+    let cfg = load_policy_config(project_root);
 
     let (effective, source) = match local.storage {
         Some(s) => (s, PolicyStorageSource::Project),
@@ -131,6 +210,8 @@ pub fn policy_storage_status(project_root: &Path) -> PolicyStorageStatus {
         global_config_path: global_config_path().display().to_string(),
         project_value: local.storage.map(|s| s.as_str().into()),
         global_value: global.storage.map(|s| s.as_str().into()),
+        require_review: cfg.require_review,
+        policy_sync: policy_sync_enabled(project_root),
     }
 }
 
@@ -181,6 +262,7 @@ mod tests {
     fn default_storage_is_files() {
         let cfg = load_policy_config(Path::new("/nonexistent"));
         assert_eq!(cfg.storage, PolicyStorage::Files);
+        assert!(!cfg.require_review);
     }
 
     #[test]
@@ -205,5 +287,12 @@ mod tests {
     fn policy_storage_parse_aliases() {
         assert_eq!(PolicyStorage::parse("db"), Some(PolicyStorage::Database));
         assert_eq!(PolicyStorage::parse("file"), Some(PolicyStorage::Files));
+    }
+
+    #[test]
+    fn policy_sync_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(CONFIG_FILENAME), r#"{"policySync":true}"#).unwrap();
+        assert!(policy_sync_enabled(dir.path()));
     }
 }

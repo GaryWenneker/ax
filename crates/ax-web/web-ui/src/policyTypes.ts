@@ -1,3 +1,23 @@
+export type PolicyScope =
+  | 'company'
+  | 'workspace'
+  | 'project'
+  | 'private_user'
+  | 'private_project';
+
+export const POLICY_SCOPES: { value: PolicyScope; label: string }[] = [
+  { value: 'company', label: 'Company' },
+  { value: 'workspace', label: 'Workspace' },
+  { value: 'project', label: 'Project' },
+  { value: 'private_user', label: 'Private (user)' },
+  { value: 'private_project', label: 'Private (project)' },
+];
+
+export function scopeLabel(scope?: string): string {
+  const found = POLICY_SCOPES.find((s) => s.value === scope);
+  return found?.label ?? (scope || 'Project');
+}
+
 export interface RuleFrontmatter {
   id: string;
   level: string;
@@ -6,6 +26,10 @@ export interface RuleFrontmatter {
   triggers: string[];
   tags: string[];
   priority: number;
+  enabled?: boolean;
+  status?: string;
+  share?: boolean;
+  scope?: string;
 }
 
 export interface SkillFrontmatter {
@@ -15,6 +39,10 @@ export interface SkillFrontmatter {
   tags: string[];
   priority: number;
   contextTask?: string;
+  enabled?: boolean;
+  status?: string;
+  share?: boolean;
+  scope?: string;
 }
 
 export interface PolicyRuleDoc {
@@ -41,6 +69,9 @@ export interface PolicyRuleRow {
   priority: number;
   body: string;
   sourcePath: string;
+  enabled?: boolean;
+  status?: string;
+  scope?: string;
 }
 
 export interface PolicySkillRow {
@@ -52,6 +83,37 @@ export interface PolicySkillRow {
   contextTask?: string;
   body: string;
   sourcePath: string;
+  enabled?: boolean;
+  status?: string;
+  scope?: string;
+}
+
+export interface PendingPolicyItem {
+  kind: string;
+  id: string;
+  path: string;
+  status: string;
+  preview: string;
+  levelOrDescription: string;
+}
+
+export interface PolicySyncSettings {
+  policySync: boolean;
+  requireReview: boolean;
+  storage: string;
+}
+
+export interface PolicyPackStatus {
+  packPath: string;
+  hasManifest: boolean;
+  rulesInPack: number;
+  skillsInPack: number;
+  exportedAt?: number | null;
+  tag?: string | null;
+  localSharedRules: number;
+  localSharedSkills: number;
+  requireReview: boolean;
+  policySync: boolean;
 }
 
 export interface MatchResult {

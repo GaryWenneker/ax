@@ -1,0 +1,21 @@
+---
+id: azdo-tests-required
+level: WARNING
+alwaysApply: false
+globs: ["**/*.{cs,ts,tsx,js,jsx,py,rs}"]
+triggers: ["implement", "feature", "bugfix", "unit test", "coverage", "edge case"]
+tags: ["azdo", "testing", "shared"]
+priority: 78
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# Unit Tests Required
+
+Every new backend/frontend logic change includes unit tests.
+
+1. Cover happy path **and** error handling / input validation
+2. Aim for agreed coverage on changed code (team default: >80% on changed lines)
+3. Follow the `tdd` skill when implementing features or fixes
+4. Existing automated regression tests in the pipeline must stay green before merge

@@ -1,0 +1,21 @@
+---
+id: azdo-shift-left-security
+level: CRITICAL
+alwaysApply: true
+globs: []
+triggers: ["secret", "password", "api key", "connection string", "Key Vault", ".env"]
+tags: ["azdo", "security", "shared"]
+priority: 90
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# Shift-Left Security
+
+Never store secrets, passwords, API keys, or connection strings in source or Git.
+
+Use Azure Key Vault, pipeline secret variables, or environment configuration.
+
+`guard: forbid-path: "**/*.pem"`
+`guard: forbid-content: "/(api[_-]?key|password|secret)\\s*[:=]\\s*['\"][^'\"]{8,}/i"`

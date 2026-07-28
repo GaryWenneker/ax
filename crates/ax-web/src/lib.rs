@@ -16,6 +16,7 @@ mod share_auth;
 mod ship;
 mod sonar_proxy;
 mod savings;
+mod pricing_api;
 mod workspace;
 mod workspace_state;
 
@@ -202,7 +203,7 @@ async fn handle_files(
 async fn handle_file_roots(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     match queries::get_file_roots(&ws.graph_pool).await {
-        Ok(roots) => (StatusCode::OK, Json(serde_json::json!({ "roots": roots }))).into_response(),
+        Ok(page) => (StatusCode::OK, Json(serde_json::json!(page))).into_response(),
         Err(e) => api_err(e.to_string()).into_response(),
     }
 }
@@ -727,6 +728,7 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     }
 
     actions::publish("web", "server started", None);
+    ax_usage::spawn_ensure_daily_pricing_sync();
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

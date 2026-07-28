@@ -159,6 +159,7 @@ export default defineConfig({
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },
 						{ label: 'Affected Tests in CI', slug: 'guides/affected-tests' },
 						{ label: 'Command Center', slug: 'guides/command-center' },
+						{ label: 'Desktop Client', slug: 'guides/desktop-client' },
 						{ label: 'Share Command Center', slug: 'guides/share' },
 						{ label: 'MCP Logging & Quality', slug: 'guides/mcp-quality' },
 						{ label: 'Agent Terminal', slug: 'guides/agent-terminal' },

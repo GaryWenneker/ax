@@ -16,6 +16,8 @@ const CLAUDE_RULE_FILE: &str = "ax.md";
 const CLAUDE_RULE_BODY: &str = include_str!("../templates/ide/claude/ax.md");
 const CONTINUE_RULE_FILE: &str = "ax.md";
 const CONTINUE_RULE_BODY: &str = include_str!("../templates/ide/continue/ax.md");
+const CONTINUE_MCP_FILE: &str = "ax.json";
+const CONTINUE_MCP_BODY: &str = include_str!("../templates/ide/continue/mcp-ax.json");
 
 const CLAUDE_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
 ## ax
@@ -46,7 +48,7 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.
 
-**Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_insights`/`ax_report` for whole-graph architecture (communities, god nodes, surprising links), `ax_guard` (`path` + `operation`; also `paths[]` / `action`) before writes when CRITICAL rules exist, `ax_diagnostics` to correlate IDE/linter diagnostics with the graph, `ax_policy_capture` for durable rules, `ax_context` for task context.
+**Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_insights`/`ax_report` for whole-graph architecture, `ax_guard` before writes when CRITICAL rules exist, `ax_diagnostics` for IDE/linter correlation, `ax_policy_capture` for durable rules, `ax_context` for task context, **`ax_sync`** / **`ax_index({force:true})`** for re-index, **`ax_lsp`** for LSP status/enrich, **`ax_ship`** for quality-gate evaluate/ci, **`ax_policy_index`** to refresh rules from disk, **`ax_remember`/`ax_recall`** for memory. Prefer these MCP tools over shelling out to the CLI when MCP is connected.
 
 Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
 <!-- AX_END -->"#;
@@ -225,8 +227,20 @@ fn continue_rule_path(project_root: &Path) -> PathBuf {
     continue_rules_dir(project_root).join(CONTINUE_RULE_FILE)
 }
 
+fn continue_mcp_dir(project_root: &Path) -> PathBuf {
+    project_root.join(".continue").join("mcpServers")
+}
+
+fn continue_mcp_path(project_root: &Path) -> PathBuf {
+    continue_mcp_dir(project_root).join(CONTINUE_MCP_FILE)
+}
+
 fn continue_bootstrap_stale(content: &str) -> bool {
     !crate::seed::verify_content(content).is_empty() || content.trim() != CONTINUE_RULE_BODY.trim()
+}
+
+fn continue_mcp_stale(content: &str) -> bool {
+    content.trim() != CONTINUE_MCP_BODY.trim()
 }
 
 fn seed_continue_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
@@ -255,6 +269,27 @@ fn seed_continue_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::i
     }
 
     std::fs::write(&target, CONTINUE_RULE_BODY.as_bytes())?;
+    result.record_created(rel);
+    Ok(())
+}
+
+/// Project-scoped Continue MCP server so teammates on Continue pick up ax without a global install.
+fn seed_continue_mcp(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let dir = continue_mcp_dir(project_root);
+    std::fs::create_dir_all(&dir)?;
+    let target = continue_mcp_path(project_root);
+    let rel = format!(".continue/mcpServers/{CONTINUE_MCP_FILE}");
+    if target.exists() {
+        let content = std::fs::read_to_string(&target)?;
+        if !continue_mcp_stale(&content) {
+            result.record_skipped(rel);
+            return Ok(());
+        }
+        std::fs::write(&target, CONTINUE_MCP_BODY.as_bytes())?;
+        result.record_updated(rel);
+        return Ok(());
+    }
+    std::fs::write(&target, CONTINUE_MCP_BODY.as_bytes())?;
     result.record_created(rel);
     Ok(())
 }
@@ -358,10 +393,14 @@ fn seed_cline_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std:
 }
 
 /// Ensure IDE bootstrap files exist (create or repair on init).
+///
+/// Seeds **all** agent surfaces (Cursor, Continue, Claude, …) so a teammate on a
+/// different IDE still gets `ax_preflight` after pack import / `ax init`.
 pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedResult> {
     let mut result = IdeSeedResult::default();
     seed_cursor_rule(project_root, &mut result)?;
     seed_continue_rule(project_root, &mut result)?;
+    seed_continue_mcp(project_root, &mut result)?;
     seed_claude_bootstrap(project_root, &mut result)?;
     seed_agents_bootstrap(project_root, &mut result)?;
     seed_gemini_bootstrap(project_root, &mut result)?;
@@ -470,6 +509,46 @@ fn verify_continue_bootstrap(project_root: &Path) -> InstructionCheck {
     }
 }
 
+fn verify_continue_mcp(project_root: &Path) -> InstructionCheck {
+    let path = continue_mcp_path(project_root);
+    let label = format!(".continue/mcpServers/{CONTINUE_MCP_FILE}");
+    if !path.exists() {
+        return InstructionCheck {
+            label,
+            path,
+            ok: false,
+            issues: vec!["missing".into()],
+            optional: false,
+        };
+    }
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    if continue_mcp_stale(&content) {
+        return InstructionCheck {
+            label,
+            path,
+            ok: false,
+            issues: vec!["MCP config drifts from embedded template".into()],
+            optional: false,
+        };
+    }
+    if !content.contains("\"ax\"") || !content.contains("serve") || !content.contains("--mcp") {
+        return InstructionCheck {
+            label,
+            path,
+            ok: false,
+            issues: vec!["missing ax MCP serve entry".into()],
+            optional: false,
+        };
+    }
+    InstructionCheck {
+        label,
+        path,
+        ok: true,
+        issues: vec![],
+        optional: false,
+    }
+}
+
 fn verify_claude_rule_bootstrap(project_root: &Path) -> InstructionCheck {
     let path = project_root.join(".claude").join("rules").join(CLAUDE_RULE_FILE);
     let label = format!(".claude/rules/{CLAUDE_RULE_FILE}");
@@ -505,7 +584,7 @@ fn check_instruction(label: impl Into<String>, path: PathBuf, issues: Vec<String
     }
 }
 
-/// Verify per-IDE bootstrap instruction files (Cursor, Claude, Codex/opencode, Gemini, Copilot, Windsurf, Cline).
+/// Verify per-IDE bootstrap instruction files (Cursor, Continue, Claude, Gemini, Copilot, Windsurf, Cline).
 pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
     let claude_md = project_root.join(".claude").join("CLAUDE.md");
     let agents_md = project_root.join("AGENTS.md");
@@ -517,6 +596,7 @@ pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
     vec![
         verify_cursor_bootstrap(project_root),
         verify_continue_bootstrap(project_root),
+        verify_continue_mcp(project_root),
         verify_claude_rule_bootstrap(project_root),
         check_instruction(
             ".claude/CLAUDE.md",
@@ -655,6 +735,22 @@ mod tests {
     }
 
     #[test]
+    fn seeds_continue_mcp_server() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result
+            .created
+            .iter()
+            .any(|p| p == ".continue/mcpServers/ax.json"));
+        let path = continue_mcp_path(dir.path());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("serve"));
+        assert!(content.contains("--mcp"));
+        assert!(!continue_mcp_stale(&content));
+    }
+
+    #[test]
     fn skips_when_bootstrap_already_in_another_continue_rule() {
         let dir = tempdir().unwrap();
         let rules = continue_rules_dir(dir.path());
@@ -737,6 +833,10 @@ mod tests {
         let synced = sync_ide_bootstrap(dir.path(), true).unwrap();
         assert_eq!(synced.fail_count, 0);
         assert!(synced.fixed.iter().any(|p| p.contains(".continue/rules/ax.md")));
+        assert!(synced
+            .fixed
+            .iter()
+            .any(|p| p.contains(".continue/mcpServers/ax.json")));
         assert!(synced.fixed.iter().any(|p| p.contains("AGENTS.md")));
         assert!(synced.fixed.iter().any(|p| p.contains("GEMINI.md")));
         assert!(synced.fixed.iter().any(|p| p.contains(".claude/rules/ax.md")));

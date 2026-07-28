@@ -8,7 +8,6 @@
 use std::cell::RefCell;
 use std::path::Path;
 
-use serde::Deserialize;
 use serde_json::Value;
 
 pub const TRACE_FIELD_MAX: usize = 3_072;
@@ -20,56 +19,9 @@ tokio::task_local! {
     static VERBOSE_TRACE: RefCell<Vec<String>>;
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ShipUiFile {
-    #[serde(default)]
-    ui: UiVerboseOnly,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct UiVerboseOnly {
-    #[serde(default)]
-    verbose_mcp: bool,
-}
-
 /// True when env override or project `[ui].verbose_mcp` is set.
 pub fn verbose_enabled(project_root: Option<&Path>) -> bool {
-    if env_flag_truthy("AX_MCP_VERBOSE") {
-        return true;
-    }
-    let Some(root) = project_root else {
-        return false;
-    };
-    read_ship_verbose_mcp(root)
-}
-
-fn env_flag_truthy(name: &str) -> bool {
-    std::env::var(name)
-        .map(|v| {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false)
-}
-
-fn read_ship_verbose_mcp(project_root: &Path) -> bool {
-    let root = strip_verbatim_prefix(project_root);
-    let path = root.join(".ax").join("ship.toml");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return false;
-    };
-    toml::from_str::<ShipUiFile>(&text)
-        .map(|c| c.ui.verbose_mcp)
-        .unwrap_or(false)
-}
-
-/// Windows daemon paths often use `\\?\C:\...` — normalize before joining.
-fn strip_verbatim_prefix(path: &Path) -> std::path::PathBuf {
-    let s = path.to_string_lossy();
-    if let Some(rest) = s.strip_prefix(r"\\?\") {
-        return std::path::PathBuf::from(rest);
-    }
-    path.to_path_buf()
+    ax_usage::verbose_enabled(project_root)
 }
 
 /// Run `fut` with an empty per-task verbose buffer; returns `(result, lines)`.
@@ -355,12 +307,6 @@ mod tests {
     }
 
     #[test]
-    fn strip_verbatim_windows_prefix() {
-        let p = strip_verbatim_prefix(std::path::Path::new(r"\\?\C:\gary\VfPf"));
-        assert_eq!(p, std::path::PathBuf::from(r"C:\gary\VfPf"));
-    }
-
-    #[test]
     fn ship_toml_verbose_flag() {
         let dir = tempfile_dir();
         let ax = dir.join(".ax");
@@ -370,9 +316,11 @@ mod tests {
             "[ui]\nverbose_mcp = true\nshow_savings = true\n",
         )
         .unwrap();
-        assert!(read_ship_verbose_mcp(&dir));
+        assert!(verbose_enabled(Some(&dir)));
         std::fs::write(ax.join("ship.toml"), "[ui]\nshow_savings = true\n").unwrap();
-        assert!(!read_ship_verbose_mcp(&dir));
+        if std::env::var("AX_MCP_VERBOSE").is_err() {
+            assert!(!verbose_enabled(Some(&dir)));
+        }
     }
 
     fn tempfile_dir() -> std::path::PathBuf {

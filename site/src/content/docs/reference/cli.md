@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v4.0.0).
+description: Complete reference for every ax command, argument, and flag (v4.1.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -687,6 +687,28 @@ ax savings hook install
 
 The **Savings** page in `ax web` (enable in Settings) exposes the same filters. See [Token savings](/guides/token-savings/).
 
+### `ax pricing`
+
+Daily model price sync from [OpenRouter](https://openrouter.ai/models) (no API key). Snapshots land in `~/.ax/usage.db` and drive Savings USD estimates plus the Command Center **Prices** page. `ax web` / MCP auto-sync once per calendar day; use this command to force or inspect.
+
+| Subcommand | Description |
+|---|---|
+| `sync` | Fetch today's prices (`--force` re-fetches even if already synced) |
+| `status` | Last sync, row counts |
+| `list` | Latest OpenRouter rates (`--json`) |
+| `history <model>` | Daily series for a model id/substring (`--days`, `--json`) |
+
+```bash
+ax pricing sync
+ax pricing sync --force
+ax pricing status
+ax pricing list
+ax pricing list --json
+ax pricing history claude-sonnet --days 30
+```
+
+Optional overrides in `~/.ax/pricing.toml` always win over synced rates.
+
 ### `ax mcp audit`
 
 Correlate `<project>/.ax/mcp-verbose-*.log` (daily files) with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Same engine powers the Command Center **Quality** status-bar chip and slide-out. Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.
@@ -804,6 +826,31 @@ Set `AX_WEB_READONLY=1` for browse-only mode.
 ```bash
 ax web
 ax web ./my-repo --port 8080 --open
+```
+
+### `ax desktop [path]`
+
+Native wgpu Command Center (egui/eframe). Embeds `ax-web` in-process — same `/api` as the browser UI, no browser required. See [Desktop Client](/guides/desktop-client/).
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `path` | optional | cwd | Project root (must contain `.ax/ax.db`) |
+| `--port` | number | `7070` | Embedded `ax-web` listen port |
+| `--bind` | string | `127.0.0.1` | Bind address |
+
+```bash
+ax desktop
+ax desktop --port 17070
+ax desktop ./my-repo --port 17070 --bind 127.0.0.1
+```
+
+### Desktop client binary (`ax-desktop`)
+
+Standalone binary from `crates/ax-desktop-client` (same UI as `ax desktop`):
+
+```bash
+cargo run -p ax-desktop-client -- .
+./target-dev/release/ax-desktop . --port 17070
 ```
 
 ---
@@ -948,7 +995,7 @@ ax policy test --json
 
 ### `ax policy sync [path]`
 
-Verify managed policy instruction files (`.ax/policy/skills/startup/SKILL.md`, …) and IDE bootstrap files (`.cursor/rules/ax.mdc`, `AGENTS.md`, etc.). Required managed files must match the embedded init templates; optional team copies only fail the basic preflight checks.
+Verify managed policy instruction files (`.ax/policy/skills/startup/SKILL.md`, …) and IDE bootstrap files (`.cursor/rules/ax.mdc`, `.continue/rules/ax.md`, `.continue/mcpServers/ax.json`, `AGENTS.md`, etc.). Required managed files must match the embedded init templates; optional team copies only fail the basic preflight checks.
 
 | Flag | Description |
 |---|---|
@@ -1022,6 +1069,87 @@ Set **files** as source of truth (`.ax/policy/` on disk).
 ```bash
 ax policy storage files --migrate
 ax policy storage files --global
+```
+
+### `ax policy enable <id> [path]`
+
+Enable a rule or skill so matcher/preflight include it again.
+
+```bash
+ax policy enable mobile-first
+```
+
+### `ax policy disable <id> [path]`
+
+Disable a rule or skill without deleting it (frontmatter `enabled: false` + DB column).
+
+```bash
+ax policy disable mobile-first
+```
+
+### `ax policy pack`
+
+Per-project shared pack under `.ax/policy/shared/` for git team sync. Default export includes all packable (project + workspace) enabled items; company/private scopes and tags `local` / `noshare` are skipped.
+
+#### `ax policy pack export [path]`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--tag` | `shared` | Default `shared` = all packable scopes; any other value filters by that frontmatter tag |
+| `--out` | `.ax/policy/shared` | Pack directory |
+| `--quiet` | | Suppress summary |
+
+```bash
+ax policy pack export
+ax policy pack export --tag team
+```
+
+#### `ax policy pack import [path]`
+
+Imports the shared pack into the local policy store, then refreshes **all** IDE bootstraps (Cursor, Continue, Claude, …) and MCP config for detected agents so a teammate on a different IDE picks up the same rules via `ax_preflight`.
+
+| Flag | Description |
+|---|---|
+| `--pack` | Pack directory (default `.ax/policy/shared`) |
+| `--force` | Overwrite conflicting local items without staging pending |
+| `--quiet` | Suppress summary |
+
+```bash
+ax policy pack import
+ax policy pack import --force
+```
+
+#### `ax policy pack status [path]`
+
+```bash
+ax policy pack status --json
+```
+
+#### `ax policy pack install [name] [path]`
+
+Install a built-in pack into **project** scope (`.ax/policy/`), then re-index. Company/private scopes are not modified.
+
+| Flag | Description |
+|---|---|
+| `--list` | List available built-in packs (no install) |
+| `--force` | Overwrite existing rules/skills with the same id/name |
+| `--json` | JSON output |
+
+```bash
+ax policy pack install --list
+ax policy pack install azdo-fullstack
+ax policy pack install azdo-fullstack --force
+```
+
+### `ax policy review`
+
+Review pending pack imports when `policy.requireReview` is true.
+
+```bash
+ax policy review list
+ax policy review show mobile-first
+ax policy review approve mobile-first
+ax policy review reject mobile-first
 ```
 
 ---

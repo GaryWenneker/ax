@@ -13,12 +13,15 @@ export type Page =
   | 'settings'
   | 'logging'
   | 'savings'
+  | 'prices'
   | 'unresolved'
   | 'policy-rules'
   | 'policy-rule-edit'
   | 'policy-skills'
   | 'policy-skill-edit'
-  | 'policy-match';
+  | 'policy-match'
+  | 'policy-review'
+  | 'policy-sync';
 
 export type SonarTab = 'dashboard' | 'setup';
 
@@ -43,12 +46,15 @@ const VALID_PAGES: Page[] = [
   'settings',
   'logging',
   'savings',
+  'prices',
   'unresolved',
   'policy-rules',
   'policy-rule-edit',
   'policy-skills',
   'policy-skill-edit',
   'policy-match',
+  'policy-review',
+  'policy-sync',
 ];
 
 /** Pages that use the full workspace width (split panes, graph canvas, terminal). */
@@ -77,12 +83,15 @@ const PAGE_PATH: Record<Page, string> = {
   settings: '/settings',
   logging: '/logging',
   savings: '/savings',
+  prices: '/prices',
   unresolved: '/unresolved',
   'policy-rules': '/policy/rules',
   'policy-rule-edit': '/policy/rules/edit',
   'policy-skills': '/policy/skills',
   'policy-skill-edit': '/policy/skills/edit',
   'policy-match': '/policy/match',
+  'policy-review': '/policy/review',
+  'policy-sync': '/policy/sync',
 };
 
 const PATH_PAGE: Record<string, Page> = Object.fromEntries(
@@ -105,12 +114,15 @@ const LEGACY_HASH_PAGE: Record<string, Page> = {
   settings: 'settings',
   logging: 'logging',
   savings: 'savings',
+  prices: 'prices',
   unresolved: 'unresolved',
   'policy-rules': 'policy-rules',
   'policy-rule-edit': 'policy-rule-edit',
   'policy-skills': 'policy-skills',
   'policy-skill-edit': 'policy-skill-edit',
   'policy-match': 'policy-match',
+  'policy-review': 'policy-review',
+  'policy-sync': 'policy-sync',
 };
 
 function normalizePathname(pathname: string): string {

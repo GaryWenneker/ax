@@ -15,7 +15,8 @@ export interface TreeNode {
   folderCount?: number;
 }
 
-const EXPANDED_KEY = 'files-tree-expanded';
+// v2: browse mode no longer auto-expands lazy root folders (old key left stale "all open").
+const EXPANDED_KEY = 'files-tree-expanded-v2';
 
 function sortTree(node: TreeNode) {
   if (!node.children) return;
@@ -228,31 +229,34 @@ export default function FileTree({
   }, [files, roots]);
   const hydrated = useRef(false);
 
-  const defaultExpanded = useMemo(() => {
-    const set = folderPathsToExpand(
-      files.map((f) => f.path),
-      !!filterActive,
-    );
-    if (!filterActive) {
-      for (const child of tree.children ?? []) {
-        if (child.kind === 'folder') set.add(child.path);
-      }
-    }
-    return set;
-  }, [files, filterActive, tree]);
+  // Filter mode: expand ancestors of matches. Browse mode: start collapsed —
+  // top-level repos are lazy shells until the user opens them.
+  const defaultExpanded = useMemo(
+    () =>
+      folderPathsToExpand(
+        files.map((f) => f.path),
+        !!filterActive,
+      ),
+    [files, filterActive],
+  );
 
   const [expanded, setExpanded] = useState<Set<string>>(() => {
+    if (filterActive) return defaultExpanded;
     const stored = loadExpandedSet();
     if (stored && stored.size > 0) return stored;
-    return defaultExpanded;
+    return new Set();
   });
 
   useEffect(() => {
     if (!hydrated.current) {
       hydrated.current = true;
-      const stored = loadExpandedSet();
-      if (stored && stored.size > 0) {
-        setExpanded(stored);
+      if (!filterActive) {
+        const stored = loadExpandedSet();
+        if (stored && stored.size > 0) {
+          setExpanded(stored);
+          return;
+        }
+        setExpanded(new Set());
         return;
       }
     }
@@ -265,6 +269,14 @@ export default function FileTree({
       });
     }
   }, [defaultExpanded, filterActive]);
+
+  // Persisted / restored expanded paths must still fetch their lazy children.
+  useEffect(() => {
+    if (!onLoadPrefix || filterActive) return;
+    for (const path of expanded) {
+      if (path) onLoadPrefix(path);
+    }
+  }, [expanded, onLoadPrefix, filterActive]);
 
   function toggle(path: string) {
     const willOpen = !expanded.has(path);

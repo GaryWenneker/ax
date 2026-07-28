@@ -171,6 +171,9 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax sync [--watch] [--quiet] [--all]` | Incremental sync; `--all` syncs every workspace member |
 | `ax export graph --format …` | Export graph (`json`/`dot`/`graphml`/`gexf`/`cypher`/`mermaid`/`plantuml`/`html`) |
 | `ax policy pull <git-url>` | Pull shared policy rules/skills from a git registry |
+| `ax policy pack export\|import\|status\|install` | Per-project shared pack + built-in packs (e.g. `azdo-fullstack`) |
+| `ax policy review list\|show\|approve\|reject` | Review pending pack imports |
+| `ax policy enable\|disable <id>` | Toggle a rule or skill without deleting it |
 | `ax watch [path]` | Alias for `ax sync --watch` |
 | `ax status [--json]` | Node/edge/file counts, doc inventory by extension, pending sync |
 | `ax query <text> [--json]` | FTS symbol search |
@@ -186,6 +189,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax capture-git` | Mine recent git commits into memories |
 | `ax memory export\|import` | Shared memory JSONL sync for teams (`memorySync` in `ax.json`) |
 | `ax savings` | Context-token and cost savings summary (`import`, `tag-session`, `hook install`) |
+| `ax pricing` | Daily model price sync (OpenRouter) |
 | `ax mcp audit` | MCP quality audit (verbose log ↔ Cursor transcript; Quality slide-out engine) |
 | `ax cursor auth …` | Save/restore Cursor subscription sessions (`status`, `save`, `use`, `list`) |
 | `ax affected <files…>` | Tests affected by file changes |
@@ -208,6 +212,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax policy guard` | Pre-write CRITICAL checks (encoding, secrets paths, plus any rule-defined `guard:` directive) |
 | `ax stop-hook` | Claude Code `Stop`/`SubagentStop` post-flight — blocks turn end on a CRITICAL guard violation |
 | `ax web [--open]` | Local web UI — graph browser + policy editor + Command Center |
+| `ax desktop [--port]` | Native wgpu Command Center (embeds ax-web in-process) |
 
 Run `ax help <command>` for detailed help with examples.
 
@@ -248,7 +253,11 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 | `ax_node` | Single symbol or file details |
 | `ax_search` | FTS symbol lookup |
 | `ax_status` | Index stats, doc breakdown by extension, staleness |
-| `ax_index` | Trigger incremental sync |
+| `ax_index` | Trigger incremental sync; pass `force: true` for a full rebuild |
+| `ax_sync` | Incremental index sync (changed files only) |
+| `ax_lsp` | LSP status / enrich Exact edges (`action`: `status` \| `enrich`) |
+| `ax_ship` | Quality-gate evaluate / ci (never exits the MCP process) |
+| `ax_policy_index` | Re-index / import policy rules and skills from disk |
 | `ax_files` | Project file listing |
 | `ax_context` | Task-oriented markdown context |
 | `ax_callers` | Incoming call edges |
@@ -263,7 +272,7 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 | `ax_guard` | Pre-write guard for CRITICAL rules — built-in (encoding, secrets) plus generic `guard: forbid-path/forbid-content/require-content` directives declared in any rule body |
 | `ax_diagnostics` | Diagnostics bridge — feed in editor/LSP/compiler findings (Cursor Problems panel, `tsc`, `eslint`, ...), get back guarded-path and `ax_affected` test correlation |
 
-**Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read.
+**Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read. Prefer MCP ops (`ax_sync`, `ax_lsp`, `ax_ship`, `ax_policy_index`, `ax_remember`) over shelling out to the CLI when MCP is connected.
 
 **Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` plus an `<ax_index>` doc inventory snapshot — no need to read `.ax/policy/` files) and `ax_guard` before writes on guarded paths.
 
@@ -271,7 +280,7 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 
 **Lean by default:** responses never ship the answer twice — `content.text` is authoritative and `structuredContent` is projected down to metadata (no duplicated source/rule bodies). `ax_context` and the data tools return compact markdown / one-line-per-symbol text instead of pretty-JSON. Tune with `AX_MCP_FULL` (restore full structured payload), `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). See the [token savings guide](https://getax.wenneker.io/guides/token-savings/).
 
-**Verbose MCP logging:** enable **Settings → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; full current day on load; scroll up for prior days; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
+**Verbose MCP logging:** enable **Logging → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; full current day on load; scroll up for prior days; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
 
 ### Transport
 
@@ -302,6 +311,7 @@ Per-project indexes: pass `projectPath` when the workspace root differs from cwd
 | `ax-agent` | Cursor auth session management (save/restore profiles) |
 | `ax-ship` | Quality-gate pipeline, SonarQube orchestration, draft PRs |
 | `ax-web` | Embedded web UI (graph + policy management + Command Center) |
+| `ax-desktop-client` | Native wgpu Command Center (`ax-desktop` binary; embeds `ax-web`) |
 | `ax-types` | Shared types (`Node`, `Edge`, `ExploreResult`, …) |
 | `ax-utils` | Errors, paths, config helpers, encoding checks |
 
@@ -309,7 +319,15 @@ Build:
 
 ```bash
 cargo build --release -p ax-cli
-./target/release/ax --version
+./target-dev/release/ax --version
+```
+
+Native desktop Command Center (`ax desktop` embeds `ax-web` — see [Desktop Client guide](https://getax.wenneker.io/guides/desktop-client/)):
+
+```bash
+ax desktop
+ax desktop --port 17070
+cargo run -p ax-desktop-client -- .   # standalone binary
 ```
 
 Run MCP (hidden command):
@@ -321,21 +339,23 @@ ax serve --mcp --daemon # background daemon
 
 ---
 
-## Policy engine (v2.0.0)
+## Policy engine
 
-IDE-agnostic **rules** and **skills** for agents — not tied to Cursor or any single IDE format.
+IDE-agnostic **rules** and **skills** for agents — not tied to Cursor or any single IDE format. Items live in layered **scopes** (company → workspace → project → private); agents get policy through **MCP** (or the Claude prompt-hook), **not** by reading policy files on disk.
 
-Agents get policy through **MCP** (or the Claude prompt-hook), **not** by reading `.ax/policy/` files on disk. Files are the source of truth; SQLite is the delivery index.
-
-| Path | Purpose |
+| Path / scope | Purpose |
 |------|---------|
-| `.ax/policy/rules/*.mdc` | YAML frontmatter + markdown constraints |
+| `~/.ax/global_policy/` (`company`) | Org-wide rules/skills (never packed) |
+| `.ax/policy/rules/*.mdc` (`project` / `workspace`) | YAML frontmatter + markdown constraints |
 | `.ax/policy/skills/*/SKILL.md` | Triggered workflows (deploy, review, …) |
+| `~/.ax/private_policy/` / `.ax/policy-private/` | Personal overlays (never packed) |
 
 ```bash
 ax policy index
 ax policy match "deploy to production"
-ax web --open    # edit rules/skills in browser
+ax policy pack export          # project/workspace → .ax/policy/shared/
+ax policy pack install --list  # built-in packs (e.g. azdo-fullstack)
+ax web --open                  # edit rules/skills; Policy → Sync / Review
 ```
 
 ### Architecture — source to agent context

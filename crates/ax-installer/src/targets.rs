@@ -11,7 +11,7 @@ use crate::cli_install::cli_installable;
 
 pub const TARGETS: &[&str] = &[
     "claude", "cursor", "codex", "opencode", "hermes", "gemini", "antigravity", "kiro",
-    "vscode", "windsurf", "zed",
+    "vscode", "windsurf", "zed", "continue",
 ];
 
 pub fn display_name(target: &str) -> &'static str {
@@ -27,6 +27,7 @@ pub fn display_name(target: &str) -> &'static str {
         "vscode" => "VS Code (Copilot Chat)",
         "windsurf" => "Windsurf (Cascade)",
         "zed" => "Zed",
+        "continue" => "Continue",
         _ => "Unknown",
     }
 }
@@ -52,6 +53,7 @@ fn has_agent_data_dir(target: &str) -> bool {
         "vscode" => home.join(".vscode").is_dir() || vscode_user_dir().map(|p| p.is_dir()).unwrap_or(false),
         "windsurf" => windsurf_config_dir().map(|p| p.is_dir()).unwrap_or(false),
         "zed" => zed_settings_path().map(|p| p.parent().is_some_and(|d| d.is_dir())).unwrap_or(false),
+        "continue" => home.join(".continue").is_dir(),
         _ => false,
     }
 }
@@ -170,6 +172,10 @@ fn is_ax_configured(target: &str, project_root: &Path) -> Result<(bool, Vec<Stri
         "vscode" => vec![vscode_mcp_path(project_root)],
         "windsurf" => vec![windsurf_mcp_path()?],
         "zed" => vec![zed_settings_path()?],
+        "continue" => vec![
+            continue_mcp_path(project_root),
+            continue_global_mcp_path()?,
+        ],
         _ => return Ok((false, Vec::new())),
     };
     let str_paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
@@ -214,6 +220,16 @@ fn config_has_ax(path: &Path, bin: &str, project_root: &Path) -> bool {
     if val.get("context_servers").and_then(|v| v.get("ax")).is_some() {
         return true;
     }
+    // Continue `.continue/mcpServers/ax.json` — single-server file (name + command).
+    if val.get("name").and_then(|n| n.as_str()) == Some("ax")
+        && val
+            .get("command")
+            .and_then(|c| c.as_str())
+            .map(|c| c.contains(bin) || bin.ends_with(c) || c == "ax")
+            .unwrap_or(false)
+    {
+        return true;
+    }
     let _ = project_root;
     false
 }
@@ -241,6 +257,7 @@ fn install_target(target: &str, project_root: &Path) -> Result<Option<TargetRepo
         "vscode" => install_vscode_mcp(project_root)?,
         "windsurf" => install_windsurf_mcp(project_root)?,
         "zed" => install_zed_mcp(project_root)?,
+        "continue" => install_continue_mcp(project_root)?,
         _ => return Ok(None),
     };
     Ok(Some(report))
@@ -259,6 +276,7 @@ fn uninstall_target(target: &str) -> Result<Option<TargetReport>, String> {
         "vscode" => uninstall_vscode_mcp()?,
         "windsurf" => uninstall_windsurf_mcp()?,
         "zed" => uninstall_zed_mcp()?,
+        "continue" => uninstall_continue_mcp()?,
         _ => return Ok(None),
     };
     Ok(Some(report))
@@ -283,7 +301,8 @@ const PROCESS_CWD: &str = ".";
 fn mcp_path_token(target: &str) -> &'static str {
     match target {
         "claude" => CLAUDE_WORKSPACE,
-        "codex" | "hermes" => PROCESS_CWD,
+        // Continue project MCP files run with workspace cwd; no ${workspaceFolder} expansion.
+        "codex" | "hermes" | "continue" => PROCESS_CWD,
         _ => VS_WORKSPACE,
     }
 }
@@ -840,6 +859,68 @@ fn install_vscode_mcp(project_root: &Path) -> Result<TargetReport, String> {
     Ok(report)
 }
 
+fn continue_mcp_path(project_root: &Path) -> PathBuf {
+    project_root
+        .join(".continue")
+        .join("mcpServers")
+        .join("ax.json")
+}
+
+fn continue_global_mcp_path() -> Result<PathBuf, String> {
+    Ok(home_dir()?.join(".continue").join("mcpServers").join("ax.json"))
+}
+
+/// Continue discovers one JSON file per server under `.continue/mcpServers/`.
+/// Project files use `command: "ax"` (PATH) so the file is safe to commit across machines.
+fn continue_mcp_entry(use_path_bin: bool) -> Value {
+    let path_token = mcp_path_token("continue");
+    let command = if use_path_bin {
+        "ax".to_string()
+    } else {
+        ax_bin()
+    };
+    serde_json::json!({
+        "name": "ax",
+        "type": "stdio",
+        "command": command,
+        "args": mcp_serve_args(path_token),
+    })
+}
+
+fn install_continue_mcp(project_root: &Path) -> Result<TargetReport, String> {
+    let mut report = TargetReport::new("continue", display_name("continue"));
+    let project_path = continue_mcp_path(project_root);
+    report.push_file(
+        project_path.clone(),
+        write_json_action(&project_path, &continue_mcp_entry(true))?,
+    );
+    let global_path = continue_global_mcp_path()?;
+    report.push_file(
+        global_path.clone(),
+        write_json_action(&global_path, &continue_mcp_entry(false))?,
+    );
+    report.note("Reload Continue / the host IDE for MCP changes. Project `.continue/mcpServers/ax.json` is git-friendly for teammates.");
+    Ok(report)
+}
+
+fn uninstall_continue_mcp() -> Result<TargetReport, String> {
+    let mut report = TargetReport::new("continue", display_name("continue"));
+    if let Ok(cwd) = std::env::current_dir() {
+        let path = continue_mcp_path(&cwd);
+        if path.exists() {
+            fs::remove_file(&path).map_err(|e| e.to_string())?;
+            report.push_file(path, FileAction::Updated);
+        }
+    }
+    if let Ok(global) = continue_global_mcp_path() {
+        if global.exists() {
+            fs::remove_file(&global).map_err(|e| e.to_string())?;
+            report.push_file(global, FileAction::Updated);
+        }
+    }
+    Ok(report)
+}
+
 fn uninstall_vscode_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("vscode", display_name("vscode"));
     // Best-effort: workspace path unknown at uninstall time for a home-only call;
@@ -1097,6 +1178,18 @@ mod mcp_path_tests {
         assert_eq!(mcp_path_token("vscode"), VS_WORKSPACE);
         assert_eq!(mcp_path_token("windsurf"), VS_WORKSPACE);
         assert_eq!(mcp_path_token("zed"), VS_WORKSPACE);
+        assert_eq!(mcp_path_token("continue"), PROCESS_CWD);
+    }
+
+    #[test]
+    fn continue_entry_is_single_server_file() {
+        let entry = continue_mcp_entry(true);
+        assert_eq!(entry["name"], "ax");
+        assert_eq!(entry["type"], "stdio");
+        assert_eq!(entry["command"], "ax");
+        assert!(entry.get("mcpServers").is_none());
+        let args = entry["args"].as_array().expect("args");
+        assert_eq!(args[3], PROCESS_CWD);
     }
 
     #[test]

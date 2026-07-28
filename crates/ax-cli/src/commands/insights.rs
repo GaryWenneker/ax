@@ -9,14 +9,26 @@ pub async fn run(
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    ax_usage::log_cli(Some(&root), "cmd=insights start");
     let resolution = if resolution > 0.0 { resolution } else { 1.0 };
     let insights = {
         let _spinner = SpinnerGuard::new("Analyzing graph structure...".to_string(), json);
         let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-        ax.insights(resolution, god_limit, surprising_limit)
-            .await
-            .map_err(|e| e.to_string())?
+        match ax.insights(resolution, god_limit, surprising_limit).await {
+            Ok(i) => i,
+            Err(e) => {
+                ax_usage::log_cli(Some(&root), "cmd=insights fail");
+                return Err(e.to_string());
+            }
+        }
     };
+    ax_usage::log_cli(
+        Some(&root),
+        format!(
+            "cmd=insights ok communities={}",
+            insights.num_communities
+        ),
+    );
 
     if json {
         println!("{}", serde_json::to_string_pretty(&insights).unwrap_or_default());

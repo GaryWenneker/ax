@@ -13,8 +13,15 @@ pub async fn run_remember(
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(None);
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let row = ax_memory::remember(
+    ax_usage::log_memory(Some(&root), "remember start");
+    let ax = match ax_core::Ax::open(&root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            ax_usage::log_memory(Some(&root), "remember fail stage=open");
+            return Err(e.to_string());
+        }
+    };
+    let row = match ax_memory::remember(
         ax.db_pool(),
         ax_memory::RememberInput {
             title: title.unwrap_or_default(),
@@ -26,7 +33,18 @@ pub async fn run_remember(
         },
     )
     .await
-    .map_err(|e| e.to_string())?;
+    {
+        Ok(row) => row,
+        Err(e) => {
+            ax_usage::log_memory(Some(&root), "remember fail");
+            return Err(e.to_string());
+        }
+    };
+
+    ax_usage::log_memory(
+        Some(&root),
+        format!("remember ok id={} kind={}", row.id, row.kind),
+    );
 
     // Near-identical memories are usually duplicates or contradictions.
     let similar = ax_memory::find_similar(ax.db_pool(), &format!("{} {}", row.title, row.body), Some(&row.id), 0.80, 3)
@@ -54,10 +72,27 @@ pub async fn run_remember(
 
 pub async fn run_capture_git(limit: Option<u32>, quiet: bool, json: bool) -> Result<(), String> {
     let root = resolve_path(None);
+    ax_usage::log_memory(
+        Some(&root),
+        format!("capture-git start limit={}", limit.unwrap_or(100)),
+    );
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let result = ax_memory::capture_git_history(ax.db_pool(), ax.project_root(), limit.unwrap_or(100) as usize)
+    let result = match ax_memory::capture_git_history(ax.db_pool(), ax.project_root(), limit.unwrap_or(100) as usize)
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_memory(Some(&root), "capture-git fail");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_memory(
+        Some(&root),
+        format!(
+            "capture-git ok scanned={} captured={}",
+            result.scanned, result.captured
+        ),
+    );
 
     if quiet {
         return Ok(());
@@ -75,11 +110,21 @@ pub async fn run_capture_git(limit: Option<u32>, quiet: bool, json: bool) -> Res
 
 pub async fn run_recall(query: String, limit: Option<u32>, json: bool) -> Result<(), String> {
     let root = resolve_path(None);
+    let q_len = query.chars().count();
+    ax_usage::log_memory(Some(&root), format!("recall start q_len={q_len}"));
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let limit = limit.unwrap_or(5).min(50) as usize;
-    let matches = ax_memory::recall(ax.db_pool(), &query, limit)
-        .await
-        .map_err(|e| e.to_string())?;
+    let matches = match ax_memory::recall(ax.db_pool(), &query, limit).await {
+        Ok(m) => m,
+        Err(e) => {
+            ax_usage::log_memory(Some(&root), "recall fail");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_memory(
+        Some(&root),
+        format!("recall ok hits={} limit={limit}", matches.len()),
+    );
 
     if json {
         println!("{}", serde_json::to_string_pretty(&matches).map_err(|e| e.to_string())?);
@@ -119,17 +164,28 @@ pub async fn run_export(
     quiet: bool,
 ) -> Result<(), String> {
     let root = resolve_path(None);
+    ax_usage::log_memory(Some(&root), "export start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let tag = tag.unwrap_or_else(|| "shared".into());
     let out_path = out.map(PathBuf::from);
-    let result = ax_memory::export_shared(
+    let result = match ax_memory::export_shared(
         ax.db_pool(),
         ax.project_root(),
         &tag,
         out_path.as_deref(),
     )
     .await
-    .map_err(|e| e.to_string())?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_memory(Some(&root), "export fail");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_memory(
+        Some(&root),
+        format!("export ok written={} tag={tag}", result.written),
+    );
     if !quiet {
         println!(
             "Exported {} memor{} tagged \"{}\" → {}",
@@ -144,13 +200,25 @@ pub async fn run_export(
 
 pub async fn run_import(path: Option<String>, quiet: bool) -> Result<(), String> {
     let root = resolve_path(None);
+    ax_usage::log_memory(Some(&root), "import start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let path = path
         .map(PathBuf::from)
         .unwrap_or_else(|| ax_memory::default_shared_path(ax.project_root()));
-    let result = ax_memory::import_shared(ax.db_pool(), &path)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = match ax_memory::import_shared(ax.db_pool(), &path).await {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_memory(Some(&root), "import fail");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_memory(
+        Some(&root),
+        format!(
+            "import ok inserted={} updated={} skipped={}",
+            result.inserted, result.updated, result.skipped
+        ),
+    );
     if !quiet {
         println!(
             "Imported memories from {}: {} new, {} updated, {} skipped",

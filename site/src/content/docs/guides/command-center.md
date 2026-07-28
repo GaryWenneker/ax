@@ -7,6 +7,8 @@ description: Git-aware quality gates, test-impact analysis, and draft PRs from a
 
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
+Prefer a native GPU window instead of the browser? Use `ax desktop` — see the [Desktop Client](/guides/desktop-client/) guide (same `/api` surface with an embedded `ax-web` server).
+
 ![Command Center — quality gate pipeline with completed evaluation, pipeline steps (Index, TIA, Tests, Sonar, Policy), branch overview, and SonarQube status](/screenshots/cc-ship-full.png)
 
 ## Quick start
@@ -119,13 +121,14 @@ Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left
 | Page | Purpose |
 |---|---|
 | **Ship** | Quality-gate pipeline, SSE logs, git events |
-| **Graph** | Interactive force-directed graph — communities, god nodes, edge confidence, docs; toolbar **Export / Download** for JSON · DOT · GraphML · GEXF · Cypher · Mermaid · PlantUML ([details](/guides/architecture-insights/#visual-graph)) |
+| **Files** | Indexed file tree — folders expand lazily; root-level files (`README.md`, `Cargo.toml`, …) show as files, not folders |
 | **SonarQube** | Proxied dashboard with auto-login and dark theme |
 | **Memory** | Browse, search, compose memories (modal composer); capture from git |
 | **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
+| **Prices** | Daily OpenRouter model $/MTok catalog and history |
 | **Agent** | Terminal with MCP wired in (when enabled in Settings) |
 | **Logging** | Fullscreen table of the **active project** MCP verbose stream (**newest at top**; **Scroll to new** when you leave the top); **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), **Has query** chip (JSON payloads with a top-level `query` — badge + blue row mark), **date** dropdown (`YYYY-MM-DD`), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **Date / time** column shows full calendar day + clock; **fluid columns** (Date/time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
-| **Policy** | View-first rule and skill editors |
+| **Policy** | View-first rule/skill editors with **Scope** (company → private), layer filters on list pages, **Sync** (pack export/import + `policySync` hooks), and **Review** queue for staged imports |
 
 ![MCP Logging — live verbose stream with kind filters, project switcher, and Call Inspector](/screenshots/cc-logging.png)
 
@@ -134,6 +137,8 @@ Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left
 Full walkthrough: [MCP Logging & Quality](/guides/mcp-quality/).
 
 Open with `ax web --open` or `ax ship --watch --open`.
+
+If pages render but stay empty / forever loading, close extra Command Center tabs and hard-refresh (`Ctrl+Shift+R`). Multiple long-lived SSE streams used to exhaust the browser’s ~6 HTTP/1.1 sockets per host; the UI now shares one EventSource per URL per tab. You can also hit `http://127.0.0.1:PORT/api/reset-client-cache` once if a stale service worker is involved.
 
 The title bar uses the same **azure CSS waves** as the marketing site (soft fade under the crest, matching the cinematic bokeh orbs). Waves sit in a reserved hang band under the chrome; the Logging overlay is portaled below that band so **Back / Newest · To new / Full / Clear** stay fully visible and clickable (never clipped under the titlebar).
 
@@ -187,7 +192,7 @@ Results stream to the dashboard via SSE (`/api/ship/events`).
 
 Default port: `7070` (override with `--port` or `[ship].web_port`).
 
-The same `ax web` UI includes **Memory**, **Savings**, **SonarQube**, and **Agent** pages — see the Command Center pages table above. Savings shows estimated context-token and dollar savings from MCP graph queries. See [`ax savings`](/reference/cli/#ax-savings) and [Token savings](/guides/token-savings/).
+The same `ax web` UI includes **Memory**, **Savings**, **Prices**, **SonarQube**, and **Agent** pages — see the Command Center pages table above. Savings shows estimated context-token and dollar savings from MCP graph queries. Prices tracks daily model rates that feed those dollar estimates. See [`ax savings`](/reference/cli/#ax-savings), [`ax pricing`](/reference/cli/#ax-pricing), and [Token savings](/guides/token-savings/).
 
 ![Settings — AI agents with terminal mode and profiles, pipeline config, and account profiles](/screenshots/cc-settings.png)
 
@@ -195,7 +200,8 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 - **SonarQube** — auto-detect Podman/Docker, one-click install & start, admin auto-login, dark theme
 - **Command Center** — target branch, test runner, Azure DevOps / GitHub remote
-- **Interface** — theme chooser (default **ax Mint** `#3ee4b2`; accent/palette presets applied live, including the status bar), toggle Savings and Agent pages in the sidebar, **Timezone** for Logging Date/time and **daily log rotation** (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC), and **Verbose MCP logging** (records MCP traces to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; Logging shows **newest events at the top** and loads older days when you scroll down; **Scroll to new** jumps back to the live top; no clear/delete in the UI; off by default; never alters tool responses)
+- **Interface** — theme chooser (default **ax Mint** `#3ee4b2`; accent/palette presets applied live, including the status bar), toggle Savings and Agent pages in the sidebar, and **Timezone** for Logging Date/time and **daily log rotation** (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC)
+- **Logging** — **Verbose MCP logging** toggle (records MCP traces to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; newest events at the top; loads older days on scroll; **Scroll to new** jumps back to the live top; off by default; never alters tool responses)
 - **Sharing** — live share status card (badge, port, copy URL), How to share, Enable PWA / Install / show hint again
 - **Plugins** — live extractor table from `GET /api/plugins` (name, mode, extensions, entry) with Refresh
 - **Embeddings** — memory embed backend (`hash` / `onnx` / …), onnx Cargo feature, model + tokenizer paths from `GET /api/memory/embed-status` with Re-probe

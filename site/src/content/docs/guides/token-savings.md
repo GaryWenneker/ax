@@ -73,7 +73,7 @@ The **Savings** page includes a compact **TokenViz-style path graph**: log-scale
 
 Per-call drill-down also shows color-coded o200k BPE chips for the truncated graph response versus the counterfactual file preview. New MCP graph calls store short local previews in `~/.ax/usage.db`; older rows use a synthetic count-based path until new calls arrive. The **Token playground** tokenizes arbitrary text the same way.
 
-**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate (`~/.ax/pricing.toml`). Run **Import sessions** on the Savings page (or `ax savings import --all`) first — MCP-only periods without imported transcripts have no model breakdown.
+**By model** rolls up imported Cursor / Claude Code sessions: input tokens, graph savings during each session window, and USD at each model's rate. Rates resolve in order: `~/.ax/pricing.toml` overrides → latest daily OpenRouter snapshot in `~/.ax/usage.db` → built-in defaults. Run **Import sessions** on the Savings page (or `ax savings import --all`) first — MCP-only periods without imported transcripts have no model breakdown.
 
 **Agent vs model name:** The **Agent** column is the log source (`cursor` = Cursor Composer chats, `claude` = Claude Code CLI). The **Model** column is normally the provider API id from the transcript (e.g. `claude-opus-4-8`). Cursor Composer transcripts usually omit model metadata — install the **sessionStart hook** (below) so ax records labels like `composer-2.5-fast` when each chat starts.
 
@@ -95,7 +95,28 @@ Manual tag (debug):
 ax savings tag-session --session-id <uuid> --model composer-2.5-fast
 ```
 
-**Limitation:** Input tokens come from Cursor's **context meter** (`promptTokenBreakdown.totalUsedTokens` in `state.vscdb`) — the same number shown in the Composer UI. It is a session snapshot, not a per-request sum, and may undercount versus the Cursor dashboard. Output tokens and exact billed USD are still unavailable locally; session cost in ax is estimated from input tokens × `pricing.toml`.
+**Limitation:** Input tokens come from Cursor's **context meter** (`promptTokenBreakdown.totalUsedTokens` in `state.vscdb`) — the same number shown in the Composer UI. It is a session snapshot, not a per-request sum, and may undercount versus the Cursor dashboard. Output tokens and exact billed USD are still unavailable locally; session cost in ax is estimated from input tokens × the resolved model rate (synced snapshot or `pricing.toml`).
+
+### Daily price sync
+
+ax stores a daily snapshot of model $/MTok rates in `~/.ax/usage.db` from [OpenRouter](https://openrouter.ai/models) (public API, no key).
+
+`ax web` and the MCP server sync **once per calendar day** on startup. Force a refresh anytime:
+
+```bash
+ax pricing sync
+ax pricing status
+ax pricing list
+ax pricing history claude-sonnet --days 30
+```
+
+The Command Center **Prices** page shows the OpenRouter catalog and price-over-time charts (after two or more daily syncs). Historical Savings daily bars use that day's rate when a snapshot exists.
+
+Resolution order for USD estimates:
+
+1. Exact / longest-substring match in `~/.ax/pricing.toml` (user override)
+2. Latest OpenRouter snapshot in `~/.ax/usage.db`
+3. Built-in defaults
 
 ### Cursor state.vscdb (automatic on import)
 
@@ -251,7 +272,7 @@ The highest-impact strategies ranked by effort-to-savings ratio:
 
 ## Model pricing snapshot (July 2026)
 
-Current pricing for models commonly used in agent workflows:
+For **live** rates, use the Command Center **Prices** page or `ax pricing list` — snapshots update daily from OpenRouter. The table below is a static reference only:
 
 | Model | Input /MTok | Output /MTok | Cache discount | Context |
 |---|---|---|---|---|
@@ -277,6 +298,9 @@ The sidebar **Savings** tab (toggle visibility in Settings) shows:
 - **Savings over time** — hourly bar chart with day labels on X; 2 / 7 / 30 day windows and Older / Newer within the selected period; Y-axis auto-caps outliers so typical hours stay readable (hover a peak for the real value)
 - **Activity heatmap** — calendar for the selected period (empty days included), Tokens / All / Graph toggles, hover tooltips, streaks
 - **Period filter** — Apply scopes every card (timeline, heatmap, heroes, tables, sessions) to the same range
+- **By model** — session spend and savings with the resolved **$/MTok** rate (from daily sync or `pricing.toml`)
+
+The sidebar **Prices** tab shows daily OpenRouter rates and price-over-time charts. Sync with **Sync now** or `ax pricing sync`.
 - **Trends** — saved / reduction / compare / weekday / hour / table views
 - **Token path graph** — token-position illustration (not clock time); Alt slider redraws grey path count (including synthetic overview); Matched toggles the green path; Y fits the green path while alts stay visible in-band
 - **Tool audit** — which MCP tools generate the most savings
@@ -311,7 +335,7 @@ ax savings import --claude-code     # Claude Code only
 | `AX_SAVINGS_TOKENS_PER_LINE` | 9 | Tokens per line for unreadable files |
 | `AX_SAVINGS_AVG_FILE_TOKENS` | 3500 | Fallback when no line count or path-only ref |
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every MCP tool |
-| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` logs inbound/enrichment/outbound MCP traces to stderr (Cursor Output); same as Settings → Verbose MCP logging |
+| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` logs inbound/enrichment/outbound MCP traces to stderr (Cursor Output); same as Logging → Verbose MCP logging |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
 | `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |

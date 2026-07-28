@@ -20,6 +20,10 @@ pub async fn run(
     if all_members {
         let members = ax_core::member_roots(&root);
         if members.len() > 1 || (members.len() == 1 && members[0] != root) {
+            ax_usage::log_workspace(
+                Some(&root),
+                format!("index-all start members={}", members.len()),
+            );
             for member in &members {
                 if !quiet {
                     println!("{}", info_line(format!("Indexing {}", member.display())));
@@ -28,8 +32,18 @@ pub async fn run(
                     Some(&root),
                     format!("index-all member={}", member.display()),
                 );
-                index_one(member, force, quiet).await?;
+                if let Err(e) = index_one(member, force, quiet).await {
+                    ax_usage::log_workspace(
+                        Some(&root),
+                        format!("index-all fail member={}", member.display()),
+                    );
+                    return Err(e);
+                }
             }
+            ax_usage::log_workspace(
+                Some(&root),
+                format!("index-all ok members={}", members.len()),
+            );
             if !quiet {
                 println!(
                     "{}",
@@ -45,9 +59,19 @@ pub async fn run(
 
 async fn index_one(root: &std::path::Path, force: bool, quiet: bool) -> Result<(), String> {
     check_unsafe_root(root)?;
-    let mut ax = ax_core::Ax::open(root).await.map_err(|e| e.to_string())?;
+    ax_usage::log_workspace(Some(root), "index start");
+    let mut ax = match ax_core::Ax::open(root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            ax_usage::log_workspace(Some(root), "index fail stage=open");
+            return Err(e.to_string());
+        }
+    };
     if force {
-        ax.clear().await.map_err(|e| e.to_string())?;
+        if let Err(e) = ax.clear().await {
+            ax_usage::log_workspace(Some(root), "index fail stage=clear");
+            return Err(e.to_string());
+        }
     }
     let opts = IndexOptions {
         force,
@@ -60,12 +84,24 @@ async fn index_one(root: &std::path::Path, force: bool, quiet: bool) -> Result<(
         .as_ref()
         .map(|pb| index_progress_callback(Arc::clone(pb)));
 
-    let result = ax
-        .index_all(opts, on_progress)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = match ax.index_all(opts, on_progress).await {
+        Ok(r) => r,
+        Err(e) => {
+            finish_progress_bar(progress);
+            ax_usage::log_workspace(Some(root), "index fail stage=index");
+            return Err(e.to_string());
+        }
+    };
 
     finish_progress_bar(progress);
+
+    ax_usage::log_workspace(
+        Some(root),
+        format!(
+            "index ok files={} duration_ms={}",
+            result.files_indexed, result.duration_ms
+        ),
+    );
 
     if !quiet {
         println!(

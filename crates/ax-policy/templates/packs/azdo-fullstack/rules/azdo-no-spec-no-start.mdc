@@ -1,0 +1,23 @@
+---
+id: azdo-no-spec-no-start
+level: WARNING
+alwaysApply: false
+globs: []
+triggers: ["In Progress", "start story", "pick up ticket", "begin work", "refinement", "Definition of Ready", "DoR"]
+tags: ["azdo", "refinement", "shared"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# No Spec, No Start
+
+A User Story may move to **In Progress** only when it meets the Definition of Ready (DoR):
+
+1. Clear functional description
+2. Explicit acceptance criteria
+3. UX/UI designs linked when UI work is in scope
+4. Linked to a parent Feature or Epic in Azure DevOps
+
+If DoR is incomplete, refine first — do not start coding.

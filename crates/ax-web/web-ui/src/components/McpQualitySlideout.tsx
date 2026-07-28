@@ -16,6 +16,7 @@ import {
   type QualitySnapshot,
 } from '../lib/mcpQuality';
 import { navigateRoute } from '../lib/routes';
+import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import { WORKSPACE_SWITCHED } from '../workspaceEvents';
 
 type Props = {
@@ -91,24 +92,24 @@ export default function McpQualitySlideout({ open, onClose, highlightFindingId }
   useEffect(() => {
     if (!open) return;
     void refresh();
-    const es = new EventSource(MCP_QUALITY_EVENTS_URL);
-    es.addEventListener('quality', (ev) => {
-      try {
-        const data = JSON.parse((ev as MessageEvent).data) as QualitySnapshot;
-        setSnap(data);
-        setError(null);
-      } catch {
-        /* ignore */
-      }
+    const unsub = subscribeSharedEventSource(MCP_QUALITY_EVENTS_URL, {
+      events: {
+        quality: (ev) => {
+          try {
+            const data = JSON.parse((ev as MessageEvent).data) as QualitySnapshot;
+            setSnap(data);
+            setError(null);
+          } catch {
+            /* ignore */
+          }
+        },
+      },
     });
-    es.onerror = () => {
-      /* poll fallback */
-    };
     const poll = window.setInterval(() => {
       void refresh();
     }, 8_000);
     return () => {
-      es.close();
+      unsub();
       clearInterval(poll);
     };
   }, [open, refresh]);
@@ -197,7 +198,7 @@ export default function McpQualitySlideout({ open, onClose, highlightFindingId }
 
           {!snap.verboseEnabled && (
             <div className="mcp-q-banner mcp-q-banner--warn">
-              Verbose MCP logging is off. Enable it in Settings → Interface so the quality loop can score enrichment.
+              Verbose MCP logging is off. Enable it on the Logging page so the quality loop can score enrichment.
             </div>
           )}
 

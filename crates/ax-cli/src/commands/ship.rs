@@ -15,11 +15,27 @@ pub async fn run(
     let root = resolve_path(path);
 
     if evaluate || ci {
+        let mode = if ci { "ci" } else { "evaluate" };
+        if ci {
+            ax_usage::log_ship_ci(Some(&root), "start");
+        } else {
+            ax_usage::log_ship(Some(&root), format!("start mode={mode}"));
+        }
         let overrides = ax_ship::AutoCommitOverride {
             enabled: if auto_commit { Some(true) } else { None },
             revert_on_fail: if revert_on_fail { Some(true) } else { None },
         };
-        let report = ax_ship::evaluate_project_with_overrides(root.clone(), overrides).await?;
+        let report = match ax_ship::evaluate_project_with_overrides(root.clone(), overrides).await {
+            Ok(r) => r,
+            Err(e) => {
+                if ci {
+                    ax_usage::log_ship_ci(Some(&root), "fail stage=evaluate");
+                } else {
+                    ax_usage::log_ship(Some(&root), format!("fail mode={mode}"));
+                }
+                return Err(e);
+            }
+        };
         let json = serde_json::to_string_pretty(&report).unwrap_or_default();
         if ci {
             let status = if report.quality_gate.passed {
@@ -50,25 +66,46 @@ pub async fn run(
             }
             return Ok(());
         }
+        ax_usage::log_ship(
+            Some(&root),
+            format!(
+                "ok mode=evaluate passed={}",
+                if report.quality_gate.passed {
+                    "1"
+                } else {
+                    "0"
+                }
+            ),
+        );
         println!("{json}");
         return Ok(());
     }
 
     if draft {
+        ax_usage::log_ship(Some(&root), "start mode=draft");
         let daemon = ax_ship::ShipDaemon::new(root.clone());
         let cfg = daemon.config().await;
-        let pipeline = ax_ship::ShipPipeline::new(root, cfg, daemon.bus);
-        let pr = pipeline
+        let pipeline = ax_ship::ShipPipeline::new(root.clone(), cfg, daemon.bus);
+        let pr = match pipeline
             .create_draft_pr(
                 title.as_deref().unwrap_or("ax ship draft"),
                 "Draft PR created by ax Command Center",
             )
-            .await?;
+            .await
+        {
+            Ok(pr) => pr,
+            Err(e) => {
+                ax_usage::log_ship(Some(&root), "fail mode=draft");
+                return Err(e);
+            }
+        };
+        ax_usage::log_ship(Some(&root), format!("ok mode=draft pr={}", pr.number));
         println!("Draft PR #{} — {}", pr.number, pr.url);
         return Ok(());
     }
 
     if watch {
+        ax_usage::log_ship(Some(&root), format!("start mode=watch port={port}"));
         return ax_web::serve(root, port, open).await;
     }
 

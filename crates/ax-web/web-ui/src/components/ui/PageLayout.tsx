@@ -304,3 +304,22 @@ export function LevelBadge({ level }: { level: string }) {
   const short = level === 'CRITICAL' ? 'Crit' : level === 'WARNING' ? 'Warn' : 'Info';
   return <span className={`page-level-badge page-level-badge--${cls}`}>{short}</span>;
 }
+
+export function ScopeBadge({ scope }: { scope?: string }) {
+  const value = (scope || 'project').toLowerCase();
+  const label =
+    value === 'company'
+      ? 'Company'
+      : value === 'workspace'
+        ? 'Workspace'
+        : value === 'private_user'
+          ? 'Private user'
+          : value === 'private_project'
+            ? 'Private'
+            : 'Project';
+  return (
+    <span className={`page-item-badge page-scope-badge page-scope-badge--${value.replace('_', '-')}`}>
+      {label}
+    </span>
+  );
+}

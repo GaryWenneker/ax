@@ -293,6 +293,25 @@ static CATALOG: &[CliCatalogEntry] = &[
         auth: None,
         runnable: false,
     },
+    CliCatalogEntry {
+        id: "continue",
+        display_name: "Continue",
+        bin: "continue",
+        npm: None,
+        install: InstallSpec {
+            method: CliInstallMethod::Manual,
+            native_url_unix: None,
+            native_url_windows: None,
+            npm_package: None,
+            manual_url: Some("https://continue.dev"),
+            manual_hint: Some(
+                "Install the Continue extension, then ax writes `.continue/mcpServers/ax.json` (project) and `~/.continue/mcpServers/ax.json` (global).",
+            ),
+        },
+        headless: None,
+        auth: None,
+        runnable: false,
+    },
 ];
 
 pub fn catalog() -> &'static [CliCatalogEntry] {
@@ -792,7 +811,7 @@ mod tests {
     fn catalog_covers_all_targets() {
         for id in [
             "claude", "cursor", "codex", "opencode", "hermes", "gemini", "antigravity", "kiro",
-            "vscode", "windsurf", "zed",
+            "vscode", "windsurf", "zed", "continue",
         ] {
             assert!(catalog_entry(id).is_some(), "missing catalog entry for {id}");
         }
@@ -800,7 +819,7 @@ mod tests {
 
     #[test]
     fn ide_only_targets_are_not_runnable() {
-        for id in ["vscode", "windsurf", "zed"] {
+        for id in ["vscode", "windsurf", "zed", "continue"] {
             assert!(
                 !catalog_entry(id).unwrap().runnable,
                 "{id} should not be marked runnable (IDE-only, no headless CLI)"

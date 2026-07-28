@@ -83,6 +83,54 @@ export function deletePolicySkill(name: string): Promise<{ ok: boolean }> {
   return request(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
+export function setPolicyRuleEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }> {
+  return request(`/rules/${encodeURIComponent(id)}/enabled`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function setPolicySkillEnabled(name: string, enabled: boolean): Promise<{ ok: boolean }> {
+  return request(`/skills/${encodeURIComponent(name)}/enabled`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function fetchPolicySyncSettings(): Promise<import('./policyTypes').PolicySyncSettings> {
+  return request('/settings');
+}
+
+export function savePolicySyncSettings(
+  patch: Partial<import('./policyTypes').PolicySyncSettings>,
+): Promise<import('./policyTypes').PolicySyncSettings> {
+  return request('/settings', { method: 'PUT', body: JSON.stringify(patch) });
+}
+
+export function fetchPolicyReview(): Promise<{ items: import('./policyTypes').PendingPolicyItem[] }> {
+  return request('/review');
+}
+
+export function approvePolicyReview(id: string): Promise<{ ok: boolean }> {
+  return request(`/review/${encodeURIComponent(id)}/approve`, { method: 'POST', body: '{}' });
+}
+
+export function rejectPolicyReview(id: string): Promise<{ ok: boolean }> {
+  return request(`/review/${encodeURIComponent(id)}/reject`, { method: 'POST', body: '{}' });
+}
+
+export function fetchPolicyPackStatus(): Promise<import('./policyTypes').PolicyPackStatus> {
+  return request('/pack/status');
+}
+
+export function exportPolicyPack(): Promise<{ rulesExported: number; skillsExported: number; path: string }> {
+  return request('/pack/export', { method: 'POST', body: '{}' });
+}
+
+export function importPolicyPack(force = false): Promise<Record<string, number>> {
+  return request('/pack/import', { method: 'POST', body: JSON.stringify({ force }) });
+}
+
 export function matchPolicy(prompt: string, files: string[] = []): Promise<MatchResult> {
   return request('/match', { method: 'POST', body: JSON.stringify({ prompt, files }) });
 }

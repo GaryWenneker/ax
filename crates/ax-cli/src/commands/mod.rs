@@ -3,6 +3,7 @@
 pub mod offload;
 pub mod telemetry;
 pub mod savings;
+pub mod pricing;
 pub mod upgrade;
 pub mod affected;
 pub mod diff;
@@ -36,6 +37,7 @@ pub mod session_hook;
 pub mod stop_hook;
 pub mod unlock;
 pub mod web;
+pub mod desktop;
 pub mod lsp;
 pub mod share;
 

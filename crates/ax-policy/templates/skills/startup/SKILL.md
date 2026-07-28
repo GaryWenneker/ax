@@ -84,6 +84,21 @@ ax cannot read editor/LSP state itself. If the IDE surfaces linter/compiler diag
 ax_diagnostics({ "diagnostics": [{ "path": "<relative path>", "line": 42, "severity": "error", "message": "<text>", "source": "<tool name>" }] })
 ```
 
+## SS-02c — Prefer MCP ops (not shell CLI)
+
+When ax MCP is connected, call MCP tools for session ops — do **not** shell out to the CLI:
+
+| Need | MCP tool |
+|------|----------|
+| Incremental re-index | `ax_sync` |
+| Full rebuild | `ax_index({ "force": true })` |
+| LSP status / enrich | `ax_lsp({ "action": "status"\|"enrich" })` |
+| Quality gate | `ax_ship({ "mode": "evaluate"\|"ci" })` |
+| Refresh policy from disk | `ax_policy_index` |
+| Memories | `ax_remember` / `ax_recall` |
+
+Shell `ax …` is only for **Mode: DEGRADED** or ops with no MCP tool (`install`, `upgrade`, `web`, `share`, `ship --watch`).
+
 ## SS-03 — Language rule (CRITICAL)
 
 - **All agent responses to the user MUST be in English.**

@@ -68,6 +68,20 @@ Configure in `ax.json`:
 { "policy": { "storage": "database" } }
 ```
 
+Both modes support the same **scopes**. Frontmatter field `scope` (and the DB column) records where an item lives. Capture interviews ask for scope; Command Center editors show a Scope selector.
+
+### Policy scopes
+
+| Scope | Path | Pack / git |
+|---|---|---|
+| `company` | `~/.ax/global_policy/` | Never packed |
+| `workspace` | `<workspace>/.ax/policy/` | Included in default pack export |
+| `project` | `<project>/.ax/policy/` | Included in default pack export |
+| `private_user` | `~/.ax/private_policy/` | Never packed |
+| `private_project` | `<project>/.ax/policy-private/` | Never packed (gitignored) |
+
+Merge order on index: company → workspace → project → private_user → private_project (later wins on the same id/name).
+
 ### Database migration scan (v2.1.2+)
 
 When switching to **database** with `--migrate`, ax does not import only `.ax/policy/`. It **recursively scans the project** for:
@@ -184,10 +198,14 @@ Rules live in `.ax/policy/rules/<id>.mdc` — YAML frontmatter plus a markdown b
 ---
 id: mobile-first
 level: CRITICAL
+scope: project
 alwaysApply: false
 globs: ["**/*.css", "**/*.tsx"]
 triggers: ["mobile", "responsive"]
 priority: 100
+enabled: true
+status: approved
+tags: ["ui"]
 ---
 # Rule body (markdown)
 ```
@@ -196,10 +214,24 @@ priority: 100
 |---|---|
 | `id` | Stable identifier (filename without `.mdc`) |
 | `level` | `CRITICAL`, `WARNING`, or `INFO` |
+| `scope` | `company`, `workspace`, `project`, `private_user`, or `private_project` (default `project`) |
 | `alwaysApply` | Inject on every turn when `true` |
 | `globs` | Match when listed files are in scope |
 | `triggers` | Match when user intent contains these phrases |
 | `priority` | Higher wins when multiple rules match |
+| `enabled` | When `false`, matcher/preflight skip the rule (default `true`) |
+| `status` | `approved` (active), `pending` (review queue), or `rejected` |
+| `tags` | Free-form labels; use `local` or `noshare` to opt out of pack export |
+| `share` | Optional alias — normalized to tag `shared` on parse (legacy; default export no longer requires it) |
+
+Disable without deleting:
+
+```bash
+ax policy disable mobile-first
+ax policy enable mobile-first
+```
+
+The same fields are stored in `ax.db` (`policy_rules.enabled`, `policy_rules.status`). Command Center Rules/Skills tables expose an On toggle.
 
 ---
 
@@ -211,12 +243,89 @@ Skills live in `.ax/policy/skills/<name>/SKILL.md`:
 ---
 name: deploy
 description: Use when the user says deploy or push to production.
+scope: project
 triggers: ["deploy", "production"]
+enabled: true
+status: approved
+tags: ["ops"]
 ---
 # Workflow steps (markdown)
 ```
 
 When triggers match, `ax_preflight` includes the skill body in `inject`. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
+
+---
+
+## Per-project pack sync
+
+Share selected rules/skills with teammates via **git** (same project repo) — not `ax share` (LAN Command Center) and not a cloud registry.
+
+1. Export the pack → commit `.ax/policy/shared/`
+2. Colleagues pull and import
+
+Default export (`--tag shared`) includes all **project** and **workspace** rules/skills that are enabled and approved. Company and private scopes are never packed. Opt out of the team pack with tags `local` or `noshare`. A custom `--tag foo` still filters to items that carry that tag.
+
+```bash
+ax policy pack export
+# commit .ax/policy/shared/
+ax policy pack import
+ax policy pack status
+```
+
+Set `"policySync": true` in project `ax.json` so git hooks run export on post-commit and import on post-merge (run `ax sync` once after enabling).
+
+### Built-in packs
+
+Install optional project packs shipped with ax (does not enable them in the ax product repo by default):
+
+```bash
+ax policy pack install --list
+ax policy pack install azdo-fullstack
+ax policy pack install azdo-fullstack --force
+```
+
+`azdo-fullstack` adds Azure DevOps ticket-to-release skills and rules (refinement → development → testing → PR → pipelines → release). It complements built-in methodology skills (`design-first`, `tdd`, `systematic-debugging`) rather than replacing them.
+
+### IDE-agnostic delivery (Cursor ↔ Continue ↔ …)
+
+Team rules live in `.ax/policy/` + `ax.db` and are delivered by MCP `ax_preflight` — not by copying rule bodies into each IDE. Pack sync is therefore agent-independent:
+
+```text
+You (Cursor)  →  pack export  →  git  →  pack import  →  colleague (Continue)
+colleague     →  pack export  →  git  →  pack import  →  you (Cursor)
+```
+
+On every `ax policy pack import` (including the post-merge hook), ax:
+
+1. Indexes shared rules/skills into the local policy store
+2. Re-seeds **all** IDE bootstrap files (`.cursor/rules/ax.mdc`, `.continue/rules/ax.md`, Claude, AGENTS.md, …)
+3. Writes Continue MCP at `.continue/mcpServers/ax.json` (project-scoped, commit-friendly) and refreshes MCP for any other detected agents
+
+Colleagues only need `ax` on PATH and their IDE open on the project. Continue is included in init seeding (`ax init` / `ax policy sync --fix`).
+
+**Context for teammates** stays on the existing memory path: tag memories `shared`, use `ax memory export` / `import` and optional `"memorySync": true`.
+
+### Optional review gate
+
+```json
+{
+  "policySync": true,
+  "policy": {
+    "requireReview": true
+  }
+}
+```
+
+When `requireReview` is true, pack imports land under `.ax/policy/pending/` and are not matched until approved:
+
+```bash
+ax policy review list
+ax policy review show <id>
+ax policy review approve <id>
+ax policy review reject <id>
+```
+
+Command Center: **Policy → Sync** (status, export/import, toggles), **Policy → Review** queue, layer filters on Rules/Skills, Scope on editors, and enable checkboxes. CLI equivalents: `ax policy pack …`, `ax policy review …`, `ax policy enable|disable`.
 
 ---
 
@@ -247,6 +356,10 @@ ax policy match "prompt text" [--file path] [--json]
 ax policy rules [--json]
 ax policy skills [--json]
 ax policy skill <name>
+ax policy enable <id-or-name>
+ax policy disable <id-or-name>
+ax policy pack export|import|status
+ax policy review list|show|approve|reject
 ax policy guard --file path        # test CRITICAL guard on a path
 ax policy capture <prompt> [--yes] [--json] [--file path]
 ax policy storage status [--json]

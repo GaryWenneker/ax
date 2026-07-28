@@ -1,0 +1,22 @@
+---
+id: azdo-traceability
+level: CRITICAL
+alwaysApply: false
+globs: []
+triggers: ["branch", "commit", "PR", "pull request", "work item", "user story", "AzDO", "Azure DevOps"]
+tags: ["azdo", "git", "shared"]
+priority: 80
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# Traceability (AZDO work item ID)
+
+Always include the Azure DevOps User Story / Bug ID:
+
+1. **Branch:** `feature/1234-short-description` (or `bug/1234-…`)
+2. **Commits:** `#1234 Add API endpoint` (numeric ID only — no AB# prefix)
+3. **PR:** link the work item (via branch name or manual link)
+
+Do not start implementation without a work item ID from the user or ticket context.

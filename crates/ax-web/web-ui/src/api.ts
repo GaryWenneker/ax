@@ -166,6 +166,8 @@ export interface FilePage {
 
 export interface FileRootsPage {
   roots: FileRoot[];
+  /** Indexed files sitting at the project root (not folders). */
+  files?: FileRow[];
 }
 
 export function fetchFileRoots(): Promise<FileRootsPage> {
@@ -444,6 +446,8 @@ export interface ModelSavingsRow {
   grep_calls: number;
   session_cost_usd_est: number;
   cost_saved_usd_est: number;
+  input_per_mtok?: number;
+  pricing_source?: string;
 }
 
 export interface WeekdaySavingsRow {
@@ -535,8 +539,79 @@ export interface PricingInfo {
   reference_model: string;
   input_per_mtok: number;
   output_per_mtok: number;
-  source: 'default' | 'user';
+  source: string;
   config_path: string;
+}
+
+export interface PricingSourceStatus {
+  source: string;
+  last_attempt_at: number | null;
+  last_success_at: number | null;
+  last_success_date: string | null;
+  status: string | null;
+  error: string | null;
+  models_count: number | null;
+}
+
+export interface PricingStatus {
+  today: string;
+  synced_today: boolean;
+  sources: PricingSourceStatus[];
+  price_rows: number;
+  benchmark_rows: number;
+  agent_rows: number;
+  aa_key_configured: boolean;
+}
+
+export interface PricingCatalogRow {
+  date: string;
+  source: string;
+  model_id: string;
+  display_name: string | null;
+  provider: string | null;
+  input_per_mtok: number;
+  output_per_mtok: number;
+  cache_read_per_mtok: number | null;
+  blended_3_to_1: number | null;
+  context_length: number | null;
+  intelligence: number | null;
+  coding: number | null;
+  agentic: number | null;
+}
+
+export interface PricingCatalogResponse {
+  status: PricingStatus;
+  models: PricingCatalogRow[];
+}
+
+export interface PricingHistoryPoint {
+  date: string;
+  source: string;
+  input_per_mtok: number;
+  output_per_mtok: number;
+  blended_3_to_1: number | null;
+}
+
+export interface CodingAgentRow {
+  date: string;
+  agent: string;
+  model: string | null;
+  index_score: number | null;
+  cost_per_task: number | null;
+  time_per_task: number | null;
+  tokens_per_task: number | null;
+}
+
+export interface PricingSyncReport {
+  date: string;
+  forced: boolean;
+  skipped: boolean;
+  openrouter_count: number;
+  aa_price_count: number;
+  aa_benchmark_count: number;
+  coding_agent_count: number;
+  warnings: string[];
+  status: string;
 }
 
 export interface SavingsSummary {
@@ -623,4 +698,30 @@ export function fetchCallTokenDetail(id: number): Promise<CallTokenDetail> {
 
 export function tokenizeText(text: string): Promise<TokenizeResult> {
   return post<TokenizeResult>('/usage/tokenize', { text });
+}
+
+export function fetchPricingCatalog(source?: string): Promise<PricingCatalogResponse> {
+  const sp = new URLSearchParams();
+  if (source) sp.set('source', source);
+  const q = sp.toString();
+  return get<PricingCatalogResponse>(`/usage/pricing${q ? `?${q}` : ''}`);
+}
+
+export function fetchPricingHistory(params: {
+  model: string;
+  source?: string;
+  days?: number;
+}): Promise<PricingHistoryPoint[]> {
+  const sp = new URLSearchParams({ model: params.model });
+  if (params.source) sp.set('source', params.source);
+  if (params.days != null) sp.set('days', String(params.days));
+  return get<PricingHistoryPoint[]>(`/usage/pricing/history?${sp}`);
+}
+
+export function fetchCodingAgents(days = 30): Promise<CodingAgentRow[]> {
+  return get<CodingAgentRow[]>(`/usage/pricing/agents?days=${days}`);
+}
+
+export function syncPricing(force = true): Promise<PricingSyncReport> {
+  return post<PricingSyncReport>('/usage/pricing/sync', { force });
 }

@@ -10,6 +10,8 @@ import PolicyRuleEditor from './pages/PolicyRuleEditor';
 import PolicySkillsPage from './pages/PolicySkills';
 import PolicySkillEditor from './pages/PolicySkillEditor';
 import PolicyMatchPage from './pages/PolicyMatch';
+import PolicyReviewPage from './pages/PolicyReview';
+import PolicySyncPage from './pages/PolicySync';
 import UnresolvedPage from './pages/Unresolved';
 import ShipPage from './pages/Ship';
 import AgentPage from './pages/Agent';
@@ -17,6 +19,7 @@ import SettingsPage from './pages/Settings';
 import LoggingPage from './pages/Logging';
 import SonarQubePage from './pages/SonarQube';
 import SavingsPage from './pages/Savings';
+import PricesPage from './pages/Prices';
 import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
@@ -47,6 +50,7 @@ const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
   { id: 'memory', label: 'Memory' },
   { id: 'unresolved', label: 'Unresolved' },
   { id: 'savings', label: 'Savings' },
+  { id: 'prices', label: 'Prices' },
   { id: 'ship', label: 'Command Center' },
   { id: 'sonar', label: 'SonarQube' },
   { id: 'agent', label: 'Agent' },
@@ -60,6 +64,8 @@ const NAV_CONFIG: Array<{ id: NavId; label: string }> = [
 const NAV_POLICY: Array<{ id: NavId; label: string }> = [
   { id: 'policy-rules', label: 'Rules' },
   { id: 'policy-skills', label: 'Skills' },
+  { id: 'policy-sync', label: 'Sync' },
+  { id: 'policy-review', label: 'Review' },
 ];
 
 const SCALE_STEP = 0.05;
@@ -298,6 +304,7 @@ function AppShell() {
             {page === 'memory' && <MemoryPage key={workspaceKey} />}
             {page === 'unresolved' && <UnresolvedPage key={workspaceKey} route={route} onRouteChange={applyRoute} />}
             {page === 'savings' && showSavings && <SavingsPage key={workspaceKey} />}
+            {page === 'prices' && <PricesPage key={workspaceKey} />}
             {page === 'ship' && <ShipPage key={workspaceKey} onOpenSonar={() => navigate('sonar')} />}
             {page === 'sonar' && (
               <SonarQubePage key={workspaceKey} tab={sonarTab} onTabChange={(tab) => navigate('sonar', { sonarTab: tab })} />
@@ -326,6 +333,10 @@ function AppShell() {
               <PolicySkillEditor key={workspaceKey} skillName={editSkillName} onBack={() => navigate('policy-skills')} />
             )}
             {page === 'policy-match' && <PolicyMatchPage key={workspaceKey} onClose={() => navigate('policy-rules')} />}
+            {page === 'policy-sync' && (
+              <PolicySyncPage key={workspaceKey} onOpenReview={() => navigate('policy-review')} />
+            )}
+            {page === 'policy-review' && <PolicyReviewPage key={workspaceKey} />}
           </main>
         </div>
 

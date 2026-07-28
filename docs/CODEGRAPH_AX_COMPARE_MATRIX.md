@@ -234,9 +234,13 @@ Stack and infrastructure used by each tool — runtime, storage, parsing, transp
 | `*_callers` | Full chain | `ax_callers` | ✅ |
 | `*_callees` | Full chain | `ax_callees` | ✅ |
 | `*_impact` | Blast radius | `ax_impact` | ✅ |
-| `*_index` | — | `ax_index` | ➕ |
+| `*_index` | — | `ax_index` (+ optional `force`) | ➕ |
+| `*_sync` | — | `ax_sync` | ➕ ax-only ops |
 | `*_context` | Via explore | `ax_context` | ✅ |
 | `*_affected` | Test impact | `ax_affected` | ✅ impact-radius + `is_test_file` |
+| `*_lsp` | — | `ax_lsp` (status / enrich) | ➕ ax-only — no CG MCP equivalent |
+| `*_ship` | — | `ax_ship` (evaluate / ci) | ➕ ax-only — no CG MCP equivalent |
+| `*_policy_index` | — | `ax_policy_index` | ➕ ax-only policy refresh |
 
 ### MCP Transport & Server
 
@@ -251,7 +255,9 @@ Stack and infrastructure used by each tool — runtime, storage, parsing, transp
 | Response envelope | `{ content:[{text}], structuredContent }` (full both) | **Lean by default** — `content.text` authoritative; `structuredContent` projected to metadata; data tools omit it (`AX_MCP_FULL=1` restores CG-style full). `server.rs` `lean_structured` | ➕ ax ahead — token-savings delta, no CG equivalent |
 | Response budgets | `mcp/tools.ts` explore caps | Stricter defaults + env knobs: `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). `explore.rs`, `formatter.rs` | ➕ ax ahead — no semantic change to graph output |
 
-CodeGraph: 8 default MCP tools. ax: 11 registered tools.
+CodeGraph: 8 default MCP tools. ax: graph + policy + memory + operational tools (`ax_sync`, `ax_lsp`, `ax_ship`, `ax_policy_index`, …).
+
+**Delta (2026-07-26) — operational MCP tools:** `ax_sync`, `ax_lsp`, `ax_ship`, `ax_policy_index` (and `ax_index` `force`) are **ax-only** session ops with no CodeGraph MCP counterpart. Graph tool semantics remain matched against CG `mcp/tools.ts`.
 
 **Delta (2026-07-15) — MCP token-savings rehaul:** ax now emits lean MCP responses (no `content`/`structuredContent` duplication), markdown/compact text projections for `ax_context` + data tools, and stricter env-tunable source budgets. This is an ax-forward optimization of the response envelope only; `ExploreResult`/graph semantics matched against `mcp/tools.ts` are unchanged. `AX_MCP_FULL=1` restores the CodeGraph-style full payload.
 

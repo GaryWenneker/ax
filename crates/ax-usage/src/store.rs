@@ -57,6 +57,59 @@ const MIGRATION_ADD_COLUMNS: &[&str] = &[
     "ALTER TABLE mcp_call_log ADD COLUMN counterfactual_preview TEXT",
 ];
 
+const PRICING_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS pricing_sync_meta (
+  source TEXT PRIMARY KEY,
+  last_attempt_at INTEGER,
+  last_success_at INTEGER,
+  last_success_date TEXT,
+  status TEXT,
+  error TEXT,
+  models_count INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS model_price_daily (
+  date TEXT NOT NULL,
+  source TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  display_name TEXT,
+  provider TEXT,
+  input_per_mtok REAL NOT NULL,
+  output_per_mtok REAL NOT NULL,
+  cache_read_per_mtok REAL,
+  blended_3_to_1 REAL,
+  context_length INTEGER,
+  raw_json TEXT,
+  PRIMARY KEY (date, source, model_id)
+);
+CREATE INDEX IF NOT EXISTS idx_model_price_daily_model ON model_price_daily(model_id, date);
+
+CREATE TABLE IF NOT EXISTS model_benchmark_daily (
+  date TEXT NOT NULL,
+  source TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  display_name TEXT,
+  intelligence REAL,
+  coding REAL,
+  agentic REAL,
+  median_output_tps REAL,
+  median_ttft_seconds REAL,
+  PRIMARY KEY (date, source, model_id)
+);
+
+CREATE TABLE IF NOT EXISTS coding_agent_daily (
+  date TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  model TEXT,
+  index_score REAL,
+  cost_per_task REAL,
+  time_per_task REAL,
+  tokens_per_task REAL,
+  raw_json TEXT,
+  PRIMARY KEY (date, agent, model)
+);
+";
+
 pub fn usage_db_path() -> PathBuf {
     if let Ok(path) = std::env::var("AX_USAGE_DB") {
         if !path.is_empty() {
@@ -97,6 +150,13 @@ pub async fn open_pool() -> Result<SqlitePool, AxError> {
             .execute(&pool)
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(format!("usage schema: {e}"))))?;
+    }
+
+    for stmt in PRICING_SCHEMA.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        sqlx::query(stmt)
+            .execute(&pool)
+            .await
+            .map_err(|e| AxError::Database(DatabaseError::new(format!("pricing schema: {e}"))))?;
     }
 
     for stmt in MIGRATION_ADD_COLUMNS {

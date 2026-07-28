@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{get, post},
+    routing::{get, patch, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -51,13 +51,214 @@ pub fn router_hub(hub: WebHub) -> Router {
     Router::new()
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", get(get_rule).put(update_rule).delete(delete_rule))
+        .route("/rules/{id}/enabled", patch(set_rule_enabled))
         .route("/skills", get(list_skills).post(create_skill))
         .route("/skills/{name}", get(get_skill).put(update_skill).delete(delete_skill))
+        .route("/skills/{name}/enabled", patch(set_skill_enabled))
         .route("/match", post(match_prompt))
         .route("/capture", post(capture_prompt))
         .route("/reindex", post(reindex))
         .route("/export", post(export_policy))
+        .route("/pack/status", get(pack_status))
+        .route("/pack/export", post(pack_export))
+        .route("/pack/import", post(pack_import))
+        .route("/review", get(review_list))
+        .route("/review/{id}", get(review_show))
+        .route("/review/{id}/approve", post(review_approve))
+        .route("/review/{id}/reject", post(review_reject))
+        .route("/settings", get(policy_settings).put(put_policy_settings))
         .with_state(hub)
+}
+
+#[derive(Deserialize)]
+struct EnabledPayload {
+    enabled: bool,
+}
+
+async fn set_rule_enabled(
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+    Json(payload): Json<EnabledPayload>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let ws = hub.read().await;
+    match ws.policy.store.set_enabled(&id, payload.enabled).await {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true, "id": id, "enabled": payload.enabled }))).into_response(),
+        Ok(false) => err(StatusCode::NOT_FOUND, "not found"),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn set_skill_enabled(
+    State(hub): State<WebHub>,
+    Path(name): Path<String>,
+    Json(payload): Json<EnabledPayload>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let ws = hub.read().await;
+    match ws.policy.store.set_enabled(&name, payload.enabled).await {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true, "name": name, "enabled": payload.enabled }))).into_response(),
+        Ok(false) => err(StatusCode::NOT_FOUND, "not found"),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn pack_status(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match ax_policy::pack_status(ws.policy.store.pool(), ws.policy.store.project_root()).await {
+        Ok(s) => (StatusCode::OK, Json(s)).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn pack_export(State(hub): State<WebHub>) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let ws = hub.read().await;
+    match ax_policy::export_pack(ws.policy.store.pool(), ws.policy.store.project_root(), "shared", None)
+        .await
+    {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct PackImportPayload {
+    #[serde(default)]
+    force: bool,
+}
+
+async fn pack_import(
+    State(hub): State<WebHub>,
+    Json(payload): Json<PackImportPayload>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let ws = hub.read().await;
+    match ax_policy::import_pack(
+        ws.policy.store.pool(),
+        ws.policy.store.project_root(),
+        None,
+        payload.force,
+    )
+    .await
+    {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn review_list(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match ax_policy::list_pending(ws.policy.store.project_root()) {
+        Ok(items) => (StatusCode::OK, Json(serde_json::json!({ "items": items }))).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn review_show(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    match ax_policy::pending_diff(ws.policy.store.project_root(), &id) {
+        Ok(diff) => (StatusCode::OK, Json(diff)).into_response(),
+        Err(e) => err(StatusCode::NOT_FOUND, &e.to_string()),
+    }
+}
+
+async fn review_approve(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let ws = hub.read().await;
+    match ax_policy::approve_pending(ws.policy.store.pool(), ws.policy.store.project_root(), &id)
+        .await
+    {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+async fn review_reject(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let ws = hub.read().await;
+    match ax_policy::reject_pending(ws.policy.store.pool(), ws.policy.store.project_root(), &id)
+        .await
+    {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PolicySettingsResponse {
+    policy_sync: bool,
+    require_review: bool,
+    storage: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PolicySettingsPayload {
+    #[serde(default)]
+    policy_sync: Option<bool>,
+    #[serde(default)]
+    require_review: Option<bool>,
+}
+
+async fn policy_settings(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ws = hub.read().await;
+    let root = ws.policy.store.project_root();
+    let status = ax_policy::policy_storage_status(root);
+    (
+        StatusCode::OK,
+        Json(PolicySettingsResponse {
+            policy_sync: status.policy_sync,
+            require_review: status.require_review,
+            storage: status.effective,
+        }),
+    )
+        .into_response()
+}
+
+async fn put_policy_settings(
+    State(hub): State<WebHub>,
+    Json(payload): Json<PolicySettingsPayload>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let ws = hub.read().await;
+    let root = ws.policy.store.project_root();
+    if let Some(v) = payload.policy_sync {
+        if let Err(e) = ax_policy::write_project_policy_sync(root, v) {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, &e);
+        }
+        // Hooks pick up policySync on the next `ax sync` / `ax init`.
+    }
+    if let Some(v) = payload.require_review {
+        if let Err(e) = ax_policy::write_project_require_review(root, v) {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, &e);
+        }
+    }
+    let status = ax_policy::policy_storage_status(root);
+    (
+        StatusCode::OK,
+        Json(PolicySettingsResponse {
+            policy_sync: status.policy_sync,
+            require_review: status.require_review,
+            storage: status.effective,
+        }),
+    )
+        .into_response()
 }
 
 async fn list_rules(State(hub): State<WebHub>) -> impl IntoResponse {

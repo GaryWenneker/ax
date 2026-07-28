@@ -61,17 +61,20 @@ pub async fn import_policy_from_files(
     let mut seen_rules = Vec::new();
     let mut seen_skills = Vec::new();
 
-    // Hierarchical merge: global → workspace → member (later upserts win).
-    let layers = crate::hierarchy::policy_layer_dirs(project_root);
+    // Hierarchical merge: company → workspace → project → private (later upserts win).
+    let layers = crate::hierarchy::policy_layers(project_root);
     let layer_list = if layers.is_empty() {
-        vec![policy_root(&ax_dir)]
+        vec![crate::hierarchy::PolicyLayer {
+            dir: policy_root(&ax_dir),
+            scope: crate::types::PolicyScope::Project,
+        }]
     } else {
         layers
     };
 
-    for policy_dir in &layer_list {
+    for layer in &layer_list {
         let (r, s, mut rule_ids, mut skill_ids) =
-            import_one_policy_dir(pool, policy_dir).await?;
+            import_one_policy_dir(pool, &layer.dir, layer.scope).await?;
         rules_indexed += r;
         skills_indexed += s;
         seen_rules.append(&mut rule_ids);
@@ -97,11 +100,13 @@ pub async fn import_policy_from_files(
 async fn import_one_policy_dir(
     pool: &SqlitePool,
     policy_dir: &Path,
+    scope: crate::types::PolicyScope,
 ) -> Result<(u32, u32, Vec<String>, Vec<String>), AxError> {
     let mut rules_indexed = 0u32;
     let mut skills_indexed = 0u32;
     let mut seen_rules = Vec::new();
     let mut seen_skills = Vec::new();
+    let scope_s = scope.as_str().to_string();
 
     let rules_path = policy_dir.join(crate::paths::RULES_DIR);
     if rules_path.is_dir() {
@@ -119,7 +124,9 @@ async fn import_one_policy_dir(
                 continue;
             }
             let raw = std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
-            let doc = parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
+            let mut doc = parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
+            // Directory layer wins over frontmatter when importing from a scoped path.
+            doc.frontmatter.scope = scope_s.clone();
             let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
             upsert_rule(pool, &doc, &hash, now_ms()).await?;
             seen_rules.push(doc.frontmatter.id.clone());
@@ -145,7 +152,8 @@ async fn import_one_policy_dir(
                 continue;
             }
             let raw = std::fs::read_to_string(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
-            let doc = parse_skill_file(&skill_path, &raw).map_err(|e| AxError::Other(e.error))?;
+            let mut doc = parse_skill_file(&skill_path, &raw).map_err(|e| AxError::Other(e.error))?;
+            doc.frontmatter.scope = scope_s.clone();
             let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
             upsert_skill(pool, &doc, &hash, now_ms()).await?;
             seen_skills.push(doc.frontmatter.name.clone());
@@ -363,14 +371,18 @@ async fn upsert_rule(
     now: i64,
 ) -> Result<(), AxError> {
     let fm = &doc.frontmatter;
+    let scope = crate::types::PolicyScope::parse(&fm.scope)
+        .unwrap_or(crate::types::PolicyScope::Project)
+        .as_str();
     sqlx::query(
-        "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            level=excluded.level, always_apply=excluded.always_apply, globs=excluded.globs,
            triggers=excluded.triggers, tags=excluded.tags, priority=excluded.priority,
            body=excluded.body, source_path=excluded.source_path, content_hash=excluded.content_hash,
-           updated_at=excluded.updated_at",
+           updated_at=excluded.updated_at, enabled=excluded.enabled, status=excluded.status,
+           scope=excluded.scope",
     )
     .bind(&fm.id)
     .bind(&fm.level)
@@ -383,6 +395,9 @@ async fn upsert_rule(
     .bind(&doc.source_path)
     .bind(hash)
     .bind(now)
+    .bind(fm.enabled as i32)
+    .bind(&fm.status)
+    .bind(scope)
     .execute(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -396,13 +411,17 @@ async fn upsert_skill(
     now: i64,
 ) -> Result<(), AxError> {
     let fm = &doc.frontmatter;
+    let scope = crate::types::PolicyScope::parse(&fm.scope)
+        .unwrap_or(crate::types::PolicyScope::Project)
+        .as_str();
     sqlx::query(
-        "INSERT INTO policy_skills (name, description, triggers, tags, priority, context_task, body, source_path, content_hash, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO policy_skills (name, description, triggers, tags, priority, context_task, body, source_path, content_hash, updated_at, enabled, status, scope)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET
            description=excluded.description, triggers=excluded.triggers, tags=excluded.tags,
            priority=excluded.priority, context_task=excluded.context_task, body=excluded.body,
-           source_path=excluded.source_path, content_hash=excluded.content_hash, updated_at=excluded.updated_at",
+           source_path=excluded.source_path, content_hash=excluded.content_hash, updated_at=excluded.updated_at,
+           enabled=excluded.enabled, status=excluded.status, scope=excluded.scope",
     )
     .bind(&fm.name)
     .bind(&fm.description)
@@ -414,6 +433,9 @@ async fn upsert_skill(
     .bind(&doc.source_path)
     .bind(hash)
     .bind(now)
+    .bind(fm.enabled as i32)
+    .bind(&fm.status)
+    .bind(scope)
     .execute(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -462,7 +484,10 @@ async fn prune_skills(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError>
 
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError> {
     let rows = sqlx::query_as::<_, RuleDbRow>(
-        "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path FROM policy_rules ORDER BY priority DESC, id",
+        "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path,
+                COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
+                COALESCE(scope, 'project') as scope
+         FROM policy_rules ORDER BY priority DESC, id",
     )
     .fetch_all(pool)
     .await
@@ -472,7 +497,10 @@ pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError
 
 pub async fn list_skills(pool: &SqlitePool) -> Result<Vec<PolicySkillRow>, AxError> {
     let rows = sqlx::query_as::<_, SkillDbRow>(
-        "SELECT name, description, triggers, tags, priority, context_task, body, source_path FROM policy_skills ORDER BY priority DESC, name",
+        "SELECT name, description, triggers, tags, priority, context_task, body, source_path,
+                COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
+                COALESCE(scope, 'project') as scope
+         FROM policy_skills ORDER BY priority DESC, name",
     )
     .fetch_all(pool)
     .await
@@ -482,7 +510,10 @@ pub async fn list_skills(pool: &SqlitePool) -> Result<Vec<PolicySkillRow>, AxErr
 
 pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Option<PolicyRuleRow>, AxError> {
     let row = sqlx::query_as::<_, RuleDbRow>(
-        "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path FROM policy_rules WHERE id = ?",
+        "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path,
+                COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
+                COALESCE(scope, 'project') as scope
+         FROM policy_rules WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -493,7 +524,10 @@ pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Option<PolicyRuleRo
 
 pub async fn get_skill(pool: &SqlitePool, name: &str) -> Result<Option<PolicySkillRow>, AxError> {
     let row = sqlx::query_as::<_, SkillDbRow>(
-        "SELECT name, description, triggers, tags, priority, context_task, body, source_path FROM policy_skills WHERE name = ?",
+        "SELECT name, description, triggers, tags, priority, context_task, body, source_path,
+                COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
+                COALESCE(scope, 'project') as scope
+         FROM policy_skills WHERE name = ?",
     )
     .bind(name)
     .fetch_optional(pool)
@@ -529,6 +563,7 @@ pub async fn policy_has_content(pool: &SqlitePool) -> Result<bool, AxError> {
 }
 
 pub fn rule_row_to_doc(row: &PolicyRuleRow, project_root: &Path) -> PolicyRuleDoc {
+    let share = row.tags.iter().any(|t| t.eq_ignore_ascii_case("shared"));
     let fm = RuleFrontmatter {
         id: row.id.clone(),
         level: row.level.clone(),
@@ -537,6 +572,10 @@ pub fn rule_row_to_doc(row: &PolicyRuleRow, project_root: &Path) -> PolicyRuleDo
         triggers: row.triggers.clone(),
         tags: row.tags.clone(),
         priority: row.priority,
+        enabled: row.enabled,
+        status: row.status.clone(),
+        share,
+        scope: row.scope.clone(),
     };
     let raw = serialize_rule(&fm, &row.body);
     let source = if row.source_path.is_empty() {
@@ -555,6 +594,7 @@ pub fn rule_row_to_doc(row: &PolicyRuleRow, project_root: &Path) -> PolicyRuleDo
 }
 
 pub fn skill_row_to_doc(row: &PolicySkillRow, project_root: &Path) -> PolicySkillDoc {
+    let share = row.tags.iter().any(|t| t.eq_ignore_ascii_case("shared"));
     let fm = SkillFrontmatter {
         name: row.name.clone(),
         description: row.description.clone(),
@@ -562,6 +602,10 @@ pub fn skill_row_to_doc(row: &PolicySkillRow, project_root: &Path) -> PolicySkil
         tags: row.tags.clone(),
         priority: row.priority,
         context_task: row.context_task.clone(),
+        enabled: row.enabled,
+        status: row.status.clone(),
+        share,
+        scope: row.scope.clone(),
     };
     let raw = serialize_skill(&fm, &row.body);
     let source = if row.source_path.is_empty() {
@@ -604,6 +648,9 @@ struct RuleDbRow {
     priority: i32,
     body: String,
     source_path: String,
+    enabled: i32,
+    status: String,
+    scope: String,
 }
 
 impl RuleDbRow {
@@ -618,6 +665,17 @@ impl RuleDbRow {
             priority: self.priority,
             body: self.body,
             source_path: self.source_path,
+            enabled: self.enabled != 0,
+            status: if self.status.is_empty() {
+                "approved".into()
+            } else {
+                self.status
+            },
+            scope: if self.scope.is_empty() {
+                "project".into()
+            } else {
+                self.scope
+            },
         }
     }
 }
@@ -632,6 +690,9 @@ struct SkillDbRow {
     context_task: Option<String>,
     body: String,
     source_path: String,
+    enabled: i32,
+    status: String,
+    scope: String,
 }
 
 impl SkillDbRow {
@@ -645,6 +706,17 @@ impl SkillDbRow {
             context_task: self.context_task,
             body: self.body,
             source_path: self.source_path,
+            enabled: self.enabled != 0,
+            status: if self.status.is_empty() {
+                "approved".into()
+            } else {
+                self.status
+            },
+            scope: if self.scope.is_empty() {
+                "project".into()
+            } else {
+                self.scope
+            },
         }
     }
 }
@@ -676,7 +748,10 @@ mod tests {
                 globs TEXT NOT NULL DEFAULT '[]', triggers TEXT NOT NULL DEFAULT '[]',
                 tags TEXT NOT NULL DEFAULT '[]', priority INTEGER NOT NULL DEFAULT 50,
                 body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'approved',
+                scope TEXT NOT NULL DEFAULT 'project'
             )",
         )
         .execute(&pool)
@@ -688,7 +763,10 @@ mod tests {
                 triggers TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]',
                 priority INTEGER NOT NULL DEFAULT 50, context_task TEXT,
                 body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'approved',
+                scope TEXT NOT NULL DEFAULT 'project'
             )",
         )
         .execute(&pool)
@@ -715,6 +793,10 @@ mod tests {
             triggers: vec![],
             tags: vec![],
             priority: 50,
+            enabled: true,
+            status: "approved".into(),
+            share: false,
+            scope: "project".into(),
         };
         let raw = serialize_rule(&fm, "body text");
         let doc = parse_rule_file(Path::new("test-rule.mdc"), &raw).unwrap();

@@ -4,9 +4,26 @@ use crate::commands::resolve_path;
 
 pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> {
     let root = resolve_path(path);
+    ax_usage::log_policy(
+        Some(&root),
+        format!("index start force={}", if force { "1" } else { "0" }),
+    );
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let storage = ax_policy::load_policy_config(&root).storage;
-    let result = ax.index_policy(force).await.map_err(|e| e.to_string())?;
+    let result = match ax.index_policy(force).await {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "index fail");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_policy(
+        Some(&root),
+        format!(
+            "index ok rules={} skills={}",
+            result.rules_indexed, result.skills_indexed
+        ),
+    );
     match storage {
         ax_policy::PolicyStorage::Database if !force => {
             println!(
@@ -37,10 +54,24 @@ pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> 
 
 pub async fn run_import(path: Option<String>) -> Result<(), String> {
     let root = resolve_path(path);
+    ax_usage::log_policy(Some(&root), "import start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let result = ax_policy::import_policy_from_files(ax.db_pool(), &root, ImportMode::Merge)
+    let result = match ax_policy::import_policy_from_files(ax.db_pool(), &root, ImportMode::Merge)
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "import fail");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_policy(
+        Some(&root),
+        format!(
+            "import ok rules={} skills={}",
+            result.rules_indexed, result.skills_indexed
+        ),
+    );
     println!(
         "Imported {} rules, {} skills from .ax/policy/ (merge — DB-only rows kept)",
         result.rules_indexed, result.skills_indexed
@@ -206,6 +237,10 @@ pub async fn run_match(
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    ax_usage::log_policy(
+        Some(&root),
+        format!("match start prompt_len={}", prompt.chars().count()),
+    );
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let input = MatchInput {
         prompt,
@@ -213,7 +248,21 @@ pub async fn run_match(
         open_files: files.iter().map(std::path::PathBuf::from).collect(),
         changed_files: vec![],
     };
-    let result = ax.match_policy(input).await.map_err(|e| e.to_string())?;
+    let result = match ax.match_policy(input).await {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "match fail");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_policy(
+        Some(&root),
+        format!(
+            "match ok rules={} skills={}",
+            result.rules.len(),
+            result.skills.len()
+        ),
+    );
     if json {
         println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
     } else {
@@ -272,19 +321,41 @@ pub async fn run_guard(
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    ax_usage::log_policy(
+        Some(&root),
+        format!(
+            "guard start op={} path_len={}",
+            if delete { "delete" } else { "write" },
+            file_path.chars().count()
+        ),
+    );
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let _ = ax.ensure_policy_ready().await.map_err(|e| e.to_string())?;
     let target = root.join(&file_path);
     let content = std::fs::read(&target).ok();
     let op = if delete { GuardOp::Delete } else { GuardOp::Write };
-    let result = ax
+    let result = match ax
         .guard_operation(
             &target,
             op,
             content.as_deref().map(|v| &v[..]),
         )
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "guard fail");
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_policy(
+        Some(&root),
+        format!(
+            "guard ok allowed={} violations={}",
+            if result.allowed { "1" } else { "0" },
+            result.violations.len()
+        ),
+    );
     if json {
         println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
     } else if result.allowed {
@@ -771,5 +842,234 @@ pub async fn run_capture(
         println!("Saved rule: {} ({storage_label})", doc.frontmatter.id);
         println!("  {}", proposal.preview_path);
     }
+    Ok(())
+}
+
+pub async fn run_enable(path: Option<String>, id: String) -> Result<(), String> {
+    set_enabled(path, &id, true).await
+}
+
+pub async fn run_disable(path: Option<String>, id: String) -> Result<(), String> {
+    set_enabled(path, &id, false).await
+}
+
+async fn set_enabled(path: Option<String>, id: &str, enabled: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root.clone());
+    let found = store
+        .set_enabled(id, enabled)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !found {
+        return Err(format!("rule or skill not found: {id}"));
+    }
+    let verb = if enabled { "Enabled" } else { "Disabled" };
+    println!("{verb}: {id}");
+    Ok(())
+}
+
+pub async fn run_pack_export(
+    path: Option<String>,
+    tag: String,
+    out: Option<String>,
+    quiet: bool,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let out_path = out.as_ref().map(std::path::PathBuf::from);
+    let result = ax_policy::export_pack(ax.db_pool(), &root, &tag, out_path.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    if !quiet {
+        println!(
+            "Exported {} rules, {} skills → {}",
+            result.rules_exported, result.skills_exported, result.path
+        );
+    }
+    Ok(())
+}
+
+pub async fn run_pack_import(
+    path: Option<String>,
+    pack: Option<String>,
+    force: bool,
+    quiet: bool,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let pack_path = pack.as_ref().map(std::path::PathBuf::from);
+    let result = ax_policy::import_pack(ax.db_pool(), &root, pack_path.as_deref(), force)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Best-effort: wire detected agent MCP configs (Continue, Cursor, …) so pack
+    // rules arrive via ax_preflight regardless of which IDE the teammate uses.
+    let _ = ax_installer::targets::install_detected(&root, false);
+    if !quiet {
+        println!(
+            "Pack import: +{} rules, +{} skills, ~{} rules, ~{} skills, pending {}/{}, skipped {}, conflicts {}",
+            result.rules_added,
+            result.skills_added,
+            result.rules_updated,
+            result.skills_updated,
+            result.rules_pending,
+            result.skills_pending,
+            result.skipped,
+            result.conflicts
+        );
+        println!("IDE bootstrap refreshed (all agents) + MCP for detected agents.");
+    }
+    Ok(())
+}
+
+pub async fn run_pack_status(path: Option<String>, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let status = ax_policy::pack_status(ax.db_pool(), &root)
+        .await
+        .map_err(|e| e.to_string())?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status).unwrap_or_default()
+        );
+    } else {
+        println!("Pack: {}", status.pack_path);
+        println!(
+            "  In pack: {} rules, {} skills (manifest={})",
+            status.rules_in_pack, status.skills_in_pack, status.has_manifest
+        );
+        println!(
+            "  Local shared: {} rules, {} skills",
+            status.local_shared_rules, status.local_shared_skills
+        );
+        println!(
+            "  policySync={}  requireReview={}",
+            status.policy_sync, status.require_review
+        );
+    }
+    Ok(())
+}
+
+pub async fn run_pack_install(
+    path: Option<String>,
+    name: Option<String>,
+    force: bool,
+    list: bool,
+    json: bool,
+) -> Result<(), String> {
+    if list || name.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+        let packs = ax_policy::list_builtin_packs();
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&packs).unwrap_or_default()
+            );
+        } else {
+            println!("Built-in packs:");
+            for p in &packs {
+                println!("  {} — {} ({} files)", p.name, p.description, p.files);
+            }
+            println!();
+            println!("Install with: ax policy pack install <name>");
+        }
+        return Ok(());
+    }
+
+    let pack_name = name.unwrap();
+    let root = resolve_path(path);
+    let result = ax_policy::install_builtin_pack(&root, &pack_name, force)
+        .map_err(|e| e.to_string())?;
+
+    // Re-index so MCP/preflight see the new items.
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let indexed = ax_policy::index_policy(ax.db_pool(), &root, false)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "install": result,
+                "indexed": indexed,
+            }))
+            .unwrap_or_default()
+        );
+    } else {
+        println!("Installed pack '{}' → {}", result.pack, result.policy_dir);
+        println!(
+            "  created={}  skipped={}  overwritten={}",
+            result.created.len(),
+            result.skipped.len(),
+            result.overwritten.len()
+        );
+        println!(
+            "  indexed: {} rules, {} skills",
+            indexed.rules_indexed, indexed.skills_indexed
+        );
+        if !result.skipped.is_empty() && !force {
+            println!("  tip: pass --force to overwrite skipped items");
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_review_list(path: Option<String>, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let items = ax_policy::list_pending(&root).map_err(|e| e.to_string())?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&items).unwrap_or_default()
+        );
+    } else if items.is_empty() {
+        println!("No pending policy items.");
+    } else {
+        for item in &items {
+            println!(
+                "[{}] {} — {} ({})",
+                item.kind, item.id, item.level_or_description, item.status
+            );
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let diff = ax_policy::pending_diff(&root, &id).map_err(|e| e.to_string())?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&diff).unwrap_or_default());
+    } else {
+        println!("=== pending {} {} ===", diff.kind, diff.id);
+        println!("{}", diff.pending_raw);
+        if let Some(local) = &diff.local_raw {
+            println!("=== local ===");
+            println!("{local}");
+        } else {
+            println!("(no local counterpart)");
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_review_approve(path: Option<String>, id: String) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let result = ax_policy::approve_pending(ax.db_pool(), &root, &id)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("Approved {} {}", result.kind, result.id);
+    Ok(())
+}
+
+pub async fn run_review_reject(path: Option<String>, id: String) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let result = ax_policy::reject_pending(ax.db_pool(), &root, &id)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("Rejected {} {}", result.kind, result.id);
     Ok(())
 }

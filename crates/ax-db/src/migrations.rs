@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 11;
+pub const CURRENT_SCHEMA_VERSION: i32 = 12;
 
 struct Migration {
     version: i32,
@@ -177,6 +177,28 @@ const MIGRATIONS: &[Migration] = &[
                 FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_node_communities_community ON node_communities(community_id);
+        ",
+    },
+    Migration {
+        version: 12,
+        description: "Policy rule/skill enable + review status for pack sync",
+        sql: "
+            ALTER TABLE policy_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE policy_rules ADD COLUMN status TEXT NOT NULL DEFAULT 'approved';
+            ALTER TABLE policy_skills ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE policy_skills ADD COLUMN status TEXT NOT NULL DEFAULT 'approved';
+            CREATE INDEX IF NOT EXISTS idx_policy_rules_status ON policy_rules(status);
+            CREATE INDEX IF NOT EXISTS idx_policy_skills_status ON policy_skills(status);
+        ",
+    },
+    Migration {
+        version: 13,
+        description: "Policy hierarchy scope (company/workspace/project/private)",
+        sql: "
+            ALTER TABLE policy_rules ADD COLUMN scope TEXT NOT NULL DEFAULT 'project';
+            ALTER TABLE policy_skills ADD COLUMN scope TEXT NOT NULL DEFAULT 'project';
+            CREATE INDEX IF NOT EXISTS idx_policy_rules_scope ON policy_rules(scope);
+            CREATE INDEX IF NOT EXISTS idx_policy_skills_scope ON policy_skills(scope);
         ",
     },
 ];

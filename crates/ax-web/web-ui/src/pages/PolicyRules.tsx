@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { deletePolicyRule, fetchPolicyRules, proposePolicyCapture, savePolicyCapture } from '../policyApi';
+import {
+  deletePolicyRule,
+  fetchPolicyRules,
+  proposePolicyCapture,
+  savePolicyCapture,
+  setPolicyRuleEnabled,
+} from '../policyApi';
 import {
   DataTable,
   LevelBadge,
+  ScopeBadge,
   PageCard,
   PageCardBody,
   PageEmpty,
@@ -26,7 +33,7 @@ import {
   type SortDir,
 } from '../components/ui/policyListUtils';
 import { usePageContext } from '../context/UiContext';
-import type { CaptureProposal, PolicyRuleRow } from '../policyTypes';
+import { POLICY_SCOPES, type CaptureProposal, type PolicyRuleRow } from '../policyTypes';
 
 interface Props {
   onEdit: (id: string | null) => void;
@@ -45,6 +52,7 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
 
   const [q, setQ] = useState('');
   const [level, setLevel] = useState('');
+  const [scope, setScope] = useState('');
   const [always, setAlways] = useState('');
   const [sortKey, setSortKey] = useState<RuleSortKey>('priority');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -57,8 +65,8 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
   }, []);
 
   const visible = useMemo(
-    () => sortRules(filterRules(rules, { q, level, always }), sortKey, sortDir),
-    [rules, q, level, always, sortKey, sortDir],
+    () => sortRules(filterRules(rules, { q, level, always, scope }), sortKey, sortDir),
+    [rules, q, level, always, scope, sortKey, sortDir],
   );
 
   usePageContext('Rules', !loading && !error ? `${visible.length}/${rules.length} rules` : undefined);
@@ -76,6 +84,15 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
       setRules((prev) => prev.filter((r) => r.id !== id));
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to delete rule "${id}"`);
+    }
+  }
+
+  async function toggleEnabled(id: string, enabled: boolean) {
+    try {
+      await setPolicyRuleEnabled(id, enabled);
+      setRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled } : r)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Failed to update rule "${id}"`);
     }
   }
 
@@ -234,6 +251,17 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
             </select>
             <select
               className="settings-select policy-toolbar-select"
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+              aria-label="Filter by policy layer"
+            >
+              <option value="">All layers</option>
+              {POLICY_SCOPES.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+            <select
+              className="settings-select policy-toolbar-select"
               value={always}
               onChange={(e) => setAlways(e.target.value)}
               aria-label="Filter by always apply"
@@ -256,8 +284,10 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
                   <tr>
                     <SortTh label="ID" active={sortKey === 'id'} dir={sortDir} onClick={() => setSort('id')} />
                     <SortTh label="Level" active={sortKey === 'level'} dir={sortDir} onClick={() => setSort('level')} />
+                    <SortTh label="Layer" active={sortKey === 'scope'} dir={sortDir} onClick={() => setSort('scope')} />
                     <SortTh label="Pri" active={sortKey === 'priority'} dir={sortDir} onClick={() => setSort('priority')} className="col-num" />
                     <th>Always</th>
+                    <th>On</th>
                     <SortTh label="Globs" active={sortKey === 'globs'} dir={sortDir} onClick={() => setSort('globs')} className="col-num" />
                     <SortTh label="Triggers" active={sortKey === 'triggers'} dir={sortDir} onClick={() => setSort('triggers')} className="col-num" />
                     <th className="col-actions">Actions</th>
@@ -272,8 +302,17 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
                         </button>
                       </td>
                       <td><LevelBadge level={r.level} /></td>
+                      <td><ScopeBadge scope={r.scope} /></td>
                       <td className="num">{r.priority}</td>
                       <td className="policy-table-flag">{r.alwaysApply ? 'yes' : '—'}</td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={r.enabled !== false}
+                          aria-label={`Enable ${r.id}`}
+                          onChange={(e) => void toggleEnabled(r.id, e.target.checked)}
+                        />
+                      </td>
                       <td className="num">{r.globs.length}</td>
                       <td className="num">{r.triggers.length}</td>
                       <td className="col-actions">

@@ -27,7 +27,6 @@ pub async fn enrich_project(
     queries: &QueryBuilder,
     limit: usize,
 ) -> Result<EnrichReport, AxError> {
-    let mut report = EnrichReport::default();
     let refs = queries.get_unresolved_refs().await?;
     let mut by_file: HashMap<String, Vec<ax_types::UnresolvedReference>> = HashMap::new();
     for r in refs.into_iter().take(limit) {
@@ -38,62 +37,63 @@ pub async fn enrich_project(
         by_file.entry(fp).or_default().push(r);
     }
 
+    let mut jobs = Vec::new();
+    let mut report = EnrichReport::default();
     for (rel, file_refs) in by_file {
-        report.examined += file_refs.len() as u32;
         let ext = Path::new(&rel)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
         let Some(spec) = spec_for_extension(ext) else {
+            report.examined += file_refs.len() as u32;
             report.skipped_no_server += file_refs.len() as u32;
             continue;
         };
         if !crate::servers::server_available(spec) {
+            report.examined += file_refs.len() as u32;
             report.skipped_no_server += file_refs.len() as u32;
             continue;
         }
         let full = project_root.join(&rel);
-        let content = match std::fs::read_to_string(&full) {
-            Ok(c) => c,
-            Err(e) => {
-                report.errors.push(format!("{rel}: {e}"));
+        if !full.is_file() {
+            report.examined += file_refs.len() as u32;
+            report.errors.push(format!("{rel}: file not found"));
+            continue;
+        }
+        let language_id = enrich::language_id(ext).to_string();
+        jobs.push((rel, full, language_id, file_refs));
+    }
+
+    let root = project_root.to_path_buf();
+    let (mut batch_report, partials) = tokio::task::spawn_blocking(move || {
+        enrich::enrich_files_blocking(&root, jobs)
+    })
+    .await
+    .map_err(|e| AxError::Other(e.to_string()))?;
+
+    report.examined += batch_report.examined;
+    report.resolved += batch_report.resolved;
+    report.skipped_no_server += batch_report.skipped_no_server;
+    report.skipped_no_definition += batch_report.skipped_no_definition;
+    report.errors.append(&mut batch_report.errors);
+
+    for mut p in partials {
+        for edge in &mut p.edges {
+            remap_one_edge(queries, edge).await?;
+        }
+        // Zip edges with the refs they resolved. Targets that stay `lsp:…`
+        // point outside the graph (stdlib/deps) and cannot be upserted
+        // (edges.target FK → nodes.id). Still drop the unresolved row.
+        for (edge, r) in p.edges.iter().zip(p.resolved_refs.iter()) {
+            if edge.target.starts_with("lsp:") {
+                let _ = queries.delete_unresolved_ref(r).await;
                 continue;
             }
-        };
-        let root = project_root.to_path_buf();
-        let language_id = enrich::language_id(ext).to_string();
-        let file_refs_owned = file_refs;
-        let partial = tokio::task::spawn_blocking(move || {
-            enrich::enrich_file_blocking(
-                &root,
-                &full,
-                &language_id,
-                spec,
-                &content,
-                &file_refs_owned,
-            )
-        })
-        .await
-        .map_err(|e| AxError::Other(e.to_string()))?;
-
-        match partial {
-            Ok(mut p) => {
-                for edge in &mut p.edges {
-                    remap_one_edge(queries, edge).await?;
-                }
-                for edge in &p.edges {
-                    queries.upsert_edge(edge).await?;
-                }
-                for r in &p.resolved_refs {
-                    let _ = queries.delete_unresolved_ref(r).await;
-                }
-                report.resolved += p.resolved;
-                report.skipped_no_definition += p.skipped_no_definition;
-                report.errors.extend(p.errors);
-            }
-            Err(e) => report.errors.push(format!("{rel}: {e}")),
+            queries.upsert_edge(edge).await?;
+            let _ = queries.delete_unresolved_ref(r).await;
         }
     }
+
     Ok(report)
 }
 

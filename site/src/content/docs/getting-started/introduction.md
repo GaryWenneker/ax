@@ -18,6 +18,16 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.1.0
+
+- **Policy layers** — every rule/skill has a `scope`: company (`~/.ax/global_policy/`), workspace, project, private user (`~/.ax/private_policy/`), or private project (`.ax/policy-private/`, gitignored). Merge order is company → workspace → project → private; later wins on the same id.
+- **Pack export by default** — `ax policy pack export` includes all enabled project/workspace items (no `shared` tag required). Opt out with tags `local` / `noshare`. Company and private scopes never pack.
+- **Built-in packs** — `ax policy pack install --list` / `ax policy pack install azdo-fullstack` for optional Azure DevOps ticket-to-release skills and rules.
+- **Command Center Policy UX** — layer filter on Rules/Skills, Scope on editors, **Policy → Sync** and **Policy → Review**, full-height rule/skill editors, consistent card padding.
+- **Prices + desktop client** — OpenRouter daily pricing catalog in Command Center; optional native `ax desktop` (wgpu/egui) embedding the same APIs.
+
+See [Policy Engine](/guides/policy-engine/), [Workspaces](/guides/workspaces/), [Desktop Client](/guides/desktop-client/), and [Command Center](/guides/command-center/).
+
 ## What's new in v4.0.0
 
 - **Monorepo workspaces** — `ax init --workspace`, `ax index --all` / `ax sync --all`, Command Center workspace switcher, and `ax policy pull` for federated policy.

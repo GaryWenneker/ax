@@ -74,6 +74,7 @@ impl McpEngine {
     /// Start the debounced file watcher and connect-time catch-up background services.
     pub fn start_background_services(project_root: &Path) {
         let _ = Ax::spawn_background_watch(project_root.to_path_buf());
+        ax_usage::spawn_ensure_daily_pricing_sync();
     }
 
     pub fn query_pool(&self) -> Option<&QueryPool> {

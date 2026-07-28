@@ -38,10 +38,16 @@ When Verbose MCP logging is on, the same daily log also receives domain lines fo
 | `plugin` | Extractor plugins during index/sync |
 | `lsp` | `ax lsp enrich` / Unresolved → Enrich with LSP |
 | `ship-ci` | `ax ship --ci` |
+| `ship` | `ax ship --evaluate` / `--draft` / `--watch` |
 | `share` | `ax share` / token gate |
-| `workspace` | workspace switch / sync-all |
+| `workspace` | `ax index` / `ax sync` (incl. `--all`) / workspace switch |
+| `memory` | `ax remember` / `ax recall` / memory export·import / capture-git |
+| `policy` | `ax policy index|import|match|guard|…` |
+| `cli` | Graph readouts: `explore` / `impact` / `insights` / `report` / `context` / `status` |
 | `embed` | memory embedding backend |
 | `action` | Command Center live activity bus |
+
+Domain lines are written only when Verbose MCP logging is on (`[ui].verbose_mcp` or `AX_MCP_VERBOSE`).
 
 Filter these on the Logging page kind chips (also via `/logging?kind=lsp`). Quality / `ax mcp audit` can raise:
 
@@ -61,7 +67,7 @@ Pick one:
 
 | Method | Effect |
 |---|---|
-| **Settings → Interface → Verbose MCP logging** | Writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project |
+| **Logging → Verbose MCP logging** | Writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project |
 | `AX_MCP_VERBOSE=1` | Env on the MCP server process (Cursor MCP config) |
 
 Then **restart / reconnect** the ax MCP server in your agent.
@@ -79,11 +85,11 @@ Open via the status-bar **Logging** chip, or navigate to `/logging`.
 
 | Control | Purpose |
 |---|---|
-| **Kind chips** | Filter Inbound / Outbound / Preview / Error / Internal / Enrich / plugin / lsp / ship / share / workspace / embed / action |
-| **Has query chip** | Show only events whose JSON payload has a top-level `query` property (e.g. `ax_search` / `ax_explore` args). Matching rows get a blue left edge + a **query** badge in Summary; Meta shows `json · query`. Click the badge or the chip to filter. |
+| **Kind chips** | Filter Inbound / Outbound / Preview / Error / Internal / Enrich / plugin / lsp / ship / share / workspace / memory / policy / cli / embed / action |
+| **Has text chip** | Show only events with a human-readable text payload (`prompt`, `query`, `text`, `message`, or `q` — including nested JSON paths and flat `key=value` fields). Matching rows get a blue left edge + a key badge (`prompt` / `query` / …) in Summary; the Call Inspector opens with a **Prompt / text** hero section. URL alias: `?hasQuery=1` still works. |
 | **Date dropdown** | Filter by calendar day (`YYYY-MM-DD` in the configured timezone); Time column shows date + clock |
 | **Timezone** | Set under **Settings → Interface → Timezone** (IANA, e.g. `Europe/Amsterdam`). Controls Logging Date/time display **and** daily log file rotation (midnight boundary). Timestamps inside log lines stay UTC. Default: browser local. |
-| **Tool dropdown** | Filter by tool name (`ax_preflight`, `ax_explore`, …) |
+| **Tool dropdown** | Filter by tool name (`ax_preflight`, `ax_explore`, …). Domain/CLI lines also fill TOOL: `memory`, `policy`, `workspace`, `lsp`, `ship-ci`, `cli:explore`, … (from `tool=` on the log line or inferred from `[ax] …` / `cli cmd=`). |
 | **Text search** | Free-text over summary / meta |
 | **Project switcher** | Switch to another recent workspace’s verbose log |
 | **Newest / Scroll to new** | Table is **newest-first**. Stay pinned to the top for live updates, or use **Scroll to new** (toolbar + floating chip) after scrolling into history |
@@ -168,7 +174,7 @@ Auditor softens false positives when possible: recovered MCP errors (same-tool s
 ```bash
 # One-time
 ax savings hook install
-# Command Center → Settings → Verbose MCP logging = on
+# Command Center → Logging → Verbose MCP logging = on
 # Restart ax MCP in Cursor
 
 # During / after a session

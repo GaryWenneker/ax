@@ -13,6 +13,7 @@ import {
   StatusPill,
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
+import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import {
   bootstrapSonar,
   discoverSonar,
@@ -252,35 +253,9 @@ export default function ShipPage({ onOpenSonar }: Props) {
     resyncStatus();
     refreshSonar().catch(() => {});
 
-    // EventSource auto-retries transient errors, but gives up permanently once
-    // the connection is CLOSED (e.g. server restart). Recreate it with backoff
-    // and resync status on every reconnect so no events are missed.
-    let es: EventSource | null = null;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let retryDelay = 1000;
+    // Shared SSE hub (one connection per URL) with auto-reconnect + status resync.
     let disposed = false;
     let wasConnected = true;
-
-    function connect() {
-      if (disposed) return;
-      es = new EventSource('/api/ship/events');
-      es.onopen = () => {
-        setConnected(true);
-        retryDelay = 1000;
-        if (!wasConnected) resyncStatus();
-        wasConnected = true;
-      };
-      es.onerror = () => {
-        setConnected(false);
-        wasConnected = false;
-        if (es?.readyState === EventSource.CLOSED && !disposed) {
-          es.close();
-          retryTimer = setTimeout(connect, retryDelay);
-          retryDelay = Math.min(retryDelay * 2, 15_000);
-        }
-      };
-      es.onmessage = handleShipEvent;
-    }
 
     const handleShipEvent = (ev: MessageEvent) => {
       try {
@@ -429,11 +404,24 @@ export default function ShipPage({ onOpenSonar }: Props) {
       }
     };
 
-    connect();
+    const unsub = subscribeSharedEventSource('/api/ship/events', {
+      events: { message: handleShipEvent },
+      onOpen: () => {
+        if (disposed) return;
+        setConnected(true);
+        if (!wasConnected) resyncStatus();
+        wasConnected = true;
+      },
+      onError: () => {
+        if (disposed) return;
+        setConnected(false);
+        wasConnected = false;
+      },
+    });
+
     return () => {
       disposed = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      es?.close();
+      unsub();
     };
   }, [refreshSonar, repoProjects]);
 

@@ -15,6 +15,7 @@ priority: 95
 1. ax_preflight(prompt, files)     [once per turn — inject has full rule/skill bodies]
 2. Work — CRITICAL rules binding; `ax_guard` (`path` + `operation`) before writes
 3. Code questions — ax_explore (not policy files on disk)
+4. Session ops — MCP tools (`ax_sync`, `ax_lsp`, `ax_ship`, `ax_policy_index`, …), never shell `ax …` while MCP is up
 ```
 
 ## First action (subagent)

@@ -14,7 +14,7 @@ import {
   PageToasts,
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
-import type { RuleFrontmatter } from '../policyTypes';
+import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
 
 interface Props {
   ruleId: string | null;
@@ -29,6 +29,10 @@ const emptyFm = (): RuleFrontmatter => ({
   triggers: [],
   tags: [],
   priority: 50,
+  enabled: true,
+  status: 'approved',
+  share: false,
+  scope: 'project',
 });
 
 function parseCsv(s: string): string[] {
@@ -114,7 +118,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
       : 'Rule metadata and injected markdown — what agents receive via ax_preflight.';
 
   return (
-    <PageShell>
+    <PageShell className="policy-editor-page">
       <PageHero
         title={title}
         subtitle={subtitle}
@@ -171,6 +175,20 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
                         <option>INFO</option>
                       </select>
                     </PageRow>
+                    <PageRow
+                      title="Scope"
+                      description="Company/user private live under ~/.ax; project private is gitignored."
+                    >
+                      <select
+                        className="settings-select"
+                        value={fm.scope || 'project'}
+                        onChange={(e) => setFm({ ...fm, scope: e.target.value })}
+                      >
+                        {POLICY_SCOPES.map((s) => (
+                          <option key={s.value} value={s.value}>{s.label}</option>
+                        ))}
+                      </select>
+                    </PageRow>
                     <PageRow title="Always apply" description="Inject on every agent turn.">
                       <button
                         type="button"
@@ -218,6 +236,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
                     globs={fm.globs}
                     triggers={fm.triggers}
                     tags={fm.tags}
+                    scope={fm.scope}
                   />
                 )}
               </PageCardBody>
@@ -230,7 +249,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
             className="page-md-panel"
           >
             {editing ? (
-              <MarkdownEditor value={body} onChange={setBody} />
+              <MarkdownEditor value={body} onChange={setBody} fill />
             ) : (
               <MarkdownPreview value={body} className="page-md-preview" />
             )}

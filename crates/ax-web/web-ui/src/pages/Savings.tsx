@@ -287,6 +287,7 @@ function ModelTable({ rows }: { rows: ModelSavingsRow[] }) {
           <th>Tokens saved</th>
           <th>Cost saved</th>
           <th>Session cost</th>
+          <th>$/MTok</th>
           <th>Ax</th>
           <th>Read</th>
           <th>Grep</th>
@@ -303,6 +304,11 @@ function ModelTable({ rows }: { rows: ModelSavingsRow[] }) {
             <td className="num">{m.tokens_saved_est > 0 ? fmtCompact(m.tokens_saved_est) : '—'}</td>
             <td className="num">{m.cost_saved_usd_est > 0 ? fmtUsd(m.cost_saved_usd_est) : '—'}</td>
             <td className="num">{m.session_cost_usd_est > 0 ? fmtUsd(m.session_cost_usd_est) : '—'}</td>
+            <td className="num" title={m.pricing_source ?? undefined}>
+              {m.input_per_mtok != null && m.input_per_mtok > 0
+                ? `$${m.input_per_mtok.toFixed(2)}`
+                : '—'}
+            </td>
             <td className="num">{fmt(m.ax_calls)}</td>
             <td className="num">{fmt(m.read_calls)}</td>
             <td className="num">{fmt(m.grep_calls)}</td>
@@ -1491,8 +1497,9 @@ export default function SavingsPage() {
                 Dollar figures price saved tokens as input tokens at the{' '}
                 <strong>{data.pricing.reference_model}</strong> reference rate (
                 {fmtUsd(data.pricing.input_per_mtok)}/M in, {fmtUsd(data.pricing.output_per_mtok)}/M out).
-                Session costs use each session's own model when known. Edit{' '}
-                <code>{data.pricing.config_path}</code> to pin your own models and prices.
+                Session costs use each session's own model when known (see the <strong>Prices</strong> page
+                for daily rate history). Edit <code>{data.pricing.config_path}</code> to pin overrides; synced
+                OpenRouter rates fill in otherwise.
               </p>
               <div className="savings-method-grid">
                 <div className="savings-method-item">
@@ -1508,7 +1515,13 @@ export default function SavingsPage() {
                   <span className="savings-method-item-label">Pricing reference</span>
                   <span className="savings-method-item-value">{data.pricing.reference_model}</span>
                   <span className="savings-method-item-env">
-                    {data.pricing.source === 'user' ? 'pricing.toml (user)' : 'built-in defaults'}
+                    {data.pricing.source === 'user'
+                      ? 'pricing.toml (user)'
+                      : data.pricing.source === 'openrouter'
+                        ? 'OpenRouter snapshot'
+                        : data.pricing.source === 'artificial_analysis'
+                          ? 'Artificial Analysis snapshot'
+                          : 'built-in defaults'}
                   </span>
                 </div>
                 <div className="savings-method-item">

@@ -41,6 +41,26 @@ ax_MCP_TOOLS=explore,node,search,callers
 
 Each also has a CLI equivalent (`ax node` / `query` / `callers` / `callees` / `impact` / `files` / `status`) for scripts and non-MCP harnesses.
 
+## Operational tools (v4+)
+
+Always advertised (alongside graph extras). Mirror high-value CLI session ops — agents never need to shell out for these:
+
+| Tool | Purpose |
+|---|---|
+| `ax_sync` | Incremental index sync (changed files only) — same as `ax sync` |
+| `ax_index` | Re-index; optional `force: true` clears and full-indexes (default behaves like `ax_sync`) |
+| `ax_lsp` | `action: "status"` lists language servers; `action: "enrich"` resolves Exact edges (`limit` optional) — same as `ax lsp status\|enrich` |
+| `ax_ship` | Quality-gate pipeline: `mode: "evaluate"` (default) or `"ci"`. Returns the ship report JSON. For `ci`, MCP `isError` is set when the gate fails — **never** exits the MCP process |
+| `ax_policy_index` | Re-index / import rules and skills from `.ax/policy/` (`force` optional). Always listed so empty DB projects can bootstrap after files exist |
+
+```json
+ax_sync({})
+ax_index({ "force": true })
+ax_lsp({ "action": "enrich", "limit": 200 })
+ax_ship({ "mode": "ci" })
+ax_policy_index({ "force": true })
+```
+
 ## Policy tools (v2.0.0+)
 
 When `.ax/policy/` contains indexed rules or skills, the server also exposes:
@@ -112,7 +132,7 @@ Set `AX_MCP_FULL=1` to restore the full `structuredContent` for every tool (for 
 
 To watch what each tool receives, how preflight enrichment builds the inject block, and what ax sends back on the wire — without changing agent-facing payloads — follow the full guide: **[MCP Logging & Quality](/guides/mcp-quality/)**. Short version:
 
-1. Enable **Settings → Interface → Verbose MCP logging** in Command Center (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
+1. Enable **Logging → Verbose MCP logging** in Command Center (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
 2. Reconnect / restart the ax MCP server in Cursor.
 3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI).
 
@@ -133,7 +153,7 @@ Lines are prefixed with `[ax-mcp]`. They are written to the log file (and option
 | Variable | Default | Purpose |
 |---|---|---|
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every tool |
-| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` emits inbound/enrichment/outbound traces to stderr (Cursor Output); same as Settings → Verbose MCP logging |
+| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` emits inbound/enrichment/outbound traces to stderr (Cursor Output); same as Logging → Verbose MCP logging |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
 | `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |
@@ -156,4 +176,6 @@ Every edge also carries a **confidence** tag — `extracted` (read straight from
 
 ax *is* the pre-built search index. For "how does X work?", architecture, a flow ("how does X reach Y"), or where-is-X questions — and while editing code — an agent should answer with `ax_explore` and stop, typically with **zero file reads**, rather than re-deriving the answer with `grep` + `Read`. A direct ax answer is one to a few calls; a grep/read exploration is dozens.
 
-The MCP server delivers this guidance to the main agent automatically, in the MCP `initialize` response. Because subagents and non-MCP harnesses never see that response, the installer also writes a short marker-fenced section into each agent's instructions file pointing at the `ax explore` CLI equivalent.
+**Prefer MCP ops over shell CLI.** When the ax MCP server is connected, agents must call `ax_sync`, `ax_index`, `ax_lsp`, `ax_ship`, `ax_policy_index`, `ax_remember` / `ax_recall` instead of running the matching `ax …` commands in a terminal. Shell CLI is reserved for DEGRADED mode (MCP unreachable) or ops with no MCP tool (`install`, `upgrade`, `web`, `share`, `ship --watch`). IDE bootstrap files (`AGENTS.md`, `.cursor/rules/ax.mdc`, …) and the CRITICAL `prefer-mcp-ops` policy rule encode the same mapping.
+
+The MCP server delivers this guidance to the main agent automatically, in the MCP `initialize` response (`server_instructions`). Because subagents and non-MCP harnesses never see that response, the installer also writes a short marker-fenced section into each agent's instructions file. Re-sync with `ax policy sync --fix` after upgrading ax.

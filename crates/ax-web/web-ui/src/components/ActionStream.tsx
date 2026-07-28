@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 
 type ActionEvent = {
   ts: number;
@@ -13,17 +14,19 @@ export default function ActionStream() {
   const [events, setEvents] = useState<ActionEvent[]>([]);
 
   useEffect(() => {
-    const es = new EventSource('/api/actions/events');
-    es.addEventListener('action', (ev) => {
-      try {
-        const data = JSON.parse((ev as MessageEvent).data) as ActionEvent;
-        if (data.kind === 'stream') return;
-        setEvents((prev) => [data, ...prev].slice(0, MAX));
-      } catch {
-        /* ignore malformed */
-      }
+    return subscribeSharedEventSource('/api/actions/events', {
+      events: {
+        action: (ev) => {
+          try {
+            const data = JSON.parse((ev as MessageEvent).data) as ActionEvent;
+            if (data.kind === 'stream') return;
+            setEvents((prev) => [data, ...prev].slice(0, MAX));
+          } catch {
+            /* ignore malformed */
+          }
+        },
+      },
     });
-    return () => es.close();
   }, []);
 
   if (events.length === 0) return null;

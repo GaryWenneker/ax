@@ -4,7 +4,7 @@ import AgentsSettingsSection from '../components/AgentsSettingsSection';
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
 import SharingSettingsSection from '../components/SharingSettingsSection';
-import McpTraceLive from '../components/McpTraceLive';
+import PolicySyncSettingsSection from '../components/PolicySyncSettingsSection';
 import { BusyLabel } from '../components/ui/PageLayout';
 import ThemeChooser from '../components/ThemeChooser';
 import { usePageContext } from '../context/UiContext';
@@ -139,33 +139,6 @@ export default function SettingsPage() {
       setConfig((c) => ({
         ...c,
         ui: { ...(c.ui ?? {}), show_savings: !show_savings },
-      }));
-      setErr(String(e));
-    }
-  }
-
-  async function setUiVerboseMcp(verbose_mcp: boolean) {
-    const next = {
-      ...config,
-      ui: { ...(config.ui ?? {}), verbose_mcp },
-    };
-    setConfig(next);
-    setErr(null);
-    setMsg(null);
-    try {
-      await saveShipConfig(next);
-      window.dispatchEvent(
-        new CustomEvent('ax-ship-config-updated', { detail: { verbose_mcp } }),
-      );
-      setMsg(
-        verbose_mcp
-          ? 'Verbose MCP logging enabled — reconnect ax MCP, then open Logging from the status bar'
-          : 'Verbose MCP logging disabled',
-      );
-    } catch (e) {
-      setConfig((c) => ({
-        ...c,
-        ui: { ...(c.ui ?? {}), verbose_mcp: !verbose_mcp },
       }));
       setErr(String(e));
     }
@@ -345,17 +318,6 @@ export default function SettingsPage() {
             </SettingRow>
 
             <SettingRow
-              title="Verbose MCP logging"
-              description="Record inbound args, enrichment, outbound MCP payloads, and v4 domain events (plugin/lsp/ship-ci/share/workspace/embed/action) to <project>/.ax/mcp-verbose-YYYY-MM-DD.log and stream them in Logging. Off by default — never alters tool responses."
-            >
-              <Toggle
-                label="Verbose MCP logging"
-                checked={config.ui?.verbose_mcp ?? false}
-                onChange={setUiVerboseMcp}
-              />
-            </SettingRow>
-
-            <SettingRow
               title="Timezone"
               description={`Display Logging Date/time in this zone and rotate daily log files at midnight here. Line timestamps in files stay UTC. Browser local is currently ${browserTimeZone()}.`}
             >
@@ -469,6 +431,7 @@ export default function SettingsPage() {
             <p>LAN share session, token gate, and optional PWA install.</p>
           </div>
           <div className="settings-card-body">
+            <PolicySyncSettingsSection />
             <SharingSettingsSection />
           </div>
         </section>
@@ -492,8 +455,6 @@ export default function SettingsPage() {
             <EmbedSettingsSection />
           </div>
         </section>
-
-        <McpTraceLive verboseEnabled={config.ui?.verbose_mcp ?? false} />
       </div>
     </div>
   );

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 pub const POLICY_DIR: &str = "policy";
 pub const RULES_DIR: &str = "rules";
 pub const SKILLS_DIR: &str = "skills";
+pub const SHARED_DIR: &str = "shared";
+pub const PENDING_DIR: &str = "pending";
 pub const SKILL_FILENAME: &str = "SKILL.md";
 
 pub fn policy_root(ax_dir: &Path) -> PathBuf {
@@ -15,6 +17,24 @@ pub fn rules_dir(ax_dir: &Path) -> PathBuf {
 
 pub fn skills_dir(ax_dir: &Path) -> PathBuf {
     policy_root(ax_dir).join(SKILLS_DIR)
+}
+
+/// Per-project git pack directory: `.ax/policy/shared/`.
+pub fn shared_dir(ax_dir: &Path) -> PathBuf {
+    policy_root(ax_dir).join(SHARED_DIR)
+}
+
+/// Pending review queue: `.ax/policy/pending/`.
+pub fn pending_dir(ax_dir: &Path) -> PathBuf {
+    policy_root(ax_dir).join(PENDING_DIR)
+}
+
+pub fn pending_rules_dir(ax_dir: &Path) -> PathBuf {
+    pending_dir(ax_dir).join(RULES_DIR)
+}
+
+pub fn pending_skills_dir(ax_dir: &Path) -> PathBuf {
+    pending_dir(ax_dir).join(SKILLS_DIR)
 }
 
 pub fn rule_file(rules: &Path, id: &str) -> PathBuf {

@@ -94,6 +94,10 @@ pub fn propose_rule_from_prompt(prompt: &str, open_files: &[String]) -> CaptureP
         triggers,
         tags: vec!["captured".into()],
         priority: 60,
+        enabled: true,
+        status: "approved".into(),
+        share: false,
+        scope: "project".into(),
     };
 
     let preview_path = format!(".ax/policy/rules/{suggested_id}.mdc");
@@ -142,6 +146,18 @@ pub fn capture_interview_questions(proposal: &CaptureProposal) -> Vec<CaptureInt
             question: "Severity level: when should agents treat this as binding?".into(),
             current: fm.level.clone(),
             options: vec!["INFO".into(), "WARNING".into(), "CRITICAL".into()],
+            required: true,
+        },
+        CaptureInterviewQuestion {
+            field: "scope".into(),
+            question: "Where should this rule live? (company = all projects on this machine; project = this repo; private_user / private_project = never git-synced)".into(),
+            current: fm.scope.clone(),
+            options: vec![
+                "company".into(),
+                "project".into(),
+                "private_user".into(),
+                "private_project".into(),
+            ],
             required: true,
         },
         CaptureInterviewQuestion {
@@ -236,6 +252,10 @@ fn empty_proposal() -> CaptureProposal {
             triggers: vec![],
             tags: vec![],
             priority: 60,
+            enabled: true,
+            status: "approved".into(),
+            share: false,
+            scope: "project".into(),
         },
         body: String::new(),
         preview_path: String::new(),
@@ -422,6 +442,7 @@ mod tests {
         assert!(p.detected);
         assert!(!p.questions.is_empty());
         assert!(p.questions.iter().any(|q| q.field == "level"));
+        assert!(p.questions.iter().any(|q| q.field == "scope"));
         assert!(p.questions.iter().any(|q| q.field == "alwaysApply"));
         assert!(!p.interview_instruction.is_empty());
     }

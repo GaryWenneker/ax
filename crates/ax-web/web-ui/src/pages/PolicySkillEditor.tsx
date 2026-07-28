@@ -14,7 +14,7 @@ import {
   PageToasts,
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
-import type { SkillFrontmatter } from '../policyTypes';
+import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
 
 interface Props {
   skillName: string | null;
@@ -27,6 +27,10 @@ const emptyFm = (): SkillFrontmatter => ({
   triggers: [],
   tags: [],
   priority: 50,
+  enabled: true,
+  status: 'approved',
+  share: false,
+  scope: 'project',
 });
 
 function parseCsv(s: string): string[] {
@@ -108,7 +112,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
       : 'Skill metadata and instructions — loaded via ax_skill when triggers match.';
 
   return (
-    <PageShell>
+    <PageShell className="policy-editor-page">
       <PageHero
         title={title}
         subtitle={subtitle}
@@ -171,6 +175,20 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                         onChange={(e) => setFm({ ...fm, priority: Number(e.target.value) })}
                       />
                     </PageRow>
+                    <PageRow
+                      title="Scope"
+                      description="Company/user private live under ~/.ax; project private is gitignored."
+                    >
+                      <select
+                        className="settings-select"
+                        value={fm.scope || 'project'}
+                        onChange={(e) => setFm({ ...fm, scope: e.target.value })}
+                      >
+                        {POLICY_SCOPES.map((s) => (
+                          <option key={s.value} value={s.value}>{s.label}</option>
+                        ))}
+                      </select>
+                    </PageRow>
                     <PageRow title="Triggers" description="Keywords that activate this skill.">
                       <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />
                     </PageRow>
@@ -193,6 +211,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                     triggers={fm.triggers}
                     tags={fm.tags}
                     contextTask={fm.contextTask}
+                    scope={fm.scope}
                   />
                 )}
               </PageCardBody>
@@ -205,7 +224,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
             className="page-md-panel"
           >
             {editing ? (
-              <MarkdownEditor value={body} onChange={setBody} />
+              <MarkdownEditor value={body} onChange={setBody} fill />
             ) : (
               <MarkdownPreview value={body} className="page-md-preview" />
             )}

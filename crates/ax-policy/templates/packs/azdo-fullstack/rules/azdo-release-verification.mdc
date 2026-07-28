@@ -1,0 +1,23 @@
+---
+id: azdo-release-verification
+level: WARNING
+alwaysApply: false
+globs: []
+triggers: ["release", "production", "smoke test", "rollback", "deployed", "Done", "Closed"]
+tags: ["azdo", "release", "shared"]
+priority: 76
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# Release Verification
+
+After each production deploy:
+
+1. Run a smoke test of critical paths
+2. Confirm monitoring/dashboards look healthy
+3. Move the Azure DevOps work item to Done/Closed only after verification
+4. Keep a clear rollback plan (slots / blue-green / previous artifact)
+
+Zero-downtime strategy is preferred (deployment slots or equivalent).

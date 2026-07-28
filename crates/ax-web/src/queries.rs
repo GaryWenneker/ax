@@ -387,31 +387,62 @@ pub struct FileRoot {
     pub count: i64,
 }
 
+#[derive(Serialize)]
+pub struct FileRootsPage {
+    pub roots: Vec<FileRoot>,
+    /// Indexed files at the project root (no `/` in path) — not folders.
+    pub files: Vec<FileRow>,
+}
+
 pub struct FilePage {
     pub files: Vec<FileRow>,
     pub total: i64,
 }
 
-pub async fn get_file_roots(pool: &SqlitePool) -> anyhow::Result<Vec<FileRoot>> {
-    let rows = sqlx::query_as::<_, (String, i64)>(
+pub async fn get_file_roots(pool: &SqlitePool) -> anyhow::Result<FileRootsPage> {
+    // Only first path segments that are directories (have children under them).
+    // Root-level files like README.md must not appear as expandable folders.
+    let folders = sqlx::query_as::<_, (String, i64)>(
         r#"SELECT
-            CASE WHEN instr(path, '/') > 0 THEN substr(path, 1, instr(path, '/') - 1) ELSE path END,
+            substr(path, 1, instr(path, '/') - 1) AS name,
             COUNT(*)
            FROM files
+           WHERE instr(path, '/') > 0
            GROUP BY 1
            ORDER BY 1 COLLATE NOCASE"#,
     )
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|(name, count)| FileRoot {
-            path: name.clone(),
-            name,
-            count,
-        })
-        .collect())
+    let root_files = sqlx::query_as::<_, (String, String, i64, i64, i64)>(
+        r#"SELECT path, language, size, node_count, indexed_at
+           FROM files
+           WHERE instr(path, '/') = 0
+           ORDER BY path COLLATE NOCASE"#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(FileRootsPage {
+        roots: folders
+            .into_iter()
+            .map(|(name, count)| FileRoot {
+                path: name.clone(),
+                name,
+                count,
+            })
+            .collect(),
+        files: root_files
+            .into_iter()
+            .map(|(path, language, size, node_count, indexed_at)| FileRow {
+                path,
+                language,
+                size,
+                node_count,
+                indexed_at,
+            })
+            .collect(),
+    })
 }
 
 pub async fn get_files(pool: &SqlitePool, f: FileFilter<'_>) -> anyhow::Result<FilePage> {

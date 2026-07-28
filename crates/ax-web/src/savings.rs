@@ -95,6 +95,7 @@ pub fn router(hub: crate::workspace_state::WebHub) -> Router {
         .route("/savings/import", post(handle_import))
         .route("/savings/call/{id}", get(handle_call_detail))
         .route("/tokenize", post(handle_tokenize))
+        .merge(crate::pricing_api::router())
         .merge(crate::mcp_trace::router(hub.clone()))
         .merge(crate::mcp_quality::router(hub))
 }

@@ -48,13 +48,30 @@ ax policy pull https://github.com/acme/ax-org-policy.git
 
 Clones into `.ax/policy/vendored/<name>/`, copies rules/skills into the project policy tree, and re-indexes.
 
+## Per-project policy pack sync
+
+For **bidirectional** team sync inside a project repo (each workspace member keeps its own pack):
+
+```bash
+# Exports enabled project/workspace items (opt out with tags local / noshare):
+ax policy pack export
+# commit .ax/policy/shared/
+ax policy pack import
+```
+
+Set `"policySync": true` in that project's `ax.json` for post-commit export / post-merge import hooks. Optional `"policy": { "requireReview": true }` stages imports under `.ax/policy/pending/` until `ax policy review approve`. See [Policy Engine](/guides/policy-engine/#per-project-pack-sync).
+
 ### Hierarchical policy merge
 
-On every policy import/index, ax merges layers (later wins on the same rule/skill id):
+On every policy import/index, ax merges layers (later wins on the same rule/skill id). Each item is stamped with a **scope** (`company`, `workspace`, `project`, `private_user`, `private_project`) in both files and database storage modes:
 
-1. `~/.ax/global_policy/`
-2. Workspace root `.ax/policy/` (when root `ax.json` has `members`)
-3. Member / project `.ax/policy/`
+1. `~/.ax/global_policy/` — **company** (UI label; path kept for compatibility)
+2. Workspace root `.ax/policy/` — **workspace** (when root `ax.json` has `members`)
+3. Member / project `.ax/policy/` — **project**
+4. `~/.ax/private_policy/` — **private_user** (never packed / never git-synced)
+5. `<project>/.ax/policy-private/` — **private_project** (gitignored via `.ax/.gitignore`)
+
+Company and private scopes are never exported by `ax policy pack export`.
 
 ### API contract federation
 

@@ -1,0 +1,18 @@
+---
+id: azdo-prod-approval-gate
+level: CRITICAL
+alwaysApply: false
+globs: ["**/azure-pipelines*.yml", "**/*pipeline*.yml"]
+triggers: ["production", "prod deploy", "release", "approval gate", "AZDO Environment"]
+tags: ["azdo", "cicd", "release", "shared"]
+priority: 88
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# Production Approval Gate
+
+- Staging deploys automatically after merge to `main` (or the release branch)
+- Production deploys require an explicit Manual Approval Gate on the Azure DevOps Environment
+- Never bypass the prod approval for convenience

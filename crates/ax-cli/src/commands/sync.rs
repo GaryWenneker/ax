@@ -24,6 +24,10 @@ pub async fn run(
         if members.len() == 1 && members[0] == root {
             // No workspace config — fall through to single-root sync.
         } else {
+            ax_usage::log_workspace(
+                Some(&root),
+                format!("sync-all start members={}", members.len()),
+            );
             for member in &members {
                 if !quiet {
                     println!("{}", info_line(format!("Syncing {}", member.display())));
@@ -32,8 +36,18 @@ pub async fn run(
                     Some(&root),
                     format!("sync-all member={}", member.display()),
                 );
-                sync_one(member, quiet, false).await?;
+                if let Err(e) = sync_one(member, quiet, false).await {
+                    ax_usage::log_workspace(
+                        Some(&root),
+                        format!("sync-all fail member={}", member.display()),
+                    );
+                    return Err(e);
+                }
             }
+            ax_usage::log_workspace(
+                Some(&root),
+                format!("sync-all ok members={}", members.len()),
+            );
             if !quiet {
                 println!(
                     "{}",
@@ -50,7 +64,17 @@ pub async fn run(
 async fn sync_one(root: &std::path::Path, quiet: bool, watch: bool) -> Result<(), String> {
     // Idempotent — adds capture-git to hooks when missing (post-init upgrade path).
     let _ = ax_sync::install_git_sync_hooks(root);
-    let mut ax = ax_core::Ax::open(root).await.map_err(|e| e.to_string())?;
+    ax_usage::log_workspace(
+        Some(root),
+        format!("sync start watch={}", if watch { "1" } else { "0" }),
+    );
+    let mut ax = match ax_core::Ax::open(root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            ax_usage::log_workspace(Some(root), "sync fail stage=open");
+            return Err(e.to_string());
+        }
+    };
     let opts = IndexOptions {
         force: false,
         quiet,
@@ -77,22 +101,38 @@ async fn sync_one(root: &std::path::Path, quiet: bool, watch: bool) -> Result<()
             }
         };
         finish_progress_bar(progress);
+        match &result {
+            Ok(()) => ax_usage::log_workspace(Some(root), "sync ok mode=watch"),
+            Err(_) => ax_usage::log_workspace(Some(root), "sync fail mode=watch"),
+        }
         result
     } else {
-        let result = ax.sync(opts, on_progress).await.map_err(|e| e.to_string())?;
+        let result = ax.sync(opts, on_progress).await.map_err(|e| e.to_string());
         finish_progress_bar(progress);
-        if !quiet {
-            let summary = if result.files_indexed == 0 {
-                ok_line("Already up to date")
-            } else {
-                ok_line(format!(
-                    "Synced {} file(s) in {}",
-                    result.files_indexed,
-                    format_duration_ms(result.duration_ms)
-                ))
-            };
-            println!("{}", summary);
+        match &result {
+            Ok(r) => {
+                ax_usage::log_workspace(
+                    Some(root),
+                    format!(
+                        "sync ok files={} duration_ms={}",
+                        r.files_indexed, r.duration_ms
+                    ),
+                );
+                if !quiet {
+                    let summary = if r.files_indexed == 0 {
+                        ok_line("Already up to date")
+                    } else {
+                        ok_line(format!(
+                            "Synced {} file(s) in {}",
+                            r.files_indexed,
+                            format_duration_ms(r.duration_ms)
+                        ))
+                    };
+                    println!("{}", summary);
+                }
+            }
+            Err(_) => ax_usage::log_workspace(Some(root), "sync fail"),
         }
-        Ok(())
+        result.map(|_| ())
     }
 }

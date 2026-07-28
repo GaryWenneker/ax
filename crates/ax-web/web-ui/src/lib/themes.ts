@@ -200,6 +200,57 @@ export function themeById(id: string): ThemePreset {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];
 }
 
+/** sRGB relative luminance (0 = black, 1 = white). */
+function relativeLuminance(hex: string): number {
+  const raw = hex.replace('#', '').trim();
+  if (raw.length !== 6) return 0.5;
+  const toLin = (n: number) => {
+    const c = n / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const r = toLin(parseInt(raw.slice(0, 2), 16));
+  const g = toLin(parseInt(raw.slice(2, 4), 16));
+  const b = toLin(parseInt(raw.slice(4, 6), 16));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(l1: number, l2: number): number {
+  const a = Math.max(l1, l2);
+  const b = Math.min(l1, l2);
+  return (a + 0.05) / (b + 0.05);
+}
+
+/**
+ * Pick status-bar foreground for a solid accent background.
+ * Light accents (ax Mint) → dark ink; dark accents → light ink.
+ */
+export function statusbarInk(accentHex: string): {
+  fg: string;
+  muted: string;
+  sep: string;
+  hoverBg: string;
+  onLight: boolean;
+} {
+  const L = relativeLuminance(accentHex);
+  const preferDark = contrastRatio(L, 0) >= contrastRatio(L, 1);
+  if (preferDark) {
+    return {
+      fg: '#0d1412',
+      muted: 'color-mix(in srgb, #0d1412 88%, transparent)',
+      sep: 'color-mix(in srgb, #0d1412 35%, transparent)',
+      hoverBg: 'rgba(0, 0, 0, 0.1)',
+      onLight: true,
+    };
+  }
+  return {
+    fg: '#f3f3f3',
+    muted: 'color-mix(in srgb, #ffffff 88%, transparent)',
+    sep: 'color-mix(in srgb, #ffffff 35%, transparent)',
+    hoverBg: 'rgba(255, 255, 255, 0.12)',
+    onLight: false,
+  };
+}
+
 export function applyTheme(theme: ThemePreset): void {
   const root = document.documentElement;
   root.style.setProperty('--accent', theme.accent);
@@ -218,6 +269,12 @@ export function applyTheme(theme: ThemePreset): void {
   root.style.setProperty('--text-dim', theme.textDim);
   root.style.setProperty('--text-hi', theme.textHi);
   root.style.setProperty('--statusbar-bg', theme.statusbarBg);
+  const ink = statusbarInk(theme.statusbarBg || theme.accent);
+  root.style.setProperty('--statusbar-fg', ink.fg);
+  root.style.setProperty('--statusbar-fg-muted', ink.muted);
+  root.style.setProperty('--statusbar-fg-sep', ink.sep);
+  root.style.setProperty('--statusbar-hover-bg', ink.hoverBg);
+  root.dataset.statusbarInk = ink.onLight ? 'dark' : 'light';
   root.style.setProperty('--ax-project-accent', theme.accent);
   root.style.setProperty(
     '--ax-project-bg',

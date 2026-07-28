@@ -1,4 +1,5 @@
-import { LevelBadge } from './ui/PageLayout';
+import { LevelBadge, ScopeBadge } from './ui/PageLayout';
+import { scopeLabel } from '../policyTypes';
 
 function TagList({ items, empty = '—' }: { items: string[]; empty?: string }) {
   if (items.length === 0) {
@@ -21,6 +22,7 @@ export function RuleMetaView({
   globs,
   triggers,
   tags,
+  scope,
 }: {
   id: string;
   level: string;
@@ -29,6 +31,7 @@ export function RuleMetaView({
   globs: string[];
   triggers: string[];
   tags: string[];
+  scope?: string;
 }) {
   return (
     <div className="policy-view-meta">
@@ -39,6 +42,12 @@ export function RuleMetaView({
       <div className="detail-kv">
         <span className="detail-key">Level</span>
         <span className="detail-val"><LevelBadge level={level} /></span>
+      </div>
+      <div className="detail-kv">
+        <span className="detail-key">Scope</span>
+        <span className="detail-val" title={scopeLabel(scope)}>
+          <ScopeBadge scope={scope} />
+        </span>
       </div>
       <div className="detail-kv">
         <span className="detail-key">Always apply</span>
@@ -71,6 +80,7 @@ export function SkillMetaView({
   triggers,
   tags,
   contextTask,
+  scope,
 }: {
   name: string;
   description: string;
@@ -78,6 +88,7 @@ export function SkillMetaView({
   triggers: string[];
   tags: string[];
   contextTask?: string;
+  scope?: string;
 }) {
   return (
     <div className="policy-view-meta">
@@ -88,6 +99,12 @@ export function SkillMetaView({
       <div className="detail-kv detail-kv--stack">
         <span className="detail-key">Description</span>
         <span className="detail-val">{description || '—'}</span>
+      </div>
+      <div className="detail-kv">
+        <span className="detail-key">Scope</span>
+        <span className="detail-val" title={scopeLabel(scope)}>
+          <ScopeBadge scope={scope} />
+        </span>
       </div>
       <div className="detail-kv">
         <span className="detail-key">Priority</span>

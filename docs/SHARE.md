@@ -24,6 +24,12 @@ Settings → Sharing shows share status, plugin count, embed backend, and a dism
 PWA install hint. The StatusBar shows a Shared/Read-only badge. Activity events live
 in the StatusBar Activity chip.
 
+Live SSE streams (activity, MCP trace, ship, quality) share **one EventSource per URL
+per tab** (`sharedEventSource`) so the browser’s ~6 HTTP/1.1 sockets per host are not
+exhausted — otherwise `/api/*` fetches hang and pages look empty. The status bar does
+**not** open its own MCP-trace SSE; Logging publishes activity via window events.
+Close extra Command Center tabs if data still fails to load.
+
 ## PWA
 
 Manifest + icons ship with Command Center. The service worker is **opt-in**

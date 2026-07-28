@@ -1,0 +1,18 @@
+---
+id: azdo-build-once-deploy-many
+level: WARNING
+alwaysApply: false
+globs: ["**/azure-pipelines*.yml", "**/*.yml", "**/*.yaml", "**/Dockerfile*", "**/Bicep/**", "**/terraform/**"]
+triggers: ["pipeline", "deploy", "artifact", "Docker image", "CI/CD", "YAML pipeline"]
+tags: ["azdo", "cicd", "shared"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# Build Once, Deploy Many
+
+Build application artifacts once in the Build stage (Docker image, zip package, etc.).
+
+Promote the same artifact through Dev → Staging → Prod using environment-specific configuration — never rebuild per environment.

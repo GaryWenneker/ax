@@ -56,7 +56,13 @@ export default function UnresolvedPage({
   const [enriching, setEnriching] = useState(false);
   const [enrichLimit, setEnrichLimit] = useState(200);
   const [lspServers, setLspServers] = useState<
-    Array<{ id: string; available: boolean; command?: string; languages?: string[] }>
+    Array<{
+      id: string;
+      available: boolean;
+      command?: string;
+      path?: string | null;
+      languages?: string[];
+    }>
   >([]);
   const [lspStatusLoading, setLspStatusLoading] = useState(false);
   const [enrichReport, setEnrichReport] = useState<{
@@ -246,7 +252,7 @@ export default function UnresolvedPage({
   }
 
   return (
-    <PageShell>
+    <PageShell className="unresolved-page">
       <PageHero
         title="Unresolved references"
         subtitle="Symbol links the indexer could not resolve to a target in the graph — method calls, imports, type references, and similar edges awaiting resolution."
@@ -336,28 +342,42 @@ export default function UnresolvedPage({
             </div>
 
             <p className="settings-help">
-              Language servers on PATH. Unavailable ones are listed but skipped at enrich time.
-              Successful definitions become edges with confidence <code>exact</code>.
+              Language servers on PATH <em>and</em> runnable. A rustup shim alone shows as{' '}
+              <code>shim</code> until you run{' '}
+              <code>rustup component add rust-analyzer</code>. Unavailable servers are skipped at
+              enrich time. Successful definitions become edges with confidence <code>exact</code>.
+              The first enrich on a large Rust workspace can take 1–3 minutes while rust-analyzer
+              indexes — leave this dialog open; later refs in the same run are much faster.
+              Reconcile only name-matches symbols already in the graph (stdlib noise often stays).
             </p>
 
             <ul className="lsp-server-list" aria-label="Language servers">
               {lspServers.length === 0 && !lspStatusLoading ? (
                 <li className="lsp-server-list__empty">No servers discovered.</li>
               ) : (
-                lspServers.map((s) => (
-                  <li
-                    key={s.id}
-                    className={`lsp-server-row${s.available ? ' lsp-server-row--ok' : ' lsp-server-row--miss'}`}
-                  >
-                    <span className="lsp-server-id mono">{s.id}</span>
-                    <span className="lsp-server-cmd mono">{s.command ?? s.id}</span>
-                    <span
-                      className={`lsp-server-badge lsp-server-badge--${s.available ? 'ok' : 'miss'}`}
+                lspServers.map((s) => {
+                  const hasPath = Boolean(s.path);
+                  const status = s.available ? 'ok' : hasPath ? 'shim' : 'miss';
+                  const label =
+                    status === 'ok' ? 'available' : status === 'shim' ? 'shim' : 'missing';
+                  return (
+                    <li
+                      key={s.id}
+                      className={`lsp-server-row lsp-server-row--${status}`}
+                      title={
+                        status === 'shim'
+                          ? 'On PATH but not runnable — e.g. rustup component add rust-analyzer'
+                          : s.path ?? undefined
+                      }
                     >
-                      {s.available ? 'available' : 'missing'}
-                    </span>
-                  </li>
-                ))
+                      <span className="lsp-server-id mono">{s.id}</span>
+                      <span className="lsp-server-cmd mono">{s.command ?? s.id}</span>
+                      <span className={`lsp-server-badge lsp-server-badge--${status}`}>
+                        {label}
+                      </span>
+                    </li>
+                  );
+                })
               )}
             </ul>
 

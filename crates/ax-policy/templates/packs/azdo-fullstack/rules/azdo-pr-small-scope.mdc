@@ -1,0 +1,18 @@
+---
+id: azdo-pr-small-scope
+level: WARNING
+alwaysApply: false
+globs: []
+triggers: ["pull request", "PR", "code review", "create PR", "open PR"]
+tags: ["azdo", "pr", "shared"]
+priority: 72
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# Small PR Scope
+
+Keep pull requests small and focused (prefer under ~400 lines of meaningful code change).
+
+If a story is larger, split into vertical slices with separate PRs. Large PRs slow reviews and hide defects.

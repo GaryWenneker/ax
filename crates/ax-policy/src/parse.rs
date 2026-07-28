@@ -55,14 +55,31 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
     }
     let id = get_str(&map, "id").ok_or_else(|| field_err("id", "required"))?;
     let level = get_str(&map, "level").ok_or_else(|| field_err("level", "required"))?;
+    let share = get_bool(&map, "share");
+    let mut tags = get_str_list(&map, "tags");
+    ensure_shared_tag(&mut tags, share);
+    let status = get_str(&map, "status").unwrap_or_else(|| "approved".into());
+    let status = crate::types::PolicyItemStatus::parse(&status)
+        .unwrap_or(crate::types::PolicyItemStatus::Approved)
+        .as_str()
+        .to_string();
+    let scope = get_str(&map, "scope").unwrap_or_else(|| "project".into());
+    let scope = crate::types::PolicyScope::parse(&scope)
+        .unwrap_or(crate::types::PolicyScope::Project)
+        .as_str()
+        .to_string();
     Ok(RuleFrontmatter {
         id,
         level,
         always_apply: get_bool(&map, "alwaysApply"),
         globs: get_str_list(&map, "globs"),
         triggers: get_str_list(&map, "triggers"),
-        tags: get_str_list(&map, "tags"),
+        tags,
         priority: get_i32(&map, "priority").unwrap_or(50),
+        enabled: get_bool_default_true(&map, "enabled"),
+        status,
+        share,
+        scope,
     })
 }
 
@@ -78,14 +95,44 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
     }
     let name = get_str(&map, "name").ok_or_else(|| field_err("name", "required"))?;
     let description = get_str(&map, "description").ok_or_else(|| field_err("description", "required"))?;
+    let share = get_bool(&map, "share");
+    let mut tags = get_str_list(&map, "tags");
+    ensure_shared_tag(&mut tags, share);
+    let status = get_str(&map, "status").unwrap_or_else(|| "approved".into());
+    let status = crate::types::PolicyItemStatus::parse(&status)
+        .unwrap_or(crate::types::PolicyItemStatus::Approved)
+        .as_str()
+        .to_string();
+    let scope = get_str(&map, "scope").unwrap_or_else(|| "project".into());
+    let scope = crate::types::PolicyScope::parse(&scope)
+        .unwrap_or(crate::types::PolicyScope::Project)
+        .as_str()
+        .to_string();
     Ok(SkillFrontmatter {
         name,
         description,
         triggers: get_str_list(&map, "triggers"),
-        tags: get_str_list(&map, "tags"),
+        tags,
         priority: get_i32(&map, "priority").unwrap_or(50),
         context_task: get_str(&map, "contextTask"),
+        enabled: get_bool_default_true(&map, "enabled"),
+        status,
+        share,
+        scope,
     })
+}
+
+fn ensure_shared_tag(tags: &mut Vec<String>, share: bool) {
+    if !share {
+        return;
+    }
+    if !tags.iter().any(|t| t.eq_ignore_ascii_case("shared")) {
+        tags.push("shared".into());
+    }
+}
+
+fn get_bool_default_true(map: &HashMap<String, Value>, key: &str) -> bool {
+    map.get(key).and_then(|v| v.as_bool()).unwrap_or(true)
 }
 
 fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
@@ -97,6 +144,12 @@ fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
     }
     if crate::types::PolicyLevel::parse(&fm.level).is_none() {
         fields.insert("level".into(), "must be CRITICAL, WARNING, or INFO".into());
+    }
+    if crate::types::PolicyScope::parse(&fm.scope).is_none() {
+        fields.insert(
+            "scope".into(),
+            "must be company, workspace, project, private_user, or private_project".into(),
+        );
     }
     if !fm.always_apply && fm.globs.is_empty() && fm.triggers.is_empty() {
         fields.insert(
@@ -131,18 +184,35 @@ fn validate_skill(fm: &SkillFrontmatter) -> Result<(), ValidationError> {
 }
 
 pub fn serialize_rule(fm: &RuleFrontmatter, body: &str) -> String {
-    let yaml = format!(
-        "---\nid: {}\nlevel: {}\nalwaysApply: {}\nglobs: {}\ntriggers: {}\ntags: {}\npriority: {}\n---\n\n{}",
-        fm.id,
-        fm.level,
-        fm.always_apply,
-        serde_json::to_string(&fm.globs).unwrap_or_else(|_| "[]".into()),
-        serde_json::to_string(&fm.triggers).unwrap_or_else(|_| "[]".into()),
-        serde_json::to_string(&fm.tags).unwrap_or_else(|_| "[]".into()),
-        fm.priority,
-        body.trim()
-    );
-    yaml
+    let mut lines = vec![
+        "---".into(),
+        format!("id: {}", fm.id),
+        format!("level: {}", fm.level),
+        format!("alwaysApply: {}", fm.always_apply),
+        format!(
+            "globs: {}",
+            serde_json::to_string(&fm.globs).unwrap_or_else(|_| "[]".into())
+        ),
+        format!(
+            "triggers: {}",
+            serde_json::to_string(&fm.triggers).unwrap_or_else(|_| "[]".into())
+        ),
+        format!(
+            "tags: {}",
+            serde_json::to_string(&fm.tags).unwrap_or_else(|_| "[]".into())
+        ),
+        format!("priority: {}", fm.priority),
+        format!("enabled: {}", fm.enabled),
+        format!("status: {}", fm.status),
+        format!("scope: {}", fm.scope),
+    ];
+    if fm.share {
+        lines.push("share: true".into());
+    }
+    lines.push("---".into());
+    lines.push(String::new());
+    lines.push(body.trim().to_string());
+    lines.join("\n")
 }
 
 pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
@@ -164,6 +234,12 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
         ));
     }
     lines.push(format!("priority: {}", fm.priority));
+    lines.push(format!("enabled: {}", fm.enabled));
+    lines.push(format!("status: {}", fm.status));
+    lines.push(format!("scope: {}", fm.scope));
+    if fm.share {
+        lines.push("share: true".into());
+    }
     if let Some(ref t) = fm.context_task {
         lines.push(format!("contextTask: {}", yaml_string(t)));
     }
@@ -258,6 +334,10 @@ mod tests {
             triggers: vec!["mobile".into()],
             tags: vec!["hello".into()],
             priority: 50,
+            enabled: true,
+            status: "approved".into(),
+            share: false,
+            scope: "project".into(),
         };
         let raw = serialize_rule(&fm, "Always say Hello World");
         let doc = parse_rule_file(Path::new("hello-world.mdc"), &raw).unwrap();

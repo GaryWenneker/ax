@@ -1,0 +1,21 @@
+---
+id: azdo-dod-code
+level: WARNING
+alwaysApply: false
+globs: []
+triggers: ["Definition of Done", "DoD", "ready to merge", "done", "lint", "format", "Sonar"]
+tags: ["azdo", "quality", "shared"]
+priority: 75
+enabled: true
+status: approved
+scope: project
+share: true
+---
+# Definition of Done — Code
+
+Before marking code ready for PR:
+
+1. Code meets agreed linter and formatter rules
+2. No new compiler warnings introduced
+3. No new critical static-analysis findings (e.g. SonarQube)
+4. Changes are covered by unit tests where logic was added

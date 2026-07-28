@@ -18,6 +18,7 @@ members = [
     "crates/ax-policy",
     "crates/ax-smoke-tests",
     "crates/ax-web",
+    "crates/ax-desktop-client",
     "crates/ax-git",
     "crates/ax-tia",
     "crates/ax-ship",
@@ -79,6 +80,7 @@ ax-core = { path = "crates/ax-core" }
 ax-mcp = { path = "crates/ax-mcp" }
 ax-memory = { path = "crates/ax-memory" }
 ax-web = { path = "crates/ax-web" }
+ax-desktop-client = { path = "crates/ax-desktop-client" }
 ax-policy = { path = "crates/ax-policy" }
 serde_yaml = "0.9"
 globset = "0.4"

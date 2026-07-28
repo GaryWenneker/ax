@@ -289,7 +289,9 @@ mod tests {
         sqlx::query(
             "CREATE TABLE policy_rules (
                 id TEXT PRIMARY KEY, level TEXT, always_apply INTEGER, globs TEXT, triggers TEXT,
-                tags TEXT, priority INTEGER, body TEXT, source_path TEXT, content_hash TEXT, updated_at INTEGER
+                tags TEXT, priority INTEGER, body TEXT, source_path TEXT, content_hash TEXT, updated_at INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
+                scope TEXT NOT NULL DEFAULT 'project'
             )",
         )
         .execute(&pool)
@@ -299,14 +301,17 @@ mod tests {
             "CREATE TABLE policy_skills (
                 name TEXT PRIMARY KEY, description TEXT, triggers TEXT, tags TEXT,
                 priority INTEGER, context_task TEXT, body TEXT, source_path TEXT,
-                content_hash TEXT, updated_at INTEGER
+                content_hash TEXT, updated_at INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
+                scope TEXT NOT NULL DEFAULT 'project'
             )",
         )
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO policy_rules VALUES ('utf8-no-bom','CRITICAL',1,'[]','[]','[\"utf8\"]',100,'','', '', 0)",
+            "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
+             VALUES ('utf8-no-bom','CRITICAL',1,'[]','[]','[\"utf8\"]',100,'','','',0,1,'approved','project')",
         )
         .execute(&pool)
         .await
@@ -318,7 +323,8 @@ mod tests {
     async fn blocks_sensitive_delete() {
         let (dir, pool) = pool_with_utf8_rule().await;
         sqlx::query(
-            "INSERT INTO policy_rules VALUES ('secrets','CRITICAL',1,'[]','[]','[\"secrets\"]',100,'','', '', 0)",
+            "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
+             VALUES ('secrets','CRITICAL',1,'[]','[]','[\"secrets\"]',100,'','','',0,1,'approved','project')",
         )
         .execute(&pool)
         .await
@@ -345,7 +351,8 @@ mod tests {
 
     async fn insert_rule(pool: &SqlitePool, id: &str, globs: &str, body: &str) {
         sqlx::query(
-            "INSERT INTO policy_rules VALUES (?, 'CRITICAL', 1, ?, '[]', '[]', 100, ?, '', '', 0)",
+            "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
+             VALUES (?, 'CRITICAL', 1, ?, '[]', '[]', 100, ?, '', '', 0, 1, 'approved', 'project')",
         )
         .bind(id)
         .bind(globs)

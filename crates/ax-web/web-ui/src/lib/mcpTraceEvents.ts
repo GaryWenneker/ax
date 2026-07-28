@@ -1,9 +1,24 @@
-import { entryHasQueryPayload, type TraceEntry, type TraceKind } from './mcpTrace';
+import {
+  entryHasQueryPayload,
+  entryHasTextPayload,
+  type TraceEntry,
+  type TraceKind,
+} from './mcpTrace';
 
 export const MCP_TRACE_STATS = 'ax-mcp-trace-stats';
 export const MCP_TRACE_FILTER = 'ax-mcp-trace-filter';
+/** Lightweight activity line for the status bar (no dedicated SSE). */
+export const MCP_TRACE_ACTIVITY = 'ax-mcp-trace-activity';
 /** Commands from StatusBar → Logging page (e.g. jump to newest). */
 export const MCP_TRACE_ACTION = 'ax-mcp-trace-action';
+
+export type McpTraceActivityDetail = {
+  summary: string;
+};
+
+export function publishMcpTraceActivity(detail: McpTraceActivityDetail) {
+  window.dispatchEvent(new CustomEvent(MCP_TRACE_ACTIVITY, { detail }));
+}
 
 export type McpTraceActionDetail = {
   jumpToNew?: boolean;
@@ -25,9 +40,12 @@ export type McpTraceFilterDetail = {
   /** Free-text query, or '' to clear. */
   q?: string;
   /**
-   * When true, keep only lines whose JSON payload has a top-level `query`
-   * property. When false / omit, do not filter on that flag.
+   * When true, keep only lines with a promoted text payload
+   * (`prompt` / `query` / `text` / `message` / `q`).
+   * `hasQuery` is kept as a deprecated alias.
    */
+  hasText?: boolean;
+  /** @deprecated use hasText — still accepted for StatusBar / URL compat */
   hasQuery?: boolean;
   /** Reset all filters. */
   clear?: boolean;
@@ -62,6 +80,9 @@ const EMPTY_COUNTS: Record<TraceKind, number> = {
   workspace: 0,
   embed: 0,
   action: 0,
+  memory: 0,
+  policy: 0,
+  cli: 0,
   other: 0,
 };
 
@@ -79,6 +100,9 @@ export const TRACE_KIND_ORDER: TraceKind[] = [
   'workspace',
   'embed',
   'action',
+  'memory',
+  'policy',
+  'cli',
   'other',
 ];
 
@@ -136,7 +160,7 @@ export function emptyMcpTraceStats(): McpTraceStats {
   };
 }
 
-/** Apply Logging table filters (kind multi-select + date + tool + text + query-payload). */
+/** Apply Logging table filters (kind multi-select + date + tool + text + text-payload). */
 export function filterTraceEntries(
   entries: TraceEntry[],
   opts: {
@@ -144,7 +168,9 @@ export function filterTraceEntries(
     tool: string;
     q: string;
     date?: string;
-    /** Keep only entries with a JSON payload that owns a top-level `query` key. */
+    /** Keep only entries with a promoted text option (prompt/query/text/…). */
+    hasText?: boolean;
+    /** @deprecated alias for hasText */
     hasQuery?: boolean;
   },
 ): TraceEntry[] {
@@ -152,13 +178,13 @@ export function filterTraceEntries(
   const date = (opts.date ?? '').trim();
   const needle = opts.q.trim().toLowerCase();
   const kindsActive = opts.kinds.size > 0;
-  const hasQuery = Boolean(opts.hasQuery);
-  if (!kindsActive && !tool && !needle && !date && !hasQuery) return entries;
+  const hasText = Boolean(opts.hasText ?? opts.hasQuery);
+  if (!kindsActive && !tool && !needle && !date && !hasText) return entries;
   return entries.filter((e) => {
     if (kindsActive && !opts.kinds.has(e.kind)) return false;
     if (date && e.day !== date) return false;
     if (tool && e.tool !== tool) return false;
-    if (hasQuery && !entryHasQueryPayload(e)) return false;
+    if (hasText && !entryHasTextPayload(e) && !entryHasQueryPayload(e)) return false;
     if (needle) {
       const hay = `${e.raw}\n${e.tool ?? ''}\n${e.message}`.toLowerCase();
       if (!hay.includes(needle)) return false;

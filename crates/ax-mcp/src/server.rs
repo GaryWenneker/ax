@@ -227,7 +227,10 @@ async fn call_tool_and_wrap(
             let wrapped = wrap_call_tool_result_parts(
                 value,
                 structured,
-                false,
+                value
+                    .get("isError")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
                 token_budget_hint(name, est.response_tokens_est),
             );
             if verbose {

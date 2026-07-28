@@ -1,5 +1,7 @@
 //! Known language servers ax can spawn for enrichment.
 
+use std::path::{Path, PathBuf};
+
 use ax_types::Language;
 
 #[derive(Debug, Clone)]
@@ -57,7 +59,7 @@ pub fn discover_servers() -> Vec<ServerStatus> {
     SERVERS
         .iter()
         .map(|s| {
-            let path = which::which(s.command).ok();
+            let path = resolve_command(s.command);
             let available = path
                 .as_ref()
                 .map(|p| server_binary_works(p))
@@ -73,22 +75,92 @@ pub fn discover_servers() -> Vec<ServerStatus> {
         .collect()
 }
 
-/// True when the binary runs (`--version` exits 0). Catches rustup shims that
-/// exist on PATH but need `rustup component add rust-analyzer`.
-pub fn server_binary_works(path: &std::path::Path) -> bool {
+/// Resolve a language-server command on PATH.
+///
+/// On Windows, prefer `.exe` / `.cmd` / `.bat` over extensionless Unix shims
+/// (Volta installs both a bash script and a `.cmd` wrapper).
+fn resolve_command(command: &str) -> Option<PathBuf> {
+    let candidates: Vec<PathBuf> = which::which_all(command).ok()?.collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        let preferred = candidates.iter().find(|p| {
+            matches!(
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_ascii_lowercase())
+                    .as_deref(),
+                Some("exe") | Some("cmd") | Some("bat")
+            )
+        });
+        return preferred.cloned().or_else(|| candidates.into_iter().next());
+    }
+    #[cfg(not(windows))]
+    {
+        candidates.into_iter().next()
+    }
+}
+
+fn probe_args(path: &Path, args: &[&str]) -> Option<std::process::Output> {
     std::process::Command::new(path)
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .ok()
+}
+
+fn looks_like_missing_shim(output: &std::process::Output) -> bool {
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    combined.contains("Unknown binary") || combined.contains("is not installed")
+}
+
+/// True when the binary is runnable for enrich.
+///
+/// Prefer `--version` success, then a `version` subcommand (gopls). Some servers
+/// (notably `pyright-langserver`) reject version probes and exit non-zero while
+/// still being a real install — those count as available unless the process looks
+/// like a rustup shim without the component.
+pub fn server_binary_works(path: &Path) -> bool {
+    // `--version` (rust-analyzer, typescript-language-server, …)
+    if let Some(output) = probe_args(path, &["--version"]) {
+        if output.status.success() {
+            return true;
+        }
+        if looks_like_missing_shim(&output) {
+            return false;
+        }
+        // Binary started but rejected `--version` (pyright-langserver, gopls, …)
+        // Try `version` subcommand before accepting.
+        if let Some(ver) = probe_args(path, &["version"]) {
+            if ver.status.success() {
+                return true;
+            }
+            if looks_like_missing_shim(&ver) {
+                return false;
+            }
+        }
+        return true;
+    }
+    // Spawn failed for `--version` — last chance: `version` (unlikely)
+    if let Some(ver) = probe_args(path, &["version"]) {
+        if ver.status.success() {
+            return true;
+        }
+        return !looks_like_missing_shim(&ver);
+    }
+    false
 }
 
 /// True when this server's command is on PATH and actually runnable.
 pub fn server_available(spec: &ServerSpec) -> bool {
-    which::which(spec.command)
-        .ok()
+    resolve_command(spec.command)
         .map(|p| server_binary_works(&p))
         .unwrap_or(false)
 }

@@ -265,6 +265,20 @@ Examples:
   ax web --open            Start and immediately open in browser
   ax web ./my-project      Browse a specific project root";
 
+pub const DESKTOP_LONG: &str = "Open the native wgpu Command Center (egui/eframe).
+
+Embeds the same ax-web HTTP API in-process — no browser required. Use a free
+port if `ax web` already owns 7070.
+
+Options:
+  --port <port>   Embedded ax-web listen port (default 7070)
+  --bind <addr>   Bind address (default 127.0.0.1)
+
+Examples:
+  ax desktop
+  ax desktop --port 17070
+  ax desktop ./my-project --port 17070 --bind 127.0.0.1";
+
 pub const OFFLOAD_LONG: &str = "Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API).
 
 Stored in ~/.ax/config.json or via AX_OFFLOAD_URL / AX_OFFLOAD_KEY env vars.
@@ -311,6 +325,21 @@ Examples:
   ax savings import --claude --cursor
   ax savings tag-session --session-id <uuid> --model composer-2.5-fast
   ax savings hook install";
+
+pub const PRICING_LONG: &str = "Sync and inspect daily model prices from OpenRouter.
+
+Snapshots land in ~/.ax/usage.db and drive Savings cost estimates and the Command Center
+Prices page. ax web / MCP auto-sync once per calendar day; use this command to force or inspect.
+
+OpenRouter needs no API key. Optional overrides: ~/.ax/pricing.toml (wins over synced rates).
+
+Examples:
+  ax pricing sync
+  ax pricing sync --force
+  ax pricing status
+  ax pricing list
+  ax pricing list --json
+  ax pricing history claude-sonnet --days 30";
 
 pub const MCP_LONG: &str = "Audit MCP quality by correlating Cursor transcripts with .ax/mcp-verbose.log.
 

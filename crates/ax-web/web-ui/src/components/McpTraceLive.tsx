@@ -4,11 +4,22 @@ import { createPortal } from 'react-dom';
 import Codicon from './Codicon';
 import LoggingProjectSwitch from './LoggingProjectSwitch';
 import {
+  computeMcpTraceStats,
+  filterTraceEntries,
+  MCP_TRACE_ACTION,
+  MCP_TRACE_FILTER,
+  publishMcpTraceActivity,
+  publishMcpTraceStats,
+  TRACE_KIND_ORDER,
+  type McpTraceFilterDetail,
+} from '../lib/mcpTraceEvents';
+import {
   classifyFieldValue,
   colorizeTraceMessage,
-  entryHasQueryPayload,
+  entryHasTextPayload,
   entryHeadline,
   entryMeta,
+  entryTextPayloads,
   extractFields,
   extractPayloadJson,
   findCallCluster,
@@ -19,22 +30,15 @@ import {
   MCP_TRACE_PATH_URL,
   parseTraceEntry,
   prettyPayload,
+  primaryTextPayload,
   reformatTraceEntry,
   setTraceTimeZone,
+  summarizeTraceLine,
   traceEntriesFromLines,
+  type TextPayload,
   type TraceEntry,
   type TraceKind,
 } from '../lib/mcpTrace';
-import { fetchShipConfig } from '../shipApi';
-import {
-  computeMcpTraceStats,
-  filterTraceEntries,
-  MCP_TRACE_ACTION,
-  MCP_TRACE_FILTER,
-  publishMcpTraceStats,
-  TRACE_KIND_ORDER,
-  type McpTraceFilterDetail,
-} from '../lib/mcpTraceEvents';
 import {
   emptyQualitySnapshot,
   fetchMcpQuality,
@@ -45,6 +49,8 @@ import {
 import { McpQualityStrip } from './McpQualitySlideout';
 import { detectStructuredLang, highlightStructured } from '../lib/mcpSyntax';
 import { navigateRoute } from '../lib/routes';
+import { subscribeSharedEventSource } from '../lib/sharedEventSource';
+import { fetchShipConfig } from '../shipApi';
 
 const KIND_LABELS: Record<TraceKind, string> = {
   inbound: 'Inbound',
@@ -60,6 +66,9 @@ const KIND_LABELS: Record<TraceKind, string> = {
   workspace: 'Workspace',
   embed: 'Embed',
   action: 'Action',
+  memory: 'Memory',
+  policy: 'Policy',
+  cli: 'CLI',
   other: 'Other',
 };
 
@@ -104,7 +113,7 @@ function SummaryCell({ text }: { text: string }) {
   );
 }
 
-function FieldValue({ value }: { value: string }) {
+function FieldValue({ value, hero }: { value: string; hero?: boolean }) {
   const kind = useMemo(() => classifyFieldValue(value), [value]);
   const structured = useMemo(() => {
     if (kind !== 'json' && kind !== 'xml') return null;
@@ -120,12 +129,46 @@ function FieldValue({ value }: { value: string }) {
     );
   }
 
-  const multiline = value.includes('\n') || value.length > 120;
+  const multiline = hero || value.includes('\n') || value.length > 120;
   if (multiline) {
-    return <pre className={`mcp-kv-block mcp-kv-val mcp-kv-val--${kind}`}>{value}</pre>;
+    return (
+      <pre
+        className={`mcp-kv-block mcp-kv-val mcp-kv-val--${kind}${hero ? ' mcp-inspect-text-hero' : ''}`}
+      >
+        {value}
+      </pre>
+    );
   }
 
   return <span className={`mcp-kv-val mcp-kv-val--${kind}`}>{value || '—'}</span>;
+}
+
+function TextPayloadSection({ payloads }: { payloads: TextPayload[] }) {
+  if (payloads.length === 0) return null;
+  return (
+    <section
+      className="mcp-inspect-section mcp-inspect-section--tight mcp-inspect-section--text-hero"
+      aria-label="Prompt / text"
+    >
+      <h3 className="mcp-inspect-section-title">
+        Prompt / text
+        <span className="mcp-inspect-section-count">{payloads.length}</span>
+      </h3>
+      <div className="mcp-inspect-text-list">
+        {payloads.map((p) => (
+          <div key={`${p.key}-${p.value.slice(0, 48)}`} className="mcp-inspect-text-item">
+            <div className="mcp-inspect-text-item-key">
+              <span className={`mcp-trace-badge mcp-trace-badge--text mcp-trace-badge--text-${p.leaf}`}>
+                {p.leaf}
+              </span>
+              {p.key !== p.leaf && <code className="mcp-inspect-text-path">{p.key}</code>}
+            </div>
+            <FieldValue value={p.value} hero />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function FieldsTable({
@@ -313,22 +356,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   const [quality, setQuality] = useState<QualitySnapshot>(emptyQualitySnapshot);
   const [kindFilter, setKindFilter] = useState<Set<TraceKind>>(() => {
     const fromUrl = new URLSearchParams(window.location.search).get('kind');
-    const valid: TraceKind[] = [
-      'inbound',
-      'enrich',
-      'internal',
-      'outbound',
-      'preview',
-      'error',
-      'plugin',
-      'lsp',
-      'ship',
-      'share',
-      'workspace',
-      'embed',
-      'action',
-      'other',
-    ];
+    const valid: TraceKind[] = [...TRACE_KIND_ORDER];
     if (fromUrl && valid.includes(fromUrl as TraceKind)) {
       return new Set([fromUrl as TraceKind]);
     }
@@ -337,8 +365,11 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   const [dateFilter, setDateFilter] = useState('');
   const [toolFilter, setToolFilter] = useState('');
   const [query, setQuery] = useState('');
-  /** Keep only rows whose JSON payload has a top-level `query` property. */
-  const [hasQueryFilter, setHasQueryFilter] = useState(false);
+  /** Keep only rows with a promoted text option (prompt/query/text/…). */
+  const [hasTextFilter, setHasTextFilter] = useState(() => {
+    const sp = new URLSearchParams(window.location.search);
+    return sp.get('hasText') === '1' || sp.get('hasQuery') === '1';
+  });
   /** On phone, filters start collapsed so the log table owns the viewport. */
   const [filtersOpen, setFiltersOpen] = useState(() =>
     typeof window !== 'undefined' ? !window.matchMedia('(max-width: 899px)').matches : true,
@@ -378,9 +409,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         tool: toolFilter,
         q: query,
         date: dateFilter,
-        hasQuery: hasQueryFilter,
+        hasText: hasTextFilter,
       }),
-    [entries, kindFilter, toolFilter, query, dateFilter, hasQueryFilter],
+    [entries, kindFilter, toolFilter, query, dateFilter, hasTextFilter],
   );
   /** Newest first for the table / keyboard navigation. `entries` stays chronological. */
   const displayEntries = useMemo(
@@ -392,7 +423,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     dateFilter.trim().length > 0 ||
     toolFilter.trim().length > 0 ||
     query.trim().length > 0 ||
-    hasQueryFilter;
+    hasTextFilter;
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 899px)');
@@ -405,8 +436,8 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  const queryPayloadCount = useMemo(
-    () => entries.reduce((n, e) => n + (entryHasQueryPayload(e) ? 1 : 0), 0),
+  const textPayloadCount = useMemo(
+    () => entries.reduce((n, e) => n + (entryHasTextPayload(e) ? 1 : 0), 0),
     [entries],
   );
 
@@ -441,6 +472,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       workspace: 0,
       embed: 0,
       action: 0,
+      memory: 0,
+      policy: 0,
+      cli: 0,
       other: 0,
     };
     for (const e of entries) counts[e.kind] += 1;
@@ -485,7 +519,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     setDateFilter('');
     setToolFilter('');
     setQuery('');
-    setHasQueryFilter(false);
+    setHasTextFilter(false);
   }
 
   useEffect(() => {
@@ -502,10 +536,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
         setDateFilter('');
         setToolFilter('');
         setQuery('');
-        setHasQueryFilter(false);
+        setHasTextFilter(false);
         return;
-      }
-      if (detail.kinds) {
+      }      if (detail.kinds) {
         setKindFilter(new Set(detail.kinds));
       }
       if (detail.toggleKind) {
@@ -520,7 +553,8 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       if (typeof detail.date === 'string') setDateFilter(detail.date);
       if (typeof detail.tool === 'string') setToolFilter(detail.tool);
       if (typeof detail.q === 'string') setQuery(detail.q);
-      if (typeof detail.hasQuery === 'boolean') setHasQueryFilter(detail.hasQuery);
+      if (typeof detail.hasText === 'boolean') setHasTextFilter(detail.hasText);
+      else if (typeof detail.hasQuery === 'boolean') setHasTextFilter(detail.hasQuery);
     }
     window.addEventListener(MCP_TRACE_FILTER, onFilter);
     return () => window.removeEventListener(MCP_TRACE_FILTER, onFilter);
@@ -644,91 +678,87 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   }, [isPage]);
 
   useEffect(() => {
-    let es: EventSource | null = null;
     let disposed = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     function ingestLines(lines: string[]) {
       const batch = traceEntriesFromLines(lines);
       if (batch.length === 0) return;
       setEntries((prev) => [...prev, ...batch]);
+      const last = lines[lines.length - 1];
+      if (last) {
+        publishMcpTraceActivity({ summary: summarizeTraceLine(last) });
+      }
     }
 
-    function connect() {
-      if (disposed) return;
-      es = new EventSource(MCP_TRACE_EVENTS_URL);
-      setLive(true);
-      setErr(null);
+    setLive(true);
+    setErr(null);
 
-      es.addEventListener('line', (ev) => {
-        const data = ((ev as MessageEvent).data as string) ?? '';
-        ingestLines([data]);
-      });
-
-      es.addEventListener('batch', (ev) => {
-        const raw = ((ev as MessageEvent).data as string) ?? '[]';
-        try {
-          const lines = JSON.parse(raw) as string[];
-          if (Array.isArray(lines)) ingestLines(lines);
-        } catch {
-          // ignore malformed batch
-        }
-      });
-
-      es.addEventListener('path', (ev) => {
-        const p = ((ev as MessageEvent).data as string) ?? '';
-        if (p) setPath(p);
-      });
-
-      es.addEventListener('project', (ev) => {
-        const raw = ((ev as MessageEvent).data as string) ?? '';
-        if (!raw) return;
-        try {
-          applyProjectMeta(
-            JSON.parse(raw) as {
-              path?: string;
-              projectRoot?: string;
-              projectLabel?: string;
-              logDay?: string;
-            },
-          );
-        } catch {
-          // ignore malformed project events
-        }
-      });
-
-      es.addEventListener('reset', () => {
-        setEntries([]);
-        setSelectedId(null);
-        setCursorId(null);
-        setHistoryExhausted(false);
-        setOldestLoadedDay('');
-      });
-
-      es.addEventListener('rotate', () => {
-        // Day rolled over: keep buffer; tail follows the new file via server.
-      });
-
-      es.addEventListener('ready', () => {
-        setLive(true);
-      });
-
-      es.onerror = () => {
-        setLive(false);
-        es?.close();
-        es = null;
+    const unsub = subscribeSharedEventSource(MCP_TRACE_EVENTS_URL, {
+      events: {
+        line: (ev) => {
+          const data = ((ev as MessageEvent).data as string) ?? '';
+          ingestLines([data]);
+        },
+        batch: (ev) => {
+          const raw = ((ev as MessageEvent).data as string) ?? '[]';
+          try {
+            const lines = JSON.parse(raw) as string[];
+            if (Array.isArray(lines)) ingestLines(lines);
+          } catch {
+            // ignore malformed batch
+          }
+        },
+        path: (ev) => {
+          const p = ((ev as MessageEvent).data as string) ?? '';
+          if (p) setPath(p);
+        },
+        project: (ev) => {
+          const raw = ((ev as MessageEvent).data as string) ?? '';
+          if (!raw) return;
+          try {
+            applyProjectMeta(
+              JSON.parse(raw) as {
+                path?: string;
+                projectRoot?: string;
+                projectLabel?: string;
+                logDay?: string;
+              },
+            );
+          } catch {
+            // ignore malformed project events
+          }
+        },
+        reset: () => {
+          setEntries([]);
+          setSelectedId(null);
+          setCursorId(null);
+          setHistoryExhausted(false);
+          setOldestLoadedDay('');
+        },
+        rotate: () => {
+          // Day rolled over: keep buffer; tail follows the new file via server.
+        },
+        ready: () => {
+          setLive(true);
+        },
+      },
+      onError: () => {
         if (!disposed) {
+          setLive(false);
           setErr('Reconnecting…');
-          reconnectTimer = setTimeout(connect, 1500);
         }
-      };
-    }
+      },
+      onOpen: () => {
+        if (!disposed) {
+          setLive(true);
+          setErr(null);
+        }
+      },
+    });
 
-    connect();
     return () => {
       disposed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      es?.close();
+      unsub();
       setLive(false);
     };
   }, []);
@@ -1156,7 +1186,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
         {!verboseEnabled && (
           <div className="settings-toast settings-toast--ok mcp-trace-hint">
-            Enable <strong>Verbose MCP logging</strong> in Settings to record new tool calls. History
+            Enable <strong>Verbose MCP logging</strong> above to record new tool calls. History
             below still tails the project log file.
           </div>
         )}
@@ -1215,30 +1245,50 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
                             ? 'ENR'
                             : kind === 'internal'
                               ? 'INT'
-                              : 'LOG'}
+                              : kind === 'plugin'
+                                ? 'PLG'
+                                : kind === 'lsp'
+                                  ? 'LSP'
+                                  : kind === 'ship'
+                                    ? 'SHIP'
+                                    : kind === 'share'
+                                      ? 'SHR'
+                                      : kind === 'workspace'
+                                        ? 'WS'
+                                        : kind === 'embed'
+                                          ? 'EMB'
+                                          : kind === 'action'
+                                            ? 'ACT'
+                                            : kind === 'memory'
+                                              ? 'MEM'
+                                              : kind === 'policy'
+                                                ? 'POL'
+                                                : kind === 'cli'
+                                                  ? 'CLI'
+                                                  : 'LOG'}
                 </span>
                 <span className="mcp-trace-filter-chip-label">{KIND_LABELS[kind]}</span>
                 <span className="mcp-trace-filter-chip-count">{count}</span>
               </button>
             );
           })}
-          {(queryPayloadCount > 0 || hasQueryFilter) && (
+          {(textPayloadCount > 0 || hasTextFilter) && (
             <button
               type="button"
               className={`mcp-trace-filter-chip mcp-trace-filter-chip--query${
-                hasQueryFilter ? ' mcp-trace-filter-chip--on' : ''
+                hasTextFilter ? ' mcp-trace-filter-chip--on' : ''
               }`}
-              aria-pressed={hasQueryFilter}
+              aria-pressed={hasTextFilter}
               title={
-                hasQueryFilter
-                  ? 'Show all events (clear query-payload filter)'
-                  : 'Show only events whose JSON payload has a top-level query property'
+                hasTextFilter
+                  ? 'Show all events (clear text-payload filter)'
+                  : 'Show only events with prompt / query / text / message options'
               }
-              onClick={() => setHasQueryFilter((v) => !v)}
+              onClick={() => setHasTextFilter((v) => !v)}
             >
-              <span className="mcp-trace-badge mcp-trace-badge--query">QRY</span>
-              <span className="mcp-trace-filter-chip-label">Has query</span>
-              <span className="mcp-trace-filter-chip-count">{queryPayloadCount}</span>
+              <span className="mcp-trace-badge mcp-trace-badge--query">TXT</span>
+              <span className="mcp-trace-filter-chip-label">Has text</span>
+              <span className="mcp-trace-filter-chip-count">{textPayloadCount}</span>
             </button>
           )}
         </div>
@@ -1361,9 +1411,18 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
               {displayEntries.map((e) => {
                 const headline = entryHeadline(e);
                 const meta = entryMeta(e);
-                const hasQuery = entryHasQueryPayload(e);
+                const textPrimary = primaryTextPayload(e);
+                const hasText = Boolean(textPrimary);
                 const isCursor = cursorId === e.id;
                 const isOpen = selectedId === e.id;
+                const summaryText =
+                  textPrimary && textPrimary.value.length > 0
+                    ? `${textPrimary.leaf}=${
+                        textPrimary.value.length > 96
+                          ? `${textPrimary.value.slice(0, 96)}…`
+                          : textPrimary.value
+                      }`
+                    : headline || '—';
                 return (
                   <tr
                     key={e.id}
@@ -1372,7 +1431,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
                     role="option"
                     aria-selected={isCursor || isOpen}
                     className={`mcp-trace-row mcp-trace-row--${e.kind}${
-                      hasQuery ? ' mcp-trace-row--has-query' : ''
+                      hasText ? ' mcp-trace-row--has-query' : ''
                     }${isOpen ? ' mcp-trace-row--selected' : ''}${
                       isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
                     }`}
@@ -1414,20 +1473,20 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
                     </td>
                     <td className="mcp-col-summary">
                       <span className="mcp-trace-summary-wrap">
-                        {hasQuery && (
+                        {textPrimary && (
                           <button
                             type="button"
-                            className="mcp-trace-badge mcp-trace-badge--query mcp-trace-badge--btn"
-                            title="JSON payload has query — click to filter"
+                            className={`mcp-trace-badge mcp-trace-badge--text mcp-trace-badge--text-${textPrimary.leaf} mcp-trace-badge--btn`}
+                            title={`${textPrimary.leaf} text — click to filter`}
                             onClick={(ev) => {
                               ev.stopPropagation();
-                              setHasQueryFilter(true);
+                              setHasTextFilter(true);
                             }}
                           >
-                            query
+                            {textPrimary.leaf}
                           </button>
                         )}
-                        <SummaryCell text={headline || '—'} />
+                        <SummaryCell text={summaryText} />
                       </span>
                     </td>
                     <td className="mcp-col-meta">{meta || '—'}</td>
@@ -1479,14 +1538,15 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
                   <span className={`mcp-trace-badge mcp-trace-badge--${selected.kind}`}>
                     {selected.badge}
                   </span>
-                  {entryHasQueryPayload(selected) && (
+                  {entryTextPayloads(selected).slice(0, 3).map((p) => (
                     <span
-                      className="mcp-trace-badge mcp-trace-badge--query"
-                      title="JSON payload includes a top-level query property"
+                      key={p.key}
+                      className={`mcp-trace-badge mcp-trace-badge--text mcp-trace-badge--text-${p.leaf}`}
+                      title={`${p.key} text option`}
                     >
-                      query
+                      {p.leaf}
                     </span>
-                  )}
+                  ))}
                   <div className="mcp-inspect-title-block">
                     <h2 className="mcp-inspect-title">
                       {cluster.tool ?? selected.tool ?? 'Log event'}
@@ -1559,6 +1619,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
                 )}
 
                 <div className="mcp-inspect-main">
+                  <TextPayloadSection payloads={entryTextPayloads(selected)} />
                   <PayloadView entry={selected} />
                   {!hasStructured && <TraceFields message={selected.message} />}
                   {!hasStructured && selectedFields.length === 0 && (

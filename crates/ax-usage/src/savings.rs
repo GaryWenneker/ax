@@ -10,7 +10,10 @@ use walkdir::WalkDir;
 
 use crate::cursor_state::{import_cursor_composer_state, normalize_cursor_model};
 use crate::period::{resolve_period, UsagePeriod};
-use crate::pricing::{input_cost_usd, price_for_model, pricing_info, reference_pricing, PricingInfo};
+use crate::pricing::{
+    input_cost_usd, price_as_of, price_for_model, price_for_model_with_source, pricing_info,
+    reference_pricing, reference_pricing_with_source, refresh_price_cache_from_db, PricingInfo,
+};
 use crate::store::{open_pool, usage_db_path};
 use crate::tokenizer::{
     count_file_line_range_tokens, count_file_tokens, count_tokens, tokenize_text,
@@ -561,6 +564,10 @@ pub struct ModelSavingsRow {
     pub grep_calls: i64,
     pub session_cost_usd_est: f64,
     pub cost_saved_usd_est: f64,
+    /// Input $/MTok used for this model's cost estimates.
+    pub input_per_mtok: f64,
+    /// Pricing source: user | openrouter | artificial_analysis | default.
+    pub pricing_source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -774,11 +781,11 @@ fn aggregate_sessions_by_model(sessions: &[AgentSessionRow]) -> Vec<ModelSavings
     let mut by_model: HashMap<String, ModelSavingsRow> = HashMap::new();
     for s in sessions {
         let model = session_model_label(&s.model);
-        let pricing = s
+        let (pricing, pricing_source) = s
             .model
             .as_deref()
-            .map(price_for_model)
-            .unwrap_or_else(reference_pricing);
+            .map(price_for_model_with_source)
+            .unwrap_or_else(reference_pricing_with_source);
         let session_cost = s.session_cost_usd_est.unwrap_or(0.0);
         let cost_saved = input_cost_usd(s.tokens_saved_in_window, pricing);
         let row = by_model.entry(model.clone()).or_insert_with(|| ModelSavingsRow {
@@ -791,6 +798,8 @@ fn aggregate_sessions_by_model(sessions: &[AgentSessionRow]) -> Vec<ModelSavings
             grep_calls: 0,
             session_cost_usd_est: 0.0,
             cost_saved_usd_est: 0.0,
+            input_per_mtok: pricing.input_per_mtok,
+            pricing_source: pricing_source.clone(),
         });
         row.sessions += 1;
         row.session_input_tokens += s.session_input_tokens.unwrap_or(0);
@@ -814,6 +823,7 @@ fn aggregate_sessions_by_model(sessions: &[AgentSessionRow]) -> Vec<ModelSavings
 pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, String> {
     let range = resolve_period(q.period, q.from.as_deref(), q.to.as_deref())?;
     let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let _ = refresh_price_cache_from_db().await;
 
     let totals: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, i64) = sqlx::query_as(
         "SELECT COUNT(*),
@@ -899,32 +909,31 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .await
     .map_err(|e| e.to_string())?;
 
-    let reference = reference_pricing();
-    let daily: Vec<DailySavings> = daily_raw
-        .into_iter()
-        .map(
-            |(
-                date,
-                tokens_saved_est,
-                calls,
-                graph_calls,
-                failed_calls,
-                counterfactual_files,
-                counterfactual_tokens_est,
-                graph_response_tokens_est,
-            )| DailySavings {
-                date,
-                tokens_saved_est,
-                calls,
-                graph_calls,
-                failed_calls,
-                counterfactual_files,
-                counterfactual_tokens_est,
-                graph_response_tokens_est,
-                cost_saved_usd_est: input_cost_usd(tokens_saved_est, reference),
-            },
-        )
-        .collect();
+    let mut daily: Vec<DailySavings> = Vec::with_capacity(daily_raw.len());
+    for (
+        date,
+        tokens_saved_est,
+        calls,
+        graph_calls,
+        failed_calls,
+        counterfactual_files,
+        counterfactual_tokens_est,
+        graph_response_tokens_est,
+    ) in daily_raw
+    {
+        let (pricing, _) = price_as_of(None, &date).await;
+        daily.push(DailySavings {
+            date,
+            tokens_saved_est,
+            calls,
+            graph_calls,
+            failed_calls,
+            counterfactual_files,
+            counterfactual_tokens_est,
+            graph_response_tokens_est,
+            cost_saved_usd_est: input_cost_usd(tokens_saved_est, pricing),
+        });
+    }
 
     type ProjectTuple = (String, i64, i64, i64, i64);
     let by_project: Vec<ProjectSavingsRow> = sqlx::query_as::<_, ProjectTuple>(
@@ -1168,6 +1177,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         0
     };
 
+    let reference = reference_pricing();
     Ok(SavingsSummary {
         period: range.period,
         from: range.from_date,

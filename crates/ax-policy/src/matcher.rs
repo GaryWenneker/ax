@@ -79,6 +79,9 @@ pub async fn match_policy(pool: &SqlitePool, input: &MatchInput) -> Result<Match
 
     let mut matched_rules: Vec<(i32, MatchedRule)> = Vec::new();
     for rule in rules.iter() {
+        if !rule.enabled || !is_approved_status(&rule.status) {
+            continue;
+        }
         if let Some(m) = score_rule(rule, &prompt_lc, &files) {
             matched_rules.push((rule.priority, m));
         }
@@ -93,6 +96,9 @@ pub async fn match_policy(pool: &SqlitePool, input: &MatchInput) -> Result<Match
 
     let mut matched_skills: Vec<(i32, MatchedSkill)> = Vec::new();
     for skill in skills.iter() {
+        if !skill.enabled || !is_approved_status(&skill.status) {
+            continue;
+        }
         if let Some(m) = score_skill(skill, &prompt_lc) {
             matched_skills.push((skill.priority, m));
         }
@@ -108,6 +114,11 @@ pub async fn match_policy(pool: &SqlitePool, input: &MatchInput) -> Result<Match
         skills: skills_out,
         inject,
     })
+}
+
+fn is_approved_status(status: &str) -> bool {
+    status.is_empty()
+        || status.eq_ignore_ascii_case("approved")
 }
 
 fn score_rule(rule: &PolicyRuleRow, prompt_lc: &str, files: &[String]) -> Option<MatchedRule> {

@@ -23,7 +23,34 @@ export type TraceKind =
   | 'workspace'
   | 'embed'
   | 'action'
+  | 'memory'
+  | 'policy'
+  | 'cli'
   | 'other';
+
+/** Human-readable text option keys (and leaf path segments) to promote in Logging. */
+export const TEXT_PAYLOAD_KEYS = ['prompt', 'query', 'text', 'message', 'q'] as const;
+export type TextPayloadKey = (typeof TEXT_PAYLOAD_KEYS)[number];
+
+export type TextPayload = { key: string; leaf: TextPayloadKey; value: string };
+
+const TEXT_KEY_SET = new Set<string>(TEXT_PAYLOAD_KEYS);
+
+const TEXT_KEY_PRIORITY: TextPayloadKey[] = ['prompt', 'query', 'text', 'message', 'q'];
+
+function leafKeyName(path: string): string {
+  const seg = path.includes('.') ? path.slice(path.lastIndexOf('.') + 1) : path;
+  const bare = seg.replace(/\[\d+]$/, '');
+  return bare.toLowerCase();
+}
+
+function isTextLeafKey(path: string): boolean {
+  return TEXT_KEY_SET.has(leafKeyName(path));
+}
+
+function asTextLeaf(path: string): TextPayloadKey {
+  return leafKeyName(path) as TextPayloadKey;
+}
 
 export interface TraceEntry {
   id: string;
@@ -104,8 +131,29 @@ export function colorizeTraceMessage(message: string, tool: string | null): Trac
 }
 
 function extractTool(body: string): string | null {
-  const m = body.match(/\btool=([A-Za-z0-9_:-]+)/);
-  return m?.[1] ?? null;
+  const explicit = body.match(/\btool=([A-Za-z0-9_:-]+)/);
+  if (explicit?.[1]) return explicit[1];
+
+  const cliCmd = body.match(/\bcli\s+cmd=([A-Za-z0-9_-]+)/);
+  if (cliCmd?.[1]) return `cli:${cliCmd[1]}`;
+
+  const domain = body.match(
+    /\[ax]\s+(ship-ci|memory|policy|workspace|plugin|lsp|ship|share|embed|action|cli)\b/,
+  );
+  if (domain?.[1]) {
+    if (domain[1] === 'cli') {
+      const nested = body.match(/\bcmd=([A-Za-z0-9_-]+)/);
+      if (nested?.[1]) return `cli:${nested[1]}`;
+    }
+    return domain[1];
+  }
+
+  return null;
+}
+
+/** Exported for smoke / unit checks of TOOL column labeling. */
+export function extractTraceTool(body: string): string | null {
+  return extractTool(body);
 }
 
 /** Parse `key=value` pairs from a trace message (best-effort for the inspector). */
@@ -224,6 +272,63 @@ export function payloadHasQueryProp(value: unknown): boolean {
 /** True when this log line's JSON payload includes a top-level `query` field. */
 export function entryHasQueryPayload(entry: TraceEntry): boolean {
   return payloadHasQueryProp(extractPayloadJson(entry));
+}
+
+/**
+ * Collect human-readable text options from JSON payload leaves and flat
+ * `key=value` fields (`prompt`, `query`, `text`, `message`, `q`).
+ */
+export function entryTextPayloads(entry: TraceEntry): TextPayload[] {
+  const out: TextPayload[] = [];
+  const seen = new Set<string>();
+
+  const push = (key: string, value: string) => {
+    if (!isTextLeafKey(key)) return;
+    const v = value.trim();
+    if (!v) return;
+    const leaf = asTextLeaf(key);
+    const id = `${key}\0${v}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({ key, leaf, value: v });
+  };
+
+  const payload = extractPayloadJson(entry);
+  if (payload !== null) {
+    for (const f of flattenPayload(payload)) {
+      push(f.key, f.value);
+    }
+  }
+
+  for (const f of extractFields(entry.message)) {
+    // Skip JSON blobs handled via flattenPayload above
+    if (f.key === 'args' || (f.key === 'text' && lookLikeJson(f.value))) continue;
+    push(f.key, f.value);
+  }
+
+  out.sort((a, b) => {
+    const depth = (k: string) => (k.match(/\./g) || []).length;
+    const d = depth(a.key) - depth(b.key);
+    if (d !== 0) return d;
+    return TEXT_KEY_PRIORITY.indexOf(a.leaf) - TEXT_KEY_PRIORITY.indexOf(b.leaf);
+  });
+  return out;
+}
+
+/** True when the entry has any promoted text option (prompt/query/text/…). */
+export function entryHasTextPayload(entry: TraceEntry): boolean {
+  return entryTextPayloads(entry).length > 0;
+}
+
+/** Best text payload for list summary: prompt > query > text > message > q. */
+export function primaryTextPayload(entry: TraceEntry): TextPayload | null {
+  const all = entryTextPayloads(entry);
+  if (all.length === 0) return null;
+  for (const leaf of TEXT_KEY_PRIORITY) {
+    const hit = all.find((p) => p.leaf === leaf);
+    if (hit) return hit;
+  }
+  return all[0] ?? null;
 }
 
 function formatScalar(v: unknown, maxStr = 48): string {
@@ -456,12 +561,22 @@ function classify(body: string): { kind: TraceKind; badge: string } {
   // v4 domain lines: `[ax] plugin …` / `plugin extract …`
   if (/\bplugin\b/.test(body)) return { kind: 'plugin', badge: 'PLG' };
   if (/\blsp\b/.test(body)) return { kind: 'lsp', badge: 'LSP' };
-  if (/\bship-ci\b/.test(body) || /\bship ci\b/.test(body)) return { kind: 'ship', badge: 'SHIP' };
+  if (/\bship-ci\b/.test(body) || /\bship ci\b/.test(body) || /\[ax] ship\b/.test(body)) {
+    return { kind: 'ship', badge: 'SHIP' };
+  }
   if (/\bshare\b/.test(body)) return { kind: 'share', badge: 'SHR' };
   if (/\bworkspace\b/.test(body)) return { kind: 'workspace', badge: 'WS' };
   if (/\bembed\b/.test(body)) return { kind: 'embed', badge: 'EMB' };
   if (/\baction\b/.test(body)) return { kind: 'action', badge: 'ACT' };
+  if (/\bmemory\b/.test(body)) return { kind: 'memory', badge: 'MEM' };
+  if (/\bpolicy\b/.test(body)) return { kind: 'policy', badge: 'POL' };
+  if (/\[ax] cli\b/.test(body) || /\bcli cmd=/.test(body)) return { kind: 'cli', badge: 'CLI' };
   return { kind: 'other', badge: 'LOG' };
+}
+
+/** Exported for smoke / unit checks of domain kind mapping. */
+export function classifyTraceBody(body: string): { kind: TraceKind; badge: string } {
+  return classify(body);
 }
 
 function parseInstantMs(isoOrLegacy: {

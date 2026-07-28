@@ -1,12 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { MCP_TRACE_EVENTS_URL, summarizeTraceLine } from '../lib/mcpTrace';
+import {
+  MCP_TRACE_ACTIVITY,
+  MCP_TRACE_STATS,
+  type McpTraceStats,
+} from '../lib/mcpTraceEvents';
 
 const RECENT_MS = 6_000;
 
 /**
- * Lightweight live feed for the status bar — tracks last activity text while
- * MCP tools are called from Cursor (or anywhere writing mcp-verbose.log).
+ * Status-bar MCP activity indicator.
+ *
+ * Does **not** open its own SSE — that used to hold a permanent socket on every
+ * page and (with multiple tabs) exhaust the browser's ~6 HTTP/1.1 connections
+ * per host so `/api/*` fetches hung. Logging's `McpTraceLive` owns the stream and
+ * publishes stats/activity via window events.
  */
 export function useMcpTraceStatus() {
   const [connected, setConnected] = useState(false);
@@ -16,8 +24,6 @@ export function useMcpTraceStatus() {
 
   useEffect(() => {
     let disposed = false;
-    let es: EventSource | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     function markRecent() {
       setRecent(true);
@@ -27,38 +33,32 @@ export function useMcpTraceStatus() {
       }, RECENT_MS);
     }
 
-    function connect() {
-      if (disposed) return;
-      es = new EventSource(MCP_TRACE_EVENTS_URL);
-      es.addEventListener('ready', () => {
-        if (!disposed) setConnected(true);
+    function onStats(ev: Event) {
+      const detail = (ev as CustomEvent<McpTraceStats>).detail;
+      if (!detail || disposed) return;
+      setConnected(detail.live);
+      setInfo((prev) => {
+        if (!detail.live) return 'offline';
+        if (prev === 'offline' || prev === 'idle') return 'listening';
+        return prev;
       });
-      es.addEventListener('line', (ev) => {
-        const line = (ev as MessageEvent).data as string;
-        if (!line) return;
-        setInfo(summarizeTraceLine(line));
-        markRecent();
-        setConnected(true);
-      });
-      es.addEventListener('reset', () => {
-        if (!disposed) setInfo('cleared');
-      });
-      es.onerror = () => {
-        setConnected(false);
-        es?.close();
-        es = null;
-        if (!disposed) {
-          reconnectTimer = setTimeout(connect, 1500);
-        }
-      };
     }
 
-    connect();
+    function onActivity(ev: Event) {
+      const detail = (ev as CustomEvent<{ summary?: string }>).detail;
+      if (!detail?.summary || disposed) return;
+      setInfo(detail.summary);
+      setConnected(true);
+      markRecent();
+    }
+
+    window.addEventListener(MCP_TRACE_STATS, onStats);
+    window.addEventListener(MCP_TRACE_ACTIVITY, onActivity);
     return () => {
       disposed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (recentTimer.current) clearTimeout(recentTimer.current);
-      es?.close();
+      window.removeEventListener(MCP_TRACE_STATS, onStats);
+      window.removeEventListener(MCP_TRACE_ACTIVITY, onActivity);
     };
   }, []);
 
