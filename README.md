@@ -3,9 +3,17 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v4.0.0](https://github.com/GaryWenneker/ax/releases/tag/v4.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v4.2.0](https://github.com/GaryWenneker/ax/releases/tag/v4.2.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+
+**v4.2.0** improves **policy filtering and Azure DevOps pack depth**:
+
+- **Label autocomplete** on Policy → Rules / Skills (tag chips, AND filter; tags required on save).
+- **Expanded `azdo-fullstack` skills** — full workflows from refinement through release (`ax policy pack install azdo-fullstack --force` to refresh).
+- **Pack install → database** — install force-imports into `ax.db` when storage mode is database.
+
+**v4.1.0** added policy layers, default pack export, built-in packs, Policy Sync/Review, pricing catalog, and `ax desktop`.
 
 **v4.0.0** is the **federation, share, and Command Center maturity** release:
 

@@ -14,14 +14,16 @@ Use `--force` to overwrite existing items with the same id/name.
 
 ### Skills
 
+Each skill is a full agent workflow (when to load, checklists, hard rules, related rules) — not a one-line summary.
+
 | Skill | When |
 |---|---|
-| `azdo-refinement` | Story breakdown, DoR, work-item linking |
-| `azdo-development` | Branching, craftsmanship, migrations |
-| `azdo-testing` | Unit/integration/E2E + pipeline awareness (uses `tdd`) |
-| `azdo-code-review` | PR review quality and git hygiene |
-| `azdo-pipelines` | YAML CI/CD, build-once, IaC basics |
-| `azdo-release` | Smoke tests, observability, rollback |
+| `azdo-refinement` | Story breakdown, DoR, hierarchy, vertical slices, right-sizing |
+| `azdo-development` | Branching, commits, craftsmanship, migrations, code DoD |
+| `azdo-testing` | Unit/integration/E2E, AC→tests, pipeline green (uses `tdd`) |
+| `azdo-code-review` | Author/reviewer checklists, merge gates, git hygiene |
+| `azdo-pipelines` | Multi-stage YAML, build-once, environments, IaC, secrets |
+| `azdo-release` | Smoke, observability, flags, rollback, closing the work item |
 
 ### Rules
 

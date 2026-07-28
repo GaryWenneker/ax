@@ -25,7 +25,10 @@ import {
   PolicyToolbar,
   SortTh,
 } from '../components/ui/PolicyTable';
+import { TagList } from '../components/PolicyMetaView';
+import { LabelAutocomplete } from '../components/ui/LabelAutocomplete';
 import {
+  collectTags,
   filterRules,
   sortRules,
   toggleSort,
@@ -53,6 +56,7 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
   const [q, setQ] = useState('');
   const [level, setLevel] = useState('');
   const [scope, setScope] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [always, setAlways] = useState('');
   const [sortKey, setSortKey] = useState<RuleSortKey>('priority');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -64,10 +68,21 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
       .finally(() => setLoading(false));
   }, []);
 
+  const tagOptions = useMemo(() => collectTags(rules), [rules]);
+
   const visible = useMemo(
-    () => sortRules(filterRules(rules, { q, level, always, scope }), sortKey, sortDir),
-    [rules, q, level, always, scope, sortKey, sortDir],
+    () => sortRules(filterRules(rules, { q, level, always, scope, tags }), sortKey, sortDir),
+    [rules, q, level, always, scope, tags, sortKey, sortDir],
   );
+
+  function toggleFilterTag(tag: string) {
+    const key = tag.trim().toLowerCase();
+    setTags((prev) =>
+      prev.some((t) => t.toLowerCase() === key)
+        ? prev.filter((t) => t.toLowerCase() !== key)
+        : [...prev, tag],
+    );
+  }
 
   usePageContext('Rules', !loading && !error ? `${visible.length}/${rules.length} rules` : undefined);
 
@@ -229,14 +244,16 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
           </PageCard>
         )}
 
-        <PageCard title="All rules" description="Filter and sort to find rules quickly.">
+        <PageCard title="All rules" description="Filter with label autocomplete, then refine by level and layer.">
           <PolicyToolbar>
-            <input
-              className="settings-input policy-toolbar-search"
-              type="search"
-              placeholder="Search id, tags, triggers…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
+            <LabelAutocomplete
+              options={tagOptions}
+              selected={tags}
+              onSelectedChange={setTags}
+              query={q}
+              onQueryChange={setQ}
+              placeholder="Search id or add label…"
+              ariaLabel="Filter rules by labels and text"
             />
             <select
               className="settings-select policy-toolbar-select"
@@ -286,6 +303,7 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
                     <SortTh label="Level" active={sortKey === 'level'} dir={sortDir} onClick={() => setSort('level')} />
                     <SortTh label="Layer" active={sortKey === 'scope'} dir={sortDir} onClick={() => setSort('scope')} />
                     <SortTh label="Pri" active={sortKey === 'priority'} dir={sortDir} onClick={() => setSort('priority')} className="col-num" />
+                    <th>Tags</th>
                     <th>Always</th>
                     <th>On</th>
                     <SortTh label="Globs" active={sortKey === 'globs'} dir={sortDir} onClick={() => setSort('globs')} className="col-num" />
@@ -304,6 +322,9 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
                       <td><LevelBadge level={r.level} /></td>
                       <td><ScopeBadge scope={r.scope} /></td>
                       <td className="num">{r.priority}</td>
+                      <td className="policy-table-tags">
+                        <TagList items={r.tags} onTagClick={toggleFilterTag} activeTags={tags} />
+                      </td>
                       <td className="policy-table-flag">{r.alwaysApply ? 'yes' : '—'}</td>
                       <td>
                         <input

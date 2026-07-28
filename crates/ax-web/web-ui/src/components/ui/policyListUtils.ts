@@ -16,14 +16,46 @@ function scopeOf(scope?: string) {
   return (scope || 'project').toLowerCase();
 }
 
+/** Unique tags across rows, sorted case-insensitively. */
+export function collectTags(items: { tags: string[] }[]): string[] {
+  const seen = new Map<string, string>();
+  for (const item of items) {
+    for (const tag of item.tags) {
+      const key = tag.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.set(key, tag.trim());
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function hasTag(tags: string[], tag: string) {
+  const needle = tag.trim().toLowerCase();
+  return tags.some((t) => t.trim().toLowerCase() === needle);
+}
+
+/** True when every selected label is present on the item (AND). */
+export function hasAllTags(itemTags: string[], selected: string[]) {
+  if (selected.length === 0) return true;
+  return selected.every((t) => hasTag(itemTags, t));
+}
+
 export function filterRules(
   rules: PolicyRuleRow[],
-  { q, level, always, scope }: { q: string; level: string; always: string; scope?: string },
+  {
+    q,
+    level,
+    always,
+    scope,
+    tags,
+  }: { q: string; level: string; always: string; scope?: string; tags?: string[] },
 ) {
   const needle = q.trim().toLowerCase();
+  const selectedTags = tags ?? [];
   return rules.filter((r) => {
     if (level && r.level !== level) return false;
     if (scope && scopeOf(r.scope) !== scope) return false;
+    if (!hasAllTags(r.tags, selectedTags)) return false;
     if (always === 'yes' && !r.alwaysApply) return false;
     if (always === 'no' && r.alwaysApply) return false;
     if (!needle) return true;
@@ -71,11 +103,13 @@ export function sortRules(rules: PolicyRuleRow[], key: RuleSortKey, dir: SortDir
 
 export function filterSkills(
   skills: PolicySkillRow[],
-  { q, scope }: { q: string; scope?: string },
+  { q, scope, tags }: { q: string; scope?: string; tags?: string[] },
 ) {
   const needle = q.trim().toLowerCase();
+  const selectedTags = tags ?? [];
   return skills.filter((s) => {
     if (scope && scopeOf(s.scope) !== scope) return false;
+    if (!hasAllTags(s.tags, selectedTags)) return false;
     if (!needle) return true;
     const hay = [
       s.name,

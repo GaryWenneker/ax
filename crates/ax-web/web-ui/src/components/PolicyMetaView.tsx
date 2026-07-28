@@ -1,15 +1,45 @@
 import { LevelBadge, ScopeBadge } from './ui/PageLayout';
 import { scopeLabel } from '../policyTypes';
 
-function TagList({ items, empty = '—' }: { items: string[]; empty?: string }) {
+export function TagList({
+  items,
+  empty = '—',
+  onTagClick,
+  activeTags,
+}: {
+  items: string[];
+  empty?: string;
+  onTagClick?: (tag: string) => void;
+  /** Tags currently active in a filter — highlighted when present. */
+  activeTags?: string[];
+}) {
   if (items.length === 0) {
     return <span className="policy-view-empty">{empty}</span>;
   }
+  const active = new Set((activeTags ?? []).map((t) => t.toLowerCase()));
   return (
     <span className="policy-view-tags">
-      {items.map((item) => (
-        <span key={item} className="page-item-badge">{item}</span>
-      ))}
+      {items.map((item) => {
+        const isActive = active.has(item.toLowerCase());
+        if (onTagClick) {
+          return (
+            <button
+              key={item}
+              type="button"
+              className={`page-item-badge page-item-badge--btn${isActive ? ' page-item-badge--active' : ''}`}
+              onClick={() => onTagClick(item)}
+              title={isActive ? `Remove filter: ${item}` : `Filter by ${item}`}
+            >
+              {item}
+            </button>
+          );
+        }
+        return (
+          <span key={item} className={`page-item-badge${isActive ? ' page-item-badge--active' : ''}`}>
+            {item}
+          </span>
+        );
+      })}
     </span>
   );
 }

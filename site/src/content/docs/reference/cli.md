@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v4.1.0).
+description: Complete reference for every ax command, argument, and flag (v4.2.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -1127,13 +1127,15 @@ ax policy pack status --json
 
 #### `ax policy pack install [name] [path]`
 
-Install a built-in pack into **project** scope (`.ax/policy/`), then re-index. Company/private scopes are not modified.
+Install a built-in pack into **project** scope (`.ax/policy/`), then import/re-index so MCP and Command Center see the new items. In **database** storage mode the install force-imports files into `ax.db` (not counts-only). Company/private scopes are not modified.
 
 | Flag | Description |
 |---|---|
 | `--list` | List available built-in packs (no install) |
-| `--force` | Overwrite existing rules/skills with the same id/name |
+| `--force` | Overwrite existing rules/skills with the same id/name (use after upgrading to refresh expanded skill bodies) |
 | `--json` | JSON output |
+
+Built-in pack `azdo-fullstack` ships full Azure DevOps ticket-to-release **skills** (workflows + checklists) and matching **rules**.
 
 ```bash
 ax policy pack install --list

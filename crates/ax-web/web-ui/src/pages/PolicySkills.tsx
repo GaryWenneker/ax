@@ -12,6 +12,8 @@ import {
   PageToasts,
   ScopeBadge,
 } from '../components/ui/PageLayout';
+import { TagList } from '../components/PolicyMetaView';
+import { LabelAutocomplete } from '../components/ui/LabelAutocomplete';
 import {
   PolicyCount,
   PolicyRowActions,
@@ -19,6 +21,7 @@ import {
   SortTh,
 } from '../components/ui/PolicyTable';
 import {
+  collectTags,
   filterSkills,
   sortSkills,
   toggleSort,
@@ -40,6 +43,7 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
 
   const [q, setQ] = useState('');
   const [scope, setScope] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [sortKey, setSortKey] = useState<SkillSortKey>('priority');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
@@ -50,10 +54,21 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
       .finally(() => setLoading(false));
   }, []);
 
+  const tagOptions = useMemo(() => collectTags(skills), [skills]);
+
   const visible = useMemo(
-    () => sortSkills(filterSkills(skills, { q, scope }), sortKey, sortDir),
-    [skills, q, scope, sortKey, sortDir],
+    () => sortSkills(filterSkills(skills, { q, scope, tags }), sortKey, sortDir),
+    [skills, q, scope, tags, sortKey, sortDir],
   );
+
+  function toggleFilterTag(tag: string) {
+    const key = tag.trim().toLowerCase();
+    setTags((prev) =>
+      prev.some((t) => t.toLowerCase() === key)
+        ? prev.filter((t) => t.toLowerCase() !== key)
+        : [...prev, tag],
+    );
+  }
 
   usePageContext('Skills', !loading && !error ? `${visible.length}/${skills.length} skills` : undefined);
 
@@ -107,14 +122,16 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
       <PageToasts err={error || null} />
 
       <PageStack>
-        <PageCard title="All skills" description="Filter and sort to find skills quickly.">
+        <PageCard title="All skills" description="Filter with label autocomplete, then refine by layer.">
           <PolicyToolbar>
-            <input
-              className="settings-input policy-toolbar-search"
-              type="search"
-              placeholder="Search name, description, tags…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
+            <LabelAutocomplete
+              options={tagOptions}
+              selected={tags}
+              onSelectedChange={setTags}
+              query={q}
+              onQueryChange={setQ}
+              placeholder="Search name or add label…"
+              ariaLabel="Filter skills by labels and text"
             />
             <select
               className="settings-select policy-toolbar-select"
@@ -142,6 +159,7 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
                     <SortTh label="Name" active={sortKey === 'name'} dir={sortDir} onClick={() => setSort('name')} />
                     <th>Description</th>
                     <SortTh label="Layer" active={sortKey === 'scope'} dir={sortDir} onClick={() => setSort('scope')} />
+                    <th>Tags</th>
                     <th>On</th>
                     <SortTh label="Pri" active={sortKey === 'priority'} dir={sortDir} onClick={() => setSort('priority')} className="col-num" />
                     <SortTh label="Triggers" active={sortKey === 'triggers'} dir={sortDir} onClick={() => setSort('triggers')} className="col-num" />
@@ -160,6 +178,9 @@ export default function PolicySkillsPage({ onEdit, onMatch }: Props) {
                         {s.description || '—'}
                       </td>
                       <td><ScopeBadge scope={s.scope} /></td>
+                      <td className="policy-table-tags">
+                        <TagList items={s.tags} onTagClick={toggleFilterTag} activeTags={tags} />
+                      </td>
                       <td>
                         <input
                           type="checkbox"

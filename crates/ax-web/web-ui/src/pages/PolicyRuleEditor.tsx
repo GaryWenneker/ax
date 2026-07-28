@@ -74,11 +74,16 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
     setSaving(true);
     setError('');
     try {
+      const tags = parseCsv(tagsText);
+      if (tags.length === 0) {
+        setError('At least one tag is required so rules can be filtered in the list.');
+        return;
+      }
       const frontmatter: RuleFrontmatter = {
         ...fm,
         globs: parseCsv(globsText),
         triggers: parseCsv(triggersText),
-        tags: parseCsv(tagsText),
+        tags,
       };
       await savePolicyRule(ruleId, frontmatter, body);
       onBack();
@@ -223,8 +228,8 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
                         placeholder="mobile, deploy"
                       />
                     </PageRow>
-                    <PageRow title="Tags" description="Optional categorization tags.">
-                      <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
+                    <PageRow title="Tags" description="Required — used to filter rules in the list (comma-separated).">
+                      <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} placeholder="e.g. azdo, cicd, quality" />
                     </PageRow>
                   </>
                 ) : (

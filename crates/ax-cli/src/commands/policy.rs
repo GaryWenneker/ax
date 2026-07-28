@@ -981,9 +981,10 @@ pub async fn run_pack_install(
     let result = ax_policy::install_builtin_pack(&root, &pack_name, force)
         .map_err(|e| e.to_string())?;
 
-    // Re-index so MCP/preflight see the new items.
+    // Re-index / import so MCP/preflight see the new items.
+    // Database mode needs force=true — otherwise index_policy only returns counts.
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let indexed = ax_policy::index_policy(ax.db_pool(), &root, false)
+    let indexed = ax_policy::index_policy(ax.db_pool(), &root, true)
         .await
         .map_err(|e| e.to_string())?;
 

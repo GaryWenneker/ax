@@ -70,10 +70,15 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
     setSaving(true);
     setError('');
     try {
+      const tags = parseCsv(tagsText);
+      if (tags.length === 0) {
+        setError('At least one tag is required so skills can be filtered in the list.');
+        return;
+      }
       const frontmatter: SkillFrontmatter = {
         ...fm,
         triggers: parseCsv(triggersText),
-        tags: parseCsv(tagsText),
+        tags,
       };
       await savePolicySkill(skillName, frontmatter, body);
       onBack();
@@ -192,8 +197,8 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                     <PageRow title="Triggers" description="Keywords that activate this skill.">
                       <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />
                     </PageRow>
-                    <PageRow title="Tags" description="Optional categorization tags.">
-                      <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
+                    <PageRow title="Tags" description="Required — used to filter skills in the list (comma-separated).">
+                      <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} placeholder="e.g. azdo, testing, methodology" />
                     </PageRow>
                     <PageRow title="Context task" description="Optional task hint for skill loading.">
                       <input

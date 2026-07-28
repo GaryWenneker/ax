@@ -221,7 +221,7 @@ tags: ["ui"]
 | `priority` | Higher wins when multiple rules match |
 | `enabled` | When `false`, matcher/preflight skip the rule (default `true`) |
 | `status` | `approved` (active), `pending` (review queue), or `rejected` |
-| `tags` | Free-form labels; use `local` or `noshare` to opt out of pack export |
+| `tags` | Required for Command Center filtering; free-form labels. Use `local` or `noshare` to opt out of pack export |
 | `share` | Optional alias — normalized to tag `shared` on parse (legacy; default export no longer requires it) |
 
 Disable without deleting:
@@ -254,6 +254,18 @@ tags: ["ops"]
 
 When triggers match, `ax_preflight` includes the skill body in `inject`. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
 
+Give every skill at least one `tags` value (same as rules) so Command Center can filter it.
+
+### Command Center: label filter
+
+On **Policy → Rules** and **Policy → Skills**:
+
+1. Type in the search box to filter by id/name **and** to see matching tag suggestions
+2. Select a suggestion (Enter / click) to add a **label chip** — multiple chips use AND (item must have all selected tags)
+3. Click a chip or Backspace to remove it
+4. Click a tag badge in the table to toggle that label into the filter
+5. Editors require at least one tag before save
+
 ---
 
 ## Per-project pack sync
@@ -284,7 +296,9 @@ ax policy pack install azdo-fullstack
 ax policy pack install azdo-fullstack --force
 ```
 
-`azdo-fullstack` adds Azure DevOps ticket-to-release skills and rules (refinement → development → testing → PR → pipelines → release). It complements built-in methodology skills (`design-first`, `tdd`, `systematic-debugging`) rather than replacing them.
+`azdo-fullstack` adds Azure DevOps ticket-to-release **skills** (full workflows with checklists — refinement → development → testing → PR → pipelines → release) and matching **rules**. It complements built-in methodology skills (`design-first`, `tdd`, `systematic-debugging`) rather than replacing them. Re-run with `--force` after upgrading ax to refresh expanded skill bodies.
+
+Install writes project files under `.ax/policy/`, then **imports into `ax.db`** when `policy.storage` is `database` (so MCP/`ax policy skill` show the new bodies without a separate `ax policy index --force`).
 
 ### IDE-agnostic delivery (Cursor ↔ Continue ↔ …)
 
@@ -325,7 +339,7 @@ ax policy review approve <id>
 ax policy review reject <id>
 ```
 
-Command Center: **Policy → Sync** (status, export/import, toggles), **Policy → Review** queue, layer filters on Rules/Skills, Scope on editors, and enable checkboxes. CLI equivalents: `ax policy pack …`, `ax policy review …`, `ax policy enable|disable`.
+Command Center: **Policy → Sync** (status, export/import, toggles), **Policy → Review** queue, label autocomplete on Rules/Skills (type to suggest tags, chips for multi-label AND filter; click a tag in the table to toggle it), layer filters, Scope on editors, and enable checkboxes. Every rule and skill should carry at least one `tags` value so you can filter (e.g. `azdo`, `cicd`, `workflow`). CLI equivalents: `ax policy pack …`, `ax policy review …`, `ax policy enable|disable`.
 
 ---
 

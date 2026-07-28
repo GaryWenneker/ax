@@ -61,6 +61,8 @@ ax policy pack import
 
 Set `"policySync": true` in that project's `ax.json` for post-commit export / post-merge import hooks. Optional `"policy": { "requireReview": true }` stages imports under `.ax/policy/pending/` until `ax policy review approve`. See [Policy Engine](/guides/policy-engine/#per-project-pack-sync).
 
+Optional built-in packs (e.g. Azure DevOps): `ax policy pack install azdo-fullstack` — writes project policy and imports into `ax.db` when storage mode is database.
+
 ### Hierarchical policy merge
 
 On every policy import/index, ax merges layers (later wins on the same rule/skill id). Each item is stamped with a **scope** (`company`, `workspace`, `project`, `private_user`, `private_project`) in both files and database storage modes:

@@ -18,6 +18,14 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.2.0
+
+- **Label autocomplete on Rules/Skills** — type to search and pick tags as chips (multi-label AND filter); click a tag in the table to toggle it. Saving a rule or skill requires at least one tag.
+- **Expanded `azdo-fullstack` skills** — full agent workflows (when to load, checklists, hard rules) for refinement → development → testing → code review → pipelines → release. Refresh with `ax policy pack install azdo-fullstack --force`.
+- **Pack install imports into the database** — in `policy.storage = database` mode, install now force-imports `.ax/policy/` into `ax.db` so Command Center and MCP see new bodies immediately.
+
+See [Policy Engine](/guides/policy-engine/) and [Command Center](/guides/command-center/).
+
 ## What's new in v4.1.0
 
 - **Policy layers** — every rule/skill has a `scope`: company (`~/.ax/global_policy/`), workspace, project, private user (`~/.ax/private_policy/`), or private project (`.ax/policy-private/`, gitignored). Merge order is company → workspace → project → private; later wins on the same id.
