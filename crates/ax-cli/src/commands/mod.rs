@@ -32,6 +32,8 @@ pub mod uninit;
 pub mod uninstall;
 pub mod daemon;
 pub mod policy;
+pub mod policy_share;
+pub mod share;
 pub mod prompt_hook;
 pub mod session_hook;
 pub mod stop_hook;
@@ -39,7 +41,6 @@ pub mod unlock;
 pub mod web;
 pub mod desktop;
 pub mod lsp;
-pub mod share;
 
 use std::path::{Path, PathBuf};
 

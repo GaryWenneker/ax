@@ -305,7 +305,7 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
                     <SortTh label="Pri" active={sortKey === 'priority'} dir={sortDir} onClick={() => setSort('priority')} className="col-num" />
                     <th>Tags</th>
                     <th>Always</th>
-                    <th>On</th>
+                    <th>Enabled</th>
                     <SortTh label="Globs" active={sortKey === 'globs'} dir={sortDir} onClick={() => setSort('globs')} className="col-num" />
                     <SortTh label="Triggers" active={sortKey === 'triggers'} dir={sortDir} onClick={() => setSort('triggers')} className="col-num" />
                     <th className="col-actions">Actions</th>
@@ -313,7 +313,7 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
                 </thead>
                 <tbody>
                   {visible.map((r) => (
-                    <tr key={r.id} className="policy-table-row">
+                    <tr key={r.id} className={`policy-table-row${r.enabled === false ? ' policy-table-row--disabled' : ''}`}>
                       <td className="mono">
                         <button type="button" className="policy-link" onClick={() => onEdit(r.id)}>
                           {r.id}
@@ -327,12 +327,16 @@ export default function PolicyRulesPage({ onEdit, onMatch }: Props) {
                       </td>
                       <td className="policy-table-flag">{r.alwaysApply ? 'yes' : '—'}</td>
                       <td>
-                        <input
-                          type="checkbox"
-                          checked={r.enabled !== false}
-                          aria-label={`Enable ${r.id}`}
-                          onChange={(e) => void toggleEnabled(r.id, e.target.checked)}
-                        />
+                        <button
+                          type="button"
+                          className={`settings-toggle${r.enabled !== false ? ' on' : ''}`}
+                          onClick={() => void toggleEnabled(r.id, r.enabled === false)}
+                          aria-pressed={r.enabled !== false}
+                          aria-label={r.enabled !== false ? `Disable ${r.id}` : `Enable ${r.id}`}
+                          title={r.enabled !== false ? 'Enabled — click to disable' : 'Disabled — click to enable'}
+                        >
+                          <span className="settings-toggle-thumb" />
+                        </button>
                       </td>
                       <td className="num">{r.globs.length}</td>
                       <td className="num">{r.triggers.length}</td>

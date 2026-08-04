@@ -41,7 +41,7 @@ function fmtUpdated(ms: number) {
   if (diff < 15_000) return 'just now';
   if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  return new Date(ms).toLocaleTimeString();
+  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
 }
 
 function FindingRow({

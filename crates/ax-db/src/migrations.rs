@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 12;
+pub const CURRENT_SCHEMA_VERSION: i32 = 13;
 
 struct Migration {
     version: i32,
@@ -200,6 +200,11 @@ const MIGRATIONS: &[Migration] = &[
             CREATE INDEX IF NOT EXISTS idx_policy_rules_scope ON policy_rules(scope);
             CREATE INDEX IF NOT EXISTS idx_policy_skills_scope ON policy_skills(scope);
         ",
+    },
+    Migration {
+        version: 14,
+        description: "Memory vault enable flag (exclude disabled from recall/inject)",
+        sql: "ALTER TABLE memories ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;",
     },
 ];
 

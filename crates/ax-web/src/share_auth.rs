@@ -19,6 +19,7 @@ pub async fn share_token_middleware(req: Request, next: Next) -> Response {
         || path == "/sw.js"
         || path == "/favicon.ico"
         || path == "/api/share/status"
+        || path.starts_with("/api/auth/microsoft")
     {
         return next.run(req).await;
     }

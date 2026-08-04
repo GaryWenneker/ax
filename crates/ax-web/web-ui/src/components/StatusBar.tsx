@@ -122,7 +122,7 @@ function formatRelative(ts: number) {
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 48) return `${hrs}h ago`;
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return new Date(ts).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function formatFullDate(ts: number) {
@@ -860,12 +860,14 @@ export default function StatusBar() {
               <button
                 type="button"
                 className="status-item status-item--clickable status-project"
-                title={`${stats.project_name} — browse for ax projects`}
-                aria-label={`Switch project (${stats.project_name})`}
+                title={`${stats.project_name === 'bonzaicoder' ? 'takumi' : stats.project_name} — browse for ax projects`}
+                aria-label={`Switch project (${stats.project_name === 'bonzaicoder' ? 'takumi' : stats.project_name})`}
                 onClick={() => setProjectModalOpen(true)}
               >
                 <Codicon name="symbol-structure" className="status-project-icon" />
-                <span className="status-lbl">{stats.project_name}</span>
+                <span className="status-lbl">
+                  {stats.project_name === 'bonzaicoder' ? 'takumi' : stats.project_name}
+                </span>
               </button>
             )}
             {projectModalOpen && (

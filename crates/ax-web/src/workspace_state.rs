@@ -9,8 +9,7 @@ use ax_policy::PolicyStore;
 use ax_resolution::prune_stale_unresolved_refs;
 use ax_ship::ShipDaemon;
 use axum::Router;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteSynchronous};
-use sqlx::ConnectOptions;
+use sqlx::sqlite::SqlitePool;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
@@ -83,7 +82,7 @@ impl WebHub {
             let _ = ax_agent::config::touch_recent_project(&new_root, true);
             self.sonar_proxy.lock().await.invalidate();
             let info = SwitchInfo {
-                path: new_root.to_string_lossy().into_owned(),
+                path: crate::workspace::display_path(&new_root),
                 label: new_root
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -116,6 +115,15 @@ impl WebHub {
                 "/api/reset-client-cache",
                 axum::routing::get(crate::handle_reset_client_cache),
             )
+            // `/api/policy/share` before `/api/policy` — otherwise `/policy` swallows `/policy/share/*`.
+            .nest(
+                "/api/policy/share",
+                crate::policy_share::policy_share_router(hub.clone()),
+            )
+            .nest(
+                "/api/auth/microsoft",
+                crate::policy_share::microsoft_auth_router(),
+            )
             .nest("/api/policy", policy::router_hub(hub.clone()))
             .nest("/api/ship", ship::router_hub(hub.clone()))
             .nest("/api/usage", crate::savings::router(hub.clone()))
@@ -126,6 +134,7 @@ impl WebHub {
             .nest("/api/share", crate::share_api::router_hub(hub.clone()))
             .nest("/api/lsp", crate::lsp_api::router_hub(hub.clone()))
             .nest("/api/plugins", crate::plugins_api::router_hub(hub.clone()))
+            .nest("/api/ops", crate::mcp_ops::router_hub(hub.clone()))
             .nest("/api", graph)
             .fallback(crate::handle_spa)
             .layer(axum::middleware::from_fn(crate::share_auth::share_token_middleware))
@@ -148,16 +157,9 @@ impl WorkspaceBundle {
             ));
         }
 
-        let mut graph_opts = SqliteConnectOptions::new()
-            .filename(&db_path)
-            .create_if_missing(false)
-            .disable_statement_logging();
+        let mut graph_opts = ax_db::connect_options(&db_path, false);
         if readonly {
             graph_opts = graph_opts.read_only(true);
-        } else {
-            graph_opts = graph_opts
-                .journal_mode(SqliteJournalMode::Wal)
-                .synchronous(SqliteSynchronous::Normal);
         }
 
         let graph_pool = if readonly {

@@ -1,12 +1,13 @@
 //! Domain-tagged verbose log lines for Logging / Quality (v4+).
 //!
-//! Lines look like: `[ax] plugin extract name=echo ok tool=plugin`
+//! Lines look like: `[ax] 🪓 plugin extract name=echo ok tool=plugin`
 //! so the Logging page `classify()` can map prefixes to TraceKinds and
 //! the TOOL column can show a stable label.
 //! Writes are gated by `append_verbose_log` (verbose MCP must be on).
 
 use std::path::Path;
 
+use crate::log_brand::format_ax_tagged;
 use crate::mcp_verbose_log::append_verbose_log;
 
 /// Append one domain event to the project verbose log (no-op if root missing / verbose off).
@@ -14,9 +15,9 @@ pub fn log_domain_event(project_root: Option<&Path>, domain: &str, message: impl
     let msg = message.as_ref();
     let tool = domain_tool_label(domain, msg);
     let line = if msg.contains("tool=") {
-        format!("[ax] {domain} {msg}")
+        format_ax_tagged(format!("{domain} {msg}"))
     } else {
-        format!("[ax] {domain} {msg} tool={tool}")
+        format_ax_tagged(format!("{domain} {msg} tool={tool}"))
     };
     append_verbose_log(&[line], project_root);
 }

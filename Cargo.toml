@@ -16,6 +16,7 @@ members = [
     "crates/ax-usage",
     "crates/ax-reasoning",
     "crates/ax-policy",
+    "crates/ax-share",
     "crates/ax-smoke-tests",
     "crates/ax-web",
     "crates/ax-desktop-client",
@@ -82,6 +83,7 @@ ax-memory = { path = "crates/ax-memory" }
 ax-web = { path = "crates/ax-web" }
 ax-desktop-client = { path = "crates/ax-desktop-client" }
 ax-policy = { path = "crates/ax-policy" }
+ax-share = { path = "crates/ax-share" }
 serde_yaml = "0.9"
 globset = "0.4"
 gix = { version = "0.68", default-features = false, features = ["max-performance-safe"] }

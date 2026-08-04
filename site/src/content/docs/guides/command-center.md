@@ -9,6 +9,8 @@ Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatic
 
 Prefer a native GPU window instead of the browser? Use `ax desktop` — see the [Desktop Client](/guides/desktop-client/) guide (same `/api` surface with an embedded `ax-web` server).
 
+Prefer the IDE shell? **[Takumi 匠](/guides/takumi/)** is a Code-OSS fork that hosts Command Center in a webview. Append `?embed=1` (or `?takumi=1`) to hide the browser titlebar when the UI is embedded.
+
 ![Command Center — quality gate pipeline with completed evaluation, pipeline steps (Index, TIA, Tests, Sonar, Policy), branch overview, and SonarQube status](/screenshots/cc-ship-full.png)
 
 ## Quick start
@@ -155,11 +157,13 @@ ax savings hook install       # Cursor sessionStart → model + session tags
 The workspace picker in the Command Center status bar opens a **project browser** modal. From there you can:
 
 - See **recent ax projects** with quick-switch buttons
-- Browse your file system for directories containing `.ax/`
+- Browse your file system (drive roots on Windows, `/` on Unix) — **all folders**, including empty ones
 - Filter by name or show ax-initialized projects only
 - Create new folders
 - **Initialize** a folder with `ax init` directly from the browser
 - Switch the active workspace without restarting the server
+
+Browse is limited to configured `browse_roots` plus home, common project dirs, and filesystem roots. Extra roots can be added in workspace config.
 
 ### Modal-based forms
 

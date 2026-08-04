@@ -2,11 +2,27 @@
 
 use std::path::Path;
 
+use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::daemon::{read_daemon_info, try_connect, wait_for_daemon};
+use ax_context::directory::get_ax_dir;
+
+use crate::daemon::{read_daemon_info, remove_daemon_info, try_connect, wait_for_daemon};
+use crate::daemon_lock::{is_pid_alive, kill_pid, read_lock_info, release_daemon_lock};
+use crate::daemon_paths::daemon_pid_path;
 use crate::liveness_watchdog::install_main_thread_watchdog;
 use crate::ppid_watchdog::spawn_ppid_watchdog;
+
+/// Result of bouncing the shared per-project MCP daemon.
+#[derive(Debug, Clone, Serialize)]
+pub struct DaemonRestartReport {
+    pub ok: bool,
+    pub stopped_pid: Option<u32>,
+    pub started_pid: Option<u32>,
+    pub cleared_ax_lock: bool,
+    pub connected: bool,
+    pub hint: String,
+}
 
 pub async fn run_stdio_proxy(project_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     spawn_ppid_watchdog(|| std::process::exit(0));
@@ -116,4 +132,51 @@ pub async fn attach_or_spawn(project_root: &Path) -> Result<(), Box<dyn std::err
         return Err("daemon failed to start within 10s".into());
     }
     run_stdio_proxy(project_root).await
+}
+
+/// Stop the shared MCP daemon (if any), clear stale locks, and start a fresh daemon.
+///
+/// Safe for Command Center: does **not** kill unrelated `ax.exe` processes (unlike `ax unlock`).
+pub async fn restart_daemon(project_root: &Path) -> Result<DaemonRestartReport, String> {
+    let mut stopped_pid = None;
+    if let Some(info) = read_daemon_info(project_root) {
+        if is_pid_alive(info.pid) {
+            let _ = kill_pid(info.pid);
+            stopped_pid = Some(info.pid);
+        }
+    }
+    let pid_path = daemon_pid_path(project_root);
+    if let Some(lock) = read_lock_info(&pid_path) {
+        if stopped_pid != Some(lock.pid) && is_pid_alive(lock.pid) {
+            let _ = kill_pid(lock.pid);
+            if stopped_pid.is_none() {
+                stopped_pid = Some(lock.pid);
+            }
+        }
+    }
+    remove_daemon_info(project_root);
+    release_daemon_lock(&pid_path);
+
+    let lock_path = get_ax_dir(project_root).join("ax.lock");
+    let had_lock = lock_path.exists();
+    ax_utils::clear_stale_lock(&lock_path);
+    let cleared_ax_lock = had_lock && !lock_path.exists();
+
+    // Give the OS a beat to release named pipes / sockets after kill.
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+    spawn_daemon_child(project_root).map_err(|e| format!("failed to spawn MCP daemon: {e}"))?;
+    if wait_for_daemon(project_root, 12_000).await.is_none() {
+        return Err("MCP daemon failed to start within 12s".into());
+    }
+    let info = read_daemon_info(project_root);
+    let connected = try_connect(project_root).await.is_some();
+    Ok(DaemonRestartReport {
+        ok: connected,
+        stopped_pid,
+        started_pid: info.map(|i| i.pid),
+        cleared_ax_lock,
+        connected,
+        hint: "Shared MCP daemon restarted. If Cursor or Takumi still show DEGRADED, run MCP: Restart Servers (or reload the window). Prefer the daemon over parallel embedded MCP processes on the same .ax/ax.db.".into(),
+    })
 }

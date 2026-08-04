@@ -147,6 +147,53 @@ impl PolicyStore {
         Ok(doc)
     }
 
+    /// Save a rule under a new id, removing the previous row/file when `old_id` differs.
+    pub async fn rename_rule(
+        &self,
+        old_id: &str,
+        frontmatter: RuleFrontmatter,
+        body: String,
+    ) -> Result<PolicyRuleDoc, ValidationError> {
+        if old_id == frontmatter.id {
+            return self.save_rule(frontmatter, body).await;
+        }
+
+        let exists_old = self.get_rule_doc(old_id).await.map_err(|e| ValidationError {
+            error: e.to_string(),
+            fields: Default::default(),
+        })?;
+        if exists_old.is_none() {
+            return Err(ValidationError {
+                error: "not found".into(),
+                fields: Default::default(),
+            });
+        }
+
+        if self
+            .get_rule_doc(&frontmatter.id)
+            .await
+            .map_err(|e| ValidationError {
+                error: e.to_string(),
+                fields: Default::default(),
+            })?
+            .is_some()
+        {
+            return Err(ValidationError {
+                error: "validation_failed".into(),
+                fields: [("id".into(), "already exists".into())]
+                    .into_iter()
+                    .collect(),
+            });
+        }
+
+        self.delete_rule(old_id).await.map_err(|e| ValidationError {
+            error: e.to_string(),
+            fields: Default::default(),
+        })?;
+
+        self.save_rule(frontmatter, body).await
+    }
+
     pub async fn save_skill(
         &self,
         mut frontmatter: SkillFrontmatter,
@@ -272,19 +319,33 @@ fn write_utf8(path: &Path, content: &str) -> Result<(), String> {
 }
 
 pub async fn open_rw_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AxError> {
-    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-    use sqlx::ConnectOptions;
+    use sqlx::sqlite::SqlitePoolOptions;
 
-    let opts = SqliteConnectOptions::new()
-        .filename(db_path)
-        .create_if_missing(false)
-        .journal_mode(SqliteJournalMode::Wal)
-        .synchronous(SqliteSynchronous::Normal)
-        .disable_statement_logging();
+    if let Some(ax_dir) = db_path.parent() {
+        ax_utils::clear_stale_lock(&ax_dir.join("ax.lock"));
+    }
+    let opts = ax_db::connect_options(db_path, false);
+    let timeout = ax_db::busy_timeout();
+    let timeout_ms = timeout.as_millis() as i64;
 
-    SqlitePoolOptions::new()
-        .max_connections(2)
-        .connect_with(opts)
-        .await
-        .map_err(|e| AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string())))
+    ax_db::with_busy_retry(|| {
+        let opts = opts.clone();
+        async move {
+            SqlitePoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(timeout)
+                .after_connect(move |conn, _meta| {
+                    Box::pin(async move {
+                        sqlx::query(&format!("PRAGMA busy_timeout = {timeout_ms}"))
+                            .execute(&mut *conn)
+                            .await?;
+                        Ok(())
+                    })
+                })
+                .connect_with(opts)
+                .await
+        }
+    })
+    .await
+    .map_err(|e| AxError::Database(ax_utils::errors::DatabaseError::new(e.to_string())))
 }

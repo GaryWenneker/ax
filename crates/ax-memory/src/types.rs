@@ -2,6 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 /// What kind of knowledge a memory captures.
 pub const MEMORY_KINDS: &[&str] = &["decision", "bug_fix", "architecture", "convention", "note", "git"];
 
@@ -18,6 +22,8 @@ pub struct MemoryRow {
     pub confidence: f64,
     /// manual | mcp | git
     pub source: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }

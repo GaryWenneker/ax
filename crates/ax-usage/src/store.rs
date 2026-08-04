@@ -132,10 +132,20 @@ pub async fn open_pool() -> Result<SqlitePool, AxError> {
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(180))
         .disable_statement_logging();
 
     let pool = SqlitePoolOptions::new()
         .max_connections(3)
+        .acquire_timeout(std::time::Duration::from_secs(180))
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA busy_timeout = 180000")
+                    .execute(&mut *conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect_with(options)
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;

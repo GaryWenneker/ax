@@ -11,7 +11,7 @@ use crate::cli_install::cli_installable;
 
 pub const TARGETS: &[&str] = &[
     "claude", "cursor", "codex", "opencode", "hermes", "gemini", "antigravity", "kiro",
-    "vscode", "windsurf", "zed", "continue",
+    "vscode", "takumi", "windsurf", "zed", "continue",
 ];
 
 pub fn display_name(target: &str) -> &'static str {
@@ -25,6 +25,7 @@ pub fn display_name(target: &str) -> &'static str {
         "antigravity" => "Antigravity IDE",
         "kiro" => "Kiro",
         "vscode" => "VS Code (Copilot Chat)",
+        "takumi" => "Takumi 匠",
         "windsurf" => "Windsurf (Cascade)",
         "zed" => "Zed",
         "continue" => "Continue",
@@ -51,6 +52,10 @@ fn has_agent_data_dir(target: &str) -> bool {
         "antigravity" => home.join(".gemini").is_dir(),
         "kiro" => home.join(".kiro").is_dir(),
         "vscode" => home.join(".vscode").is_dir() || vscode_user_dir().map(|p| p.is_dir()).unwrap_or(false),
+        "takumi" => {
+            home.join(".takumi").is_dir()
+                || takumi_user_dir().map(|p| p.is_dir()).unwrap_or(false)
+        }
         "windsurf" => windsurf_config_dir().map(|p| p.is_dir()).unwrap_or(false),
         "zed" => zed_settings_path().map(|p| p.parent().is_some_and(|d| d.is_dir())).unwrap_or(false),
         "continue" => home.join(".continue").is_dir(),
@@ -137,7 +142,11 @@ pub fn install_targets(
 ) -> Result<InstallSummary, String> {
     let mut reports = Vec::new();
     for target in selected {
-        if let Some(report) = install_target(target, project_root)? {
+        let id = target.trim().to_ascii_lowercase();
+        if id.is_empty() {
+            continue;
+        }
+        if let Some(report) = install_target(&id, project_root)? {
             reports.push(report);
         }
     }
@@ -147,7 +156,11 @@ pub fn install_targets(
 pub fn uninstall_targets(selected: &[String]) -> Result<Vec<TargetReport>, String> {
     let mut reports = Vec::new();
     for target in selected {
-        if let Some(report) = uninstall_target(target)? {
+        let id = target.trim().to_ascii_lowercase();
+        if id.is_empty() {
+            continue;
+        }
+        if let Some(report) = uninstall_target(&id)? {
             reports.push(report);
         }
     }
@@ -169,7 +182,7 @@ fn is_ax_configured(target: &str, project_root: &Path) -> Result<(bool, Vec<Stri
         "antigravity" => vec![antigravity_mcp_path()?],
         "kiro" => vec![home.join(".kiro").join("settings").join("mcp.json")],
         "hermes" => vec![hermes_config_path()?],
-        "vscode" => vec![vscode_mcp_path(project_root)],
+        "vscode" | "takumi" => vec![vscode_mcp_path(project_root)],
         "windsurf" => vec![windsurf_mcp_path()?],
         "zed" => vec![zed_settings_path()?],
         "continue" => vec![
@@ -255,6 +268,7 @@ fn install_target(target: &str, project_root: &Path) -> Result<Option<TargetRepo
         "antigravity" => install_antigravity_mcp(project_root)?,
         "kiro" => install_kiro_mcp(project_root)?,
         "vscode" => install_vscode_mcp(project_root)?,
+        "takumi" => install_takumi_mcp(project_root)?,
         "windsurf" => install_windsurf_mcp(project_root)?,
         "zed" => install_zed_mcp(project_root)?,
         "continue" => install_continue_mcp(project_root)?,
@@ -274,6 +288,7 @@ fn uninstall_target(target: &str) -> Result<Option<TargetReport>, String> {
         "antigravity" => uninstall_antigravity_mcp()?,
         "kiro" => uninstall_kiro_mcp()?,
         "vscode" => uninstall_vscode_mcp()?,
+        "takumi" => uninstall_takumi_mcp()?,
         "windsurf" => uninstall_windsurf_mcp()?,
         "zed" => uninstall_zed_mcp()?,
         "continue" => uninstall_continue_mcp()?,
@@ -836,6 +851,29 @@ fn vscode_user_dir() -> Option<PathBuf> {
     }
 }
 
+/// Takumi 匠 product data folder (Code-OSS fork; `product.json` `dataFolderName`).
+fn takumi_user_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("APPDATA")
+            .ok()
+            .map(|a| PathBuf::from(a).join("Takumi").join("User"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir().map(|h| {
+            h.join("Library")
+                .join("Application Support")
+                .join("Takumi")
+                .join("User")
+        })
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        dirs::home_dir().map(|h| h.join(".config").join("Takumi").join("User"))
+    }
+}
+
 fn vscode_mcp_entry() -> Value {
     let path_token = mcp_path_token("vscode");
     serde_json::json!({
@@ -846,8 +884,12 @@ fn vscode_mcp_entry() -> Value {
     })
 }
 
-fn install_vscode_mcp(project_root: &Path) -> Result<TargetReport, String> {
-    let mut report = TargetReport::new("vscode", display_name("vscode"));
+fn install_vscode_lineage_mcp(
+    target: &'static str,
+    project_root: &Path,
+    note: &str,
+) -> Result<TargetReport, String> {
+    let mut report = TargetReport::new(target, display_name(target));
     let path = vscode_mcp_path(project_root);
     let mut config = read_json(&path);
     if config.get("servers").is_none() {
@@ -855,8 +897,34 @@ fn install_vscode_mcp(project_root: &Path) -> Result<TargetReport, String> {
     }
     config["servers"]["ax"] = vscode_mcp_entry();
     report.push_file(path.clone(), write_json_action(&path, &config)?);
-    report.note("Reload the VS Code window and set Copilot Chat to Agent mode for MCP tools.");
+    report.note(note);
     Ok(report)
+}
+
+fn install_vscode_mcp(project_root: &Path) -> Result<TargetReport, String> {
+    install_vscode_lineage_mcp(
+        "vscode",
+        project_root,
+        "Reload the VS Code window and set Copilot Chat to Agent mode for MCP tools.",
+    )
+}
+
+fn install_takumi_mcp(project_root: &Path) -> Result<TargetReport, String> {
+    // Always resolve to an absolute project root so Takumi / CI can pass --path
+    // even when the process cwd is not the workspace folder.
+    let root = if project_root.is_absolute() {
+        project_root.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(project_root)
+    };
+    let root = root.canonicalize().unwrap_or(root);
+    install_vscode_lineage_mcp(
+        "takumi",
+        &root,
+        "Reload Takumi 匠 — native Ax panels and Copilot Chat Agent mode both use .vscode/mcp.json.",
+    )
 }
 
 fn continue_mcp_path(project_root: &Path) -> PathBuf {
@@ -921,8 +989,8 @@ fn uninstall_continue_mcp() -> Result<TargetReport, String> {
     Ok(report)
 }
 
-fn uninstall_vscode_mcp() -> Result<TargetReport, String> {
-    let mut report = TargetReport::new("vscode", display_name("vscode"));
+fn uninstall_vscode_lineage_mcp(target: &'static str) -> Result<TargetReport, String> {
+    let mut report = TargetReport::new(target, display_name(target));
     // Best-effort: workspace path unknown at uninstall time for a home-only call;
     // callers pass project_root through install/uninstall_targets for scoped removal.
     if let Ok(cwd) = std::env::current_dir() {
@@ -938,6 +1006,14 @@ fn uninstall_vscode_mcp() -> Result<TargetReport, String> {
         }
     }
     Ok(report)
+}
+
+fn uninstall_vscode_mcp() -> Result<TargetReport, String> {
+    uninstall_vscode_lineage_mcp("vscode")
+}
+
+fn uninstall_takumi_mcp() -> Result<TargetReport, String> {
+    uninstall_vscode_lineage_mcp("takumi")
 }
 
 /// Windsurf (Cascade) — global-only config at `~/.codeium/windsurf/mcp_config.json`,
@@ -1197,6 +1273,29 @@ mod mcp_path_tests {
         let entry = vscode_mcp_entry();
         assert_eq!(entry["type"], "stdio");
         assert!(entry.get("mcpServers").is_none());
+    }
+
+    #[test]
+    fn takumi_install_writes_workspace_mcp_json() {
+        let dir = std::env::temp_dir().join(format!(
+            "ax-takumi-mcp-{}-{}",
+            std::process::id(),
+            "test"
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let report = install_takumi_mcp(&dir).unwrap();
+        assert_eq!(report.id, "takumi");
+        let path = vscode_mcp_path(&dir);
+        assert!(path.is_file());
+        let cfg = read_json(&path);
+        assert_eq!(cfg["servers"]["ax"]["type"], "stdio");
+        assert!(cfg["servers"]["ax"]["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a.as_str() == Some("--mcp")));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

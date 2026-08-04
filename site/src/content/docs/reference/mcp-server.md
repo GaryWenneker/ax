@@ -172,6 +172,12 @@ For whole-graph understanding — subsystems, hot spots, and unexpected coupling
 
 Every edge also carries a **confidence** tag — `extracted` (read straight from the AST), `inferred` (resolved by a heuristic/name-matching pass), or `ambiguous` (one of several candidate targets was picked) — surfaced in `ax_node` / `ax_callers` / `ax_callees` output and the Command Center edge badges. Markdown docs (`.md`/`.mdx`) are indexed as `Doc` nodes with full parsing; PDF, Office, and other opaque formats appear as `Doc` nodes (presence only, no content extraction). Counts by extension are auto-injected via `ax_preflight` and available in `ax status --json` as `stats.docsByExtension`.
 
+## Shared daemon (multi-client)
+
+`ax serve --mcp` prefers a **per-project daemon**: the IDE process is a thin stdio proxy; one daemon owns `.ax/ax.db`. That lets Cursor and Takumi share one writer.
+
+If the daemon cannot start in time, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (hamburger / sidebar Ops) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/docs/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
+
 ## How agents should use it
 
 ax *is* the pre-built search index. For "how does X work?", architecture, a flow ("how does X reach Y"), or where-is-X questions — and while editing code — an agent should answer with `ax_explore` and stop, typically with **zero file reads**, rather than re-deriving the answer with `grep` + `Read`. A direct ax answer is one to a few calls; a grep/read exploration is dozens.

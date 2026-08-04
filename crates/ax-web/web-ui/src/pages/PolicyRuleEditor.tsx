@@ -39,6 +39,19 @@ function parseCsv(s: string): string[] {
   return s.split(',').map((x) => x.trim()).filter(Boolean);
 }
 
+function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
+  return {
+    ...fm,
+    alwaysApply: !!fm.alwaysApply,
+    enabled: fm.enabled !== false,
+    globs: fm.globs ?? [],
+    triggers: fm.triggers ?? [],
+    tags: fm.tags ?? [],
+    scope: fm.scope || 'project',
+    status: fm.status || 'approved',
+  };
+}
+
 export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
   const isNew = !ruleId;
   const [editing, setEditing] = useState(isNew);
@@ -57,7 +70,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
     setError('');
     fetchPolicyRule(ruleId)
       .then((doc) => {
-        setFm(doc.frontmatter);
+        setFm(normalizeRuleFm(doc.frontmatter));
         setBody(doc.body);
         setGlobsText(doc.frontmatter.globs.join(', '));
         setTriggersText(doc.frontmatter.triggers.join(', '));
@@ -79,10 +92,18 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
         setError('At least one tag is required so rules can be filtered in the list.');
         return;
       }
+      const globs = parseCsv(globsText);
+      const triggers = parseCsv(triggersText);
+      if (!fm.alwaysApply && globs.length === 0 && triggers.length === 0) {
+        setError('Turn on Always apply, or set at least one glob or trigger — otherwise the rule never matches.');
+        return;
+      }
       const frontmatter: RuleFrontmatter = {
         ...fm,
-        globs: parseCsv(globsText),
-        triggers: parseCsv(triggersText),
+        alwaysApply: !!fm.alwaysApply,
+        enabled: fm.enabled !== false,
+        globs,
+        triggers,
         tags,
       };
       await savePolicyRule(ruleId, frontmatter, body);
@@ -105,7 +126,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
     setLoading(true);
     fetchPolicyRule(ruleId)
       .then((doc) => {
-        setFm(doc.frontmatter);
+        setFm(normalizeRuleFm(doc.frontmatter));
         setBody(doc.body);
         setGlobsText(doc.frontmatter.globs.join(', '));
         setTriggersText(doc.frontmatter.triggers.join(', '));
@@ -161,12 +182,13 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
               <PageCardBody>
                 {editing ? (
                   <>
-                    <PageRow title="ID" description="Unique rule identifier.">
+                    <PageRow title="ID" description="Unique rule identifier (kebab-case). You can rename when editing.">
                       <input
                         className="settings-input"
                         value={fm.id}
-                        disabled={!!ruleId}
                         onChange={(e) => setFm({ ...fm, id: e.target.value })}
+                        pattern="[a-z0-9-]+"
+                        title="Kebab-case: lowercase letters, digits, hyphens"
                       />
                     </PageRow>
                     <PageRow title="Level" description="CRITICAL rules block edits via ax_guard.">
@@ -194,12 +216,30 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
                         ))}
                       </select>
                     </PageRow>
-                    <PageRow title="Always apply" description="Inject on every agent turn.">
+                    <PageRow
+                      title="Enabled"
+                      description="Off = skipped by preflight/matcher (keep the rule without deleting it)."
+                    >
+                      <button
+                        type="button"
+                        className={`settings-toggle${fm.enabled !== false ? ' on' : ''}`}
+                        onClick={() => setFm({ ...fm, enabled: fm.enabled === false })}
+                        aria-pressed={fm.enabled !== false}
+                        aria-label="Enabled"
+                      >
+                        <span className="settings-toggle-thumb" />
+                      </button>
+                    </PageRow>
+                    <PageRow
+                      title="Always apply"
+                      description="Matching: inject on every agent turn. Not the same as Enabled — if off, set globs or triggers."
+                    >
                       <button
                         type="button"
                         className={`settings-toggle${fm.alwaysApply ? ' on' : ''}`}
                         onClick={() => setFm({ ...fm, alwaysApply: !fm.alwaysApply })}
                         aria-pressed={fm.alwaysApply}
+                        aria-label="Always apply"
                       >
                         <span className="settings-toggle-thumb" />
                       </button>
@@ -242,6 +282,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
                     triggers={fm.triggers}
                     tags={fm.tags}
                     scope={fm.scope}
+                    enabled={fm.enabled}
                   />
                 )}
               </PageCardBody>

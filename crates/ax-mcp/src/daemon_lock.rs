@@ -106,6 +106,29 @@ pub fn is_pid_alive(pid: u32) -> bool {
   sys.process(Pid::from_u32(pid)).is_some()
 }
 
+/// Force-stop a process by PID (Windows `taskkill` / Unix `kill -9`).
+pub fn kill_pid(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(unix)]
+    {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

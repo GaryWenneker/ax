@@ -119,7 +119,10 @@ pub fn run_watchdog_child(parent_pid: u32, timeout_ms: u64) {
         if elapsed >= timeout_ms {
             let secs = timeout_ms / 1000;
             eprintln!(
-                "[ax] Main thread unresponsive for ~{secs}s — killing wedged process. Disable with AX_NO_WATCHDOG=1."
+                "{}",
+                ax_usage::format_ax_tagged(format!(
+                    "Main thread unresponsive for ~{secs}s — killing wedged process. Disable with AX_NO_WATCHDOG=1."
+                ))
             );
             kill_process(parent_pid);
             std::process::exit(0);

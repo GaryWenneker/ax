@@ -47,7 +47,6 @@ const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
   { id: 'graph', label: 'Graph' },
   { id: 'files', label: 'Files' },
   { id: 'search', label: 'Search' },
-  { id: 'memory', label: 'Memory' },
   { id: 'unresolved', label: 'Unresolved' },
   { id: 'savings', label: 'Savings' },
   { id: 'prices', label: 'Prices' },
@@ -58,17 +57,31 @@ const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
 
 const NAV_CONFIG: Array<{ id: NavId; label: string }> = [
   { id: 'settings', label: 'Settings' },
-  { id: 'logging', label: 'Logging' },
+  { id: 'logging', label: '🪓 Logging' },
 ];
 
-const NAV_POLICY: Array<{ id: NavId; label: string }> = [
+const NAV_KNOWLEDGE: Array<{ id: NavId; label: string }> = [
   { id: 'policy-rules', label: 'Rules' },
   { id: 'policy-skills', label: 'Skills' },
+  { id: 'memory', label: 'Memory' },
+];
+
+const NAV_POLICY_SYNC: Array<{ id: NavId; label: string }> = [
   { id: 'policy-sync', label: 'Sync' },
   { id: 'policy-review', label: 'Review' },
 ];
 
 const SCALE_STEP = 0.05;
+
+/** True when hosted inside Takumi 匠 / IDE webview (`?embed=1` or `?takumi=1`). */
+function detectEmbedMode(): boolean {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    return q.get('embed') === '1' || q.get('takumi') === '1' || q.get('bonzai') === '1';
+  } catch {
+    return false;
+  }
+}
 
 function stripValid(parsed: RouteState & { valid?: boolean }): RouteState {
   const { valid: _valid, ...route } = parsed;
@@ -82,6 +95,9 @@ function AppShell() {
   const [showSavings, setShowSavings] = useState(false);
   const [showAgent, setShowAgent] = useState(true);
   const [workspaceKey, setWorkspaceKey] = useState(0);
+  const [embedMode] = useState(detectEmbedMode);
+  const [mcpReloadBusy, setMcpReloadBusy] = useState(false);
+  const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const { page, ruleId: editRuleId, skillName: editSkillName, sonarTab } = route;
 
@@ -114,6 +130,10 @@ function AppShell() {
     initBladeWidth();
     initTheme();
     setFontScale(loadUiScale());
+    if (embedMode) {
+      document.documentElement.dataset.axEmbed = '1';
+      document.body.classList.add('ax-embed');
+    }
 
     migrateLegacyHash();
     const initial = parseLocation();
@@ -123,7 +143,7 @@ function AppShell() {
     }
 
     refreshNavConfig();
-  }, []);
+  }, [embedMode]);
 
   useEffect(() => {
     function onWorkspaceSwitched() {
@@ -203,6 +223,42 @@ function AppShell() {
     setFontScale(adjustUiScale(delta));
   }
 
+  async function reloadMcpDaemon() {
+    if (mcpReloadBusy) return;
+    setMcpReloadBusy(true);
+    setMcpToast(null);
+    try {
+      const res = await fetch('/api/ops/mcp-reload', { method: 'POST' });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        startedPid?: number;
+        connected?: boolean;
+        hint?: string;
+      };
+      if (!res.ok || body.ok === false) {
+        setMcpToast({
+          kind: 'err',
+          text: body.error || body.hint || 'MCP reload failed',
+        });
+      } else {
+        const pid = body.startedPid ? ` pid ${body.startedPid}` : '';
+        setMcpToast({
+          kind: 'ok',
+          text: `MCP daemon reloaded${pid}. ${body.hint || 'If the IDE is still DEGRADED, restart MCP servers there.'}`,
+        });
+      }
+    } catch (e) {
+      setMcpToast({
+        kind: 'err',
+        text: e instanceof Error ? e.message : 'MCP reload request failed',
+      });
+    } finally {
+      setMcpReloadBusy(false);
+      setSidebarOpen(false);
+    }
+  }
+
   const navMain = NAV_MAIN_BASE.filter((n) => {
     if (n.id === 'savings' && !showSavings) return false;
     if (n.id === 'agent' && !showAgent) return false;
@@ -221,7 +277,8 @@ function AppShell() {
         />
       )}
 
-      <div className="app">
+      <div className={`app${embedMode ? ' app--embed' : ''}`}>
+        {!embedMode && (
         <header className="titlebar">
           <div className="titlebar-inner">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -253,6 +310,18 @@ function AppShell() {
           </div>
           <HeaderWaves />
         </header>
+        )}
+        {embedMode && (
+          <button
+            className="hamburger embed-menu"
+            type="button"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label="Toggle menu"
+            aria-expanded={sidebarOpen}
+          >
+            <i className="codicon codicon-menu" aria-hidden="true" />
+          </button>
+        )}
 
         <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
           {navMain.map((n) => (
@@ -278,8 +347,8 @@ function AppShell() {
               {n.label}
             </button>
           ))}
-          <div className="nav-section-label">Policy</div>
-          {NAV_POLICY.map((n) => (
+          <div className="nav-section-label">Rules · Skills · Memory</div>
+          {NAV_KNOWLEDGE.map((n) => (
             <button
               key={n.id}
               type="button"
@@ -290,11 +359,50 @@ function AppShell() {
               {n.label}
             </button>
           ))}
+          <div className="nav-divider" aria-hidden="true" />
+          {NAV_POLICY_SYNC.map((n) => (
+            <button
+              key={n.id}
+              type="button"
+              className={`nav-item${page === n.id ? ' active' : ''}`}
+              onClick={() => navigate(n.id as Page)}
+            >
+              <NavIcon id={n.id} />
+              {n.label}
+            </button>
+          ))}
+          <div className="nav-section-label">Ops</div>
+          <button
+            type="button"
+            className="nav-item nav-item--action"
+            onClick={() => void reloadMcpDaemon()}
+            disabled={mcpReloadBusy}
+            title="Restart the shared MCP daemon and clear stale locks"
+          >
+            <i className="codicon codicon-refresh" aria-hidden="true" />
+            {mcpReloadBusy ? 'Reloading MCP…' : 'Reload MCP'}
+          </button>
         </nav>
 
         <SidebarResizeHandle />
 
         <div className="workspace">
+          {mcpToast && (
+            <div
+              className={`settings-toast settings-toast--${mcpToast.kind} mcp-reload-toast`}
+              role="status"
+            >
+              <span>{mcpToast.text}</span>
+              <button
+                type="button"
+                className="mcp-reload-toast-dismiss"
+                onClick={() => setMcpToast(null)}
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <main className={containerClass} id="main-content">
             {page === 'stats' && <StatsPage key={workspaceKey} />}
             {page === 'nodes' && <NodesPage key={workspaceKey} />}

@@ -231,7 +231,7 @@ ax policy disable mobile-first
 ax policy enable mobile-first
 ```
 
-The same fields are stored in `ax.db` (`policy_rules.enabled`, `policy_rules.status`). Command Center Rules/Skills tables expose an On toggle.
+The same fields are stored in `ax.db` (`policy_rules.enabled`, `policy_rules.status`). Command Center exposes an **Enabled** toggle on the Rules/Skills tables and in each rule/skill editor. That is separate from **Always apply** (matching): a rule must have Always apply, globs, or triggers to save — otherwise matching would never fire.
 
 ---
 
@@ -339,7 +339,9 @@ ax policy review approve <id>
 ax policy review reject <id>
 ```
 
-Command Center: **Policy → Sync** (status, export/import, toggles), **Policy → Review** queue, label autocomplete on Rules/Skills (type to suggest tags, chips for multi-label AND filter; click a tag in the table to toggle it), layer filters, Scope on editors, and enable checkboxes. Every rule and skill should carry at least one `tags` value so you can filter (e.g. `azdo`, `cicd`, `workflow`). CLI equivalents: `ax policy pack …`, `ax policy review …`, `ax policy enable|disable`.
+Command Center: **Policy → Sync** (status, export/import, toggles), **Policy → Review** queue, label autocomplete on Rules/Skills (type to suggest tags, chips for multi-label AND filter; click a tag in the table to toggle it), layer filters, Scope on editors, and enable checkboxes. Every rule and skill should carry at least one `tags` value so you can filter (e.g. `azdo`, `cicd`, `workflow`). CLI equivalents: `ax policy pack …`, `ax policy review …`, `ax policy share …`, `ax policy enable|disable`.
+
+For org-wide sync outside the project repo, see [Remote Policy Share](/guides/policy-sharing/).
 
 ---
 

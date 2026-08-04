@@ -57,7 +57,7 @@
 
 - **100% local** — no source code leaves your machine
 - **Deterministic** — graph data comes from AST extraction, not LLM summaries
-- **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed, and more
+- **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Takumi 匠, Windsurf, Zed, and more
 - **Native Rust** — single binary, no Node.js runtime required
 
 Docs: [getax.wenneker.io](https://getax.wenneker.io) — MCP loop: [MCP Logging & Quality](https://getax.wenneker.io/guides/mcp-quality/)
@@ -180,6 +180,8 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax export graph --format …` | Export graph (`json`/`dot`/`graphml`/`gexf`/`cypher`/`mermaid`/`plantuml`/`html`) |
 | `ax policy pull <git-url>` | Pull shared policy rules/skills from a git registry |
 | `ax policy pack export\|import\|status\|install` | Per-project shared pack + built-in packs (e.g. `azdo-fullstack`) |
+| `ax policy share config\|sync` | Remote policy share — pull/push via git (GitHub/GitLab/Azure DevOps/on-prem, optionally GitLab `/api/v4` with a token) or OneDrive Graph |
+| `ax auth microsoft login\|logout\|status` | Microsoft device-code sign-in for OneDrive share sync |
 | `ax policy review list\|show\|approve\|reject` | Review pending pack imports |
 | `ax policy enable\|disable <id>` | Toggle a rule or skill without deleting it |
 | `ax watch [path]` | Alias for `ax sync --watch` |
@@ -209,8 +211,8 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax ship --draft` | Draft PR after quality gate |
 | `ax share [--open]` | Share Command Center on the LAN with a token (read-only) |
 | `ax lsp status\|enrich` | Optional LSP bridge — Exact edges via rust-analyzer / tsserver / pyright / gopls |
-| `ax unlock [path]` | Remove stale `ax.lock` |
-| `ax daemon [status\|stop]` | MCP daemon control |
+| `ax unlock [path]` | Force-clear stale `ax.lock` / orphaned ax (prefer `ax daemon restart`) |
+| `ax daemon [status\|stop\|restart]` | MCP daemon control (restart = Command Center **Reload MCP**) |
 | `ax upgrade [tag]` | Self-update from GitHub releases |
 | `ax telemetry [on\|off\|status]` | Anonymous usage telemetry |
 | `ax offload …` | Optional BYO LLM for explore synthesis |
@@ -221,6 +223,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax stop-hook` | Claude Code `Stop`/`SubagentStop` post-flight — blocks turn end on a CRITICAL guard violation |
 | `ax web [--open]` | Local web UI — graph browser + policy editor + Command Center |
 | `ax desktop [--port]` | Native wgpu Command Center (embeds ax-web in-process) |
+| `ax install --target takumi` | Wire MCP for the [Takumi 匠](https://getax.wenneker.io/guides/takumi/) Code-OSS fork (`--path` optional project root) |
 
 Run `ax help <command>` for detailed help with examples.
 
@@ -244,6 +247,7 @@ Environment:
 | `AX_PARSE_WORKERS` | Parallel parse thread count |
 | `AX_QUERY_POOL_SIZE` | MCP query pool size |
 | `AX_GITHUB_REPO` | Override repo for `ax upgrade` (default `GaryWenneker/ax`) |
+| `AX_MS_CLIENT_ID` | Optional custom Azure AD public client ID for OneDrive policy share (`ax auth microsoft login`) — defaults to the built-in Microsoft app if unset |
 | `AX_SHARE_TOKEN` | Require this token for `ax web` / `ax share` (query / Bearer / cookie) |
 | `AX_ONNX_MODEL` | Path to ONNX embedding model (requires `--features onnx` build) |
 

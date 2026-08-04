@@ -154,7 +154,7 @@ fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
     if !fm.always_apply && fm.globs.is_empty() && fm.triggers.is_empty() {
         fields.insert(
             "triggers".into(),
-            "need alwaysApply, globs, or triggers".into(),
+            "turn on Always apply, or set at least one glob or trigger".into(),
         );
     }
     if !fields.is_empty() {

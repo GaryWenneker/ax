@@ -11,17 +11,36 @@ Run `ax init` in your project directory first.
 
 Large committed directories (mobile apps, vendored SDKs, e2e test trees) bloat the index even when gitignored paths are skipped. Add them to `exclude` in `ax.json` at the project root — see [Configuration](/getting-started/configuration/). Use `--quiet` to reduce CLI output overhead.
 
-## MCP hits `database is locked`
+## MCP hits `database is locked` / agents go DEGRADED
 
-Current builds use SQLite WAL mode via sqlx; concurrent reads should not block writers. If you still see lock errors:
+Cursor reports **DEGRADED** when the `user-ax` MCP stdio process fails tool discovery or returns `SQLITE_BUSY` (`database is locked`, code 5). In Takumi this is common when **Cursor and Takumi both spawn `ax serve --mcp` against the same project** (same `.ax/ax.db`) without the shared daemon.
 
-- **Stale lock after a crash** — run `ax unlock`, then retry.
-- **Another ax process is indexing** — wait for `ax init` / `ax index` to finish, or stop the other process.
-- **Network filesystem** — WAL may not work reliably on SMB/NFS or WSL2 `/mnt`. Move the project (with `.ax/`) to a local disk.
+ax hardens this by default:
+
+- WAL mode + **180s** SQLite `busy_timeout` (override with `AX_DB_BUSY_TIMEOUT_SECS`)
+- Writers **wait up to 180s** for `.ax/ax.lock` instead of failing immediately
+- Stale `ax.lock` / dead daemon PIDs are cleared on open and on `ax daemon restart`
+- Maintenance uses `wal_checkpoint(PASSIVE)` so optimize does not starve readers
+
+Healthy path: each IDE attaches as a thin **stdio proxy** to one **shared per-project daemon**. If the daemon fails to start within ~10s, ax falls back to an **embedded** MCP engine inside each client — multiple writers → locks → DEGRADED.
+
+Mitigations:
+
+1. **Reload the shared daemon** (preferred) — Command Center hamburger / sidebar → **Reload MCP**, or:
+
+```bash
+ax daemon restart
+```
+
+2. Then in the IDE: **MCP: Restart Servers** (or reload the window) so proxies reconnect.
+3. **Stale lock after a crash** — `ax unlock` (kills orphaned `ax.exe`; heavier than `daemon restart`).
+4. Avoid starting a second long `ax index` / `ax init` while one is already running (the second will wait, then proceed).
+5. **Network filesystem** — WAL may not work reliably on SMB/NFS or WSL2 `/mnt`. Keep the project (with `.ax/`) on a local disk.
+6. Prefer **one primary IDE MCP client** for a workspace when the daemon keeps failing; use Command Center Logging to confirm `attached to ax daemon`.
 
 ## MCP server not connecting
 
-Your agent starts the server itself. Verify the project is indexed (`ax status`) and re-run `ax install` to rewrite MCP config if needed.
+Your agent starts the server itself (proxy → shared daemon). Verify the project is indexed (`ax status`), check `ax daemon status`, use **Reload MCP** / `ax daemon restart`, and re-run `ax install` to rewrite MCP config if needed.
 
 ## MCP Logging empty / Quality score stuck
 

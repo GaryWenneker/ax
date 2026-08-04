@@ -51,7 +51,9 @@ async fn handle_pty_socket(socket: WebSocket, hub: WebHub, query: PtyQuery) {
     if query.agent == "builtin" {
         let _ = ws_tx
             .send(Message::Text(
-                serde_json::json!({"t":"e","m":"Built-in ax uses chat mode — pick an external agent for the interactive CLI."})
+                serde_json::json!({"t":"e","m": ax_usage::format_ax_tagged(
+                    "Built-in ax uses chat mode — pick an external agent for the interactive CLI."
+                )})
                     .to_string()
                     .into(),
             ))
@@ -117,7 +119,11 @@ async fn handle_pty_socket(socket: WebSocket, hub: WebHub, query: PtyQuery) {
         let status = pty.handles.child.wait();
         let code = status.map(|s| s.exit_code()).unwrap_or(1);
         let _ = out_tx_exit.send(
-            format!("\r\n\x1b[33m[ax] Process exited (code {code})\x1b[0m\r\n").into_bytes(),
+            format!(
+                "\r\n\x1b[33m{}\x1b[0m\r\n",
+                ax_usage::format_ax_tagged(format!("Process exited (code {code})"))
+            )
+            .into_bytes(),
         );
     });
 
@@ -242,11 +248,12 @@ fn spawn_pty(agent: &str, profile_id: &str, cwd: &Path) -> Result<PtySpawn, Stri
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    let mut banner = format!(
-        "\r\n\x1b[36m[ax] {} — `{}",
+    let label = ax_usage::format_ax_tagged(format!(
+        "{} — `{}",
         catalog_display_name(agent),
         program.replace('`', "'")
-    );
+    ));
+    let mut banner = format!("\r\n\x1b[36m{label}");
     if !spawn.args_prefix.is_empty() {
         banner.push(' ');
         banner.push_str(&spawn.args_prefix.join(" "));

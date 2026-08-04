@@ -29,6 +29,7 @@ Running `ax` with **no subcommand** starts the interactive installer (same as `a
 | `AX_NO_POLICY_CAPTURE=1` | Skip directive capture hints in prompt-hook |
 | `AX_POLICY_MAX_CHARS` | Cap policy inject size (default `16000`) |
 | `AX_TELEMETRY=0` / `DO_NOT_TRACK=1` | Disable anonymous telemetry |
+| `AX_MS_CLIENT_ID` | Optional custom Azure AD public client ID for OneDrive policy share — defaults to the built-in Microsoft app if unset |
 | `AX_OFFLOAD_URL`, `AX_OFFLOAD_KEY`, … | Override explore offload settings |
 
 ## Configuration files
@@ -36,7 +37,7 @@ Running `ax` with **no subcommand** starts the interactive installer (same as `a
 | File | Scope | Contents |
 |---|---|---|
 | `~/.ax/config.json` | Global | `index`, `offload`, `policy.storage` |
-| `<project>/ax.json` | Per-project | Same keys — project wins on conflict |
+| `<project>/ax.json` | Per-project | `share`, policy overrides — each project has its own remote share config |
 | `<project>/.ax/` | Per-project | `ax.db`, lock file, optional `policy/` |
 
 See [Configuration](/getting-started/configuration/) for the full schema.
@@ -47,17 +48,21 @@ See [Configuration](/getting-started/configuration/) for the full schema.
 
 ### `ax` / `ax install`
 
-Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed). Does **not** index a project. VS Code, Windsurf, and Zed are MCP-config-only targets (no prompt-hook or stop-hook — those are Claude Code-specific). See [Integrations](/reference/integrations/) for per-agent details.
+Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Takumi 匠, Windsurf, Zed). Does **not** index a project. VS Code, Takumi 匠, Windsurf, and Zed are MCP-config-only targets (no prompt-hook or stop-hook — those are Claude Code-specific). See [Integrations](/reference/integrations/) for per-agent details.
 
 | Argument / flag | Type | Description |
 |---|---|---|
 | `--yes` | flag | Non-interactive: skip prompts, install detected agents |
 | `--all` | flag | Configure every supported agent, not only detected ones |
+| `--target <id>` | string | Wire a single agent (e.g. `takumi`, `vscode`, `cursor`); ids are case-insensitive |
+| `--path <dir>` | string | Project root for workspace MCP files (default: current directory). Takumi passes this explicitly. |
 
 ```bash
 ax install
 ax install --yes
 ax install --yes --all
+ax install --target takumi
+ax install --yes --target takumi --path .
 ```
 
 ### `ax uninstall`
@@ -171,7 +176,7 @@ ax status --json
 
 ### `ax unlock [path]`
 
-Remove a stale `.ax/ax.lock` left by a crashed process.
+Force-remove a stale `.ax/ax.lock` and stop orphaned `ax.exe` processes. Prefer `ax daemon restart` first — writers normally wait up to 180s for the lock and clear dead PIDs automatically.
 
 | Argument | Type | Description |
 |---|---|---|
@@ -586,19 +591,21 @@ ax install                       # adds Stop + SubagentStop hooks for Claude Cod
 
 ## Daemon
 
-### `ax daemon [path] [status|stop]`
+### `ax daemon [path] [status|stop|restart]`
 
-MCP background daemon control (shared index connection per project).
+MCP background daemon control (shared index connection per project). Cursor / Takumi attach as stdio proxies; `restart` clears a stuck daemon and stale locks without killing every `ax.exe` (unlike `ax unlock`).
 
 | Argument / subcommand | Description |
 |---|---|
 | `path` | Optional project root (before subcommand) |
 | `status` | Show pid, port, socket from `.ax/daemon.json` (default) |
 | `stop` | Stop the running daemon |
+| `restart` | Stop + start a fresh daemon (Command Center **Reload MCP** uses the same path) |
 
 ```bash
 ax daemon status
 ax daemon stop
+ax daemon restart
 ax daemon ./repo status
 ```
 
@@ -1154,6 +1161,88 @@ ax policy review approve mobile-first
 ax policy review reject mobile-first
 ```
 
+### `ax policy share`
+
+Remote policy share sync from any git host (GitHub, GitLab, Azure DevOps, on-prem) or OneDrive / SharePoint. See [Remote Policy Share](/guides/policy-sharing/).
+
+Config is stored in **`<project>/ax.json`** under the `"share"` key (per project only). Manage in Takumi Preferences or Command Center Settings.
+
+#### `ax policy share config [path]`
+
+Show this project's share configuration (provider, import mode, URLs, `ax.json` path, last sync).
+
+| Flag | Description |
+|---|---|
+| `--json` | JSON output |
+
+```bash
+ax policy share config
+ax policy share config --json
+ax policy share config ./services/api
+```
+
+#### `ax policy share sync [path]`
+
+Pull (and optionally push) rules, skills, and shared memory from the configured remote.
+
+| Flag | Description |
+|---|---|
+| `--pull` | Pull from remote (default when neither flag is set) |
+| `--push` | Push local pack to remote (OneDrive, git, or GitLab `/api/v4` — see [Remote Policy Share](/guides/policy-sharing/)) |
+| `--json` | JSON sync status |
+
+```bash
+ax policy share sync
+ax policy share sync --pull
+ax policy share sync --push
+ax policy share sync --pull --push
+ax policy share sync --json
+```
+
+---
+
+## Authentication
+
+### `ax auth microsoft`
+
+Microsoft device-code sign-in for OneDrive / SharePoint policy share. Works out of
+the box using a built-in Microsoft public client — no Azure app registration
+needed. Set `AX_MS_CLIENT_ID` only to override with your own Azure AD app (e.g.
+tenants that block first-party app consent). Tokens stored in `~/.ax/auth/microsoft.json`.
+
+#### `ax auth microsoft login`
+
+Start interactive device code flow — open the verification URL and enter the code shown in the terminal.
+
+```bash
+ax auth microsoft login
+
+# optional: use your own Azure AD app instead of the built-in default
+export AX_MS_CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+ax auth microsoft login
+```
+
+#### `ax auth microsoft logout`
+
+Clear stored Microsoft tokens.
+
+```bash
+ax auth microsoft logout
+```
+
+#### `ax auth microsoft status`
+
+Show whether you are signed in and which account is active.
+
+| Flag | Description |
+|---|---|
+| `--json` | JSON output |
+
+```bash
+ax auth microsoft status
+ax auth microsoft status --json
+```
+
 ---
 
 ## Hidden / internal commands
@@ -1202,6 +1291,8 @@ ax ship --watch --open
 ax policy storage status
 ax policy match "deploy" --file src/app.ts
 ax policy capture "always validate input"
+ax policy share sync
+ax auth microsoft status
 
 # Upgrade
 ax upgrade

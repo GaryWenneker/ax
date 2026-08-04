@@ -29,6 +29,7 @@ ax-telemetry = { workspace = true }
 ax-usage = { workspace = true }
 ax-reasoning = { workspace = true }
 ax-policy = { workspace = true }
+ax-share = { workspace = true }
 ax-memory = { workspace = true }
 ax-git = { workspace = true }
 ax-tia = { workspace = true }

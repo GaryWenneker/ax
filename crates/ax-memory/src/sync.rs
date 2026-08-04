@@ -139,8 +139,8 @@ async fn insert_with_id(pool: &SqlitePool, row: &MemoryRow) -> Result<(), AxErro
         row.tags.join(" ")
     )));
     sqlx::query(
-        r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&row.id)
     .bind(&row.kind)
@@ -153,6 +153,7 @@ async fn insert_with_id(pool: &SqlitePool, row: &MemoryRow) -> Result<(), AxErro
     .bind(row.created_at)
     .bind(row.updated_at)
     .bind(embedding)
+    .bind(if row.enabled { 1 } else { 0 })
     .execute(pool)
     .await
     .map_err(db_err)?;

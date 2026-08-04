@@ -2,6 +2,7 @@
 
 mod cursor_state;
 mod domain_log;
+mod log_brand;
 mod mcp_audit;
 mod mcp_verbose_log;
 mod period;
@@ -41,6 +42,7 @@ pub use mcp_verbose_log::{
     previous_calendar_day, read_log_for_day, read_merged_verbose_log, read_ship_timezone,
     rotation_calendar_date, verbose_enabled, LEGACY_LOG_NAME,
 };
+pub use log_brand::{format_ax_mcp_trace, format_ax_tagged, AX_LOG_ICON};
 pub use domain_log::{
     log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,
     log_share, log_ship, log_ship_ci, log_workspace,

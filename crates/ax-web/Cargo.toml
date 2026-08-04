@@ -19,6 +19,7 @@ ax-db = { workspace = true }
 ax-graph = { workspace = true }
 ax-resolution = { workspace = true }
 ax-policy = { workspace = true }
+ax-share = { workspace = true }
 ax-memory = { workspace = true }
 ax-ship = { workspace = true }
 ax-git = { workspace = true }
@@ -31,6 +32,7 @@ ax-agent = { workspace = true }
 ax-reasoning = { workspace = true }
 ax-lsp = { workspace = true }
 ax-plugins = { workspace = true }
+ax-mcp = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }
 reqwest = { workspace = true }

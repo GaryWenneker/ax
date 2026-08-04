@@ -53,6 +53,7 @@ export function RuleMetaView({
   triggers,
   tags,
   scope,
+  enabled = true,
 }: {
   id: string;
   level: string;
@@ -62,12 +63,17 @@ export function RuleMetaView({
   triggers: string[];
   tags: string[];
   scope?: string;
+  enabled?: boolean;
 }) {
   return (
     <div className="policy-view-meta">
       <div className="detail-kv">
         <span className="detail-key">ID</span>
         <span className="detail-val">{id || '—'}</span>
+      </div>
+      <div className="detail-kv">
+        <span className="detail-key">Enabled</span>
+        <span className="detail-val">{enabled !== false ? 'On — active in matching' : 'Off — skipped by preflight'}</span>
       </div>
       <div className="detail-kv">
         <span className="detail-key">Level</span>
@@ -111,6 +117,7 @@ export function SkillMetaView({
   tags,
   contextTask,
   scope,
+  enabled = true,
 }: {
   name: string;
   description: string;
@@ -119,12 +126,17 @@ export function SkillMetaView({
   tags: string[];
   contextTask?: string;
   scope?: string;
+  enabled?: boolean;
 }) {
   return (
     <div className="policy-view-meta">
       <div className="detail-kv">
         <span className="detail-key">Name</span>
         <span className="detail-val">{name || '—'}</span>
+      </div>
+      <div className="detail-kv">
+        <span className="detail-key">Enabled</span>
+        <span className="detail-val">{enabled !== false ? 'On — active in matching' : 'Off — skipped by preflight'}</span>
       </div>
       <div className="detail-kv detail-kv--stack">
         <span className="detail-key">Description</span>

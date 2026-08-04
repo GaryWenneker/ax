@@ -18,7 +18,7 @@ pub mod verbose;
 pub use daemon::run_daemon;
 pub use engine::McpEngine;
 pub use invoke::{call_tool, format_tool_result};
-pub use proxy::attach_or_spawn;
+pub use proxy::{attach_or_spawn, restart_daemon, DaemonRestartReport};
 pub use server::{resolve_mcp_project_root, run_stdio_server};
 pub use liveness_watchdog::run_watchdog_child;
 pub use transport::{JsonRpcRequest, JsonRpcResponse, StdioTransport};

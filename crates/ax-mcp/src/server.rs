@@ -441,11 +441,11 @@ fn token_budget_hint(tool: &str, response_tokens: i64) -> Option<String> {
         "ax_impact" | "ax_affected" | "ax_callers" | "ax_callees" => "reduce depth or target a more specific symbol",
         _ => "use a more specific query",
     };
-    Some(format!(
-        "[ax] token budget: this response is ~{}k tokens; {} to keep context small.",
+    Some(ax_usage::format_ax_tagged(format!(
+        "token budget: this response is ~{}k tokens; {} to keep context small.",
         (response_tokens + 500) / 1000,
         advice
-    ))
+    )))
 }
 
 fn tool_result_text(value: &Value) -> String {

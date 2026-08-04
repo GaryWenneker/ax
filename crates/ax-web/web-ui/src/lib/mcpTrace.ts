@@ -1,9 +1,25 @@
-/** Shared helpers for MCP verbose log streaming. */
-
 import {
   formatInstantInZone,
   resolveTimeZone,
 } from './timeZone';
+
+/** Unicode axe (U+1FA93) — prefix for ax logging and chat output. */
+export const AX_LOG_ICON = '🪓';
+
+/** Ensure user-visible ax text includes the axe icon once. */
+export function withAxLogIcon(message: string): string {
+  const trimmed = message.trimStart();
+  if (trimmed.includes(`[ax] ${AX_LOG_ICON}`) || trimmed.startsWith(AX_LOG_ICON)) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('[ax]')) {
+    return trimmed.replace('[ax]', `[ax] ${AX_LOG_ICON}`);
+  }
+  if (trimmed.startsWith('[ax-mcp]')) {
+    return trimmed.replace('[ax-mcp]', `[ax-mcp] ${AX_LOG_ICON}`);
+  }
+  return `${AX_LOG_ICON} ${trimmed}`;
+}
 
 export const MCP_TRACE_EVENTS_URL = '/api/usage/mcp-trace/events';
 export const MCP_TRACE_PATH_URL = '/api/usage/mcp-trace/path';
@@ -138,7 +154,7 @@ function extractTool(body: string): string | null {
   if (cliCmd?.[1]) return `cli:${cliCmd[1]}`;
 
   const domain = body.match(
-    /\[ax]\s+(ship-ci|memory|policy|workspace|plugin|lsp|ship|share|embed|action|cli)\b/,
+    /\[ax\]\s*(?:🪓\s*)?(ship-ci|memory|policy|workspace|plugin|lsp|ship|share|embed|action|cli)\b/,
   );
   if (domain?.[1]) {
     if (domain[1] === 'cli') {
@@ -561,7 +577,7 @@ function classify(body: string): { kind: TraceKind; badge: string } {
   // v4 domain lines: `[ax] plugin …` / `plugin extract …`
   if (/\bplugin\b/.test(body)) return { kind: 'plugin', badge: 'PLG' };
   if (/\blsp\b/.test(body)) return { kind: 'lsp', badge: 'LSP' };
-  if (/\bship-ci\b/.test(body) || /\bship ci\b/.test(body) || /\[ax] ship\b/.test(body)) {
+  if (/\bship-ci\b/.test(body) || /\bship ci\b/.test(body) || /\[ax]\s*(?:🪓\s*)?ship\b/.test(body)) {
     return { kind: 'ship', badge: 'SHIP' };
   }
   if (/\bshare\b/.test(body)) return { kind: 'share', badge: 'SHR' };
@@ -570,7 +586,7 @@ function classify(body: string): { kind: TraceKind; badge: string } {
   if (/\baction\b/.test(body)) return { kind: 'action', badge: 'ACT' };
   if (/\bmemory\b/.test(body)) return { kind: 'memory', badge: 'MEM' };
   if (/\bpolicy\b/.test(body)) return { kind: 'policy', badge: 'POL' };
-  if (/\[ax] cli\b/.test(body) || /\bcli cmd=/.test(body)) return { kind: 'cli', badge: 'CLI' };
+  if (/\[ax]\s*(?:🪓\s*)?cli\b/.test(body) || /\bcli cmd=/.test(body)) return { kind: 'cli', badge: 'CLI' };
   return { kind: 'other', badge: 'LOG' };
 }
 
@@ -620,9 +636,9 @@ export function parseTraceEntry(raw: string): TraceEntry {
     day = formatted.day || null;
   }
 
-  rest = rest.replace(/^\[ax-mcp\]\s*/, '');
+  rest = rest.replace(/^\[ax-mcp\]\s*(?:🪓\s*)?/, '');
   const { kind, badge } = classify(rest);
-  const message = rest.replace(/⏎/g, '↵ ');
+  const message = withAxLogIcon(rest.replace(/⏎/g, '↵ '));
   return {
     id,
     raw,
@@ -642,6 +658,7 @@ export function isTraceLogLine(data: string): boolean {
   if (!s) return false;
   return (
     s.includes('[ax-mcp]') ||
+    s.includes('[ax]') ||
     s.includes('ts=') ||
     /^\d{4}-\d{2}-\d{2}T/.test(s)
   );

@@ -30,6 +30,7 @@ You've got ax installed and a graph built. Here's where to go next.
 ## Agent instructions
 
 - [Policy Engine](/guides/policy-engine/) — IDE-agnostic rules and skills in `.ax/policy/`, MCP preflight, and ax web editor.
+- [Remote Policy Share](/guides/policy-sharing/) — org-wide policy sync via GitHub or OneDrive Graph.
 
 ## Reference
 

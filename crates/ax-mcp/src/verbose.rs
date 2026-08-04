@@ -13,7 +13,6 @@ use serde_json::Value;
 pub const TRACE_FIELD_MAX: usize = 3_072;
 /// Keep outbound previews short so the log stays one-line-per-event (no dump of explore bodies).
 const PREVIEW_LOG_MAX: usize = 160;
-const PREFIX: &str = "[ax-mcp]";
 
 tokio::task_local! {
     static VERBOSE_TRACE: RefCell<Vec<String>>;
@@ -45,8 +44,8 @@ pub fn push_line(msg: impl AsRef<str>) {
     let _ = VERBOSE_TRACE.try_with(|buf| {
         let clean = sanitize_one_line(msg.as_ref());
         let line = match active_session_id() {
-            Some(sid) => format!("{PREFIX} {clean} session={sid}"),
-            None => format!("{PREFIX} {clean}"),
+            Some(sid) => ax_usage::format_ax_mcp_trace(format!("{clean} session={sid}")),
+            None => ax_usage::format_ax_mcp_trace(clean),
         };
         buf.borrow_mut().push(line);
     });

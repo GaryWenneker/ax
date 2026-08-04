@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { AX_LOG_ICON } from '../../lib/mcpTrace';
 import '@xterm/xterm/css/xterm.css';
 
 interface Props {
@@ -49,7 +50,7 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
       ws = new WebSocket(wsUrl(agent, profileId));
       ws.onopen = () => {
         retries = 0;
-        term.writeln(`\x1b[36m[ax] Connected — ${agent} interactive CLI\x1b[0m`);
+        term.writeln(`\x1b[36m[ax] ${AX_LOG_ICON} Connected — ${agent} interactive CLI\x1b[0m`);
         sendResize();
       };
       ws.onmessage = (ev) => {
@@ -57,7 +58,8 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
           const msg = JSON.parse(String(ev.data)) as { t: string; d?: string; m?: string };
           if (msg.t === 'o' && msg.d) term.write(msg.d);
           if (msg.t === 'e' && msg.m) {
-            term.writeln(`\r\n\x1b[31m[ax] ${msg.m}\x1b[0m`);
+            const line = msg.m.startsWith('[ax]') ? msg.m : `[ax] ${AX_LOG_ICON} ${msg.m}`;
+            term.writeln(`\r\n\x1b[31m${line}\x1b[0m`);
           }
         } catch {
           term.write(String(ev.data));
@@ -69,15 +71,15 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
           retries += 1;
           const delay = Math.min(1000 * 2 ** (retries - 1), 10_000);
           term.writeln(
-            `\r\n\x1b[33m[ax] Disconnected — reconnecting in ${Math.round(delay / 1000)}s (${retries}/${MAX_RETRIES})\x1b[0m`,
+            `\r\n\x1b[33m[ax] ${AX_LOG_ICON} Disconnected — reconnecting in ${Math.round(delay / 1000)}s (${retries}/${MAX_RETRIES})\x1b[0m`,
           );
           retryTimer = setTimeout(connect, delay);
         } else {
-          term.writeln('\r\n\x1b[31m[ax] Disconnected — reload the page to reconnect\x1b[0m');
+          term.writeln(`\r\n\x1b[31m[ax] ${AX_LOG_ICON} Disconnected — reload the page to reconnect\x1b[0m`);
         }
       };
       ws.onerror = () => {
-        term.writeln('\r\n\x1b[31m[ax] WebSocket error\x1b[0m');
+        term.writeln(`\r\n\x1b[31m[ax] ${AX_LOG_ICON} WebSocket error\x1b[0m`);
       };
     }
 

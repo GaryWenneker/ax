@@ -37,6 +37,17 @@ function parseCsv(s: string): string[] {
   return s.split(',').map((x) => x.trim()).filter(Boolean);
 }
 
+function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
+  return {
+    ...fm,
+    enabled: fm.enabled !== false,
+    triggers: fm.triggers ?? [],
+    tags: fm.tags ?? [],
+    scope: fm.scope || 'project',
+    status: fm.status || 'approved',
+  };
+}
+
 export default function PolicySkillEditor({ skillName, onBack }: Props) {
   const isNew = !skillName;
   const [editing, setEditing] = useState(isNew);
@@ -54,7 +65,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
     setError('');
     fetchPolicySkill(skillName)
       .then((doc) => {
-        setFm(doc.frontmatter);
+        setFm(normalizeSkillFm(doc.frontmatter));
         setBody(doc.body);
         setTriggersText(doc.frontmatter.triggers.join(', '));
         setTagsText(doc.frontmatter.tags.join(', '));
@@ -77,6 +88,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
       }
       const frontmatter: SkillFrontmatter = {
         ...fm,
+        enabled: fm.enabled !== false,
         triggers: parseCsv(triggersText),
         tags,
       };
@@ -100,7 +112,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
     setLoading(true);
     fetchPolicySkill(skillName)
       .then((doc) => {
-        setFm(doc.frontmatter);
+        setFm(normalizeSkillFm(doc.frontmatter));
         setBody(doc.body);
         setTriggersText(doc.frontmatter.triggers.join(', '));
         setTagsText(doc.frontmatter.tags.join(', '));
@@ -163,6 +175,20 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                         onChange={(e) => setFm({ ...fm, name: e.target.value })}
                       />
                     </PageRow>
+                    <PageRow
+                      title="Enabled"
+                      description="Off = skipped by preflight/matcher (keep the skill without deleting it)."
+                    >
+                      <button
+                        type="button"
+                        className={`settings-toggle${fm.enabled !== false ? ' on' : ''}`}
+                        onClick={() => setFm({ ...fm, enabled: fm.enabled === false })}
+                        aria-pressed={fm.enabled !== false}
+                        aria-label="Enabled"
+                      >
+                        <span className="settings-toggle-thumb" />
+                      </button>
+                    </PageRow>
                     <PageRow title="Description" description="Short summary shown in skill lists.">
                       <textarea
                         className="settings-input"
@@ -217,6 +243,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                     tags={fm.tags}
                     contextTask={fm.contextTask}
                     scope={fm.scope}
+                    enabled={fm.enabled}
                   />
                 )}
               </PageCardBody>

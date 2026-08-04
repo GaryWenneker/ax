@@ -20,6 +20,41 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+type MemoryDbRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    f64,
+    String,
+    i64,
+    i64,
+    i64,
+);
+
+fn row_from_db(
+    (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled): MemoryDbRow,
+) -> MemoryRow {
+    MemoryRow {
+        id,
+        kind,
+        title,
+        body,
+        tags: serde_json::from_str(&tags).unwrap_or_default(),
+        files: serde_json::from_str(&files).unwrap_or_default(),
+        confidence,
+        source,
+        enabled: enabled != 0,
+        created_at,
+        updated_at,
+    }
+}
+
+const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled
+           FROM memories"#;
+
 /// Time-decayed confidence: recently touched memories rank higher.
 pub fn effective_confidence(confidence: f64, updated_at_ms: i64, now_ms: i64) -> f64 {
     let age_days = ((now_ms - updated_at_ms).max(0) as f64) / 86_400_000.0;
@@ -43,6 +78,7 @@ pub async fn remember(pool: &SqlitePool, input: RememberInput) -> Result<MemoryR
         files: input.files,
         confidence: 1.0,
         source: input.source.unwrap_or_else(|| "manual".into()),
+        enabled: true,
         created_at: now,
         updated_at: now,
     };
@@ -53,8 +89,8 @@ pub async fn remember(pool: &SqlitePool, input: RememberInput) -> Result<MemoryR
         row.tags.join(" ")
     )));
     sqlx::query(
-        r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"#,
     )
     .bind(&row.id)
     .bind(&row.kind)
@@ -110,7 +146,7 @@ pub async fn recall(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<
             r#"SELECT m.id
                FROM memories_fts
                JOIN memories m ON m.rowid = memories_fts.rowid
-               WHERE memories_fts MATCH ?
+               WHERE memories_fts MATCH ? AND m.enabled = 1
                ORDER BY bm25(memories_fts)
                LIMIT ?"#,
         )
@@ -125,7 +161,7 @@ pub async fn recall(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<
     // Vector leg: cosine similarity over stored embeddings.
     let query_embedding = crate::embed::embed_text(query);
     let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL",
+        "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL AND enabled = 1",
     )
     .fetch_all(pool)
     .await
@@ -178,54 +214,35 @@ pub async fn list(pool: &SqlitePool, limit: usize, offset: usize) -> Result<(Vec
         .fetch_one(pool)
         .await
         .map_err(db_err)?;
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, f64, String, i64, i64)>(
-        r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at
-           FROM memories ORDER BY updated_at DESC LIMIT ? OFFSET ?"#,
+    let rows = sqlx::query_as::<_, MemoryDbRow>(
+        &format!("{MEMORY_SELECT} ORDER BY updated_at DESC LIMIT ? OFFSET ?"),
     )
     .bind(limit as i64)
     .bind(offset as i64)
     .fetch_all(pool)
     .await
     .map_err(db_err)?;
-    let memories = rows
-        .into_iter()
-        .map(|(id, kind, title, body, tags, files, confidence, source, created_at, updated_at)| MemoryRow {
-            id,
-            kind,
-            title,
-            body,
-            tags: serde_json::from_str(&tags).unwrap_or_default(),
-            files: serde_json::from_str(&files).unwrap_or_default(),
-            confidence,
-            source,
-            created_at,
-            updated_at,
-        })
-        .collect();
+    let memories = rows.into_iter().map(row_from_db).collect();
     Ok((memories, total))
 }
 
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<MemoryRow>, AxError> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, String, f64, String, i64, i64)>(
-        r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at
-           FROM memories WHERE id = ?"#,
-    )
+    let row = sqlx::query_as::<_, MemoryDbRow>(&format!("{MEMORY_SELECT} WHERE id = ?"))
     .bind(id)
     .fetch_optional(pool)
     .await
     .map_err(db_err)?;
-    Ok(row.map(|(id, kind, title, body, tags, files, confidence, source, created_at, updated_at)| MemoryRow {
-        id,
-        kind,
-        title,
-        body,
-        tags: serde_json::from_str(&tags).unwrap_or_default(),
-        files: serde_json::from_str(&files).unwrap_or_default(),
-        confidence,
-        source,
-        created_at,
-        updated_at,
-    }))
+    Ok(row.map(row_from_db))
+}
+
+pub async fn set_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<bool, AxError> {
+    let result = sqlx::query("UPDATE memories SET enabled = ? WHERE id = ?")
+        .bind(if enabled { 1 } else { 0 })
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result<bool, AxError> {
@@ -266,7 +283,7 @@ pub async fn find_similar(
 ) -> Result<Vec<MemoryMatch>, AxError> {
     let query_embedding = crate::embed::embed_text(text);
     let rows = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL",
+        "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL AND enabled = 1",
     )
     .fetch_all(pool)
     .await

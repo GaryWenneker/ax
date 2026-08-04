@@ -16,12 +16,13 @@ The interactive installer auto-detects supported agents and wires the ax MCP ser
 - **Antigravity IDE**
 - **Kiro**
 - **VS Code (Copilot Chat)** — writes the workspace-local `.vscode/mcp.json` (root key `servers`, per VS Code's native MCP config format).
+- **Takumi 匠** — Code-OSS fork with native Ax panels + lifecycle; same `.vscode/mcp.json` shape as VS Code. See [Takumi 匠](/guides/takumi/).
 - **Windsurf (Cascade)** — writes `~/.codeium/windsurf/mcp_config.json` (global only — Windsurf has no project-level MCP config).
 - **Zed** — writes `context_servers` in Zed's `settings.json` (`%APPDATA%\Zed\settings.json` on Windows, `~/.config/zed/settings.json` on macOS/Linux).
 
 Run `npx @garywenneker/ax` or `ax install` — see [Installation](/getting-started/installation/) for non-interactive flags.
 
-VS Code, Windsurf, and Zed are MCP-only integrations — there is no headless CLI to run these as background agents (unlike Claude Code, Cursor, Codex, opencode, or Gemini CLI), so `ax install` wires the MCP server but the "Agent terminal" in the Command Center will not offer them as a runnable target.
+VS Code, Takumi 匠, Windsurf, and Zed are MCP-only integrations — there is no headless CLI to run these as background agents (unlike Claude Code, Cursor, Codex, opencode, or Gemini CLI), so `ax install` wires the MCP server but the Agent page in Takumi will not offer them as a runnable target.
 
 ## Manual setup
 

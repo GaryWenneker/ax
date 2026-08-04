@@ -24,18 +24,30 @@ async fn seed_memories_if_empty(pool: &SqlitePool, project_root: &Path) {
         match ax_memory::capture_git_history(pool, project_root, 100).await {
             Ok(r) => {
                 eprintln!(
-                    "[ax] auto-seeded memory vault: {} captured, {} trivial skipped",
-                    r.captured, r.skipped_trivial
+                    "{}",
+                    ax_usage::format_ax_tagged(format!(
+                        "auto-seeded memory vault: {} captured, {} trivial skipped",
+                        r.captured, r.skipped_trivial
+                    ))
                 );
                 return;
             }
-            Err(e) => eprintln!("[ax] git memory seed failed, falling back to graph: {e}"),
+            Err(e) => eprintln!(
+                "{}",
+                ax_usage::format_ax_tagged(format!("git memory seed failed, falling back to graph: {e}"))
+            ),
         }
     }
     match ax_memory::seed_from_graph(pool).await {
-        Ok(n) if n > 0 => eprintln!("[ax] auto-seeded memory vault from graph: {n} memories"),
+        Ok(n) if n > 0 => eprintln!(
+            "{}",
+            ax_usage::format_ax_tagged(format!("auto-seeded memory vault from graph: {n} memories"))
+        ),
         Ok(_) => {}
-        Err(e) => eprintln!("[ax] graph memory seed failed: {e}"),
+        Err(e) => eprintln!(
+            "{}",
+            ax_usage::format_ax_tagged(format!("graph memory seed failed: {e}"))
+        ),
     }
 }
 

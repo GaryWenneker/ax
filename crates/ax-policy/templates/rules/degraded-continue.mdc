@@ -1,0 +1,25 @@
+---
+id: degraded-continue
+level: CRITICAL
+alwaysApply: true
+triggers: ["degraded", "MCP unreachable", "ax MCP", "continue"]
+tags: ["mcp", "degraded", "workflow"]
+priority: 95
+---
+# DEGRADED mode — fully continue
+
+> **ABSOLUTE**: Mode: DEGRADED is a warning, not a stop. Never halt, refuse, or defer the user's task because ax MCP is unreachable or `ax_preflight` is missing from the session.
+
+## Required behavior
+
+1. Report once: `ax MCP unreachable: [error]` and `Mode: DEGRADED`.
+2. **Immediately continue** the user's actual request with normal tools (Read, Grep, Shell, edit, Task, browser, etc.).
+3. Skip only ax-only steps that truly need MCP (graph explore, `ax_guard`, policy capture, `ax_sync` / `ax_index` via MCP). Prefer shell CLI for ops when MCP is down.
+4. Do **not** ask the user to "enable ax MCP" before doing the work. Mention reconnect as an optional tip at the end if useful.
+5. Do **not** interpret "do not proceed silently" / "best-effort" as permission to stop. Best-effort means **complete the task without policy/graph assistance**.
+
+## Forbidden
+
+- Stopping after DEGRADED with no substantive progress on the user request
+- Claiming the change cannot be made until ax MCP is available
+- Waiting for the user to fix MCP before continuing

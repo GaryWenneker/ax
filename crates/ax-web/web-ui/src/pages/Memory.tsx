@@ -5,6 +5,7 @@ import {
   deleteMemory,
   fetchMemories,
   recallMemories,
+  setMemoryEnabled,
   type MemoryMatch,
   type MemoryRow,
 } from '../api';
@@ -27,6 +28,7 @@ import {
 } from '../components/ui/PageLayout';
 import { usePersistedString } from '../hooks/usePersistedState';
 import { usePageContext } from '../context/UiContext';
+import { formatInstantInZone, browserTimeZone } from '../lib/timeZone';
 
 const KIND_ICONS: Record<string, string> = {
   decision: 'law',
@@ -39,13 +41,8 @@ const KIND_ICONS: Record<string, string> = {
 
 const KIND_OPTIONS = ['note', 'decision', 'bug_fix', 'architecture', 'convention'];
 
-function fmtAge(ts: number): string {
-  const days = Math.floor((Date.now() - ts) / 86_400_000);
-  if (days <= 0) return 'today';
-  if (days === 1) return '1 day ago';
-  if (days < 30) return `${days} days ago`;
-  const months = Math.floor(days / 30);
-  return months === 1 ? '1 month ago' : `${months} months ago`;
+function fmtMemoryTime(ts: number): string {
+  return formatInstantInZone(ts, browserTimeZone()).time.replace(/\.\d{3}$/, '');
 }
 
 export default function MemoryPage() {
@@ -139,6 +136,17 @@ export default function MemoryPage() {
       if (selectedId === id) setSelectedId('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }
+
+  async function toggleEnabled(id: string, enabled: boolean) {
+    try {
+      await setMemoryEnabled(id, enabled);
+      const patch = (m: MemoryRow) => (m.id === id ? { ...m, enabled } : m);
+      setMemories((prev) => prev.map(patch));
+      setMatches((prev) => (prev ? prev.map((m) => ({ ...m, ...patch(m) })) : prev));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Update failed');
     }
   }
 
@@ -401,11 +409,24 @@ export default function MemoryPage() {
                         key={m.id}
                         icon={<Codicon name={KIND_ICONS[m.kind] ?? 'note'} className="page-item-codicon" />}
                         title={m.title}
-                        subtitle={`${m.kind} · ${fmtAge(m.updated_at)}${m.score != null ? ` · score ${m.score.toFixed(1)}` : ''}`}
+                        subtitle={`${m.kind} · ${fmtMemoryTime(m.updated_at)}${m.score != null ? ` · score ${m.score.toFixed(1)}` : ''}`}
                         selected={selectedId === m.id}
                         onClick={() => setSelectedId(m.id === selectedId ? '' : m.id)}
                         badges={
                           <>
+                            <button
+                              type="button"
+                              className={`settings-toggle${m.enabled !== false ? ' on' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void toggleEnabled(m.id, m.enabled === false);
+                              }}
+                              aria-pressed={m.enabled !== false}
+                              aria-label={m.enabled !== false ? `Disable ${m.title}` : `Enable ${m.title}`}
+                              title={m.enabled !== false ? 'Enabled — click to disable' : 'Disabled — click to enable'}
+                            >
+                              <span className="settings-toggle-thumb" />
+                            </button>
                             {m.source === 'git' && <span className="page-item-badge">git</span>}
                             {m.tags.slice(0, 3).map((t) => (
                               <span key={t} className="page-item-badge">{t}</span>
@@ -453,7 +474,7 @@ export default function MemoryPage() {
                             </InfoHover>
                           </span>
                         </div>
-                        <div className="detail-kv"><span className="detail-key">Updated</span><span className="detail-val">{fmtAge(selected.updated_at)}</span></div>
+                        <div className="detail-kv"><span className="detail-key">Updated</span><span className="detail-val">{fmtMemoryTime(selected.updated_at)}</span></div>
                         <div className="detail-kv">
                           <span className="detail-key">Confidence</span>
                           <span className="detail-val">

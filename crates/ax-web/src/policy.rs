@@ -300,11 +300,19 @@ async fn update_rule(
     if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
-    if payload.frontmatter.id != id {
-        return err(StatusCode::BAD_REQUEST, "id mismatch");
-    }
     let ws = hub.read().await;
-    match ws.policy.store.save_rule(payload.frontmatter, payload.body).await {
+    let result = if payload.frontmatter.id != id {
+        ws.policy
+            .store
+            .rename_rule(&id, payload.frontmatter, payload.body)
+            .await
+    } else {
+        ws.policy
+            .store
+            .save_rule(payload.frontmatter, payload.body)
+            .await
+    };
+    match result {
         Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }

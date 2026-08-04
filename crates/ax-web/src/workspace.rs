@@ -48,6 +48,12 @@ fn canonical_or(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Strip Windows `\\?\` extended-length prefix for UI / clients.
+pub(crate) fn display_path(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).to_owned()
+}
+
 fn allowed_browse_roots(project_root: &Path) -> Vec<PathBuf> {
     let mut roots = default_browse_roots();
     roots.push(canonical_or(project_root));
@@ -68,9 +74,12 @@ fn allowed_browse_roots(project_root: &Path) -> Vec<PathBuf> {
 
 fn is_path_allowed(path: &Path, project_root: &Path) -> bool {
     let target = canonical_or(path);
-    allowed_browse_roots(project_root)
-        .iter()
-        .any(|root| target.starts_with(root))
+    allowed_browse_roots(project_root).iter().any(|root| {
+        // Canonicalize roots too — Windows `canonicalize` adds `\\?\`, and
+        // `starts_with` fails when only one side has the extended prefix.
+        let root = canonical_or(root);
+        target.starts_with(&root)
+    })
 }
 
 fn safe_join(parent: &Path, name: &str) -> Result<PathBuf, String> {
@@ -93,7 +102,7 @@ async fn handle_current(State(hub): State<WebHub>) -> impl IntoResponse {
     Json(serde_json::json!({
         "ok": true,
         "workspace": CurrentWorkspace {
-            path: path.to_string_lossy().into_owned(),
+            path: display_path(&path),
             label: path_label(&path),
             initialized: is_initialized(&path),
         },
@@ -148,31 +157,40 @@ async fn handle_browse(
     let mut entries = Vec::new();
     if let Ok(read) = std::fs::read_dir(&base) {
         for ent in read.flatten() {
-            let path = ent.path();
-            if path.is_dir() {
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.starts_with('.'))
-                    .unwrap_or(false)
-                {
-                    continue;
-                }
-                entries.push(BrowseEntry {
-                    name: path_label(&path),
-                    path: path.to_string_lossy().into_owned(),
-                    is_dir: true,
-                    initialized: is_initialized(&path),
-                });
+            // Prefer DirEntry::file_type — includes empty dirs and avoids
+            // extra metadata probes that can fail on locked Windows folders.
+            let is_dir = ent.file_type().map(|t| t.is_dir()).unwrap_or_else(|_| ent.path().is_dir());
+            if !is_dir {
+                continue;
             }
+            let path = ent.path();
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with('.'))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            entries.push(BrowseEntry {
+                name: path_label(&path),
+                path: display_path(&path),
+                is_dir: true,
+                initialized: is_initialized(&path),
+            });
         }
     }
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    entries.sort_by(|a, b| {
+        // Ax projects first, then alphabetical — easier to spot in the picker.
+        b.initialized
+            .cmp(&a.initialized)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
 
     Json(serde_json::json!({
         "ok": true,
-        "path": base.to_string_lossy(),
-        "parent": base.parent().map(|p| p.to_string_lossy().into_owned()),
+        "path": display_path(&base),
+        "parent": base.parent().map(|p| display_path(p)),
         "initialized": is_initialized(&base),
         "entries": entries,
     }))

@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{get, post},
+    routing::{get, patch, post},
     Router,
 };
 use serde::Deserialize;
@@ -18,6 +18,7 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/recall", get(handle_recall))
         .route("/embed-status", get(handle_embed_status))
         .route("/capture-git", post(handle_capture_git))
+        .route("/{id}/enabled", patch(handle_set_enabled))
         .route("/{id}", get(handle_get).put(handle_update).delete(handle_delete))
         .with_state(hub)
 }
@@ -181,6 +182,31 @@ async fn handle_delete(State(hub): State<WebHub>, Path(id): Path<String>) -> imp
     let ws = hub.read().await;
     match ax_memory::delete(&ws.graph_pool, &id).await {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Ok(false) => err(StatusCode::NOT_FOUND, "memory not found"),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct EnabledPayload {
+    enabled: bool,
+}
+
+async fn handle_set_enabled(
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+    Json(payload): Json<EnabledPayload>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return forbidden_readonly();
+    }
+    let ws = hub.read().await;
+    match ax_memory::set_enabled(&ws.graph_pool, &id, payload.enabled).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "id": id, "enabled": payload.enabled })),
+        )
+            .into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "memory not found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }

@@ -1,13 +1,21 @@
 //! Cross-process file lock using ax.lock (PID stamped, stale recovery).
+//!
+//! Index/sync writers wait for the lock instead of failing immediately, so a
+//! concurrent `ax sync`, MCP catch-up, or sync --watch does not surface as
+//! `database is locked` / LockUnavailable under normal contention.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use fs2::FileExt;
 
 use crate::errors::AxError;
 use crate::process::is_pid_alive;
+
+/// How long writers wait for `.ax/ax.lock` before giving up.
+pub const DEFAULT_LOCK_WAIT: Duration = Duration::from_secs(180);
 
 pub struct FileLock {
     path: PathBuf,
@@ -33,12 +41,38 @@ impl FileLock {
         }
     }
 
+    /// Wait up to [`DEFAULT_LOCK_WAIT`] for an exclusive lock.
     pub fn acquire(&mut self) -> Result<(), AxError> {
-        self.prepare();
-        self.acquire_inner(false)
+        self.acquire_wait(DEFAULT_LOCK_WAIT)
     }
 
-    fn acquire_inner(&mut self, retried: bool) -> Result<(), AxError> {
+    /// Wait up to `timeout` for an exclusive lock, clearing stale PIDs between attempts.
+    pub fn acquire_wait(&mut self, timeout: Duration) -> Result<(), AxError> {
+        if self.file.is_some() {
+            return Ok(());
+        }
+        self.prepare();
+        let deadline = Instant::now() + timeout;
+        let mut attempt = 0u32;
+        loop {
+            match self.try_acquire_once() {
+                Ok(()) => return Ok(()),
+                Err(AxError::LockUnavailable(_)) => {
+                    // Holder may have crashed since the last check.
+                    let _ = clear_stale_lock(&self.path);
+                    if Instant::now() >= deadline {
+                        return Err(self.lock_unavailable_error());
+                    }
+                    let sleep_ms = 50u64.saturating_mul((attempt + 1).min(20) as u64);
+                    std::thread::sleep(Duration::from_millis(sleep_ms));
+                    attempt = attempt.saturating_add(1);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn try_acquire_once(&mut self) -> Result<(), AxError> {
         if self.file.is_some() {
             return Ok(());
         }
@@ -70,30 +104,31 @@ impl FileLock {
                 self.file = Some(file);
                 Ok(())
             }
-            Err(_) => {
-                if !retried {
-                    clear_stale_lock(&self.path);
-                    return self.acquire_inner(true);
-                }
-                let holder = read_lock_pid(&self.path);
-                let hint = match holder {
-                    Some(pid) if is_pid_alive(pid) => {
-                        format!(
-                            "lock unavailable: {} (held by PID {pid} — run `ax unlock` or stop that process)",
-                            self.path.display()
-                        )
-                    }
-                    Some(pid) => {
-                        format!(
-                            "lock unavailable: {} (stale PID {pid} — run `ax unlock`)",
-                            self.path.display()
-                        )
-                    }
-                    None => format!("lock unavailable: {} (run `ax unlock`)", self.path.display()),
-                };
-                Err(AxError::LockUnavailable(hint))
-            }
+            Err(_) => Err(self.lock_unavailable_error()),
         }
+    }
+
+    fn lock_unavailable_error(&self) -> AxError {
+        let holder = read_lock_pid(&self.path);
+        let hint = match holder {
+            Some(pid) if is_pid_alive(pid) => {
+                format!(
+                    "lock unavailable: {} (held by PID {pid} — wait for that sync to finish, or run `ax unlock` / `ax daemon restart`)",
+                    self.path.display()
+                )
+            }
+            Some(pid) => {
+                format!(
+                    "lock unavailable: {} (stale PID {pid} — run `ax unlock`)",
+                    self.path.display()
+                )
+            }
+            None => format!(
+                "lock unavailable: {} (run `ax unlock` or `ax daemon restart`)",
+                self.path.display()
+            ),
+        };
+        AxError::LockUnavailable(hint)
     }
 
     pub fn release(&mut self) -> Result<(), AxError> {
@@ -174,6 +209,23 @@ mod tests {
         fs::write(&lock, format!("{}\n", std::process::id())).unwrap();
         assert!(!clear_stale_lock(&lock));
         assert!(lock.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Windows `LockFileEx` does not conflict across handles in the same process;
+    /// this test only verifies cross-handle wait semantics on Unix.
+    #[cfg(unix)]
+    #[test]
+    fn acquire_wait_times_out_while_held() {
+        let dir = std::env::temp_dir().join(format!("ax-file-lock-wait-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut holder = FileLock::new(&dir);
+        holder.acquire().unwrap();
+        let mut waiter = FileLock::new(&dir);
+        let err = waiter.acquire_wait(Duration::from_millis(200)).unwrap_err();
+        assert!(matches!(err, AxError::LockUnavailable(_)), "{err:?}");
+        drop(holder);
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -36,6 +36,20 @@ enum Commands {
         yes: bool,
         #[arg(long, action = clap::ArgAction::SetTrue, help = "Install all agent targets, not only detected ones")]
         all: bool,
+        #[arg(
+            long = "target",
+            value_name = "ID",
+            num_args = 1,
+            action = clap::ArgAction::Append,
+            help = "Wire a specific agent target (repeatable), e.g. takumi, vscode, cursor"
+        )]
+        target: Vec<String>,
+        #[arg(
+            long,
+            value_name = "DIR",
+            help = "Project root for workspace MCP files (default: current directory). Use from Takumi with an explicit folder."
+        )]
+        path: Option<String>,
     },
     /// Remove ax from agent configs
     #[command(long_about = help_text::UNINSTALL_LONG)]
@@ -342,6 +356,11 @@ enum Commands {
     Policy {
         #[command(subcommand)]
         action: PolicyCommands,
+    },
+    /// Authentication for remote share providers
+    Auth {
+        #[command(subcommand)]
+        action: AuthCommands,
     },
     /// Cursor IDE auth profiles (subscription switching)
     #[command(long_about = help_text::CURSOR_LONG)]
@@ -697,6 +716,11 @@ enum PolicyCommands {
         #[command(subcommand)]
         action: PolicyReviewCommands,
     },
+    /// Remote policy share sync (GitHub / OneDrive Graph)
+    Share {
+        #[command(subcommand)]
+        action: PolicyShareCommands,
+    },
     /// Enable a rule or skill (matcher/preflight include it)
     Enable {
         /// Rule id or skill name
@@ -748,6 +772,48 @@ enum PolicyPackCommands {
         force: bool,
         #[arg(long, help = "List available built-in packs")]
         list: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyShareCommands {
+    /// Show merged share config (~/.ax/config.json + project override)
+    Config {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Pull (or push) rules/skills/memory from configured remote
+    Sync {
+        path: Option<String>,
+        #[arg(long, help = "Pull from remote (default)")]
+        pull: bool,
+        #[arg(long, help = "Push local pack to remote (OneDrive only)")]
+        push: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthCommands {
+    /// Microsoft / OneDrive device-code sign-in
+    Microsoft {
+        #[command(subcommand)]
+        action: MicrosoftAuthCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum MicrosoftAuthCommands {
+    /// Start device code sign-in (interactive)
+    Login,
+    /// Clear stored Microsoft tokens
+    Logout,
+    /// Show Microsoft auth status
+    Status {
         #[arg(long)]
         json: bool,
     },
@@ -818,6 +884,8 @@ enum DaemonCommands {
     Status,
     /// Stop running daemon
     Stop,
+    /// Restart shared MCP daemon (clears stale locks)
+    Restart,
 }
 
 fn main() {
@@ -895,11 +963,16 @@ async fn async_main() {
     let should_check_update = should_notify_update(&cli.command);
     let result = match cli.command {
         None | Some(Commands::Install { .. }) => {
-            let (yes, all) = match &cli.command {
-                Some(Commands::Install { yes, all }) => (*yes, *all),
-                _ => (false, false),
+            let (yes, all, targets, path) = match &cli.command {
+                Some(Commands::Install {
+                    yes,
+                    all,
+                    target,
+                    path,
+                }) => (*yes, *all, target.clone(), path.clone()),
+                _ => (false, false, Vec::new(), None),
             };
-            commands::install::run(yes, all)
+            commands::install::run(yes, all, targets, path)
         }
         Some(Commands::Uninstall) => commands::uninstall::run(),
         Some(Commands::Init { path, workspace }) => commands::init::run(path, workspace).await,
@@ -1021,6 +1094,7 @@ async fn async_main() {
         Some(Commands::Daemon { path, action }) => {
             let act = match action {
                 Some(DaemonCommands::Stop) => commands::daemon::DaemonAction::Stop,
+                Some(DaemonCommands::Restart) => commands::daemon::DaemonAction::Restart,
                 Some(DaemonCommands::Status) | None => commands::daemon::DaemonAction::Status,
             };
             commands::daemon::run(path, act).await
@@ -1152,8 +1226,23 @@ async fn async_main() {
                     commands::policy::run_review_reject(path, id).await
                 }
             },
+            PolicyCommands::Share { action } => match action {
+                PolicyShareCommands::Config { path, json } => {
+                    commands::policy_share::run_config(path, json).await
+                }
+                PolicyShareCommands::Sync { path, pull, push, json } => {
+                    commands::policy_share::run_sync(path, pull, push, json).await
+                }
+            },
             PolicyCommands::Enable { id, path } => commands::policy::run_enable(path, id).await,
             PolicyCommands::Disable { id, path } => commands::policy::run_disable(path, id).await,
+        },
+        Some(Commands::Auth { action }) => match action {
+            AuthCommands::Microsoft { action } => match action {
+                MicrosoftAuthCommands::Login => commands::policy_share::ms_login().await,
+                MicrosoftAuthCommands::Logout => commands::policy_share::ms_logout(),
+                MicrosoftAuthCommands::Status { json } => commands::policy_share::ms_status(json),
+            },
         },
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::SessionHook) => commands::session_hook::run().await,
@@ -1309,6 +1398,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Lsp { .. }) => Some("lsp".into()),
         Some(Commands::Cursor { .. }) => Some("cursor".into()),
         Some(Commands::Policy { .. }) => Some("policy".into()),
+        Some(Commands::Auth { .. }) => Some("auth".into()),
         Some(Commands::PromptHook) => None,
         Some(Commands::SessionHook) => None,
         Some(Commands::StopHook) => None,

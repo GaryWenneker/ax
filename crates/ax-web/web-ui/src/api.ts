@@ -77,6 +77,7 @@ export interface MemoryRow {
   files: string[];
   confidence: number;
   source: string;
+  enabled?: boolean;
   created_at: number;
   updated_at: number;
 }
@@ -143,6 +144,20 @@ export async function deleteMemory(id: string): Promise<void> {
 
 export function captureGitMemories(limit = 100): Promise<GitCaptureResult> {
   return post<GitCaptureResult>('/memory/capture-git', { limit });
+}
+
+export function setMemoryEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }> {
+  return fetch(`${BASE}/memory/${encodeURIComponent(id)}/enabled`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  }).then(async (res) => {
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<{ ok: boolean }>;
+  });
 }
 
 export function fetchSource(params: {

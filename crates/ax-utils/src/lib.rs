@@ -13,7 +13,7 @@ pub mod text_encoding;
 
 pub use debounce::{debounce, Throttle};
 pub use errors::*;
-pub use file_lock::{clear_stale_lock, FileLock};
+pub use file_lock::{clear_stale_lock, FileLock, DEFAULT_LOCK_WAIT};
 pub use logger::{get_logger, set_logger, Logger};
 pub use memory::MemoryMonitor;
 pub use mutex::AsyncMutex;

@@ -41,4 +41,4 @@ On session start (you are a subagent if you see this rule and a delegated Task p
 
 ## MCP failure
 
-Report `ax MCP unreachable`, state `Mode: DEGRADED`, and continue best-effort only.
+Report `ax MCP unreachable`, state `Mode: DEGRADED`, then **fully continue** the user task with normal tools. Never stop or refuse work because MCP is down.

@@ -163,6 +163,24 @@ pub fn default_browse_roots() -> Vec<PathBuf> {
             }
         }
     }
+    // Drive / filesystem roots so the project picker can walk to any folder
+    // (including empty ones) — e.g. C:\gary when the home is C:\Users\….
+    #[cfg(windows)]
+    {
+        for letter in b'A'..=b'Z' {
+            let root = PathBuf::from(format!("{}:\\", letter as char));
+            if root.is_dir() {
+                roots.push(root);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let root = PathBuf::from("/");
+        if root.is_dir() {
+            roots.push(root);
+        }
+    }
     roots
 }
 

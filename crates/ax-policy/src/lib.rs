@@ -29,8 +29,8 @@ pub use builtin_packs::{
     install_builtin_pack, list_builtin_packs, BuiltinPackInfo, BuiltinPackInstallResult,
 };
 pub use pack::{
-    default_pack_path, export_pack, import_pack, pack_status, PackExportResult, PackImportResult,
-    PackStatus,
+    default_pack_path, export_pack, import_pack, import_pack_with_options, pack_status,
+    PackExportResult, PackImportResult, PackStatus,
 };
 pub use review::{
     approve_pending, ensure_pending_dirs, list_pending, pending_diff, reject_pending, show_pending,

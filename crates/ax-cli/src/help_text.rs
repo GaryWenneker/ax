@@ -206,15 +206,18 @@ Examples:
 
 pub const DAEMON_LONG: &str = "MCP background daemon control (TCP / named pipe per project).
 
-The daemon shares one index connection for multiple MCP clients.
+The daemon shares one index connection for multiple MCP clients (Cursor, Takumi, …).
+`restart` clears a stuck daemon and stale locks without killing every ax.exe.
 
 Subcommands:
-  status   Show pid, port, socket path from .ax/daemon.json
-  stop     Stop the running daemon for this project root
+  status    Show pid, port, socket path from .ax/daemon.json
+  stop      Stop the running daemon for this project root
+  restart   Stop + start a fresh daemon (same as Command Center Reload MCP)
 
 Examples:
   ax daemon status
   ax daemon stop
+  ax daemon restart
   ax daemon ./repo status";
 
 pub const VERSION_LONG: &str = "Print the installed ax version.

@@ -60,7 +60,7 @@ pub fn split_statements(sql: &str) -> Vec<String> {
 pub async fn apply_initial_schema(pool: &SqlitePool) -> Result<(), AxError> {
     let schema = include_str!("schema.sql");
     for trimmed in split_statements(schema) {
-        let result = sqlx::query(&trimmed).execute(pool).await;
+        let result = execute_schema_statement(pool, &trimmed).await;
         if let Err(e) = result {
             // schema.sql reflects the current end-state and runs *before*
             // migrations. On an older database, a column a later migration adds
@@ -80,6 +80,13 @@ pub async fn apply_initial_schema(pool: &SqlitePool) -> Result<(), AxError> {
         }
     }
     Ok(())
+}
+
+async fn execute_schema_statement(
+    pool: &SqlitePool,
+    sql: &str,
+) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+    crate::with_busy_retry(|| async { sqlx::query(sql).execute(pool).await }).await
 }
 #[cfg(test)]
 mod tests {

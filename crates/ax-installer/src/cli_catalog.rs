@@ -260,6 +260,25 @@ static CATALOG: &[CliCatalogEntry] = &[
         runnable: false,
     },
     CliCatalogEntry {
+        id: "takumi",
+        display_name: "Takumi 匠",
+        bin: "takumi",
+        npm: None,
+        install: InstallSpec {
+            method: CliInstallMethod::Manual,
+            native_url_unix: None,
+            native_url_windows: None,
+            npm_package: None,
+            manual_url: Some("https://getax.wenneker.io/guides/takumi/"),
+            manual_hint: Some(
+                "Build Takumi 匠 from the Code-OSS fork (c:\\gary\\takumi). Built-in ax extension + .vscode/mcp.json.",
+            ),
+        },
+        headless: None,
+        auth: None,
+        runnable: false,
+    },
+    CliCatalogEntry {
         id: "windsurf",
         display_name: "Windsurf (Cascade)",
         bin: "windsurf",
@@ -811,7 +830,7 @@ mod tests {
     fn catalog_covers_all_targets() {
         for id in [
             "claude", "cursor", "codex", "opencode", "hermes", "gemini", "antigravity", "kiro",
-            "vscode", "windsurf", "zed", "continue",
+            "vscode", "takumi", "windsurf", "zed", "continue",
         ] {
             assert!(catalog_entry(id).is_some(), "missing catalog entry for {id}");
         }
@@ -819,7 +838,7 @@ mod tests {
 
     #[test]
     fn ide_only_targets_are_not_runnable() {
-        for id in ["vscode", "windsurf", "zed", "continue"] {
+        for id in ["vscode", "takumi", "windsurf", "zed", "continue"] {
             assert!(
                 !catalog_entry(id).unwrap().runnable,
                 "{id} should not be marked runnable (IDE-only, no headless CLI)"

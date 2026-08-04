@@ -240,6 +240,17 @@ pub async fn import_pack(
     pack_path: Option<&Path>,
     force: bool,
 ) -> Result<PackImportResult, AxError> {
+    import_pack_with_options(pool, project_root, pack_path, force, None).await
+}
+
+/// Import pack with optional `require_review` override (remote share sync).
+pub async fn import_pack_with_options(
+    pool: &SqlitePool,
+    project_root: &Path,
+    pack_path: Option<&Path>,
+    force: bool,
+    require_review_override: Option<bool>,
+) -> Result<PackImportResult, AxError> {
     let pack_root = pack_path
         .map(Path::to_path_buf)
         .unwrap_or_else(|| default_pack_path(project_root));
@@ -252,7 +263,7 @@ pub async fn import_pack(
 
     let manifest = read_manifest(&pack_root)?;
     let cfg = load_policy_config(project_root);
-    let require_review = cfg.require_review;
+    let require_review = require_review_override.unwrap_or(cfg.require_review);
     let store = PolicyStore::new(pool.clone(), project_root.to_path_buf());
 
     let local_rules = list_rules(pool).await?;

@@ -13,6 +13,7 @@ import {
   type AgentStreamEvent,
   type ProfileEntry,
 } from '../../agentApi';
+import { AX_LOG_ICON } from '../../lib/mcpTrace';
 import AgentMessageBody from './AgentMessageBody';
 import AgentPtyTerminal from './AgentPtyTerminal';
 import Codicon from '../Codicon';
@@ -143,7 +144,7 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
     setProfileId(pid);
     if (config) void persistAgentChoice(nextAgent, config);
     if (nextAgent === 'builtin') {
-      pushSystem('Built-in ax chat mode');
+      pushSystem(`[ax] ${AX_LOG_ICON} Built-in ax chat mode`);
     } else {
       pushSystem(`Interactive ${labelFor(nextAgent)} CLI · profile ${pid}`);
     }
@@ -174,11 +175,13 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
           setLines((l) => [...l, { kind: 'system', text: ev.text }]);
         }
         if (ev.type === 'tool_start') {
-          setLines((l) => [...l, { kind: 'tool', text: `▶ ${ev.name}` }]);
+          const prefix = ev.name.startsWith('ax_') ? `${AX_LOG_ICON} ` : '';
+          setLines((l) => [...l, { kind: 'tool', text: `${prefix}▶ ${ev.name}` }]);
         }
         if (ev.type === 'tool_end') {
+          const prefix = ev.name.startsWith('ax_') ? `${AX_LOG_ICON} ` : '';
           const preview = ev.preview?.trim();
-          const text = preview ? `✓ ${ev.name}\n${preview}` : `✓ ${ev.name}`;
+          const text = preview ? `${prefix}✓ ${ev.name}\n${preview}` : `${prefix}✓ ${ev.name}`;
           setLines((l) => [...l, { kind: 'tool', text }]);
         }
         if (ev.type === 'token') {

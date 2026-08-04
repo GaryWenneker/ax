@@ -304,6 +304,7 @@ pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
         InstallOptions {
             yes: true,
             install_all: false,
+            targets: Vec::new(),
         },
     )?;
     Ok(())

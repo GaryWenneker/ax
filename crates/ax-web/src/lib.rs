@@ -5,9 +5,11 @@ mod agent;
 mod agent_pty;
 mod graph_export;
 mod lsp_api;
+mod mcp_ops;
 mod mcp_quality;
 mod mcp_trace;
 mod memory;
+mod policy_share;
 mod plugins_api;
 mod policy;
 mod queries;
@@ -85,12 +87,19 @@ async fn handle_stats(State(hub): State<WebHub>) -> impl IntoResponse {
                 .await
                 .map(|sk| sk.len() as i64)
                 .unwrap_or(0);
-            let project_name = ws
-                .project_root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("project")
-                .to_string();
+            let project_name = {
+                let raw = ws
+                    .project_root
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("project");
+                // Legacy Code-OSS fork folder name — display as Takumi.
+                if raw.eq_ignore_ascii_case("bonzaicoder") {
+                    "takumi".to_string()
+                } else {
+                    raw.to_string()
+                }
+            };
             let body = WebStats {
                 graph,
                 db_size_bytes,

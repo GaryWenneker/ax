@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
+import { displayPath, pathBreadcrumbs } from '../pathDisplay';
 import {
   browseWorkspace,
   fetchWorkspaceCurrent,
@@ -40,14 +41,19 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [pathDraft, setPathDraft] = useState('');
+  const [editingPath, setEditingPath] = useState(false);
   const loadBrowse = useCallback(async (path: string) => {
     setErr(null);
     const data = await browseWorkspace(path);
     if (data.ok && data.path) {
-      setBrowsePath(data.path);
-      setParent(data.parent);
+      const shown = displayPath(data.path);
+      setBrowsePath(shown);
+      setPathDraft(shown);
+      setParent(data.parent ? displayPath(data.parent) : undefined);
       setBrowseInitialized(data.initialized === true);
       setEntries(data.entries ?? []);
+      setEditingPath(false);
     } else {
       setErr(data.error ?? 'Browse failed');
     }
@@ -57,8 +63,10 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
     void (async () => {
       const data = await fetchWorkspaceCurrent();
       if (data.workspace?.path) {
-        setCurrentPath(data.workspace.path);
-        setBrowsePath(data.workspace.path);
+        const shown = displayPath(data.workspace.path);
+        setCurrentPath(shown);
+        setBrowsePath(shown);
+        setPathDraft(shown);
       }
       if (data.recent) setRecent(data.recent);
     })();
@@ -69,6 +77,18 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   useEffect(() => {
     if (browsePath) void loadBrowse(browsePath);
   }, [browsePath, loadBrowse]);
+
+  const crumbs = useMemo(() => pathBreadcrumbs(browsePath), [browsePath]);
+
+  function goToPath(raw: string) {
+    const next = displayPath(raw.trim());
+    if (!next || next === browsePath) {
+      setEditingPath(false);
+      setPathDraft(browsePath);
+      return;
+    }
+    setBrowsePath(next);
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -136,11 +156,18 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
 
   const axRecent = recent.filter((r) => r.initialized);
   const needle = filter.trim().toLowerCase();
-  const visibleEntries = entries.filter((e) => {
-    if (axOnly && !e.initialized) return false;
-    if (!needle) return true;
-    return e.name.toLowerCase().includes(needle);
-  });
+  const visibleEntries = entries
+    .filter((e) => {
+      if (axOnly && !e.initialized) return false;
+      if (!needle) return true;
+      return e.name.toLowerCase().includes(needle);
+    })
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(b.initialized) - Number(a.initialized) || a.name.localeCompare(b.name),
+    );
+  const currentShown = displayPath(currentPath);
 
   return createPortal(
     <div className="project-browser-overlay" role="presentation" onMouseDown={onClose}>
@@ -175,10 +202,10 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                 <button
                   key={r.path}
                   type="button"
-                  className={`project-browser-recent-card${r.path === currentPath ? ' project-browser-recent-card--active' : ''}`}
+                  className={`project-browser-recent-card${displayPath(r.path) === currentShown ? ' project-browser-recent-card--active' : ''}`}
                   onClick={() => void doSwitch(r.path)}
                   disabled={!!busy}
-                  title={r.path}
+                  title={displayPath(r.path)}
                 >
                   <span className="project-browser-recent-icon" aria-hidden="true">
                     <Codicon name="symbol-structure" />
@@ -191,7 +218,11 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
           </section>
         )}
 
-        <section className="project-browser-section">
+        <section className="project-browser-section project-browser-picker">
+          <h3 className="project-browser-section-title">
+            <Codicon name="folder-opened" />
+            Folder picker
+          </h3>
           <div className="project-browser-toolbar">
             <div className="project-browser-path-row">
               {parent && (
@@ -205,7 +236,61 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                   <Codicon name="arrow-up" />
                 </button>
               )}
-              <code className="project-browser-path mono">{browsePath}</code>
+              {editingPath ? (
+                <form
+                  className="project-browser-path-edit"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    goToPath(pathDraft);
+                  }}
+                >
+                  <input
+                    className="settings-input project-browser-path-input mono"
+                    value={pathDraft}
+                    onChange={(e) => setPathDraft(e.target.value)}
+                    disabled={!!busy}
+                    autoFocus
+                    spellCheck={false}
+                    aria-label="Folder path"
+                    onBlur={() => {
+                      if (pathDraft.trim() === browsePath) setEditingPath(false);
+                    }}
+                  />
+                  <button type="submit" className="btn btn-subtle btn-sm" disabled={!!busy}>
+                    Go
+                  </button>
+                </form>
+              ) : (
+                <nav className="project-browser-crumbs" aria-label="Current path">
+                  {crumbs.map((c, i) => (
+                    <span key={c.path} className="project-browser-crumb-wrap">
+                      {i > 0 && <span className="project-browser-crumb-sep" aria-hidden="true">/</span>}
+                      <button
+                        type="button"
+                        className={`project-browser-crumb${i === crumbs.length - 1 ? ' project-browser-crumb--current' : ''}`}
+                        onClick={() => (i === crumbs.length - 1 ? setEditingPath(true) : setBrowsePath(c.path))}
+                        disabled={!!busy}
+                        title={c.path}
+                      >
+                        {c.label}
+                      </button>
+                    </span>
+                  ))}
+                  <button
+                    type="button"
+                    className="btn btn-subtle btn-sm project-browser-path-edit-btn"
+                    onClick={() => {
+                      setPathDraft(browsePath);
+                      setEditingPath(true);
+                    }}
+                    disabled={!!busy}
+                    title="Edit path"
+                    aria-label="Edit path"
+                  >
+                    <Codicon name="edit" />
+                  </button>
+                </nav>
+              )}
             </div>
             <div className="project-browser-filters">
               <input
@@ -231,21 +316,25 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
           <div className="project-browser-list" role="list">
             {visibleEntries.length === 0 && (
               <p className="project-browser-empty">
-                {axOnly ? 'No ax projects in this folder.' : 'No subfolders here.'}
+                {err
+                  ? err
+                  : axOnly
+                    ? 'No ax projects in this folder.'
+                    : 'No subfolders here.'}
               </p>
             )}
             {visibleEntries.map((e) => (
               <div
                 key={e.path}
                 role="listitem"
-                className={`project-browser-row${e.initialized ? ' project-browser-row--ax' : ''}${e.path === currentPath ? ' project-browser-row--current' : ''}`}
+                className={`project-browser-row${e.initialized ? ' project-browser-row--ax' : ''}${displayPath(e.path) === currentShown ? ' project-browser-row--current' : ''}`}
               >
                 <button
                   type="button"
                   className="project-browser-row-main"
-                  onClick={() => (e.initialized ? void doSwitch(e.path) : setBrowsePath(e.path))}
+                  onClick={() => (e.initialized ? void doSwitch(e.path) : setBrowsePath(displayPath(e.path)))}
                   disabled={!!busy}
-                  title={e.path}
+                  title={displayPath(e.path)}
                 >
                   <span className={`project-browser-folder-icon${e.initialized ? ' project-browser-folder-icon--ax' : ''}`}>
                     <Codicon name={e.initialized ? 'symbol-structure' : 'folder'} />
@@ -257,14 +346,14 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                   <button
                     type="button"
                     className="btn btn-subtle btn-sm project-browser-row-enter"
-                    onClick={() => setBrowsePath(e.path)}
+                    onClick={() => setBrowsePath(displayPath(e.path))}
                     disabled={!!busy}
                     title="Open folder"
                   >
                     <Codicon name="chevron-right" />
                   </button>
                 )}
-                {e.initialized && e.path !== currentPath && (
+                {e.initialized && displayPath(e.path) !== currentShown && (
                   <button
                     type="button"
                     className="btn primary btn-sm"
@@ -274,7 +363,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                     Switch
                   </button>
                 )}
-                {e.path === currentPath && (
+                {displayPath(e.path) === currentShown && (
                   <span className="project-browser-current-pill">current</span>
                 )}
               </div>

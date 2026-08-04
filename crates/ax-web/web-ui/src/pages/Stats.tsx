@@ -73,7 +73,7 @@ export default function StatsPage() {
         subtitle={
           stats ? (
             <>
-              <strong>{stats.project_name}</strong>
+              <strong>{stats.project_name === 'bonzaicoder' ? 'takumi' : stats.project_name}</strong>
               {stats.readonly ? ' · read-only' : ''} · last indexed {formatDate(stats.last_indexed_at)}
             </>
           ) : (

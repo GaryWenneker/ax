@@ -15,7 +15,7 @@ pub use capture::{capture_git_history, GitCaptureResult};
 pub use format::format_memories_inject_block;
 pub use store::{
     delete, effective_confidence, find_similar, fts_query_from_text, get, list, recall, remember,
-    update,
+    set_enabled, update,
 };
 pub use sync::{
     default_shared_path, export_shared, import_shared, memory_sync_enabled, MemoryExportResult,

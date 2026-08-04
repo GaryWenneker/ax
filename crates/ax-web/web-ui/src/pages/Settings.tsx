@@ -4,6 +4,7 @@ import AgentsSettingsSection from '../components/AgentsSettingsSection';
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
 import SharingSettingsSection from '../components/SharingSettingsSection';
+import PolicyShareSettingsSection from '../components/PolicyShareSettingsSection';
 import PolicySyncSettingsSection from '../components/PolicySyncSettingsSection';
 import { BusyLabel } from '../components/ui/PageLayout';
 import ThemeChooser from '../components/ThemeChooser';
@@ -455,6 +456,8 @@ export default function SettingsPage() {
             <EmbedSettingsSection />
           </div>
         </section>
+
+        <PolicyShareSettingsSection />
       </div>
     </div>
   );
