@@ -3,9 +3,11 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v4.2.0](https://github.com/GaryWenneker/ax/releases/tag/v4.2.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v4.3.1](https://github.com/GaryWenneker/ax/releases/tag/v4.3.1)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+
+**v4.3.1** seeds **global old-coder policy** on init/install — evidence-first skills plus a CRITICAL `alwaysApply` rule for implementation work. See [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).
 
 **v4.2.0** improves **policy filtering and Azure DevOps pack depth**:
 
@@ -177,6 +179,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax uninit [path]` | Delete `.ax/` directory |
 | `ax index [--force] [--quiet] [--all]` | Full re-index; `--all` indexes every `ax.json` workspace member |
 | `ax sync [--watch] [--quiet] [--all]` | Incremental sync; `--all` syncs every workspace member |
+| `ax export okf` | Export Open Knowledge Format (OKF) Markdown concept bundle |
 | `ax export graph --format …` | Export graph (`json`/`dot`/`graphml`/`gexf`/`cypher`/`mermaid`/`plantuml`/`html`) |
 | `ax policy pull <git-url>` | Pull shared policy rules/skills from a git registry |
 | `ax policy pack export\|import\|status\|install` | Per-project shared pack + built-in packs (e.g. `azdo-fullstack`) |
@@ -184,6 +187,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax auth microsoft login\|logout\|status` | Microsoft device-code sign-in for OneDrive share sync |
 | `ax policy review list\|show\|approve\|reject` | Review pending pack imports |
 | `ax policy enable\|disable <id>` | Toggle a rule or skill without deleting it |
+| `ax policy storage status\|set-item\|…` | Project default + per-item files/database storage; `policy.roots` mounts |
 | `ax watch [path]` | Alias for `ax sync --watch` |
 | `ax status [--json]` | Node/edge/file counts, doc inventory by extension, pending sync |
 | `ax query <text> [--json]` | FTS symbol search |

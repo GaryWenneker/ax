@@ -21,9 +21,10 @@ pub use capture::{
     propose_rule_from_prompt, resolve_unique_id, CaptureInterviewQuestion, CaptureProposal,
 };
 pub use config::{
-    load_policy_config, policy_storage_status, policy_sync_enabled, write_global_policy_storage,
+    effective_storage, find_policy_root, load_policy_config, load_policy_roots,
+    policy_storage_status, policy_sync_enabled, write_global_policy_storage,
     write_project_policy_storage, write_project_policy_sync, write_project_require_review,
-    PolicyConfig, PolicyStorage, PolicyStorageStatus,
+    PolicyConfig, PolicyRoot, PolicyStorage, PolicyStorageStatus,
 };
 pub use builtin_packs::{
     install_builtin_pack, list_builtin_packs, BuiltinPackInfo, BuiltinPackInstallResult,
@@ -43,10 +44,11 @@ pub use hierarchy::{
     policy_layer_dirs, policy_layers, PolicyLayer,
 };
 pub use index::{
-    ensure_policy_ready, export_policy_to_files, get_rule, get_skill, import_policy_from_files,
-    index_policy, list_rules, list_skills, policy_exists, policy_exists_filesystem,
-    policy_has_content, policy_status, policy_tools_enabled, rule_row_to_doc, skill_row_to_doc,
-    ExportResult, ImportMode,
+    enrich_rule_row, enrich_skill_row, ensure_policy_ready, export_policy_to_files, get_rule,
+    get_skill, import_policy_from_files, index_policy, list_rules, list_rules_enriched,
+    list_skills, list_skills_enriched, policy_exists, policy_exists_filesystem, policy_has_content,
+    policy_status, policy_tools_enabled, rule_row_to_doc, skill_row_to_doc, ExportResult,
+    ImportMode,
 };
 pub use migrate::{
     import_migrate_candidates, migrate_interview_instruction, migrate_rule_questions,
@@ -54,9 +56,19 @@ pub use migrate::{
     MigrateCandidate, MigratePlan, MigrateSkipped,
 };
 pub use matcher::{match_policy, max_inject_chars};
-pub use parse::{parse_rule_file, parse_skill_file, serialize_rule, serialize_skill};
-pub use paths::{ensure_policy_dirs, ensure_scaffold, policy_root, rules_dir, skills_dir};
+pub use parse::{
+    parse_rule_file, parse_skill_file, serialize_rule, serialize_rule_stub, serialize_skill,
+    serialize_skill_stub,
+};
+pub use paths::{
+    ensure_policy_dirs, ensure_scaffold, is_stub_body, policy_root, resolve_source_path,
+    rules_dir, skills_dir, STUB_BODY_MARKER,
+};
 pub use ide_seed::{seed_ide_agent_workflow, sync_ide_bootstrap, verify_ide_bootstrap, IdeSeedResult};
-pub use seed::{check_cursor_rule_duplicates, seed_default_policy, sync_instructions, verify_content, verify_instructions, InstructionCheck, SeedResult, SyncResult};
+pub use seed::{
+    check_cursor_rule_duplicates, seed_cursor_skills, seed_default_policy, seed_global_cursor_skills,
+    seed_global_policy_skills, seed_global_policy, seed_project_cursor_skills, sync_instructions, verify_content,
+    verify_instructions, InstructionCheck, SeedResult, SyncResult,
+};
 pub use store::{open_rw_pool, PolicyStore};
 pub use types::*;

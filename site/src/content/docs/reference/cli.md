@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v4.2.0).
+description: Complete reference for every ax command, argument, and flag (v4.3.1).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -339,6 +339,32 @@ ax report
 ax report --out docs/ARCHITECTURE.md
 ax report --stdout
 ```
+
+### `ax export okf [path]`
+
+Export an **Open Knowledge Format (OKF)** Markdown bundle from the indexed graph — one YAML-frontmatter page per concept with Calls / Called by links. Configure the relative output path under `okf` in `ax.json` (default `.ax/knowledge`). The same export can be started from Command Center **Settings → Open Knowledge Format (OKF)**. See [Open Knowledge Format (OKF)](/guides/okf/).
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `path` | optional | cwd | Project root |
+| `--out` | path | `okf.outDir` or `.ax/knowledge` | Output directory |
+| `--limit` | int | `0` | Max concepts (`0` = all) |
+| `--check` | flag | — | Validate `index.md` + relative links |
+| `--ci` | flag | — | With `--check`: exit non-zero on issues |
+| `--publish-wiki` | flag | — | Publish bundle to `okf.azdoWiki` git remote |
+| `--dry-run` | flag | — | With `--publish-wiki`: preview only |
+| `--no-push` | flag | — | Commit wiki locally without push |
+| `--json` | flag | — | Machine-readable output for check/publish |
+
+```bash
+ax export okf
+ax export okf --out knowledge
+ax export okf --check --ci
+ax export okf --publish-wiki --dry-run
+ax export concepts
+```
+
+`ax export concepts` is an alias for `ax export okf`.
 
 ### `ax export graph [path]`
 
@@ -1032,11 +1058,11 @@ ax policy capture "never commit secrets" --file .env --json
 
 ### `ax policy storage`
 
-Show or set policy storage mode (`files` vs `database`).
+Show or set policy storage mode (`files` vs `database`). Supports a **project default** plus **per-item overrides**, and lists configured `policy.roots` mounts.
 
 #### `ax policy storage status [path]`
 
-Show effective storage mode, config paths, and project/global values.
+Show effective storage mode, config paths, project/global values, and `policy.roots`.
 
 | Flag | Description |
 |---|---|
@@ -1049,7 +1075,7 @@ ax policy storage status --json
 
 #### `ax policy storage database [path]`
 
-Set **database** as source of truth (`ax.db`).
+Set **database** as the project default source of truth (`ax.db`). Does not rewrite existing per-item overrides.
 
 | Flag | Description |
 |---|---|
@@ -1065,7 +1091,7 @@ ax policy storage database --migrate --yes    # apply import
 
 #### `ax policy storage files [path]`
 
-Set **files** as source of truth (`.ax/policy/` on disk).
+Set **files** as the project default source of truth (`.ax/policy/` on disk).
 
 | Flag | Description |
 |---|---|
@@ -1076,6 +1102,21 @@ Set **files** as source of truth (`.ax/policy/` on disk).
 ```bash
 ax policy storage files --migrate
 ax policy storage files --global
+```
+
+#### `ax policy storage set-item <id> <files|database> [path]`
+
+Set a **per-item** storage override for one rule id or skill name (hybrid mode).
+
+| Flag | Description |
+|---|---|
+| `--keep-file` | When switching to `database`, keep the markdown/stub file on disk |
+| `--json` | JSON output |
+
+```bash
+ax policy storage set-item utf8-no-bom database
+ax policy storage set-item startup files
+ax policy storage set-item mobile-first database --keep-file --json
 ```
 
 ### `ax policy enable <id> [path]`

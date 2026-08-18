@@ -1,0 +1,32 @@
+---
+id: old-coder-mandatory
+level: CRITICAL
+alwaysApply: true
+scope: company
+tags: ["old-coder", "evidence", "tdd", "quality"]
+priority: 90
+---
+
+# Old Coder — mandatory for implementation work
+
+> **ABSOLUTE**: Every code change must follow the [old-coder](https://github.com/AmazingAng/old-coder) evidence-first workflow. Skipping SPEC, gauntlet, or EVIDENCE is a protocol violation.
+
+## Required workflow
+
+1. **`ax_skill({ name: "old-coder" })`** — load the full workflow before writing implementation code.
+2. **SPEC first** — write an executable spec; get human approval before coding (unless the user explicitly waived review).
+3. **Gauntlet** — run tests, types/lint, coverage, and domain checks from the skill; never weaken tests to pass.
+4. **EVIDENCE** — deliver a rerunnable evidence report with real numbers from one fresh run.
+5. **HTTP/JSON APIs** — also call **`ax_skill({ name: "old-coder-api" })`** and fold API gates into SPEC and EVIDENCE.
+
+## Scope
+
+Applies to features, bug fixes, refactors, new endpoints, concurrency, auth, and any change that ships behavior.
+
+Skip the full loop only for trivial non-behavior edits (comments, typos in docs with no logic change) — and say so in the response.
+
+## Forbidden
+
+- Marking implementation work done without EVIDENCE
+- Weakening or deleting tests to make the gauntlet pass
+- Reporting checks that did not actually run (`unverified` must stay `unverified`)

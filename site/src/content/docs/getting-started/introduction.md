@@ -18,6 +18,14 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.3.1
+
+- **Global old-coder policy** — `ax init` and `ax install` seed [old-coder](https://github.com/AmazingAng/old-coder) skills to `~/.ax/global_policy/` and `~/.cursor/skills/` (MIT, includes reference docs).
+- **`old-coder-mandatory` rule** — CRITICAL `alwaysApply` company rule requires SPEC → gauntlet → EVIDENCE for implementation work; load full workflows via `ax_skill("old-coder")` / `ax_skill("old-coder-api")`.
+- **Policy re-import on init** — every `ax init` merges all layers (including global) into `ax.db` so seeded company policy is active without manual `ax policy index --force`.
+
+See [Policy Engine](/guides/policy-engine/).
+
 ## What's new in v4.2.0
 
 - **Label autocomplete on Rules/Skills** — type to search and pick tags as chips (multi-label AND filter); click a tag in the table to toggle it. Saving a rule or skill requires at least one tag.

@@ -80,6 +80,124 @@ const TEMPLATES: &[Template] = &[
         rel: "skills/design-first/SKILL.md",
         body: include_str!("../templates/skills/design-first/SKILL.md"),
     },
+    Template {
+        rel: "skills/auti/SKILL.md",
+        body: include_str!("../templates/skills/auti/SKILL.md"),
+    },
+    Template {
+        rel: "skills/deploy/SKILL.md",
+        body: include_str!("../templates/skills/deploy/SKILL.md"),
+    },
+    Template {
+        rel: "skills/feature-information/SKILL.md",
+        body: include_str!("../templates/skills/feature-information/SKILL.md"),
+    },
+    Template {
+        rel: "skills/no-ab-prefix/SKILL.md",
+        body: include_str!("../templates/skills/no-ab-prefix/SKILL.md"),
+    },
+    Template {
+        rel: "skills/noti/SKILL.md",
+        body: include_str!("../templates/skills/noti/SKILL.md"),
+    },
+    Template {
+        rel: "skills/pr/SKILL.md",
+        body: include_str!("../templates/skills/pr/SKILL.md"),
+    },
+    Template {
+        rel: "skills/pre-pr-check/SKILL.md",
+        body: include_str!("../templates/skills/pre-pr-check/SKILL.md"),
+    },
+    Template {
+        rel: "skills/preq/SKILL.md",
+        body: include_str!("../templates/skills/preq/SKILL.md"),
+    },
+    Template {
+        rel: "skills/ship/SKILL.md",
+        body: include_str!("../templates/skills/ship/SKILL.md"),
+    },
+];
+
+/// Baseline rollout skills — also copied to `.cursor/skills/` on init/install.
+const ROLLOUT_SKILL_RELS: &[&str] = &[
+    "skills/auti/SKILL.md",
+    "skills/deploy/SKILL.md",
+    "skills/feature-information/SKILL.md",
+    "skills/no-ab-prefix/SKILL.md",
+    "skills/noti/SKILL.md",
+    "skills/pr/SKILL.md",
+    "skills/pre-pr-check/SKILL.md",
+    "skills/preq/SKILL.md",
+    "skills/ship/SKILL.md",
+];
+
+/// Relative path + embedded body within a skill directory (e.g. `SKILL.md`, `references/gauntlet.md`).
+struct SkillBundleFile {
+    rel: &'static str,
+    body: &'static str,
+}
+
+/// Multi-file skill bundle (SKILL.md + references/). Vendored from upstream repos.
+struct SkillBundle {
+    name: &'static str,
+    files: &'static [SkillBundleFile],
+}
+
+/// Global company-scope rules seeded to `~/.ax/global_policy/rules/`.
+const GLOBAL_RULE_TEMPLATES: &[Template] = &[Template {
+    rel: "rules/old-coder-mandatory.mdc",
+    body: include_str!("../templates/rules/old-coder-mandatory.mdc"),
+}];
+
+/// Machine-wide skills seeded to `~/.ax/global_policy/skills/` and `~/.cursor/skills/`.
+/// Source: https://github.com/AmazingAng/old-coder (MIT)
+const GLOBAL_SKILL_BUNDLES: &[SkillBundle] = &[
+    SkillBundle {
+        name: "old-coder",
+        files: &[
+            SkillBundleFile {
+                rel: "SKILL.md",
+                body: include_str!("../templates/skills/old-coder/SKILL.md"),
+            },
+            SkillBundleFile {
+                rel: "references/gauntlet.md",
+                body: include_str!("../templates/skills/old-coder/references/gauntlet.md"),
+            },
+            SkillBundleFile {
+                rel: "references/templates.md",
+                body: include_str!("../templates/skills/old-coder/references/templates.md"),
+            },
+            SkillBundleFile {
+                rel: "references/verifier-case-study.md",
+                body: include_str!("../templates/skills/old-coder/references/verifier-case-study.md"),
+            },
+            SkillBundleFile {
+                rel: "references/verifier.md",
+                body: include_str!("../templates/skills/old-coder/references/verifier.md"),
+            },
+        ],
+    },
+    SkillBundle {
+        name: "old-coder-api",
+        files: &[
+            SkillBundleFile {
+                rel: "SKILL.md",
+                body: include_str!("../templates/skills/old-coder-api/SKILL.md"),
+            },
+            SkillBundleFile {
+                rel: "references/breaking-changes.md",
+                body: include_str!("../templates/skills/old-coder-api/references/breaking-changes.md"),
+            },
+            SkillBundleFile {
+                rel: "references/examples.md",
+                body: include_str!("../templates/skills/old-coder-api/references/examples.md"),
+            },
+            SkillBundleFile {
+                rel: "references/patterns.md",
+                body: include_str!("../templates/skills/old-coder-api/references/patterns.md"),
+            },
+        ],
+    },
 ];
 
 const MANAGED: &[(&str, &str, bool)] = &[
@@ -175,6 +293,132 @@ pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {
         result.created.push(t.rel.to_string());
     }
     Ok(result)
+}
+
+fn cursor_skill_rel(name: &str) -> String {
+    format!(".cursor/skills/{name}/{}", crate::paths::SKILL_FILENAME)
+}
+
+fn write_skill_bundle(skills_root: &Path, bundle: &SkillBundle) -> std::io::Result<bool> {
+    let skill_dir = skills_root.join(bundle.name);
+    let skill_md = skill_dir.join(crate::paths::SKILL_FILENAME);
+    if skill_md.exists() {
+        let existing = std::fs::read_to_string(&skill_md).unwrap_or_default();
+        // Bundles ship with triggers — upgrade seeded copies from before triggers were added.
+        if existing.contains("triggers:") {
+            return Ok(false);
+        }
+    }
+    for file in bundle.files {
+        let dest = skill_dir.join(file.rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&dest, file.body.as_bytes())?;
+    }
+    Ok(true)
+}
+
+fn seed_skill_bundles(skills_root: &Path, label_prefix: &str) -> std::io::Result<SeedResult> {
+    std::fs::create_dir_all(skills_root)?;
+    let mut result = SeedResult::default();
+    for bundle in GLOBAL_SKILL_BUNDLES {
+        let label = format!("{label_prefix}/{}/{}", bundle.name, crate::paths::SKILL_FILENAME);
+        if write_skill_bundle(skills_root, bundle)? {
+            result.created.push(label);
+        } else {
+            result.skipped.push(label);
+        }
+    }
+    Ok(result)
+}
+
+/// Write baseline rollout skills to a Cursor skills directory (never overwrites).
+pub fn seed_cursor_skills(skills_root: &Path) -> std::io::Result<SeedResult> {
+    std::fs::create_dir_all(skills_root)?;
+    let mut result = SeedResult::default();
+    for rel in ROLLOUT_SKILL_RELS {
+        let t = template_by_rel(rel).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, format!("unknown rollout skill: {rel}"))
+        })?;
+        let name = rel
+            .strip_prefix("skills/")
+            .and_then(|s| s.strip_suffix("/SKILL.md"))
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("bad skill rel: {rel}"))
+            })?;
+        let dest = skills_root.join(name).join(crate::paths::SKILL_FILENAME);
+        let label = cursor_skill_rel(name);
+        if dest.exists() {
+            result.skipped.push(label);
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&dest, t.body.as_bytes())?;
+        result.created.push(label);
+    }
+    let bundles = seed_skill_bundles(skills_root, ".cursor/skills")?;
+    result.created.extend(bundles.created);
+    result.skipped.extend(bundles.skipped);
+    Ok(result)
+}
+
+fn seed_global_policy_rules(rules_root: &Path) -> std::io::Result<SeedResult> {
+    std::fs::create_dir_all(rules_root)?;
+    let mut result = SeedResult::default();
+    for t in GLOBAL_RULE_TEMPLATES {
+        let id = t
+            .rel
+            .strip_prefix("rules/")
+            .and_then(|s| s.strip_suffix(".mdc"))
+            .unwrap_or("rule");
+        let dest = rules_root.join(format!("{id}.mdc"));
+        let label = format!("~/.ax/global_policy/rules/{id}.mdc");
+        if dest.exists() {
+            result.skipped.push(label);
+            continue;
+        }
+        std::fs::write(&dest, t.body.as_bytes())?;
+        result.created.push(label);
+    }
+    Ok(result)
+}
+
+fn global_policy_root() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".ax").join("global_policy"))
+}
+
+/// Seed `~/.ax/global_policy/` with machine-wide rules and skills (company scope via MCP).
+pub fn seed_global_policy() -> std::io::Result<SeedResult> {
+    let Some(global) = global_policy_root() else {
+        return Ok(SeedResult::default());
+    };
+    std::fs::create_dir_all(&global)?;
+    let mut result = seed_global_policy_rules(&global.join("rules"))?;
+    let skills = seed_skill_bundles(&global.join("skills"), "~/.ax/global_policy/skills")?;
+    result.created.extend(skills.created);
+    result.skipped.extend(skills.skipped);
+    Ok(result)
+}
+
+/// Seed `~/.ax/global_policy/skills/` with machine-wide skills (company scope via MCP).
+pub fn seed_global_policy_skills() -> std::io::Result<SeedResult> {
+    seed_global_policy()
+}
+
+/// Seed `~/.cursor/skills/` with baseline rollout skills (machine-wide Cursor agents).
+pub fn seed_global_cursor_skills() -> std::io::Result<SeedResult> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(SeedResult::default());
+    };
+    seed_cursor_skills(&home.join(".cursor").join("skills"))
+}
+
+/// Seed `<project>/.cursor/skills/` with baseline rollout skills.
+pub fn seed_project_cursor_skills(project_root: &Path) -> std::io::Result<SeedResult> {
+    seed_cursor_skills(&project_root.join(".cursor").join("skills"))
 }
 
 pub fn verify_content(content: &str) -> Vec<String> {
@@ -410,6 +654,63 @@ mod tests {
         let synced = sync_instructions(&ax, true).unwrap();
         assert!(!synced.fixed.is_empty());
         assert_eq!(synced.fail_count, 0);
+    }
+
+    #[test]
+    fn rollout_skill_templates_parse() {
+        use crate::parse::parse_skill_file;
+
+        for rel in ROLLOUT_SKILL_RELS {
+            let t = template_by_rel(rel).expect(rel);
+            let tmp = tempdir().unwrap();
+            let path = tmp.path().join("SKILL.md");
+            std::fs::write(&path, t.body).unwrap();
+            parse_skill_file(&path, t.body).expect(rel);
+        }
+    }
+
+    #[test]
+    fn seed_cursor_skills_writes_once() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path().join(".cursor").join("skills");
+        let first = seed_cursor_skills(&skills).unwrap();
+        assert_eq!(
+            first.created.len(),
+            ROLLOUT_SKILL_RELS.len() + GLOBAL_SKILL_BUNDLES.len()
+        );
+        let second = seed_cursor_skills(&skills).unwrap();
+        assert!(second.created.is_empty());
+        assert_eq!(
+            second.skipped.len(),
+            ROLLOUT_SKILL_RELS.len() + GLOBAL_SKILL_BUNDLES.len()
+        );
+    }
+
+    #[test]
+    fn global_skill_bundles_include_references() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        let result = seed_skill_bundles(&skills, "test/skills").unwrap();
+        assert_eq!(result.created.len(), GLOBAL_SKILL_BUNDLES.len());
+        assert!(skills.join("old-coder/references/gauntlet.md").is_file());
+        assert!(skills.join("old-coder-api/references/patterns.md").is_file());
+    }
+
+    #[test]
+    fn global_skill_bundle_templates_parse() {
+        use crate::parse::parse_skill_file;
+
+        for bundle in GLOBAL_SKILL_BUNDLES {
+            let skill_md = bundle
+                .files
+                .iter()
+                .find(|f| f.rel == "SKILL.md")
+                .expect("bundle has SKILL.md");
+            let tmp = tempdir().unwrap();
+            let path = tmp.path().join("SKILL.md");
+            std::fs::write(&path, skill_md.body).unwrap();
+            parse_skill_file(&path, skill_md.body).expect(bundle.name);
+        }
     }
 
     #[test]

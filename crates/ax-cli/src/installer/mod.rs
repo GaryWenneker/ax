@@ -28,6 +28,24 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
 
     ax_installer::ensure_global_config();
 
+    if let Ok(cursor) = ax_policy::seed_global_cursor_skills() {
+        if !cursor.created.is_empty() {
+            eprintln!(
+                "Seeded {} baseline Cursor skill(s) in ~/.cursor/skills/",
+                cursor.created.len()
+            );
+        }
+    }
+
+    if let Ok(global) = ax_policy::seed_global_policy() {
+        if !global.created.is_empty() {
+            eprintln!(
+                "Seeded {} global policy file(s) in ~/.ax/global_policy/",
+                global.created.len()
+            );
+        }
+    }
+
     install_log::intro(env!("CARGO_PKG_VERSION"));
 
     let summary = if !opts.targets.is_empty() {

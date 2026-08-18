@@ -85,6 +85,8 @@ pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
 
     let ax_dir = root.join(".ax");
     let seed = ax_policy::seed_default_policy(&ax_dir).ok();
+    let cursor = ax_policy::seed_project_cursor_skills(&root).ok();
+    let global_policy = ax_policy::seed_global_policy().ok();
     let project_name = root.file_name().and_then(|n| n.to_str());
     let ship = ax_ship::seed_ship_config(&ax_dir, project_name).ok();
     let ide = ax_policy::seed_ide_agent_workflow(&root).ok();
@@ -99,6 +101,36 @@ pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
                 ))
             );
             for rel in &s.created {
+                println!("  {}", dim(rel));
+            }
+            println!();
+        }
+    }
+    if let Some(ref c) = cursor {
+        if !c.created.is_empty() {
+            println!(
+                "{}",
+                ok_line(format!(
+                    "Seeded {} baseline Cursor skill(s) in .cursor/skills/",
+                    c.created.len()
+                ))
+            );
+            for rel in &c.created {
+                println!("  {}", dim(rel));
+            }
+            println!();
+        }
+    }
+    if let Some(ref g) = global_policy {
+        if !g.created.is_empty() {
+            println!(
+                "{}",
+                ok_line(format!(
+                    "Seeded {} global policy skill(s) in ~/.ax/global_policy/skills/",
+                    g.created.len()
+                ))
+            );
+            for rel in &g.created {
                 println!("  {}", dim(rel));
             }
             println!();
@@ -265,8 +297,8 @@ pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
         );
     }
 
-    // Database policy mode keeps rules in SQLite — import seeded .ax/policy/ files on first init.
-    let force_policy = !already_initialized;
+    // Database policy mode — always merge from disk so ~/.ax/global_policy/ stays in ax.db.
+    let force_policy = true;
     match ax.index_policy(force_policy).await {
         Ok(policy) => {
             if policy.rules_indexed > 0 || policy.skills_indexed > 0 {

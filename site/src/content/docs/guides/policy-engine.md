@@ -19,7 +19,19 @@ ax policy storage status   # show effective files vs database mode
 ax web --open              # edit rules/skills in the browser
 ```
 
-Commit `.ax/policy/` to git so your team shares the same agent instructions everywhere.
+On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy (never overwrites existing files):
+
+| Location | Content |
+|---|---|
+| `~/.ax/global_policy/rules/` | `old-coder-mandatory` (CRITICAL, **alwaysApply**) — agents must follow the old-coder workflow for implementation work |
+| `~/.ax/global_policy/skills/` | `old-coder`, `old-coder-api` (matched on coding/API triggers; load full body via `ax_skill`) |
+| `~/.cursor/skills/` | Same skill bundles for Cursor agent discovery |
+
+**Enforcement model:** Rules with `alwaysApply: true` are injected on **every** `ax_preflight` turn under `Rules (always apply)`. Skills match on triggers/description and appear under `Suggested skills` — the mandatory rule requires agents to call `ax_skill("old-coder")` before implementing.
+
+Every `ax init` re-imports all policy layers (including global) into `ax.db`. After install alone, run `ax init` or `ax policy index --force` in any project once.
+
+Source: [AmazingAng/old-coder](https://github.com/AmazingAng/old-coder) (MIT). Project init also copies rollout skills into `<project>/.cursor/skills/`.
 
 Upgrade to **ax v2.1.2+** and restart your agent so MCP exposes `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`, and `ax_policy_capture`.
 
@@ -47,26 +59,65 @@ Saved rules go to **database** or **files** depending on `policy.storage` in `ax
 
 ---
 
-## Policy storage (v2.1.1+)
+## Policy storage (v2.1.1+; hybrid in v4.3+)
 
 | Mode | Source of truth | Typical workflow |
 |---|---|---|
 | `files` | `.ax/policy/*.mdc` and `SKILL.md` on disk | Edit in git, `ax policy index` syncs to DB |
 | `database` | `ax.db` policy tables | Edit in ax web or via capture; `ax policy export` for git |
 
+**Hybrid storage:** `ax.json` sets the **project default**. Each rule/skill may override with frontmatter `storage: files|database` (Command Center list toggle or `ax policy storage set-item`). Delivery to agents remains via MCP from `ax.db` either way — the toggle chooses where edits are authoritative.
+
 ```bash
-ax policy storage status                 # show project + global mode
+ax policy storage status                 # show project + global mode + policy.roots
 ax policy storage database --migrate           # propose: scan repo + interview questions
 ax policy storage database --migrate --yes     # apply: switch + import all candidates
 ax policy storage files --migrate              # export DB → files when switching
 ax policy storage database --global            # set default in ~/.ax/config.json
+ax policy storage set-item utf8-no-bom database
+ax policy storage set-item startup files --keep-file
 ```
 
 Configure in `ax.json`:
 
 ```json
-{ "policy": { "storage": "database" } }
+{
+  "policy": {
+    "storage": "files",
+    "roots": [
+      {
+        "id": "team-shared",
+        "path": "D:/ax-policy-shared",
+        "scope": "workspace"
+      },
+      {
+        "id": "api-rules",
+        "path": "../other-repo/.ax/policy",
+        "scope": "project",
+        "member": "api"
+      }
+    ]
+  }
+}
 ```
+
+### External roots and stubs
+
+- **`policy.roots`** — mount directories (absolute or relative to the config file) as extra policy layers. Optional `member` limits a root to one workspace member name/path. Roots appear in `ax policy storage status` and Command Center settings.
+- **Stubs** — a committed file under `.ax/policy/` can point elsewhere:
+
+```yaml
+---
+id: utf8-no-bom
+level: CRITICAL
+alwaysApply: true
+storage: files
+source: "root:team-shared/rules/utf8-no-bom.mdc"
+---
+<!-- ax:stub — body loaded from source -->
+```
+
+Index loads the body from `source` (absolute path or `root:<id>/…`). Broken sources are skipped with a soft warning — preflight never crashes. Saving updates the external file and keeps the stub metadata.
 
 Both modes support the same **scopes**. Frontmatter field `scope` (and the DB column) records where an item lives. Capture interviews ask for scope; Command Center editors show a Scope selector.
 
@@ -392,6 +443,10 @@ ax web --port 7070 --open
 ```
 
 Open **Policy → Rules** or **Policy → Skills** in the sidebar to edit frontmatter and markdown, save to disk, and re-index automatically.
+
+Selecting a row opens a master-detail blade (slides in once). Switching to another row while the blade is open keeps the panel in place and reveals the new metadata/body (no repeat slide-in).
+
+In the rule/skill editor, drag the handle between **Metadata** and the markdown panel to resize the meta column (persisted in the browser). In edit mode, drag the bar between the markdown source and the live preview to resize those panes. Double-click the meta handle to reset its width.
 
 ![Policy Rules — sortable table with level badges, globs, triggers, capture and match testing](/screenshots/cc-policy-rules.png)
 
