@@ -1,6 +1,6 @@
 [package]
 name = "ax-desktop-client"
-version = "4.3.0"
+version = "4.3.1"
 edition = "2021"
 description = "Native wgpu Command Center for ax (egui/eframe)"
 license = "MIT"
