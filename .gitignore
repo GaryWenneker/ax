@@ -41,6 +41,9 @@ telemetry-worker/.wrangler/
 # IDE / OS
 .idea/
 .vscode/
+# Seeded policy skills (ax init/install copies templates here — not repo content)
+.cursor/skills/*
+!.cursor/skills/ax-reinstall/
 .DS_Store
 Thumbs.db
 
