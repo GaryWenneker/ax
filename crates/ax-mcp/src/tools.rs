@@ -6,7 +6,10 @@ use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
 use ax_context::directory::{find_nearest_ax_root, is_initialized};
 use ax_context::{format_context_as_markdown, format_explore_text};
-use ax_policy::{detect_directive, finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, PolicyStore, RuleFrontmatter};
+use ax_policy::{
+    detect_directive, finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, MatchResult,
+    PolicyStatus, PolicyStore, RuleFrontmatter,
+};
 use ax_reasoning::{maybe_synthesize_explore, ExploreOffloadMeta};
 use ax_types::{BuildContextOptions, ExploreOptions, Node, SearchOptions, SearchResult, Subgraph, TaskInput};
 use serde_json::{json, Value};
@@ -30,6 +33,9 @@ impl ToolHandler {
             tools.push(guard_tool());
         }
         tools.extend(extra_tools());
+        // Lean default: core tools only. Extras via AX_MCP_TOOLS=all|name,name.
+        // Unlisted tools remain callable (call_tool is not filtered).
+        crate::tool_filter::filter_tools_list(&mut tools);
         json!({ "tools": tools })
     }
 
@@ -100,6 +106,87 @@ impl ToolHandler {
                 } else {
                     Ok(json!({ "text": format!("No symbol matching '{sym}'") }))
                 }
+            }
+            "ax_cycles" => {
+                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+                let cycles = ax.find_cycles(limit).await.map_err(|e| e.to_string())?;
+                let text = if cycles.is_empty() {
+                    "No call-graph cycles found.".to_string()
+                } else {
+                    let mut s = format!("## Call-graph cycles ({})\n\n", cycles.len());
+                    for (i, c) in cycles.iter().enumerate() {
+                        let mut names = Vec::with_capacity(c.nodes.len());
+                        for id in &c.nodes {
+                            let name = ax
+                                .get_node(id)
+                                .await
+                                .ok()
+                                .flatten()
+                                .map(|n| n.qualified_name)
+                                .unwrap_or_else(|| id.clone());
+                            names.push(name);
+                        }
+                        s.push_str(&format!("{}. {}\n", i + 1, names.join(" → ")));
+                    }
+                    s
+                };
+                Ok(json!({ "text": text, "cycles": cycles }))
+            }
+            "ax_path" => {
+                let from = params.get("from").and_then(|v| v.as_str()).unwrap_or("");
+                let to = params.get("to").and_then(|v| v.as_str()).unwrap_or("");
+                if from.is_empty() || to.is_empty() {
+                    return Err("from and to are required".into());
+                }
+                let from_hits = ax
+                    .search_nodes(from, &SearchOptions { limit: Some(1), ..Default::default() })
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let to_hits = ax
+                    .search_nodes(to, &SearchOptions { limit: Some(1), ..Default::default() })
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let (Some(f), Some(t)) = (from_hits.first(), to_hits.first()) else {
+                    return Ok(json!({
+                        "text": format!("Could not resolve symbols '{from}' / '{to}'"),
+                        "path": Value::Null
+                    }));
+                };
+                let path = ax
+                    .find_path(&f.node.id, &t.node.id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let text = match &path {
+                    Some(ids) if !ids.is_empty() => format!("Path: {}", ids.join(" → ")),
+                    _ => format!(
+                        "No Calls/References path from '{}' to '{}'.",
+                        f.node.qualified_name, t.node.qualified_name
+                    ),
+                };
+                Ok(json!({
+                    "text": text,
+                    "from": f.node.qualified_name,
+                    "to": t.node.qualified_name,
+                    "path": path
+                }))
+            }
+            "ax_api" => {
+                let module = params.get("module").and_then(|v| v.as_str()).unwrap_or("");
+                if module.is_empty() {
+                    return Err("module is required".into());
+                }
+                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(200) as usize;
+                let nodes = ax.module_api(module, limit).await.map_err(|e| e.to_string())?;
+                let text = if nodes.is_empty() {
+                    format!("No exported symbols matching module '{module}'.")
+                } else {
+                    let mut s = format!("## API surface: {module} ({} symbols)\n\n", nodes.len());
+                    for n in &nodes {
+                        s.push_str(&format!("- {} — {}\n", n.qualified_name, n.file_path));
+                    }
+                    s
+                };
+                Ok(json!({ "text": text, "module": module, "symbols": nodes }))
             }
             "ax_files" => {
                 let files = ax.queries().get_all_files().await.map_err(|e| e.to_string())?;
@@ -420,8 +507,40 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         open_files: files.iter().map(PathBuf::from).collect(),
         changed_files: vec![],
     };
-    let result = ax.match_policy(input).await.map_err(|e| e.to_string())?;
-    let status = ax.policy_status().await.map_err(|e| e.to_string())?;
+    // Preflight must always return a payload. Policy match/status failures
+    // degrade to an empty inject + error note — never MCP isError.
+    let mut policy_error: Option<String> = None;
+    let result = match ax.match_policy(input).await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            policy_error = Some(msg.clone());
+            crate::verbose::push_line(format!("enrich policy match failed: {msg}"));
+            MatchResult {
+                rules: vec![],
+                skills: vec![],
+                inject: format!(
+                    "<ax_policy note=\"preflight degraded: policy match failed — {msg}\">\n</ax_policy>\n"
+                ),
+            }
+        }
+    };
+    let status = match ax.policy_status().await {
+        Ok(s) => s,
+        Err(e) => {
+            let msg = e.to_string();
+            crate::verbose::push_line(format!("enrich policy status failed: {msg}"));
+            if policy_error.is_none() {
+                policy_error = Some(msg);
+            }
+            PolicyStatus {
+                indexed: false,
+                rules: 0,
+                skills: 0,
+                mode: "degraded".into(),
+            }
+        }
+    };
     let meta = ax_policy::build_preflight_meta(&status, &result);
     crate::verbose::push_line(format!(
         "enrich policy matched_rules={} matched_skills={} inject_chars={} mode={}",
@@ -516,7 +635,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         has_directive
     ));
 
-    Ok(json!({
+    let mut out = json!({
         "policyStatus": meta.policy_status,
         "matchedRules": meta.matched_rules,
         "matchedSkills": meta.matched_skills,
@@ -532,7 +651,13 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "pendingFiles": pending,
         "inject": inject,
         "instruction": instruction,
-    }))
+    });
+    if let Some(err) = policy_error {
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("policyError".to_string(), Value::String(err));
+        }
+    }
+    Ok(out)
 }
 
 async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -1159,7 +1284,7 @@ fn skill_tool() -> Value {
 fn guard_tool() -> Value {
     json!({
         "name": "ax_guard",
-        "description": "Pre-write guard for CRITICAL policy rules. Prefer path+operation; also accepts paths[] and action=edit|write|delete. Checks built-in encoding/secrets rules, plus any CRITICAL rule whose body contains a `guard: forbid-path: \"<glob>\"`, `guard: forbid-content: \"<substring or /regex/>\"`, or `guard: require-content: \"<substring or /regex/>\"` (scoped by that rule's globs) directive line.",
+        "description": "Pre-write guard for CRITICAL policy rules. Prefer path+operation; also accepts paths[] and action=edit|write|delete. Checks built-in encoding/secrets rules, plus any CRITICAL rule whose body contains a `guard: forbid-path: \"<glob>\"`, `guard: forbid-content: \"<substring or /regex/>\"`, `guard: require-content: \"<substring or /regex/>\"` (scoped by that rule's globs), or `guard: require-skill: \"<name>\"` (skill must exist, be approved, and have alwaysApply) directive line.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1239,6 +1364,40 @@ fn extra_tools() -> Vec<Value> {
         json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
+        json!({
+            "name": "ax_cycles",
+            "description": "List call-graph cycles (non-trivial SCCs on Calls/References edges).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "number", "description": "Max cycles to return (default 50)" }
+                }
+            }
+        }),
+        json!({
+            "name": "ax_path",
+            "description": "Shortest Calls/References path between two symbols.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string" },
+                    "to": { "type": "string" }
+                },
+                "required": ["from", "to"]
+            }
+        }),
+        json!({
+            "name": "ax_api",
+            "description": "Public API surface for a module or path prefix (exported symbols).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "module": { "type": "string", "description": "Module name or path prefix, e.g. ax-mcp or crates/ax-mcp" },
+                    "limit": { "type": "number", "description": "Max symbols (default 200)" }
+                },
+                "required": ["module"]
+            }
+        }),
         json!({
             "name": "ax_insights",
             "description": "Whole-graph insights: Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Use to understand overall architecture before diving in.",
@@ -1427,27 +1586,69 @@ mod tests {
         assert!(s.contains("ax_policy_capture"));
     }
 
-    #[tokio::test]
-    async fn ax_diagnostics_always_advertised_regardless_of_policy() {
-        // Diagnostics correlation (affected tests) is useful even with no policy —
-        // guardedPaths degrades to empty rather than gating the whole tool.
-        for has_policy in [false, true] {
-            let names = tool_names(&ToolHandler::list_tools(has_policy).await);
-            assert!(names.contains(&"ax_diagnostics".to_string()));
+    #[test]
+    fn lean_default_hides_extras_including_diagnostics() {
+        let mut tools = extra_tools();
+        tools.insert(0, explore_tool());
+        tools.insert(1, preflight_tool());
+        tools.insert(2, capture_tool());
+        crate::tool_filter::filter_tools_list_with(&mut tools, None);
+        let names: Vec<String> = tools
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
+            .collect();
+        assert!(names.contains(&"ax_explore".to_string()));
+        assert!(names.contains(&"ax_preflight".to_string()));
+        assert!(names.contains(&"ax_policy_capture".to_string()));
+        assert!(!names.contains(&"ax_diagnostics".to_string()));
+        assert!(!names.contains(&"ax_sync".to_string()));
+        assert!(!names.contains(&"ax_search".to_string()));
+    }
+
+    #[test]
+    fn ax_mcp_tools_all_advertises_ops_and_diagnostics() {
+        let mut tools = extra_tools();
+        tools.insert(0, explore_tool());
+        tools.insert(1, preflight_tool());
+        crate::tool_filter::filter_tools_list_with(
+            &mut tools,
+            crate::tool_filter::resolve_tool_allowlist_from(Some("all")),
+        );
+        let names: Vec<String> = tools
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
+            .collect();
+        for expected in [
+            "ax_diagnostics",
+            "ax_sync",
+            "ax_lsp",
+            "ax_ship",
+            "ax_policy_index",
+            "ax_index",
+            "ax_search",
+            "ax_explore",
+            "ax_preflight",
+        ] {
+            assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
     }
 
-    #[tokio::test]
-    async fn operational_tools_always_advertised() {
-        for has_policy in [false, true] {
-            let names = tool_names(&ToolHandler::list_tools(has_policy).await);
-            for expected in ["ax_sync", "ax_lsp", "ax_ship", "ax_policy_index", "ax_index"] {
-                assert!(
-                    names.contains(&expected.to_string()),
-                    "missing {expected} (has_policy={has_policy})"
-                );
-            }
-        }
+    #[test]
+    fn ax_mcp_tools_allowlist_adds_short_names() {
+        let mut tools = extra_tools();
+        tools.insert(0, explore_tool());
+        crate::tool_filter::filter_tools_list_with(
+            &mut tools,
+            crate::tool_filter::resolve_tool_allowlist_from(Some("node,status")),
+        );
+        let names: Vec<String> = tools
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
+            .collect();
+        assert!(names.contains(&"ax_node".to_string()));
+        assert!(names.contains(&"ax_status".to_string()));
+        assert!(!names.contains(&"ax_callers".to_string()));
+        assert!(names.contains(&"ax_explore".to_string()));
     }
 
     #[test]

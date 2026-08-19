@@ -27,7 +27,10 @@ export function TagList({
               key={item}
               type="button"
               className={`page-item-badge page-item-badge--btn${isActive ? ' page-item-badge--active' : ''}`}
-              onClick={() => onTagClick(item)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onTagClick(item);
+              }}
               title={isActive ? `Remove filter: ${item}` : `Filter by ${item}`}
             >
               {item}
@@ -54,6 +57,12 @@ export function RuleMetaView({
   tags,
   scope,
   enabled = true,
+  onLevelClick,
+  onScopeClick,
+  onTagClick,
+  activeLevel,
+  activeScope,
+  activeTags,
 }: {
   id: string;
   level: string;
@@ -64,6 +73,12 @@ export function RuleMetaView({
   tags: string[];
   scope?: string;
   enabled?: boolean;
+  onLevelClick?: (level: string) => void;
+  onScopeClick?: (scope?: string) => void;
+  onTagClick?: (tag: string) => void;
+  activeLevel?: string;
+  activeScope?: string;
+  activeTags?: string[];
 }) {
   return (
     <div className="policy-view-meta">
@@ -77,12 +92,22 @@ export function RuleMetaView({
       </div>
       <div className="detail-kv">
         <span className="detail-key">Level</span>
-        <span className="detail-val"><LevelBadge level={level} /></span>
+        <span className="detail-val">
+          <LevelBadge
+            level={level}
+            onClick={onLevelClick ? () => onLevelClick(level) : undefined}
+            active={activeLevel === level}
+          />
+        </span>
       </div>
       <div className="detail-kv">
         <span className="detail-key">Scope</span>
         <span className="detail-val" title={scopeLabel(scope)}>
-          <ScopeBadge scope={scope} />
+          <ScopeBadge
+            scope={scope}
+            onClick={onScopeClick ? () => onScopeClick(scope) : undefined}
+            active={activeScope === (scope || 'project').toLowerCase()}
+          />
         </span>
       </div>
       <div className="detail-kv">
@@ -103,7 +128,9 @@ export function RuleMetaView({
       </div>
       <div className="detail-kv detail-kv--stack">
         <span className="detail-key">Tags</span>
-        <span className="detail-val"><TagList items={tags} empty="None" /></span>
+        <span className="detail-val">
+          <TagList items={tags} empty="None" onTagClick={onTagClick} activeTags={activeTags} />
+        </span>
       </div>
     </div>
   );
@@ -112,6 +139,7 @@ export function RuleMetaView({
 export function SkillMetaView({
   name,
   description,
+  alwaysApply = false,
   priority,
   triggers,
   tags,
@@ -121,6 +149,7 @@ export function SkillMetaView({
 }: {
   name: string;
   description: string;
+  alwaysApply?: boolean;
   priority: number;
   triggers: string[];
   tags: string[];
@@ -137,6 +166,10 @@ export function SkillMetaView({
       <div className="detail-kv">
         <span className="detail-key">Enabled</span>
         <span className="detail-val">{enabled !== false ? 'On — active in matching' : 'Off — skipped by preflight'}</span>
+      </div>
+      <div className="detail-kv">
+        <span className="detail-key">Always apply</span>
+        <span className="detail-val">{alwaysApply ? 'Yes — every agent turn, including empty prompts' : 'No — match triggers/description'}</span>
       </div>
       <div className="detail-kv detail-kv--stack">
         <span className="detail-key">Description</span>

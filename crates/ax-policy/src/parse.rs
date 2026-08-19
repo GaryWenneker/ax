@@ -28,6 +28,7 @@ pub fn parse_rule_file(path: &Path, raw: &str) -> Result<PolicyRuleDoc, Validati
         body,
         raw: raw.to_string(),
         source_path: path.to_string_lossy().to_string(),
+        stub_path: None,
     })
 }
 
@@ -40,6 +41,7 @@ pub fn parse_skill_file(path: &Path, raw: &str) -> Result<PolicySkillDoc, Valida
         body,
         raw: raw.to_string(),
         source_path: path.to_string_lossy().to_string(),
+        stub_path: None,
     })
 }
 
@@ -68,6 +70,9 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
         .unwrap_or(crate::types::PolicyScope::Project)
         .as_str()
         .to_string();
+    let storage = get_str(&map, "storage").and_then(|s| {
+        crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string())
+    });
     Ok(RuleFrontmatter {
         id,
         level,
@@ -80,6 +85,11 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
         status,
         share,
         scope,
+        storage,
+        source: get_str(&map, "source").filter(|s| !s.is_empty()),
+        root_id: get_str(&map, "rootId")
+            .or_else(|| get_str(&map, "root_id"))
+            .filter(|s| !s.is_empty()),
     })
 }
 
@@ -108,9 +118,13 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
         .unwrap_or(crate::types::PolicyScope::Project)
         .as_str()
         .to_string();
+    let storage = get_str(&map, "storage").and_then(|s| {
+        crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string())
+    });
     Ok(SkillFrontmatter {
         name,
         description,
+        always_apply: get_bool(&map, "alwaysApply"),
         triggers: get_str_list(&map, "triggers"),
         tags,
         priority: get_i32(&map, "priority").unwrap_or(50),
@@ -119,6 +133,11 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
         status,
         share,
         scope,
+        storage,
+        source: get_str(&map, "source").filter(|s| !s.is_empty()),
+        root_id: get_str(&map, "rootId")
+            .or_else(|| get_str(&map, "root_id"))
+            .filter(|s| !s.is_empty()),
     })
 }
 
@@ -150,6 +169,11 @@ fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
             "scope".into(),
             "must be company, workspace, project, private_user, or private_project".into(),
         );
+    }
+    if let Some(ref s) = fm.storage {
+        if crate::config::PolicyStorage::parse(s).is_none() {
+            fields.insert("storage".into(), "must be files or database".into());
+        }
     }
     if !fm.always_apply && fm.globs.is_empty() && fm.triggers.is_empty() {
         fields.insert(
@@ -209,10 +233,29 @@ pub fn serialize_rule(fm: &RuleFrontmatter, body: &str) -> String {
     if fm.share {
         lines.push("share: true".into());
     }
+    if let Some(ref s) = fm.storage {
+        lines.push(format!("storage: {s}"));
+    }
+    if let Some(ref s) = fm.source {
+        lines.push(format!("source: {}", yaml_string(s)));
+    }
+    if let Some(ref r) = fm.root_id {
+        lines.push(format!("rootId: {r}"));
+    }
     lines.push("---".into());
     lines.push(String::new());
     lines.push(body.trim().to_string());
     lines.join("\n")
+}
+
+/// Serialize a stub rule file (frontmatter + stub marker body).
+pub fn serialize_rule_stub(fm: &RuleFrontmatter) -> String {
+    serialize_rule(fm, crate::paths::STUB_BODY_MARKER)
+}
+
+/// Serialize a stub skill file (frontmatter + stub marker body).
+pub fn serialize_skill_stub(fm: &SkillFrontmatter) -> String {
+    serialize_skill(fm, crate::paths::STUB_BODY_MARKER)
 }
 
 pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
@@ -220,6 +263,7 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
         "---".into(),
         format!("name: {}", fm.name),
         format!("description: {}", yaml_string(&fm.description)),
+        format!("alwaysApply: {}", fm.always_apply),
     ];
     if !fm.triggers.is_empty() {
         lines.push(format!(
@@ -239,6 +283,15 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     lines.push(format!("scope: {}", fm.scope));
     if fm.share {
         lines.push("share: true".into());
+    }
+    if let Some(ref s) = fm.storage {
+        lines.push(format!("storage: {s}"));
+    }
+    if let Some(ref s) = fm.source {
+        lines.push(format!("source: {}", yaml_string(s)));
+    }
+    if let Some(ref r) = fm.root_id {
+        lines.push(format!("rootId: {r}"));
     }
     if let Some(ref t) = fm.context_task {
         lines.push(format!("contextTask: {}", yaml_string(t)));
@@ -338,10 +391,24 @@ mod tests {
             status: "approved".into(),
             share: false,
             scope: "project".into(),
+            storage: None,
+            source: None,
+            root_id: None,
         };
         let raw = serialize_rule(&fm, "Always say Hello World");
         let doc = parse_rule_file(Path::new("hello-world.mdc"), &raw).unwrap();
         assert_eq!(doc.frontmatter.globs.len(), 2);
         assert!(doc.frontmatter.always_apply);
+    }
+
+    #[test]
+    fn parse_skill_always_apply_roundtrip() {
+        let raw = "---\nname: old-coder\ndescription: evidence first\nalwaysApply: true\n---\n\nFollow the gauntlet.\n";
+        let doc = parse_skill_file(Path::new("SKILL.md"), raw).unwrap();
+        assert!(doc.frontmatter.always_apply);
+        let round = serialize_skill(&doc.frontmatter, &doc.body);
+        let again = parse_skill_file(Path::new("SKILL.md"), &round).unwrap();
+        assert!(again.frontmatter.always_apply);
+        assert!(round.contains("alwaysApply: true"));
     }
 }

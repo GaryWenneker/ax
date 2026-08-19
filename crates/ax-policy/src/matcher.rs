@@ -103,8 +103,7 @@ pub async fn match_policy(pool: &SqlitePool, input: &MatchInput) -> Result<Match
             matched_skills.push((skill.priority, m));
         }
     }
-    matched_skills.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
-    let skills_out: Vec<MatchedSkill> = matched_skills.into_iter().take(2).map(|(_, s)| s).collect();
+    let skills_out = select_matched_skills(matched_skills);
 
     let max_chars = max_inject_chars();
     let inject = format_inject_block(&rules_out, &skills_out, max_chars);
@@ -164,9 +163,24 @@ fn score_rule(rule: &PolicyRuleRow, prompt_lc: &str, files: &[String]) -> Option
     })
 }
 
+fn select_matched_skills(matched: Vec<(i32, MatchedSkill)>) -> Vec<MatchedSkill> {
+    let (mut always, mut rest): (Vec<_>, Vec<_>) =
+        matched.into_iter().partition(|(_, s)| s.always_apply);
+    always.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
+    rest.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
+    let mut out: Vec<MatchedSkill> = always.into_iter().map(|(_, s)| s).collect();
+    out.extend(rest.into_iter().take(2).map(|(_, s)| s));
+    out
+}
+
 fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<MatchedSkill> {
     let mut score = 0i32;
     let mut reasons = Vec::new();
+
+    if skill.always_apply {
+        score += 100;
+        reasons.push("alwaysApply".into());
+    }
 
     for trigger in &skill.triggers {
         let t = trigger.to_lowercase();
@@ -194,6 +208,7 @@ fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<
         reason: reasons.join(", "),
         description: skill.description.clone(),
         body: skill.body.clone(),
+        always_apply: skill.always_apply,
     })
 }
 
@@ -238,4 +253,98 @@ pub fn max_inject_chars() -> usize {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(16_000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PolicySkillRow;
+
+    fn skill_row(name: &str, always: bool, triggers: &[&str], priority: i32) -> PolicySkillRow {
+        PolicySkillRow {
+            name: name.into(),
+            description: "evidence-first implementation workflow".into(),
+            always_apply: always,
+            triggers: triggers.iter().map(|s| (*s).to_string()).collect(),
+            tags: vec![],
+            priority,
+            context_task: None,
+            body: "BODY".into(),
+            source_path: String::new(),
+            enabled: true,
+            status: "approved".into(),
+            scope: "company".into(),
+            storage: None,
+            source: None,
+            root_id: None,
+            stub_path: None,
+            effective_storage: String::new(),
+            storage_is_override: false,
+        }
+    }
+
+    #[test]
+    fn empty_prompt_matches_always_apply_skill() {
+        let skill = skill_row("old-coder", true, &["implement"], 90);
+        let matched = score_skill(&skill, "").expect("alwaysApply must match empty prompt");
+        assert_eq!(matched.name, "old-coder");
+        assert!(matched.always_apply);
+        assert!(matched.reason.contains("alwaysApply"));
+    }
+
+    #[test]
+    fn empty_prompt_skips_trigger_only_skill() {
+        let skill = skill_row("startup", false, &["preflight"], 100);
+        assert!(score_skill(&skill, "").is_none());
+    }
+
+    #[test]
+    fn select_keeps_all_always_apply_plus_two_contextual() {
+        let matched = vec![
+            (10, MatchedSkill {
+                name: "a".into(),
+                score: 100,
+                reason: "alwaysApply".into(),
+                description: String::new(),
+                body: String::new(),
+                always_apply: true,
+            }),
+            (90, MatchedSkill {
+                name: "b".into(),
+                score: 100,
+                reason: "alwaysApply".into(),
+                description: String::new(),
+                body: String::new(),
+                always_apply: true,
+            }),
+            (50, MatchedSkill {
+                name: "c".into(),
+                score: 25,
+                reason: "trigger:x".into(),
+                description: String::new(),
+                body: String::new(),
+                always_apply: false,
+            }),
+            (40, MatchedSkill {
+                name: "d".into(),
+                score: 25,
+                reason: "trigger:x".into(),
+                description: String::new(),
+                body: String::new(),
+                always_apply: false,
+            }),
+            (30, MatchedSkill {
+                name: "e".into(),
+                score: 25,
+                reason: "trigger:x".into(),
+                description: String::new(),
+                body: String::new(),
+                always_apply: false,
+            }),
+        ];
+        let out = select_matched_skills(matched);
+        let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["b", "a", "c", "d"]);
+        assert!(out.iter().filter(|s| s.always_apply).count() == 2);
+    }
 }

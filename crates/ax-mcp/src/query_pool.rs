@@ -43,6 +43,9 @@ pub fn is_read_tool(name: &str) -> bool {
             | "ax_callers"
             | "ax_callees"
             | "ax_impact"
+            | "ax_cycles"
+            | "ax_path"
+            | "ax_api"
             | "ax_affected"
             | "ax_recall"
     )

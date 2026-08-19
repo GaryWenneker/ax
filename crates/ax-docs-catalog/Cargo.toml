@@ -1,0 +1,18 @@
+[package]
+name = "ax-docs-catalog"
+version = "4.3.0"
+edition = "2021"
+description = "Sync AzDO wiki + workspace docs into ax.db (documentation-catalog memories)"
+
+[dependencies]
+ax-core = { workspace = true }
+ax-memory = { workspace = true }
+ax-extraction = { workspace = true }
+ax-utils = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+walkdir = { workspace = true }
+regex = { workspace = true }
+tokio = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

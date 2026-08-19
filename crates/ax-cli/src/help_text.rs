@@ -329,6 +329,36 @@ Examples:
   ax savings tag-session --session-id <uuid> --model composer-2.5-fast
   ax savings hook install";
 
+pub const EXPORT_OKF_LONG: &str = "Export an Open Knowledge Format (OKF) Markdown bundle from the indexed graph.
+
+Writes one YAML-frontmatter Markdown page per concept (functions, types, …) with
+Calls / Called by links — a git-diffable OKF projection of `.ax/ax.db`.
+
+Configure the relative output path in ax.json under `okf` (default: `.ax/knowledge`).
+Optional `okf.azdoWiki` publishes the bundle to an Azure DevOps Wiki (or any git wiki)
+when you pass `--publish-wiki` (requires network credentials via git; no secrets in ax).
+
+Examples:
+  ax export okf
+  ax export okf --out knowledge
+  ax export okf --check --ci
+  ax export okf --publish-wiki --dry-run
+  ax export concepts          # alias for ax export okf";
+
+pub const DOCS_CATALOG_LONG: &str = "Sync AzDO wiki + workspace documentation into ax.db.
+
+Pulls the Frontends-Algemeen wiki (git clone/pull), scans .docs/, agent skills, and
+script READMEs, writes .ax/memory/documentation-catalog.jsonl, imports into ax.db,
+and runs ax sync. Same engine powers the Command Center Memory page.
+
+Configure paths in ax.json under docsCatalog (optional; VfPf defaults apply).
+
+Examples:
+  ax docs-catalog sync
+  ax docs-catalog sync --skip-wiki-pull
+  ax docs-catalog sync --dry-run
+  ax docs-catalog sync --json";
+
 pub const PRICING_LONG: &str = "Sync and inspect daily model prices from OpenRouter.
 
 Snapshots land in ~/.ax/usage.db and drive Savings cost estimates and the Command Center

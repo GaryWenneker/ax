@@ -1,6 +1,7 @@
 //! Ax facade - wires all layers together.
 
 mod project_config;
+pub mod okf;
 pub mod report;
 pub mod stats_format;
 pub mod workspace;
@@ -28,6 +29,10 @@ use ax_types::{
 use ax_utils::file_lock::FileLock;
 use ax_utils::mutex::AsyncMutex;
 
+pub use okf::{
+    export_okf_bundle, publish_okf_wiki, validate_okf_bundle, OkfConfig, OkfExportOptions,
+    OkfExportReport, OkfPublishOptions, OkfPublishReport, OkfValidateReport, OkfWikiConfig,
+};
 pub use project_config::ProjectConfig;
 pub use workspace::{
     discover_members, find_workspace_root, load_workspace_config, member_roots,
@@ -384,6 +389,12 @@ impl Ax {
     }
 
     pub async fn get_pending_files(&self) -> Vec<PendingFile> {
+        // Prefer the process-global registry so MCP tool Ax instances see
+        // pending files owned by the background watcher Ax.
+        let global = ax_sync::global_pending_files(&self.project_root);
+        if !global.is_empty() {
+            return global;
+        }
         if let Some(w) = &self.watcher {
             w.get_pending_files().await
         } else {
@@ -510,6 +521,115 @@ impl Ax {
         self.traverser.get_callees(node_id, depth).await
     }
 
+    /// Call-graph cycles (non-trivial SCCs on Calls/References edges).
+    pub async fn find_cycles(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<ax_graph::CallCycle>, ax_utils::errors::AxError> {
+        let edges = self.queries.get_all_edges().await?;
+        // Over-fetch then drop cycles that only live in bundles/dist.
+        let fetch = if limit == 0 { 0 } else { limit.saturating_mul(8).max(64) };
+        let mut cycles = ax_graph::find_call_cycles(&edges, fetch);
+        let mut kept = Vec::new();
+        for c in cycles.drain(..) {
+            let mut bundleish = false;
+            for id in &c.nodes {
+                if let Ok(Some(n)) = self.get_node(id).await {
+                    let fp = n.file_path.replace('\\', "/").to_ascii_lowercase();
+                    if fp.contains("/dist/")
+                        || fp.contains("/node_modules/")
+                        || fp.contains("/vendor/")
+                        || fp.contains(".min.js")
+                    {
+                        bundleish = true;
+                        break;
+                    }
+                }
+            }
+            if !bundleish {
+                kept.push(c);
+            }
+            if limit > 0 && kept.len() >= limit {
+                break;
+            }
+        }
+        Ok(kept)
+    }
+
+    /// Shortest Calls/References path between two node ids.
+    pub async fn find_path(
+        &self,
+        from_id: &str,
+        to_id: &str,
+    ) -> Result<Option<Vec<String>>, ax_utils::errors::AxError> {
+        let edges = self.queries.get_all_edges().await?;
+        Ok(ax_graph::shortest_call_path(&edges, from_id, to_id))
+    }
+
+    /// Public API surface for a module/path prefix.
+    ///
+    /// Matches exported symbols (`is_exported`) or `Visibility::Public`, whose
+    /// file path / qualified name contains the module needle (e.g. `ax-mcp`
+    /// or `crates/ax-mcp`).
+    pub async fn module_api(
+        &self,
+        module: &str,
+        limit: usize,
+    ) -> Result<Vec<ax_types::Node>, ax_utils::errors::AxError> {
+        use ax_types::{NodeKind, Visibility};
+
+        let needle = module.trim().trim_matches('/').replace('\\', "/");
+        let needle_l = needle.to_ascii_lowercase();
+        let nodes = self.queries.get_all_nodes().await?;
+        let in_module = |n: &ax_types::Node| {
+            let fp = n.file_path.replace('\\', "/").to_ascii_lowercase();
+            let qn = n.qualified_name.replace('\\', "/").to_ascii_lowercase();
+            // Skip build artifacts / bundles.
+            if fp.contains("/dist/") || fp.contains("\\dist\\") || fp.contains("/node_modules/") {
+                return false;
+            }
+            path_matches_module(&fp, &needle_l) || path_matches_module(&qn, &needle_l)
+        };
+        let is_api_kind = |n: &ax_types::Node| {
+            matches!(
+                n.kind,
+                NodeKind::Function
+                    | NodeKind::Method
+                    | NodeKind::Struct
+                    | NodeKind::Class
+                    | NodeKind::Trait
+                    | NodeKind::Interface
+                    | NodeKind::Enum
+                    | NodeKind::TypeAlias
+                    | NodeKind::Module
+                    | NodeKind::Component
+                    | NodeKind::Route
+            )
+        };
+        let is_public = |n: &ax_types::Node| {
+            n.is_exported.unwrap_or(false) || matches!(n.visibility, Some(Visibility::Public))
+        };
+
+        let mut out: Vec<_> = nodes
+            .iter()
+            .filter(|n| in_module(n) && is_api_kind(n) && is_public(n))
+            .cloned()
+            .collect();
+        // Many extractors leave is_exported unset/false for Rust `pub` items.
+        // Fall back to API-kind symbols under the module path.
+        if out.is_empty() {
+            out = nodes
+                .into_iter()
+                .filter(|n| in_module(n) && is_api_kind(n))
+                .collect();
+        }
+        out.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
+        if limit > 0 && out.len() > limit {
+            out.truncate(limit);
+        }
+        Ok(out)
+    }
+
     pub async fn clear(&mut self) -> Result<(), ax_utils::errors::AxError> {
         self.queries.clear_all().await
     }
@@ -585,6 +705,33 @@ impl Ax {
     ) -> Result<ax_policy::GuardResult, ax_utils::errors::AxError> {
         ax_policy::guard_operation(self.db.pool(), &self.project_root, path, op, content).await
     }
+}
+
+fn path_matches_module(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    if haystack == needle
+        || haystack.starts_with(&format!("{needle}/"))
+        || haystack.starts_with(&format!("{needle}::"))
+        || haystack.contains(&format!("/{needle}/"))
+        || haystack.contains(&format!("/{needle}::"))
+        || haystack.contains(&format!("/{needle}"))
+        || haystack.contains(&format!("::{needle}"))
+        || haystack.contains(&format!("::{needle}::"))
+        || haystack.ends_with(&format!("/{needle}"))
+    {
+        return true;
+    }
+    // Bare crate name → crates/<name>/
+    if !needle.contains('/') {
+        let under_crates = format!("crates/{needle}/");
+        let under_crates_exact = format!("crates/{needle}");
+        if haystack.contains(&under_crates) || haystack.contains(&under_crates_exact) {
+            return true;
+        }
+    }
+    false
 }
 
 async fn finalize_after_extract(

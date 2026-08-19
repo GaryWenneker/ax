@@ -14,7 +14,7 @@ pub async fn guard_operation(
     op: GuardOp,
     content: Option<&[u8]>,
 ) -> Result<GuardResult, AxError> {
-    let (rules, _skills) = cached_rules_and_skills(pool).await?;
+    let (rules, skills) = cached_rules_and_skills(pool).await?;
     let mut violations = Vec::new();
 
     let rel = path
@@ -23,6 +23,7 @@ pub async fn guard_operation(
         .to_string_lossy()
         .replace('\\', "/");
     let rel_lc = rel.to_lowercase();
+    let require_skill_exempt = is_require_skill_exempt(&rel);
 
     for rule in rules.iter() {
         if PolicyLevel::parse(&rule.level) != Some(PolicyLevel::Critical) {
@@ -68,6 +69,7 @@ pub async fn guard_operation(
         //   guard: forbid-path: "**/*.pem"
         //   guard: forbid-content: "eval("            (or /regex/ form)
         //   guard: require-content: "requireAuth("    (scoped by the rule's `globs`)
+        //   guard: require-skill: "old-coder"         (skill must exist, be approved, alwaysApply)
         for directive in parse_guard_directives(&rule.body) {
             match directive {
                 GuardDirective::ForbidPath(glob) => {
@@ -111,6 +113,19 @@ pub async fn guard_operation(
                                     ),
                                 });
                             }
+                        }
+                    }
+                }
+                GuardDirective::RequireSkill(name) => {
+                    if matches!(op, GuardOp::Write | GuardOp::Delete) && !require_skill_exempt {
+                        if !skill_satisfies_require(&skills, &name) {
+                            violations.push(GuardViolation {
+                                rule_id: rule.id.clone(),
+                                message: format!(
+                                    "Required skill '{name}' is missing, disabled, not approved, or not alwaysApply (rule {})",
+                                    rule.id
+                                ),
+                            });
                         }
                     }
                 }
@@ -172,11 +187,13 @@ enum GuardDirective {
     ForbidPath(String),
     ForbidContent(GuardMatcher),
     RequireContent(GuardMatcher),
+    RequireSkill(String),
 }
 
 const FORBID_PATH_PREFIX: &str = "forbid-path:";
 const FORBID_CONTENT_PREFIX: &str = "forbid-content:";
 const REQUIRE_CONTENT_PREFIX: &str = "require-content:";
+const REQUIRE_SKILL_PREFIX: &str = "require-skill:";
 
 /// Scan a rule body for `guard: <keyword>: "<value>"` lines. Matching is
 /// intentionally narrow (exact `guard:` prefix + a known keyword) so ordinary
@@ -184,7 +201,11 @@ const REQUIRE_CONTENT_PREFIX: &str = "require-content:";
 fn parse_guard_directives(body: &str) -> Vec<GuardDirective> {
     let mut out = Vec::new();
     for raw_line in body.lines() {
-        let line = raw_line.trim().trim_start_matches(['-', '*']).trim();
+        let line = raw_line
+            .trim()
+            .trim_start_matches(['-', '*', '`'])
+            .trim_end_matches('`')
+            .trim();
         let lower = line.to_ascii_lowercase();
         let Some(after_guard) = lower.strip_prefix("guard:") else {
             continue;
@@ -203,6 +224,15 @@ fn parse_guard_directives(body: &str) -> Vec<GuardDirective> {
             } else if after_guard.starts_with(REQUIRE_CONTENT_PREFIX) {
                 (REQUIRE_CONTENT_PREFIX.len(), |v| {
                     GuardMatcher::parse(&v).map(GuardDirective::RequireContent)
+                })
+            } else if after_guard.starts_with(REQUIRE_SKILL_PREFIX) {
+                (REQUIRE_SKILL_PREFIX.len(), |v| {
+                    let name = v.trim();
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(GuardDirective::RequireSkill(name.to_string()))
+                    }
                 })
             } else {
                 continue;
@@ -238,6 +268,23 @@ fn path_matches_glob(pattern: &str, rel_path: &str) -> bool {
 
 fn any_glob_matches(patterns: &[String], rel_path: &str) -> bool {
     patterns.iter().any(|p| path_matches_glob(p, rel_path))
+}
+
+/// Policy and template paths stay writable so seed/index can repair a missing skill.
+fn is_require_skill_exempt(rel: &str) -> bool {
+    let r = rel.replace('\\', "/");
+    r.starts_with(".ax/policy/")
+        || r.contains("/.ax/policy/")
+        || r.starts_with("crates/ax-policy/templates/")
+}
+
+fn skill_satisfies_require(skills: &[crate::types::PolicySkillRow], name: &str) -> bool {
+    skills.iter().any(|s| {
+        s.name.eq_ignore_ascii_case(name)
+            && s.enabled
+            && (s.status.is_empty() || s.status.eq_ignore_ascii_case("approved"))
+            && s.always_apply
+    })
 }
 
 fn is_sensitive_path(rel_lc: &str) -> bool {
@@ -291,7 +338,8 @@ mod tests {
                 id TEXT PRIMARY KEY, level TEXT, always_apply INTEGER, globs TEXT, triggers TEXT,
                 tags TEXT, priority INTEGER, body TEXT, source_path TEXT, content_hash TEXT, updated_at INTEGER,
                 enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project'
+                scope TEXT NOT NULL DEFAULT 'project',
+                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT
             )",
         )
         .execute(&pool)
@@ -299,11 +347,13 @@ mod tests {
         .unwrap();
         sqlx::query(
             "CREATE TABLE policy_skills (
-                name TEXT PRIMARY KEY, description TEXT, triggers TEXT, tags TEXT,
+                name TEXT PRIMARY KEY, description TEXT, always_apply INTEGER NOT NULL DEFAULT 0,
+                triggers TEXT, tags TEXT,
                 priority INTEGER, context_task TEXT, body TEXT, source_path TEXT,
                 content_hash TEXT, updated_at INTEGER,
                 enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project'
+                scope TEXT NOT NULL DEFAULT 'project',
+                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT
             )",
         )
         .execute(&pool)
@@ -446,5 +496,140 @@ mod tests {
             .await
             .unwrap();
         assert!(out_of_scope.allowed);
+    }
+
+    async fn insert_skill(
+        pool: &SqlitePool,
+        name: &str,
+        always_apply: i32,
+        enabled: i32,
+        status: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO policy_skills (name, description, always_apply, triggers, tags, priority, context_task, body, source_path, content_hash, updated_at, enabled, status, scope)
+             VALUES (?, '', ?, '[]', '[]', 50, NULL, '', '', '', 0, ?, ?, 'company')",
+        )
+        .bind(name)
+        .bind(always_apply)
+        .bind(enabled)
+        .bind(status)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn require_skill_blocks_when_skill_missing() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "old-coder-mandatory",
+            "[]",
+            "guard: require-skill: \"old-coder\"\n",
+        )
+        .await;
+        let root = dir.path();
+        let target = root.join("src").join("lib.rs");
+        let result = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"fn f() {}"))
+            .await
+            .unwrap();
+        assert!(!result.allowed);
+        assert_eq!(result.violations[0].rule_id, "old-coder-mandatory");
+        assert!(result.violations[0].message.contains("old-coder"));
+    }
+
+    #[tokio::test]
+    async fn require_skill_blocks_when_skill_not_always_apply() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "old-coder-mandatory",
+            "[]",
+            "guard: require-skill: \"old-coder\"\n",
+        )
+        .await;
+        insert_skill(&pool, "old-coder", 0, 1, "approved").await;
+        let root = dir.path();
+        let target = root.join("app.rs");
+        let result = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"fn f() {}"))
+            .await
+            .unwrap();
+        assert!(!result.allowed);
+        assert!(result.violations[0].message.contains("alwaysApply"));
+    }
+
+    #[tokio::test]
+    async fn require_skill_parses_backtick_wrapped_directive() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "old-coder-mandatory",
+            "[]",
+            "`guard: require-skill: \"old-coder\"`\n",
+        )
+        .await;
+        insert_skill(&pool, "old-coder", 1, 1, "approved").await;
+        let root = dir.path();
+        let present = guard_operation(
+            &pool,
+            root,
+            &root.join("other.rs"),
+            GuardOp::Write,
+            Some(b"fn f() {}"),
+        )
+        .await
+        .unwrap();
+        assert!(present.allowed, "{:?}", present.violations);
+        sqlx::query("DELETE FROM policy_skills WHERE name = 'old-coder'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let missing = guard_operation(
+            &pool,
+            root,
+            &root.join("other.rs"),
+            GuardOp::Write,
+            Some(b"fn f() {}"),
+        )
+        .await
+        .unwrap();
+        assert!(!missing.allowed);
+    }
+
+    #[tokio::test]
+    async fn require_skill_allows_when_skill_is_always_apply() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "old-coder-mandatory",
+            "[]",
+            "guard: require-skill: \"old-coder\"\n",
+        )
+        .await;
+        insert_skill(&pool, "old-coder", 1, 1, "approved").await;
+        let root = dir.path();
+        let target = root.join("app.rs");
+        let result = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"fn f() {}"))
+            .await
+            .unwrap();
+        assert!(result.allowed, "{:?}", result.violations);
+    }
+
+    #[tokio::test]
+    async fn require_skill_exempts_policy_paths() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "old-coder-mandatory",
+            "[]",
+            "guard: require-skill: \"old-coder\"\n",
+        )
+        .await;
+        let root = dir.path();
+        let target = root.join(".ax").join("policy").join("rules").join("x.mdc");
+        let result = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"---\nid: x\n---\n"))
+            .await
+            .unwrap();
+        assert!(result.allowed, "{:?}", result.violations);
     }
 }

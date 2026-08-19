@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import AgentsSettingsSection from '../components/AgentsSettingsSection';
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
+import OkfSettingsSection from '../components/OkfSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
 import SharingSettingsSection from '../components/SharingSettingsSection';
 import PolicyShareSettingsSection from '../components/PolicyShareSettingsSection';
@@ -434,6 +435,19 @@ export default function SettingsPage() {
           <div className="settings-card-body">
             <PolicySyncSettingsSection />
             <SharingSettingsSection />
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <h2>Open Knowledge Format (OKF)</h2>
+            <p>
+              Generate a portable Markdown OKF concept bundle from the indexed graph (
+              <code>ax export okf</code>).
+            </p>
+          </div>
+          <div className="settings-card-body">
+            <OkfSettingsSection />
           </div>
         </section>
 

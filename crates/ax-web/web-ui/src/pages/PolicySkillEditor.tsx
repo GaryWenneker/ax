@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
 import MarkdownPreview from '../components/MarkdownPreview';
+import PolicyMetaResizeHandle from '../components/PolicyEditorResize';
 import { SkillMetaView } from '../components/PolicyMetaView';
 import {
   PageCard,
@@ -24,6 +25,7 @@ interface Props {
 const emptyFm = (): SkillFrontmatter => ({
   name: '',
   description: '',
+  alwaysApply: false,
   triggers: [],
   tags: [],
   priority: 50,
@@ -40,6 +42,7 @@ function parseCsv(s: string): string[] {
 function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
   return {
     ...fm,
+    alwaysApply: !!fm.alwaysApply,
     enabled: fm.enabled !== false,
     triggers: fm.triggers ?? [],
     tags: fm.tags ?? [],
@@ -189,6 +192,20 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                         <span className="settings-toggle-thumb" />
                       </button>
                     </PageRow>
+                    <PageRow
+                      title="Always apply"
+                      description="Matching: inject this skill on every agent turn, including empty prompts. Not the same as Enabled."
+                    >
+                      <button
+                        type="button"
+                        className={`settings-toggle${fm.alwaysApply ? ' on' : ''}`}
+                        onClick={() => setFm({ ...fm, alwaysApply: !fm.alwaysApply })}
+                        aria-pressed={!!fm.alwaysApply}
+                        aria-label="Always apply"
+                      >
+                        <span className="settings-toggle-thumb" />
+                      </button>
+                    </PageRow>
                     <PageRow title="Description" description="Short summary shown in skill lists.">
                       <textarea
                         className="settings-input"
@@ -198,7 +215,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                         style={{ resize: 'vertical' }}
                       />
                     </PageRow>
-                    <PageRow title="Priority" description="Higher priority skills sort first.">
+                    <PageRow title="Priority" description="Higher priority wins when multiple skills match (list is alphabetical by name).">
                       <input
                         className="settings-input settings-input--narrow"
                         type="number"
@@ -238,6 +255,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                   <SkillMetaView
                     name={fm.name}
                     description={fm.description}
+                    alwaysApply={!!fm.alwaysApply}
                     priority={fm.priority}
                     triggers={fm.triggers}
                     tags={fm.tags}
@@ -249,6 +267,8 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
               </PageCardBody>
             </PageCard>
           </PageStack>
+
+          <PolicyMetaResizeHandle />
 
           <PageCard
             title="Skill body"

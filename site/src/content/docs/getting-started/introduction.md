@@ -18,6 +18,15 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.4.0
+
+- **Guarded old-coder** — `old-coder` skill has `alwaysApply: true` (matches empty prompts); `old-coder-mandatory` adds `guard: require-skill: "old-coder"` so `ax_guard` blocks Write/Delete when the skill is missing, disabled, or not always-apply. Policy/template paths stay writable for seed repair.
+- **Preflight contract** — always-apply rules **and** always-apply skills are never hard-truncated; contextual rules/skills drop first. Policy match errors return degraded JSON instead of MCP `isError`. Optional `projectPath` on `ax_preflight`.
+- **Skill `alwaysApply` in Command Center** — toggle on Policy → Skills; persisted in `ax.db` (schema v16).
+- **OKF export** — `ax export okf` / `ax export concepts` writes a portable Markdown concept bundle; optional Azure DevOps Wiki publish. See [OKF](/guides/okf/).
+
+See [Policy Engine](/guides/policy-engine/) and [OKF](/guides/okf/).
+
 ## What's new in v4.3.1
 
 - **Global old-coder policy** — `ax init` and `ax install` seed [old-coder](https://github.com/AmazingAng/old-coder) skills to `~/.ax/global_policy/` and `~/.cursor/skills/` (MIT, includes reference docs).

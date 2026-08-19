@@ -146,6 +146,98 @@ export function captureGitMemories(limit = 100): Promise<GitCaptureResult> {
   return post<GitCaptureResult>('/memory/capture-git', { limit });
 }
 
+export interface DocsCatalogSyncReport {
+  wikiAction: string;
+  wikiPages: number;
+  wikiSections: number;
+  integratiePages: number;
+  digitaleProducten: number;
+  docsSections: number;
+  skills: number;
+  scriptReadmes: number;
+  memoriesBuilt: number;
+  importInserted: number;
+  importUpdated: number;
+  importSkipped: number;
+  syncFilesIndexed: number;
+  durationMs: number;
+  jsonlPath: string;
+  dryRun: boolean;
+  memories: { id: string; kind: string; title: string }[];
+}
+
+export function syncDocsCatalog(opts?: {
+  skipWikiPull?: boolean;
+  dryRun?: boolean;
+}): Promise<DocsCatalogSyncReport> {
+  return post<DocsCatalogSyncReport>('/docs-catalog/sync', {
+    skipWikiPull: opts?.skipWikiPull ?? false,
+    dryRun: opts?.dryRun ?? false,
+  });
+}
+
+/** Open Knowledge Format (OKF) — Command Center Settings. */
+export interface OkfConfigInfo {
+  enabled: boolean;
+  outDir: string;
+  outDirAbs: string;
+  kinds: string[];
+  autoExportOnSync: boolean;
+  wikiEnabled: boolean;
+  wikiRemoteConfigured: boolean;
+  wikiSubdir: string;
+  bundleExists: boolean;
+  format: string;
+}
+
+export interface OkfExportReport {
+  exported: number;
+  outDir: string;
+  byKind: Record<string, number>;
+  format: string;
+}
+
+export interface OkfValidateReport {
+  ok: boolean;
+  missingIndex: boolean;
+  pages: number;
+  danglingLinks: string[];
+  outDir: string;
+}
+
+export interface OkfPublishReport {
+  wikiAction: string;
+  subdir: string;
+  filesCopied: number;
+  committed: boolean;
+  pushed: boolean;
+  dryRun: boolean;
+}
+
+export function fetchOkfConfig(): Promise<OkfConfigInfo> {
+  return get<OkfConfigInfo>('/okf/config');
+}
+
+export function exportOkf(opts?: { limit?: number }): Promise<OkfExportReport> {
+  return post<OkfExportReport>('/okf/export', {
+    limit: opts?.limit ?? 0,
+  });
+}
+
+export function validateOkf(): Promise<OkfValidateReport> {
+  return post<OkfValidateReport>('/okf/validate', {});
+}
+
+export function publishOkf(opts?: {
+  dryRun?: boolean;
+  noPush?: boolean;
+}): Promise<OkfPublishReport> {
+  return post<OkfPublishReport>('/okf/publish', {
+    dryRun: opts?.dryRun ?? false,
+    noPush: opts?.noPush ?? false,
+  });
+}
+
 export function setMemoryEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }> {
   return fetch(`${BASE}/memory/${encodeURIComponent(id)}/enabled`, {
     method: 'PATCH',

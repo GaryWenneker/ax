@@ -33,6 +33,8 @@ ax-reasoning = { workspace = true }
 ax-lsp = { workspace = true }
 ax-plugins = { workspace = true }
 ax-mcp = { workspace = true }
+ax-docs-catalog = { workspace = true }
+ax-core = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }
 reqwest = { workspace = true }

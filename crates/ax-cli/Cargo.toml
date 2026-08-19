@@ -37,6 +37,7 @@ ax-ship = { workspace = true }
 ax-installer = { workspace = true }
 ax-agent = { workspace = true }
 ax-lsp = { workspace = true }
+ax-docs-catalog = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }

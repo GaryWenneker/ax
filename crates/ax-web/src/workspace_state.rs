@@ -128,6 +128,11 @@ impl WebHub {
             .nest("/api/ship", ship::router_hub(hub.clone()))
             .nest("/api/usage", crate::savings::router(hub.clone()))
             .nest("/api/memory", crate::memory::router_hub(hub.clone()))
+            .nest(
+                "/api/docs-catalog",
+                crate::docs_catalog::router_hub(hub.clone()),
+            )
+            .nest("/api/okf", crate::okf_api::router_hub(hub.clone()))
             .nest("/api/workspace", workspace::router_hub(hub.clone()))
             .nest("/api/agent", agent::router_hub(hub.clone()))
             .nest("/api/actions", crate::actions::router_hub(hub.clone()))

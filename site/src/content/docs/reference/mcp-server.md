@@ -13,15 +13,15 @@ When a `.ax/` index exists, the agent gets the tools below. In a workspace with 
 
 When `.ax/policy/` is indexed (**ax v2.0.0+**), policy tools are listed automatically. See [Policy Engine](/guides/policy-engine/).
 
-## One tool by default: `ax_explore`
+## Lean tools by default: `ax_explore` + preflight
 
-By default the server exposes a **single tool**, `ax_explore`. It's Read-equivalent: give it a natural-language question or a bag of symbol and file names, and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file — the same shape the `Read` tool gives you — plus the call paths between them (including dynamic-dispatch hops like callbacks, React re-render, and JSX children that grep can't follow) and a blast-radius summary of what depends on them. One call usually answers the whole question.
+By default the server lists a **lean** tool set: `ax_explore`, `ax_preflight`, `ax_policy_capture`, and (when policy exists) `ax_rules` / `ax_skill` / `ax_guard`. `ax_explore` is Read-equivalent: give it a natural-language question or a bag of symbol and file names, and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file — plus call paths and a blast-radius summary. One call usually answers the whole question.
 
-Exposing a single strong tool is deliberate. Measured agent behavior showed that one well-aimed tool steers agents to a direct answer better than a menu of narrower ones — fewer mis-picks — and agents reach for it both when answering questions and while editing code.
+A lean list is deliberate. Measured agent behavior showed that a small, strong surface steers agents to a direct answer better than a menu of narrower ones — fewer mis-picks.
 
 ## The other tools
 
-Seven more tools exist and stay fully functional, but are **unlisted by default** — everything they return already arrives inline on a `ax_explore` response (its blast-radius section, the relationship map, a symbol's body and its callee list):
+Graph and ops tools stay fully functional via `tools/call`, but are **unlisted by default** — most of what they return already arrives inline on an `ax_explore` response:
 
 | Tool | Purpose |
 |---|---|
@@ -33,17 +33,19 @@ Seven more tools exist and stay fully functional, but are **unlisted by default*
 | `ax_files` | Get the indexed file structure (faster than filesystem scanning) |
 | `ax_status` | Check index health and statistics (includes doc counts by extension) |
 
-Re-enable any of them with the `ax_MCP_TOOLS` environment variable — a comma-separated allowlist of short names that replaces the default:
+Re-enable extras with the `AX_MCP_TOOLS` environment variable — a comma-separated allowlist of short names (or full `ax_*` names). Core tools always stay listed. Use `all` for the full menu:
 
 ```bash
-ax_MCP_TOOLS=explore,node,search,callers
+AX_MCP_TOOLS=explore,node,search,callers
+# or
+AX_MCP_TOOLS=all
 ```
 
 Each also has a CLI equivalent (`ax node` / `query` / `callers` / `callees` / `impact` / `files` / `status`) for scripts and non-MCP harnesses.
 
 ## Operational tools (v4+)
 
-Always advertised (alongside graph extras). Mirror high-value CLI session ops — agents never need to shell out for these:
+Unlisted by default; enable with `AX_MCP_TOOLS=all` or an explicit allowlist (e.g. `sync,lsp,ship`). Mirror high-value CLI session ops — agents never need to shell out for these:
 
 | Tool | Purpose |
 |---|---|
@@ -67,10 +69,10 @@ When `.ax/policy/` contains indexed rules or skills, the server also exposes:
 
 | Tool | Purpose |
 |---|---|
-| `ax_preflight` | Turn-start: matched rules + skills + `inject` (full markdown bodies from SQLite) + auto-injected `<ax_index>` snapshot (doc counts by type) |
+| `ax_preflight` | Turn-start: matched rules + skills + `inject` (always-apply rules and always-apply skills always complete; contextual rules/skills may be omitted with an `ax_skill` / `ax_rules` hint) + auto-injected `<ax_index>` snapshot. Policy match failures return a degraded payload, never MCP `isError`. |
 | `ax_rules` | List all rules or match against a prompt |
 | `ax_skill` | Load the full markdown body of a skill by name |
-| `ax_guard` | Block or warn before writes that violate CRITICAL rules. Built-in checks: UTF-8 BOM/encoding, secrets paths. **Generic gate (v3.1+):** any CRITICAL rule can opt in without code changes by adding a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, or `guard: require-content: "<substring or /regex/>"` line to its body (the last is scoped to files matching that rule's `globs`). |
+| `ax_guard` | Block or warn before writes that violate CRITICAL rules. Built-in checks: UTF-8 BOM/encoding, secrets paths. **Generic gate:** any CRITICAL rule can opt in without code changes by adding a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, `guard: require-content: "<substring or /regex/>"` (scoped by that rule's `globs`), or `guard: require-skill: "<name>"` (skill must be approved and `alwaysApply`) line to its body. |
 
 Agents should **not** read `.ax/policy/` files when these tools are available — policy is indexed locally and returned in MCP responses.
 

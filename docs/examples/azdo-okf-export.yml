@@ -1,0 +1,24 @@
+# Azure Pipelines — generate and validate an Open Knowledge Format (OKF) bundle.
+# Does not require wiki publish. Commit `knowledge/` separately if you want it in git.
+#
+# Prerequisites: ax installed on the agent (or add an install step from getax.wenneker.io).
+
+trigger:
+  - main
+
+pool:
+  vmImage: windows-latest
+
+steps:
+  - checkout: self
+
+  - script: |
+      ax sync
+      ax export okf --out knowledge --check --ci
+    displayName: Export and validate Open Knowledge Format (OKF) bundle
+
+  - task: PublishPipelineArtifact@1
+    inputs:
+      targetPath: knowledge
+      artifact: okf-bundle
+    displayName: Publish OKF bundle artifact

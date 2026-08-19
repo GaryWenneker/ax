@@ -9,6 +9,8 @@ mod mcp_ops;
 mod mcp_quality;
 mod mcp_trace;
 mod memory;
+mod docs_catalog;
+mod okf_api;
 mod policy_share;
 mod plugins_api;
 mod policy;
@@ -53,8 +55,8 @@ struct WebStats {
 }
 
 #[derive(Serialize)]
-struct ApiError {
-    error: String,
+pub(crate) struct ApiError {
+    pub error: String,
 }
 
 fn api_err(msg: impl Into<String>) -> (StatusCode, Json<ApiError>) {

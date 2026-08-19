@@ -224,8 +224,19 @@ async fn call_tool_and_wrap(
             } else {
                 lean_structured(name, value)
             };
+            let pending = project_root
+                .map(ax_sync::global_pending_files)
+                .unwrap_or_default();
+            let annotated = crate::staleness::annotate_staleness(&text, value, &pending);
+            let text_source = if annotated == text {
+                value.clone()
+            } else {
+                // Prefer annotated text for the model-facing content while
+                // keeping structuredContent on the original tool payload.
+                json!({ "text": annotated })
+            };
             let wrapped = wrap_call_tool_result_parts(
-                value,
+                &text_source,
                 structured,
                 value
                     .get("isError")

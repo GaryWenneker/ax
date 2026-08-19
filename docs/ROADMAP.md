@@ -61,3 +61,11 @@ Phone / tablet Command Center (share + PWA path). Agent runs Playwright smoke wi
 ## Extension points
 
 See [EXTENSION_POINTS.md](./EXTENSION_POINTS.md).
+
+## Competitive note — Open Knowledge Format (OKF) vs okf-rs
+
+[okf-rs](https://github.com/jyjeanne/okf-rs) ships a Markdown-first Open Knowledge Format (OKF) toolkit (generate/validate/MCP). ax already covers most of that surface via SQLite + MCP (call graph, explore, insights, LSP enrich, ship), plus ax-only pillars (policy, memory, Command Center).
+
+**Shipped differentiator:** `ax export okf` writes a portable OKF Markdown bundle from `.ax/ax.db`, with relative `okf.outDir` in `ax.json` and optional git-wiki publish (`okf.azdoWiki`). SQLite remains the live query source; OKF is an interoperability/CI projection. See [Open Knowledge Format (OKF)](https://getax.wenneker.io/guides/okf/).
+
+**Non-goals (for now):** DITA bridge, treating the OKF tree as a second query engine, okf-server GraphQL org mesh.

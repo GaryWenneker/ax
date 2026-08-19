@@ -588,6 +588,7 @@ dependencies = [
  "ax-context",
  "ax-core",
  "ax-desktop-client",
+ "ax-docs-catalog",
  "ax-extraction",
  "ax-git",
  "ax-graph",
@@ -697,6 +698,23 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
+]
+
+[[package]]
+name = "ax-docs-catalog"
+version = "4.3.0"
+dependencies = [
+ "ax-core",
+ "ax-extraction",
+ "ax-memory",
+ "ax-utils",
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "walkdir",
 ]
 
 [[package]]
@@ -816,6 +834,7 @@ dependencies = [
  "ax-policy",
  "ax-reasoning",
  "ax-ship",
+ "ax-sync",
  "ax-telemetry",
  "ax-types",
  "ax-usage",
@@ -1093,7 +1112,9 @@ dependencies = [
  "anyhow",
  "async-stream",
  "ax-agent",
+ "ax-core",
  "ax-db",
+ "ax-docs-catalog",
  "ax-git",
  "ax-graph",
  "ax-installer",

@@ -31,6 +31,10 @@ export interface RouteState {
   skillName: string | null;
   kind: string | null;
   sonarTab: SonarTab;
+  /** Full-page rule editor (policy-rule-edit with an existing id). */
+  ruleEditMode?: boolean;
+  /** Full-page skill editor (policy-skill-edit with an existing name). */
+  skillEditMode?: boolean;
 }
 
 const VALID_PAGES: Page[] = [
@@ -141,6 +145,7 @@ export function parseLocation(loc: Location = window.location): RouteState & { v
   const { page, valid } = parsePathname(loc.pathname);
   const params = new URLSearchParams(loc.search);
   const sonarTab = params.get('tab') === 'setup' ? 'setup' : 'dashboard';
+  const edit = params.get('mode') === 'edit';
   return {
     page,
     valid,
@@ -148,14 +153,26 @@ export function parseLocation(loc: Location = window.location): RouteState & { v
     skillName: params.get('name'),
     kind: params.get('kind'),
     sonarTab,
+    ruleEditMode: edit && page === 'policy-rule-edit',
+    skillEditMode: edit && page === 'policy-skill-edit',
   };
 }
 
 export function buildPath(state: Partial<RouteState> & Pick<RouteState, 'page'>): string {
   const base = PAGE_PATH[state.page];
   const params = new URLSearchParams();
-  if (state.page === 'policy-rule-edit' && state.ruleId) params.set('id', state.ruleId);
-  if (state.page === 'policy-skill-edit' && state.skillName) params.set('name', state.skillName);
+  if ((state.page === 'policy-rules' || state.page === 'policy-rule-edit') && state.ruleId) {
+    params.set('id', state.ruleId);
+  }
+  if (state.page === 'policy-rule-edit' && state.ruleId && state.ruleEditMode) {
+    params.set('mode', 'edit');
+  }
+  if ((state.page === 'policy-skills' || state.page === 'policy-skill-edit') && state.skillName) {
+    params.set('name', state.skillName);
+  }
+  if (state.page === 'policy-skill-edit' && state.skillName && state.skillEditMode) {
+    params.set('mode', 'edit');
+  }
   if (state.page === 'unresolved' && state.kind) params.set('kind', state.kind);
   if (state.page === 'logging' && state.kind) params.set('kind', state.kind);
   if (state.page === 'sonar' && state.sonarTab === 'setup') params.set('tab', 'setup');
@@ -170,6 +187,8 @@ export function navigateRoute(state: Partial<RouteState> & Pick<RouteState, 'pag
     skillName: state.skillName ?? null,
     kind: state.kind ?? null,
     sonarTab: state.sonarTab ?? 'dashboard',
+    ruleEditMode: state.ruleEditMode ?? false,
+    skillEditMode: state.skillEditMode ?? false,
   });
   const current = `${window.location.pathname}${window.location.search}`;
   if (current === path) return;
@@ -197,6 +216,8 @@ export function migrateLegacyHash(): string | null {
     skillName: params.get('name'),
     kind: params.get('kind'),
     sonarTab: params.get('tab') === 'setup' ? 'setup' : 'dashboard',
+    ruleEditMode: params.get('mode') === 'edit' && page === 'policy-rule-edit',
+    skillEditMode: params.get('mode') === 'edit' && page === 'policy-skill-edit',
   });
   window.history.replaceState(null, '', path);
   return path;

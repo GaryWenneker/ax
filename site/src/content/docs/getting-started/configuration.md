@@ -71,6 +71,30 @@ Commit the file to share settings with your team.
 
 Re-index (`ax index`) after changing either config file.
 
+### Open Knowledge Format (OKF) export
+
+Optional `okf` section controls the portable Markdown OKF bundle written by `ax export okf`. Paths are **relative** to the project root:
+
+```json
+{
+  "okf": {
+    "enabled": true,
+    "outDir": "knowledge",
+    "autoExportOnSync": false,
+    "kinds": [],
+    "azdoWiki": {
+      "enabled": false,
+      "remote": "",
+      "local": ".ax/wiki-okf",
+      "subdir": "okf",
+      "commitMessage": "chore: refresh Open Knowledge Format (OKF) bundle"
+    }
+  }
+}
+```
+
+See [Open Knowledge Format (OKF)](/guides/okf/) for export, `--check`, and optional Azure DevOps Wiki publish.
+
 ---
 
 ## Excluding a tracked directory

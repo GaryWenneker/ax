@@ -155,6 +155,15 @@ pub struct RuleFrontmatter {
     /// Hierarchy scope: company | workspace | project | private_user | private_project.
     #[serde(default = "default_scope")]
     pub scope: String,
+    /// Per-item storage override: `files` | `database`. Empty/None → project default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>,
+    /// External body path (absolute, project-relative, or `root:<id>/…`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Write under a configured `policy.roots` mount instead of the scope dir.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +171,8 @@ pub struct RuleFrontmatter {
 pub struct SkillFrontmatter {
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    pub always_apply: bool,
     #[serde(default)]
     pub triggers: Vec<String>,
     #[serde(default)]
@@ -178,6 +189,12 @@ pub struct SkillFrontmatter {
     pub share: bool,
     #[serde(default = "default_scope")]
     pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +204,8 @@ pub struct PolicyRuleDoc {
     pub body: String,
     pub raw: String,
     pub source_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stub_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +215,8 @@ pub struct PolicySkillDoc {
     pub body: String,
     pub raw: String,
     pub source_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stub_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,6 +237,21 @@ pub struct PolicyRuleRow {
     pub status: String,
     #[serde(default = "default_scope")]
     pub scope: String,
+    /// Per-item override (`files`/`database`); null means inherit project default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stub_path: Option<String>,
+    /// Resolved storage after applying project default.
+    #[serde(default)]
+    pub effective_storage: String,
+    /// True when `storage` is set on the item (not inheriting default).
+    #[serde(default)]
+    pub storage_is_override: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +259,8 @@ pub struct PolicyRuleRow {
 pub struct PolicySkillRow {
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    pub always_apply: bool,
     pub triggers: Vec<String>,
     pub tags: Vec<String>,
     pub priority: i32,
@@ -235,6 +273,18 @@ pub struct PolicySkillRow {
     pub status: String,
     #[serde(default = "default_scope")]
     pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stub_path: Option<String>,
+    #[serde(default)]
+    pub effective_storage: String,
+    #[serde(default)]
+    pub storage_is_override: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -263,6 +313,8 @@ pub struct MatchedSkill {
     pub reason: String,
     pub description: String,
     pub body: String,
+    #[serde(default)]
+    pub always_apply: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

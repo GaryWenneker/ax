@@ -1,6 +1,7 @@
 ---
 name: old-coder
 description: Evidence-first development — surround the implementation with an executable spec and a gauntlet of constraints (tests, types, coverage, mutation) so line-by-line review becomes optional. Mandatory for all implementation work per the old-coder-mandatory rule. Also use when the user asks for high-assurance work ("reliable", "TDD", "prove it works", "I won't read the code") or when the change touches high-stakes domains (money, auth, data loss, concurrency, public API).
+alwaysApply: true
 triggers: ["implement", "feature", "fix", "bug", "refactor", "test", "tdd", "api", "endpoint", "gauntlet", "evidence", "spec", "old-coder", "prove it works", "reliable"]
 tags: ["old-coder", "evidence", "tdd", "quality"]
 priority: 90

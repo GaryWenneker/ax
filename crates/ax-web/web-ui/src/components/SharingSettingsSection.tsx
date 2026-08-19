@@ -142,10 +142,10 @@ export default function SharingSettingsSection() {
 
   return (
     <>
-      <div className="setting-row">
-        <div>
-          <div className="setting-row-title">Share session</div>
-          <div className="setting-row-desc">
+      <div className="settings-row">
+        <div className="settings-row-label">
+          <span className="settings-row-title">Share session</span>
+          <span className="settings-row-desc">
             {err
               ? err
               : sharing
@@ -153,7 +153,7 @@ export default function SharingSettingsSection() {
                 : readonly
                   ? 'Read-only mode is active.'
                   : 'Local session. Use `ax share` to expose Command Center on the LAN with a token.'}
-          </div>
+          </span>
           {!err && (
             <div className="settings-share-meta">
               <span className={`settings-share-badge settings-share-badge--${statusTone}`}>
@@ -166,14 +166,14 @@ export default function SharingSettingsSection() {
             </div>
           )}
         </div>
-        <div className="setting-row-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" className="btn" disabled={loading} onClick={() => loadStatus()}>
+        <div className="settings-row-control settings-row-control--actions">
+          <button type="button" className="btn btn-subtle" disabled={loading} onClick={() => loadStatus()}>
             Refresh
           </button>
-          <button type="button" className="btn" onClick={() => setHelpOpen(true)}>
+          <button type="button" className="btn btn-subtle" onClick={() => setHelpOpen(true)}>
             How to share
           </button>
-          <button type="button" className="btn" onClick={() => void copyHint()}>
+          <button type="button" className="btn btn-subtle" onClick={() => void copyHint()}>
             {copied === 'cli' ? 'Copied' : 'Copy CLI tip'}
           </button>
         </div>
@@ -188,10 +188,10 @@ export default function SharingSettingsSection() {
         </p>
       )}
 
-      <div className="setting-row">
-        <div>
-          <div className="setting-row-title">Install as app (PWA)</div>
-          <div className="setting-row-desc">
+      <div className="settings-row">
+        <div className="settings-row-label">
+          <span className="settings-row-title">Install as app (PWA)</span>
+          <span className="settings-row-desc">
             {pwaOptIn
               ? deferredPrompt
                 ? 'PWA enabled — Install is available in this browser.'
@@ -201,9 +201,9 @@ export default function SharingSettingsSection() {
                     ? 'Running as an installed app.'
                     : 'PWA enabled. Use the browser Install / Add to Home Screen menu if Install does not appear.'
               : 'Opt in to register the service worker, then Install (or Add to Home Screen). Off by default to avoid stale cache issues.'}
-          </div>
+          </span>
         </div>
-        <div className="setting-row-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div className="settings-row-control settings-row-control--actions">
           {!pwaOptIn ? (
             <button type="button" className="btn primary" onClick={enablePwa}>
               Enable PWA
@@ -216,19 +216,19 @@ export default function SharingSettingsSection() {
                 </button>
               )}
               {!isStandalone() && (
-                <button type="button" className="btn" onClick={disablePwa}>
+                <button type="button" className="btn btn-subtle" onClick={disablePwa}>
                   Disable PWA
                 </button>
               )}
             </>
           )}
           {pwaDismissed ? (
-            <button type="button" className="btn" onClick={showPwaAgain}>
+            <button type="button" className="btn btn-subtle" onClick={showPwaAgain}>
               Show hint again
             </button>
           ) : (
             pwaOptIn && (
-              <button type="button" className="btn" onClick={dismissPwa}>
+              <button type="button" className="btn btn-subtle" onClick={dismissPwa}>
                 Dismiss hint
               </button>
             )

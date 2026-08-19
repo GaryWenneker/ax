@@ -613,8 +613,60 @@ pub async fn run_storage_status(path: Option<String>, json: bool) -> Result<(), 
         } else {
             println!("  global value: (not set)");
         }
+        if status.roots.is_empty() {
+            println!("  roots: (none)");
+        } else {
+            println!("  roots:");
+            for r in &status.roots {
+                let state = if r.exists { "ok" } else { "missing" };
+                println!(
+                    "    - {} → {} [{}] scope={}{}",
+                    r.id,
+                    r.path.display(),
+                    state,
+                    r.scope,
+                    r.member
+                        .as_ref()
+                        .map(|m| format!(" member={m}"))
+                        .unwrap_or_default()
+                );
+            }
+        }
         println!();
-        println!("Set: ax policy storage database|files [--migrate] [--yes] [--global]");
+        println!("Set default: ax policy storage database|files [--migrate] [--yes] [--global]");
+        println!("Set item:    ax policy storage set-item <id> files|database [--keep-file]");
+    }
+    Ok(())
+}
+
+pub async fn run_storage_set_item(
+    path: Option<String>,
+    id: String,
+    storage: String,
+    keep_file: bool,
+    json: bool,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let target = PolicyStorage::parse(&storage)
+        .ok_or_else(|| "storage must be files or database".to_string())?;
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let store = ax_policy::PolicyStore::new(ax.db_pool().clone(), root);
+    let result = store
+        .set_item_storage(&id, target, keep_file)
+        .await
+        .map_err(|e| e.to_string())?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+    } else {
+        println!(
+            "Set {} storage to {}.",
+            result
+                .get("id")
+                .or_else(|| result.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id),
+            target.as_str()
+        );
     }
     Ok(())
 }

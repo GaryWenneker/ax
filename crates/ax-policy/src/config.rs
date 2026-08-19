@@ -1,11 +1,14 @@
 //! Policy storage mode — filesystem (default) or database-first.
-//! Also reads `requireReview` and project-level `policySync`.
+//! Also reads `requireReview`, `policySync`, and external `policy.roots`.
 
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::types::PolicyScope;
+
 const CONFIG_FILENAME: &str = "ax.json";
+const CONFIG_ALIAS: &str = ".ax.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,6 +35,38 @@ impl PolicyStorage {
     }
 }
 
+/// Resolve per-item storage override against the project default.
+pub fn effective_storage(project_default: PolicyStorage, item_storage: Option<&str>) -> PolicyStorage {
+    item_storage
+        .and_then(PolicyStorage::parse)
+        .unwrap_or(project_default)
+}
+
+/// One configured external (or sibling-repo) policy mount.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyRoot {
+    pub id: String,
+    /// Absolute resolved path.
+    pub path: PathBuf,
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
+    /// Whether the directory currently exists on disk.
+    pub exists: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PolicyRootFile {
+    id: String,
+    path: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    member: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PolicyConfigFile {
@@ -39,6 +74,8 @@ struct PolicyConfigFile {
     storage: Option<PolicyStorage>,
     #[serde(default)]
     require_review: Option<bool>,
+    #[serde(default)]
+    roots: Vec<PolicyRootFile>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +83,7 @@ pub struct PolicyConfig {
     pub storage: PolicyStorage,
     /// When true, pack import (and capture when configured) lands as pending.
     pub require_review: bool,
+    pub roots: Vec<PolicyRoot>,
 }
 
 impl Default for PolicyConfig {
@@ -53,14 +91,31 @@ impl Default for PolicyConfig {
         Self {
             storage: PolicyStorage::Files,
             require_review: false,
+            roots: Vec::new(),
         }
     }
 }
 
-/// Merge global `~/.ax/config.json` `"policy"` section with per-project `ax.json`.
+/// Merge global `~/.ax/config.json` `"policy"` section with per-project `ax.json`
+/// (and workspace root `ax.json` roots when present).
 pub fn load_policy_config(project_root: &Path) -> PolicyConfig {
     let global = read_policy_section(&global_config_path());
     let local = read_policy_section(&project_root.join(CONFIG_FILENAME));
+    let mut roots = Vec::new();
+    append_roots(
+        &mut roots,
+        &global.roots,
+        global_config_path().parent().unwrap_or_else(|| Path::new(".")),
+        project_root,
+    );
+    if let Some(ws) = crate::hierarchy::find_workspace_root(project_root) {
+        if ws != project_root {
+            let ws_section = read_policy_section(&ws.join(CONFIG_FILENAME));
+            append_roots(&mut roots, &ws_section.roots, &ws, project_root);
+        }
+    }
+    append_roots(&mut roots, &local.roots, project_root, project_root);
+
     PolicyConfig {
         storage: local
             .storage
@@ -70,7 +125,112 @@ pub fn load_policy_config(project_root: &Path) -> PolicyConfig {
             .require_review
             .or(global.require_review)
             .unwrap_or(false),
+        roots,
     }
+}
+
+/// Configured roots applicable to this project (member filter applied).
+pub fn load_policy_roots(project_root: &Path) -> Vec<PolicyRoot> {
+    load_policy_config(project_root).roots
+}
+
+/// Look up a root by id for the project.
+pub fn find_policy_root(project_root: &Path, root_id: &str) -> Option<PolicyRoot> {
+    load_policy_roots(project_root)
+        .into_iter()
+        .find(|r| r.id == root_id)
+}
+
+fn append_roots(
+    out: &mut Vec<PolicyRoot>,
+    entries: &[PolicyRootFile],
+    config_dir: &Path,
+    project_root: &Path,
+) {
+    let member_name = current_member_name(project_root);
+    for entry in entries {
+        if entry.id.trim().is_empty() || entry.path.trim().is_empty() {
+            continue;
+        }
+        if let Some(ref m) = entry.member {
+            match &member_name {
+                Some(name) if name == m || member_path_matches(project_root, m) => {}
+                _ => continue,
+            }
+        }
+        let abs = resolve_config_path(config_dir, &entry.path);
+        let scope = PolicyScope::parse(entry.scope.as_deref().unwrap_or("project"))
+            .unwrap_or(PolicyScope::Project)
+            .as_str()
+            .to_string();
+        // Later configs (project) override earlier ones with the same id.
+        out.retain(|r| r.id != entry.id);
+        let exists = abs.is_dir();
+        out.push(PolicyRoot {
+            id: entry.id.clone(),
+            path: abs,
+            scope,
+            member: entry.member.clone(),
+            exists,
+        });
+    }
+}
+
+fn resolve_config_path(config_dir: &Path, raw: &str) -> PathBuf {
+    let p = PathBuf::from(raw.trim());
+    let joined = if p.is_absolute() {
+        p
+    } else {
+        config_dir.join(p)
+    };
+    joined.canonicalize().unwrap_or(joined)
+}
+
+fn current_member_name(project_root: &Path) -> Option<String> {
+    let ws = crate::hierarchy::find_workspace_root(project_root)?;
+    for name in [CONFIG_FILENAME, CONFIG_ALIAS] {
+        let path = ws.join(name);
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else {
+            continue;
+        };
+        let Some(members) = v.get("members").and_then(|m| m.as_array()) else {
+            continue;
+        };
+        let project_canon = project_root
+            .canonicalize()
+            .unwrap_or_else(|_| project_root.to_path_buf());
+        for m in members {
+            let rel = m.get("path").and_then(|p| p.as_str()).unwrap_or("");
+            if rel.is_empty() {
+                continue;
+            }
+            let abs = ws.join(rel);
+            let abs_canon = abs.canonicalize().unwrap_or(abs);
+            if abs_canon == project_canon {
+                if let Some(n) = m.get("name").and_then(|n| n.as_str()) {
+                    return Some(n.to_string());
+                }
+                return Some(
+                    Path::new(rel)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| rel.to_string()),
+                );
+            }
+        }
+    }
+    None
+}
+
+fn member_path_matches(project_root: &Path, member_key: &str) -> bool {
+    project_root
+        .file_name()
+        .map(|n| n.to_string_lossy() == member_key)
+        .unwrap_or(false)
+        || project_root.to_string_lossy().replace('\\', "/").ends_with(member_key)
 }
 
 /// True when project `ax.json` has `"policySync": true`.
@@ -92,7 +252,7 @@ pub fn write_project_require_review(project_root: &Path, enabled: bool) -> Resul
 }
 
 fn read_root_bool(project_root: &Path, key: &str) -> bool {
-    for name in [CONFIG_FILENAME, ".ax.json"] {
+    for name in [CONFIG_FILENAME, CONFIG_ALIAS] {
         let path = project_root.join(name);
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
@@ -186,6 +346,7 @@ pub struct PolicyStorageStatus {
     pub global_value: Option<String>,
     pub require_review: bool,
     pub policy_sync: bool,
+    pub roots: Vec<PolicyRoot>,
 }
 
 /// Resolved storage mode and which config layer set it.
@@ -212,6 +373,7 @@ pub fn policy_storage_status(project_root: &Path) -> PolicyStorageStatus {
         global_value: global.storage.map(|s| s.as_str().into()),
         require_review: cfg.require_review,
         policy_sync: policy_sync_enabled(project_root),
+        roots: cfg.roots,
     }
 }
 
@@ -263,6 +425,7 @@ mod tests {
         let cfg = load_policy_config(Path::new("/nonexistent"));
         assert_eq!(cfg.storage, PolicyStorage::Files);
         assert!(!cfg.require_review);
+        assert!(cfg.roots.is_empty());
     }
 
     #[test]
@@ -294,5 +457,42 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(CONFIG_FILENAME), r#"{"policySync":true}"#).unwrap();
         assert!(policy_sync_enabled(dir.path()));
+    }
+
+    #[test]
+    fn effective_storage_respects_override() {
+        assert_eq!(
+            effective_storage(PolicyStorage::Files, Some("database")),
+            PolicyStorage::Database
+        );
+        assert_eq!(
+            effective_storage(PolicyStorage::Database, None),
+            PolicyStorage::Database
+        );
+        assert_eq!(
+            effective_storage(PolicyStorage::Database, Some("files")),
+            PolicyStorage::Files
+        );
+    }
+
+    #[test]
+    fn loads_policy_roots_relative_and_absolute() {
+        let dir = tempfile::tempdir().unwrap();
+        let external = dir.path().join("external-policy");
+        std::fs::create_dir_all(external.join("rules")).unwrap();
+        let abs = external.display().to_string().replace('\\', "/");
+        std::fs::write(
+            dir.path().join(CONFIG_FILENAME),
+            format!(
+                r#"{{"policy":{{"storage":"files","roots":[{{"id":"shared","path":"{abs}","scope":"workspace"}},{{"id":"rel","path":"external-policy","scope":"project"}}]}}}}"#
+            ),
+        )
+        .unwrap();
+        let roots = load_policy_roots(dir.path());
+        assert_eq!(roots.len(), 2);
+        assert!(roots.iter().any(|r| r.id == "shared" && r.exists));
+        assert!(roots.iter().any(|r| r.id == "rel" && r.exists));
+        let status = policy_storage_status(dir.path());
+        assert_eq!(status.roots.len(), 2);
     }
 }

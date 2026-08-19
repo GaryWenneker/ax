@@ -19,6 +19,8 @@ const CONFIG_ALIAS: &str = ".ax.json";
 pub struct PolicyLayer {
     pub dir: PathBuf,
     pub scope: PolicyScope,
+    /// When set, this layer comes from `policy.roots` (external/sibling mount).
+    pub root_id: Option<String>,
 }
 
 /// Ordered policy directory roots to merge (lowest → highest precedence).
@@ -31,6 +33,9 @@ pub fn policy_layer_dirs(project_root: &Path) -> Vec<PathBuf> {
 }
 
 /// Ordered layers with scope metadata (lowest → highest precedence).
+///
+/// Built-in scope dirs are merged first; configured [`crate::config::PolicyRoot`]
+/// mounts are inserted immediately after the matching built-in scope layer.
 pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
     let mut layers = Vec::new();
 
@@ -40,9 +45,11 @@ pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
             layers.push(PolicyLayer {
                 dir: global,
                 scope: PolicyScope::Company,
+                root_id: None,
             });
         }
     }
+    push_root_layers(&mut layers, project_root, PolicyScope::Company);
 
     if let Some(ws) = find_workspace_root(project_root) {
         let ws_policy = ws.join(".ax").join("policy");
@@ -52,18 +59,22 @@ pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
                 layers.push(PolicyLayer {
                     dir: ws_policy,
                     scope: PolicyScope::Workspace,
+                    root_id: None,
                 });
             }
         }
     }
+    push_root_layers(&mut layers, project_root, PolicyScope::Workspace);
 
     let local = project_root.join(".ax").join("policy");
     if local.is_dir() {
         layers.push(PolicyLayer {
             dir: local,
             scope: PolicyScope::Project,
+            root_id: None,
         });
     }
+    push_root_layers(&mut layers, project_root, PolicyScope::Project);
 
     if let Some(home) = dirs::home_dir() {
         let private_user = home.join(".ax").join("private_policy");
@@ -71,19 +82,40 @@ pub fn policy_layers(project_root: &Path) -> Vec<PolicyLayer> {
             layers.push(PolicyLayer {
                 dir: private_user,
                 scope: PolicyScope::PrivateUser,
+                root_id: None,
             });
         }
     }
+    push_root_layers(&mut layers, project_root, PolicyScope::PrivateUser);
 
     let private_project = project_root.join(".ax").join("policy-private");
     if private_project.is_dir() {
         layers.push(PolicyLayer {
             dir: private_project,
             scope: PolicyScope::PrivateProject,
+            root_id: None,
         });
     }
+    push_root_layers(&mut layers, project_root, PolicyScope::PrivateProject);
 
     layers
+}
+
+fn push_root_layers(layers: &mut Vec<PolicyLayer>, project_root: &Path, scope: PolicyScope) {
+    for root in crate::config::load_policy_roots(project_root) {
+        if !root.exists {
+            continue;
+        }
+        let root_scope = PolicyScope::parse(&root.scope).unwrap_or(PolicyScope::Project);
+        if root_scope != scope {
+            continue;
+        }
+        layers.push(PolicyLayer {
+            dir: root.path.clone(),
+            scope: root_scope,
+            root_id: Some(root.id),
+        });
+    }
 }
 
 /// Resolve the on-disk policy directory for a scope (may not exist yet).

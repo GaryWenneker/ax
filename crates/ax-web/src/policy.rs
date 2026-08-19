@@ -52,9 +52,11 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", get(get_rule).put(update_rule).delete(delete_rule))
         .route("/rules/{id}/enabled", patch(set_rule_enabled))
+        .route("/rules/{id}/storage", patch(set_rule_storage))
         .route("/skills", get(list_skills).post(create_skill))
         .route("/skills/{name}", get(get_skill).put(update_skill).delete(delete_skill))
         .route("/skills/{name}/enabled", patch(set_skill_enabled))
+        .route("/skills/{name}/storage", patch(set_skill_storage))
         .route("/match", post(match_prompt))
         .route("/capture", post(capture_prompt))
         .route("/reindex", post(reindex))
@@ -103,6 +105,62 @@ async fn set_skill_enabled(
     match ws.policy.store.set_enabled(&name, payload.enabled).await {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true, "name": name, "enabled": payload.enabled }))).into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "not found"),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoragePayload {
+    storage: String,
+    #[serde(default)]
+    keep_file: bool,
+}
+
+async fn set_rule_storage(
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+    Json(payload): Json<StoragePayload>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let Some(target) = ax_policy::PolicyStorage::parse(&payload.storage) else {
+        return err(StatusCode::BAD_REQUEST, "storage must be files or database");
+    };
+    let ws = hub.read().await;
+    match ws
+        .policy
+        .store
+        .set_item_storage(&id, target, payload.keep_file)
+        .await
+    {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) if e.to_string().contains("not found") => err(StatusCode::NOT_FOUND, "not found"),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn set_skill_storage(
+    State(hub): State<WebHub>,
+    Path(name): Path<String>,
+    Json(payload): Json<StoragePayload>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let Some(target) = ax_policy::PolicyStorage::parse(&payload.storage) else {
+        return err(StatusCode::BAD_REQUEST, "storage must be files or database");
+    };
+    let ws = hub.read().await;
+    match ws
+        .policy
+        .store
+        .set_item_storage(&name, target, payload.keep_file)
+        .await
+    {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) if e.to_string().contains("not found") => err(StatusCode::NOT_FOUND, "not found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -203,6 +261,7 @@ struct PolicySettingsResponse {
     policy_sync: bool,
     require_review: bool,
     storage: String,
+    roots: Vec<ax_policy::PolicyRoot>,
 }
 
 #[derive(Deserialize)]
@@ -212,21 +271,25 @@ struct PolicySettingsPayload {
     policy_sync: Option<bool>,
     #[serde(default)]
     require_review: Option<bool>,
+    /// Project default storage: `files` | `database`. Does not rewrite per-item overrides.
+    #[serde(default)]
+    storage: Option<String>,
+}
+
+fn settings_response(root: &std::path::Path) -> PolicySettingsResponse {
+    let status = ax_policy::policy_storage_status(root);
+    PolicySettingsResponse {
+        policy_sync: status.policy_sync,
+        require_review: status.require_review,
+        storage: status.effective,
+        roots: status.roots,
+    }
 }
 
 async fn policy_settings(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     let root = ws.policy.store.project_root();
-    let status = ax_policy::policy_storage_status(root);
-    (
-        StatusCode::OK,
-        Json(PolicySettingsResponse {
-            policy_sync: status.policy_sync,
-            require_review: status.require_review,
-            storage: status.effective,
-        }),
-    )
-        .into_response()
+    (StatusCode::OK, Json(settings_response(root))).into_response()
 }
 
 async fn put_policy_settings(
@@ -249,16 +312,15 @@ async fn put_policy_settings(
             return err(StatusCode::INTERNAL_SERVER_ERROR, &e);
         }
     }
-    let status = ax_policy::policy_storage_status(root);
-    (
-        StatusCode::OK,
-        Json(PolicySettingsResponse {
-            policy_sync: status.policy_sync,
-            require_review: status.require_review,
-            storage: status.effective,
-        }),
-    )
-        .into_response()
+    if let Some(ref s) = payload.storage {
+        let Some(mode) = ax_policy::PolicyStorage::parse(s) else {
+            return err(StatusCode::BAD_REQUEST, "storage must be files or database");
+        };
+        if let Err(e) = ax_policy::write_project_policy_storage(root, mode) {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, &e);
+        }
+    }
+    (StatusCode::OK, Json(settings_response(root))).into_response()
 }
 
 async fn list_rules(State(hub): State<WebHub>) -> impl IntoResponse {

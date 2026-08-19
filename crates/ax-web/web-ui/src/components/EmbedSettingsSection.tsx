@@ -78,10 +78,10 @@ export default function EmbedSettingsSection() {
 
   return (
     <>
-      <div className="setting-row">
-        <div>
-          <div className="setting-row-title">Memory embeddings</div>
-          <div className="setting-row-desc">
+      <div className="settings-row">
+        <div className="settings-row-label">
+          <span className="settings-row-title">Memory embeddings</span>
+          <span className="settings-row-desc">
             {status
               ? backendHint(status)
               : err
@@ -89,9 +89,9 @@ export default function EmbedSettingsSection() {
                 : loading
                   ? 'Checking embed backend…'
                   : '—'}
-          </div>
+          </span>
         </div>
-        <div className="setting-row-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div className="settings-row-control settings-row-control--actions">
           {status && (
             <span
               className={`settings-embed-badge settings-embed-badge--${status.backend}`}
@@ -100,7 +100,7 @@ export default function EmbedSettingsSection() {
               {backendLabel(status.backend)}
             </span>
           )}
-          <button type="button" className="btn" disabled={loading} onClick={load}>
+          <button type="button" className="btn btn-subtle" disabled={loading} onClick={load}>
             {loading ? 'Probing…' : 'Re-probe'}
           </button>
         </div>
@@ -116,41 +116,37 @@ export default function EmbedSettingsSection() {
       )}
 
       {status && (
-        <div className="page-table-wrap settings-embed-table-wrap">
-          <table className="page-table page-table--dense">
-            <tbody>
-              <tr>
-                <th scope="row">Backend</th>
-                <td className="mono">{status.backend}</td>
-              </tr>
-              <tr>
-                <th scope="row">onnx feature</th>
-                <td>
-                  <span className={status.feature ? 'lsp-server-badge--ok' : 'lsp-server-badge--miss'}>
-                    {status.feature ? 'enabled' : 'disabled in this binary'}
-                  </span>
-                </td>
-              </tr>
-              <tr>
-                <th scope="row">Model</th>
-                <td className="mono settings-plugin-entry" title={status.modelPath ?? ''}>
-                  {status.modelPath || '—'}
-                </td>
-              </tr>
-              <tr>
-                <th scope="row">Tokenizer</th>
-                <td className="mono settings-plugin-entry" title={status.tokenizerPath ?? ''}>
-                  {status.tokenizer
-                    ? status.tokenizerPath || 'configured'
-                    : 'missing (hashed token ids)'}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <dl className="settings-meta">
+          <div className="settings-meta-row">
+            <dt>Backend</dt>
+            <dd className="mono">{status.backend}</dd>
+          </div>
+          <div className="settings-meta-row">
+            <dt>onnx feature</dt>
+            <dd>
+              <span className={status.feature ? 'lsp-server-badge--ok' : 'lsp-server-badge--miss'}>
+                {status.feature ? 'enabled' : 'disabled in this binary'}
+              </span>
+            </dd>
+          </div>
+          <div className="settings-meta-row">
+            <dt>Model</dt>
+            <dd className="mono" title={status.modelPath ?? ''}>
+              {status.modelPath || '—'}
+            </dd>
+          </div>
+          <div className="settings-meta-row">
+            <dt>Tokenizer</dt>
+            <dd className="mono" title={status.tokenizerPath ?? ''}>
+              {status.tokenizer
+                ? status.tokenizerPath || 'configured'
+                : 'missing (hashed token ids)'}
+            </dd>
+          </div>
+        </dl>
       )}
 
-      <p className="status-panel-muted settings-embed-docs">
+      <p className="settings-callout settings-embed-docs">
         Docs:{' '}
         <a href="https://getax.wenneker.io/guides/memory/" target="_blank" rel="noreferrer">
           Memory vault

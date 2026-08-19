@@ -101,6 +101,9 @@ impl FileWatcher {
                         p.indexing = false;
                     }
                 }
+                let snapshot: Vec<PendingFile> = map.values().cloned().collect();
+                drop(map);
+                crate::pending_registry::publish(&root, &snapshot);
             }
         });
 
@@ -110,6 +113,12 @@ impl FileWatcher {
     pub async fn stop(&mut self) {
         self.watcher = None;
         *self.active.lock().await = false;
+        crate::pending_registry::clear_project(&self.project_root);
+    }
+
+    async fn publish_pending(&self) {
+        let snapshot = self.pending.lock().await.values().cloned().collect::<Vec<_>>();
+        crate::pending_registry::publish(&self.project_root, &snapshot);
     }
 
     pub async fn is_active(&self) -> bool {
@@ -133,6 +142,8 @@ impl FileWatcher {
         for p in paths {
             map.remove(p);
         }
+        drop(map);
+        self.publish_pending().await;
     }
 
     /// Paths quiet for at least `debounce_ms` and not currently indexing.
@@ -155,6 +166,8 @@ impl FileWatcher {
                 entry.indexing = true;
             }
         }
+        drop(map);
+        self.publish_pending().await;
     }
 
     pub async fn wait_until_ready(&self, timeout_ms: u64) -> bool {

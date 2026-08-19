@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 13;
+pub const CURRENT_SCHEMA_VERSION: i32 = 16;
 
 struct Migration {
     version: i32,
@@ -205,6 +205,25 @@ const MIGRATIONS: &[Migration] = &[
         version: 14,
         description: "Memory vault enable flag (exclude disabled from recall/inject)",
         sql: "ALTER TABLE memories ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;",
+    },
+    Migration {
+        version: 15,
+        description: "Hybrid policy storage: per-item storage, source, root_id, stub_path",
+        sql: "
+            ALTER TABLE policy_rules ADD COLUMN storage TEXT;
+            ALTER TABLE policy_rules ADD COLUMN source TEXT;
+            ALTER TABLE policy_rules ADD COLUMN root_id TEXT;
+            ALTER TABLE policy_rules ADD COLUMN stub_path TEXT;
+            ALTER TABLE policy_skills ADD COLUMN storage TEXT;
+            ALTER TABLE policy_skills ADD COLUMN source TEXT;
+            ALTER TABLE policy_skills ADD COLUMN root_id TEXT;
+            ALTER TABLE policy_skills ADD COLUMN stub_path TEXT;
+        ",
+    },
+    Migration {
+        version: 16,
+        description: "Skills always_apply — match even on empty prompts",
+        sql: "ALTER TABLE policy_skills ADD COLUMN always_apply INTEGER NOT NULL DEFAULT 0;",
     },
 ];
 

@@ -3,11 +3,11 @@ use std::path::Path;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-use crate::config::{load_policy_config, PolicyStorage};
+use crate::config::{effective_storage, load_policy_config, PolicyStorage};
 use crate::parse::{parse_rule_file, parse_skill_file, serialize_rule, serialize_skill};
 use crate::paths::{
-    ax_dir_from_project, ensure_policy_dirs, policy_root, rule_file, rules_dir, skill_file,
-    skills_dir,
+    ax_dir_from_project, ensure_policy_dirs, is_stub_body, policy_root, resolve_source_path,
+    rule_file, rules_dir, skill_file, skills_dir,
 };
 use crate::types::{
     PolicyIndexResult, PolicyRuleDoc, PolicyRuleRow, PolicySkillDoc, PolicySkillRow,
@@ -67,6 +67,7 @@ pub async fn import_policy_from_files(
         vec![crate::hierarchy::PolicyLayer {
             dir: policy_root(&ax_dir),
             scope: crate::types::PolicyScope::Project,
+            root_id: None,
         }]
     } else {
         layers
@@ -74,7 +75,7 @@ pub async fn import_policy_from_files(
 
     for layer in &layer_list {
         let (r, s, mut rule_ids, mut skill_ids) =
-            import_one_policy_dir(pool, &layer.dir, layer.scope).await?;
+            import_one_policy_dir(pool, project_root, &layer.dir, layer.scope).await?;
         rules_indexed += r;
         skills_indexed += s;
         seen_rules.append(&mut rule_ids);
@@ -82,13 +83,13 @@ pub async fn import_policy_from_files(
     }
 
     if mode == ImportMode::Replace {
-        // Only prune against the highest-precedence (member) layer set.
+        // Hybrid-aware prune: keep per-item database overrides not present on disk.
         seen_rules.sort();
         seen_rules.dedup();
         seen_skills.sort();
         seen_skills.dedup();
-        prune_rules(pool, &seen_rules).await?;
-        prune_skills(pool, &seen_skills).await?;
+        prune_rules_hybrid(pool, &seen_rules).await?;
+        prune_skills_hybrid(pool, &seen_skills).await?;
     }
 
     Ok(PolicyIndexResult {
@@ -99,6 +100,7 @@ pub async fn import_policy_from_files(
 
 async fn import_one_policy_dir(
     pool: &SqlitePool,
+    project_root: &Path,
     policy_dir: &Path,
     scope: crate::types::PolicyScope,
 ) -> Result<(u32, u32, Vec<String>, Vec<String>), AxError> {
@@ -127,7 +129,11 @@ async fn import_one_policy_dir(
             let mut doc = parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
             // Directory layer wins over frontmatter when importing from a scoped path.
             doc.frontmatter.scope = scope_s.clone();
-            let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
+            if let Err(e) = materialize_rule_stub(project_root, &mut doc) {
+                eprintln!("[ax policy] skip rule stub {}: {e}", path.display());
+                continue;
+            }
+            let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
             upsert_rule(pool, &doc, &hash, now_ms()).await?;
             seen_rules.push(doc.frontmatter.id.clone());
             rules_indexed += 1;
@@ -154,7 +160,11 @@ async fn import_one_policy_dir(
             let raw = std::fs::read_to_string(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
             let mut doc = parse_skill_file(&skill_path, &raw).map_err(|e| AxError::Other(e.error))?;
             doc.frontmatter.scope = scope_s.clone();
-            let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
+            if let Err(e) = materialize_skill_stub(project_root, &mut doc) {
+                eprintln!("[ax policy] skip skill stub {}: {e}", skill_path.display());
+                continue;
+            }
+            let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
             upsert_skill(pool, &doc, &hash, now_ms()).await?;
             seen_skills.push(doc.frontmatter.name.clone());
             skills_indexed += 1;
@@ -162,6 +172,56 @@ async fn import_one_policy_dir(
     }
 
     Ok((rules_indexed, skills_indexed, seen_rules, seen_skills))
+}
+
+/// If the doc is a stub (`source:` set), load body from the external file.
+fn materialize_rule_stub(project_root: &Path, doc: &mut PolicyRuleDoc) -> Result<(), String> {
+    let Some(ref source) = doc.frontmatter.source.clone() else {
+        return Ok(());
+    };
+    if !is_stub_body(&doc.body) && !doc.body.trim().is_empty() {
+        // Non-stub body with source: keep body, still record stub path as the file we scanned.
+        doc.stub_path = Some(doc.source_path.clone());
+        let resolved = resolve_source_path(project_root, source)?;
+        doc.source_path = resolved.to_string_lossy().into();
+        return Ok(());
+    }
+    let stub_path = doc.source_path.clone();
+    let resolved = resolve_source_path(project_root, source)?;
+    if !resolved.is_file() {
+        return Err(format!("source not found: {}", resolved.display()));
+    }
+    let raw = std::fs::read_to_string(&resolved).map_err(|e| e.to_string())?;
+    let external = parse_rule_file(&resolved, &raw).map_err(|e| e.error)?;
+    doc.body = external.body;
+    doc.raw = serialize_rule(&doc.frontmatter, &doc.body);
+    doc.stub_path = Some(stub_path);
+    doc.source_path = resolved.to_string_lossy().into();
+    Ok(())
+}
+
+fn materialize_skill_stub(project_root: &Path, doc: &mut PolicySkillDoc) -> Result<(), String> {
+    let Some(ref source) = doc.frontmatter.source.clone() else {
+        return Ok(());
+    };
+    if !is_stub_body(&doc.body) && !doc.body.trim().is_empty() {
+        doc.stub_path = Some(doc.source_path.clone());
+        let resolved = resolve_source_path(project_root, source)?;
+        doc.source_path = resolved.to_string_lossy().into();
+        return Ok(());
+    }
+    let stub_path = doc.source_path.clone();
+    let resolved = resolve_source_path(project_root, source)?;
+    if !resolved.is_file() {
+        return Err(format!("source not found: {}", resolved.display()));
+    }
+    let raw = std::fs::read_to_string(&resolved).map_err(|e| e.to_string())?;
+    let external = parse_skill_file(&resolved, &raw).map_err(|e| e.error)?;
+    doc.body = external.body;
+    doc.raw = serialize_skill(&doc.frontmatter, &doc.body);
+    doc.stub_path = Some(stub_path);
+    doc.source_path = resolved.to_string_lossy().into();
+    Ok(())
 }
 
 pub async fn export_policy_to_files(
@@ -375,14 +435,15 @@ async fn upsert_rule(
         .unwrap_or(crate::types::PolicyScope::Project)
         .as_str();
     sqlx::query(
-        "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope, storage, source, root_id, stub_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            level=excluded.level, always_apply=excluded.always_apply, globs=excluded.globs,
            triggers=excluded.triggers, tags=excluded.tags, priority=excluded.priority,
            body=excluded.body, source_path=excluded.source_path, content_hash=excluded.content_hash,
            updated_at=excluded.updated_at, enabled=excluded.enabled, status=excluded.status,
-           scope=excluded.scope",
+           scope=excluded.scope, storage=excluded.storage, source=excluded.source,
+           root_id=excluded.root_id, stub_path=excluded.stub_path",
     )
     .bind(&fm.id)
     .bind(&fm.level)
@@ -398,6 +459,10 @@ async fn upsert_rule(
     .bind(fm.enabled as i32)
     .bind(&fm.status)
     .bind(scope)
+    .bind(&fm.storage)
+    .bind(&fm.source)
+    .bind(&fm.root_id)
+    .bind(&doc.stub_path)
     .execute(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -415,16 +480,19 @@ async fn upsert_skill(
         .unwrap_or(crate::types::PolicyScope::Project)
         .as_str();
     sqlx::query(
-        "INSERT INTO policy_skills (name, description, triggers, tags, priority, context_task, body, source_path, content_hash, updated_at, enabled, status, scope)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO policy_skills (name, description, always_apply, triggers, tags, priority, context_task, body, source_path, content_hash, updated_at, enabled, status, scope, storage, source, root_id, stub_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET
-           description=excluded.description, triggers=excluded.triggers, tags=excluded.tags,
+           description=excluded.description, always_apply=excluded.always_apply, triggers=excluded.triggers, tags=excluded.tags,
            priority=excluded.priority, context_task=excluded.context_task, body=excluded.body,
            source_path=excluded.source_path, content_hash=excluded.content_hash, updated_at=excluded.updated_at,
-           enabled=excluded.enabled, status=excluded.status, scope=excluded.scope",
+           enabled=excluded.enabled, status=excluded.status, scope=excluded.scope,
+           storage=excluded.storage, source=excluded.source, root_id=excluded.root_id,
+           stub_path=excluded.stub_path",
     )
     .bind(&fm.name)
     .bind(&fm.description)
+    .bind(fm.always_apply as i32)
     .bind(serde_json::to_string(&fm.triggers).unwrap_or_else(|_| "[]".into()))
     .bind(serde_json::to_string(&fm.tags).unwrap_or_else(|_| "[]".into()))
     .bind(fm.priority)
@@ -436,22 +504,32 @@ async fn upsert_skill(
     .bind(fm.enabled as i32)
     .bind(&fm.status)
     .bind(scope)
+    .bind(&fm.storage)
+    .bind(&fm.source)
+    .bind(&fm.root_id)
+    .bind(&doc.stub_path)
     .execute(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
 }
 
-async fn prune_rules(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> {
+/// Delete file-backed rows not on disk; keep `storage = 'database'` overrides.
+async fn prune_rules_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> {
     if keep.is_empty() {
-        sqlx::query("DELETE FROM policy_rules")
-            .execute(pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        sqlx::query(
+            "DELETE FROM policy_rules WHERE COALESCE(NULLIF(storage, ''), 'files') != 'database'",
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         return Ok(());
     }
     let placeholders = keep.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!("DELETE FROM policy_rules WHERE id NOT IN ({placeholders})");
+    let sql = format!(
+        "DELETE FROM policy_rules WHERE id NOT IN ({placeholders}) \
+         AND COALESCE(NULLIF(storage, ''), 'files') != 'database'"
+    );
     let mut q = sqlx::query(&sql);
     for id in keep {
         q = q.bind(id);
@@ -462,16 +540,21 @@ async fn prune_rules(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> 
     Ok(())
 }
 
-async fn prune_skills(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> {
+async fn prune_skills_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError> {
     if keep.is_empty() {
-        sqlx::query("DELETE FROM policy_skills")
-            .execute(pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        sqlx::query(
+            "DELETE FROM policy_skills WHERE COALESCE(NULLIF(storage, ''), 'files') != 'database'",
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         return Ok(());
     }
     let placeholders = keep.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!("DELETE FROM policy_skills WHERE name NOT IN ({placeholders})");
+    let sql = format!(
+        "DELETE FROM policy_skills WHERE name NOT IN ({placeholders}) \
+         AND COALESCE(NULLIF(storage, ''), 'files') != 'database'"
+    );
     let mut q = sqlx::query(&sql);
     for name in keep {
         q = q.bind(name);
@@ -482,57 +565,88 @@ async fn prune_skills(pool: &SqlitePool, keep: &[String]) -> Result<(), AxError>
     Ok(())
 }
 
-pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError> {
-    let rows = sqlx::query_as::<_, RuleDbRow>(
-        "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path,
+const RULE_SELECT: &str = "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path,
                 COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
-                COALESCE(scope, 'project') as scope
-         FROM policy_rules ORDER BY priority DESC, id",
-    )
+                COALESCE(scope, 'project') as scope, storage, source, root_id, stub_path
+         FROM policy_rules";
+
+const SKILL_SELECT: &str = "SELECT name, description, COALESCE(always_apply, 0) as always_apply, triggers, tags, priority, context_task, body, source_path,
+                COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
+                COALESCE(scope, 'project') as scope, storage, source, root_id, stub_path
+         FROM policy_skills";
+
+pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError> {
+    let rows = sqlx::query_as::<_, RuleDbRow>(&format!(
+        "{RULE_SELECT} ORDER BY id COLLATE NOCASE ASC"
+    ))
     .fetch_all(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(rows.into_iter().map(RuleDbRow::into_row).collect())
 }
 
+/// List rules with `effectiveStorage` / override flags filled from project default.
+pub async fn list_rules_enriched(
+    pool: &SqlitePool,
+    project_root: &Path,
+) -> Result<Vec<PolicyRuleRow>, AxError> {
+    let default = load_policy_config(project_root).storage;
+    let mut rows = list_rules(pool).await?;
+    for row in &mut rows {
+        enrich_rule_row(row, default);
+    }
+    Ok(rows)
+}
+
 pub async fn list_skills(pool: &SqlitePool) -> Result<Vec<PolicySkillRow>, AxError> {
-    let rows = sqlx::query_as::<_, SkillDbRow>(
-        "SELECT name, description, triggers, tags, priority, context_task, body, source_path,
-                COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
-                COALESCE(scope, 'project') as scope
-         FROM policy_skills ORDER BY priority DESC, name",
-    )
+    let rows = sqlx::query_as::<_, SkillDbRow>(&format!(
+        "{SKILL_SELECT} ORDER BY name COLLATE NOCASE ASC"
+    ))
     .fetch_all(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(rows.into_iter().map(SkillDbRow::into_row).collect())
 }
 
+pub async fn list_skills_enriched(
+    pool: &SqlitePool,
+    project_root: &Path,
+) -> Result<Vec<PolicySkillRow>, AxError> {
+    let default = load_policy_config(project_root).storage;
+    let mut rows = list_skills(pool).await?;
+    for row in &mut rows {
+        enrich_skill_row(row, default);
+    }
+    Ok(rows)
+}
+
+pub fn enrich_rule_row(row: &mut PolicyRuleRow, default: PolicyStorage) {
+    let eff = effective_storage(default, row.storage.as_deref());
+    row.effective_storage = eff.as_str().into();
+    row.storage_is_override = row.storage.is_some();
+}
+
+pub fn enrich_skill_row(row: &mut PolicySkillRow, default: PolicyStorage) {
+    let eff = effective_storage(default, row.storage.as_deref());
+    row.effective_storage = eff.as_str().into();
+    row.storage_is_override = row.storage.is_some();
+}
+
 pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Option<PolicyRuleRow>, AxError> {
-    let row = sqlx::query_as::<_, RuleDbRow>(
-        "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path,
-                COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
-                COALESCE(scope, 'project') as scope
-         FROM policy_rules WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let row = sqlx::query_as::<_, RuleDbRow>(&format!("{RULE_SELECT} WHERE id = ?"))
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(row.map(RuleDbRow::into_row))
 }
 
 pub async fn get_skill(pool: &SqlitePool, name: &str) -> Result<Option<PolicySkillRow>, AxError> {
-    let row = sqlx::query_as::<_, SkillDbRow>(
-        "SELECT name, description, triggers, tags, priority, context_task, body, source_path,
-                COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
-                COALESCE(scope, 'project') as scope
-         FROM policy_skills WHERE name = ?",
-    )
-    .bind(name)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let row = sqlx::query_as::<_, SkillDbRow>(&format!("{SKILL_SELECT} WHERE name = ?"))
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(row.map(SkillDbRow::into_row))
 }
 
@@ -576,6 +690,9 @@ pub fn rule_row_to_doc(row: &PolicyRuleRow, project_root: &Path) -> PolicyRuleDo
         status: row.status.clone(),
         share,
         scope: row.scope.clone(),
+        storage: row.storage.clone(),
+        source: row.source.clone(),
+        root_id: row.root_id.clone(),
     };
     let raw = serialize_rule(&fm, &row.body);
     let source = if row.source_path.is_empty() {
@@ -590,6 +707,7 @@ pub fn rule_row_to_doc(row: &PolicyRuleRow, project_root: &Path) -> PolicyRuleDo
         body: row.body.clone(),
         raw,
         source_path: source,
+        stub_path: row.stub_path.clone(),
     }
 }
 
@@ -598,6 +716,7 @@ pub fn skill_row_to_doc(row: &PolicySkillRow, project_root: &Path) -> PolicySkil
     let fm = SkillFrontmatter {
         name: row.name.clone(),
         description: row.description.clone(),
+        always_apply: row.always_apply,
         triggers: row.triggers.clone(),
         tags: row.tags.clone(),
         priority: row.priority,
@@ -606,6 +725,9 @@ pub fn skill_row_to_doc(row: &PolicySkillRow, project_root: &Path) -> PolicySkil
         status: row.status.clone(),
         share,
         scope: row.scope.clone(),
+        storage: row.storage.clone(),
+        source: row.source.clone(),
+        root_id: row.root_id.clone(),
     };
     let raw = serialize_skill(&fm, &row.body);
     let source = if row.source_path.is_empty() {
@@ -620,6 +742,7 @@ pub fn skill_row_to_doc(row: &PolicySkillRow, project_root: &Path) -> PolicySkil
         body: row.body.clone(),
         raw,
         source_path: source,
+        stub_path: row.stub_path.clone(),
     }
 }
 
@@ -651,10 +774,15 @@ struct RuleDbRow {
     enabled: i32,
     status: String,
     scope: String,
+    storage: Option<String>,
+    source: Option<String>,
+    root_id: Option<String>,
+    stub_path: Option<String>,
 }
 
 impl RuleDbRow {
     fn into_row(self) -> PolicyRuleRow {
+        let storage = self.storage.filter(|s| !s.is_empty());
         PolicyRuleRow {
             id: self.id,
             level: self.level,
@@ -676,6 +804,12 @@ impl RuleDbRow {
             } else {
                 self.scope
             },
+            storage,
+            source: self.source.filter(|s| !s.is_empty()),
+            root_id: self.root_id.filter(|s| !s.is_empty()),
+            stub_path: self.stub_path.filter(|s| !s.is_empty()),
+            effective_storage: String::new(),
+            storage_is_override: false,
         }
     }
 }
@@ -684,6 +818,7 @@ impl RuleDbRow {
 struct SkillDbRow {
     name: String,
     description: String,
+    always_apply: i32,
     triggers: String,
     tags: String,
     priority: i32,
@@ -693,13 +828,19 @@ struct SkillDbRow {
     enabled: i32,
     status: String,
     scope: String,
+    storage: Option<String>,
+    source: Option<String>,
+    root_id: Option<String>,
+    stub_path: Option<String>,
 }
 
 impl SkillDbRow {
     fn into_row(self) -> PolicySkillRow {
+        let storage = self.storage.filter(|s| !s.is_empty());
         PolicySkillRow {
             name: self.name,
             description: self.description,
+            always_apply: self.always_apply != 0,
             triggers: parse_json_array(&self.triggers),
             tags: parse_json_array(&self.tags),
             priority: self.priority,
@@ -717,6 +858,12 @@ impl SkillDbRow {
             } else {
                 self.scope
             },
+            storage,
+            source: self.source.filter(|s| !s.is_empty()),
+            root_id: self.root_id.filter(|s| !s.is_empty()),
+            stub_path: self.stub_path.filter(|s| !s.is_empty()),
+            effective_storage: String::new(),
+            storage_is_override: false,
         }
     }
 }
@@ -751,7 +898,8 @@ mod tests {
                 updated_at INTEGER NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project'
+                scope TEXT NOT NULL DEFAULT 'project',
+                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT
             )",
         )
         .execute(&pool)
@@ -760,13 +908,15 @@ mod tests {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS policy_skills (
                 name TEXT PRIMARY KEY, description TEXT NOT NULL,
+                always_apply INTEGER NOT NULL DEFAULT 0,
                 triggers TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]',
                 priority INTEGER NOT NULL DEFAULT 50, context_task TEXT,
                 body TEXT NOT NULL, source_path TEXT NOT NULL, content_hash TEXT NOT NULL,
                 updated_at INTEGER NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'approved',
-                scope TEXT NOT NULL DEFAULT 'project'
+                scope TEXT NOT NULL DEFAULT 'project',
+                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT
             )",
         )
         .execute(&pool)
@@ -797,6 +947,9 @@ mod tests {
             status: "approved".into(),
             share: false,
             scope: "project".into(),
+            storage: Some("database".into()),
+            source: None,
+            root_id: None,
         };
         let raw = serialize_rule(&fm, "body text");
         let doc = parse_rule_file(Path::new("test-rule.mdc"), &raw).unwrap();
@@ -833,5 +986,17 @@ mod tests {
         assert!(counts.rules_indexed >= 1);
         let rules = list_rules(&pool).await.unwrap();
         assert!(rules.iter().any(|r| r.id == "disk-rule"));
+    }
+
+    #[tokio::test]
+    async fn skill_always_apply_persists() {
+        let (_dir, pool) = test_pool().await;
+        let raw = "---\nname: old-coder\ndescription: evidence\nalwaysApply: true\n---\n\nbody\n";
+        let doc = parse_skill_file(Path::new("SKILL.md"), raw).unwrap();
+        upsert_skill_doc(&pool, &doc).await.unwrap();
+        let skills = list_skills(&pool).await.unwrap();
+        assert_eq!(skills.len(), 1);
+        assert!(skills[0].always_apply);
+        assert_eq!(skills[0].name, "old-coder");
     }
 }

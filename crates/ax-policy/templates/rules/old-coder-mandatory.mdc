@@ -11,9 +11,13 @@ priority: 90
 
 > **ABSOLUTE**: Every code change must follow the [old-coder](https://github.com/AmazingAng/old-coder) evidence-first workflow. Skipping SPEC, gauntlet, or EVIDENCE is a protocol violation.
 
+This rule and the `old-coder` skill inject on **every** `ax_preflight` turn — including empty and one-word prompts.
+
+guard: require-skill: "old-coder"
+
 ## Required workflow
 
-1. **`ax_skill({ name: "old-coder" })`** — load the full workflow before writing implementation code.
+1. **`ax_skill({ name: "old-coder" })`** — load the full workflow before writing implementation code (also injected when `alwaysApply` is set on the skill).
 2. **SPEC first** — write an executable spec; get human approval before coding (unless the user explicitly waived review).
 3. **Gauntlet** — run tests, types/lint, coverage, and domain checks from the skill; never weaken tests to pass.
 4. **EVIDENCE** — deliver a rerunnable evidence report with real numbers from one fresh run.
@@ -30,3 +34,4 @@ Skip the full loop only for trivial non-behavior edits (comments, typos in docs 
 - Marking implementation work done without EVIDENCE
 - Weakening or deleting tests to make the gauntlet pass
 - Reporting checks that did not actually run (`unverified` must stay `unverified`)
+- Turning off `alwaysApply` on the `old-coder` skill or this rule

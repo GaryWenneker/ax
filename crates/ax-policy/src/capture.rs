@@ -35,6 +35,9 @@ const DIRECTIVE_PREFIXES: &[&str] = &[
     "je moet",
     "jij moet",
     "u moet",
+    "moet altijd",
+    "moet nooit",
+    "moet ",
     "gebruik altijd",
     "gebruik nooit",
     "altijd ",
@@ -98,6 +101,9 @@ pub fn propose_rule_from_prompt(prompt: &str, open_files: &[String]) -> CaptureP
         status: "approved".into(),
         share: false,
         scope: "project".into(),
+        storage: None,
+        source: None,
+        root_id: None,
     };
 
     let preview_path = format!(".ax/policy/rules/{suggested_id}.mdc");
@@ -256,6 +262,9 @@ fn empty_proposal() -> CaptureProposal {
             status: "approved".into(),
             share: false,
             scope: "project".into(),
+            storage: None,
+            source: None,
+            root_id: None,
         },
         body: String::new(),
         preview_path: String::new(),
@@ -280,13 +289,20 @@ fn extract_directive_body(prompt: &str) -> Option<(&'static str, String)> {
     for prefix in DIRECTIVE_PREFIXES {
         if let Some(pos) = lower.find(prefix) {
             let rest = prompt[pos + prefix.len()..].trim();
-            if rest.len() >= 8 {
+            // Short remainder ("… moet altijd werken") still counts — keep
+            // text from the prefix so the body stays ≥ 8 chars.
+            let body = if rest.len() >= 8 {
+                rest.to_string()
+            } else {
+                prompt[pos..].trim().to_string()
+            };
+            if body.len() >= 8 {
                 let conf = if prefix.contains("moet") || prefix.contains("must") {
                     "high"
                 } else {
                     "medium"
                 };
-                return Some((conf, rest.to_string()));
+                return Some((conf, body));
             }
         }
     }
@@ -408,6 +424,13 @@ mod tests {
         assert_eq!(p.confidence, "high");
         assert!(p.frontmatter.triggers.iter().any(|t| t.contains("tailwind")));
         assert!(p.preview.contains("---"));
+    }
+
+    #[test]
+    fn detects_moet_altijd_without_je() {
+        let p = propose_rule_from_prompt("preflight moet altijd werken", &[]);
+        assert!(p.detected, "expected directive in: preflight moet altijd werken");
+        assert_eq!(p.confidence, "high");
     }
 
     #[test]

@@ -299,13 +299,53 @@ export function DistBar({ pct }: { pct: number }) {
   );
 }
 
-export function LevelBadge({ level }: { level: string }) {
+export function LevelBadge({
+  level,
+  onClick,
+  active,
+}: {
+  level: string;
+  onClick?: () => void;
+  active?: boolean;
+}) {
   const cls = level.toLowerCase();
   const short = level === 'CRITICAL' ? 'Crit' : level === 'WARNING' ? 'Warn' : 'Info';
-  return <span className={`page-level-badge page-level-badge--${cls}`}>{short}</span>;
+  const className = [
+    'page-level-badge',
+    `page-level-badge--${cls}`,
+    onClick ? 'page-level-badge--btn' : '',
+    active ? 'page-level-badge--active' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={className}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        aria-pressed={!!active}
+        title={active ? `Remove filter: ${level}` : `Filter by ${level}`}
+      >
+        {short}
+      </button>
+    );
+  }
+  return <span className={className}>{short}</span>;
 }
 
-export function ScopeBadge({ scope }: { scope?: string }) {
+export function ScopeBadge({
+  scope,
+  onClick,
+  active,
+}: {
+  scope?: string;
+  onClick?: () => void;
+  active?: boolean;
+}) {
   const value = (scope || 'project').toLowerCase();
   const label =
     value === 'company'
@@ -317,9 +357,30 @@ export function ScopeBadge({ scope }: { scope?: string }) {
           : value === 'private_project'
             ? 'Private'
             : 'Project';
-  return (
-    <span className={`page-item-badge page-scope-badge page-scope-badge--${value.replace('_', '-')}`}>
-      {label}
-    </span>
-  );
+  const className = [
+    'page-item-badge',
+    'page-scope-badge',
+    `page-scope-badge--${value.replace(/_/g, '-')}`,
+    onClick ? 'page-item-badge--btn' : '',
+    active ? 'page-item-badge--active' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={className}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        aria-pressed={!!active}
+        title={active ? `Remove filter: ${label}` : `Filter by ${label}`}
+      >
+        {label}
+      </button>
+    );
+  }
+  return <span className={className}>{label}</span>;
 }

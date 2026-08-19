@@ -56,17 +56,18 @@ export default function PluginsSettingsSection() {
 
   return (
     <>
-      <div className="setting-row">
-        <div>
-          <div className="setting-row-title">Extractor plugins</div>
-          <div className="setting-row-desc">
+      <div className="settings-row">
+        <div className="settings-row-label">
+          <span className="settings-row-title">Extractor plugins</span>
+          <span className="settings-row-desc">
             Process and WASM extractors under <code>{pluginsDir}</code>. Matching extensions run
-            before the built-in tree-sitter pool during <code>ax index</code> / <code>ax sync</code>.
+            before the built-in tree-sitter pool during <code>ax index</code> /{' '}
+            <code>ax sync</code>.
             {loading ? ' Loading…' : ` ${plugins.length} loaded.`}
-          </div>
+          </span>
         </div>
-        <div className="setting-row-control">
-          <button type="button" className="btn" disabled={loading} onClick={load}>
+        <div className="settings-row-control">
+          <button type="button" className="btn btn-subtle" disabled={loading} onClick={load}>
             {loading ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
@@ -82,7 +83,7 @@ export default function PluginsSettingsSection() {
       )}
 
       {!loading && !err && plugins.length === 0 ? (
-        <p className="status-panel-muted settings-plugins-empty">
+        <p className="settings-callout settings-plugins-empty">
           No plugins discovered. Add <code>.ax/plugins/&lt;name&gt;/plugin.toml</code> — see the{' '}
           <a href="https://getax.wenneker.io/guides/plugins/" target="_blank" rel="noreferrer">
             plugins guide
@@ -93,7 +94,7 @@ export default function PluginsSettingsSection() {
 
       {plugins.length > 0 && (
         <div className="page-table-wrap settings-plugins-table-wrap">
-          <table className="page-table page-table--dense">
+          <table className="page-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -114,7 +115,10 @@ export default function PluginsSettingsSection() {
                   <td className="mono">
                     {(p.extensions ?? []).length ? p.extensions.join(', ') : '—'}
                   </td>
-                  <td className="mono settings-plugin-entry" title={p.command || p.wasm || ''}>
+                  <td
+                    className="mono settings-plugin-entry"
+                    title={p.command || p.wasm || ''}
+                  >
                     {p.mode === 'wasm' ? p.wasm || '—' : p.command || '—'}
                   </td>
                 </tr>

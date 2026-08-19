@@ -13,7 +13,12 @@ function cmpNum(a: number, b: number) {
 }
 
 function scopeOf(scope?: string) {
-  return (scope || 'project').toLowerCase();
+  return (scope || 'project').trim().toLowerCase();
+}
+
+/** Normalized policy layer value for filters and comparisons. */
+export function normalizePolicyScope(scope?: string) {
+  return scopeOf(scope);
 }
 
 /** Unique tags across rows, sorted case-insensitively. */

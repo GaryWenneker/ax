@@ -1,0 +1,19 @@
+---
+description: MCP errors are first priority — fix before any other work
+alwaysApply: true
+---
+
+# MCP first
+
+When the **user-ax** MCP server reports an error, is disconnected, fails tool discovery, or any `CallMcpTool` / `ax_*` call returns connection/auth failures:
+
+1. **Stop other work.** Do not continue the user’s task in DEGRADED mode as if nothing happened.
+2. **Fix MCP first.** Highest priority until `ax_preflight` (or another ax MCP tool) succeeds again.
+3. Typical recovery (Windows):
+   - Confirm all three `ax.exe` copies match `target-dev\release\ax.exe` (see ax-release-install).
+   - `ax daemon restart` in the project root (or kill stale `ax.exe` + restart).
+   - In Cursor: **MCP: Restart Servers** (or reload the window).
+4. Only after MCP is healthy again: re-run `ax_preflight` once, then resume the original task.
+5. If recovery is blocked (no binary, install broken), report the blocker briefly — then continue DEGRADED only with that explicit reason.
+
+Never silently ignore MCP failure and proceed with Grep/Read as a substitute for ax graph tools when the failure is fixable in-session.

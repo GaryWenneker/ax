@@ -311,10 +311,16 @@ fn cursor_skill_rel(name: &str) -> String {
 fn write_skill_bundle(skills_root: &Path, bundle: &SkillBundle) -> std::io::Result<bool> {
     let skill_dir = skills_root.join(bundle.name);
     let skill_md = skill_dir.join(crate::paths::SKILL_FILENAME);
+    let template_skill = bundle
+        .files
+        .iter()
+        .find(|f| f.rel == crate::paths::SKILL_FILENAME)
+        .map(|f| f.body)
+        .unwrap_or("");
     if skill_md.exists() {
         let existing = std::fs::read_to_string(&skill_md).unwrap_or_default();
-        // Bundles ship with triggers — upgrade seeded copies from before triggers were added.
-        if existing.contains("triggers:") {
+        let missing_triggers = !existing.contains("triggers:");
+        if !missing_triggers && !seeded_content_needs_upgrade(&existing, template_skill) {
             return Ok(false);
         }
     }
@@ -326,6 +332,20 @@ fn write_skill_bundle(skills_root: &Path, bundle: &SkillBundle) -> std::io::Resu
         std::fs::write(&dest, file.body.as_bytes())?;
     }
     Ok(true)
+}
+
+/// Rewrite a previously seeded file when the template gained `alwaysApply: true`
+/// or a `require-skill` guard the on-disk copy does not have yet.
+fn seeded_content_needs_upgrade(existing: &str, template: &str) -> bool {
+    let ex = existing.to_ascii_lowercase();
+    let tmpl = template.to_ascii_lowercase();
+    if tmpl.contains("alwaysapply: true") && !ex.contains("alwaysapply: true") {
+        return true;
+    }
+    if tmpl.contains("require-skill:") && !ex.contains("require-skill:") {
+        return true;
+    }
+    false
 }
 
 fn seed_skill_bundles(skills_root: &Path, label_prefix: &str) -> std::io::Result<SeedResult> {
@@ -343,6 +363,7 @@ fn seed_skill_bundles(skills_root: &Path, label_prefix: &str) -> std::io::Result
 }
 
 /// Write baseline rollout skills to a Cursor skills directory (never overwrites).
+/// Bundled skills (old-coder) are rewritten if they are missing `alwaysApply: true`.
 pub fn seed_cursor_skills(skills_root: &Path) -> std::io::Result<SeedResult> {
     std::fs::create_dir_all(skills_root)?;
     let mut result = SeedResult::default();
@@ -386,8 +407,11 @@ fn seed_global_policy_rules(rules_root: &Path) -> std::io::Result<SeedResult> {
         let dest = rules_root.join(format!("{id}.mdc"));
         let label = format!("~/.ax/global_policy/rules/{id}.mdc");
         if dest.exists() {
-            result.skipped.push(label);
-            continue;
+            let existing = std::fs::read_to_string(&dest).unwrap_or_default();
+            if !seeded_content_needs_upgrade(&existing, t.body) {
+                result.skipped.push(label);
+                continue;
+            }
         }
         std::fs::write(&dest, t.body.as_bytes())?;
         result.created.push(label);
@@ -720,6 +744,53 @@ mod tests {
             std::fs::write(&path, skill_md.body).unwrap();
             parse_skill_file(&path, skill_md.body).expect(bundle.name);
         }
+    }
+
+    #[test]
+    fn write_skill_bundle_upgrades_missing_always_apply() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path();
+        let dest_dir = skills.join("old-coder");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+        std::fs::write(
+            dest_dir.join("SKILL.md"),
+            "---\nname: old-coder\ndescription: x\ntriggers: [\"a\"]\n---\n\nold\n",
+        )
+        .unwrap();
+        let bundle = GLOBAL_SKILL_BUNDLES
+            .iter()
+            .find(|b| b.name == "old-coder")
+            .unwrap();
+        assert!(write_skill_bundle(skills, bundle).unwrap());
+        let body = std::fs::read_to_string(dest_dir.join("SKILL.md")).unwrap();
+        assert!(body.to_ascii_lowercase().contains("alwaysapply: true"));
+        assert!(!write_skill_bundle(skills, bundle).unwrap());
+    }
+
+    #[test]
+    fn seed_global_policy_rules_upgrades_require_skill() {
+        let dir = tempdir().unwrap();
+        let rules = dir.path().join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(
+            rules.join("old-coder-mandatory.mdc"),
+            "---\nid: old-coder-mandatory\nlevel: CRITICAL\nalwaysApply: true\n---\n\nNo guard yet.\n",
+        )
+        .unwrap();
+        let result = seed_global_policy_rules(&rules).unwrap();
+        assert!(
+            result
+                .created
+                .iter()
+                .any(|s| s.contains("old-coder-mandatory")),
+            "{:?}",
+            result
+        );
+        let body = std::fs::read_to_string(rules.join("old-coder-mandatory.mdc")).unwrap();
+        assert!(body.to_ascii_lowercase().contains("require-skill"));
+        let second = seed_global_policy_rules(&rules).unwrap();
+        assert!(second.created.is_empty());
+        assert!(second.skipped.iter().any(|s| s.contains("old-coder-mandatory")));
     }
 
     #[test]

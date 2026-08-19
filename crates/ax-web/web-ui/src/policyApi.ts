@@ -97,6 +97,28 @@ export function setPolicySkillEnabled(name: string, enabled: boolean): Promise<{
   });
 }
 
+export function setPolicyRuleStorage(
+  id: string,
+  storage: 'files' | 'database',
+  keepFile = false,
+): Promise<{ ok: boolean; effectiveStorage?: string; storageIsOverride?: boolean }> {
+  return request(`/rules/${encodeURIComponent(id)}/storage`, {
+    method: 'PATCH',
+    body: JSON.stringify({ storage, keepFile }),
+  });
+}
+
+export function setPolicySkillStorage(
+  name: string,
+  storage: 'files' | 'database',
+  keepFile = false,
+): Promise<{ ok: boolean; effectiveStorage?: string; storageIsOverride?: boolean }> {
+  return request(`/skills/${encodeURIComponent(name)}/storage`, {
+    method: 'PATCH',
+    body: JSON.stringify({ storage, keepFile }),
+  });
+}
+
 export function fetchPolicySyncSettings(): Promise<import('./policyTypes').PolicySyncSettings> {
   return request('/settings');
 }

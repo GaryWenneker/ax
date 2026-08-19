@@ -19,15 +19,15 @@ ax policy storage status   # show effective files vs database mode
 ax web --open              # edit rules/skills in the browser
 ```
 
-On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy (never overwrites existing files):
+On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy. Existing files are left alone **unless** the template gained `alwaysApply: true` or a `require-skill` guard the on-disk copy does not have yet (then ax rewrites from the template):
 
 | Location | Content |
 |---|---|
-| `~/.ax/global_policy/rules/` | `old-coder-mandatory` (CRITICAL, **alwaysApply**) — agents must follow the old-coder workflow for implementation work |
-| `~/.ax/global_policy/skills/` | `old-coder`, `old-coder-api` (matched on coding/API triggers; load full body via `ax_skill`) |
+| `~/.ax/global_policy/rules/` | `old-coder-mandatory` (CRITICAL, **alwaysApply**, `guard: require-skill: "old-coder"`) — agents must follow the old-coder workflow for implementation work |
+| `~/.ax/global_policy/skills/` | `old-coder` (**alwaysApply**, injects on every turn including empty prompts), `old-coder-api` (matched on API triggers; load full body via `ax_skill`) |
 | `~/.cursor/skills/` | Same skill bundles for Cursor agent discovery |
 
-**Enforcement model:** Rules with `alwaysApply: true` are injected on **every** `ax_preflight` turn under `Rules (always apply)`. Skills match on triggers/description and appear under `Suggested skills` — the mandatory rule requires agents to call `ax_skill("old-coder")` before implementing.
+**Enforcement model:** Rules and skills with `alwaysApply: true` are injected on **every** `ax_preflight` turn (including empty or one-word prompts). Always-apply inject is never hard-truncated. `ax_guard` blocks Write/Delete when a CRITICAL rule declares `guard: require-skill: "old-coder"` unless that skill is indexed, approved, enabled, and `alwaysApply`. Policy files under `.ax/policy/` and `crates/ax-policy/templates/` are exempt so seed/index can repair a missing skill.
 
 Every `ax init` re-imports all policy layers (including global) into `ax.db`. After install alone, run `ax init` or `ax policy index --force` in any project once.
 
@@ -188,12 +188,12 @@ Use `--json` on either step for agent-driven interviews.
  2. Agent calls ax_preflight({ prompt, files })
          │
          ▼
- 3. ax matches rules (alwaysApply, globs, triggers) and skills (triggers, description)
+  3. ax matches rules (alwaysApply, globs, triggers) and skills (alwaysApply, triggers, description)
          │
          ▼
  4. MCP returns:
       • rules[]   — id, level, score, full body
-      • skills[]  — name, description, full body (max 2)
+      • skills[]  — name, description, full body (all alwaysApply skills, then up to 2 trigger-matched)
       • inject    — ready-to-apply <ax_policy> markdown block
          │
          ▼
@@ -222,7 +222,7 @@ Use `--json` on either step for agent-driven interviews.
 
 In **Cursor**, policy is **pull-only**: the agent must call `ax_preflight` at turn start. MCP server instructions include this when `.ax/policy/` is indexed.
 
-Set `AX_NO_POLICY=1` to skip prompt-hook injection. Set `AX_POLICY_MAX_CHARS` to cap inject size (default `16000`).
+Set `AX_NO_POLICY=1` to skip prompt-hook injection. Set `AX_POLICY_MAX_CHARS` to cap **contextual** inject size (default `16000`). Always-apply rules are never hard-truncated: if they exceed the cap, the inject grows so `ax_preflight` still delivers a complete `Rules (always apply)` block. Oversized skills are omitted with an `ax_skill` hint instead of cutting always-apply rules mid-body.
 
 ---
 
@@ -295,6 +295,7 @@ Skills live in `.ax/policy/skills/<name>/SKILL.md`:
 name: deploy
 description: Use when the user says deploy or push to production.
 scope: project
+alwaysApply: false
 triggers: ["deploy", "production"]
 enabled: true
 status: approved
@@ -303,9 +304,29 @@ tags: ["ops"]
 # Workflow steps (markdown)
 ```
 
-When triggers match, `ax_preflight` includes the skill body in `inject`. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
+When `alwaysApply` is `true`, `ax_preflight` injects the skill body on **every** turn (including empty prompts) under **Skills (always apply)** — the same contract as always-apply rules. Otherwise the skill matches on triggers/description and appears under **Suggested skills**. Load a specific workflow anytime with `ax_skill({ name: "deploy" })`.
 
 Give every skill at least one `tags` value (same as rules) so Command Center can filter it.
+
+### Guard directives
+
+Any **CRITICAL** rule can opt into the static `ax_guard` gate by putting one of these lines in its body (quotes required):
+
+```text
+guard: forbid-path: "**/*.pem"
+guard: forbid-content: "eval("
+guard: require-content: "requireAuth("
+guard: require-skill: "old-coder"
+```
+
+| Directive | When it blocks |
+|---|---|
+| `forbid-path` | Path matches the glob (Write or Delete) |
+| `forbid-content` | Write content contains the substring or `/regex/` |
+| `require-content` | Write to a path matching the rule's `globs` is missing the substring or `/regex/` |
+| `require-skill` | Write/Delete unless that skill is indexed, enabled, approved, and `alwaysApply: true`. Exempt: `.ax/policy/**` and `crates/ax-policy/templates/**` |
+
+`old-coder-mandatory` ships with `require-skill: "old-coder"` so implementation writes fail closed if the skill is missing or not always-apply.
 
 ### Command Center: label filter
 
@@ -495,7 +516,7 @@ Run `ax policy sync` to verify managed policy files and warn about duplicate `.c
 |---|---|
 | `AX_NO_POLICY=1` | Skip policy injection in prompt-hook |
 | `AX_NO_POLICY_CAPTURE=1` | Skip directive capture hints in prompt-hook |
-| `AX_POLICY_MAX_CHARS` | Cap injected policy text (default 16000) |
+| `AX_POLICY_MAX_CHARS` | Cap **contextual** policy inject (default 16000). Always-apply rules **and** always-apply skills are never hard-truncated. |
 | `AX_WEB_READONLY` | Disable saves in ax web |
 
 ---

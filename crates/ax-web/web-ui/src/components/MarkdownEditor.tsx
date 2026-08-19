@@ -1,4 +1,7 @@
+import { useRef } from 'react';
 import MDEditor from '@uiw/react-md-editor';
+import MarkdownPreview from './MarkdownPreview';
+import { MdPreviewResizeHandle, loadMdEditPct } from './PolicyEditorResize';
 
 interface Props {
   value: string;
@@ -9,20 +12,38 @@ interface Props {
   fill?: boolean;
 }
 
+/**
+ * Source + preview side-by-side with a real vertical resize handle.
+ * (uiw's visibleDragbar only resizes editor height, and is disabled when height is %.)
+ */
 export default function MarkdownEditor({ value, onChange, height = 520, fill = false }: Props) {
+  const splitRef = useRef<HTMLDivElement>(null);
+  const pct = loadMdEditPct();
+
   return (
-    <div className={`md-editor-wrap${fill ? ' md-editor-wrap--fill' : ''}`} data-color-mode="dark">
-      <MDEditor
-        value={value}
-        onChange={(v) => onChange(v ?? '')}
-        preview="live"
-        height={fill ? '100%' : height}
-        visibleDragbar={false}
-        textareaProps={{
-          spellCheck: false,
-          placeholder: 'Write rule or skill content in Markdown…',
-        }}
-      />
+    <div
+      ref={splitRef}
+      className={`md-editor-wrap md-editor-split${fill ? ' md-editor-wrap--fill' : ''}`}
+      data-color-mode="dark"
+      style={{ ['--md-edit-pct' as string]: `${pct}%`, height: fill ? undefined : height }}
+    >
+      <div className="md-editor-split-edit">
+        <MDEditor
+          value={value}
+          onChange={(v) => onChange(v ?? '')}
+          preview="edit"
+          height="100%"
+          visibleDragbar={false}
+          textareaProps={{
+            spellCheck: false,
+            placeholder: 'Write rule or skill content in Markdown…',
+          }}
+        />
+      </div>
+      <MdPreviewResizeHandle containerRef={splitRef} />
+      <div className="md-editor-split-preview">
+        <MarkdownPreview value={value} />
+      </div>
     </div>
   );
 }

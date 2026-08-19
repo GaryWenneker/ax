@@ -155,6 +155,7 @@ export default defineConfig({
 						{ label: 'Extractor plugins', slug: 'guides/plugins' },
 						{ label: 'LSP enrichment', slug: 'guides/lsp' },
 						{ label: 'Architecture Insights', slug: 'guides/architecture-insights' },
+						{ label: 'Open Knowledge Format (OKF)', slug: 'guides/okf' },
 						{ label: 'Policy Engine', slug: 'guides/policy-engine' },
 						{ label: 'Remote Policy Share', slug: 'guides/policy-sharing' },
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },

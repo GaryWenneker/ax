@@ -176,6 +176,28 @@ enum Commands {
     /// Impact radius
     #[command(long_about = help_text::IMPACT_LONG)]
     Impact { symbol: String },
+    /// List call-graph cycles (non-trivial SCCs)
+    Cycles {
+        #[arg(long, default_value_t = 50, help = "Max cycles to report")]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Shortest Calls/References path between two symbols
+    Path {
+        from: String,
+        to: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Public API surface for a module / path prefix
+    Api {
+        module: String,
+        #[arg(long, default_value_t = 200, help = "Max exported symbols")]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
     /// Graph insights: communities, god nodes, surprising connections
     Insights {
         path: Option<String>,
@@ -202,6 +224,14 @@ enum Commands {
     Export {
         #[command(subcommand)]
         action: ExportCommands,
+    },
+    /// Graph hygiene: isolated symbols, dangling edges, orphan docs
+    Validate {
+        path: Option<String>,
+        #[arg(long, help = "Exit non-zero when dangling edges or isolated symbols exist")]
+        ci: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// Git diff symbol-level blast radius vs base branch
     Diff {
@@ -352,6 +382,12 @@ enum Commands {
         #[command(subcommand)]
         action: LspCommands,
     },
+    /// Sync AzDO wiki + workspace docs into ax.db (documentation-catalog)
+    #[command(name = "docs-catalog", long_about = help_text::DOCS_CATALOG_LONG)]
+    DocsCatalog {
+        #[command(subcommand)]
+        action: DocsCatalogAction,
+    },
     /// Policy rules and skills
     Policy {
         #[command(subcommand)]
@@ -401,6 +437,19 @@ enum Commands {
         daemon: bool,
         #[arg(long, hide = true)]
         path: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DocsCatalogAction {
+    /// Pull wiki, scan workspace, import memories, sync graph
+    Sync {
+        #[arg(long, help = "Skip git pull/clone of AzDO wiki")]
+        skip_wiki_pull: bool,
+        #[arg(long, help = "Build JSONL only; skip import and graph sync")]
+        dry_run: bool,
+        #[arg(long, help = "JSON output")]
+        json: bool,
     },
 }
 
@@ -521,6 +570,38 @@ enum LspCommands {
 
 #[derive(Subcommand)]
 enum ExportCommands {
+    /// Export an Open Knowledge Format (OKF) Markdown bundle
+    #[command(long_about = help_text::EXPORT_OKF_LONG)]
+    Okf {
+        path: Option<String>,
+        #[arg(long, help = "Output directory (default: ax.json okf.outDir or .ax/knowledge)")]
+        out: Option<String>,
+        #[arg(long, default_value_t = 0, help = "Max concepts (0 = all)")]
+        limit: usize,
+        #[arg(long, help = "Validate the OKF bundle (index + relative links)")]
+        check: bool,
+        #[arg(long, help = "With --check: fail non-zero on OKF validation issues")]
+        ci: bool,
+        #[arg(
+            long,
+            help = "Publish OKF bundle to okf.azdoWiki git remote (Azure DevOps Wiki or any wiki)"
+        )]
+        publish_wiki: bool,
+        #[arg(long, help = "With --publish-wiki: preview only (no clone/commit/push)")]
+        dry_run: bool,
+        #[arg(long, help = "With --publish-wiki: commit locally but do not push")]
+        no_push: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Alias for `ax export okf` (Open Knowledge Format)
+    Concepts {
+        path: Option<String>,
+        #[arg(long, help = "Output directory (default: ax.json okf.outDir or .ax/knowledge)")]
+        out: Option<String>,
+        #[arg(long, default_value_t = 0, help = "Max concepts (0 = all)")]
+        limit: usize,
+    },
     /// Self-contained interactive HTML graph (portable, no server needed)
     GraphHtml {
         path: Option<String>,
@@ -876,6 +957,19 @@ enum PolicyStorageCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Set per-item storage override for one rule or skill
+    #[command(name = "set-item")]
+    SetItem {
+        /// Rule id or skill name
+        id: String,
+        /// Target storage: files | database
+        storage: String,
+        path: Option<String>,
+        #[arg(long, help = "When switching to database, keep the markdown file on disk")]
+        keep_file: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1021,6 +1115,11 @@ async fn async_main() {
         Some(Commands::Callers { symbol }) => commands::callers::run(symbol).await,
         Some(Commands::Callees { symbol }) => commands::callees::run(symbol).await,
         Some(Commands::Impact { symbol }) => commands::impact::run(symbol).await,
+        Some(Commands::Cycles { limit, json }) => commands::cycles::run(limit, json).await,
+        Some(Commands::Path { from, to, json }) => commands::path::run(from, to, json).await,
+        Some(Commands::Api { module, limit, json }) => {
+            commands::api::run(module, limit, json).await
+        }
         Some(Commands::Insights { path, resolution, god_limit, surprising_limit, json }) => {
             commands::insights::run(path, resolution, god_limit, surprising_limit, json).await
         }
@@ -1028,6 +1127,33 @@ async fn async_main() {
             commands::report::run(path, out, resolution, stdout).await
         }
         Some(Commands::Export { action }) => match action {
+            ExportCommands::Okf {
+                path,
+                out,
+                limit,
+                check,
+                ci,
+                publish_wiki,
+                dry_run,
+                no_push,
+                json,
+            } => {
+                commands::export_okf::run(commands::export_okf::ExportOkfArgs {
+                    path,
+                    out,
+                    limit,
+                    check,
+                    ci,
+                    publish_wiki,
+                    dry_run,
+                    no_push,
+                    json,
+                })
+                .await
+            }
+            ExportCommands::Concepts { path, out, limit } => {
+                commands::export_concepts::run(path, out, limit).await
+            }
             ExportCommands::GraphHtml {
                 path,
                 out,
@@ -1042,6 +1168,9 @@ async fn async_main() {
                 limit,
             } => commands::export::run_graph(path, out, &format, resolution, limit).await,
         },
+        Some(Commands::Validate { path, ci, json }) => {
+            commands::validate::run(path, ci, json).await
+        }
         Some(Commands::Affected {
             files,
             stdin,
@@ -1190,6 +1319,15 @@ async fn async_main() {
                     )
                     .await
                 }
+                PolicyStorageCommands::SetItem {
+                    id,
+                    storage,
+                    path,
+                    keep_file,
+                    json,
+                } => {
+                    commands::policy::run_storage_set_item(path, id, storage, keep_file, json).await
+                }
             },
             PolicyCommands::Pack { action } => match action {
                 PolicyPackCommands::Export { path, tag, out, quiet } => {
@@ -1289,6 +1427,13 @@ async fn async_main() {
                 json,
             } => commands::pricing::run_history(model, source, days, json).await,
         },
+        Some(Commands::DocsCatalog { action }) => match action {
+            DocsCatalogAction::Sync {
+                skip_wiki_pull,
+                dry_run,
+                json,
+            } => commands::docs_catalog::run_sync(skip_wiki_pull, dry_run, json).await,
+        },
         Some(Commands::Mcp { action }) => match action {
             McpAction::Audit {
                 path,
@@ -1376,9 +1521,13 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Callers { .. }) => Some("callers".into()),
         Some(Commands::Callees { .. }) => Some("callees".into()),
         Some(Commands::Impact { .. }) => Some("impact".into()),
+        Some(Commands::Cycles { .. }) => Some("cycles".into()),
+        Some(Commands::Path { .. }) => Some("path".into()),
+        Some(Commands::Api { .. }) => Some("api".into()),
         Some(Commands::Insights { .. }) => Some("insights".into()),
         Some(Commands::Report { .. }) => Some("report".into()),
         Some(Commands::Export { .. }) => Some("export".into()),
+        Some(Commands::Validate { .. }) => Some("validate".into()),
         Some(Commands::Affected { .. }) => Some("affected".into()),
         Some(Commands::Diff { .. }) => Some("diff".into()),
         Some(Commands::TestImpact { .. }) => Some("test-impact".into()),
@@ -1390,6 +1539,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Telemetry { .. }) => Some("telemetry".into()),
         Some(Commands::Savings { .. }) => Some("savings".into()),
         Some(Commands::Pricing { .. }) => Some("pricing".into()),
+        Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),

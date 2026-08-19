@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v4.3.1).
+description: Complete reference for every ax command, argument, and flag (v4.4.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -27,7 +27,7 @@ Running `ax` with **no subcommand** starts the interactive installer (same as `a
 | `AX_NO_UPDATE_CHECK=1` | Skip background upgrade notices after commands |
 | `AX_NO_POLICY=1` | Skip policy injection in prompt-hook |
 | `AX_NO_POLICY_CAPTURE=1` | Skip directive capture hints in prompt-hook |
-| `AX_POLICY_MAX_CHARS` | Cap policy inject size (default `16000`) |
+| `AX_POLICY_MAX_CHARS` | Cap contextual policy inject (default `16000`). Always-apply rules are never hard-truncated. |
 | `AX_TELEMETRY=0` / `DO_NOT_TRACK=1` | Disable anonymous telemetry |
 | `AX_MS_CLIENT_ID` | Optional custom Azure AD public client ID for OneDrive policy share — defaults to the built-in Microsoft app if unset |
 | `AX_OFFLOAD_URL`, `AX_OFFLOAD_KEY`, … | Override explore offload settings |
@@ -998,7 +998,7 @@ ax policy skill release
 
 ### `ax policy guard <file>`
 
-Pre-write CRITICAL guard check. Built-in: UTF-8/BOM encoding, secrets paths. Generic: any CRITICAL rule can add a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, or `guard: require-content: "<substring or /regex/>"` directive line to its body to opt into this check without code changes — no separate flag needed, directives are picked up automatically from indexed policy.
+Pre-write CRITICAL guard check. Built-in: UTF-8/BOM encoding, secrets paths. Generic: any CRITICAL rule can add a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, `guard: require-content: "<substring or /regex/>"`, or `guard: require-skill: "<name>"` directive line to its body to opt into this check without code changes — no separate flag needed, directives are picked up automatically from indexed policy.
 
 | Argument / flag | Type | Description |
 |---|---|---|

@@ -21,6 +21,7 @@ toml = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
 ax-usage = { workspace = true }
+ax-sync = { workspace = true }
 ax-lsp = { workspace = true }
 ax-ship = { workspace = true }
 dirs = { workspace = true }

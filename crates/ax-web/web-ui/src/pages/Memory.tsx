@@ -6,6 +6,7 @@ import {
   fetchMemories,
   recallMemories,
   setMemoryEnabled,
+  syncDocsCatalog,
   type MemoryMatch,
   type MemoryRow,
 } from '../api';
@@ -55,6 +56,7 @@ export default function MemoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
+  const [syncingCatalog, setSyncingCatalog] = useState(false);
 
   const [composerOpen, setComposerOpen] = useState(false);
   const [newBody, setNewBody] = useState('');
@@ -101,6 +103,24 @@ export default function MemoryPage() {
       setError(e instanceof Error ? e.message : 'Capture failed');
     } finally {
       setCapturing(false);
+    }
+  }
+
+  async function runDocsCatalogSync() {
+    setSyncingCatalog(true);
+    setError(null);
+    setMsg(null);
+    try {
+      const r = await syncDocsCatalog();
+      setMsg(
+        `Docs catalog: ${r.memoriesBuilt} memories, wiki ${r.wikiAction} (${r.wikiPages} pages), `
+        + `${r.importInserted} new / ${r.importUpdated} updated (${Math.round(r.durationMs / 100) / 10}s).`,
+      );
+      loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Docs catalog sync failed');
+    } finally {
+      setSyncingCatalog(false);
     }
   }
 
@@ -186,6 +206,19 @@ export default function MemoryPage() {
               single-line changes) and creates a memory for each one. This gives agents
               historical context about <strong>why</strong> code changed. Duplicates are
               automatically skipped. Run this periodically or set up a post-commit hook.
+            </InfoHover>
+            <button
+              type="button"
+              className="btn"
+              disabled={syncingCatalog}
+              onClick={runDocsCatalogSync}
+            >
+              {syncingCatalog ? 'Syncing catalog…' : 'Sync docs catalog'}
+            </button>
+            <InfoHover label="About Sync docs catalog">
+              Pulls the AzDO Frontends-applicaties wiki, scans <code>.docs/</code>, agent skills,
+              and script READMEs, then imports <strong>documentation-catalog</strong> memories into
+              ax.db. Same as <code>ax docs-catalog sync</code>.
             </InfoHover>
             <button type="button" className="btn primary" onClick={() => setComposerOpen(true)}>
               New memory

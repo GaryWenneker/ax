@@ -3,11 +3,13 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v4.3.1](https://github.com/GaryWenneker/ax/releases/tag/v4.3.1)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v4.4.0](https://github.com/GaryWenneker/ax/releases/tag/v4.4.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
 
-**v4.3.1** seeds **global old-coder policy** on init/install — evidence-first skills plus a CRITICAL `alwaysApply` rule for implementation work. See [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).
+**v4.4.0** **guards old-coder end-to-end** — `alwaysApply` skills inject on every turn (including empty prompts), `guard: require-skill: "old-coder"` blocks writes when the skill is missing, and preflight never hard-truncates always-apply rules or skills. Also ships **OKF export** (`ax export okf`) and preflight hardening (`projectPath`, degrade-on-error). See [Policy Engine](https://getax.wenneker.io/guides/policy-engine/) and [OKF](https://getax.wenneker.io/guides/okf/).
+
+**v4.3.1** seeds **global old-coder policy** on init/install — evidence-first skills plus a CRITICAL `alwaysApply` rule for implementation work.
 
 **v4.2.0** improves **policy filtering and Azure DevOps pack depth**:
 
@@ -285,7 +287,7 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 | `ax_preflight` | Turn-start policy: matched rules + skills (when `.ax/policy/` exists) |
 | `ax_rules` | List or match policy rules |
 | `ax_skill` | Load a skill by name |
-| `ax_guard` | Pre-write guard for CRITICAL rules — built-in (encoding, secrets) plus generic `guard: forbid-path/forbid-content/require-content` directives declared in any rule body |
+| `ax_guard` | Pre-write guard for CRITICAL rules — built-in (encoding, secrets) plus generic `guard: forbid-path/forbid-content/require-content/require-skill` directives declared in any rule body |
 | `ax_diagnostics` | Diagnostics bridge — feed in editor/LSP/compiler findings (Cursor Problems panel, `tsc`, `eslint`, ...), get back guarded-path and `ax_affected` test correlation |
 
 **Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read. Prefer MCP ops (`ax_sync`, `ax_lsp`, `ax_ship`, `ax_policy_index`, `ax_remember`) over shelling out to the CLI when MCP is connected.

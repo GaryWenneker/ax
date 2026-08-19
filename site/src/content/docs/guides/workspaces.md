@@ -48,6 +48,28 @@ ax policy pull https://github.com/acme/ax-org-policy.git
 
 Clones into `.ax/policy/vendored/<name>/`, copies rules/skills into the project policy tree, and re-indexes.
 
+## External / sibling-repo policy roots
+
+When several git repos share rules outside any one IDE folder, mount them from the workspace (or member) `ax.json`:
+
+```json
+{
+  "members": [
+    { "path": "services/api", "name": "api" },
+    { "path": "services/web", "name": "web" }
+  ],
+  "policy": {
+    "storage": "files",
+    "roots": [
+      { "id": "team-shared", "path": "D:/ax-policy-shared", "scope": "workspace" },
+      { "id": "api-only", "path": "../legacy-policy", "scope": "project", "member": "api" }
+    ]
+  }
+}
+```
+
+Each existing root is merged as an extra policy layer after the matching built-in scope directory. Per-item stubs with `source: "root:team-shared/rules/….mdc"` keep a pointer in each member’s tree while the body lives on the shared mount. See [Policy Engine — storage](/guides/policy-engine/#policy-storage-v211).
+
 ## Per-project policy pack sync
 
 For **bidirectional** team sync inside a project repo (each workspace member keeps its own pack):

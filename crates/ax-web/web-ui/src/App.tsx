@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import StatsPage from './pages/Stats';
 import NodesPage from './pages/Nodes';
@@ -99,7 +99,7 @@ function AppShell() {
   const [mcpReloadBusy, setMcpReloadBusy] = useState(false);
   const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  const { page, ruleId: editRuleId, skillName: editSkillName, sonarTab } = route;
+  const { page, ruleId: editRuleId, skillName: editSkillName, sonarTab, ruleEditMode, skillEditMode } = route;
 
   function refreshNavConfig() {
     fetchShipConfig()
@@ -205,7 +205,7 @@ function AppShell() {
 
   function navigate(
     p: Page,
-    extras?: Partial<Pick<RouteState, 'ruleId' | 'skillName' | 'kind' | 'sonarTab'>>,
+    extras?: Partial<Pick<RouteState, 'ruleId' | 'skillName' | 'kind' | 'sonarTab' | 'ruleEditMode' | 'skillEditMode'>>,
   ) {
     const next: RouteState = {
       page: p,
@@ -213,11 +213,69 @@ function AppShell() {
       skillName: extras?.skillName !== undefined ? extras.skillName : editSkillName,
       kind: extras?.kind !== undefined ? extras.kind : route.kind,
       sonarTab: extras?.sonarTab ?? route.sonarTab,
+      ruleEditMode: false,
+      skillEditMode: false,
     };
+    if (p === 'policy-rule-edit') {
+      next.ruleEditMode = extras?.ruleEditMode ?? Boolean(next.ruleId);
+    } else if (extras?.ruleEditMode !== undefined) {
+      next.ruleEditMode = extras.ruleEditMode;
+    }
+    if (p === 'policy-skill-edit') {
+      next.skillEditMode = extras?.skillEditMode ?? Boolean(next.skillName);
+    } else if (extras?.skillEditMode !== undefined) {
+      next.skillEditMode = extras.skillEditMode;
+    }
     setRoute(next);
     setSidebarOpen(false);
     navigateRoute(next);
   }
+
+  const selectPolicyRule = useCallback(
+    (id: string | null) => {
+      navigate('policy-rules', { ruleId: id, ruleEditMode: false });
+    },
+    [editRuleId, editSkillName, route.kind, route.sonarTab],
+  );
+
+  const selectPolicySkill = useCallback(
+    (name: string | null) => {
+      navigate('policy-skills', { skillName: name, skillEditMode: false });
+    },
+    [editRuleId, editSkillName, route.kind, route.sonarTab],
+  );
+
+  // Old bookmarks: /policy/rules/edit?id=x → slideout view at /policy/rules?id=x
+  useEffect(() => {
+    if (page === 'policy-rule-edit' && editRuleId && !ruleEditMode) {
+      applyRoute(
+        {
+          page: 'policy-rules',
+          ruleId: editRuleId,
+          skillName: editSkillName,
+          kind: route.kind,
+          sonarTab: route.sonarTab,
+          ruleEditMode: false,
+          skillEditMode: false,
+        },
+        true,
+      );
+    }
+    if (page === 'policy-skill-edit' && editSkillName && !skillEditMode) {
+      applyRoute(
+        {
+          page: 'policy-skills',
+          ruleId: editRuleId,
+          skillName: editSkillName,
+          kind: route.kind,
+          sonarTab: route.sonarTab,
+          ruleEditMode: false,
+          skillEditMode: false,
+        },
+        true,
+      );
+    }
+  }, [page, editRuleId, editSkillName, ruleEditMode, skillEditMode, route.kind, route.sonarTab]);
 
   function adjFont(delta: number) {
     setFontScale(adjustUiScale(delta));
@@ -420,25 +478,37 @@ function AppShell() {
             {page === 'agent' && showAgent && <AgentPage key={workspaceKey} />}
             {page === 'settings' && <SettingsPage key={workspaceKey} />}
             {page === 'logging' && <LoggingPage key={workspaceKey} />}
-            {page === 'policy-rules' && (
+            {(page === 'policy-rules' || (page === 'policy-rule-edit' && editRuleId && !ruleEditMode)) && (
               <PolicyRulesPage
                 key={workspaceKey}
-                onEdit={(id) => navigate('policy-rule-edit', { ruleId: id })}
+                selectedId={editRuleId}
+                onSelect={selectPolicyRule}
+                onEditFull={(id) => navigate('policy-rule-edit', { ruleId: id, ruleEditMode: true })}
                 onMatch={() => navigate('policy-match')}
               />
             )}
-            {page === 'policy-rule-edit' && (
-              <PolicyRuleEditor key={workspaceKey} ruleId={editRuleId} onBack={() => navigate('policy-rules')} />
+            {page === 'policy-rule-edit' && (ruleEditMode || !editRuleId) && (
+              <PolicyRuleEditor
+                key={workspaceKey}
+                ruleId={editRuleId}
+                onBack={() => navigate('policy-rules', { ruleId: editRuleId, ruleEditMode: false })}
+              />
             )}
-            {page === 'policy-skills' && (
+            {(page === 'policy-skills' || (page === 'policy-skill-edit' && editSkillName && !skillEditMode)) && (
               <PolicySkillsPage
                 key={workspaceKey}
-                onEdit={(name) => navigate('policy-skill-edit', { skillName: name })}
+                selectedName={editSkillName}
+                onSelect={selectPolicySkill}
+                onEditFull={(name) => navigate('policy-skill-edit', { skillName: name, skillEditMode: true })}
                 onMatch={() => navigate('policy-match')}
               />
             )}
-            {page === 'policy-skill-edit' && (
-              <PolicySkillEditor key={workspaceKey} skillName={editSkillName} onBack={() => navigate('policy-skills')} />
+            {page === 'policy-skill-edit' && (skillEditMode || !editSkillName) && (
+              <PolicySkillEditor
+                key={workspaceKey}
+                skillName={editSkillName}
+                onBack={() => navigate('policy-skills', { skillName: editSkillName, skillEditMode: false })}
+              />
             )}
             {page === 'policy-match' && <PolicyMatchPage key={workspaceKey} onClose={() => navigate('policy-rules')} />}
             {page === 'policy-sync' && (

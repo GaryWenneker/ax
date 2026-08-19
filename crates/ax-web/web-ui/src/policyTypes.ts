@@ -18,6 +18,8 @@ export function scopeLabel(scope?: string): string {
   return found?.label ?? (scope || 'Project');
 }
 
+export type PolicyItemStorage = 'files' | 'database';
+
 export interface RuleFrontmatter {
   id: string;
   level: string;
@@ -30,11 +32,16 @@ export interface RuleFrontmatter {
   status?: string;
   share?: boolean;
   scope?: string;
+  /** Per-item override; omit to inherit project default. */
+  storage?: PolicyItemStorage | null;
+  source?: string | null;
+  rootId?: string | null;
 }
 
 export interface SkillFrontmatter {
   name: string;
   description: string;
+  alwaysApply?: boolean;
   triggers: string[];
   tags: string[];
   priority: number;
@@ -43,6 +50,9 @@ export interface SkillFrontmatter {
   status?: string;
   share?: boolean;
   scope?: string;
+  storage?: PolicyItemStorage | null;
+  source?: string | null;
+  rootId?: string | null;
 }
 
 export interface PolicyRuleDoc {
@@ -72,11 +82,18 @@ export interface PolicyRuleRow {
   enabled?: boolean;
   status?: string;
   scope?: string;
+  storage?: PolicyItemStorage | null;
+  source?: string | null;
+  rootId?: string | null;
+  stubPath?: string | null;
+  effectiveStorage?: string;
+  storageIsOverride?: boolean;
 }
 
 export interface PolicySkillRow {
   name: string;
   description: string;
+  alwaysApply?: boolean;
   triggers: string[];
   tags: string[];
   priority: number;
@@ -86,6 +103,20 @@ export interface PolicySkillRow {
   enabled?: boolean;
   status?: string;
   scope?: string;
+  storage?: PolicyItemStorage | null;
+  source?: string | null;
+  rootId?: string | null;
+  stubPath?: string | null;
+  effectiveStorage?: string;
+  storageIsOverride?: boolean;
+}
+
+export interface PolicyRootInfo {
+  id: string;
+  path: string;
+  scope: string;
+  member?: string | null;
+  exists: boolean;
 }
 
 export interface PendingPolicyItem {
@@ -101,6 +132,7 @@ export interface PolicySyncSettings {
   policySync: boolean;
   requireReview: boolean;
   storage: string;
+  roots?: PolicyRootInfo[];
 }
 
 export interface PolicyPackStatus {
