@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
+use ax_context::directory::{find_nearest_ax_root, is_initialized};
 use ax_context::{format_context_as_markdown, format_explore_text};
 use ax_policy::{detect_directive, finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, PolicyStore, RuleFrontmatter};
 use ax_reasoning::{maybe_synthesize_explore, ExploreOffloadMeta};
@@ -392,12 +393,30 @@ async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> 
     }))
 }
 
+fn resolve_preflight_cwd(ax: &Ax, params: &Value) -> PathBuf {
+    let override_path = params
+        .get("projectPath")
+        .or_else(|| params.get("project_path"))
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from);
+    if let Some(p) = override_path {
+        if let Some(root) = find_nearest_ax_root(&p) {
+            return root;
+        }
+        if is_initialized(&p) {
+            return p;
+        }
+    }
+    ax.project_root().to_path_buf()
+}
+
 async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let files = string_array(params.get("files"));
+    let cwd = resolve_preflight_cwd(ax, &params);
     let input = MatchInput {
         prompt: prompt.clone(),
-        cwd: ax.project_root().to_path_buf(),
+        cwd,
         open_files: files.iter().map(PathBuf::from).collect(),
         changed_files: vec![],
     };
@@ -1077,7 +1096,11 @@ fn preflight_tool() -> Value {
             "type": "object",
             "properties": {
                 "prompt": { "type": "string" },
-                "files": { "type": "array", "items": { "type": "string" } }
+                "files": { "type": "array", "items": { "type": "string" } },
+                "projectPath": {
+                    "type": "string",
+                    "description": "Optional project root when cwd differs from the MCP --path index (monorepos). Resolves to the nearest ax root."
+                }
             },
             "required": ["prompt"]
         }
@@ -1376,6 +1399,13 @@ mod tests {
         for expected in ["ax_preflight", "ax_policy_capture", "ax_guard", "ax_rules", "ax_skill"] {
             assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
+    }
+
+    #[test]
+    fn preflight_tool_schema_includes_project_path() {
+        let schema = preflight_tool()["inputSchema"]["properties"].clone();
+        assert!(schema.get("projectPath").is_some());
+        assert!(schema.get("prompt").is_some());
     }
 
     #[test]
