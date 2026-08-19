@@ -57,6 +57,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/explore-before-grep.mdc"),
     },
     Template {
+        rel: "rules/mcp-callmcp-shape.mdc",
+        body: include_str!("../templates/rules/mcp-callmcp-shape.mdc"),
+    },
+    Template {
         rel: "rules/prefer-mcp-ops.mdc",
         body: include_str!("../templates/rules/prefer-mcp-ops.mdc"),
     },
@@ -209,6 +213,11 @@ const MANAGED: &[(&str, &str, bool)] = &[
     (
         ".ax/policy/rules/explore-before-grep.mdc",
         "rules/explore-before-grep.mdc",
+        false,
+    ),
+    (
+        ".ax/policy/rules/mcp-callmcp-shape.mdc",
+        "rules/mcp-callmcp-shape.mdc",
         false,
     ),
     (

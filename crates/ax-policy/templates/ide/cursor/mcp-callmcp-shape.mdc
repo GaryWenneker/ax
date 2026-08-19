@@ -1,0 +1,62 @@
+---
+description: Correct CallMcpTool parameter shape — prevents ax_preflight and other MCP failures.
+alwaysApply: true
+---
+# MCP CallMcpTool — correct call shape
+
+> **ABSOLUTE**: When invoking MCP tools via `CallMcpTool`, put `server` and `toolName` at the **top level**. Never nest them inside `arguments`.
+
+## Correct shape
+
+```json
+{
+  "server": "user-ax",
+  "toolName": "ax_preflight",
+  "arguments": {
+    "prompt": "user message or task summary",
+    "files": []
+  }
+}
+```
+
+| Field | Level | Required |
+|-------|-------|----------|
+| `server` | top | yes — e.g. `user-ax`, `user-eamodio.gitlens-extension-GitKraken` |
+| `toolName` | top | yes — exact tool name from MCP catalog |
+| `arguments` | top | yes — tool-specific params only (never `server` / `toolName` here) |
+
+## Wrong (causes `Invalid arguments: server: Required, toolName: Required`)
+
+```json
+{
+  "arguments": {
+    "server": "user-ax",
+    "toolName": "ax_preflight",
+    "arguments": { "prompt": "..." }
+  }
+}
+```
+
+Also wrong: empty `CallMcpTool` invocations with no JSON parameters.
+
+## Discovery — avoid full catalog
+
+- **Targeted:** `GetMcpTools({ "server": "user-ax", "toolName": "ax_preflight" })`
+- **Pattern:** `GetMcpTools({ "pattern": "ax_preflight" })`
+- **Avoid:** `GetMcpTools()` with no args — loads every MCP server and can hang.
+
+## ax_preflight (mandatory turn start)
+
+When `user-ax` MCP is available:
+
+1. Call `ax_preflight` once per turn **before** other work.
+2. Pass the user prompt in `arguments.prompt`; optional `arguments.files` for open/changed paths.
+3. Optional `arguments.projectPath` when cwd differs from the indexed MCP root (monorepos).
+4. On failure: report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`, continue best-effort.
+
+## Forbidden
+
+- Nesting `server` / `toolName` under `arguments`
+- Truncated or parameter-less `CallMcpTool` invocations
+- Full MCP catalog discovery when a single server or tool is known
+- Skipping `ax_preflight` when ax MCP is connected (see rule `ax`)

@@ -10,8 +10,10 @@ const AX_SECTION_START: &str = "<!-- AX_START -->";
 const AX_SECTION_END: &str = "<!-- AX_END -->";
 
 const CURSOR_RULE_FILE: &str = "ax.mdc";
+const MCP_CALLMCP_SHAPE_FILE: &str = "mcp-callmcp-shape.mdc";
 const LEGACY_CURSOR_RULE_FILE: &str = "ax-agent-workflow.mdc";
 const CURSOR_RULE_BODY: &str = include_str!("../templates/ide/cursor/ax.mdc");
+const MCP_CALLMCP_SHAPE_BODY: &str = include_str!("../templates/ide/cursor/mcp-callmcp-shape.mdc");
 const CLAUDE_RULE_FILE: &str = "ax.md";
 const CLAUDE_RULE_BODY: &str = include_str!("../templates/ide/claude/ax.md");
 const CONTINUE_RULE_FILE: &str = "ax.md";
@@ -163,7 +165,7 @@ fn bootstrap_already_present_ext(rules_dir: &Path, ext: &str) -> bool {
             continue;
         }
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        if stem == "ax" || stem == "ax-agent-workflow" {
+        if stem == "ax" || stem == "ax-agent-workflow" || stem == "mcp-callmcp-shape" {
             continue;
         }
         let content = std::fs::read_to_string(&path).unwrap_or_default();
@@ -186,6 +188,37 @@ fn remove_legacy_cursor_rule(project_root: &Path, result: &mut IdeSeedResult) {
 
 fn cursor_bootstrap_stale(content: &str) -> bool {
     !crate::seed::verify_content(content).is_empty() || content.trim() != CURSOR_RULE_BODY.trim()
+}
+
+fn mcp_callmcp_shape_rule_path(project_root: &Path) -> PathBuf {
+    cursor_rules_dir(project_root).join(MCP_CALLMCP_SHAPE_FILE)
+}
+
+fn mcp_callmcp_shape_stale(content: &str) -> bool {
+    content.trim() != MCP_CALLMCP_SHAPE_BODY.trim()
+}
+
+fn seed_mcp_callmcp_shape_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+    let cursor_rules = cursor_rules_dir(project_root);
+    std::fs::create_dir_all(&cursor_rules)?;
+
+    let target = mcp_callmcp_shape_rule_path(project_root);
+    let rel = format!(".cursor/rules/{MCP_CALLMCP_SHAPE_FILE}");
+
+    if target.exists() {
+        let content = std::fs::read_to_string(&target)?;
+        if !mcp_callmcp_shape_stale(&content) {
+            result.record_skipped(rel);
+            return Ok(());
+        }
+        std::fs::write(&target, MCP_CALLMCP_SHAPE_BODY.as_bytes())?;
+        result.record_updated(rel);
+        return Ok(());
+    }
+
+    std::fs::write(&target, MCP_CALLMCP_SHAPE_BODY.as_bytes())?;
+    result.record_created(rel);
+    Ok(())
 }
 
 fn seed_cursor_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
@@ -399,6 +432,7 @@ fn seed_cline_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std:
 pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedResult> {
     let mut result = IdeSeedResult::default();
     seed_cursor_rule(project_root, &mut result)?;
+    seed_mcp_callmcp_shape_rule(project_root, &mut result)?;
     seed_continue_rule(project_root, &mut result)?;
     seed_continue_mcp(project_root, &mut result)?;
     seed_claude_bootstrap(project_root, &mut result)?;
@@ -584,6 +618,37 @@ fn check_instruction(label: impl Into<String>, path: PathBuf, issues: Vec<String
     }
 }
 
+fn verify_mcp_callmcp_shape_bootstrap(project_root: &Path) -> InstructionCheck {
+    let path = mcp_callmcp_shape_rule_path(project_root);
+    let label = format!(".cursor/rules/{MCP_CALLMCP_SHAPE_FILE}");
+    if !path.exists() {
+        return InstructionCheck {
+            label,
+            path,
+            ok: false,
+            issues: vec!["missing".into()],
+            optional: false,
+        };
+    }
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    if mcp_callmcp_shape_stale(&content) {
+        return InstructionCheck {
+            label,
+            path,
+            ok: false,
+            issues: vec!["bootstrap content drifts from embedded template".into()],
+            optional: false,
+        };
+    }
+    InstructionCheck {
+        label,
+        path,
+        ok: true,
+        issues: vec![],
+        optional: false,
+    }
+}
+
 /// Verify per-IDE bootstrap instruction files (Cursor, Continue, Claude, Gemini, Copilot, Windsurf, Cline).
 pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
     let claude_md = project_root.join(".claude").join("CLAUDE.md");
@@ -595,6 +660,7 @@ pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
 
     vec![
         verify_cursor_bootstrap(project_root),
+        verify_mcp_callmcp_shape_bootstrap(project_root),
         verify_continue_bootstrap(project_root),
         verify_continue_mcp(project_root),
         verify_claude_rule_bootstrap(project_root),
@@ -668,6 +734,21 @@ pub fn sync_ide_bootstrap(project_root: &Path, fix: bool) -> std::io::Result<Syn
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn creates_mcp_callmcp_shape_rule_on_init() {
+        let dir = tempdir().unwrap();
+        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(result
+            .created
+            .iter()
+            .any(|p| p.contains("mcp-callmcp-shape.mdc")));
+        let path = mcp_callmcp_shape_rule_path(dir.path());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("CallMcpTool"));
+        assert!(content.contains("toolName"));
+    }
 
     #[test]
     fn creates_cursor_ax_rule_on_init() {
@@ -824,7 +905,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let checks = verify_ide_bootstrap(dir.path());
         let fails: Vec<_> = checks.iter().filter(|c| !c.ok && !c.optional).collect();
-        assert!(fails.len() >= 8);
+        assert!(fails.len() >= 9);
     }
 
     #[test]
@@ -843,5 +924,9 @@ mod tests {
         assert!(synced.fixed.iter().any(|p| p.contains("copilot-instructions.md")));
         assert!(synced.fixed.iter().any(|p| p.contains(".windsurfrules")));
         assert!(synced.fixed.iter().any(|p| p.contains(".clinerules")));
+        assert!(synced
+            .fixed
+            .iter()
+            .any(|p| p.contains("mcp-callmcp-shape.mdc")));
     }
 }
