@@ -62,12 +62,20 @@ The Command Center **Graph** page renders the graph as an interactive force-dire
 - **Docs = squares** — `.md`/`.mdx` files stand apart from code (circles).
 - Click any node to open the existing detail panel; pan, zoom, and drag to explore.
 
-Open it with `ax web --open` and pick **Graph** in the sidebar. Controls:
+Open it with `ax web --open` and pick **Graph** in the sidebar.
 
+**Start here (onboarding, no LLM).** The left panel lists Leiden **subsystems**, a **god-node tour** (Prev/Next), and **Ask the graph** prompts (the same templates as `ax report`). Click a subsystem to hide the rest of the canvas. These clusters are code coupling, not business processes.
+
+**Domain view (opt-in overlay).** Toggle **Structure / Domain** in the Graph toolbar. Domain is a horizontal graph of `domain` → `flow` → `step` read from `.ax/domain-graph.json`. It does **not** change `ax.db`. Ask an agent to run the `domain` skill (or write the JSON yourself). `GET`/`PUT /api/domain-graph` load and save the file. Empty overlay → empty canvas plus a hint. The skill is seeded on `ax init` as `.ax/policy/skills/domain/SKILL.md`.
+
+Controls:
+
+- **Structure / Domain** toggle
 - **Search / Kind / Community** filters — focus a subsystem or symbol kind
-- **Density** slider — tighten or loosen the force layout
+- **Density** slider — tighten or loosen the force layout (structure view)
 - **Node-count selector** — cap large graphs (e.g. 100 of N nodes)
 - **Recompute communities** — re-run Leiden detection after index changes
+- **Reload overlay** — re-read `.ax/domain-graph.json` in Domain view
 
 ![Interactive Graph — Leiden communities, god nodes, confidence-tagged edges, and doc nodes](/screenshots/cc-graph.png)
 

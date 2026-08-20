@@ -122,6 +122,9 @@ Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left
 
 | Page | Purpose |
 |---|---|
+| **Graph** | Interactive knowledge graph — Leiden communities, god-node tour, suggested questions; optional **Domain** view from `.ax/domain-graph.json` |
+| **Nodes** | Symbol table with kind/file filters and detail blade |
+| **Search** | FTS over indexed symbols |
 | **Ship** | Quality-gate pipeline, SSE logs, git events |
 | **Files** | Indexed file tree — folders expand lazily; root-level files (`README.md`, `Cargo.toml`, …) show as files, not folders |
 | **SonarQube** | Proxied dashboard with auto-login and dark theme |

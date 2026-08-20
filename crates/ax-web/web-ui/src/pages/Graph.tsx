@@ -1,8 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { streamGraph, type GraphNode, type GraphEdge, type GraphStreamMeta } from '../api';
+import {
+  streamGraph,
+  fetchInsights,
+  fetchDomainGraph,
+  type GraphNode,
+  type GraphEdge,
+  type GraphStreamMeta,
+  type GraphInsights,
+  type DomainOverlay,
+  type DomainOverlayNode,
+} from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
+import GraphOnboard, { suggestedQuestionsFromGraph } from '../components/GraphOnboard';
 import { Spinner } from '../components/ui/Spinner';
 import { usePersistedNumber } from '../hooks/usePersistedState';
+import { layoutDomainGraph } from '../lib/domainLayout';
 
 interface SimNode extends GraphNode {
   x: number;
@@ -47,6 +59,13 @@ const DEFAULT_STEP_INDEX = 1; // 100 nodes
 /** Visual radius from graph degree — kept small to reduce overlap. */
 function nodeRadius(degree: number): number {
   return Math.min(1.0 + Math.sqrt(degree) * 0.5, 7);
+}
+
+function visualRadius(n: { kind: string; degree: number }): number {
+  if (n.kind === 'domain') return 12;
+  if (n.kind === 'flow') return 8;
+  if (n.kind === 'step') return 5.5;
+  return nodeRadius(n.degree);
 }
 
 const LABEL_FONT = '8px var(--font-mono, monospace)';
@@ -146,6 +165,13 @@ export default function GraphPage() {
   const [exportSummary, setExportSummary] = useState<string | null>(null);
   const [exportCopied, setExportCopied] = useState(false);
   const isMobile = useNarrowViewport();
+  const [viewMode, setViewMode] = useState<'structure' | 'domain'>('structure');
+  const [insights, setInsights] = useState<GraphInsights | null>(null);
+  const [tourIndex, setTourIndex] = useState(0);
+  const [domainOverlay, setDomainOverlay] = useState<DomainOverlay | null>(null);
+  const [selectedDomain, setSelectedDomain] = useState<DomainOverlayNode | null>(null);
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
 
   const EXPORT_FORMATS = [
     { id: 'json', label: 'JSON' },
@@ -327,13 +353,130 @@ export default function GraphPage() {
     );
   }
 
+  function frameLaidOutGraph() {
+    const nodes = simNodesRef.current;
+    const canvas = canvasRef.current;
+    if (!nodes.length || !canvas) return;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const n of nodes) {
+      minX = Math.min(minX, n.x);
+      maxX = Math.max(maxX, n.x);
+      minY = Math.min(minY, n.y);
+      maxY = Math.max(maxY, n.y);
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.width / dpr;
+    const h = canvas.height / dpr;
+    const gw = Math.max(120, maxX - minX + 160);
+    const gh = Math.max(80, maxY - minY + 120);
+    const scale = Math.min(1.6, Math.max(0.35, Math.min(w / gw, h / gh)));
+    transformRef.current = {
+      scale,
+      offsetX: w / 2 - ((minX + maxX) / 2) * scale,
+      offsetY: h / 2 - ((minY + maxY) / 2) * scale,
+    };
+  }
+
+  async function loadDomain() {
+    if (abortRef.current) abortRef.current();
+    abortRef.current = null;
+    resetGraphState();
+    setMeta(null);
+    setLegendNodes([]);
+    setLoadedNodes(0);
+    setEdgeCount(0);
+    setLoadDone(false);
+    setMatchCount(null);
+    setSelected(null);
+    setSelectedDomain(null);
+    setLoading(true);
+    setError(null);
+    detailRef.current = { maxIterations: 0, maxEdgesDrawn: 4000, showLabels: true };
+    try {
+      const overlay = await fetchDomainGraph();
+      setDomainOverlay(overlay);
+      const laid = layoutDomainGraph(overlay);
+      const wrap = wrapRef.current;
+      const w = wrap?.clientWidth ?? 800;
+      const h = wrap?.clientHeight ?? 600;
+      const nodes: SimNode[] = laid.map((n) => ({
+        id: n.id,
+        name: n.name,
+        kind: n.kind,
+        file_path: '',
+        community_id: n.community_id,
+        community_label: n.kind,
+        degree: n.kind === 'domain' ? 16 : n.kind === 'flow' ? 9 : 4,
+        x: n.x || w / 2,
+        y: n.y || h / 2,
+        vx: 0,
+        vy: 0,
+      }));
+      simNodesRef.current = nodes;
+      const idIndex = new Map<string, number>();
+      nodes.forEach((n, i) => idIndex.set(n.id, i));
+      idIndexRef.current = idIndex;
+      const edges: SimEdge[] = [];
+      for (const e of overlay.edges) {
+        const s = idIndex.get(e.source);
+        const t = idIndex.get(e.target);
+        if (s != null && t != null && s !== t) {
+          edges.push({ source: s, target: t, kind: e.kind, confidence: 'extracted' });
+        }
+      }
+      simEdgesRef.current = edges;
+      setLegendNodes(nodes);
+      setLoadedNodes(nodes.length);
+      setEdgeCount(edges.length);
+      setMeta({
+        total_nodes: nodes.length,
+        truncated: false,
+        node_count: nodes.length,
+        edge_count: edges.length,
+      });
+      settledRef.current = true;
+      iterationsRef.current = 9999;
+      frameLaidOutGraph();
+      requestDraw();
+      setLoadDone(true);
+      setLoading(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load domain overlay');
+      setDomainOverlay({ version: 1, nodes: [], edges: [] });
+      setLoading(false);
+      setLoadDone(true);
+    }
+  }
+
   useEffect(() => {
-    load();
+    if (viewMode === 'domain') {
+      void loadDomain();
+    } else {
+      setSelectedDomain(null);
+      load();
+    }
     return () => {
       if (abortRef.current) abortRef.current();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit]);
+  }, [limit, viewMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchInsights()
+      .then((data) => {
+        if (!cancelled) setInsights(data);
+      })
+      .catch(() => {
+        /* share/readonly or empty index — onboard falls back to the loaded slice */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const communityLegend = useMemo(() => {
     const seen = new Map<number, string>();
@@ -350,6 +493,42 @@ export default function GraphPage() {
   const kindOptions = useMemo(() => {
     return Array.from(new Set(legendNodes.map((n) => n.kind))).sort();
   }, [legendNodes]);
+
+  const onboardCommunities = useMemo(() => {
+    if (insights?.communities?.length) {
+      return insights.communities.slice(0, 16).map((c) => ({
+        id: c.communityId,
+        label: c.label,
+        color: colorFor(c.communityId),
+        size: c.size,
+      }));
+    }
+    return communityLegend.map((c) => ({ ...c, size: undefined as number | undefined }));
+  }, [insights, communityLegend]);
+
+  const onboardGods = useMemo(() => {
+    if (insights?.godNodes?.length) {
+      return insights.godNodes.slice(0, 8).map((g) => ({
+        id: g.nodeId,
+        name: g.name,
+        kind: g.kind,
+        degree: g.degree,
+      }));
+    }
+    return [...legendNodes]
+      .filter((n) => n.kind !== 'doc' && n.kind !== 'domain' && n.kind !== 'flow' && n.kind !== 'step')
+      .sort((a, b) => b.degree - a.degree)
+      .slice(0, 8)
+      .map((n) => ({ id: n.id, name: n.name, kind: n.kind, degree: n.degree }));
+  }, [insights, legendNodes]);
+
+  const onboardQuestions = useMemo(() => {
+    if (insights?.suggestedQuestions?.length) return insights.suggestedQuestions;
+    return suggestedQuestionsFromGraph(
+      onboardGods.map((g) => g.name),
+      onboardCommunities.map((c) => c.label),
+    );
+  }, [insights, onboardGods, onboardCommunities]);
 
   // Recenter the viewport on a single node without changing zoom too much.
   function centerOnNode(node: SimNode) {
@@ -391,6 +570,10 @@ export default function GraphPage() {
   // Start (or keep) the physics loop. Adding nodes mid-flight resets the
   // settle state so the layout keeps relaxing as the stream fills in.
   function ensureSimulation() {
+    if (viewModeRef.current === 'domain') {
+      requestDraw();
+      return;
+    }
     settledRef.current = false;
     if (runningRef.current) return;
     runningRef.current = true;
@@ -592,7 +775,8 @@ export default function GraphPage() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     for (const n of nodes) {
       const { x: sx, y: sy } = worldToScreen(n.x, n.y);
-      const r = nodeRadius(n.degree);
+      const domainKind = n.kind === 'domain' || n.kind === 'flow' || n.kind === 'step';
+      const r = visualRadius(n);
       const isDoc = n.kind === 'doc';
       const matched = isMatch(n);
       if (hideNonMatches && match != null && !matched) continue;
@@ -600,7 +784,15 @@ export default function GraphPage() {
       ctx.globalAlpha = dimmed ? 0.12 : 1;
       ctx.beginPath();
       ctx.fillStyle = isDoc ? '#e0b341' : colorFor(n.community_id);
-      if (isDoc) {
+      if (n.kind === 'domain') {
+        const rw = 26;
+        const rh = 16;
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(sx - rw / 2, sy - rh / 2, rw, rh, 3);
+        } else {
+          ctx.rect(sx - rw / 2, sy - rh / 2, rw, rh);
+        }
+      } else if (n.kind === 'flow' || isDoc) {
         ctx.rect(sx - r, sy - r, r * 2, r * 2);
       } else {
         ctx.arc(sx, sy, r, 0, Math.PI * 2);
@@ -613,8 +805,8 @@ export default function GraphPage() {
       }
       const labelFocus =
         n === hoverRef.current || n.id === selected || (match != null && matched);
-      if (!dimmed && (detail.showLabels || labelFocus)) {
-        const fontSize = labelFocus ? 9 : 8;
+      if (!dimmed && (detail.showLabels || labelFocus || domainKind)) {
+        const fontSize = labelFocus || domainKind ? 9 : 8;
         ctx.fillStyle = 'rgba(230,230,230,0.85)';
         ctx.font = `${fontSize}px var(--font-mono, monospace)`;
         ctx.fillText(n.name, sx + r + 1.5, sy + 2);
@@ -676,7 +868,7 @@ export default function GraphPage() {
     for (let i = nodes.length - 1; i >= 0; i--) {
       const n = nodes[i];
       if (hideNonMatches && match != null && !match.has(n.id)) continue;
-      const r = worldHit(nodeRadius(n.degree) + 2);
+      const r = worldHit(visualRadius(n) + 2);
       if ((n.x - x) ** 2 + (n.y - y) ** 2 <= r * r) return n;
     }
     return null;
@@ -693,7 +885,7 @@ export default function GraphPage() {
       lastX: ev.clientX,
       lastY: ev.clientY,
     };
-    if (n) ensureSimulation();
+    if (n && viewModeRef.current !== 'domain') ensureSimulation();
   }
 
   function onPointerMove(ev: React.PointerEvent) {
@@ -722,7 +914,12 @@ export default function GraphPage() {
     const drag = draggingRef.current;
     if (drag.node) {
       const moved = Math.abs(ev.clientX - drag.lastX) + Math.abs(ev.clientY - drag.lastY);
-      if (moved < (ev.pointerType === 'touch' ? 16 : 8)) setSelected(drag.node.id);
+      if (moved < (ev.pointerType === 'touch' ? 16 : 8)) {
+        setSelected(drag.node.id);
+        if (viewModeRef.current === 'domain' && domainOverlay) {
+          setSelectedDomain(domainOverlay.nodes.find((n) => n.id === drag.node!.id) ?? null);
+        }
+      }
     }
     draggingRef.current = { node: null, panning: false, lastX: 0, lastY: 0 };
     if (ev.currentTarget.hasPointerCapture(ev.pointerId)) {
@@ -819,7 +1016,12 @@ export default function GraphPage() {
         const touch = ev.changedTouches[0];
         if (touch) {
           const moved = Math.abs(touch.clientX - drag.lastX) + Math.abs(touch.clientY - drag.lastY);
-          if (moved < 16) setSelected(drag.node.id);
+          if (moved < 16) {
+            setSelected(drag.node.id);
+            if (viewModeRef.current === 'domain' && domainOverlay) {
+              setSelectedDomain(domainOverlay.nodes.find((n) => n.id === drag.node!.id) ?? null);
+            }
+          }
         }
       }
       draggingRef.current = { node: null, panning: false, lastX: 0, lastY: 0 };
@@ -837,6 +1039,26 @@ export default function GraphPage() {
       <div className="graph-toolbar">
         <div className="graph-toolbar-left">
           <strong>Graph</strong>
+          <div className="graph-mode-toggle" role="tablist" aria-label="Graph view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'structure'}
+              className={viewMode === 'structure' ? 'active' : ''}
+              onClick={() => setViewMode('structure')}
+            >
+              Structure
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'domain'}
+              className={viewMode === 'domain' ? 'active' : ''}
+              onClick={() => setViewMode('domain')}
+            >
+              Domain
+            </button>
+          </div>
           {meta && (
             <span className="graph-meta">
               {nodesShown} of {totalNodes} nodes · {edgeCount} edges
@@ -925,8 +1147,8 @@ export default function GraphPage() {
           >
             {exportBusy ? 'Exporting…' : 'Download'}
           </button>
-          <button type="button" className="btn-secondary" onClick={() => load(true)}>
-            Recompute communities
+          <button type="button" className="btn-secondary" onClick={() => (viewMode === 'domain' ? void loadDomain() : load(true))}>
+            {viewMode === 'domain' ? 'Reload overlay' : 'Recompute communities'}
           </button>
         </div>
       </div>
@@ -940,6 +1162,25 @@ export default function GraphPage() {
       )}
 
       <div className="graph-body">
+        {viewMode === 'structure' && !isMobile && (
+          <GraphOnboard
+            communities={onboardCommunities}
+            godNodes={onboardGods}
+            questions={onboardQuestions}
+            activeCommunity={communityFilter}
+            tourIndex={tourIndex}
+            onSelectCommunity={(id) => setCommunityFilter(id)}
+            onFocusGod={(id, index) => {
+              setTourIndex(index);
+              setSelected(id);
+              const node = simNodesRef.current.find((n) => n.id === id);
+              if (node) {
+                centerOnNode(node);
+                requestDraw();
+              }
+            }}
+          />
+        )}
         <div
           className="graph-canvas-wrap"
           ref={wrapRef}
@@ -956,44 +1197,104 @@ export default function GraphPage() {
           <canvas ref={canvasRef} className="graph-canvas" />
           {loading && (
             <div className="graph-overlay">
-              <Spinner /> Streaming graph… {meta ? `${loadingPct}%` : ''}
+              <Spinner /> {viewMode === 'domain' ? 'Loading domain overlay…' : `Streaming graph… ${meta ? `${loadingPct}%` : ''}`}
             </div>
           )}
           {error && <div className="graph-overlay state-msg"><strong>Error</strong> {error}</div>}
-          {!loading && !error && loadDone && loadedNodes === 0 && (
+          {!loading && !error && loadDone && loadedNodes === 0 && viewMode === 'structure' && (
             <div className="graph-overlay">No nodes — run <code>ax index</code> first.</div>
+          )}
+          {!loading && !error && loadDone && loadedNodes === 0 && viewMode === 'domain' && (
+            <div className="graph-overlay graph-overlay-wide">
+              No domain overlay. Ask an agent to run the <code>domain</code> skill, or save
+              <code> .ax/domain-graph.json</code>. Structure view stays the deterministic graph.
+            </div>
           )}
 
           <div className="graph-legend">
-            <div className="graph-legend-title">Communities</div>
-            {communityLegend.map((c) => (
-              <div
-                key={c.id}
-                className={`graph-legend-row${communityFilter === String(c.id) ? ' active' : ''}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => setCommunityFilter((prev) => prev === String(c.id) ? '' : String(c.id))}
-              >
-                <span className="graph-legend-swatch" style={{ background: c.color }} />
-                <span className="graph-legend-label">{c.label}</span>
-              </div>
-            ))}
-            <div className="graph-legend-title" style={{ marginTop: 8 }}>Edges</div>
-            <div className="graph-legend-row"><span className="graph-legend-line solid" /> extracted</div>
-            <div className="graph-legend-row"><span className="graph-legend-line dashed" /> inferred</div>
-            <div className="graph-legend-row"><span className="graph-legend-line dotted" /> ambiguous</div>
-            <div className="graph-legend-title" style={{ marginTop: 8 }}>Nodes</div>
-            <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ borderRadius: '50%', background: '#888' }} /> code</div>
-            <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ background: '#e0b341' }} /> doc</div>
+            <div className="graph-legend-title">{viewMode === 'domain' ? 'Domain kinds' : 'Communities'}</div>
+            {viewMode === 'domain' ? (
+              <>
+                <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ borderRadius: 3, background: colorFor(0) }} /> domain</div>
+                <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ borderRadius: 0, background: colorFor(0) }} /> flow</div>
+                <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ background: colorFor(0) }} /> step</div>
+              </>
+            ) : (
+              communityLegend.map((c) => (
+                <div
+                  key={c.id}
+                  className={`graph-legend-row${communityFilter === String(c.id) ? ' active' : ''}`}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setCommunityFilter((prev) => (prev === String(c.id) ? '' : String(c.id)))}
+                >
+                  <span className="graph-legend-swatch" style={{ background: c.color }} />
+                  <span className="graph-legend-label">{c.label}</span>
+                </div>
+              ))
+            )}
+            {viewMode === 'structure' && (
+              <>
+                <div className="graph-legend-title" style={{ marginTop: 8 }}>Edges</div>
+                <div className="graph-legend-row"><span className="graph-legend-line solid" /> extracted</div>
+                <div className="graph-legend-row"><span className="graph-legend-line dashed" /> inferred</div>
+                <div className="graph-legend-row"><span className="graph-legend-line dotted" /> ambiguous</div>
+                <div className="graph-legend-title" style={{ marginTop: 8 }}>Nodes</div>
+                <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ borderRadius: '50%', background: '#888' }} /> code</div>
+                <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ background: '#e0b341' }} /> doc</div>
+              </>
+            )}
           </div>
         </div>
 
-        {selected && (
+        {viewMode === 'structure' && selected && (
           <NodeDetailPanel
             nodeId={selected}
             variant={isMobile ? 'overlay' : 'blade'}
             onClose={() => setSelected(null)}
             onNavigate={(id) => setSelected(id)}
           />
+        )}
+        {viewMode === 'domain' && selectedDomain && (
+          <aside className="detail-panel detail-panel--blade" aria-label="Domain node">
+            <div className="detail-header">
+              <span className="detail-title">{selectedDomain.name}</span>
+              <button type="button" className="detail-close" onClick={() => { setSelectedDomain(null); setSelected(null); }} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <div className="detail-body">
+              <div className="detail-meta">
+                <div className="detail-kv"><span className="detail-key">Kind</span><span className="detail-val">{selectedDomain.kind}</span></div>
+              </div>
+              {selectedDomain.summary && (
+                <div>
+                  <div className="detail-section-title">Summary</div>
+                  <p className="graph-onboard-hint">{selectedDomain.summary}</p>
+                </div>
+              )}
+              {selectedDomain.codeNodeIds && selectedDomain.codeNodeIds.length > 0 && (
+                <div>
+                  <div className="detail-section-title">Linked code</div>
+                  <div className="edge-list">
+                    {selectedDomain.codeNodeIds.map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className="edge-item"
+                        onClick={() => {
+                          setViewMode('structure');
+                          setSearch(id);
+                          setSelected(id);
+                        }}
+                      >
+                        <span className="edge-name">{id}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
         )}
       </div>
     </div>

@@ -731,7 +731,14 @@ async fn insights(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .insights(resolution, god_limit, surprising_limit)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(json!(insights))
+    let mut value = serde_json::to_value(&insights).map_err(|e| e.to_string())?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "suggestedQuestions".to_string(),
+            json!(ax_core::report::suggested_questions(&insights)),
+        );
+    }
+    Ok(value)
 }
 
 async fn report(ax: &mut Ax, params: Value) -> Result<Value, String> {

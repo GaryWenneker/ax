@@ -120,6 +120,10 @@ const TEMPLATES: &[Template] = &[
         rel: "skills/ship/SKILL.md",
         body: include_str!("../templates/skills/ship/SKILL.md"),
     },
+    Template {
+        rel: "skills/domain/SKILL.md",
+        body: include_str!("../templates/skills/domain/SKILL.md"),
+    },
 ];
 
 /// Baseline rollout skills — also copied to `.cursor/skills/` on init/install.
@@ -133,6 +137,7 @@ const ROLLOUT_SKILL_RELS: &[&str] = &[
     "skills/pre-pr-check/SKILL.md",
     "skills/preq/SKILL.md",
     "skills/ship/SKILL.md",
+    "skills/domain/SKILL.md",
 ];
 
 /// Relative path + embedded body within a skill directory (e.g. `SKILL.md`, `references/gauntlet.md`).

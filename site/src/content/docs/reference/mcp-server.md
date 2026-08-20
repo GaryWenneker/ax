@@ -176,7 +176,7 @@ For whole-graph understanding — subsystems, hot spots, and unexpected coupling
 
 | Tool | Purpose |
 |---|---|
-| `ax_insights` | Leiden **communities** (subsystems), **god nodes** (most-connected concepts), and **surprising connections** (edges crossing both a community and a module boundary). Params: `resolution`, `godLimit`, `surprisingLimit`. |
+| `ax_insights` | Leiden **communities** (subsystems), **god nodes** (most-connected concepts), **surprising connections**, and **suggestedQuestions** (same templates as `ax report`). Params: `resolution`, `godLimit`, `surprisingLimit`. |
 | `ax_report` | Full Markdown architecture report (god nodes, communities, surprising links, dead code, unresolved refs, suggested questions). Returns `{ markdown }`. Param: `resolution`. |
 
 Every edge also carries a **confidence** tag — `extracted` (read straight from the AST), `inferred` (resolved by a heuristic/name-matching pass), or `ambiguous` (one of several candidate targets was picked) — surfaced in `ax_node` / `ax_callers` / `ax_callees` output and the Command Center edge badges. Markdown docs (`.md`/`.mdx`) are indexed as `Doc` nodes with full parsing; PDF, Office, and other opaque formats appear as `Doc` nodes (presence only, no content extraction). Counts by extension are auto-injected via `ax_preflight` and available in `ax status --json` as `stats.docsByExtension`.

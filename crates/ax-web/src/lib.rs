@@ -3,6 +3,7 @@
 mod actions;
 mod agent;
 mod agent_pty;
+mod domain_graph;
 mod graph_export;
 mod lsp_api;
 mod mcp_ops;
@@ -522,9 +523,27 @@ async fn handle_insights(
     let gm = ax_graph::GraphQueryManager::new(QueryBuilder::new(ws.graph_pool.clone()));
     let resolution = if p.resolution > 0.0 { p.resolution } else { 1.0 };
     match gm.compute_insights(resolution, 25, 25).await {
-        Ok(insights) => (StatusCode::OK, Json(insights)).into_response(),
+        Ok(insights) => {
+            let suggested_questions = ax_core::report::suggested_questions(&insights);
+            (
+                StatusCode::OK,
+                Json(InsightsApiResponse {
+                    insights,
+                    suggested_questions,
+                }),
+            )
+                .into_response()
+        }
         Err(e) => api_err(e.to_string()).into_response(),
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InsightsApiResponse {
+    #[serde(flatten)]
+    insights: ax_graph::GraphInsights,
+    suggested_questions: Vec<String>,
 }
 
 async fn handle_version() -> impl IntoResponse {

@@ -504,11 +504,40 @@ export interface GraphInsights {
   godNodes: GodNode[];
   communities: CommunitySummary[];
   surprisingConnections: SurprisingEdge[];
+  suggestedQuestions?: string[];
 }
 
 export function fetchInsights(resolution = 1.0): Promise<GraphInsights> {
   const sp = new URLSearchParams({ resolution: String(resolution) });
   return get<GraphInsights>(`/insights?${sp}`);
+}
+
+export type DomainKind = 'domain' | 'flow' | 'step';
+export type DomainEdgeKind = 'contains_flow' | 'flow_step' | 'cross_domain';
+
+export interface DomainOverlayNode {
+  id: string;
+  kind: DomainKind;
+  name: string;
+  summary?: string;
+  codeNodeIds?: string[];
+}
+
+export interface DomainOverlayEdge {
+  source: string;
+  target: string;
+  kind: DomainEdgeKind;
+  order?: number;
+}
+
+export interface DomainOverlay {
+  version: number;
+  nodes: DomainOverlayNode[];
+  edges: DomainOverlayEdge[];
+}
+
+export function fetchDomainGraph(): Promise<DomainOverlay> {
+  return get<DomainOverlay>('/domain-graph');
 }
 
 export interface ToolSavingsRow {

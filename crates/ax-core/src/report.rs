@@ -178,7 +178,7 @@ pub fn render_architecture_report(input: &ReportInput) -> String {
 }
 
 /// Templated exploration prompts seeded from the top god nodes and communities.
-fn suggested_questions(ins: &GraphInsights) -> Vec<String> {
+pub fn suggested_questions(ins: &GraphInsights) -> Vec<String> {
     let mut qs = Vec::new();
     if let Some(g) = ins.god_nodes.first() {
         qs.push(format!("How does `{}` connect to the rest of the system?", g.name));
@@ -324,6 +324,9 @@ mod tests {
         assert!(md.contains("core"));
         assert!(md.contains("## Surprising Connections"));
         assert!(md.contains("`auth`"));
+        let qs = suggested_questions(&insights);
+        assert!(qs.iter().any(|q| q.contains("hub")));
+        assert!(qs.iter().any(|q| q.contains("core")));
         assert!(md.contains("## Dead Code Candidates"));
         assert!(md.contains("`orphan`"));
         assert!(md.contains("## Unresolved References"));

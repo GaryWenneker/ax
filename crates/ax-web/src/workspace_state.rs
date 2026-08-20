@@ -292,6 +292,10 @@ fn graph_router(hub: WebHub) -> Router {
         .route("/graph/stream", get(crate::handle_graph_stream))
         .route("/graph/export", get(crate::graph_export::handle_export))
         .route("/insights", get(crate::handle_insights))
+        .route(
+            "/domain-graph",
+            get(crate::domain_graph::handle_get).put(crate::domain_graph::handle_put),
+        )
         .route("/files", get(crate::handle_files))
         .route("/files/roots", get(crate::handle_file_roots))
         .route("/search", get(crate::handle_search))
