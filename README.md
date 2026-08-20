@@ -3,9 +3,13 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v4.4.0](https://github.com/GaryWenneker/ax/releases/tag/v4.4.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v4.6.0](https://github.com/GaryWenneker/ax/releases/tag/v4.6.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+
+**v4.6.0** adds **Graph Start here** (Leiden subsystems, god-node tour, suggested questions) and an opt-in **Domain** overlay (`.ax/domain-graph.json`, agent `domain` skill) so you can show business flows without writing those nodes into `ax.db`. See [Architecture Insights](https://getax.wenneker.io/guides/architecture-insights/).
+
+**v4.5.0** serves **graph-only snippets** (`ax_explore` / `ax_context` read indexed source from `ax.db`) and adds `policy.storage: "database"` with `ax policy import` / `ax policy export`.
 
 **v4.4.0** **guards old-coder end-to-end** — `alwaysApply` skills inject on every turn (including empty prompts), `guard: require-skill: "old-coder"` blocks writes when the skill is missing, and preflight never hard-truncates always-apply rules or skills. Also ships **OKF export** (`ax export okf`) and preflight hardening (`projectPath`, degrade-on-error). See [Policy Engine](https://getax.wenneker.io/guides/policy-engine/) and [OKF](https://getax.wenneker.io/guides/okf/).
 
@@ -200,6 +204,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax callers <symbol>` | Who calls this symbol? |
 | `ax callees <symbol>` | What does this symbol call? |
 | `ax impact <symbol>` | Blast-radius subgraph |
+| `ax domain` | Write `.ax/domain-graph.json` (Command Center Domain view) from Leiden communities |
 | `ax remember <text>` | Store a durable project memory (decision, fix, convention) |
 | `ax recall <query>` | Hybrid search (FTS + vectors) over project memories |
 | `ax capture-git` | Mine recent git commits into memories |

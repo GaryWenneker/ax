@@ -18,6 +18,19 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.6.0
+
+- **Graph Start here** — Command Center Graph left panel lists Leiden **subsystems** (click to filter the canvas), a **god-node tour** (Prev/Next), and **Ask the graph** prompts (the same templates as `ax report`). No LLM required.
+- **Domain overlay** — toggle **Structure / Domain** for a horizontal `domain` → `flow` → `step` map from `.ax/domain-graph.json`. It does **not** change `ax.db`. Seeded `domain` skill on `ax init`; `GET`/`PUT /api/domain-graph` load and save the file.
+- **`ax_insights` suggested questions** — JSON includes `suggestedQuestions` so agents can hand the same prompts to a human.
+
+See [Architecture Insights](/guides/architecture-insights/) and [Command Center](/guides/command-center/).
+
+## What's new in v4.5.0
+
+- **Graph-only snippets** — `ax_explore` and `ax_context` serve source from the indexed store in `ax.db` (hash-checked, no silent disk fallback). After upgrading from a pre-v17 index, run `ax index` once to backfill.
+- **Database policy storage** — `policy.storage: "database"` in `ax.json` makes SQLite the source of truth (`.mdc` export only), with `ax policy import` / `ax policy export`.
+
 ## What's new in v4.4.0
 
 - **Guarded old-coder** — `old-coder` skill has `alwaysApply: true` (matches empty prompts); `old-coder-mandatory` adds `guard: require-skill: "old-coder"` so `ax_guard` blocks Write/Delete when the skill is missing, disabled, or not always-apply. Policy/template paths stay writable for seed repair.

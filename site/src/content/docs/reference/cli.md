@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v4.4.0).
+description: Complete reference for every ax command, argument, and flag (v4.6.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -322,6 +322,26 @@ ax insights
 ax insights --resolution 1.4 --god-limit 30
 ax insights --json
 ```
+
+### `ax domain [path]`
+
+Build a **domain overlay** from the indexed graph (Leiden communities → domains, call chains → flows/steps, cross-community edges → `cross_domain`) and write `.ax/domain-graph.json`. Does **not** change `ax.db`. No LLM. Command Center Graph → Domain reads this file.
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `path` | optional | cwd | Project root |
+| `--resolution` | number | `1.0` | Cluster granularity — higher yields more, smaller communities |
+| `--json` | flag | — | Print the overlay JSON |
+| `--dry-run` | flag | — | Do not write the file |
+
+```bash
+ax domain
+ax domain --resolution 1.4
+ax domain --json
+ax domain --dry-run
+```
+
+Empty index exits non-zero (`run ax index first`). Empty Domain view in Command Center points at this command.
 
 ### `ax report [path]`
 
@@ -1315,6 +1335,7 @@ ax callers handleRequest
 
 # Architecture insights
 ax insights --json
+ax domain
 ax report --out AX_REPORT.md
 ax export graph-html --out graph.html
 
