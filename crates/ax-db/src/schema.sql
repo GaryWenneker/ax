@@ -59,6 +59,18 @@ CREATE TABLE IF NOT EXISTS files (
     errors TEXT
 );
 
+-- Source store (schema v17). Query-time snippets are sliced from here so a graph
+-- read never touches the working tree; content_hash is compared against
+-- files.content_hash to detect staleness. Kept out of `files` because file
+-- listings select every column and would otherwise load all source into memory.
+CREATE TABLE IF NOT EXISTS file_contents (
+    path TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    content TEXT NOT NULL,
+    byte_len INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS unresolved_refs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     from_node_id TEXT NOT NULL,

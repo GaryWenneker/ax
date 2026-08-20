@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 16;
+pub const CURRENT_SCHEMA_VERSION: i32 = 17;
 
 struct Migration {
     version: i32,
@@ -224,6 +224,23 @@ const MIGRATIONS: &[Migration] = &[
         version: 16,
         description: "Skills always_apply — match even on empty prompts",
         sql: "ALTER TABLE policy_skills ADD COLUMN always_apply INTEGER NOT NULL DEFAULT 0;",
+    },
+    // Query-time snippets are served from here instead of the working tree, so a
+    // graph read never touches the filesystem. Separate table on purpose: file
+    // listings do `SELECT * FROM files`, and a body column there would pull every
+    // file's text into memory on every listing.
+    Migration {
+        version: 17,
+        description: "Source store: file_contents for graph-only snippet reads",
+        sql: "
+            CREATE TABLE IF NOT EXISTS file_contents (
+              path TEXT PRIMARY KEY,
+              content_hash TEXT NOT NULL,
+              content TEXT NOT NULL,
+              byte_len INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+        ",
     },
 ];
 

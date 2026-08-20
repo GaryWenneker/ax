@@ -100,7 +100,7 @@ pub async fn run() -> Result<(), String> {
             };
 
             if let Some(root) = &plan.explore_root {
-                if let Ok(ax) = ax_core::Ax::open(root).await {
+                if let Ok(mut ax) = ax_core::Ax::open(root).await {
                     let mut proceed = keyworded;
                     if !keyworded {
                         for token in &code_tokens {

@@ -1,7 +1,6 @@
 //! Rich explore: search hits, numbered source snippets, caller/callee spines.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use ax_db::queries::QueryBuilder;
 use ax_graph::query_parser::parse_query;
@@ -12,23 +11,24 @@ use ax_types::{
     SearchOptions,
 };
 
+use crate::source_store::{
+    numbered_slice, resolve_source, stale_note, unavailable_reason, ResolvedSource,
+    NOT_STORED_MARKER,
+};
+
+/// Builds explore results from the graph alone.
+///
+/// Deliberately holds no project root: without it this type *cannot* read the
+/// working tree, so the graph-only guarantee is enforced by construction rather
+/// than by reviewer vigilance.
 pub struct ExploreBuilder {
     queries: QueryBuilder,
     traverser: GraphTraverser,
-    project_root: std::path::PathBuf,
 }
 
 impl ExploreBuilder {
-    pub fn new(
-        queries: QueryBuilder,
-        traverser: GraphTraverser,
-        project_root: std::path::PathBuf,
-    ) -> Self {
-        Self {
-            queries,
-            traverser,
-            project_root,
-        }
+    pub fn new(queries: QueryBuilder, traverser: GraphTraverser) -> Self {
+        Self { queries, traverser }
     }
 
     pub async fn explore(
@@ -105,16 +105,9 @@ impl ExploreBuilder {
             let callees = to_neighbors(callees, &callee_conf);
 
             let source = if include_code {
-                // File IO off the async runtime so slow disks don't stall
-                // other in-flight MCP queries.
-                let root = self.project_root.clone();
-                let snippet_node = node.clone();
                 Some(
-                    tokio::task::spawn_blocking(move || {
-                        numbered_snippet(&root, &snippet_node, max_lines, max_source_chars)
-                    })
-                    .await
-                    .unwrap_or_default(),
+                    self.graph_snippet(&node, max_lines, max_source_chars, '\t')
+                        .await?,
                 )
             } else {
                 None
@@ -154,6 +147,59 @@ impl ExploreBuilder {
             entries,
         })
     }
+
+    /// Snippet for one node, sourced from `ax.db` only.
+    ///
+    /// A hash mismatch is labelled rather than repaired here: this layer holds no
+    /// index lock, so re-indexing is the caller's job (`Ax::explore` does one
+    /// bounded attempt and retries the query).
+    async fn graph_snippet(
+        &self,
+        node: &Node,
+        max_lines: usize,
+        max_chars: usize,
+        sep: char,
+    ) -> Result<String, ax_utils::errors::AxError> {
+        let resolved = resolve_source(&self.queries, &node.file_path).await?;
+        match &resolved {
+            ResolvedSource::Fresh(content) => Ok(numbered_slice(
+                content,
+                node.start_line,
+                node.end_line,
+                max_lines,
+                max_chars,
+                sep,
+            )),
+            ResolvedSource::Stale(content) => {
+                let body = numbered_slice(
+                    content,
+                    node.start_line,
+                    node.end_line,
+                    max_lines,
+                    max_chars,
+                    sep,
+                );
+                Ok(format!("{}\n{}", stale_note(&node.file_path), body))
+            }
+            _ => Ok(unavailable_reason(&resolved, &node.file_path)
+                .unwrap_or_else(|| format!("({NOT_STORED_MARKER}: {})", node.file_path))),
+        }
+    }
+
+    /// Files in this result whose stored source no longer matches the graph.
+    pub async fn stale_files(
+        &self,
+        result: &ExploreResult,
+    ) -> Result<Vec<String>, ax_utils::errors::AxError> {
+        let paths: Vec<String> = result
+            .entries
+            .iter()
+            .map(|e| e.node.file_path.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        self.queries.stale_source_paths(&paths).await
+    }
 }
 
 /// Read a positive `usize` from `name`, falling back to `default`.
@@ -163,10 +209,6 @@ fn env_usize(name: &str, default: usize) -> usize {
         .and_then(|s| s.parse().ok())
         .filter(|&n| n > 0)
         .unwrap_or(default)
-}
-
-fn numbered_snippet(root: &Path, node: &Node, max_lines: usize, max_chars: usize) -> String {
-    numbered_snippet_with_sep(root, node, max_lines, max_chars, '\t')
 }
 
 /// Attach the direct edge kind + confidence (if known) to each neighbor node.
@@ -190,88 +232,3 @@ fn to_neighbors(
         .collect()
 }
 
-fn numbered_snippet_with_sep(
-    root: &Path,
-    node: &Node,
-    max_lines: usize,
-    max_chars: usize,
-    sep: char,
-) -> String {
-    let full = root.join(&node.file_path);
-    let content = match std::fs::read_to_string(&full) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("explore: cannot read {}: {e}", full.display());
-            return format!("(source unavailable: {})", node.file_path);
-        }
-    };
-    let lines: Vec<&str> = content.lines().collect();
-    let start = (node.start_line as usize).saturating_sub(1);
-    let end = node.end_line as usize;
-    let slice = lines.get(start..end.min(lines.len())).unwrap_or(&[]);
-    let truncated_lines = slice.len() > max_lines;
-    let out = slice
-        .iter()
-        .take(max_lines)
-        .enumerate()
-        .map(|(i, line)| format!("{}{}{}", start + i + 1, sep, line))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let result = if out.len() > max_chars {
-        format!(
-            "{}\n...(truncated to {} chars; increase maxSourceChars)",
-            &out[..max_chars],
-            max_chars
-        )
-    } else if truncated_lines {
-        format!(
-            "{}\n...(truncated to {} lines; off-spine signatures omitted (adaptive skeleton); increase maxLinesPerSnippet)",
-            out,
-            max_lines
-        )
-    } else {
-        out
-    };
-    result
-}
-
-#[cfg(test)]
-mod snippet_tests {
-    use super::*;
-    use ax_types::{Language, Node, NodeKind};
-
-    #[test]
-    fn numbered_snippet_truncation_hint() {
-        let dir = std::env::temp_dir().join("ax-explore-snippet-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file_path = dir.join("lines.ts");
-        let body: String = (1..=20).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
-        std::fs::write(&file_path, body).unwrap();
-        let node = Node {
-            id: "n1".into(),
-            kind: NodeKind::Function,
-            name: "f".into(),
-            qualified_name: "f".into(),
-            file_path: file_path.to_string_lossy().into_owned(),
-            language: Language::Typescript,
-            start_line: 1,
-            end_line: 20,
-            start_column: 0,
-            end_column: 0,
-            docstring: None,
-            signature: None,
-            visibility: None,
-            is_exported: None,
-            is_async: None,
-            is_static: None,
-            is_abstract: None,
-            decorators: None,
-            type_parameters: None,
-            return_type: None,
-            updated_at: 0,
-        };
-        let text = numbered_snippet(&dir, &node, 3, 4000);
-        assert!(text.contains("truncated to 3 lines"));
-        assert!(text.contains("1\tline1"));
-    }
-}

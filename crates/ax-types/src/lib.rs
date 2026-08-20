@@ -798,6 +798,17 @@ pub struct GraphStats {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub docs_by_extension: HashMap<String, i64>,
     pub files_by_language: HashMap<String, i64>,
+    /// Files with source text in the store (schema v17). Query-time snippets come
+    /// from here, so a value below `source_expected_files` means some snippets
+    /// will report "source not stored" until the next index.
+    #[serde(default)]
+    pub source_stored_files: i64,
+    /// Files the store is expected to cover: a parser claimed the language and the
+    /// file fits under the source-store cap. Not `file_count`: `files` also holds
+    /// rows for assets and build output no parser claims, which can never own a
+    /// node and so can never be asked for a snippet.
+    #[serde(default)]
+    pub source_expected_files: i64,
     pub db_size_bytes: i64,
     pub last_updated: i64,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -67,7 +67,8 @@ pub async fn guard_operation(
         // these directives as a plain line in its body — no code change needed
         // per rule, unlike the two hardcoded checks above.
         //   guard: forbid-path: "**/*.pem"
-        //   guard: forbid-content: "eval("            (or /regex/ form)
+        //   guard: forbid-content: "eval("            (or /regex/ form; scoped by
+        //                                             the rule's `globs` if it has any)
         //   guard: require-content: "requireAuth("    (scoped by the rule's `globs`)
         //   guard: require-skill: "old-coder"         (skill must exist, be approved, alwaysApply)
         for directive in parse_guard_directives(&rule.body) {
@@ -84,7 +85,14 @@ pub async fn guard_operation(
                     }
                 }
                 GuardDirective::ForbidContent(matcher) => {
-                    if op == GuardOp::Write {
+                    // Scoped by the rule's globs when it has any, project-wide when
+                    // it does not. The asymmetry with require-content below is
+                    // deliberate: "never write this" is meaningful everywhere (the
+                    // secrets rule carries no globs), while "always write this" only
+                    // makes sense somewhere.
+                    if op == GuardOp::Write
+                        && (rule.globs.is_empty() || any_glob_matches(&rule.globs, &rel))
+                    {
                         if let Some(text) = content.and_then(|b| std::str::from_utf8(b).ok()) {
                             if matcher.is_match(text) {
                                 violations.push(GuardViolation {
@@ -465,6 +473,42 @@ mod tests {
             .await
             .unwrap();
         assert!(!bad.allowed);
+    }
+
+    /// A rule that names globs means those files, not the whole project.
+    ///
+    /// `graph-only-query-path` bans `read_to_string` in six query-path modules
+    /// while the indexer next door *must* read files. An unscoped forbid-content
+    /// blocks writing the indexer, the gate test that lists the banned spellings,
+    /// and the mutation script — so the rule that protects one directory makes
+    /// the repo unworkable, and the guard gets switched off.
+    #[tokio::test]
+    async fn forbid_content_directive_is_scoped_by_rule_globs() {
+        let (dir, pool) = pool_with_utf8_rule().await;
+        insert_rule(
+            &pool,
+            "graph-only",
+            "[\"crates/ax-context/src/explore.rs\"]",
+            "guard: forbid-content: \"read_to_string\"",
+        )
+        .await;
+        let root = dir.path();
+
+        let in_scope = root.join("crates").join("ax-context").join("src").join("explore.rs");
+        let blocked = guard_operation(&pool, root, &in_scope, GuardOp::Write, Some(b"std::fs::read_to_string(p)"))
+            .await
+            .unwrap();
+        assert!(!blocked.allowed, "the rule's own file must still be guarded");
+
+        let out_of_scope = root.join("crates").join("ax-extraction").join("src").join("orchestrator.rs");
+        let allowed = guard_operation(&pool, root, &out_of_scope, GuardOp::Write, Some(b"std::fs::read_to_string(p)"))
+            .await
+            .unwrap();
+        assert!(
+            allowed.allowed,
+            "a file outside the rule's globs must not be blocked: {:?}",
+            allowed.violations
+        );
     }
 
     #[tokio::test]

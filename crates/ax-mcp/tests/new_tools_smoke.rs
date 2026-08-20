@@ -5,7 +5,7 @@ use ax_mcp::tools::ToolHandler;
 use serde_json::json;
 
 #[tokio::test]
-async fn lean_tools_list_hides_extras() {
+async fn default_tools_list_shows_graph_surface_and_gates_heavy_ops() {
     std::env::remove_var("AX_MCP_TOOLS");
     let listed = ToolHandler::list_tools(true).await;
     let names: Vec<&str> = listed["tools"]
@@ -16,8 +16,15 @@ async fn lean_tools_list_hides_extras() {
         .collect();
     assert!(names.contains(&"ax_explore"));
     assert!(names.contains(&"ax_preflight"));
-    assert!(!names.contains(&"ax_cycles"), "cycles must be lean-hidden by default");
-    assert!(!names.contains(&"ax_search"), "search must be lean-hidden by default");
+    // The graph read surface the CRITICAL policy rules tell agents to prefer
+    // over Grep/Read must be visible in the default catalog.
+    for expected in ["ax_search", "ax_cycles", "ax_node", "ax_impact", "ax_status"] {
+        assert!(names.contains(&expected), "{expected} must be advertised by default");
+    }
+    // Heavy ops stay opt-in via AX_MCP_TOOLS.
+    for hidden in ["ax_ship", "ax_lsp", "ax_index", "ax_diagnostics", "ax_policy_index"] {
+        assert!(!names.contains(&hidden), "{hidden} must stay opt-in by default");
+    }
 }
 
 #[tokio::test]

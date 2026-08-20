@@ -331,6 +331,13 @@ fn mcp_serve_args(path_token: &str) -> Vec<String> {
     ]
 }
 
+/// Deliberately writes no `env` block.
+///
+/// Earlier plans considered pinning `AX_MCP_TOOLS` here so agents could see the
+/// graph tools. That is now the code default (`tool_filter::CORE_TOOLS`), so
+/// baking it into every IDE config would freeze today's tool list into files ax
+/// does not own and cannot migrate. Users who want the opt-in ops tools set
+/// `AX_MCP_TOOLS` themselves.
 fn mcp_config_entry(target: &str) -> Value {
     let path_token = mcp_path_token(target);
     serde_json::json!({

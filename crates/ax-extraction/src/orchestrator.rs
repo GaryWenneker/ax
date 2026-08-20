@@ -108,6 +108,35 @@ impl ExtractionOrchestrator {
         (results, parse_total)
     }
 
+    /// Whether any parser claims this extension.
+    ///
+    /// `scan_files` uses this to decide what to walk, and the source store uses
+    /// it to decide what to keep: snippets are only ever served for graph nodes,
+    /// and only a file some parser claims can produce one. `index_files` takes
+    /// paths straight from its caller — the daemon's watcher reports every `.o`
+    /// and `.rmeta` a build writes — so it has to apply the test itself.
+    fn is_extractable(
+        &self,
+        path: &Path,
+        opts: &IndexOptions,
+        ext_map: &HashMap<String, Language>,
+        plugin_exts: &[String],
+    ) -> bool {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let dotted = format!(".{}", ext);
+        let known = opts
+            .custom_extensions
+            .get(&dotted)
+            .copied()
+            .or_else(|| language_for_extension(&dotted))
+            .is_some();
+        known
+            || ext_map.contains_key(&dotted)
+            || plugin_exts
+                .iter()
+                .any(|e| e.eq_ignore_ascii_case(&dotted) || e.eq_ignore_ascii_case(ext))
+    }
+
     pub async fn scan_files(&self, opts: &IndexOptions) -> Result<Vec<PathBuf>, ax_utils::errors::AxError> {
         let mut files = Vec::new();
         let exclude_matcher = build_exclude_matcher(&self.project_root, &opts.exclude);
@@ -160,7 +189,11 @@ impl ExtractionOrchestrator {
             if is_generated(&content) { continue; }
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let lang = opts.custom_extensions.get(&format!(".{}", ext)).copied().or_else(|| language_for_extension(ext)).unwrap_or(Language::Unknown);
-            content_hashes.insert(rel.clone(), hash(content.as_bytes()).to_hex().to_string());
+            let content_hash = hash(content.as_bytes()).to_hex().to_string();
+            // Store the text now, while we still own it — query-time snippets are
+            // served from here so a graph read never touches the working tree.
+            queries.upsert_file_content(&rel, &content_hash, &content).await?;
+            content_hashes.insert(rel.clone(), content_hash);
             tasks.push(ParseTask { file_path: rel, content, language: lang });
         }
 
@@ -175,7 +208,9 @@ impl ExtractionOrchestrator {
                     file_path: Some(file_path.clone()),
                 });
             }
-            queries.clear_file(&file_path).await?;
+            // Keeps file_contents: the text was stored above and the hash we are
+            // about to write must stay paired with it.
+            queries.clear_file_for_reindex(&file_path).await?;
             match parse_result {
                 Ok(extraction) => {
                     queries.upsert_nodes(&extraction.nodes).await?;
@@ -207,6 +242,10 @@ impl ExtractionOrchestrator {
                     }).await?;
                 }
                 Err(msg) => {
+                    // A failed parse writes an empty content_hash, which no stored
+                    // text could ever match. Drop the row so reads say "not stored"
+                    // instead of looking permanently stale and retrying forever.
+                    queries.delete_file_content(&file_path).await?;
                     queries.upsert_file(&FileRecord {
                         path: file_path.clone(), content_hash: String::new(), language: Language::Unknown,
                         size: 0, modified_at: now_ms(), indexed_at: now_ms(), node_count: 0,
@@ -242,6 +281,12 @@ impl ExtractionOrchestrator {
         let indexed_map: HashMap<String, FileRecord> =
             indexed.into_iter().map(|f| (f.path.clone(), f)).collect();
 
+        // Databases indexed before schema v17 have file rows but no stored source.
+        // Unchanged files would never be revisited, so snippets would stay
+        // "not stored" forever; close the gap here without a full re-extraction.
+        let stored_paths = queries.get_file_content_paths().await?;
+        let mut backfilled = 0u32;
+
         let mut current_paths = HashSet::new();
         let mut changed = Vec::new();
 
@@ -266,7 +311,22 @@ impl ExtractionOrchestrator {
             let modified = file_mtime_ms(path).unwrap_or(0);
             match indexed_map.get(&rel) {
                 None => changed.push(rel),
-                Some(rec) if rec.modified_at == modified && rec.size == size => {}
+                Some(rec) if rec.modified_at == modified && rec.size == size => {
+                    if !stored_paths.contains(&rel) && !rec.content_hash.is_empty() {
+                        // Unchanged file with no stored source. Re-read and store it
+                        // only if the text still matches the indexed hash; otherwise
+                        // the graph itself is stale and a re-index is the right fix.
+                        if let Ok(content) = ax_utils::read_text_file(path) {
+                            let h = hash(content.as_bytes()).to_hex().to_string();
+                            if h == rec.content_hash {
+                                queries.upsert_file_content(&rel, &h, &content).await?;
+                                backfilled += 1;
+                            } else {
+                                changed.push(rel);
+                            }
+                        }
+                    }
+                }
                 Some(rec) => {
                     // mtime or size differs — compare content hashes so that
                     // touch-only changes (branch switches, checkouts) don't
@@ -282,6 +342,17 @@ impl ExtractionOrchestrator {
                         refreshed.size = size;
                         refreshed.indexed_at = now_ms();
                         queries.upsert_file(&refreshed).await?;
+                        // Touch-only change: content is identical, so this file is
+                        // never re-extracted. Backfill its source here or it stays
+                        // missing from the store indefinitely.
+                        if !stored_paths.contains(&rel) {
+                            if let Ok(content) = ax_utils::read_text_file(path) {
+                                queries
+                                    .upsert_file_content(&rel, &rec.content_hash, &content)
+                                    .await?;
+                                backfilled += 1;
+                            }
+                        }
                     } else {
                         changed.push(rel);
                     }
@@ -322,9 +393,14 @@ impl ExtractionOrchestrator {
         let mut affected_files = changed;
         affected_files.extend(deleted.clone());
 
+        // After indexing, so this sees the file rows this sync just wrote.
+        let pruned = queries.prune_orphan_file_contents().await?;
+
         Ok(SyncResult {
             files_indexed: indexed_count,
             files_removed: removed,
+            source_backfilled: backfilled,
+            source_pruned: pruned,
             affected_files,
             duration_ms: start.elapsed().as_millis() as u64,
         })
@@ -340,6 +416,8 @@ impl ExtractionOrchestrator {
         let start = Instant::now();
         let mut tasks = Vec::new();
         let mut content_hashes: HashMap<String, String> = HashMap::new();
+        let ext_map = extension_map();
+        let plugin_exts = ax_plugins::load_plugins(&self.project_root).extensions();
         for file_path in file_paths {
             let rel = file_path.replace('\\', "/");
             let full_path = self.project_root.join(&rel);
@@ -357,7 +435,16 @@ impl ExtractionOrchestrator {
                 .copied()
                 .or_else(|| language_for_extension(ext))
                 .unwrap_or(Language::Unknown);
-            content_hashes.insert(rel.clone(), hash(content.as_bytes()).to_hex().to_string());
+            let content_hash = hash(content.as_bytes()).to_hex().to_string();
+            // Store the text now, while we still own it — query-time snippets are
+            // served from here so a graph read never touches the working tree.
+            // Only for files a parser claims: callers of index_files did not run
+            // the scan filter, and storing build output would put megabytes of
+            // object-file text in ax.db that no snippet could ever use.
+            if self.is_extractable(&full_path, opts, &ext_map, &plugin_exts) {
+                queries.upsert_file_content(&rel, &content_hash, &content).await?;
+            }
+            content_hashes.insert(rel.clone(), content_hash);
             tasks.push(ParseTask { file_path: rel, content, language: lang });
         }
 
@@ -371,7 +458,9 @@ impl ExtractionOrchestrator {
                     file_path: Some(file_path.clone()),
                 });
             }
-            queries.clear_file(&file_path).await?;
+            // Keeps file_contents: the text was stored above and the hash we are
+            // about to write must stay paired with it.
+            queries.clear_file_for_reindex(&file_path).await?;
             match parse_result {
                 Ok(extraction) => {
                     queries.upsert_nodes(&extraction.nodes).await?;
@@ -409,6 +498,10 @@ impl ExtractionOrchestrator {
                     }).await?;
                 }
                 Err(msg) => {
+                    // A failed parse writes an empty content_hash, which no stored
+                    // text could ever match. Drop the row so reads say "not stored"
+                    // instead of looking permanently stale and retrying forever.
+                    queries.delete_file_content(&file_path).await?;
                     queries.upsert_file(&FileRecord {
                         path: file_path.clone(),
                         content_hash: String::new(),
@@ -441,6 +534,12 @@ pub struct IndexResult {
 pub struct SyncResult {
     pub files_indexed: u32,
     pub files_removed: u32,
+    /// Files whose source was added to the store without re-extraction — the
+    /// pre-v17 backfill. Non-zero only until the store has caught up.
+    pub source_backfilled: u32,
+    /// Stored source rows dropped because no indexed file claims them. Cleans up
+    /// after binaries that stored text for files they never parsed.
+    pub source_pruned: u32,
     /// Project-relative paths that were added, modified, or deleted this sync.
     pub affected_files: Vec<String>,
     pub duration_ms: u64,

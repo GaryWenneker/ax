@@ -13,7 +13,7 @@ pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
         format!("cmd=explore start q_len={}", query_text.chars().count()),
     );
     let _spinner = SpinnerGuard::new(format!("Exploring \"{}\"...", query_text), json);
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let mut ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let result = match ax
         .explore(&query_text, ExploreOptions::default())
         .await

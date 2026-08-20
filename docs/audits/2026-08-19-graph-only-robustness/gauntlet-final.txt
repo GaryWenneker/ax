@@ -1,0 +1,1950 @@
+---
+pid: 4348
+cwd: "c:\\gary\\ax"
+command: "git rev-parse HEAD; git status --porcelain | Measure-Object -Line; New-Item -ItemType Directory -Force -Path .ax\\gauntlet | Out-Null; .\\scripts\\gauntlet-graph-only.ps1 2>&1 | Tee-Object -FilePath .ax\\gauntlet\\final-run.log | Select-Object -Last 60"
+title: "Run full gauntlet fresh and capture log"
+status: succeeded
+started_at: 2026-08-19T20:53:29.863Z
+running_for_ms: 1559755  
+---
+96ddab4cc85bfcaf9aba0da8739ada0761f6f5d7
+
+
+=== 1. Workspace suite ===
+> cargo test --workspace
+   Compiling ax-db v4.4.0 (C:\gary\ax\crates\ax-db)
+   Compiling ax-web v4.4.0 (C:\gary\ax\crates\ax-web)
+   Compiling ax-graph v4.4.0 (C:\gary\ax\crates\ax-graph)
+   Compiling ax-policy v4.4.0 (C:\gary\ax\crates\ax-policy)
+   Compiling ax-extraction v4.4.0 (C:\gary\ax\crates\ax-extraction)
+   Compiling ax-resolution v4.4.0 (C:\gary\ax\crates\ax-resolution)
+   Compiling ax-git v4.4.0 (C:\gary\ax\crates\ax-git)
+   Compiling ax-lsp v4.4.0 (C:\gary\ax\crates\ax-lsp)
+   Compiling ax-memory v4.4.0 (C:\gary\ax\crates\ax-memory)
+   Compiling ax-remote v4.4.0 (C:\gary\ax\crates\ax-remote)
+warning: unused variable: `len`
+   --> crates\ax-lsp\src\client.rs:390:9
+    |
+390 |     let len = content_length.ok_or("missing Content-Length")?;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_len`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: method `is_quiescent` is never used
+   --> crates\ax-lsp\src\client.rs:221:12
+    |
+ 35 | impl LspClient {
+    | -------------- method in this implementation
+...
+221 |     pub fn is_quiescent(&self) -> bool {
+    |            ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+   Compiling ax-context v4.4.0 (C:\gary\ax\crates\ax-context)
+   Compiling ax-tia v4.4.0 (C:\gary\ax\crates\ax-tia)
+   Compiling ax-share v4.4.0 (C:\gary\ax\crates\ax-share)
+warning: unused import: `super::*`
+  --> crates\ax-extraction\src\languages\csharp.rs:57:9
+   |
+57 |     use super::*;
+   |         ^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+   Compiling ax-core v4.4.0 (C:\gary\ax\crates\ax-core)
+warning: `ax-lsp` (lib) generated 2 warnings (run `cargo fix --lib -p ax-lsp` to apply 1 suggestion)
+warning: struct `ShareSectionFile` is never constructed
+   --> crates\ax-share\src\config.rs:185:8
+    |
+185 | struct ShareSectionFile {
+    |        ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: field `name` is never read
+   --> crates\ax-share\src\providers\onedrive.rs:163:5
+    |
+160 | struct DriveItem {
+    |        --------- field in this struct
+...
+163 |     name: Option<String>,
+    |     ^^^^
+    |
+    = note: `DriveItem` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `child_count` is never read
+   --> crates\ax-share\src\providers\onedrive.rs:178:5
+    |
+176 | struct FolderFacet {
+    |        ----------- field in this struct
+177 |     #[serde(rename = "childCount")]
+178 |     child_count: Option<u32>,
+    |     ^^^^^^^^^^^
+    |
+    = note: `FolderFacet` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+   Compiling ax-ship v4.4.0 (C:\gary\ax\crates\ax-ship)
+   Compiling ax-docs-catalog v4.4.0 (C:\gary\ax\crates\ax-docs-catalog)
+warning: `ax-share` (lib) generated 3 warnings
+warning: `ax-lsp` (lib test) generated 1 warning (1 duplicate)
+   Compiling ax-smoke-tests v4.4.0 (C:\gary\ax\crates\ax-smoke-tests)
+   Compiling ax-mcp v4.4.0 (C:\gary\ax\crates\ax-mcp)
+warning: `ax-extraction` (lib test) generated 1 warning (run `cargo fix --lib -p ax-extraction --tests` to apply 1 suggestion)
+   Compiling ax-agent v4.4.0 (C:\gary\ax\crates\ax-agent)
+warning: `ax-share` (lib test) generated 3 warnings (3 duplicates)
+   Compiling ax-desktop-client v4.4.0 (C:\gary\ax\crates\ax-desktop-client)
+warning: methods `delete` and `mcp_trace_chunk` are never used
+   --> crates\ax-desktop-client\src\api\client.rs:89:12
+    |
+ 21 | impl ApiClient {
+    | -------------- methods in this implementation
+...
+ 89 |     pub fn delete(&self, path: &str) -> Result<()> {
+    |            ^^^^^^
+...
+461 |     pub fn mcp_trace_chunk(&self, day: &str) -> Result<McpTraceChunk> {
+    |            ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: function `parse_sse_chunk` is never used
+  --> crates\ax-desktop-client\src\api\sse.rs:14:8
+   |
+14 | pub fn parse_sse_chunk(buf: &mut String, chunk: &str) -> Vec<SseEvent> {
+   |        ^^^^^^^^^^^^^^^
+System.Management.Automation.RemoteException
+warning: function `parse_block` is never used
+  --> crates\ax-desktop-client\src\api\sse.rs:27:4
+   |
+27 | fn parse_block(block: &str) -> Option<SseEvent> {
+   |    ^^^^^^^^^^^
+System.Management.Automation.RemoteException
+warning: field `last_indexed_at` is never read
+  --> crates\ax-desktop-client\src\api\types.rs:19:9
+   |
+12 | pub struct Stats {
+   |            ----- field in this struct
+...
+19 |     pub last_indexed_at: i64,
+   |         ^^^^^^^^^^^^^^^
+   |
+   = note: `Stats` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `qualified_name`, `language`, `end_line`, `signature`, and `is_exported` are never read
+  --> crates\ax-desktop-client\src\api\types.rs:39:9
+   |
+34 | pub struct NodeRow {
+   |            ------- fields in this struct
+...
+39 |     pub qualified_name: String,
+   |         ^^^^^^^^^^^^^^
+40 |     pub file_path: String,
+41 |     pub language: String,
+   |         ^^^^^^^^
+...
+44 |     pub end_line: i64,
+   |         ^^^^^^^^
+45 |     pub signature: Option<String>,
+   |         ^^^^^^^^^
+46 |     #[serde(default)]
+47 |     pub is_exported: i64,
+   |         ^^^^^^^^^^^
+   |
+   = note: `NodeRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `id`, `kind`, `file_path`, `start_line`, and `edge_confidence` are never read
+  --> crates\ax-desktop-client\src\api\types.rs:58:9
+   |
+57 | pub struct EdgeNode {
+   |            -------- fields in this struct
+58 |     pub id: String,
+   |         ^^
+59 |     pub kind: String,
+   |         ^^^^
+60 |     pub name: String,
+61 |     pub file_path: String,
+   |         ^^^^^^^^^
+62 |     pub start_line: i64,
+   |         ^^^^^^^^^^
+63 |     pub edge_kind: String,
+64 |     pub edge_confidence: Option<String>,
+   |         ^^^^^^^^^^^^^^^
+   |
+   = note: `EdgeNode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `id`, `qualified_name`, `visibility`, `is_exported`, and `is_async` are never read
+  --> crates\ax-desktop-client\src\api\types.rs:69:9
+   |
+68 | pub struct NodeDetailProps {
+   |            --------------- fields in this struct
+69 |     pub id: String,
+   |         ^^
+...
+73 |     pub qualified_name: String,
+   |         ^^^^^^^^^^^^^^
+...
+80 |     pub visibility: Option<String>,
+   |         ^^^^^^^^^^
+81 |     #[serde(default)]
+82 |     pub is_exported: i64,
+   |         ^^^^^^^^^^^
+83 |     #[serde(default)]
+84 |     pub is_async: i64,
+   |         ^^^^^^^^
+   |
+   = note: `NodeDetailProps` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `size`, `node_count`, and `indexed_at` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:101:9
+    |
+ 97 | pub struct FileRow {
+    |            ------- fields in this struct
+...
+101 |     pub size: i64,
+    |         ^^^^
+102 |     #[serde(default)]
+103 |     pub node_count: i64,
+    |         ^^^^^^^^^^
+104 |     #[serde(default)]
+105 |     pub indexed_at: i64,
+    |         ^^^^^^^^^^
+    |
+    = note: `FileRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `total` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:118:9
+    |
+116 | pub struct FilePage {
+    |            -------- field in this struct
+117 |     pub files: Vec<FileRow>,
+118 |     pub total: i64,
+    |         ^^^^^
+    |
+    = note: `FilePage` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `qualified_name`, `language`, and `snippet` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:136:9
+    |
+131 | pub struct SearchResult {
+    |            ------------ fields in this struct
+...
+136 |     pub qualified_name: String,
+    |         ^^^^^^^^^^^^^^
+...
+139 |     pub language: String,
+    |         ^^^^^^^^
+140 |     pub snippet: Option<String>,
+    |         ^^^^^^^
+    |
+    = note: `SearchResult` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `id`, `from_node_id`, and `col` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:150:9
+    |
+149 | pub struct UnresolvedRow {
+    |            ------------- fields in this struct
+150 |     pub id: i64,
+    |         ^^
+151 |     pub from_node_id: String,
+    |         ^^^^^^^^^^^^
+...
+156 |     pub col: i64,
+    |         ^^^
+    |
+    = note: `UnresolvedRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `file_path` and `community_label` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:200:9
+    |
+196 | pub struct GraphNode {
+    |            --------- fields in this struct
+...
+200 |     pub file_path: String,
+    |         ^^^^^^^^^
+201 |     pub community_id: i64,
+202 |     pub community_label: Option<String>,
+    |         ^^^^^^^^^^^^^^^
+    |
+    = note: `GraphNode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `kind` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:210:9
+    |
+207 | pub struct GraphEdge {
+    |            --------- field in this struct
+...
+210 |     pub kind: String,
+    |         ^^^^
+    |
+    = note: `GraphEdge` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `node_count` and `edge_count` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:229:9
+    |
+223 | pub struct GraphStreamMeta {
+    |            --------------- fields in this struct
+...
+229 |     pub node_count: i64,
+    |         ^^^^^^^^^^
+230 |     #[serde(default)]
+231 |     pub edge_count: i64,
+    |         ^^^^^^^^^^
+    |
+    = note: `GraphStreamMeta` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `id`, `files`, and `confidence` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:252:9
+    |
+251 | pub struct MemoryRow {
+    |            --------- fields in this struct
+252 |     pub id: String,
+    |         ^^
+...
+259 |     pub files: Vec<String>,
+    |         ^^^^^
+260 |     #[serde(default)]
+261 |     pub confidence: f64,
+    |         ^^^^^^^^^^
+    |
+    = note: `MemoryRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `input_per_mtok`, `output_per_mtok`, `source`, and `config_path` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:279:9
+    |
+275 | pub struct PricingInfo {
+    |            ----------- fields in this struct
+...
+279 |     pub input_per_mtok: f64,
+    |         ^^^^^^^^^^^^^^
+280 |     #[serde(default)]
+281 |     pub output_per_mtok: f64,
+    |         ^^^^^^^^^^^^^^^
+282 |     #[serde(default)]
+283 |     pub source: String,
+    |         ^^^^^^
+284 |     #[serde(default)]
+285 |     pub config_path: String,
+    |         ^^^^^^^^^^^
+    |
+    = note: `PricingInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `exact_tokenizer`, `chars_per_token`, `tokens_per_line`, `avg_file_tokens`, and `counterfactual_mode` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:291:9
+    |
+289 | pub struct SavingsAssumptions {
+    |            ------------------ fields in this struct
+290 |     #[serde(default)]
+291 |     pub exact_tokenizer: bool,
+    |         ^^^^^^^^^^^^^^^
+292 |     #[serde(default)]
+293 |     pub chars_per_token: f64,
+    |         ^^^^^^^^^^^^^^^
+294 |     #[serde(default)]
+295 |     pub tokens_per_line: f64,
+    |         ^^^^^^^^^^^^^^^
+296 |     #[serde(default)]
+297 |     pub avg_file_tokens: f64,
+    |         ^^^^^^^^^^^^^^^
+298 |     #[serde(default)]
+299 |     pub counterfactual_mode: String,
+    |         ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `SavingsAssumptions` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `failed_calls`, `counterfactual_tokens_est`, `graph_response_tokens_est`, and `avg_duration_ms` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:310:9
+    |
+303 | pub struct ToolSavingsRow {
+    |            -------------- fields in this struct
+...
+310 |     pub failed_calls: i64,
+    |         ^^^^^^^^^^^^
+...
+316 |     pub counterfactual_tokens_est: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+317 |     #[serde(default)]
+318 |     pub graph_response_tokens_est: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+319 |     #[serde(default)]
+320 |     pub avg_duration_ms: i64,
+    |         ^^^^^^^^^^^^^^^
+    |
+    = note: `ToolSavingsRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: multiple fields are never read
+   --> crates\ax-desktop-client\src\api\types.rs:325:9
+    |
+324 | pub struct DailySavings {
+    |            ------------ fields in this struct
+325 |     pub date: String,
+    |         ^^^^
+...
+329 |     pub calls: i64,
+    |         ^^^^^
+330 |     #[serde(default)]
+331 |     pub graph_calls: i64,
+    |         ^^^^^^^^^^^
+332 |     #[serde(default)]
+333 |     pub failed_calls: i64,
+    |         ^^^^^^^^^^^^
+334 |     #[serde(default)]
+335 |     pub counterfactual_files: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^
+336 |     #[serde(default)]
+337 |     pub counterfactual_tokens_est: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+338 |     #[serde(default)]
+339 |     pub graph_response_tokens_est: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+340 |     #[serde(default)]
+341 |     pub cost_saved_usd_est: f64,
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `DailySavings` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `project`, `calls`, `graph_calls`, `tokens_saved_est`, and `counterfactual_files` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:346:9
+    |
+345 | pub struct ProjectSavingsRow {
+    |            ----------------- fields in this struct
+346 |     pub project: String,
+    |         ^^^^^^^
+347 |     #[serde(default)]
+348 |     pub calls: i64,
+    |         ^^^^^
+349 |     #[serde(default)]
+350 |     pub graph_calls: i64,
+    |         ^^^^^^^^^^^
+351 |     #[serde(default)]
+352 |     pub tokens_saved_est: i64,
+    |         ^^^^^^^^^^^^^^^^
+353 |     #[serde(default)]
+354 |     pub counterfactual_files: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `ProjectSavingsRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: multiple fields are never read
+   --> crates\ax-desktop-client\src\api\types.rs:359:9
+    |
+358 | pub struct ModelSavingsRow {
+    |            --------------- fields in this struct
+359 |     pub model: String,
+    |         ^^^^^
+360 |     #[serde(default)]
+361 |     pub sessions: i64,
+    |         ^^^^^^^^
+362 |     #[serde(default)]
+363 |     pub session_input_tokens: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^
+364 |     #[serde(default)]
+365 |     pub tokens_saved_est: i64,
+    |         ^^^^^^^^^^^^^^^^
+366 |     #[serde(default)]
+367 |     pub ax_calls: i64,
+    |         ^^^^^^^^
+368 |     #[serde(default)]
+369 |     pub read_calls: i64,
+    |         ^^^^^^^^^^
+370 |     #[serde(default)]
+371 |     pub grep_calls: i64,
+    |         ^^^^^^^^^^
+372 |     #[serde(default)]
+373 |     pub session_cost_usd_est: f64,
+    |         ^^^^^^^^^^^^^^^^^^^^
+374 |     #[serde(default)]
+375 |     pub cost_saved_usd_est: f64,
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `ModelSavingsRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: multiple fields are never read
+   --> crates\ax-desktop-client\src\api\types.rs:380:9
+    |
+379 | pub struct RecentCallRow {
+    |            ------------- fields in this struct
+380 |     pub id: i64,
+    |         ^^
+...
+386 |     pub counterfactual_tokens_est: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+387 |     #[serde(default)]
+388 |     pub response_tokens_est: i64,
+    |         ^^^^^^^^^^^^^^^^^^^
+389 |     #[serde(default)]
+390 |     pub counterfactual_files: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^
+...
+394 |     pub savings_eligible: bool,
+    |         ^^^^^^^^^^^^^^^^
+395 |     pub duration_ms: Option<i64>,
+    |         ^^^^^^^^^^^
+396 |     #[serde(default)]
+397 |     pub created_at: i64,
+    |         ^^^^^^^^^^
+    |
+    = note: `RecentCallRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: multiple fields are never read
+   --> crates\ax-desktop-client\src\api\types.rs:403:9
+    |
+401 | pub struct SavingsSummary {
+    |            -------------- fields in this struct
+402 |     #[serde(default)]
+403 |     pub period: String,
+    |         ^^^^^^
+...
+409 |     pub mcp_calls: i64,
+    |         ^^^^^^^^^
+...
+413 |     pub failed_calls: i64,
+    |         ^^^^^^^^^^^^
+...
+417 |     pub net_tokens_saved_est: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^
+...
+427 |     pub graph_response_cost_usd_est: f64,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+428 |     #[serde(default)]
+429 |     pub counterfactual_cost_usd_est: f64,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+430 |     #[serde(default)]
+431 |     pub policy_calls: i64,
+    |         ^^^^^^^^^^^^
+...
+435 |     pub avg_duration_ms: i64,
+    |         ^^^^^^^^^^^^^^^
+...
+441 |     pub assumptions: SavingsAssumptions,
+    |         ^^^^^^^^^^^
+...
+445 |     pub by_project: Vec<ProjectSavingsRow>,
+    |         ^^^^^^^^^^
+446 |     #[serde(default)]
+447 |     pub by_model: Vec<ModelSavingsRow>,
+    |         ^^^^^^^^
+...
+453 |     pub db_path: String,
+    |         ^^^^^^^
+    |
+    = note: `SavingsSummary` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `source`, `last_success_date`, `status`, `error`, and `models_count` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:458:9
+    |
+457 | pub struct PricingSourceStatus {
+    |            ------------------- fields in this struct
+458 |     pub source: String,
+    |         ^^^^^^
+459 |     pub last_success_date: Option<String>,
+    |         ^^^^^^^^^^^^^^^^^
+460 |     pub status: Option<String>,
+    |         ^^^^^^
+461 |     pub error: Option<String>,
+    |         ^^^^^
+462 |     pub models_count: Option<i64>,
+    |         ^^^^^^^^^^^^
+    |
+    = note: `PricingSourceStatus` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `sources` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:472:9
+    |
+466 | pub struct PricingStatus {
+    |            ------------- field in this struct
+...
+472 |     pub sources: Vec<PricingSourceStatus>,
+    |         ^^^^^^^
+    |
+    = note: `PricingStatus` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `source` and `provider` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:480:9
+    |
+478 | pub struct PricingCatalogRow {
+    |            ----------------- fields in this struct
+479 |     pub date: String,
+480 |     pub source: String,
+    |         ^^^^^^
+...
+483 |     pub provider: Option<String>,
+    |         ^^^^^^^^
+    |
+    = note: `PricingCatalogRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `date` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:498:9
+    |
+497 | pub struct PricingHistoryPoint {
+    |            ------------------- field in this struct
+498 |     pub date: String,
+    |         ^^^^
+    |
+    = note: `PricingHistoryPoint` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `date` and `forced` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:507:9
+    |
+505 | pub struct PricingSyncReport {
+    |            ----------------- fields in this struct
+506 |     #[serde(default)]
+507 |     pub date: String,
+    |         ^^^^
+508 |     #[serde(default)]
+509 |     pub forced: bool,
+    |         ^^^^^^
+    |
+    = note: `PricingSyncReport` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `status` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:531:9
+    |
+519 | pub struct PolicyRuleRow {
+    |            ------------- field in this struct
+...
+531 |     pub status: String,
+    |         ^^^^^^
+    |
+    = note: `PolicyRuleRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `status` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:550:9
+    |
+541 | pub struct PolicySkillRow {
+    |            -------------- field in this struct
+...
+550 |     pub status: String,
+    |         ^^^^^^
+    |
+    = note: `PolicySkillRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `detail` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:563:9
+    |
+560 | pub struct GateStep {
+    |            -------- field in this struct
+...
+563 |     pub detail: Option<String>,
+    |         ^^^^^^
+    |
+    = note: `GateStep` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `started_at` and `finished_at` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:585:9
+    |
+581 | pub struct LastRunLog {
+    |            ---------- fields in this struct
+...
+585 |     pub started_at: Option<String>,
+    |         ^^^^^^^^^^
+586 |     pub finished_at: Option<String>,
+    |         ^^^^^^^^^^^
+    |
+    = note: `LastRunLog` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `project_root` and `log_day` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:650:9
+    |
+646 | pub struct McpTracePath {
+    |            ------------ fields in this struct
+...
+650 |     pub project_root: String,
+    |         ^^^^^^^^^^^^
+...
+654 |     pub log_day: String,
+    |         ^^^^^^^
+    |
+    = note: `McpTracePath` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: struct `McpTraceChunk` is never constructed
+   --> crates\ax-desktop-client\src\api\types.rs:658:12
+    |
+658 | pub struct McpTraceChunk {
+    |            ^^^^^^^^^^^^^
+System.Management.Automation.RemoteException
+warning: fields `id` and `day` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:670:9
+    |
+669 | pub struct TraceEntry {
+    |            ---------- fields in this struct
+670 |     pub id: String,
+    |         ^^
+...
+676 |     pub day: String,
+    |         ^^^
+    |
+    = note: `TraceEntry` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `ok` and `error` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:688:9
+    |
+686 | pub struct ReconcileResult {
+    |            --------------- fields in this struct
+687 |     #[serde(default)]
+688 |     pub ok: bool,
+    |         ^^
+...
+691 |     pub error: Option<String>,
+    |         ^^^^^
+    |
+    = note: `ReconcileResult` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `command` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:699:9
+    |
+695 | pub struct LspServerInfo {
+    |            ------------- field in this struct
+...
+699 |     pub command: Option<String>,
+    |         ^^^^^^^
+    |
+    = note: `LspServerInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: fields `skipped_no_server` and `skipped_no_definition` are never read
+   --> crates\ax-desktop-client\src\api\types.rs:717:9
+    |
+711 | pub struct LspEnrichReport {
+    |            --------------- fields in this struct
+...
+717 |     pub skipped_no_server: i64,
+    |         ^^^^^^^^^^^^^^^^^
+718 |     #[serde(default, rename = "skippedNoDefinition")]
+719 |     pub skipped_no_definition: i64,
+    |         ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `LspEnrichReport` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: field `skipped` is never read
+   --> crates\ax-desktop-client\src\api\types.rs:737:9
+    |
+731 | pub struct SavingsImportResult {
+    |            ------------------- field in this struct
+...
+737 |     pub skipped: i64,
+    |         ^^^^^^^
+    |
+    = note: `SavingsImportResult` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+System.Management.Automation.RemoteException
+warning: struct `AgentSessionInfo` is never constructed
+   --> crates\ax-desktop-client\src\api\types.rs:741:12
+    |
+741 | pub struct AgentSessionInfo {
+    |            ^^^^^^^^^^^^^^^^
+System.Management.Automation.RemoteException
+warning: `ax-desktop-client` (lib) generated 40 warnings
+   Compiling ax-cli v4.4.0 (C:\gary\ax\crates\ax-cli)
+warning: unused import: `bold`
+  --> crates\ax-cli\src\ui\mod.rs:13:25
+   |
+13 | pub use style::{accent, bold, dim, err_line, info_line, kv_line, ok_line, warn_line};
+   |                         ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: `ax-desktop-client` (lib test) generated 40 warnings (40 duplicates)
+warning: function `run_config_save` is never used
+  --> crates\ax-cli\src\commands\policy_share.rs:93:14
+   |
+93 | pub async fn run_config_save(path: Option<String>, config_json: &str) -> Result<(), String> {
+   |              ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: `ax-cli` (bin "ax" test) generated 2 warnings (run `cargo fix --bin "ax" -p ax-cli --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 15s
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_agent-28ba6376d4f3051d.exe)
+
+running 3 tests
+test cursor_auth::tests::validate_profile_names ... ok
+test cursor_auth::tests::decode_sample_jwt_payload ... ok
+test config::tests::read_config_root_treats_null_as_empty_object ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target-dev\debug\deps\ax-56f8c5be0dc9fdc6.exe)
+
+running 11 tests
+test commands::stop_hook::tests::parses_modified_and_untracked ... ok
+test commands::stop_hook::tests::skips_deleted_entries ... ok
+test commands::stop_hook::tests::resolves_rename_to_new_path ... ok
+test commands::stop_hook::tests::stop_hook_active_short_circuits_without_stdin_block ... ok
+test commands::upgrade::tests::bundle_names ... ok
+test ui::update_notice::tests::notice_does_not_panic ... ok
+test version_check::tests::collect_latest_candidates_prefers_github_over_stale_cdn ... ok
+test version_check::tests::compare_and_update_available ... ok
+test version_check::tests::unique_tags_desc_picks_highest_semver ... ok
+test version_check::tests::parse_tag_from_redirect_url ... ok
+test ui::install_log::tests::tildify_home ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_context-be16e64aed652f44.exe)
+
+running 26 tests
+test source_store::tests::differing_hash_is_stale_not_fresh ... ok
+test explore_format::tests::empty_entries_message ... ok
+test formatter::tests::caps_number_of_blocks ... ok
+test formatter::tests::small_context_has_no_truncation_notes ... ok
+test source_store::tests::numbered_slice_reports_char_truncation ... ok
+test source_store::tests::end_line_past_eof_is_clamped ... ok
+test source_store::tests::inverted_range_yields_empty ... ok
+test source_store::tests::properties::fresh_iff_hashes_agree_and_the_graph_hash_is_real ... ok
+test source_store::tests::missing_row_over_cap_says_so ... ok
+test source_store::tests::missing_row_under_cap_asks_for_backfill ... ok
+test source_store::tests::numbered_slice_numbers_from_start_line ... ok
+test formatter::tests::truncates_long_block_content ... ok
+test source_store::tests::char_truncation_does_not_split_multibyte ... ok
+test source_store::tests::numbered_slice_reports_line_truncation ... ok
+test explore_format::tests::golden_explore_text_shape ... ok
+test source_store::tests::empty_indexed_hash_is_never_fresh ... ok
+test source_store::tests::properties::every_textless_outcome_explains_itself ... ok
+test source_store::tests::matching_hash_is_fresh ... ok
+test source_store::tests::negative_line_numbers_do_not_panic ... ok
+test source_store::tests::properties::a_range_overlapping_the_file_shows_exactly_those_lines ... ok
+test source_store::tests::slice_lines_has_no_line_numbers_and_caps_bytes ... ok
+test source_store::tests::start_line_past_eof_yields_empty_not_panic ... ok
+test source_store::tests::properties::numbered_lines_are_real_lines_with_their_real_numbers ... ok
+test source_store::tests::properties::slice_lines_returns_every_line_in_an_overlapping_range ... ok
+test source_store::tests::properties::the_line_cap_is_never_exceeded ... ok
+test source_store::tests::properties::slice_lines_respects_its_budget_and_the_file ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\no_query_time_disk_reads.rs (target-dev\debug\deps\no_query_time_disk_reads-8f5a1e193b2fbb49.exe)
+
+running 3 tests
+test gate_rejects_known_bad_source ... ok
+test every_source_module_is_classified ... ok
+test query_path_modules_do_not_touch_the_filesystem ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_core-acd4c1102f6ac7e6.exe)
+
+running 18 tests
+test okf::tests::sanitize_handles_multiline_and_long_names ... ok
+test report::tests::report_handles_empty_graph ... ok
+test report::tests::report_contains_all_sections_and_data ... ok
+test report::tests::summarize_unresolved_ranks_by_frequency ... ok
+test stats_format::tests::index_inject_lists_categories ... ok
+test stats_format::tests::empty_index_does_not_warn ... ok
+test stats_format::tests::full_source_store_coverage_does_not_warn ... ok
+test stats_format::tests::rows_no_parser_claims_are_not_a_store_gap ... ok
+test stats_format::tests::source_store_gap_warns_with_backfill_instruction ... ok
+test stats_format::tests::status_text_includes_pending ... ok
+test stats_format::tests::formats_extension_breakdown ... ok
+test workspace::tests::member_roots_falls_back_to_root ... ok
+test okf::tests::config_loads_relative_out_dir ... ok
+test workspace::tests::write_and_load_roundtrip ... ok
+test okf::tests::publish_dry_run_requires_remote ... ok
+test workspace::tests::discover_nested_ax ... ok
+test okf::tests::export_survives_windows_hostile_qualified_names ... ok
+test okf::tests::export_and_validate_roundtrip ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\sync.rs (target-dev\debug\deps\sync-53432a1568811053.exe)
+
+running 6 tests
+test sync_without_changes_indexes_nothing ... ok
+test sync_reindexes_everything_on_extractor_version_change ... ok
+test sync_picks_up_new_and_deleted_files ... ok
+test sync_reindexes_only_changed_file ... ok
+test sync_resolves_only_affected_files ... ok
+test sync_skips_touched_file_with_same_content ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.59s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_db-9ce7fecc0f4f2757.exe)
+
+running 5 tests
+test queries::tests::fts_prefix_splits_rust_qualifier ... ok
+test tests::busy_timeout_default_is_generous ... ok
+test tests::is_sqlite_busy_detects_code_5 ... ok
+test schema::tests::trigger_statements_are_complete ... ok
+test schema::tests::apply_initial_schema_tolerates_pre_migration_columns ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\migration_v17.rs (target-dev\debug\deps\migration_v17-44873b9d14afca61.exe)
+
+running 4 tests
+test file_contents_path_is_unique ... ok
+test interrupted_v17_upgrade_recovers_on_next_open ... ok
+test v16_database_upgrades_to_v17_without_losing_data ... ok
+test migration_is_idempotent_across_reopens ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running tests\source_store_coverage.rs (target-dev\debug\deps\source_store_coverage-3cb8b16df1b74120.exe)
+
+running 1 test
+test coverage_counts_only_files_that_can_own_a_snippet ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_desktop_client-e4a7637a1eff297b.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target-dev\debug\deps\ax_desktop-f01ca7d205136681.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_docs_catalog-d60592ba5efe5e1d.exe)
+
+running 1 test
+test scan::tests::digitale_producten_parses_plain_table_rows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_extraction-d7be6e18638510c8.exe)
+
+running 13 tests
+test markdown::tests::resolves_relative_doc_links ... ok
+test contracts::tests::parses_graphql_query_fields ... ok
+test contracts::tests::parses_proto_rpc ... ok
+test contracts::tests::parses_openapi_json ... ok
+test languages::csharp::tests::extracts_csharp_symbols ... ok
+test test_mapper::tests::detects_test_file_paths ... ok
+test markdown::tests::parses_title_links_and_mentions ... ok
+test languages::refs::tests::ts_function_ref_in_call_arg ... ok
+test markdown::tests::skips_external_links ... ok
+test markdown::tests::ignores_noisy_mentions ... ok
+test ts_grammars::tests::loads_all_linked_grammars ... ok
+test languages::refs::tests::ts_call_and_import_refs ... ok
+test languages::csharp::tests::skips_external_di_call_refs ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\source_store_write_path.rs (target-dev\debug\deps\source_store_write_path-e219220da5d49cd7.exe)
+
+running 2 tests
+test index_files_stores_source_only_for_files_it_can_parse ... ok
+test sync_prunes_stored_source_that_no_indexed_file_claims ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_git-ac7388567f521dbd.exe)
+
+running 1 test
+test diff::tests::parse_hunk_header_works ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_graph-2a9bd8640d7f5b14.exe)
+
+running 12 tests
+test analysis::tests::documents_edges_excluded_from_god_nodes ... ok
+test analysis::tests::god_nodes_rank_by_degree ... ok
+test petgraph_analysis::tests::acyclic_chain ... ok
+test petgraph_analysis::tests::self_loops_omitted_by_default ... ok
+test analysis::tests::empty_graph_is_safe ... ok
+test petgraph_analysis::tests::shortest_path_finds_chain ... ok
+test petgraph_analysis::tests::shortest_path_missing_returns_none ... ok
+test query_parser::tests::parses_kind_and_lang_filters ... ok
+test query_parser::tests::parses_path_filter ... ok
+test analysis::tests::communities_split_two_clusters ... ok
+test analysis::tests::documents_edge_is_semantic_but_not_architectural ... ok
+test petgraph_analysis::tests::detects_simple_cycle ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_installer-cc5ebecba7b32920.exe)
+
+running 20 tests
+test cli_catalog::tests::catalog_covers_all_targets ... ok
+test cli_catalog::tests::cursor_uses_agent_bin ... ok
+test cli_catalog::tests::extract_js_from_cmd_line_parses_dp0 ... ok
+test targets::mcp_path_tests::new_ide_targets_default_to_workspace_token ... ok
+test targets::mcp_path_tests::mcp_config_entry_never_embeds_install_cwd ... ok
+test targets::mcp_path_tests::vscode_entry_uses_servers_shape_with_type_stdio ... ok
+test cli_catalog::tests::kiro_uses_kiro_cli_bin ... ok
+test cli_install::tests::cli_bin_names ... ok
+test cli_install::tests::main_targets_have_install_plans ... ok
+test targets::mcp_path_tests::codex_block_upserts_with_process_cwd ... ok
+test targets::mcp_path_tests::continue_entry_is_single_server_file ... ok
+test targets::mcp_path_tests::global_targets_use_workspace_tokens_not_fixed_paths ... ok
+test targets::mcp_path_tests::hermes_block_includes_path_arg ... ok
+test cli_catalog::tests::hermes_not_runnable ... ok
+test targets::mcp_path_tests::zed_entry_requires_source_custom ... ok
+test cli_catalog::tests::ide_only_targets_are_not_runnable ... ok
+test targets::mcp_path_tests::takumi_install_writes_workspace_mcp_json ... ok
+test cli_catalog::tests::parse_cmd_extracts_cli_js ... ok
+test targets::mcp_path_tests::claude_stop_hook_install_is_idempotent_and_removable ... ok
+test targets::mcp_path_tests::claude_hooks_for_different_events_do_not_collide ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_lsp-f613adcfed774bf1.exe)
+
+running 5 tests
+test client::tests::probe_ra_definition ... ignored
+test client::tests::strips_windows_verbatim_prefix ... ok
+test client::tests::column_for_name_finds_method ... ok
+test client::tests::parses_location ... ok
+test client::tests::strips_unc_verbatim_prefix ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_mcp-dadeb54e315a2930.exe)
+
+running 51 tests
+test daemon::tests::parse_idle_timeout_env ... ok
+test liveness_watchdog::tests::parse_timeout_defaults ... ok
+test liveness_watchdog::tests::derive_check_interval ... ok
+test liveness_watchdog::tests::no_watchdog_env ... ok
+test daemon_paths::tests::hash_is_stable ... ok
+test ppid_watchdog::tests::parse_poll_ms_zero_disables ... ok
+test query_pool::tests::read_tool_names ... ok
+test query_pool::tests::resolve_pool_size_zero_disables ... ok
+test server::wrap_tests::lean_data_tools_omit_structured ... ok
+test server::wrap_tests::lean_context_drops_graph_payload ... ok
+test server::wrap_tests::lean_status_drops_text_keeps_stats ... ok
+test server::wrap_tests::lean_preflight_drops_bodies_keeps_actionable ... ok
+test server::wrap_tests::lean_explore_drops_source_and_neighbors ... ok
+test server::wrap_tests::wrap_parts_keeps_structured_when_some ... ok
+test server::wrap_tests::wrap_error_sets_is_error ... ok
+test server::wrap_tests::wrap_parts_omits_structured_when_none ... ok
+test ppid_watchdog::tests::posix_ppid_change_signals_loss ... ok
+test staleness::tests::banner_when_response_references_pending_file ... ok
+test staleness::tests::footer_only_when_no_referenced_pending ... ok
+test server::wrap_tests::wrap_preflight_puts_inject_in_content_text ... ok
+test staleness::tests::no_annotation_when_nothing_pending ... ok
+test staleness::tests::text_mention_counts_as_reference ... ok
+test tool_filter::tests::comma_list_accepts_short_and_full_names ... ok
+test tool_filter::tests::all_exposes_everything ... ok
+test tool_filter::tests::core_and_gated_sets_are_disjoint_and_unique ... ok
+test tool_filter::tests::default_advertises_turn_contract_and_graph_reads ... ok
+test tool_filter::tests::default_still_gates_heavy_ops ... ok
+test tool_filter::tests::every_policy_referenced_tool_is_classified ... ok
+test daemon_lock::tests::acquire_and_release_roundtrip ... ok
+test tools::tests::diagnostics_from_params_empty_without_diagnostics_key ... ok
+test tools::tests::ax_mcp_tools_all_advertises_ops_and_diagnostics ... ok
+test tools::tests::diagnostics_from_params_parses_entries_and_defaults_severity ... ok
+test tools::tests::ax_mcp_tools_allowlist_adds_short_names ... ok
+test tools::tests::default_advertises_graph_reads_and_hides_heavy_ops ... ok
+test tools::tests::every_core_tool_exists_in_the_catalog ... ok
+test tools::tests::preflight_tool_schema_includes_project_path ... ok
+test tools::tests::server_instructions_always_mention_directive_capture ... ok
+test tools::tests::server_instructions_prefer_mcp_ops_over_shell ... ok
+test tools::tests::preflight_and_capture_always_advertised_even_without_policy ... ok
+test tools::tests::policy_tools_appear_when_policy_present ... ok
+test verbose::tests::ax_log_roundtrip ... ok
+test verbose::tests::env_flag_accepts_truthy ... ok
+test verbose::tests::mcp_notification_contains_logger ... ok
+test verbose::tests::redact_hides_secret_keys ... ok
+test verbose::tests::sanitize_collapses_newlines ... ok
+test verbose::tests::truncate_marks_overflow ... ok
+test verbose::tests::ship_toml_verbose_flag ... ok
+test ppid_watchdog::tests::host_ppid_death_signals_loss ... ok
+test ppid_watchdog::tests::windows_parent_death_signals_loss ... ok
+test server::policy_integration::mcp_ax_status_policy_counts ... ok
+test server::policy_integration::mcp_ax_rules_returns_indexed_rules ... ok
+
+test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.96s
+
+     Running tests\catalog_payload_size.rs (target-dev\debug\deps\catalog_payload_size-9eeeb11dd6ccb0ab.exe)
+
+running 1 test
+test catalog_payload_is_recorded_and_bounded ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\new_tools_smoke.rs (target-dev\debug\deps\new_tools_smoke-e4f173d56e9a3da8.exe)
+
+running 2 tests
+test default_tools_list_shows_graph_surface_and_gates_heavy_ops ... ok
+test cycles_api_path_handlers_work ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.32s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_memory-ca688624c3f1aa67.exe)
+
+running 7 tests
+test capture::tests::trivial_subjects_are_skipped ... ok
+test embed::tests::blob_roundtrip ... ok
+test embed::tests::identical_texts_have_cosine_one ... ok
+test embed::tests::related_texts_beat_unrelated ... ok
+test embed::tests::typos_still_score_high ... ok
+test store::tests::fts_query_drops_stop_words_and_short_tokens ... ok
+test store::tests::decay_halves_after_half_life ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\vault.rs (target-dev\debug\deps\vault-aefca6ce50460878.exe)
+
+running 4 tests
+test hybrid_recall_survives_typos_via_vector_leg ... ok
+test remember_then_recall_finds_memory ... ok
+test delete_removes_memory_from_recall ... ok
+test recall_with_no_usable_tokens_returns_empty ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_plugins-eb91dffec2473f31.exe)
+
+running 1 test
+test host::tests::discovers_process_plugin_manifest ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_policy-d09604883eada932.exe)
+
+running 81 tests
+test builtin_packs::tests::lists_azdo_pack ... ok
+test capture::tests::explicit_rule_marker ... ok
+test capture::tests::detects_english_directive ... ok
+test capture::tests::detects_dutch_directive ... ok
+test capture::tests::detects_moet_altijd_without_je ... ok
+test capture::tests::globs_from_open_files ... ok
+test capture::tests::ignores_question_prompt ... ok
+test config::tests::effective_storage_respects_override ... ok
+test config::tests::policy_storage_parse_aliases ... ok
+test format::tests::always_apply_never_hard_truncated_when_over_budget ... ok
+test format::tests::always_apply_rules_kept_when_truncating ... ok
+test format::tests::always_apply_skills_never_omitted_when_over_budget ... ok
+test format::tests::skills_omitted_instead_of_cutting_always_apply ... ok
+test capture::tests::propose_includes_interview_questions ... ok
+test capture::tests::resolve_unique_id_suffix ... ok
+test config::tests::policy_sync_flag ... ok
+test config::tests::write_project_storage_preserves_other_keys ... ok
+test hierarchy::tests::scope_parse_aliases ... ok
+test config::tests::default_storage_is_files ... ok
+test config::tests::loads_policy_roots_relative_and_absolute ... ok
+test hierarchy::tests::finds_workspace_with_members ... ok
+test guard::tests::blocks_utf8_bom_in_proposed_content ... ok
+test guard::tests::blocks_sensitive_delete ... ok
+test hierarchy::tests::private_project_layer_and_gitignore ... ok
+test guard::tests::forbid_path_directive_blocks_matching_glob ... ok
+test guard::tests::require_skill_blocks_when_skill_missing ... ok
+test guard::tests::forbid_content_directive_supports_regex ... ok
+test guard::tests::require_skill_exempts_policy_paths ... ok
+test guard::tests::forbid_content_directive_blocks_matching_write ... ok
+test guard::tests::forbid_content_directive_is_scoped_by_rule_globs ... ok
+test hierarchy::tests::layer_precedence_order ... ok
+test guard::tests::require_skill_parses_backtick_wrapped_directive ... ok
+test ide_seed::tests::verify_ide_bootstrap_fails_before_seed ... ok
+test guard::tests::require_skill_blocks_when_skill_not_always_apply ... ok
+test guard::tests::generic_gate_ignores_rules_without_directives ... ok
+test matcher::tests::empty_prompt_matches_always_apply_skill ... ok
+test guard::tests::require_content_directive_scoped_by_rule_globs ... ok
+test matcher::tests::select_keeps_all_always_apply_plus_two_contextual ... ok
+test matcher::tests::empty_prompt_skips_trigger_only_skill ... ok
+test guard::tests::require_skill_allows_when_skill_is_always_apply ... ok
+test ide_seed::tests::repairs_stale_cursor_ax_rule ... ok
+test parse::tests::api_json_accepts_camel_case_frontmatter ... ok
+test parse::tests::parse_minimal_rule ... ok
+test parse::tests::parse_skill_always_apply_roundtrip ... ok
+test parse::tests::serialize_roundtrip_with_globs ... ok
+test ide_seed::tests::creates_mcp_callmcp_shape_rule_on_init ... ok
+test ide_seed::tests::creates_cursor_ax_rule_on_init ... ok
+test paths::tests::stub_body_detection ... ok
+test seed::tests::detect_stale_recall_references ... ok
+test migrate::tests::scan_skips_node_modules ... ok
+test migrate::tests::migrate_rule_questions_include_storage ... ok
+test index::tests::skill_always_apply_persists ... ok
+test builtin_packs::tests::installs_without_overwrite ... ok
+test seed::tests::global_skill_bundle_templates_parse ... ok
+test seed::tests::detect_cursor_rule_duplicate_by_alias ... ok
+test paths::tests::resolve_root_source ... ok
+test seed::tests::startup_template_documents_guard_aliases ... ok
+test ide_seed::tests::migrates_legacy_ax_agent_workflow_to_ax_mdc ... ok
+test seed::tests::seed_global_policy_rules_upgrades_require_skill ... ok
+test ide_seed::tests::upserts_agents_and_gemini_markers ... ok
+test ide_seed::tests::skips_when_bootstrap_already_in_another_continue_rule ... ok
+test ide_seed::tests::seeds_copilot_instructions ... ok
+test ide_seed::tests::seeds_claude_rule_and_claude_md_marker ... ok
+test ide_seed::tests::skips_when_bootstrap_already_in_another_cursor_rule ... ok
+test ide_seed::tests::seeds_windsurf_rules ... ok
+test index::tests::database_mode_save_without_files ... ok
+test ide_seed::tests::sync_ide_bootstrap_fix_creates_all_targets ... ok
+test ide_seed::tests::seeds_continue_rule ... ok
+test migrate::tests::scan_finds_ax_policy_and_cursor_rules ... ok
+test ide_seed::tests::seeds_continue_mcp_server ... ok
+test ide_seed::tests::seeds_cline_rules ... ok
+test seed::tests::global_skill_bundles_include_references ... ok
+test migrate::tests::scan_finds_skills_recursively ... ok
+test seed::tests::rollout_skill_templates_parse ... ok
+test seed::tests::write_skill_bundle_upgrades_missing_always_apply ... ok
+test seed::tests::seed_cursor_skills_writes_once ... ok
+test index::tests::ensure_policy_ready_imports_when_db_empty ... ok
+test seed::tests::seed_writes_defaults_once ... ok
+test seed::tests::seeded_files_pass_verify ... ok
+test seed::tests::sync_fix_restores_missing_startup ... ok
+test seed::tests::sync_fix_restores_drifted_startup_template ... ok
+
+test result: ok. 81 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.91s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_quality-1895661eb855cb1e.exe)
+
+running 16 tests
+test bootstrap::tests::ax_is_explicit_project_key_not_placeholder ... ok
+test bootstrap::tests::keeps_explicit_project_key ... ok
+test bootstrap::tests::canonical_repo_key_multi_repo ... ok
+test sonar::tests::single_repo_workspace_uses_workspace_key ... ok
+test bootstrap::tests::resolves_placeholder_to_folder_name ... ok
+test bootstrap::tests::token_already_exists_detects_conflict ... ok
+test container::discover_fallback_tests::localhost_fallback_skips_same_host ... ok
+test container::tests::db_sidecar_name_derived_from_sonar_name ... ok
+test container::tests::jdbc_url_points_at_sidecar ... ok
+test sonar::tests::groups_dirty_files_per_repo ... ok
+test sonar::tests::large_diff_collapses_to_repo_globs ... ok
+test sonar::tests::single_repo_from_multi_workspace_keeps_prefixed_key ... ok
+test bootstrap::tests::legacy_prefix_from_workspace_folder ... ok
+test sonar::tests::small_diff_lists_explicit_paths ... ok
+test container::tests::sonar_host_port_parsed_from_url ... ok
+test sonar::tests::resolve_rel_path_splits_forward_slashes ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_reasoning-ae75f8ec0c4ac161.exe)
+
+running 2 tests
+test config::tests::provider_catalog_has_all_supported ... ok
+test config::tests::auto_detect_openai_key ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_remote-6a630a6746a145db.exe)
+
+running 7 tests
+test ship_config::tests::auto_commit_is_opt_in_by_default ... ok
+test ship_config::tests::missing_timezone_in_older_toml_defaults_to_empty_local ... ok
+test ship_config::tests::missing_auto_commit_section_in_older_toml_defaults_to_disabled ... ok
+test ship_config::tests::timezone_survives_toml_round_trip ... ok
+test ship_config::tests::auto_commit_survives_toml_round_trip ... ok
+test seed::tests::seeds_sonar_project_key_from_folder_name ... ok
+test seed::tests::creates_ship_toml_once ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_resolution-071a48d262660989.exe)
+
+running 33 tests
+test frameworks::django::tests::claims_reference_urls_module ... ok
+test c_fnptr_synthesizer::tests::c_cpp_extension_gate ... ok
+test frameworks::spring::tests::yaml_config_leaf ... ok
+test frameworks::cargo_workspace::tests::glob_pattern_matches_crate_star ... ok
+test frameworks::angular::tests::router_module_route_component ... ok
+test frameworks::laravel::tests::extract_handler_namespaced_tuple ... ok
+test frameworks::laravel::tests::claims_controller_reference ... ok
+test frameworks::svelte::tests::sveltekit_dynamic_route ... ok
+test frameworks::svelte::tests::sveltekit_catch_all_route ... ok
+test frameworks::react::tests::react_data_router_route ... ok
+test import_resolver::tests::strip_json_comments_valid_json ... ok
+test frameworks::django::tests::drf_router_register ... ok
+test frameworks::django::tests::path_include_urls_module ... ok
+test frameworks::vue::tests::nuxt_api_route ... ok
+test frameworks::svelte::tests::sveltekit_page_route ... ok
+test frameworks::django::tests::path_to_view_function ... ok
+test frameworks::flask::tests::fastapi_get_decorator ... ok
+test frameworks::svelte::tests::sveltekit_root_route ... ok
+test frameworks::laravel::tests::route_get_class_tuple ... ok
+test frameworks::laravel::tests::route_get_controller_at_method ... ok
+test frameworks::django::tests::path_to_class_as_view ... ok
+test frameworks::flask::tests::flask_route_decorator ... ok
+test import_resolver::tests::tsconfig_paths_resolve_with_comments ... ok
+test frameworks::react::tests::next_pages_route ... ok
+test frameworks::flask::tests::flask_restful_add_resource ... ok
+test frameworks::react::tests::next_app_router_dynamic_segment ... ok
+test frameworks::vue::tests::nuxt_catch_all_route ... ok
+test frameworks::laravel::tests::route_resource_controller_class ... ok
+test frameworks::cargo_workspace::tests::workspace_glob_smoke_fixture ... ok
+test frameworks::vue::tests::nuxt_pages_dynamic_route ... ok
+test frameworks::vue::tests::nuxt_pages_index_route ... ok
+test frameworks::spring::tests::value_binding_reference ... ok
+test frameworks::spring::tests::get_mapping_route ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_share-ec144a26f8b5e951.exe)
+
+running 23 tests
+test auth::microsoft::tests::default_client_id_is_a_guid ... ok
+test auth::microsoft::tests::encode_share_id_format ... ok
+test config::tests::default_onedrive_url ... ok
+test auth::microsoft::tests::encode_share_id_is_deterministic ... ok
+test config::tests::import_mode_flags ... ok
+test config::tests::import_mode_parse_and_as_str ... ok
+test providers::gitlab_api::tests::should_use_api_requires_token_and_http ... ok
+test config::tests::share_provider_parse ... ok
+test providers::gitlab_api::tests::parse_target_extracts_api_base_and_project_id ... ok
+test providers::github::tests::push_requires_repo_url ... ok
+test config::tests::content_config_from_project ... ok
+test config::tests::global_config_is_ignored ... ok
+test auth::microsoft::tests::write_and_read_client_id_from_config ... ok
+test config::tests::project_config_overrides_defaults ... ok
+test config::tests::project_can_switch_provider ... ok
+test config::tests::merge_global_then_project_override ... ok
+test providers::gitlab_api::tests::pull_fails_clearly_on_sso_redirect_instead_of_following_it ... ok
+test providers::gitlab_api::tests::push_with_no_changes_is_a_noop ... ok
+test providers::onedrive::tests::pull_onedrive_errors_when_no_pack_or_memory ... ok
+test providers::gitlab_api::tests::push_then_pull_round_trips_via_api ... ok
+test providers::onedrive::tests::pull_onedrive_downloads_pack_from_mock_graph ... ok
+Initialized empty Git repository in C:/Users/gary.wenneker/AppData/Local/Temp/.tmpggKz5S/
+Initialized empty Git repository in C:/Users/gary.wenneker/AppData/Local/Temp/.tmpTdJis5/
+warning: You appear to have cloned an empty repository.
+warning: You appear to have cloned an empty repository.
+error: pathspec 'main' did not match any file(s) known to git
+error: pathspec 'main' did not match any file(s) known to git
+Switched to a new branch 'main'
+Switched to a new branch 'main'
+warning: in the working copy of '.ax/policy/shared/rules/example.mdc', LF will be replaced by CRLF the next time Git touches it
+[main (root-commit) c875afd] ax: policy share sync
+ 1 file changed, 1 insertion(+)
+ create mode 100644 .ax/policy/shared/manifest.json
+[main (root-commit) 1cf4171] ax: policy share sync
+ 2 files changed, 5 insertions(+)
+ create mode 100644 .ax/policy/shared/manifest.json
+ create mode 100644 .ax/policy/shared/rules/example.mdc
+To C:\Users\GARY~1.WEN\AppData\Local\Temp\.tmpggKz5S
+ * [new branch]      HEAD -> main
+To C:\Users\GARY~1.WEN\AppData\Local\Temp\.tmpTdJis5
+ * [new branch]      HEAD -> main
+warning: --depth is ignored in local clones; use file:// instead.
+test providers::github::tests::push_then_pull_round_trips_pack ... ok
+Your branch is up to date with 'origin/main'.
+Already on 'main'
+test providers::github::tests::push_with_no_changes_is_a_noop ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.07s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_ship-c26aa52607e7e9c9.exe)
+
+running 8 tests
+test runners::tests::classifies_pytest ... ok
+test runners::tests::classifies_rust_hint ... ok
+test git_root::tests::resolve_sonar_repo_names_skips_missing_git_roots ... ok
+test git_root::tests::discovers_immediate_child_git_repos ... ok
+warning: in the working copy of 'a.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'a.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'a.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'a.txt', LF will be replaced by CRLF the next time Git touches it
+test auto_commit::tests::no_checkpoint_when_working_tree_is_clean ... ok
+test auto_commit::tests::checkpoint_commits_uncommitted_changes ... ok
+test auto_commit::tests::revert_restores_uncommitted_state_without_losing_content ... ok
+test auto_commit::tests::revert_refuses_if_head_moved_since_checkpoint ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.62s
+
+     Running tests\smoke.rs (target-dev\debug\deps\smoke-d182242ef7b7901d.exe)
+
+running 1 test
+test smoke_init_index_and_search ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_sync-b1fe78f35cf04d9e.exe)
+
+running 12 tests
+test git_hooks::tests::memory_sync_adds_export_on_commit ... ok
+test git_hooks::tests::policy_sync_adds_pack_on_commit_and_merge ... ok
+test git_hooks::tests::post_commit_includes_capture_git ... ok
+test git_hooks::tests::post_checkout_skips_capture_git ... ok
+test git_hooks::tests::merge_adds_missing_lines ... ok
+test pending_registry::tests::publish_and_read_roundtrip ... ok
+test watcher::tests::watch_debounce_env_is_clamped ... ok
+test watcher::tests::ready_files_respect_debounce ... ok
+test watcher::tests::clear_pending_removes_entries ... ok
+test watcher::tests::marked_indexing_files_are_not_ready ... ok
+test watcher::tests::live_watcher_picks_up_file_writes ... ok
+test watcher::tests::events_under_ax_dir_are_ignored ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_telemetry-aa8d359b3b1ba4c2.exe)
+
+running 2 tests
+test tests::buckets ... ok
+test tests::set_enabled_persists ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_tia-3e66b6d28010ae92.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_types-111c9fd95c93c3c4.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_usage-5e1c5f5db1928efa.exe)
+
+running 59 tests
+test cursor_state::tests::normalize_cursor_model_skips_duplicate_suffix ... ok
+test cursor_state::tests::parse_composer_data_full_row ... ok
+test cursor_state::tests::parse_composer_model_with_fast_param ... ok
+test log_brand::tests::format_ax_tagged_idempotent ... ok
+test log_brand::tests::format_ax_mcp_trace_adds_icon ... ok
+test log_brand::tests::format_ax_tagged_adds_icon ... ok
+test mcp_audit::tests::parses_verbose_inbound ... ok
+test mcp_audit::tests::classifies_call_dynamic_tool ... ok
+test mcp_audit::tests::slug_sanitizes_windows_path ... ok
+test mcp_audit::tests::markdown_includes_score ... ok
+test cursor_state::tests::parse_composer_input_tokens_from_breakdown ... ok
+test mcp_audit::tests::parses_cursor_embed_timestamp ... ok
+test mcp_audit::tests::parses_verbose_session_id ... ok
+test domain_log::tests::domain_tool_label_cli_cmd ... ok
+test mcp_audit::tests::skips_call_dynamic_without_tool_name ... ok
+test mcp_audit::tests::enrich_lines_attach_to_preflight_cluster ... ok
+test mcp_verbose_log::tests::dated_filename_roundtrip ... ok
+test mcp_audit::tests::domain_lines_do_not_form_tool_clusters ... ok
+test mcp_audit::tests::carry_forward_embed_ts_filters_old_events ... ok
+test pricing::tests::cost_math ... ok
+test period::tests::parses_period_aliases ... ok
+test pricing_fetch::tests::openrouter_per_token_conversion ... ok
+test pricing_fetch::tests::parse_aa_sample ... ok
+test pricing_fetch::tests::parse_openrouter_sample ... ok
+test savings::tests::cursor_transcript_path_filter ... ok
+test mcp_verbose_log::tests::nearest_dated_log_before_skips_gaps ... ok
+test mcp_verbose_log::tests::legacy_migration_idempotent ... ok
+test mcp_verbose_log::tests::verbose_enabled_reads_ship_toml ... ok
+test savings::tests::normalize_cursor_model_composer_fast ... ok
+test savings::tests::parse_cursor_hook_payload ... ok
+test savings::tests::parse_cursor_hook_session_without_model ... ok
+test savings::tests::claude_tool_classification ... ok
+test pricing::tests::model_substring_match_prefers_longest_key ... ok
+test pricing::tests::unknown_model_uses_reference ... ok
+test pricing_sync::tests::upsert_and_history ... FAILED
+test savings::tests::tag_session_model_merge ... ok
+test savings::tests::transcript_import_does_not_wipe_state_tokens ... ok
+test tokenizer::tests::truncate_utf8_respects_char_boundary ... ok
+test tokenizer::tests::missing_file_returns_none ... ok
+test tokenizer::tests::empty_text_is_zero_tokens ... ok
+test savings::tests::path_only_ref_still_counts_file ... ok
+test tokenizer::tests::tokenize_text_roundtrips_visible_tokens ... ok
+test savings::tests::same_file_counted_once_per_call ... ok
+test tokenizer::tests::counts_tokens_exactly ... ok
+test tokenizer::tests::file_tokens_cached_by_mtime_and_size ... ok
+test savings::tests::no_file_refs_means_zero_savings ... ok
+test savings::tests::estimate_from_explore_result ... ok
+test savings::tests::related_files_array_increments_counterfactual ... ok
+test tokenizer::tests::line_range_tokens_subset_of_full_file ... ok
+test savings::tests::range_mode_uses_line_span_when_set ... ok
+test savings::tests::readable_file_counterfactual_is_measured_exactly ... ok
+test savings::tests::policy_tool_not_eligible ... ok
+test tokenizer::tests::tokenize_text_respects_token_cap ... ok
+test savings::tests::saved_tokens_clamped_at_zero_per_call ... ok
+test mcp_audit::tests::quiet_mcp_skips_explore_before_grep_and_verbose_gap ... ok
+test mcp_audit::tests::recovered_guard_error_does_not_penalize ... ok
+test mcp_audit::tests::scores_missing_preflight ... ok
+test mcp_audit::tests::uncorrelated_is_info_when_verbose_enabled ... ok
+test mcp_audit::tests::uncorrelated_softens_when_verbose_present ... ok
+
+failures:
+
+---- pricing_sync::tests::upsert_and_history stdout ----
+
+thread 'pricing_sync::tests::upsert_and_history' (53408) panicked at crates\ax-usage\src\pricing_sync.rs:674:9:
+assertion failed: hist.len() >= 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    pricing_sync::tests::upsert_and_history
+
+test result: FAILED. 58 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.74s
+
+error: test failed, to rerun pass `-p ax-usage --lib`
+
+=== 2. Graph-only gate ===
+> cargo test -p ax-context --test no_query_time_disk_reads
+   Compiling ax-context v4.4.0 (C:\gary\ax\crates\ax-context)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.96s
+     Running tests\no_query_time_disk_reads.rs (target-dev\debug\deps\no_query_time_disk_reads-db7b43d6465b47dc.exe)
+
+running 3 tests
+test gate_rejects_known_bad_source ... ok
+test every_source_module_is_classified ... ok
+test query_path_modules_do_not_touch_the_filesystem ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+> cargo test -p ax-policy --lib guard
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.59s
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_policy-3530befa228718f7.exe)
+
+running 14 tests
+test seed::tests::startup_template_documents_guard_aliases ... ok
+test guard::tests::blocks_utf8_bom_in_proposed_content ... ok
+test guard::tests::forbid_path_directive_blocks_matching_glob ... ok
+test guard::tests::require_skill_blocks_when_skill_missing ... ok
+test guard::tests::forbid_content_directive_supports_regex ... ok
+test guard::tests::generic_gate_ignores_rules_without_directives ... ok
+test guard::tests::require_skill_allows_when_skill_is_always_apply ... ok
+test guard::tests::blocks_sensitive_delete ... ok
+test guard::tests::require_skill_exempts_policy_paths ... ok
+test guard::tests::require_content_directive_scoped_by_rule_globs ... ok
+test guard::tests::forbid_content_directive_is_scoped_by_rule_globs ... ok
+test guard::tests::forbid_content_directive_blocks_matching_write ... ok
+test guard::tests::require_skill_blocks_when_skill_not_always_apply ... ok
+test guard::tests::require_skill_parses_backtick_wrapped_directive ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 67 filtered out; finished in 0.13s
+
+
+=== 3. MCP catalog coherence ===
+> cargo test -p ax-mcp --lib tool_filter
+warning: unused variable: `len`
+   --> crates\ax-lsp\src\client.rs:390:9
+    |
+390 |     let len = content_length.ok_or("missing Content-Length")?;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_len`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: method `is_quiescent` is never used
+   --> crates\ax-lsp\src\client.rs:221:12
+    |
+ 35 | impl LspClient {
+    | -------------- method in this implementation
+...
+221 |     pub fn is_quiescent(&self) -> bool {
+    |            ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: `ax-lsp` (lib) generated 2 warnings (run `cargo fix --lib -p ax-lsp` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.44s
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_mcp-2c458320fbd31f0b.exe)
+
+running 6 tests
+test tool_filter::tests::all_exposes_everything ... ok
+test tool_filter::tests::core_and_gated_sets_are_disjoint_and_unique ... ok
+test tool_filter::tests::comma_list_accepts_short_and_full_names ... ok
+test tool_filter::tests::default_advertises_turn_contract_and_graph_reads ... ok
+test tool_filter::tests::default_still_gates_heavy_ops ... ok
+test tool_filter::tests::every_policy_referenced_tool_is_classified ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 45 filtered out; finished in 0.00s
+
+> cargo test -p ax-mcp --test new_tools_smoke
+warning: unused variable: `len`
+   --> crates\ax-lsp\src\client.rs:390:9
+    |
+390 |     let len = content_length.ok_or("missing Content-Length")?;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_len`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: method `is_quiescent` is never used
+   --> crates\ax-lsp\src\client.rs:221:12
+    |
+ 35 | impl LspClient {
+    | -------------- method in this implementation
+...
+221 |     pub fn is_quiescent(&self) -> bool {
+    |            ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: `ax-lsp` (lib) generated 2 warnings (run `cargo fix --lib -p ax-lsp` to apply 1 suggestion)
+   Compiling ax-mcp v4.4.0 (C:\gary\ax\crates\ax-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 45.65s
+     Running tests\new_tools_smoke.rs (target-dev\debug\deps\new_tools_smoke-2a082860f54c5fd8.exe)
+
+running 2 tests
+test default_tools_list_shows_graph_surface_and_gates_heavy_ops ... ok
+test cycles_api_path_handlers_work ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.04s
+
+
+=== 4. Source store ===
+> cargo test -p ax-db --test migration_v17
+   Compiling ax-db v4.4.0 (C:\gary\ax\crates\ax-db)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.94s
+     Running tests\migration_v17.rs (target-dev\debug\deps\migration_v17-69c4514808230731.exe)
+
+running 4 tests
+test file_contents_path_is_unique ... ok
+test interrupted_v17_upgrade_recovers_on_next_open ... ok
+test v16_database_upgrades_to_v17_without_losing_data ... ok
+test migration_is_idempotent_across_reopens ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+> cargo test -p ax-db --test source_store_coverage
+   Compiling ax-db v4.4.0 (C:\gary\ax\crates\ax-db)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.90s
+     Running tests\source_store_coverage.rs (target-dev\debug\deps\source_store_coverage-8bc07676e8102bb9.exe)
+
+running 1 test
+test coverage_counts_only_files_that_can_own_a_snippet ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+> cargo test -p ax-context --lib source_store
+   Compiling ax-context v4.4.0 (C:\gary\ax\crates\ax-context)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.55s
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_context-732e9b0a9ff94033.exe)
+
+running 21 tests
+test source_store::tests::differing_hash_is_stale_not_fresh ... ok
+test source_store::tests::empty_indexed_hash_is_never_fresh ... ok
+test source_store::tests::char_truncation_does_not_split_multibyte ... ok
+test source_store::tests::end_line_past_eof_is_clamped ... ok
+test source_store::tests::inverted_range_yields_empty ... ok
+test source_store::tests::missing_row_over_cap_says_so ... ok
+test source_store::tests::matching_hash_is_fresh ... ok
+test source_store::tests::missing_row_under_cap_asks_for_backfill ... ok
+test source_store::tests::negative_line_numbers_do_not_panic ... ok
+test source_store::tests::numbered_slice_numbers_from_start_line ... ok
+test source_store::tests::numbered_slice_reports_char_truncation ... ok
+test source_store::tests::numbered_slice_reports_line_truncation ... ok
+test source_store::tests::properties::every_textless_outcome_explains_itself ... ok
+test source_store::tests::properties::fresh_iff_hashes_agree_and_the_graph_hash_is_real ... ok
+test source_store::tests::slice_lines_has_no_line_numbers_and_caps_bytes ... ok
+test source_store::tests::start_line_past_eof_yields_empty_not_panic ... ok
+test source_store::tests::properties::numbered_lines_are_real_lines_with_their_real_numbers ... ok
+test source_store::tests::properties::slice_lines_returns_every_line_in_an_overlapping_range ... ok
+test source_store::tests::properties::a_range_overlapping_the_file_shows_exactly_those_lines ... ok
+test source_store::tests::properties::slice_lines_respects_its_budget_and_the_file ... ok
+test source_store::tests::properties::the_line_cap_is_never_exceeded ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s
+
+> cargo test -p ax-extraction --test source_store_write_path
+   Compiling ax-db v4.4.0 (C:\gary\ax\crates\ax-db)
+   Compiling ax-extraction v4.4.0 (C:\gary\ax\crates\ax-extraction)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.63s
+     Running tests\source_store_write_path.rs (target-dev\debug\deps\source_store_write_path-3eff359f3fa5ee07.exe)
+
+running 2 tests
+test sync_prunes_stored_source_that_no_indexed_file_claims ... ok
+test index_files_stores_source_only_for_files_it_can_parse ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+> cargo test -p ax-core --lib stats_format
+   Compiling ax-policy v4.4.0 (C:\gary\ax\crates\ax-policy)
+   Compiling ax-context v4.4.0 (C:\gary\ax\crates\ax-context)
+   Compiling ax-core v4.4.0 (C:\gary\ax\crates\ax-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 24.23s
+     Running unittests src\lib.rs (target-dev\debug\deps\ax_core-8b76e356c450e382.exe)
+
+running 7 tests
+test stats_format::tests::empty_index_does_not_warn ... ok
+test stats_format::tests::formats_extension_breakdown ... ok
+test stats_format::tests::full_source_store_coverage_does_not_warn ... ok
+test stats_format::tests::rows_no_parser_claims_are_not_a_store_gap ... ok
+test stats_format::tests::index_inject_lists_categories ... ok
+test stats_format::tests::source_store_gap_warns_with_backfill_instruction ... ok
+test stats_format::tests::status_text_includes_pending ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+
+=== 5. Catalog payload size ===
+> cargo test -p ax-mcp --test catalog_payload_size -- --nocapture
+warning: unused variable: `len`
+   --> crates\ax-lsp\src\client.rs:390:9
+    |
+390 |     let len = content_length.ok_or("missing Content-Length")?;
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_len`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: method `is_quiescent` is never used
+   --> crates\ax-lsp\src\client.rs:221:12
+    |
+ 35 | impl LspClient {
+    | -------------- method in this implementation
+...
+221 |     pub fn is_quiescent(&self) -> bool {
+    |            ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: `ax-lsp` (lib) generated 2 warnings (run `cargo fix --lib -p ax-lsp` to apply 1 suggestion)
+   Compiling ax-mcp v4.4.0 (C:\gary\ax\crates\ax-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.91s
+     Running tests\catalog_payload_size.rs (target-dev\debug\deps\catalog_payload_size-515ac9d87994ce06.exe)
+
+running 1 test
+default catalog: 22 tools, 7331 chars, ~1832 tokens
+  ax_explore: 360 chars
+  ax_preflight: 771 chars
+  ax_policy_capture: 617 chars
+  ax_rules: 187 chars
+  ax_skill: 163 chars
+  ax_guard: 1199 chars
+  ax_node: 133 chars
+  ax_search: 148 chars
+  ax_status: 110 chars
+  ax_sync: 207 chars
+  ax_context: 148 chars
+  ax_callers: 146 chars
+  ax_callees: 146 chars
+  ax_impact: 146 chars
+  ax_cycles: 228 chars
+  ax_path: 206 chars
+  ax_api: 337 chars
+  ax_insights: 579 chars
+  ax_report: 330 chars
+  ax_affected: 156 chars
+  ax_remember: 691 chars
+  ax_recall: 290 chars
+full catalog:    28 tools, 9725 chars, ~2431 tokens
+gated by default: ax_index, ax_lsp, ax_ship, ax_policy_index, ax_files, ax_diagnostics
+test catalog_payload_is_recorded_and_bounded ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+=== 6. Clippy ===
+> cargo clippy -p ax-context -p ax-db -p ax-core -p ax-mcp -p ax-extraction -p ax-cli --all-targets --no-deps --message-format=json
+16 finding(s), all within the recorded baseline
+
+=== 7. Negative control ===
+> cargo test -p ax-context --test no_query_time_disk_reads
+   Compiling ax-context v4.4.0 (C:\gary\ax\crates\ax-context)
+warning: function `gauntlet_negative_control_probe` is never used
+   --> crates\ax-context\src\explore.rs:236:4
+    |
+236 | fn gauntlet_negative_control_probe(p: &std::path::Path) -> String {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+System.Management.Automation.RemoteException
+warning: `ax-context` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.48s
+     Running tests\no_query_time_disk_reads.rs (target-dev\debug\deps\no_query_time_disk_reads-db7b43d6465b47dc.exe)
+
+running 3 tests
+test every_source_module_is_classified ... ok
+test gate_rejects_known_bad_source ... ok
+test query_path_modules_do_not_touch_the_filesystem ... FAILED
+
+failures:
+
+---- query_path_modules_do_not_touch_the_filesystem stdout ----
+
+thread 'query_path_modules_do_not_touch_the_filesystem' (9036) panicked at crates\ax-context\tests\no_query_time_disk_reads.rs:146:5:
+query-path modules must serve source from ax.db, not the filesystem.
+Use ax_context::source_store instead.
+
+src/explore.rs:237: `read_to_string` in `std::fs::read_to_string(p).unwrap_or_default()`
+src/explore.rs:237: `fs::read` in `std::fs::read_to_string(p).unwrap_or_default()`
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    query_path_modules_do_not_touch_the_filesystem
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p ax-context --test no_query_time_disk_reads`
+gate correctly failed on the injected disk read (exit 101)
+
+=== 8. Mutation (full) ===
+
+=== MUTANT: classify: blank graph hash counts as fresh ===
+    A failed parse stores a blank hash; treating blank as a match would present unverified text as current.
+    applied to crates/ax-context/src/source_store.rs
+> cargo test -p ax-context --lib source_store
+    killed (exit 101), file restored
+
+=== MUTANT: classify: every stored row is fresh ===
+    The core failure mode: stale source served without a stale label.
+    applied to crates/ax-context/src/source_store.rs
+> cargo test -p ax-context --lib source_store
+    killed (exit 101), file restored
+
+=== MUTANT: line_bounds: end line not clamped to EOF ===
+    An end line past EOF must clamp, not silently yield an empty snippet.
+    applied to crates/ax-context/src/source_store.rs
+> cargo test -p ax-context --lib source_store
+    killed (exit 101), file restored
+
+=== MUTANT: numbered_slice: line numbers off by one ===
+    Wrong line numbers send an agent to the wrong place - worse than no snippet.
+    applied to crates/ax-context/src/source_store.rs
+> cargo test -p ax-context --lib source_store
+    killed (exit 101), file restored
+
+=== MUTANT: store scope: keep build output again ===
+    The regression that put 90 MB of object-file text into ax.db.
+    applied to crates/ax-extraction/src/orchestrator.rs
+> cargo test -p ax-extraction --test source_store_write_path
+    killed (exit 101), file restored
+
+=== MUTANT: prune: delete claimed source instead of orphans ===
+    An inverted prune would wipe exactly the source snippets need.
+    applied to crates/ax-db/src/queries.rs
+> cargo test -p ax-extraction --test source_store_write_path
+    killed (exit 101), file restored
+
+=== MUTANT: coverage: count every file row again ===
+    Counting assets and build output makes ax_status nag forever about a gap no re-index can close.
+    applied to crates/ax-db/src/queries.rs
+> cargo test -p ax-db --test source_store_coverage
+    killed (exit 101), file restored
+
+=== MUTANT: coverage warning: measure against every file row ===
+    The defect this fixed: a fully covered store reported as a permanent gap.
+    applied to crates/ax-core/src/stats_format.rs
+> cargo test -p ax-core --lib stats_format
+    killed (exit 101), file restored
+
+=== MUTANT: guard: forbid-content ignores the rule globs again ===
+    An unscoped ban blocks the indexer that must read files, so the guard gets switched off.
+    applied to crates/ax-policy/src/guard.rs
+> cargo test -p ax-policy --lib guard
+    killed (exit 101), file restored
+
+=== MUTANT: guard: forbid-content needs globs to fire ===
+    The opposite drift: the secrets rule carries no globs, so this would silence it everywhere.
+    applied to crates/ax-policy/src/guard.rs
+> cargo test -p ax-policy --lib guard
+    killed (exit 101), file restored
+
+=== MUTANT: catalog: graph reads hidden again (pre-C6 behaviour) ===
+    Finding C6 itself: a graph tool the rules mandate, missing from the catalog.
+    applied to crates/ax-mcp/src/tool_filter.rs
+> cargo test -p ax-mcp --lib tool_filter
+    killed (exit 101), file restored
+
+=== MUTANT: catalog: heavy ops advertised by default ===
+    The opposite drift: the lean filter stops gating anything and every turn pays for the full menu.
+    applied to crates/ax-mcp/src/tool_filter.rs
+> cargo test -p ax-mcp --lib tool_filter
+    killed (exit 101), file restored
+
+===== Mutation summary =====
+
+Mutant                                               Status Detail
+------                                               ------ ------
+classify: blank graph hash counts as fresh           KILLED tests failed as required (exit 101)
+classify: every stored row is fresh                  KILLED tests failed as required (exit 101)
+line_bounds: end line not clamped to EOF             KILLED tests failed as required (exit 101)
+numbered_slice: line numbers off by one              KILLED tests failed as required (exit 101)
+store scope: keep build output again                 KILLED tests failed as required (exit 101)
+prune: delete claimed source instead of orphans      KILLED tests failed as required (exit 101)
+coverage: count every file row again                 KILLED tests failed as required (exit 101)
+coverage warning: measure against every file row     KILLED tests failed as required (exit 101)
+guard: forbid-content ignores the rule globs again   KILLED tests failed as required (exit 101)
+guard: forbid-content needs globs to fire            KILLED tests failed as required (exit 101)
+catalog: graph reads hidden again (pre-C6 behaviour) KILLED tests failed as required (exit 101)
+catalog: heavy ops advertised by default             KILLED tests failed as required (exit 101)
+
+
+MUTATION PASSED - every mutant was applied, caught, and reverted
+12/12 mutants killed
+
+=== 9. Mutation (properties only) ===
+
+=== MUTANT: classify: blank graph hash counts as fresh ===
+    A failed parse stores a blank hash; treating blank as a match would present unverified text as current.
+    applied to crates/ax-context/src/source_store.rs
+> cargo test -p ax-context --lib source_store::tests::properties
+    killed (exit 101), file restored
+
+=== MUTANT: classify: every stored row is fresh ===
+    The core failure mode: stale source served without a stale label.
+    applied to crates/ax-context/src/source_store.rs
+> cargo test -p ax-context --lib source_store::tests::properties
+    killed (exit 101), file restored
+
+=== MUTANT: line_bounds: end line not clamped to EOF ===
+    An end line past EOF must clamp, not silently yield an empty snippet.
+    applied to crates/ax-context/src/source_store.rs
+> cargo test -p ax-context --lib source_store::tests::properties
+    killed (exit 101), file restored
+
+=== MUTANT: numbered_slice: line numbers off by one ===
+    Wrong line numbers send an agent to the wrong place - worse than no snippet.
+    applied to crates/ax-context/src/source_store.rs
+> cargo test -p ax-context --lib source_store::tests::properties
+    killed (exit 101), file restored
+
+=== MUTANT: store scope: keep build output again ===
+    The regression that put 90 MB of object-file text into ax.db.
+    no property target - not a claim the properties make
+
+=== MUTANT: prune: delete claimed source instead of orphans ===
+    An inverted prune would wipe exactly the source snippets need.
+    no property target - not a claim the properties make
+
+=== MUTANT: coverage: count every file row again ===
+    Counting assets and build output makes ax_status nag forever about a gap no re-index can close.
+    no property target - not a claim the properties make
+
+=== MUTANT: coverage warning: measure against every file row ===
+    The defect this fixed: a fully covered store reported as a permanent gap.
+    no property target - not a claim the properties make
+
+=== MUTANT: guard: forbid-content ignores the rule globs again ===
+    An unscoped ban blocks the indexer that must read files, so the guard gets switched off.
+    no property target - not a claim the properties make
+
+=== MUTANT: guard: forbid-content needs globs to fire ===
+    The opposite drift: the secrets rule carries no globs, so this would silence it everywhere.
+    no property target - not a claim the properties make
+
+=== MUTANT: catalog: graph reads hidden again (pre-C6 behaviour) ===
+    Finding C6 itself: a graph tool the rules mandate, missing from the catalog.
+    no property target - not a claim the properties make
+
+=== MUTANT: catalog: heavy ops advertised by default ===
+    The opposite drift: the lean filter stops gating anything and every turn pays for the full menu.
+    no property target - not a claim the properties make
+
+===== Mutation summary =====
+
+Mutant                                               Status Detail
+------                                               ------ ------
+classify: blank graph hash counts as fresh           KILLED tests failed as required (exit 101)
+classify: every stored row is fresh                  KILLED tests failed as required (exit 101)
+line_bounds: end line not clamped to EOF             KILLED tests failed as required (exit 101)
+numbered_slice: line numbers off by one              KILLED tests failed as required (exit 101)
+store scope: keep build output again                 N/A    no property-test target for this mutant
+prune: delete claimed source instead of orphans      N/A    no property-test target for this mutant
+coverage: count every file row again                 N/A    no property-test target for this mutant
+coverage warning: measure against every file row     N/A    no property-test target for this mutant
+guard: forbid-content ignores the rule globs again   N/A    no property-test target for this mutant
+guard: forbid-content needs globs to fire            N/A    no property-test target for this mutant
+catalog: graph reads hidden again (pre-C6 behaviour) N/A    no property-test target for this mutant
+catalog: heavy ops advertised by default             N/A    no property-test target for this mutant
+
+
+MUTATION PASSED - every mutant was applied, caught, and reverted
+4/4 mutants killed
+
+===== Gauntlet summary =====
+
+Layer                         Status Detail
+-----                         ------ ------
+1. Workspace suite            PASS   37 test binaries, 0 new failures; 1 baseline failure(s): pricing_sync::tests::upsert_and_history
+2. Graph-only gate            PASS   test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s | test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 67 fil
+                                     tered out; finished in 0.13s
+3. MCP catalog coherence      PASS   test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 45 filtered out; finished in 0.00s | test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filt
+                                     ered out; finished in 9.04s
+4. Source store               PASS   test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s | test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filte
+                                     red out; finished in 0.39s | test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.01s | test result: ok. 2 passed; 0 failed;
+                                     0 ignored; 0 measured; 0 filtered out; finished in 0.42s | test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+5. Catalog payload size       PASS   default catalog: 22 tools, 7331 chars, ~1832 tokens | full catalog:    28 tools, 9725 chars, ~2431 tokens | test result: ok. 1 passed; 0 failed; 0 ignored; 0 measu
+                                     red; 0 filtered out; finished in 0.01s
+6. Clippy                     PASS   0 new findings (16 pre-existing, all baselined)
+7. Negative control           PASS   gate failed as required (exit 101); file restored byte-for-byte
+8. Mutation (full)            PASS   12/12 mutants killed
+9. Mutation (properties only) PASS   4/4 mutants killed
+
+
+GAUNTLET PASSED (all layers)
+
+---
+exit_code: 0
+elapsed_ms: 1559755
+ended_at: 2026-08-19T21:19:29.618Z
+---

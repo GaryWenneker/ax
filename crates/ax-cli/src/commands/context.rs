@@ -10,7 +10,7 @@ pub async fn run(task: String) -> Result<(), String> {
         format!("cmd=context start task_len={}", task.chars().count()),
     );
     let _spinner = SpinnerGuard::new("Building task context...", false);
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let mut ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let ctx = match ax
         .build_context(TaskInput::Text(task), BuildContextOptions::default())
         .await

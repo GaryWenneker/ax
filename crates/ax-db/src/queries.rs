@@ -222,8 +222,26 @@ impl QueryBuilder {
         self.clear_file(file_path).await
     }
 
-    /// CG: `deleteFile` — remove file record, nodes (cascade edges), and unresolved refs.
+    /// CG: `deleteFile` — remove file record, nodes (cascade edges), unresolved
+    /// refs, and stored source.
+    ///
+    /// Stored source must not outlive its `files` row: without the row there is
+    /// no `content_hash` to validate the text against, so a reader could never
+    /// tell fresh from stale.
     pub async fn clear_file(&self, file_path: &str) -> Result<(), AxError> {
+        self.clear_file_inner(file_path, true).await
+    }
+
+    /// Same as [`Self::clear_file`] but keeps the stored source.
+    ///
+    /// Used by the re-index path, which writes `file_contents` while it still
+    /// holds the text in memory and only afterwards replaces nodes and the
+    /// `files` row. Dropping the source here would erase what was just stored.
+    pub async fn clear_file_for_reindex(&self, file_path: &str) -> Result<(), AxError> {
+        self.clear_file_inner(file_path, false).await
+    }
+
+    async fn clear_file_inner(&self, file_path: &str, drop_content: bool) -> Result<(), AxError> {
         let mut tx = self
             .pool
             .begin()
@@ -244,6 +262,13 @@ impl QueryBuilder {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
+        if drop_content {
+            sqlx::query("DELETE FROM file_contents WHERE path = ?")
+                .bind(file_path)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+        }
         tx.commit().await.map_err(db_err)?;
         Ok(())
     }
@@ -281,6 +306,169 @@ impl QueryBuilder {
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         Ok(())
+    }
+
+    /// Store a file's text in the source store so graph reads never touch disk.
+    ///
+    /// `content_hash` must be the same hash written to `files.content_hash` for
+    /// this path — the read path compares the two to detect staleness. Content
+    /// over [`crate::source_store_cap_bytes`] is not stored: the row is removed
+    /// so a read reports "not stored" rather than serving a truncated body.
+    pub async fn upsert_file_content(
+        &self,
+        path: &str,
+        content_hash: &str,
+        content: &str,
+    ) -> Result<(), AxError> {
+        let byte_len = content.len();
+        if byte_len > crate::source_store_cap_bytes() {
+            return self.delete_file_content(path).await;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        sqlx::query(
+            r#"
+            INSERT INTO file_contents (path, content_hash, content, byte_len, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                content_hash=excluded.content_hash, content=excluded.content,
+                byte_len=excluded.byte_len, updated_at=excluded.updated_at
+            "#,
+        )
+        .bind(path)
+        .bind(content_hash)
+        .bind(content)
+        .bind(byte_len as i64)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// Fetch stored source for a path. `None` means "not stored" — never a
+    /// licence to read the file from disk.
+    pub async fn get_file_content(&self, path: &str) -> Result<Option<StoredContent>, AxError> {
+        let row = sqlx::query_as::<_, StoredContent>(
+            "SELECT path, content_hash, content, byte_len FROM file_contents WHERE path = ?",
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(row)
+    }
+
+    /// Everything a query-time snippet read needs, in one round trip: the stored
+    /// text plus the `files` row it must agree with.
+    ///
+    /// `Ok(None)` means the path is not in the graph at all. A row with
+    /// `stored_content: None` means the source was never stored (or exceeded the
+    /// cap) — the caller must report that, not fall back to reading the file.
+    pub async fn lookup_source(&self, path: &str) -> Result<Option<SourceLookup>, AxError> {
+        let row = sqlx::query_as::<_, SourceLookup>(
+            r#"
+            SELECT f.content_hash AS indexed_hash,
+                   f.size         AS indexed_size,
+                   c.content_hash AS stored_hash,
+                   c.content      AS stored_content
+            FROM files f
+            LEFT JOIN file_contents c ON c.path = f.path
+            WHERE f.path = ?
+            "#,
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(row)
+    }
+
+    /// Indexed paths whose stored source no longer matches `files.content_hash`,
+    /// restricted to `paths`. Pure SQL — no filesystem access.
+    pub async fn stale_source_paths(&self, paths: &[String]) -> Result<Vec<String>, AxError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        const CHUNK: usize = 900;
+        let mut stale = Vec::new();
+        for chunk in paths.chunks(CHUNK) {
+            let mut qb = sqlx::QueryBuilder::new(
+                "SELECT f.path FROM files f
+                 JOIN file_contents c ON c.path = f.path
+                 WHERE f.content_hash <> c.content_hash AND f.path IN (",
+            );
+            let mut separated = qb.separated(", ");
+            for p in chunk {
+                separated.push_bind(p);
+            }
+            separated.push_unseparated(")");
+            let rows: Vec<String> = qb
+                .build_query_scalar()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_err)?;
+            stale.extend(rows);
+        }
+        Ok(stale)
+    }
+
+    /// Paths that already have stored source — used to find the backfill gap on
+    /// databases indexed before the source store existed (pre-v17).
+    pub async fn get_file_content_paths(&self) -> Result<std::collections::HashSet<String>, AxError> {
+        let rows: Vec<String> = sqlx::query_scalar("SELECT path FROM file_contents")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Drop stored source for paths the `files` table does not know about, and
+    /// report how many rows went. Such rows can never be served — snippets are
+    /// resolved through the graph — so they are pure weight in ax.db. They exist
+    /// because a binary shipped before this prune stored text for every path it
+    /// was handed, including build output the parser never claimed.
+    pub async fn prune_orphan_file_contents(&self) -> Result<u32, AxError> {
+        let result =
+            sqlx::query("DELETE FROM file_contents WHERE path NOT IN (SELECT path FROM files)")
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
+        Ok(result.rows_affected() as u32)
+    }
+
+    pub async fn delete_file_content(&self, path: &str) -> Result<(), AxError> {
+        sqlx::query("DELETE FROM file_contents WHERE path = ?")
+            .bind(path)
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// Coverage of the source store: (files with stored text, files it should cover).
+    /// A gap means those snippets come back "not stored" until the next index.
+    ///
+    /// The denominator is not `COUNT(*) FROM files`. That table also holds rows for
+    /// files no parser claims — SVG assets, `.o` and `.rmeta` build output the
+    /// watcher reported — and rows for files over the store cap. None of them can
+    /// own a node, so none can ever be asked for a snippet; counting them would
+    /// report a permanent gap that no re-index can close.
+    pub async fn source_store_coverage(&self) -> Result<(i64, i64), AxError> {
+        let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_contents")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_err)?;
+        let expected: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM files WHERE language != 'unknown' AND size <= ?",
+        )
+        .bind(crate::source_store_cap_bytes() as i64)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok((stored, expected))
     }
 
     pub async fn get_node_by_id(&self, id: &str) -> Result<Option<Node>, AxError> {
@@ -868,6 +1056,8 @@ impl QueryBuilder {
         let resolution_resolved = self.parse_metadata_u32("resolution_resolved").await?;
         let resolution_unresolved = self.parse_metadata_u32("resolution_unresolved").await?;
 
+        let (source_stored_files, source_expected_files) = self.source_store_coverage().await?;
+
         Ok(GraphStats {
             node_count,
             edge_count,
@@ -876,6 +1066,8 @@ impl QueryBuilder {
             edges_by_kind,
             docs_by_extension,
             files_by_language,
+            source_stored_files,
+            source_expected_files,
             db_size_bytes: 0,
             last_updated,
             unresolved_ref_count: Some(unresolved_ref_count),
@@ -971,6 +1163,7 @@ impl QueryBuilder {
         sqlx::query("DELETE FROM unresolved_refs").execute(&self.pool).await.map_err(db_err)?;
         sqlx::query("DELETE FROM nodes").execute(&self.pool).await.map_err(db_err)?;
         sqlx::query("DELETE FROM files").execute(&self.pool).await.map_err(db_err)?;
+        sqlx::query("DELETE FROM file_contents").execute(&self.pool).await.map_err(db_err)?;
         Ok(())
     }
 
@@ -1199,6 +1392,40 @@ impl UnresolvedRefRow {
             candidates: self.candidates.and_then(|c| serde_json::from_str(&c).ok()),
         }
     }
+}
+
+/// Joined view of an indexed file and its stored source.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SourceLookup {
+    /// `files.content_hash` — the hash the graph's line numbers belong to.
+    pub indexed_hash: String,
+    /// `files.size` — used to explain a missing row as "over the store cap".
+    pub indexed_size: i64,
+    /// `file_contents.content_hash`, absent when nothing is stored.
+    pub stored_hash: Option<String>,
+    pub stored_content: Option<String>,
+}
+
+impl SourceLookup {
+    /// True when stored text exists and provably matches the indexed graph.
+    pub fn is_fresh(&self) -> bool {
+        match (&self.stored_hash, &self.stored_content) {
+            (Some(h), Some(_)) => !self.indexed_hash.is_empty() && h == &self.indexed_hash,
+            _ => false,
+        }
+    }
+}
+
+/// A row of the source store (schema v17).
+///
+/// `content_hash` is the hash of `content` as of indexing. Callers must compare
+/// it against `files.content_hash` before trusting the text.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct StoredContent {
+    pub path: String,
+    pub content_hash: String,
+    pub content: String,
+    pub byte_len: i64,
 }
 
 #[derive(sqlx::FromRow)]

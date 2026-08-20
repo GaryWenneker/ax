@@ -27,6 +27,23 @@ pub fn busy_timeout() -> Duration {
     Duration::from_secs(secs)
 }
 
+/// Per-file cap for the source store (`file_contents`, schema v17).
+///
+/// Files above the cap store no text. A graph read then reports an explicit
+/// "source not stored" marker instead of falling back to a disk read — a silent
+/// fallback would make the graph-only guarantee unverifiable.
+/// Override with `AX_SOURCE_STORE_MAX_BYTES` (bytes, clamped 64 KiB..=64 MiB).
+pub fn source_store_cap_bytes() -> usize {
+    const DEFAULT: usize = 1024 * 1024;
+    const MIN: usize = 64 * 1024;
+    const MAX: usize = 64 * 1024 * 1024;
+    std::env::var("AX_SOURCE_STORE_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(DEFAULT)
+        .clamp(MIN, MAX)
+}
+
 /// Shared `ax.db` connect options — WAL + busy timeout for multi-process Takumi/CLI use.
 pub fn connect_options(path: &Path, create_if_missing: bool) -> SqliteConnectOptions {
     SqliteConnectOptions::new()

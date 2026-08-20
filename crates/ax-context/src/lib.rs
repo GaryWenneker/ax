@@ -6,6 +6,7 @@ pub mod explore;
 pub mod explore_format;
 pub mod formatter;
 pub mod markers;
+pub mod source_store;
 
 pub use builder::ContextBuilder;
 pub use directory::*;
@@ -13,3 +14,4 @@ pub use explore::ExploreBuilder;
 pub use explore_format::format_explore_text;
 pub use formatter::{format_context_as_json, format_context_as_markdown};
 pub use markers::LOW_CONFIDENCE_MARKER;
+pub use source_store::{ResolvedSource, NOT_STORED_MARKER, STALE_MARKER};

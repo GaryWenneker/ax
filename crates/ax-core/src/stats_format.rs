@@ -45,6 +45,28 @@ fn format_category_line(label: &str, docs: &HashMap<String, i64>, extensions: &[
     }
 }
 
+/// Warn when the source store does not cover the files that can own a snippet.
+///
+/// Snippets come from the store, so an uncovered file answers graph queries with
+/// a "source not stored" marker. A database indexed before schema v17 starts at
+/// zero coverage, which looks like a broken tool unless we say what to run.
+/// Returns `None` once coverage is complete — no noise in the common case.
+///
+/// Measured against `source_expected_files`, not `file_count`: assets and build
+/// output are indexed as file rows but never parsed, so counting them would nag
+/// forever about a gap `ax_index` cannot close.
+pub fn source_store_warning(stats: &GraphStats) -> Option<String> {
+    if stats.source_expected_files <= 0
+        || stats.source_stored_files >= stats.source_expected_files
+    {
+        return None;
+    }
+    Some(format!(
+        "Source store: {}/{} files — snippets for the rest report \"source not stored\"; run ax_index (or ax_sync) to backfill",
+        stats.source_stored_files, stats.source_expected_files
+    ))
+}
+
 /// Auto-injected index snapshot for `ax_preflight`.
 pub fn format_index_inject_block(stats: &GraphStats, pending: &[PendingFile]) -> String {
     let doc_total = stats.nodes_by_kind.get("doc").copied().unwrap_or(0);
@@ -111,6 +133,11 @@ pub fn format_index_inject_block(stats: &GraphStats, pending: &[PendingFile]) ->
         ));
     }
 
+    if let Some(warning) = source_store_warning(stats) {
+        body.push_str(&warning);
+        body.push('\n');
+    }
+
     if !pending.is_empty() {
         body.push_str("Pending sync:\n");
         for p in pending.iter().take(8) {
@@ -163,6 +190,15 @@ pub fn format_status_text(
 
     if let Some(unresolved) = stats.unresolved_ref_count.filter(|&n| n > 0) {
         out.push_str(&format!("Unresolved refs: {unresolved}\n"));
+    }
+
+    match source_store_warning(stats) {
+        Some(warning) => out.push_str(&format!("{warning}\n")),
+        None if stats.source_expected_files > 0 => out.push_str(&format!(
+            "Source store: {}/{} files — snippets served from the graph\n",
+            stats.source_stored_files, stats.source_expected_files
+        )),
+        None => {}
     }
 
     out.push_str(&format!("Last indexed: {last_indexed_at}\n"));
@@ -227,6 +263,64 @@ mod tests {
         assert!(block.contains("PDF: 1 pdf"));
         assert!(block.contains("Office: none indexed"));
         assert!(block.contains("5 doc→code mentions"));
+    }
+
+    #[test]
+    fn source_store_gap_warns_with_backfill_instruction() {
+        let stats = GraphStats {
+            file_count: 3539,
+            source_expected_files: 496,
+            source_stored_files: 0,
+            ..Default::default()
+        };
+        let warning = source_store_warning(&stats).expect("gap must warn");
+        assert!(warning.contains("0/496"), "{warning}");
+        assert!(warning.contains("ax_index"), "{warning}");
+        assert!(format_index_inject_block(&stats, &[]).contains("0/496"));
+        assert!(format_status_text(&stats, 0, &[]).contains("0/496"));
+    }
+
+    #[test]
+    fn full_source_store_coverage_does_not_warn() {
+        let stats = GraphStats {
+            file_count: 10,
+            source_expected_files: 10,
+            source_stored_files: 10,
+            ..Default::default()
+        };
+        assert!(source_store_warning(&stats).is_none());
+        assert!(!format_index_inject_block(&stats, &[]).contains("source not stored"));
+        assert!(format_status_text(&stats, 0, &[]).contains("Source store: 10/10"));
+    }
+
+    /// The store only ever holds files a parser claimed. This repo indexes 3539
+    /// file rows and 499 of them are code; measuring coverage against every row
+    /// would print a permanent "run ax_index" nag that no re-index can clear,
+    /// because SVG assets and build output can never own a snippet.
+    #[test]
+    fn rows_no_parser_claims_are_not_a_store_gap() {
+        let stats = GraphStats {
+            file_count: 3539,
+            source_expected_files: 499,
+            source_stored_files: 499,
+            ..Default::default()
+        };
+        assert!(
+            source_store_warning(&stats).is_none(),
+            "complete coverage must be silent even when most file rows are unparseable"
+        );
+        let text = format_status_text(&stats, 0, &[]);
+        assert!(
+            text.contains("Source store: 499/499"),
+            "status must report the covered set, not every file row: {text}"
+        );
+    }
+
+    /// An empty index is not a store gap — do not nag before the first index.
+    #[test]
+    fn empty_index_does_not_warn() {
+        let stats = GraphStats::default();
+        assert!(source_store_warning(&stats).is_none());
     }
 
     #[test]

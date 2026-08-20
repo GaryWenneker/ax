@@ -74,7 +74,7 @@ Also accepted (avoids `path required` retries):
 
 Do **not** call `ax_guard({ "action": "edit", "paths": [...] })` without also satisfying `path`/`paths` — prefer one call per file with `path` + `operation`.
 
-Any CRITICAL rule can opt into a static check without code changes by adding a directive line to its body: `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, or `guard: require-content: "<substring or /regex/>"` (the last is scoped to files matching that rule's `globs`).
+Any CRITICAL rule can opt into a static check without code changes by adding a directive line to its body: `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, or `guard: require-content: "<substring or /regex/>"`. Both content directives honour the rule's `globs`; `forbid-content` falls back to project-wide when the rule declares none.
 
 ## SS-02b — Diagnostics correlation
 

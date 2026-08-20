@@ -265,32 +265,46 @@ ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. 
 
 ### Tools
 
+Advertised by default — the turn contract plus the whole graph read surface:
+
 | Tool | Purpose |
 |------|---------|
 | `ax_explore` | Semantic search + graph traversal + numbered source |
 | `ax_node` | Single symbol or file details |
 | `ax_search` | FTS symbol lookup |
-| `ax_status` | Index stats, doc breakdown by extension, staleness |
-| `ax_index` | Trigger incremental sync; pass `force: true` for a full rebuild |
+| `ax_status` | Index stats, doc breakdown by extension, staleness, source-store coverage |
 | `ax_sync` | Incremental index sync (changed files only) |
-| `ax_lsp` | LSP status / enrich Exact edges (`action`: `status` \| `enrich`) |
-| `ax_ship` | Quality-gate evaluate / ci (never exits the MCP process) |
-| `ax_policy_index` | Re-index / import policy rules and skills from disk |
-| `ax_files` | Project file listing |
 | `ax_context` | Task-oriented markdown context |
 | `ax_callers` | Incoming call edges |
 | `ax_callees` | Outgoing call edges |
 | `ax_impact` | Blast-radius subgraph |
+| `ax_path` | Shortest call path between two symbols |
+| `ax_cycles` | Call-graph cycles |
+| `ax_api` | Exported API surface of a module |
 | `ax_affected` | Reverse impact → affected tests |
+| `ax_insights` | Communities, god nodes, surprising connections |
+| `ax_report` | Full Markdown architecture report |
 | `ax_remember` | Store a durable project memory (flags near-duplicates) |
 | `ax_recall` | Hybrid memory search (FTS5 + local vector embeddings) |
 | `ax_preflight` | Turn-start policy: matched rules + skills (when `.ax/policy/` exists) |
 | `ax_rules` | List or match policy rules |
 | `ax_skill` | Load a skill by name |
 | `ax_guard` | Pre-write guard for CRITICAL rules — built-in (encoding, secrets) plus generic `guard: forbid-path/forbid-content/require-content/require-skill` directives declared in any rule body |
+
+Opt-in via `AX_MCP_TOOLS` (comma-separated names, or `all`) — these mutate the index, spawn language servers, or run the quality gate. They stay callable by name either way; the allowlist only controls discovery:
+
+| Tool | Purpose |
+|------|---------|
+| `ax_index` | Trigger incremental sync; pass `force: true` for a full rebuild |
+| `ax_lsp` | LSP status / enrich Exact edges (`action`: `status` \| `enrich`) |
+| `ax_ship` | Quality-gate evaluate / ci (never exits the MCP process) |
+| `ax_policy_index` | Re-index / import policy rules and skills from disk |
 | `ax_diagnostics` | Diagnostics bridge — feed in editor/LSP/compiler findings (Cursor Problems panel, `tsc`, `eslint`, ...), get back guarded-path and `ax_affected` test correlation |
+| `ax_files` | Project file listing (superseded by graph queries) |
 
 **Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read. Prefer MCP ops (`ax_sync`, `ax_lsp`, `ax_ship`, `ax_policy_index`, `ax_remember`) over shelling out to the CLI when MCP is connected.
+
+**Graph-only snippets:** source in `ax_explore` and `ax_context` responses is served from the source store in `ax.db`, never read from your working tree at query time. Each read verifies the stored content hash against the indexed one, so a snippet is either provably current or explicitly labelled stale — there is no silent disk fallback. Files over 1 MB (`AX_SOURCE_STORE_MAX_BYTES`) are not stored and say so. Only files a parser claims are stored — build output the watcher reports during a `cargo build` is not — which keeps the store to 3.8 MB of text over 499 files on this repo; `ax sync` also drops stored text no indexed file claims. After upgrading from a pre-v17 index, run `ax index` (or `ax sync`) once to backfill; `ax status` reports the coverage gap (counted over parseable files, not every indexed row) until you do. A snippet shows the last indexed text, so its line numbers and its source always agree.
 
 **Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` plus an `<ax_index>` doc inventory snapshot — no need to read `.ax/policy/` files) and `ax_guard` before writes on guarded paths.
 

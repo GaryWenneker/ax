@@ -11,20 +11,22 @@ use ax_types::{
 
 use crate::formatter::{format_context_as_json, format_context_as_markdown};
 use crate::markers::LOW_CONFIDENCE_MARKER;
+use crate::source_store::{
+    resolve_source, slice_lines, stale_note, unavailable_reason, ResolvedSource,
+};
 
+/// Builds task context from the graph alone.
+///
+/// Holds no project root on purpose — see [`crate::source_store`]. Code blocks
+/// come from the source store, so this type cannot reach the working tree.
 pub struct ContextBuilder {
     queries: QueryBuilder,
     traverser: GraphTraverser,
-    project_root: std::path::PathBuf,
 }
 
 impl ContextBuilder {
-    pub fn new(queries: QueryBuilder, traverser: GraphTraverser, project_root: std::path::PathBuf) -> Self {
-        Self {
-            queries,
-            traverser,
-            project_root,
-        }
+    pub fn new(queries: QueryBuilder, traverser: GraphTraverser) -> Self {
+        Self { queries, traverser }
     }
 
     pub async fn build_context(
@@ -61,20 +63,28 @@ impl ContextBuilder {
         for node in &entry_points {
             related_files.insert(node.file_path.clone());
             if opts.include_code.unwrap_or(true) && code_blocks.len() < max_blocks {
-                let full = self.project_root.join(&node.file_path);
-                if let Ok(content) = std::fs::read_to_string(&full) {
-                    let lines: Vec<&str> = content.lines().collect();
-                    let start = (node.start_line as usize).saturating_sub(1);
-                    let end = node.end_line as usize;
-                    let slice = lines.get(start..end.min(lines.len())).unwrap_or(&[]);
-                    let block_content = slice.join("\n");
-                    let truncated = if block_content.len() > max_size {
-                        block_content[..max_size].to_string()
-                    } else {
-                        block_content
-                    };
+                // Source store only — a context block that silently read the
+                // working tree would break the graph-only guarantee.
+                let resolved = resolve_source(&self.queries, &node.file_path).await?;
+                let text = match &resolved {
+                    ResolvedSource::Fresh(content) => Some(slice_lines(
+                        content,
+                        node.start_line,
+                        node.end_line,
+                        max_size,
+                    )),
+                    ResolvedSource::Stale(content) => Some(format!(
+                        "{}\n{}",
+                        stale_note(&node.file_path),
+                        slice_lines(content, node.start_line, node.end_line, max_size)
+                    )),
+                    // Emit the marker as the block body: an agent must see that
+                    // the source is missing, not silently get fewer blocks.
+                    _ => unavailable_reason(&resolved, &node.file_path),
+                };
+                if let Some(content) = text {
                     code_blocks.push(CodeBlock {
-                        content: truncated,
+                        content,
                         file_path: node.file_path.clone(),
                         start_line: node.start_line,
                         end_line: node.end_line,

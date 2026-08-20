@@ -322,7 +322,7 @@ guard: require-skill: "old-coder"
 | Directive | When it blocks |
 |---|---|
 | `forbid-path` | Path matches the glob (Write or Delete) |
-| `forbid-content` | Write content contains the substring or `/regex/` |
+| `forbid-content` | Write content contains the substring or `/regex/`. Scoped to the rule's `globs` when it declares any, project-wide when it declares none — so a rule can ban a pattern in one directory without blocking the code next door that legitimately needs it |
 | `require-content` | Write to a path matching the rule's `globs` is missing the substring or `/regex/` |
 | `require-skill` | Write/Delete unless that skill is indexed, enabled, approved, and `alwaysApply: true`. Exempt: `.ax/policy/**` and `crates/ax-policy/templates/**` |
 

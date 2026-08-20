@@ -1284,7 +1284,7 @@ fn skill_tool() -> Value {
 fn guard_tool() -> Value {
     json!({
         "name": "ax_guard",
-        "description": "Pre-write guard for CRITICAL policy rules. Prefer path+operation; also accepts paths[] and action=edit|write|delete. Checks built-in encoding/secrets rules, plus any CRITICAL rule whose body contains a `guard: forbid-path: \"<glob>\"`, `guard: forbid-content: \"<substring or /regex/>\"`, `guard: require-content: \"<substring or /regex/>\"` (scoped by that rule's globs), or `guard: require-skill: \"<name>\"` (skill must exist, be approved, and have alwaysApply) directive line.",
+        "description": "Pre-write guard for CRITICAL policy rules. Prefer path+operation; also accepts paths[] and action=edit|write|delete. Checks built-in encoding/secrets rules, plus any CRITICAL rule whose body contains a `guard: forbid-path: \"<glob>\"`, `guard: forbid-content: \"<substring or /regex/>\"` (scoped by that rule's globs when it has any), `guard: require-content: \"<substring or /regex/>\"` (scoped by that rule's globs), or `guard: require-skill: \"<name>\"` (skill must exist, be approved, and have alwaysApply) directive line.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1586,23 +1586,76 @@ mod tests {
         assert!(s.contains("ax_policy_capture"));
     }
 
+    /// The unfiltered catalog, exactly as `list_tools` assembles it.
+    fn full_catalog() -> Vec<Value> {
+        let mut tools = vec![
+            explore_tool(),
+            preflight_tool(),
+            capture_tool(),
+            rules_tool(),
+            skill_tool(),
+            guard_tool(),
+        ];
+        tools.extend(extra_tools());
+        tools
+    }
+
     #[test]
-    fn lean_default_hides_extras_including_diagnostics() {
-        let mut tools = extra_tools();
-        tools.insert(0, explore_tool());
-        tools.insert(1, preflight_tool());
-        tools.insert(2, capture_tool());
+    fn default_advertises_graph_reads_and_hides_heavy_ops() {
+        let mut tools = full_catalog();
         crate::tool_filter::filter_tools_list_with(&mut tools, None);
         let names: Vec<String> = tools
             .iter()
             .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
             .collect();
-        assert!(names.contains(&"ax_explore".to_string()));
-        assert!(names.contains(&"ax_preflight".to_string()));
-        assert!(names.contains(&"ax_policy_capture".to_string()));
-        assert!(!names.contains(&"ax_diagnostics".to_string()));
-        assert!(!names.contains(&"ax_sync".to_string()));
-        assert!(!names.contains(&"ax_search".to_string()));
+        for expected in [
+            "ax_explore",
+            "ax_preflight",
+            "ax_policy_capture",
+            "ax_search",
+            "ax_node",
+            "ax_callers",
+            "ax_callees",
+            "ax_impact",
+            "ax_context",
+            "ax_affected",
+            "ax_insights",
+            "ax_report",
+            "ax_status",
+            "ax_sync",
+        ] {
+            assert!(names.contains(&expected.to_string()), "missing {expected}");
+        }
+        // The lean filter must still be doing real work.
+        for hidden in crate::tool_filter::GATED_BY_DESIGN {
+            assert!(
+                !names.contains(&hidden.to_string()),
+                "{hidden} must stay opt-in by default"
+            );
+        }
+        assert!(!names.contains(&"ax_files".to_string()));
+    }
+
+    /// A typo in `CORE_TOOLS` would silently advertise nothing. Pin every core
+    /// name to a tool that actually exists in the catalog.
+    #[test]
+    fn every_core_tool_exists_in_the_catalog() {
+        let catalog: Vec<String> = full_catalog()
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
+            .collect();
+        for name in crate::tool_filter::CORE_TOOLS {
+            assert!(
+                catalog.contains(&name.to_string()),
+                "CORE_TOOLS names {name}, which is not a real tool (typo?)"
+            );
+        }
+        for name in crate::tool_filter::GATED_BY_DESIGN {
+            assert!(
+                catalog.contains(&name.to_string()),
+                "GATED_BY_DESIGN names {name}, which is not a real tool (typo?)"
+            );
+        }
     }
 
     #[test]
@@ -1637,18 +1690,21 @@ mod tests {
     fn ax_mcp_tools_allowlist_adds_short_names() {
         let mut tools = extra_tools();
         tools.insert(0, explore_tool());
+        // Opt in to two gated ops by short name; the third must stay hidden.
         crate::tool_filter::filter_tools_list_with(
             &mut tools,
-            crate::tool_filter::resolve_tool_allowlist_from(Some("node,status")),
+            crate::tool_filter::resolve_tool_allowlist_from(Some("lsp,ship")),
         );
         let names: Vec<String> = tools
             .iter()
             .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
             .collect();
-        assert!(names.contains(&"ax_node".to_string()));
-        assert!(names.contains(&"ax_status".to_string()));
-        assert!(!names.contains(&"ax_callers".to_string()));
+        assert!(names.contains(&"ax_lsp".to_string()));
+        assert!(names.contains(&"ax_ship".to_string()));
+        assert!(!names.contains(&"ax_diagnostics".to_string()));
+        // Core is never gated by the allowlist.
         assert!(names.contains(&"ax_explore".to_string()));
+        assert!(names.contains(&"ax_search".to_string()));
     }
 
     #[test]

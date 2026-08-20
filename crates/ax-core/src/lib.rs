@@ -39,6 +39,14 @@ pub use workspace::{
     write_workspace_config, WorkspaceConfig, WorkspaceMember,
 };
 
+/// How long a *read* waits for the in-process index mutex before giving up and
+/// serving stale-labelled source. Reads must stay bounded; a graph query is on
+/// the agent's critical path and an index can run for minutes.
+const SOURCE_RESYNC_MUTEX_WAIT: std::time::Duration = std::time::Duration::from_millis(750);
+
+/// Same idea for the cross-process `.ax/ax.lock`: try briefly, never camp on it.
+const SOURCE_RESYNC_FILE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(750);
+
 pub struct Ax {
     db: Database,
     queries: QueryBuilder,
@@ -108,12 +116,10 @@ impl Ax {
             context_builder: ContextBuilder::new(
                 QueryBuilder::new(pool.clone()),
                 GraphTraverser::new(QueryBuilder::new(pool.clone())),
-                root.clone(),
             ),
             explore_builder: ExploreBuilder::new(
                 QueryBuilder::new(pool.clone()),
                 GraphTraverser::new(QueryBuilder::new(pool.clone())),
-                root.clone(),
             ),
             index_mutex: Arc::new(AsyncMutex::new(())),
             file_lock,
@@ -132,12 +138,10 @@ impl Ax {
         self.context_builder = ContextBuilder::new(
             QueryBuilder::new(pool.clone()),
             GraphTraverser::new(QueryBuilder::new(pool.clone())),
-            self.project_root.clone(),
         );
         self.explore_builder = ExploreBuilder::new(
             QueryBuilder::new(pool.clone()),
             GraphTraverser::new(QueryBuilder::new(pool)),
-            self.project_root.clone(),
         );
     }
 
@@ -275,8 +279,26 @@ impl Ax {
                 duration_ms: 0,
             });
         }
-        let _guard = self.index_mutex.lock().await;
-        self.file_lock.acquire()?;
+        // Lock through a cloned Arc so the guard borrows the local, leaving
+        // `&mut self` available for the indexing call below.
+        let mutex = Arc::clone(&self.index_mutex);
+        let _guard = mutex.lock().await;
+        self.index_files_locked(paths, opts, on_progress, ax_utils::file_lock::DEFAULT_LOCK_WAIT)
+            .await
+    }
+
+    /// Re-index `paths`, assuming the caller already holds `index_mutex`.
+    ///
+    /// `lock_wait` bounds the on-disk lock acquisition so a read-path caller
+    /// cannot hang behind another process's long index.
+    async fn index_files_locked(
+        &mut self,
+        paths: &[String],
+        opts: IndexOptions,
+        on_progress: &mut Option<Box<dyn FnMut(IndexProgress) + Send>>,
+        lock_wait: std::time::Duration,
+    ) -> Result<IndexResult, ax_utils::errors::AxError> {
+        self.file_lock.acquire_wait(lock_wait)?;
         let index_opts = self.merge_index_opts(&opts);
         let result = self
             .orchestrator
@@ -300,6 +322,47 @@ impl Ax {
         };
         let _ = self.file_lock.release();
         result
+    }
+
+    /// Re-index paths whose stored source drifted from the working tree, so the
+    /// next graph read can serve verified-fresh snippets.
+    ///
+    /// Best-effort and strictly bounded: if either lock is busy, or the re-index
+    /// fails, this returns `false` and the caller serves stale-labelled text.
+    /// Blocking here would turn a read into an unbounded wait, and reads are on
+    /// the agent's critical path.
+    async fn try_resync_source(&mut self, paths: &[String]) -> bool {
+        if paths.is_empty() {
+            return false;
+        }
+        let mutex = Arc::clone(&self.index_mutex);
+        let guard = match tokio::time::timeout(SOURCE_RESYNC_MUTEX_WAIT, mutex.lock()).await {
+            Ok(g) => g,
+            Err(_) => {
+                tracing::debug!("source resync skipped: index busy");
+                return false;
+            }
+        };
+        let mut no_progress: Option<Box<dyn FnMut(IndexProgress) + Send>> = None;
+        let outcome = self
+            .index_files_locked(
+                paths,
+                IndexOptions {
+                    quiet: true,
+                    ..IndexOptions::default()
+                },
+                &mut no_progress,
+                SOURCE_RESYNC_FILE_LOCK_WAIT,
+            )
+            .await;
+        drop(guard);
+        match outcome {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::debug!("source resync failed: {e}");
+                false
+            }
+        }
     }
 
     /// Spawn a background task that watches the project and incrementally re-indexes changed files.
@@ -437,19 +500,50 @@ impl Ax {
         self.queries.get_node_by_id(id).await
     }
 
+    /// Task context from the graph, with one bounded freshness repair.
+    ///
+    /// Code blocks come from the source store. If any entry point's stored source
+    /// drifted from the working tree, re-index those files once and rebuild —
+    /// never more than once, so a file that keeps failing cannot spin.
     pub async fn build_context(
-        &self,
+        &mut self,
         input: TaskInput,
         opts: BuildContextOptions,
     ) -> Result<TaskContext, ax_utils::errors::AxError> {
+        let ctx = self
+            .context_builder
+            .build_context(input.clone(), opts.clone())
+            .await?;
+        let paths: Vec<String> = ctx
+            .code_blocks
+            .iter()
+            .map(|b| b.file_path.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let stale = self.queries.stale_source_paths(&paths).await?;
+        if stale.is_empty() || !self.try_resync_source(&stale).await {
+            return Ok(ctx);
+        }
         self.context_builder.build_context(input, opts).await
     }
 
+    /// Explore the graph, with one bounded freshness repair.
+    ///
+    /// Snippets are served from the source store (never the working tree). A
+    /// hash mismatch triggers a single scoped re-index of the affected files and
+    /// one retry; if the index is busy the first result stands, with its stale
+    /// labels intact.
     pub async fn explore(
-        &self,
+        &mut self,
         query: &str,
         opts: ExploreOptions,
     ) -> Result<ExploreResult, ax_utils::errors::AxError> {
+        let result = self.explore_builder.explore(query, opts.clone()).await?;
+        let stale = self.explore_builder.stale_files(&result).await?;
+        if stale.is_empty() || !self.try_resync_source(&stale).await {
+            return Ok(result);
+        }
         self.explore_builder.explore(query, opts).await
     }
 

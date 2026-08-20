@@ -998,7 +998,7 @@ ax policy skill release
 
 ### `ax policy guard <file>`
 
-Pre-write CRITICAL guard check. Built-in: UTF-8/BOM encoding, secrets paths. Generic: any CRITICAL rule can add a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, `guard: require-content: "<substring or /regex/>"`, or `guard: require-skill: "<name>"` directive line to its body to opt into this check without code changes — no separate flag needed, directives are picked up automatically from indexed policy.
+Pre-write CRITICAL guard check. Built-in: UTF-8/BOM encoding, secrets paths. Generic: any CRITICAL rule can add a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"`, `guard: require-content: "<substring or /regex/>"`, or `guard: require-skill: "<name>"` directive line to its body to opt into this check without code changes. Both content directives respect the rule's `globs`: `forbid-content` applies project-wide only when the rule declares no globs — no separate flag needed, directives are picked up automatically from indexed policy.
 
 | Argument / flag | Type | Description |
 |---|---|---|
