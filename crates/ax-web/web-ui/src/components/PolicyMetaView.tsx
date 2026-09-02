@@ -1,5 +1,20 @@
 import { LevelBadge, ScopeBadge } from './ui/PageLayout';
+import { GitShareDot } from './ui/GitShareDot';
+import { isGitShared } from './ui/policyListUtils';
 import { scopeLabel } from '../policyTypes';
+import { skillGroupLabel } from '../skillGroups';
+
+function GitShareStatus({ scope, enabled }: { scope?: string; enabled?: boolean }) {
+  if (isGitShared(scope, enabled)) {
+    return (
+      <span className="policy-git-share-status">
+        <GitShareDot scope={scope} enabled={enabled} />
+        Shared via git (.agents)
+      </span>
+    );
+  }
+  return <span>Not git-shared</span>;
+}
 
 export function TagList({
   items,
@@ -17,8 +32,9 @@ export function TagList({
     return <span className="policy-view-empty">{empty}</span>;
   }
   const active = new Set((activeTags ?? []).map((t) => t.toLowerCase()));
+  const allTitle = items.join(', ');
   return (
-    <span className="policy-view-tags">
+    <span className="policy-view-tags" title={allTitle}>
       {items.map((item) => {
         const isActive = active.has(item.toLowerCase());
         if (onTagClick) {
@@ -57,6 +73,7 @@ export function RuleMetaView({
   tags,
   scope,
   enabled = true,
+  group,
   onLevelClick,
   onScopeClick,
   onTagClick,
@@ -73,6 +90,7 @@ export function RuleMetaView({
   tags: string[];
   scope?: string;
   enabled?: boolean;
+  group?: string | null;
   onLevelClick?: (level: string) => void;
   onScopeClick?: (scope?: string) => void;
   onTagClick?: (tag: string) => void;
@@ -111,6 +129,16 @@ export function RuleMetaView({
         </span>
       </div>
       <div className="detail-kv">
+        <span className="detail-key">Git</span>
+        <span className="detail-val">
+          <GitShareStatus scope={scope} enabled={enabled} />
+        </span>
+      </div>
+      <div className="detail-kv">
+        <span className="detail-key">Group</span>
+        <span className="detail-val">{skillGroupLabel(group || 'ungrouped')}</span>
+      </div>
+      <div className="detail-kv">
         <span className="detail-key">Always apply</span>
         <span className="detail-val">{alwaysApply ? 'Yes — every agent turn' : 'No — match triggers/globs'}</span>
       </div>
@@ -146,6 +174,7 @@ export function SkillMetaView({
   contextTask,
   scope,
   enabled = true,
+  group,
 }: {
   name: string;
   description: string;
@@ -156,6 +185,7 @@ export function SkillMetaView({
   contextTask?: string;
   scope?: string;
   enabled?: boolean;
+  group?: string | null;
 }) {
   return (
     <div className="policy-view-meta">
@@ -180,6 +210,16 @@ export function SkillMetaView({
         <span className="detail-val" title={scopeLabel(scope)}>
           <ScopeBadge scope={scope} />
         </span>
+      </div>
+      <div className="detail-kv">
+        <span className="detail-key">Git</span>
+        <span className="detail-val">
+          <GitShareStatus scope={scope} enabled={enabled} />
+        </span>
+      </div>
+      <div className="detail-kv">
+        <span className="detail-key">Group</span>
+        <span className="detail-val">{skillGroupLabel(group || 'ungrouped')}</span>
       </div>
       <div className="detail-kv">
         <span className="detail-key">Priority</span>

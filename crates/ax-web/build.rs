@@ -16,6 +16,7 @@ fn main() {
 
     if std::env::var("AX_SKIP_WEB_BUILD").is_ok() {
         register_dist_rerun(&dist);
+        stamp_embedded_index(&dist);
         return;
     }
 
@@ -54,6 +55,22 @@ fn main() {
     }
 
     register_dist_rerun(&dist);
+    stamp_embedded_index(&dist);
+}
+
+/// Force rustc to rerun `include_dir!` after Vite writes a new `dist/index.html`.
+/// Running only the build script does not rebuild the rlib, so Command Center can
+/// keep serving a stale JS bundle.
+fn stamp_embedded_index(dist: &Path) {
+    let index = dist.join("index.html");
+    let body = std::fs::read_to_string(&index).unwrap_or_default();
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in body.as_bytes() {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    println!("cargo:rustc-env=AX_WEB_DIST_STAMP={hash:016x}");
+    println!("cargo:rerun-if-changed=web-ui/dist/index.html");
 }
 
 /// Ensure `include_dir!(web-ui/dist)` recompiles when Vite output changes.

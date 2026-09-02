@@ -280,6 +280,7 @@ mod tests {
             stub_path: None,
             effective_storage: String::new(),
             storage_is_override: false,
+            group: String::new(),
         }
     }
 

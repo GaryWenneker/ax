@@ -1,5 +1,5 @@
 //! IDE-specific bootstrap — written on `ax init` into each agent's native
-//! instructions surface. Team policy stays in `.ax/policy/` (MCP); only the
+//! instructions surface. Team policy stays in `.agents/` (MCP); only the
 //! `ax_preflight` entry point is seeded into IDE rules/instructions files.
 
 use std::path::{Path, PathBuf};
@@ -38,7 +38,9 @@ MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`
 const AGENTS_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
 ## ax
 
-Call `ax_preflight` exactly once per turn **before all other work** whenever the `user-ax` MCP server is available. Team policy arrives via MCP inject — do not Read `.ax/policy/` files when ax MCP tools are available.
+Call `ax_preflight` exactly once per turn **before all other work** whenever the `user-ax` MCP server is available. Team policy arrives via MCP inject — do not Read `.agents/` or `.ax/policy/` files when ax MCP tools are available.
+
+**Git-shared team files:** `.agents/rules/` and `.agents/skills/` (each skill is a directory with `SKILL.md`). Do not load `.ax/policy-private/` or `.ax/policy-inactive/`.
 
 **Inject fallback:** If preflight lacks `<ax_policy>` (empty inject/rules), call `ax_skill("startup")` once.
 
@@ -868,6 +870,9 @@ mod tests {
         assert!(result.created.iter().any(|p| p == "GEMINI.md"));
         let agents = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
         assert!(agents.contains("ax_preflight"));
+        assert!(agents.contains(".agents/rules/"));
+        assert!(agents.contains(".agents/skills/"));
+        assert!(!agents.contains("load `.agents/`"));
     }
 
     #[test]

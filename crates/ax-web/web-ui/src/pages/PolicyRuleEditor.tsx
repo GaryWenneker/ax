@@ -16,6 +16,7 @@ import {
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
+import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
   ruleId: string | null;
@@ -34,6 +35,7 @@ const emptyFm = (): RuleFrontmatter => ({
   status: 'approved',
   share: false,
   scope: 'project',
+  group: 'ungrouped',
 });
 
 function parseCsv(s: string): string[] {
@@ -50,6 +52,7 @@ function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
     tags: fm.tags ?? [],
     scope: fm.scope || 'project',
     status: fm.status || 'approved',
+    group: resolveSkillGroup(fm.group, fm.id, fm.tags ?? []),
   };
 }
 
@@ -269,6 +272,18 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
                         onChange={(e) => setFm({ ...fm, priority: Number(e.target.value) })}
                       />
                     </PageRow>
+                    <PageRow title="Group" description="Catalog folder on the Rules list. Empty groups stay available here.">
+                      <select
+                        className="settings-select"
+                        value={fm.group || 'ungrouped'}
+                        onChange={(e) => setFm({ ...fm, group: e.target.value })}
+                        aria-label="Rule group"
+                      >
+                        {SKILL_GROUPS.map((g) => (
+                          <option key={g.id} value={g.id}>{g.label}</option>
+                        ))}
+                      </select>
+                    </PageRow>
                     <PageRow title="Globs" description="Comma-separated file patterns.">
                       <input
                         className="settings-input"
@@ -300,6 +315,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
                     tags={fm.tags}
                     scope={fm.scope}
                     enabled={fm.enabled}
+                    group={fm.group}
                   />
                 )}
               </PageCardBody>

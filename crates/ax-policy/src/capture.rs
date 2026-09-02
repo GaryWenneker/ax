@@ -104,9 +104,10 @@ pub fn propose_rule_from_prompt(prompt: &str, open_files: &[String]) -> CaptureP
         storage: None,
         source: None,
         root_id: None,
+        group: None,
     };
 
-    let preview_path = format!(".ax/policy/rules/{suggested_id}.mdc");
+    let preview_path = format!(".agents/rules/{suggested_id}.mdc");
     let preview = serialize_rule(&frontmatter, &format_rule_body(&body));
     let body = format_rule_body(&body);
 
@@ -224,7 +225,7 @@ pub fn finalize_proposal(mut proposal: CaptureProposal, existing_ids: &[String])
     if unique_id != proposal.suggested_id {
         proposal.frontmatter.id = unique_id.clone();
         proposal.suggested_id = unique_id.clone();
-        proposal.preview_path = format!(".ax/policy/rules/{unique_id}.mdc");
+        proposal.preview_path = format!(".agents/rules/{unique_id}.mdc");
         proposal.preview = crate::parse::serialize_rule(&proposal.frontmatter, &proposal.body);
     }
     proposal.questions = capture_interview_questions(&proposal);
@@ -265,6 +266,7 @@ fn empty_proposal() -> CaptureProposal {
             storage: None,
             source: None,
             root_id: None,
+            group: None,
         },
         body: String::new(),
         preview_path: String::new(),

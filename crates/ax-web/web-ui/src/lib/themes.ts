@@ -160,6 +160,26 @@ export const THEMES: ThemePreset[] = [
     textHi: '#ffffff',
     statusbarBg: '#22a2c8',
   },
+  {
+    id: 'macos',
+    label: 'macOS',
+    accent: '#64d2ff',
+    ok: '#30d158',
+    danger: '#ff453a',
+    warn: '#ffd60a',
+    bg: '#1c1c1e',
+    bgSide: '#161618',
+    bgInput: '#2c2c2e',
+    bgHover: '#2c2c2e',
+    bgActive: '#3a3a3c',
+    bgPanel: '#1c1c1e',
+    border: '#38383a',
+    borderHi: '#48484a',
+    text: '#f5f5f7',
+    textDim: '#c7c7cc',
+    textHi: '#ffffff',
+    statusbarBg: '#2c2c2e',
+  },
 ];
 
 const STORAGE_KEY = 'ax-theme';
@@ -220,6 +240,56 @@ function contrastRatio(l1: number, l2: number): number {
   return (a + 0.05) / (b + 0.05);
 }
 
+function parseHexRgb(hex: string): [number, number, number] {
+  const raw = hex.replace('#', '').trim();
+  return [parseInt(raw.slice(0, 2), 16), parseInt(raw.slice(2, 4), 16), parseInt(raw.slice(4, 6), 16)];
+}
+
+function toHex(n: number): string {
+  return Math.max(0, Math.min(255, Math.round(n)))
+    .toString(16)
+    .padStart(2, '0');
+}
+
+function mixHex(a: string, b: string, t: number): string {
+  const [ar, ag, ab] = parseHexRgb(a);
+  const [br, bg, bb] = parseHexRgb(b);
+  return `#${toHex(ar + (br - ar) * t)}${toHex(ag + (bg - ag) * t)}${toHex(ab + (bb - ab) * t)}`;
+}
+
+/** WCAG 2 contrast ratio of two sRGB hex colors. */
+export function contrastRatioHex(fg: string, bg: string): number {
+  return contrastRatio(relativeLuminance(fg), relativeLuminance(bg));
+}
+
+const WCAG_AA = 4.5;
+const WCAG_AAA = 7;
+
+/** Mix `fg` toward white or black until contrast vs `bg` meets WCAG AAA (7:1) by default. */
+export function ensureTextContrast(fg: string, bg: string, min = WCAG_AAA): string {
+  if (contrastRatioHex(fg, bg) >= min) return fg.toLowerCase();
+  const toward = relativeLuminance(bg) < 0.5 ? '#ffffff' : '#000000';
+  let t = 0;
+  for (let i = 0; i < 32; i++) {
+    t = Math.min(1, t + 0.06);
+    const c = mixHex(fg, toward, t);
+    if (contrastRatioHex(c, bg) >= min) return c;
+  }
+  return toward;
+}
+
+/** Darken a fill until white label text meets WCAG AA. */
+export function ensureWhiteOnFill(fill: string, min = WCAG_AA): string {
+  if (contrastRatioHex('#ffffff', fill) >= min) return fill.toLowerCase();
+  let t = 0;
+  for (let i = 0; i < 32; i++) {
+    t = Math.min(1, t + 0.06);
+    const c = mixHex(fill, '#000000', t);
+    if (contrastRatioHex('#ffffff', c) >= min) return c;
+  }
+  return '#000000';
+}
+
 /**
  * Pick status-bar foreground for a solid accent background.
  * Light accents (ax Mint) → dark ink; dark accents → light ink.
@@ -253,7 +323,15 @@ export function statusbarInk(accentHex: string): {
 
 export function applyTheme(theme: ThemePreset): void {
   const root = document.documentElement;
-  root.style.setProperty('--accent', theme.accent);
+  const accentText = ensureTextContrast(theme.accent, theme.bg);
+  let fill = theme.accent;
+  if (relativeLuminance(theme.bg) < 0.5 && contrastRatioHex(fill, theme.bg) < WCAG_AAA) {
+    fill = ensureTextContrast(fill, theme.bg);
+  }
+  const onFill = ensureTextContrast('#ffffff', fill, WCAG_AA);
+  root.style.setProperty('--accent', fill);
+  root.style.setProperty('--accent-text', accentText);
+  root.style.setProperty('--accent-on-fill', onFill);
   root.style.setProperty('--ok', theme.ok);
   root.style.setProperty('--danger', theme.danger);
   root.style.setProperty('--warn', theme.warn);

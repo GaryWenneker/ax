@@ -81,6 +81,8 @@ Avoid bare `cargo install --path crates/ax-cli --force` on Windows while Cursor 
 bash scripts/reinstall-cli.sh
 ```
 
+On **macOS**, that script builds into `target-dev/release/ax`, **relinks the Mach-O onto a new inode** (in-place overwrite is SIGKILL’d), and writes a **POSIX shim** at `~/.local/bin/ax`. Do **not** `cargo install` or copy a Mach-O onto `~/.local/bin/ax` or `~/.cargo/bin/ax`. After copying a new binary onto `target-dev/release/ax`, always `rm` then `mv` from a `.new` file — never `cp` onto the existing `ax`. Cursor MCP `command` must be the `target-dev/release/ax` path. After a shim/MCP change: `hash -r` in existing shells and **MCP: Restart Servers**.
+
 **Manual (any OS):**
 
 ```bash

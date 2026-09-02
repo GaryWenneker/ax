@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 17;
+pub const CURRENT_SCHEMA_VERSION: i32 = 19;
 
 struct Migration {
     version: i32,
@@ -241,6 +241,16 @@ const MIGRATIONS: &[Migration] = &[
               updated_at INTEGER NOT NULL
             );
         ",
+    },
+    Migration {
+        version: 18,
+        description: "Policy skill catalog group (Command Center grouping)",
+        sql: "ALTER TABLE policy_skills ADD COLUMN skill_group TEXT;",
+    },
+    Migration {
+        version: 19,
+        description: "Policy rule catalog group (Command Center grouping)",
+        sql: "ALTER TABLE policy_rules ADD COLUMN skill_group TEXT;",
     },
 ];
 

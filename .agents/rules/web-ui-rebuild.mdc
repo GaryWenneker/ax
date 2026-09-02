@@ -1,0 +1,40 @@
+---
+id: web-ui-rebuild
+level: CRITICAL
+alwaysApply: false
+globs: ["crates/ax-web/web-ui/**"]
+triggers: ["ax web", "web-ui", "web ui", "settings page", "vite", "npm run build", "settings.tsx", "index.css", "web-ui/dist"]
+tags: ["ax-web", "ui", "build"]
+priority: 90
+---
+# ax web UI — rebuild required after changes
+
+> **ABSOLUTE**: `npm run build` in `crates/ax-web/web-ui/` alone is **not** enough. The UI is embedded into the `ax` binary at compile time (`include_dir!("web-ui/dist")`). Agents must rebuild and reinstall `ax` before telling the user to preview `ax web`.
+
+## When this applies
+
+Any change under `crates/ax-web/web-ui/` (React pages, CSS, components, `dist/` output).
+
+## Required workflow (end of every ax-web UI task)
+
+```text
+1. npm run build          # in crates/ax-web/web-ui/ (also runs via ax-web build.rs)
+2. .\scripts\release-local.ps1   # or cargo build --release -p ax-cli
+3. Reinstall verified: ax --version + (Get-Command ax).Source
+4. Restart ax web         # kill old process; ax web --open
+5. Tell user: hard refresh browser (Ctrl+Shift+R) if layout still looks stale
+```
+
+On macOS/Linux use `bash scripts/reinstall-cli.sh` or `scripts/release-local.ps1` equivalent.
+
+## Forbidden
+
+- Reporting UI work as done after only `npm run build`
+- Asking the user to refresh `ax web` without rebuilding the `ax` binary
+- Testing UI changes with a stale `ax web` process serving an old embedded bundle
+
+## Verify
+
+- Vite output filenames changed in `web-ui/dist/index.html` (hashed assets)
+- `ax-web` crate recompiled in the release build log
+- User sees new layout after restart + hard refresh

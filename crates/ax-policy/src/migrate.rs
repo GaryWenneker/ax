@@ -427,7 +427,11 @@ fn should_skip_entry(path: &Path, project_root: &Path) -> bool {
 }
 
 fn classify_source(rel_path: &str) -> String {
-    if rel_path.starts_with(".ax/policy/rules/") || rel_path.starts_with(".ax/policy/skills/") {
+    if rel_path.starts_with(".ax/policy/rules/")
+        || rel_path.starts_with(".ax/policy/skills/")
+        || rel_path.starts_with(".agents/rules/")
+        || rel_path.starts_with(".agents/skills/")
+    {
         "ax-policy".into()
     } else if rel_path.starts_with(".cursor/rules/") {
         "cursor-rules".into()

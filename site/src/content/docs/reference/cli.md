@@ -910,7 +910,7 @@ cargo run -p ax-desktop-client -- .
 
 ## Policy
 
-Policy commands manage `.ax/policy/` rules and skills. See [Policy Engine](/guides/policy-engine/).
+Policy commands manage `.agents/` rules and skills (legacy `.ax/policy/{rules,skills}` still indexes). See [Policy Engine](/guides/policy-engine/).
 
 Most policy subcommands accept an optional `[path]` project root (default: current directory).
 
@@ -1209,6 +1209,23 @@ Built-in pack `azdo-fullstack` ships full Azure DevOps ticket-to-release **skill
 ax policy pack install --list
 ax policy pack install azdo-fullstack
 ax policy pack install azdo-fullstack --force
+```
+
+#### `ax policy pack zip [path]`
+
+Build a portable `.ax-policy.zip` of selected **shareable** rules and skills (project/workspace, enabled). Private and disabled items are rejected.
+
+```bash
+ax policy pack zip --out team.ax-policy.zip --name "Team pack" --rules utf8-no-bom,english-only --skills startup
+```
+
+### `ax policy restore`
+
+Preview or install a portable zip into `.agents/`. Conflicts default to skip unless listed as overwrite in `--decisions`.
+
+```bash
+ax policy restore --preview team.ax-policy.zip
+ax policy restore team.ax-policy.zip --decisions decisions.json
 ```
 
 ### `ax policy review`

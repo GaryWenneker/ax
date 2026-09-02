@@ -1,11 +1,11 @@
 //! Default policy templates — embedded at compile time, written on `ax init`.
-//! Team policy → `.ax/policy/` (MCP). IDE bootstrap → per-IDE instructions via `ide_seed`.
+//! Team policy → `.agents/` (MCP). IDE bootstrap → per-IDE instructions via `ide_seed`.
 
 use std::path::{Path, PathBuf};
 
-use crate::paths::{rule_file, rules_dir, skill_file, skills_dir};
+use crate::paths::{rule_file, skill_file};
 
-/// Relative path under `.ax/policy/` and file body (UTF-8, no BOM).
+/// Relative path under `.agents/` and file body (UTF-8, no BOM).
 struct Template {
     rel: &'static str,
     body: &'static str,
@@ -211,32 +211,32 @@ const GLOBAL_SKILL_BUNDLES: &[SkillBundle] = &[
 
 const MANAGED: &[(&str, &str, bool)] = &[
     (
-        ".ax/policy/skills/startup/SKILL.md",
+        ".agents/skills/startup/SKILL.md",
         "skills/startup/SKILL.md",
         false,
     ),
     (
-        ".ax/policy/rules/explore-before-grep.mdc",
+        ".agents/rules/explore-before-grep.mdc",
         "rules/explore-before-grep.mdc",
         false,
     ),
     (
-        ".ax/policy/rules/mcp-callmcp-shape.mdc",
+        ".agents/rules/mcp-callmcp-shape.mdc",
         "rules/mcp-callmcp-shape.mdc",
         false,
     ),
     (
-        ".ax/policy/rules/prefer-mcp-ops.mdc",
+        ".agents/rules/prefer-mcp-ops.mdc",
         "rules/prefer-mcp-ops.mdc",
         true, // ops mapping — not a preflight instruction file
     ),
     (
-        ".ax/policy/rules/subagents.mdc",
+        ".agents/rules/subagents.mdc",
         "rules/subagents.mdc",
         true,
     ),
     (
-        ".ax/policy/skills/subagents/SKILL.md",
+        ".agents/skills/subagents/SKILL.md",
         "skills/subagents/SKILL.md",
         true,
     ),
@@ -291,11 +291,18 @@ fn write_template(policy_root: &Path, rel: &str) -> std::io::Result<PathBuf> {
     Ok(dest)
 }
 
+fn shareable_policy_root(ax_dir: &Path) -> PathBuf {
+    let project = ax_dir.parent().unwrap_or(ax_dir);
+    crate::agents_share::agents_dir(project)
+}
+
 /// Write embedded default policy files when missing. Never overwrites existing files.
 pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {
-    let policy = ax_dir.join("policy");
-    std::fs::create_dir_all(rules_dir(ax_dir))?;
-    std::fs::create_dir_all(skills_dir(ax_dir))?;
+    let project = ax_dir.parent().unwrap_or(ax_dir);
+    let _ = crate::agents_share::migrate_legacy_policy_to_agents(project);
+    let policy = shareable_policy_root(ax_dir);
+    std::fs::create_dir_all(policy.join("rules"))?;
+    std::fs::create_dir_all(policy.join("skills"))?;
     let mut result = SeedResult::default();
     for t in TEMPLATES {
         let dest = policy_path(&policy, t.rel);
@@ -456,7 +463,23 @@ pub fn seed_global_cursor_skills() -> std::io::Result<SeedResult> {
 
 /// Seed `<project>/.cursor/skills/` with baseline rollout skills.
 pub fn seed_project_cursor_skills(project_root: &Path) -> std::io::Result<SeedResult> {
-    seed_cursor_skills(&project_root.join(".cursor").join("skills"))
+    let agents_skills = crate::agents_share::agents_dir(project_root).join("skills");
+    let mut result = seed_cursor_skills(&agents_skills)?;
+    match crate::agents_share::link_cursor_skills_to_agents(project_root) {
+        Ok(linked) => {
+            for name in linked {
+                result
+                    .created
+                    .push(format!(".cursor/skills/{name} -> .agents/skills/{name}"));
+            }
+        }
+        Err(_) => {
+            let copied = seed_cursor_skills(&project_root.join(".cursor").join("skills"))?;
+            result.created.extend(copied.created);
+            result.skipped.extend(copied.skipped);
+        }
+    }
+    Ok(result)
 }
 
 pub fn verify_content(content: &str) -> Vec<String> {
@@ -496,7 +519,7 @@ fn managed_file_issues(rel: &str, content: &str, optional: bool) -> Vec<String> 
 
 /// Verify default instruction files match ax preflight workflow (Recall instruction-sync parity).
 pub fn verify_instructions(ax_dir: &Path) -> Vec<InstructionCheck> {
-    let policy = ax_dir.join("policy");
+    let policy = shareable_policy_root(ax_dir);
     MANAGED
         .iter()
         .map(|(label, rel, optional)| {
@@ -534,9 +557,9 @@ pub fn verify_instructions(ax_dir: &Path) -> Vec<InstructionCheck> {
 
 /// Verify instruction files; with `fix`, restore missing or drifted managed files from embedded templates.
 pub fn sync_instructions(ax_dir: &Path, fix: bool) -> std::io::Result<SyncResult> {
-    std::fs::create_dir_all(rules_dir(ax_dir))?;
-    std::fs::create_dir_all(skills_dir(ax_dir))?;
-    let policy = ax_dir.join("policy");
+    let policy = shareable_policy_root(ax_dir);
+    std::fs::create_dir_all(policy.join("rules"))?;
+    std::fs::create_dir_all(policy.join("skills"))?;
     let mut result = SyncResult::default();
     for (label, rel, optional) in MANAGED {
         let path = policy_path(&policy, rel);
@@ -629,7 +652,7 @@ pub fn check_cursor_rule_duplicates(project_root: &Path) -> Vec<String> {
         for (cursor_name, policy_id) in CURSOR_RULE_ALIASES {
             if stem == *cursor_name {
                 warnings.push(format!(
-                    "`.cursor/rules/{cursor_name}.mdc` duplicates ax policy rule `{policy_id}` — remove it; use `.ax/policy/rules/{policy_id}.mdc` + ax_preflight MCP instead"
+                    "`.cursor/rules/{cursor_name}.mdc` duplicates ax policy rule `{policy_id}` — remove it; use `.agents/rules/{policy_id}.mdc` + ax_preflight MCP instead"
                 ));
             }
         }
@@ -687,7 +710,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let ax = dir.path().join(".ax");
         seed_default_policy(&ax).unwrap();
-        let startup = skill_file(&skills_dir(&ax), "startup");
+        let startup = dir.path().join(".agents/skills/startup/SKILL.md");
         std::fs::remove_file(&startup).unwrap();
         let synced = sync_instructions(&ax, true).unwrap();
         assert!(!synced.fixed.is_empty());
@@ -803,7 +826,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let ax = dir.path().join(".ax");
         seed_default_policy(&ax).unwrap();
-        let startup = skill_file(&skills_dir(&ax), "startup");
+        let startup = dir.path().join(".agents/skills/startup/SKILL.md");
         let mut body = std::fs::read_to_string(&startup).unwrap();
         body.push_str("\n<!-- drifted -->\n");
         std::fs::write(&startup, body).unwrap();

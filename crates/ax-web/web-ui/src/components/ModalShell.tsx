@@ -10,7 +10,7 @@ export interface ModalShellProps {
   children: ReactNode;
   footer?: ReactNode;
   /** Default 520px; lg = 720px */
-  size?: 'md' | 'lg';
+  size?: 'md' | 'lg' | 'xl';
   ariaLabel?: string;
 }
 

@@ -86,8 +86,8 @@ if (-not $SkipKill) {
 }
 
 if (-not $SkipBuild) {
-    Write-Step 'cargo build --release -p ax-cli'
-    cargo build --release -p ax-cli
+    Write-Step 'cargo build --release -p ax-cli --features onnx'
+    cargo build --release -p ax-cli --features onnx
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

@@ -23,7 +23,8 @@ check-macos-error.sh
 # Local MCP config (machine-specific paths)
 .mcp.json
 
-# ax project data (local indexes) — policy rules/skills are committed
+# ax project data (local indexes) — shareable policy is `.agents/`;
+# `.ax/policy/pending` and `.ax/policy/shared` remain committable.
 .ax/
 !.ax/policy/
 !.ax/policy/**

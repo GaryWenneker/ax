@@ -1,0 +1,34 @@
+---
+id: prefer-mcp-ops
+level: CRITICAL
+alwaysApply: true
+triggers: ["sync", "index", "reindex", "lsp", "enrich", "ship", "quality gate", "ci", "policy index", "ax sync", "ax lsp", "ax ship", "remember", "recall"]
+tags: ["mcp", "ops", "workflow"]
+priority: 85
+---
+# Prefer MCP ops tools (not shell CLI)
+
+> **ABSOLUTE**: When ax MCP is available, agents MUST call the matching MCP tools for session ops — never `Shell` / terminal `ax …` for these actions.
+
+## Required mapping
+
+| Need | Call (MCP) | Do **not** |
+|------|------------|------------|
+| Incremental re-index after edits | `ax_sync` | `ax sync` in shell |
+| Full rebuild of the index | `ax_index({ "force": true })` | `ax index --force` in shell |
+| Index health / staleness | `ax_status` | `ax status` in shell (except DEGRADED) |
+| LSP servers / Exact-edge enrich | `ax_lsp({ "action": "status"\|"enrich", "limit"? })` | `ax lsp …` in shell |
+| Quality gate / CI evaluate | `ax_ship({ "mode": "evaluate"\|"ci" })` | `ax ship --ci` / `--evaluate` in shell |
+| Refresh rules/skills from disk | `ax_policy_index({ "force"? })` | `ax policy index` in shell |
+| Store / search memories | `ax_remember` / `ax_recall` | `ax remember` / `ax recall` in shell |
+
+## Hard rules
+
+1. Prefer MCP tools listed above whenever the `user-ax` (or ax) MCP server is connected.
+2. Shell CLI is allowed only when MCP is unreachable (**Mode: DEGRADED**) or for ops with no MCP tool (install, upgrade, hooks, daemon, `ax web`, `ax share`, `ax ship --watch`/`--draft`).
+3. After large local edits that should refresh the graph, call `ax_sync` (or `ax_index` with `force`) before depending on explore/search results.
+4. Do not tell the user to “run ax sync in a terminal” when you can call `ax_sync` yourself.
+
+## Why
+
+MCP tools emit Logging domain lines, respect verbose gates, and keep agents inside the policy/preflight pipeline. Shell bypass skips that and burns tokens re-deriving what ax already exposes.

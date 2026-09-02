@@ -1,6 +1,6 @@
 # ax
 
-> **ABSOLUTE**: Every turn starts with `ax_preflight` — mandatory whenever the ax MCP server is available. Team policy lives in `.ax/policy/` and is delivered via MCP — do not Read policy files on disk when MCP policy tools are available.
+> **ABSOLUTE**: Every turn starts with `ax_preflight` — mandatory whenever the ax MCP server is available. Team policy lives in `.agents/rules/` and `.agents/skills/` and is delivered via MCP — do not Read policy files on disk when MCP policy tools are available. Do not load `.ax/policy-private/` or `.ax/policy-inactive/`.
 
 ## Turn order
 
@@ -40,7 +40,7 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Full index rebuild | `ax_index({ "force": true })` |
 | LSP status / Exact-edge enrich | `ax_lsp` (`action`: `status` \| `enrich`) |
 | Quality gate / CI evaluate | `ax_ship` (`mode`: `evaluate` \| `ci`) |
-| Refresh policy from `.ax/policy/` | `ax_policy_index` |
+| Refresh policy from `.agents/` | `ax_policy_index` |
 | Store / search memories | `ax_remember` / `ax_recall` |
 | Build task context | `ax_context` |
 

@@ -279,9 +279,9 @@ if (-not $SkipBuild) {
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 
-    Write-Step 'cargo build --release -p ax-cli'
+    Write-Step 'cargo build --release -p ax-cli --features onnx'
     Use-BuildPath
-    cargo build --release -p ax-cli
+    cargo build --release -p ax-cli --features onnx
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $built = Join-Path $root 'target-dev\release\ax.exe'
@@ -304,7 +304,7 @@ if (-not $SkipInstall) {
         Write-Step 'cargo install --path crates/ax-cli --force (optional; slow)'
         Write-Host '  Note: cargo install rebuilds; Cursor MCP may respawn ax.exe and lock ~/.cargo/bin.' -ForegroundColor Yellow
         Use-BuildPath
-        cargo install --path crates/ax-cli --force
+        cargo install --path crates/ax-cli --force --features onnx
         if ($LASTEXITCODE -ne 0) {
             Write-Host "cargo install failed (exit $LASTEXITCODE) - falling back to copy-sync from $built" -ForegroundColor Yellow
             Stop-AllAxProcesses -Reason 'post-cargo-install fallback' -AllowRemaining

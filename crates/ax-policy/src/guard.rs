@@ -283,6 +283,8 @@ fn is_require_skill_exempt(rel: &str) -> bool {
     let r = rel.replace('\\', "/");
     r.starts_with(".ax/policy/")
         || r.contains("/.ax/policy/")
+        || r.starts_with(".agents/")
+        || r.contains("/.agents/")
         || r.starts_with("crates/ax-policy/templates/")
 }
 
@@ -347,7 +349,7 @@ mod tests {
                 tags TEXT, priority INTEGER, body TEXT, source_path TEXT, content_hash TEXT, updated_at INTEGER,
                 enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
                 scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT
+                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT
             )",
         )
         .execute(&pool)
@@ -361,7 +363,7 @@ mod tests {
                 content_hash TEXT, updated_at INTEGER,
                 enabled INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'approved',
                 scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT
+                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT
             )",
         )
         .execute(&pool)

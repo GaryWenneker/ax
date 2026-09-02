@@ -31,6 +31,7 @@ import {
 import { TagList } from '../components/PolicyMetaView';
 import PolicyRuleInlineWorkspace from '../components/PolicyRuleInlineWorkspace';
 import { PolicyListResizeHandle } from '../components/PolicyEditorResize';
+import PolicyZipPackageButtons from '../components/PolicyZipPackageModals';
 import { LabelAutocomplete } from '../components/ui/LabelAutocomplete';
 import {
   collectTags,
@@ -43,6 +44,18 @@ import {
 } from '../components/ui/policyListUtils';
 import { usePageContext } from '../context/UiContext';
 import { POLICY_SCOPES, type CaptureProposal, type PolicyRuleRow } from '../policyTypes';
+import { visibleRuleGroups, toggleCollapsed, ruleResolvedGroup } from '../skillGroups';
+import {
+  allListedCollapsed,
+  allListedExpanded,
+  collapseAllGroupIds,
+  expandAllGroupIds,
+  matchesGroupFilter,
+} from '../skillGroupFilter';
+import { PolicyGroupListControls } from '../components/ui/PolicyGroupListControls';
+import { GitShareDot } from '../components/ui/GitShareDot';
+import Codicon from '../components/Codicon';
+import { loadJson, saveJson } from '../lib/uiStorage';
 
 interface Props {
   selectedId: string | null;
@@ -81,6 +94,26 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
   const [sortKey, setSortKey] = useState<RuleSortKey>('id');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [projectStorage, setProjectStorage] = useState<'files' | 'database'>('files');
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () => new Set(loadJson<string[]>('rules-groups-collapsed', [])),
+  );
+  const [groupIds, setGroupIds] = useState<string[]>(
+    () => loadJson<string[]>('rules-groups-filter', []),
+  );
+
+  function persistCollapsed(next: Set<string>) {
+    saveJson('rules-groups-collapsed', [...next]);
+    setCollapsed(next);
+  }
+
+  function persistGroupIds(next: string[]) {
+    saveJson('rules-groups-filter', next);
+    setGroupIds(next);
+  }
+
+  function toggleGroup(id: string) {
+    persistCollapsed(toggleCollapsed(collapsed, id));
+  }
 
   useEffect(() => {
     Promise.all([fetchPolicyRules(), fetchPolicySyncSettings()])
@@ -100,10 +133,28 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
 
   const tagOptions = useMemo(() => collectTags(rules), [rules]);
 
-  const visible = useMemo(
+  const searchVisible = useMemo(
     () => sortRules(filterRules(rules, { q, level, always, scope, tags }), sortKey, sortDir),
     [rules, q, level, always, scope, tags, sortKey, sortDir],
   );
+
+  const groupOptions = useMemo(
+    () =>
+      visibleRuleGroups(searchVisible).map((g) => ({
+        id: g.id,
+        label: g.label,
+        count: g.rules.length,
+      })),
+    [searchVisible],
+  );
+
+  const visible = useMemo(
+    () => searchVisible.filter((r) => matchesGroupFilter(ruleResolvedGroup(r), groupIds)),
+    [searchVisible, groupIds],
+  );
+
+  const grouped = useMemo(() => visibleRuleGroups(visible), [visible]);
+  const listedIds = useMemo(() => grouped.map((g) => g.id), [grouped]);
 
   function toggleFilterTag(tag: string) {
     const key = tag.trim().toLowerCase();
@@ -268,6 +319,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
               <span className={`policy-storage-label${projectStorage === 'database' ? ' active' : ''}`}>DB</span>
             </label>
             <button type="button" className="btn btn-subtle" onClick={onMatch}>Test match</button>
+            <PolicyZipPackageButtons onRestored={() => void reloadRules()} />
             <button type="button" className="btn btn-subtle" onClick={openCapture}>Capture</button>
             <button type="button" className="btn primary" onClick={() => onEditFull(null)}>New rule</button>
           </>
@@ -336,7 +388,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
           </PageCard>
         )}
 
-        <PageCard title="All rules" description="Filter with label autocomplete, then refine by level and layer.">
+        <PageCard title="All rules" description="Grouped by catalog folders. Empty groups stay hidden until a rule is assigned.">
           <PolicyToolbar>
             <LabelAutocomplete
               options={tagOptions}
@@ -379,6 +431,15 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
               <option value="yes">Always apply</option>
               <option value="no">Conditional</option>
             </select>
+            <PolicyGroupListControls
+              options={groupOptions}
+              selectedIds={groupIds}
+              onSelectedIds={persistGroupIds}
+              onCollapseAll={() => persistCollapsed(collapseAllGroupIds(listedIds))}
+              onExpandAll={() => persistCollapsed(expandAllGroupIds())}
+              collapseAllDisabled={allListedCollapsed(listedIds, collapsed)}
+              expandAllDisabled={allListedExpanded(listedIds, collapsed)}
+            />
             <PolicyCount shown={visible.length} total={rules.length} />
           </PolicyToolbar>
 
@@ -399,19 +460,44 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                         </tr>
                       </thead>
                       <tbody>
-                        {visible.map((r) => (
-                          <tr
-                            key={r.id}
-                            className={`policy-table-row${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedId === r.id ? ' policy-table-row--selected' : ''}`}
-                            onClick={() => selectRule(r.id)}
-                          >
-                            <td className="mono">
-                              <button type="button" className="policy-link" onClick={() => selectRule(r.id)}>
-                                {r.id}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {grouped.flatMap((g) => {
+                          const open = !collapsed.has(g.id);
+                          const header = (
+                            <tr key={`group-${g.id}`} className="policy-skill-group-row">
+                              <td>
+                                <button
+                                  type="button"
+                                  className="policy-skill-group-toggle"
+                                  aria-expanded={open}
+                                  onClick={() => toggleGroup(g.id)}
+                                >
+                                  <Codicon name={open ? 'chevron-down' : 'chevron-right'} className="policy-skill-group-chevron" />
+                                  <span>{g.label}</span>
+                                  <span className="muted">{g.rules.length}</span>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                          const children = open
+                            ? g.rules.map((r) => (
+                                <tr
+                                  key={r.id}
+                                  className={`policy-table-row policy-table-row--nested${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedId === r.id ? ' policy-table-row--selected' : ''}`}
+                                  onClick={() => selectRule(r.id)}
+                                >
+                                  <td className="mono">
+                                    <span className="policy-id-with-git">
+                                      <button type="button" className="policy-link" onClick={() => selectRule(r.id)}>
+                                        {r.id}
+                                      </button>
+                                      <GitShareDot scope={r.scope} enabled={r.enabled} />
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                            : [];
+                          return [header, ...children];
+                        })}
                       </tbody>
                     </DataTable>
                     </div>
@@ -433,10 +519,29 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                       </tr>
                     </thead>
                     <tbody>
-                      {visible.map((r) => (
+                      {grouped.flatMap((g) => {
+                        const open = !collapsed.has(g.id);
+                        const header = (
+                          <tr key={`group-${g.id}`} className="policy-skill-group-row">
+                            <td colSpan={11}>
+                              <button
+                                type="button"
+                                className="policy-skill-group-toggle"
+                                aria-expanded={open}
+                                onClick={() => toggleGroup(g.id)}
+                              >
+                                <Codicon name={open ? 'chevron-down' : 'chevron-right'} className="policy-skill-group-chevron" />
+                                <span>{g.label}</span>
+                                <span className="muted">{g.rules.length}</span>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                        const children = open
+                          ? g.rules.map((r) => (
                         <tr
                           key={r.id}
-                          className={`policy-table-row${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedId === r.id ? ' policy-table-row--selected' : ''}`}
+                          className={`policy-table-row policy-table-row--nested${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedId === r.id ? ' policy-table-row--selected' : ''}`}
                           onClick={(e) => {
                             const t = e.target as HTMLElement;
                             if (t.closest('button, a, input, select, textarea, label')) return;
@@ -444,9 +549,12 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                           }}
                         >
                           <td className="mono">
-                            <button type="button" className="policy-link" onClick={() => selectRule(r.id)}>
-                              {r.id}
-                            </button>
+                            <span className="policy-id-with-git">
+                              <button type="button" className="policy-link" onClick={() => selectRule(r.id)}>
+                                {r.id}
+                              </button>
+                              <GitShareDot scope={r.scope} enabled={r.enabled} />
+                            </span>
                           </td>
                           <td className="policy-col-filter">
                             <LevelBadge
@@ -508,7 +616,10 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                             <PolicyRowActions onEdit={() => onEditFull(r.id)} onDelete={() => remove(r.id)} />
                           </td>
                         </tr>
-                      ))}
+                              ))
+                            : [];
+                          return [header, ...children];
+                        })}
                     </tbody>
                   </DataTable>
                   )}

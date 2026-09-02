@@ -1,16 +1,16 @@
 ---
 title: Policy Engine
-description: IDE-agnostic rules and skills for AI agents — stored in .ax/policy/, indexed locally, delivered via MCP without reading source files.
+description: IDE-agnostic rules and skills for AI agents — stored in .agents/, indexed locally, delivered via MCP without reading source files.
 ---
 
 **ax v2.0.0+** ships a **policy engine**: project-local rules and skills that work in any IDE or agent harness — not tied to Cursor rules or a single vendor format.
 
-Policy files live under `.ax/policy/`, are indexed into SQLite (`ax.db`), and reach the agent through **MCP tools** or the **prompt-hook**. Agents should **not** open `.mdc` / `SKILL.md` files on disk when policy MCP tools are available — the matched text is returned in the `inject` field.
+Policy files live under `.agents/rules/` and `.agents/skills/`, are indexed into SQLite (`ax.db`), and reach the agent through **MCP tools** or the **prompt-hook**. Agents should **not** open `.mdc` / `SKILL.md` files on disk when policy MCP tools are available — the matched text is returned in the `inject` field. Private overlays stay under `.ax/policy-private/` and `~/.ax/private_policy/`. Disabled items move to `.ax/policy-inactive/` (gitignored). Legacy `.ax/policy/{rules,skills}` is still read for one release and migrated into `.agents/` on index/init.
 
 ## Quick start
 
 ```bash
-ax init                    # creates .ax/policy/ and seeds default preflight rules/skills
+ax init                    # creates .agents/ and seeds default preflight rules/skills
 ax policy index            # index policy files into ax.db
 ax policy sync [--fix]     # verify/restore ax_preflight instruction files
 ax policy match "deploy"   # test which rules/skills match
@@ -63,7 +63,7 @@ Saved rules go to **database** or **files** depending on `policy.storage` in `ax
 
 | Mode | Source of truth | Typical workflow |
 |---|---|---|
-| `files` | `.ax/policy/*.mdc` and `SKILL.md` on disk | Edit in git, `ax policy index` syncs to DB |
+| `files` | `.agents/rules/*.mdc` and `.agents/skills/*/SKILL.md` on disk | Edit in git, `ax policy index` syncs to DB |
 | `database` | `ax.db` policy tables | Edit in ax web or via capture; `ax policy export` for git |
 
 **Hybrid storage:** `ax.json` sets the **project default**. Each rule/skill may override with frontmatter `storage: files|database` (Command Center list toggle or `ax policy storage set-item`). Delivery to agents remains via MCP from `ax.db` either way — the toggle chooses where edits are authoritative.
@@ -126,12 +126,13 @@ Both modes support the same **scopes**. Frontmatter field `scope` (and the DB co
 | Scope | Path | Pack / git |
 |---|---|---|
 | `company` | `~/.ax/global_policy/` | Never packed |
-| `workspace` | `<workspace>/.ax/policy/` | Included in default pack export |
-| `project` | `<project>/.ax/policy/` | Included in default pack export |
+| `workspace` | `<workspace>/.agents/` | Included in default pack export |
+| `project` | `<project>/.agents/` | Included in default pack export |
 | `private_user` | `~/.ax/private_policy/` | Never packed |
 | `private_project` | `<project>/.ax/policy-private/` | Never packed (gitignored) |
+| inactive (local) | `<project>/.ax/policy-inactive/` | Never packed (gitignored) |
 
-Merge order on index: company → workspace → project → private_user → private_project (later wins on the same id/name).
+Merge order on index: company → workspace → project → inactive overlay → private_user → private_project (later wins on the same id/name).
 
 ### Database migration scan (v2.1.2+)
 
@@ -139,8 +140,8 @@ When switching to **database** with `--migrate`, ax does not import only `.ax/po
 
 | Pattern | Examples |
 |---|---|
-| `*.mdc` with YAML frontmatter | `.ax/policy/rules/`, `.cursor/rules/`, nested packages |
-| `**/SKILL.md` with frontmatter | `.ax/policy/skills/`, `.cursor/skills/`, monorepo subfolders |
+| `*.mdc` with YAML frontmatter | `.agents/rules/`, `.ax/policy/rules/` (legacy), `.cursor/rules/`, nested packages |
+| `**/SKILL.md` with frontmatter | `.agents/skills/`, `.ax/policy/skills/` (legacy), `.cursor/skills/`, monorepo subfolders |
 
 Skipped automatically: `node_modules`, `target`, `dist`, IDE bootstrap (`.cursor/rules/ax.mdc`), invalid frontmatter, duplicate ids.
 
@@ -243,7 +244,7 @@ Set `AX_NO_POLICY=1` to skip prompt-hook injection. Set `AX_POLICY_MAX_CHARS` to
 
 ## Authoring rules
 
-Rules live in `.ax/policy/rules/<id>.mdc` — YAML frontmatter plus a markdown body:
+Rules live in `.agents/rules/<id>.mdc` — YAML frontmatter plus a markdown body:
 
 ```yaml
 ---
@@ -257,6 +258,7 @@ priority: 100
 enabled: true
 status: approved
 tags: ["ui"]
+group: design
 ---
 # Rule body (markdown)
 ```
@@ -273,6 +275,7 @@ tags: ["ui"]
 | `enabled` | When `false`, matcher/preflight skip the rule (default `true`) |
 | `status` | `approved` (active), `pending` (review queue), or `rejected` |
 | `tags` | Required for Command Center filtering; free-form labels. Use `local` or `noshare` to opt out of pack export |
+| `group` | Optional catalog folder id for Command Center **Rules** grouping (same catalog as skills). Matching ignores this field |
 | `share` | Optional alias — normalized to tag `shared` on parse (legacy; default export no longer requires it) |
 
 Disable without deleting:
@@ -288,7 +291,7 @@ The same fields are stored in `ax.db` (`policy_rules.enabled`, `policy_rules.sta
 
 ## Authoring skills
 
-Skills live in `.ax/policy/skills/<name>/SKILL.md`:
+Skills live in `.agents/skills/<name>/SKILL.md`:
 
 ```yaml
 ---
@@ -300,6 +303,7 @@ triggers: ["deploy", "production"]
 enabled: true
 status: approved
 tags: ["ops"]
+group: deploy-ops
 ---
 # Workflow steps (markdown)
 ```
@@ -324,7 +328,7 @@ guard: require-skill: "old-coder"
 | `forbid-path` | Path matches the glob (Write or Delete) |
 | `forbid-content` | Write content contains the substring or `/regex/`. Scoped to the rule's `globs` when it declares any, project-wide when it declares none — so a rule can ban a pattern in one directory without blocking the code next door that legitimately needs it |
 | `require-content` | Write to a path matching the rule's `globs` is missing the substring or `/regex/` |
-| `require-skill` | Write/Delete unless that skill is indexed, enabled, approved, and `alwaysApply: true`. Exempt: `.ax/policy/**` and `crates/ax-policy/templates/**` |
+| `require-skill` | Write/Delete unless that skill is indexed, enabled, approved, and `alwaysApply: true`. Exempt: `.agents/**`, `.ax/policy/**`, and `crates/ax-policy/templates/**` |
 
 `old-coder-mandatory` ships with `require-skill: "old-coder"` so implementation writes fail closed if the skill is missing or not always-apply.
 
@@ -337,6 +341,10 @@ On **Policy → Rules** and **Policy → Skills**:
 3. Click a chip or Backspace to remove it
 4. Click a tag badge in the table to toggle that label into the filter
 5. Editors require at least one tag before save
+
+The rule and skill **source** pane is a highlighted overlay on a textarea. Overlay and textarea use the same font-size, line-height, and font-family so clicks, the caret, and selection sit on the glyphs you see.
+
+Skills on **Policy → Skills** (and rules on **Policy → Rules**) are grouped into a fixed catalog (session, implementation, testing, release, …). Collapse a group header to hide its rows, or use **Collapse all** / **Expand all**. A **Groups** multiselect filters the list to one or more folders (empty selection shows every group that still matches search and other filters). Groups with no items are omitted from the list; the editor still lists every catalog group so a new item can be attached.
 
 ---
 
@@ -371,6 +379,21 @@ ax policy pack install azdo-fullstack --force
 `azdo-fullstack` adds Azure DevOps ticket-to-release **skills** (full workflows with checklists — refinement → development → testing → PR → pipelines → release) and matching **rules**. It complements built-in methodology skills (`design-first`, `tdd`, `systematic-debugging`) rather than replacing them. Re-run with `--force` after upgrading ax to refresh expanded skill bodies.
 
 Install writes project files under `.ax/policy/`, then **imports into `ax.db`** when `policy.storage` is `database` (so MCP/`ax policy skill` show the new bodies without a separate `ax policy index --force`).
+
+### Portable zip packages
+
+Sitecore-style **item pick → zip → restore with conflict preview**. This is not git pack sync and not OneDrive.
+
+1. Command Center **Rules** or **Skills**: **Package** — large modal, **Select all** / **Select none**, rule and skill **descriptions** (generated from the body when missing), click a name to inspect the local file, then **Download** `*.ax-policy.zip`.
+2. On the other machine: **Restore package** — upload, compare badges (`New` / `Identical` / `Different` / `Invalid`), click a row for a git-style unified diff vs local, set **Skip** or **Overwrite** per conflict, confirm. Files land in `.agents/`, then policy re-index.
+
+```bash
+ax policy pack zip --out team.ax-policy.zip --name "Team pack" --rules utf8-no-bom --skills startup
+ax policy restore --preview team.ax-policy.zip
+ax policy restore team.ax-policy.zip --decisions decisions.json
+```
+
+`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite` or `skip`. Missing conflict keys default to skip. Private and disabled items are never packed.
 
 ### IDE-agnostic delivery (Cursor ↔ Continue ↔ …)
 
@@ -487,11 +510,11 @@ ax policy does not replace other systems:
 
 | Source | Loaded by |
 |---|---|
-| `.ax/policy/` | ax MCP + prompt-hook |
+| `.agents/` | ax MCP + prompt-hook |
 | `.cursor/rules`, `.cursor/skills` | Cursor (separate) |
 | Recall MCP | Recall OS projects (separate) |
 
-**Do not duplicate ax team policy in `.cursor/rules/`.** Rules and skills under `.ax/policy/` are indexed into `ax.db` and delivered via `ax_preflight` MCP inject.
+**Do not duplicate ax team policy in `.cursor/rules/`.** Rules and skills under `.agents/` are indexed into `ax.db` and delivered via `ax_preflight` MCP inject. Cursor skill folders may symlink to `.agents/skills/`.
 
 **Exception — IDE bootstrap:** `ax init` seeds each agent's native instructions surface (create or repair). These files only tell the agent to call `ax_preflight`; they are not team policy.
 

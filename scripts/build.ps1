@@ -15,7 +15,7 @@ if ($running) {
     Write-Host "Note: ax is running (PID $($running.Id -join ', ')). Building to target-dev\release\ax.exe (MCP can stay up)." -ForegroundColor Yellow
 }
 
-cargo build --release -p ax-cli
+cargo build --release -p ax-cli --features onnx
 $built = Join-Path $root "target-dev\release\ax.exe"
 if (-not (Test-Path $built)) {
     Write-Error "Build failed — ax.exe not found at $built"

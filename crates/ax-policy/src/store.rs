@@ -224,15 +224,23 @@ impl PolicyStore {
             return Ok((doc, Some(stub_path.to_string_lossy().into())));
         }
 
-        let policy_dir = resolve_item_write_dir(
-            &self.project_root,
-            scope,
-            frontmatter.root_id.as_deref(),
-        )
-        .map_err(|e| ValidationError {
-            error: e,
-            fields: Default::default(),
-        })?;
+        let policy_dir = if frontmatter.root_id.as_deref().filter(|s| !s.is_empty()).is_some() {
+            resolve_item_write_dir(
+                &self.project_root,
+                scope,
+                frontmatter.root_id.as_deref(),
+            )
+            .map_err(|e| ValidationError {
+                error: e,
+                fields: Default::default(),
+            })?
+        } else {
+            crate::agents_share::resolve_shareable_write_dir(
+                &self.project_root,
+                scope,
+                frontmatter.enabled,
+            )
+        };
         let path = rule_file(&policy_dir.join("rules"), &frontmatter.id);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| ValidationError {
@@ -240,11 +248,26 @@ impl PolicyStore {
                 fields: Default::default(),
             })?;
         }
+        if scope.is_packable() && !frontmatter.enabled {
+            crate::agents_share::ensure_ax_share_gitignore(&self.project_root).map_err(|e| {
+                ValidationError {
+                    error: e.to_string(),
+                    fields: Default::default(),
+                }
+            })?;
+        }
         let raw = serialize_rule(&frontmatter, &body);
         write_utf8(&path, &raw).map_err(|e| ValidationError {
             error: e,
             fields: Default::default(),
         })?;
+        if scope.is_packable() {
+            crate::agents_share::relocate_rule_file(&self.project_root, &frontmatter.id, &path)
+                .map_err(|e| ValidationError {
+                    error: e.to_string(),
+                    fields: Default::default(),
+                })?;
+        }
         let doc = parse_rule_file(&path, &raw)?;
         Ok((doc, None))
     }
@@ -413,26 +436,53 @@ impl PolicyStore {
             return Ok((doc, Some(stub_path.to_string_lossy().into())));
         }
 
-        let policy_dir = resolve_item_write_dir(
-            &self.project_root,
-            scope,
-            frontmatter.root_id.as_deref(),
-        )
-        .map_err(|e| ValidationError {
-            error: e,
-            fields: Default::default(),
-        })?;
+        let policy_dir = if frontmatter.root_id.as_deref().filter(|s| !s.is_empty()).is_some() {
+            resolve_item_write_dir(
+                &self.project_root,
+                scope,
+                frontmatter.root_id.as_deref(),
+            )
+            .map_err(|e| ValidationError {
+                error: e,
+                fields: Default::default(),
+            })?
+        } else {
+            crate::agents_share::resolve_shareable_write_dir(
+                &self.project_root,
+                scope,
+                frontmatter.enabled,
+            )
+        };
         let skills = policy_dir.join("skills");
         let path = skill_file(&skills, &frontmatter.name);
         std::fs::create_dir_all(skills.join(&frontmatter.name)).map_err(|e| ValidationError {
             error: e.to_string(),
             fields: Default::default(),
         })?;
+        if scope.is_packable() && !frontmatter.enabled {
+            crate::agents_share::ensure_ax_share_gitignore(&self.project_root).map_err(|e| {
+                ValidationError {
+                    error: e.to_string(),
+                    fields: Default::default(),
+                }
+            })?;
+        }
         let raw = serialize_skill(&frontmatter, &body);
         write_utf8(&path, &raw).map_err(|e| ValidationError {
             error: e,
             fields: Default::default(),
         })?;
+        if scope.is_packable() {
+            crate::agents_share::relocate_skill_dir(
+                &self.project_root,
+                &frontmatter.name,
+                &skills.join(&frontmatter.name),
+            )
+            .map_err(|e| ValidationError {
+                error: e.to_string(),
+                fields: Default::default(),
+            })?;
+        }
         let doc = parse_skill_file(&path, &raw)?;
         Ok((doc, None))
     }

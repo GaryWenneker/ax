@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use ax_policy::{
-    finalize_proposal, propose_rule_from_prompt, CaptureProposal, MatchInput, PolicyStore,
-    RuleFrontmatter, SkillFrontmatter, ValidationError,
+    build_policy_zip, diff_policy_zip_item, index_policy, preview_policy_zip, restore_policy_zip,
+    slug_package_filename, PackSpec, RestoreAction, ZipPkgError, ZIP_PACKAGE_MAX_BYTES,
+    CaptureProposal, MatchInput, PolicyStore, RuleFrontmatter, SkillFrontmatter, ValidationError,
+    finalize_proposal, propose_rule_from_prompt,
 };
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
+    body::Body,
+    extract::{DefaultBodyLimit, Multipart, Path, State},
+    http::{header, StatusCode},
     response::{IntoResponse, Json},
     routing::{get, patch, post},
     Router,
@@ -64,11 +67,16 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/pack/status", get(pack_status))
         .route("/pack/export", post(pack_export))
         .route("/pack/import", post(pack_import))
+        .route("/package", post(create_zip_package))
+        .route("/package/preview", post(preview_zip_package))
+        .route("/package/restore", post(restore_zip_package))
+        .route("/package/diff", post(diff_zip_package))
         .route("/review", get(review_list))
         .route("/review/{id}", get(review_show))
         .route("/review/{id}/approve", post(review_approve))
         .route("/review/{id}/reject", post(review_reject))
         .route("/settings", get(policy_settings).put(put_policy_settings))
+        .layer(DefaultBodyLimit::max(ZIP_PACKAGE_MAX_BYTES))
         .with_state(hub)
 }
 
@@ -326,7 +334,14 @@ async fn put_policy_settings(
 async fn list_rules(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     match ws.policy.store.list_rules().await {
-        Ok(rules) => (StatusCode::OK, Json(serde_json::json!({ "rules": rules }))).into_response(),
+        Ok(rules) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "rules": rules,
+                "groups": ax_policy::skill_groups_json(),
+            })),
+        )
+            .into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -395,7 +410,14 @@ async fn delete_rule(State(hub): State<WebHub>, Path(id): Path<String>) -> impl 
 async fn list_skills(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     match ws.policy.store.list_skills().await {
-        Ok(skills) => (StatusCode::OK, Json(serde_json::json!({ "skills": skills }))).into_response(),
+        Ok(skills) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "skills": skills,
+                "groups": ax_policy::skill_groups_json(),
+            })),
+        )
+            .into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -515,7 +537,7 @@ async fn capture_prompt(
                         "action": "save",
                         "id": id,
                         "storage": storage,
-                        "path": format!(".ax/policy/rules/{id}.mdc"),
+                        "path": format!(".agents/rules/{id}.mdc"),
                     })),
                 )
                     .into_response()
@@ -596,6 +618,157 @@ async fn reindex(State(hub): State<WebHub>) -> impl IntoResponse {
     match ws.policy.store.reindex(true).await {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct ZipPackagePayload {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    #[serde(rename = "ruleIds")]
+    rule_ids: Vec<String>,
+    #[serde(default)]
+    #[serde(rename = "skillNames")]
+    skill_names: Vec<String>,
+}
+
+fn zip_err(e: ZipPkgError) -> axum::response::Response {
+    match e {
+        ZipPkgError::Empty | ZipPkgError::Unknown(_) => err(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()),
+        ZipPkgError::BadZip(_) | ZipPkgError::TooLarge => err(StatusCode::BAD_REQUEST, &e.to_string()),
+        ZipPkgError::Io(_) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn read_multipart_fields(
+    multipart: &mut Multipart,
+) -> Result<std::collections::HashMap<String, Vec<u8>>, String> {
+    let mut fields = std::collections::HashMap::new();
+    while let Some(field) = multipart.next_field().await.map_err(|e| e.to_string())? {
+        let name = field.name().unwrap_or("").to_string();
+        let bytes = field.bytes().await.map_err(|e| e.to_string())?;
+        if !name.is_empty() {
+            fields.insert(name, bytes.to_vec());
+        }
+    }
+    Ok(fields)
+}
+
+async fn read_multipart_zip(multipart: &mut Multipart) -> Result<(Vec<u8>, Option<String>), String> {
+    let fields = read_multipart_fields(multipart).await?;
+    let zip = fields
+        .get("package")
+        .cloned()
+        .ok_or_else(|| "missing package field".to_string())?;
+    let decisions = fields
+        .get("decisions")
+        .map(|b| String::from_utf8_lossy(b).into_owned());
+    Ok((zip, decisions))
+}
+
+async fn create_zip_package(
+    State(hub): State<WebHub>,
+    Json(payload): Json<ZipPackagePayload>,
+) -> impl IntoResponse {
+    let ws = hub.read().await;
+    let spec = PackSpec {
+        name: payload.name,
+        description: payload.description,
+        rule_ids: payload.rule_ids,
+        skill_names: payload.skill_names,
+        ax_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    match build_policy_zip(ws.policy.store.project_root(), &spec) {
+        Ok(bytes) => {
+            let filename = slug_package_filename(&spec.name);
+            axum::http::Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/zip")
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{filename}\""),
+                )
+                .body(Body::from(bytes))
+                .unwrap_or_else(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "response"))
+        }
+        Err(e) => zip_err(e),
+    }
+}
+
+async fn preview_zip_package(State(hub): State<WebHub>, mut multipart: Multipart) -> impl IntoResponse {
+    let (bytes, _) = match read_multipart_zip(&mut multipart).await {
+        Ok(v) => v,
+        Err(e) => return err(StatusCode::BAD_REQUEST, &e),
+    };
+    let ws = hub.read().await;
+    match preview_policy_zip(ws.policy.store.project_root(), &bytes) {
+        Ok(p) => (StatusCode::OK, Json(p)).into_response(),
+        Err(e) => zip_err(e),
+    }
+}
+
+async fn restore_zip_package(State(hub): State<WebHub>, mut multipart: Multipart) -> impl IntoResponse {
+    if hub.readonly {
+        return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
+    }
+    let (bytes, decisions_raw) = match read_multipart_zip(&mut multipart).await {
+        Ok(v) => v,
+        Err(e) => return err(StatusCode::BAD_REQUEST, &e),
+    };
+    let decisions: std::collections::HashMap<String, RestoreAction> = match decisions_raw {
+        Some(s) if !s.trim().is_empty() => match serde_json::from_str(&s) {
+            Ok(d) => d,
+            Err(e) => return err(StatusCode::BAD_REQUEST, &format!("decisions: {e}")),
+        },
+        _ => std::collections::HashMap::new(),
+    };
+    let ws = hub.read().await;
+    let root = ws.policy.store.project_root().to_path_buf();
+    let pool = ws.policy.store.pool().clone();
+    drop(ws);
+    match restore_policy_zip(&root, &bytes, &decisions) {
+        Ok(result) => {
+            if let Err(e) = index_policy(&pool, &root, true).await {
+                return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+            }
+            (StatusCode::OK, Json(result)).into_response()
+        }
+        Err(e) => zip_err(e),
+    }
+}
+
+async fn diff_zip_package(
+    State(hub): State<WebHub>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let fields = match read_multipart_fields(&mut multipart).await {
+        Ok(f) => f,
+        Err(e) => return err(StatusCode::BAD_REQUEST, &e),
+    };
+    let bytes = match fields.get("package") {
+        Some(b) if b.len() <= ZIP_PACKAGE_MAX_BYTES => b.clone(),
+        Some(_) => return err(StatusCode::BAD_REQUEST, "zip exceeds 8 MiB limit"),
+        None => return err(StatusCode::BAD_REQUEST, "missing package field"),
+    };
+    let kind = fields
+        .get("kind")
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default();
+    let id = fields
+        .get("id")
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default();
+    if kind.is_empty() || id.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "kind and id are required");
+    }
+    let ws = hub.read().await;
+    let root = ws.policy.store.project_root().to_path_buf();
+    drop(ws);
+    match diff_policy_zip_item(&root, &bytes, &kind, &id) {
+        Ok(diff) => (StatusCode::OK, Json(diff)).into_response(),
+        Err(e) => zip_err(e),
     }
 }
 

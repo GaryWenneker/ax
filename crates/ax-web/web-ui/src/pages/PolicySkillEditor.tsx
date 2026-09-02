@@ -16,6 +16,7 @@ import {
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
+import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
   skillName: string | null;
@@ -33,6 +34,7 @@ const emptyFm = (): SkillFrontmatter => ({
   status: 'approved',
   share: false,
   scope: 'project',
+  group: 'ungrouped',
 });
 
 function parseCsv(s: string): string[] {
@@ -48,6 +50,7 @@ function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
     tags: fm.tags ?? [],
     scope: fm.scope || 'project',
     status: fm.status || 'approved',
+    group: resolveSkillGroup(fm.group, fm.name, fm.tags ?? []),
   };
 }
 
@@ -237,6 +240,18 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                         ))}
                       </select>
                     </PageRow>
+                    <PageRow title="Group" description="Catalog folder on the Skills list. Empty groups stay available here.">
+                      <select
+                        className="settings-select"
+                        value={fm.group || 'ungrouped'}
+                        onChange={(e) => setFm({ ...fm, group: e.target.value })}
+                        aria-label="Skill group"
+                      >
+                        {SKILL_GROUPS.map((g) => (
+                          <option key={g.id} value={g.id}>{g.label}</option>
+                        ))}
+                      </select>
+                    </PageRow>
                     <PageRow title="Triggers" description="Keywords that activate this skill.">
                       <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />
                     </PageRow>
@@ -262,6 +277,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
                     contextTask={fm.contextTask}
                     scope={fm.scope}
                     enabled={fm.enabled}
+                    group={fm.group}
                   />
                 )}
               </PageCardBody>

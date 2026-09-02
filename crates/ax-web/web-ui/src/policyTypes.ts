@@ -18,6 +18,18 @@ export function scopeLabel(scope?: string): string {
   return found?.label ?? (scope || 'Project');
 }
 
+export function isShareablePolicyItem(scope?: string, enabled?: boolean): boolean {
+  if (enabled === false) return false;
+  const s = (scope || 'project').toLowerCase().replace(/-/g, '_');
+  return s === 'project' || s === 'workspace';
+}
+
+export function defaultRestoreAction(status: string): 'overwrite' | 'skip' | null {
+  if (status === 'invalid') return null;
+  if (status === 'conflict') return 'skip';
+  return 'overwrite';
+}
+
 export type PolicyItemStorage = 'files' | 'database';
 
 export interface RuleFrontmatter {
@@ -36,6 +48,8 @@ export interface RuleFrontmatter {
   storage?: PolicyItemStorage | null;
   source?: string | null;
   rootId?: string | null;
+  /** Catalog group id. Empty groups stay in this picker, not on the list. */
+  group?: string | null;
 }
 
 export interface SkillFrontmatter {
@@ -53,6 +67,8 @@ export interface SkillFrontmatter {
   storage?: PolicyItemStorage | null;
   source?: string | null;
   rootId?: string | null;
+  /** Catalog group id. Empty groups stay in this picker, not on the list. */
+  group?: string | null;
 }
 
 export interface PolicyRuleDoc {
@@ -88,6 +104,8 @@ export interface PolicyRuleRow {
   stubPath?: string | null;
   effectiveStorage?: string;
   storageIsOverride?: boolean;
+  /** Resolved catalog group id from GET /rules. */
+  group?: string;
 }
 
 export interface PolicySkillRow {
@@ -109,6 +127,8 @@ export interface PolicySkillRow {
   stubPath?: string | null;
   effectiveStorage?: string;
   storageIsOverride?: boolean;
+  /** Resolved catalog group id from GET /skills. */
+  group?: string;
 }
 
 export interface PolicyRootInfo {

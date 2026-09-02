@@ -5,7 +5,7 @@
 
 **Current release: [v4.6.0](https://github.com/GaryWenneker/ax/releases/tag/v4.6.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
-**ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.ax/policy/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+**ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.agents/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
 
 **v4.6.0** adds **Graph Start here** (Leiden subsystems, god-node tour, suggested questions) and an opt-in **Domain** overlay (`.ax/domain-graph.json`, agent `domain` skill) so you can show business flows without writing those nodes into `ax.db`. See [Architecture Insights](https://getax.wenneker.io/guides/architecture-insights/).
 
@@ -17,7 +17,7 @@
 
 **v4.2.0** improves **policy filtering and Azure DevOps pack depth**:
 
-- **Label autocomplete** on Policy → Rules / Skills (tag chips, AND filter; tags required on save).
+- **Label autocomplete** on Policy → Rules / Skills (tag chips, AND filter; tags required on save). **Rules and Skills** lists group by a shared catalog (collapsible; empty folders hidden until assigned).
 - **Expanded `azdo-fullstack` skills** — full workflows from refinement through release (`ax policy pack install azdo-fullstack --force` to refresh).
 - **Pack install → database** — install force-imports into `ax.db` when storage mode is database.
 
@@ -32,7 +32,7 @@
 - **`ax ship --ci`** — headless quality gate + reusable `.github/workflows/ax-ship.yml`.
 - **LSP bridge** — Exact edges via `ax-lsp`; Unresolved → enrich (limit, server checklist, report).
 - **`ax share` + PWA** — LAN token gate, Settings → Sharing, opt-in install, Activity chip (SSE).
-- **ax Mint default** — `#3ee4b2` Command Center theme; project browser tracks `--accent`.
+- **ax Mint default** — `#3ee4b2` Command Center theme; project browser tracks `--accent`. Settings also includes a **macOS** theme (System Settings–style charcoal + `#64d2ff`).
 
 **v3.1.0** focused on **agent-side diagnostics, safer auto-commit, and policy flexibility** (diagnostics bridge, generic guard directives, Stop hook, ship auto-commit, MCP Logging polish, VS Code / Windsurf / Zed).
 
@@ -188,7 +188,8 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax export okf` | Export Open Knowledge Format (OKF) Markdown concept bundle |
 | `ax export graph --format …` | Export graph (`json`/`dot`/`graphml`/`gexf`/`cypher`/`mermaid`/`plantuml`/`html`) |
 | `ax policy pull <git-url>` | Pull shared policy rules/skills from a git registry |
-| `ax policy pack export\|import\|status\|install` | Per-project shared pack + built-in packs (e.g. `azdo-fullstack`) |
+| `ax policy pack export\|import\|status\|install\|zip` | Git shared pack, built-in packs, or portable `.ax-policy.zip` |
+| `ax policy restore` | Preview/install a portable policy zip into `.agents/` |
 | `ax policy share config\|sync` | Remote policy share — pull/push via git (GitHub/GitLab/Azure DevOps/on-prem, optionally GitLab `/api/v4` with a token) or OneDrive Graph |
 | `ax auth microsoft login\|logout\|status` | Microsoft device-code sign-in for OneDrive share sync |
 | `ax policy review list\|show\|approve\|reject` | Review pending pack imports |
@@ -227,7 +228,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax upgrade [tag]` | Self-update from GitHub releases |
 | `ax telemetry [on\|off\|status]` | Anonymous usage telemetry |
 | `ax offload …` | Optional BYO LLM for explore synthesis |
-| `ax policy index` | Index `.ax/policy/` rules and skills |
+| `ax policy index` | Index `.agents/` (and legacy `.ax/policy/`) rules and skills |
 | `ax policy match <text>` | Test which rules/skills match a prompt |
 | `ax policy rules` / `skills` | List indexed policy |
 | `ax policy guard` | Pre-write CRITICAL checks (encoding, secrets paths, plus any rule-defined `guard:` directive) |
@@ -291,7 +292,7 @@ Advertised by default — the turn contract plus the whole graph read surface:
 | `ax_report` | Full Markdown architecture report |
 | `ax_remember` | Store a durable project memory (flags near-duplicates) |
 | `ax_recall` | Hybrid memory search (FTS5 + local vector embeddings) |
-| `ax_preflight` | Turn-start policy: matched rules + skills (when `.ax/policy/` exists) |
+| `ax_preflight` | Turn-start policy: matched rules + skills (when `.agents/` or `.ax/policy/` exists) |
 | `ax_rules` | List or match policy rules |
 | `ax_skill` | Load a skill by name |
 | `ax_guard` | Pre-write guard for CRITICAL rules — built-in (encoding, secrets) plus generic `guard: forbid-path/forbid-content/require-content/require-skill` directives declared in any rule body |
@@ -311,13 +312,13 @@ Opt-in via `AX_MCP_TOOLS` (comma-separated names, or `all`) — these mutate the
 
 **Graph-only snippets:** source in `ax_explore` and `ax_context` responses is served from the source store in `ax.db`, never read from your working tree at query time. Each read verifies the stored content hash against the indexed one, so a snippet is either provably current or explicitly labelled stale — there is no silent disk fallback. Files over 1 MB (`AX_SOURCE_STORE_MAX_BYTES`) are not stored and say so. Only files a parser claims are stored — build output the watcher reports during a `cargo build` is not — which keeps the store to 3.8 MB of text over 499 files on this repo; `ax sync` also drops stored text no indexed file claims. After upgrading from a pre-v17 index, run `ax index` (or `ax sync`) once to backfill; `ax status` reports the coverage gap (counted over parseable files, not every indexed row) until you do. A snippet shows the last indexed text, so its line numbers and its source always agree.
 
-**Policy rule:** when `.ax/policy/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` plus an `<ax_index>` doc inventory snapshot — no need to read `.ax/policy/` files) and `ax_guard` before writes on guarded paths.
+**Policy rule:** when `.agents/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` plus an `<ax_index>` doc inventory snapshot — no need to read `.agents/` files) and `ax_guard` before writes on guarded paths.
 
 **Turn-end post-flight (Claude Code):** `ax install` also wires `Stop`/`SubagentStop` hooks (`ax stop-hook`) so ax gets a say at the *end* of a turn too, not just the start — it re-checks every uncommitted file against `ax_guard` and blocks (`{"decision": "block", ...}`) only on a CRITICAL violation. Disable with `AX_NO_STOP_HOOK=1`.
 
 **Lean by default:** responses never ship the answer twice — `content.text` is authoritative and `structuredContent` is projected down to metadata (no duplicated source/rule bodies). `ax_context` and the data tools return compact markdown / one-line-per-symbol text instead of pretty-JSON. Tune with `AX_MCP_FULL` (restore full structured payload), `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). See the [token savings guide](https://getax.wenneker.io/guides/token-savings/).
 
-**Verbose MCP logging:** enable **Logging → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; full current day on load; scroll up for prior days; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
+**Verbose MCP logging:** enable **Settings → Interface → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; full current day on load; scroll up for prior days; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
 
 ### Transport
 
@@ -383,9 +384,10 @@ IDE-agnostic **rules** and **skills** for agents — not tied to Cursor or any s
 | Path / scope | Purpose |
 |------|---------|
 | `~/.ax/global_policy/` (`company`) | Org-wide rules/skills (never packed) |
-| `.ax/policy/rules/*.mdc` (`project` / `workspace`) | YAML frontmatter + markdown constraints |
-| `.ax/policy/skills/*/SKILL.md` | Triggered workflows (deploy, review, …) |
+| `.agents/rules/*.mdc` (`project` / `workspace`) | YAML frontmatter + markdown constraints |
+| `.agents/skills/*/SKILL.md` | Triggered workflows (deploy, review, …) |
 | `~/.ax/private_policy/` / `.ax/policy-private/` | Personal overlays (never packed) |
+| `.ax/policy-inactive/` | Disabled items (local only, gitignored) |
 
 ```bash
 ax policy index

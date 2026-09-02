@@ -1,3 +1,4 @@
+pub mod agents_share;
 pub mod builtin_packs;
 pub mod capture;
 pub mod config;
@@ -13,8 +14,10 @@ pub mod paths;
 pub mod ide_seed;
 pub mod review;
 pub mod seed;
+pub mod skill_groups;
 pub mod store;
 pub mod types;
+pub mod zip_package;
 
 pub use capture::{
     capture_interview_questions, detect_directive, finalize_proposal, interview_instruction_text,
@@ -39,6 +42,12 @@ pub use review::{
 };
 pub use format::{build_preflight_meta, format_inject_block};
 pub use guard::{guard_operation, guard_with_context};
+pub use agents_share::{
+    agents_dir, agents_share_violations, ensure_ax_share_gitignore, inactive_dir,
+    is_git_export_candidate, legacy_policy_dir, link_cursor_skills_to_agents,
+    migrate_legacy_policy_to_agents, relocate_rule_file, relocate_skill_dir,
+    resolve_shareable_write_dir,
+};
 pub use hierarchy::{
     ensure_private_gitignore, ensure_scope_dirs, find_workspace_root, policy_dir_for_scope,
     policy_layer_dirs, policy_layers, PolicyLayer,
@@ -65,10 +74,16 @@ pub use paths::{
     rules_dir, skills_dir, STUB_BODY_MARKER,
 };
 pub use ide_seed::{seed_ide_agent_workflow, sync_ide_bootstrap, verify_ide_bootstrap, IdeSeedResult};
+pub use zip_package::{
+    build_policy_zip, decision_key, diff_policy_zip_item, preview_policy_zip, restore_policy_zip,
+    slug_package_filename, ItemDiff, PackSpec, PreviewItem, RestoreAction, RestoreResult,
+    ZipPkgError, ZipPreview, ZIP_PACKAGE_MAX_BYTES,
+};
 pub use seed::{
     check_cursor_rule_duplicates, seed_cursor_skills, seed_default_policy, seed_global_cursor_skills,
     seed_global_policy_skills, seed_global_policy, seed_project_cursor_skills, sync_instructions, verify_content,
     verify_instructions, InstructionCheck, SeedResult, SyncResult,
 };
+pub use skill_groups::{catalog as skill_group_catalog, catalog_json as skill_groups_json, resolve_skill_group};
 pub use store::{open_rw_pool, PolicyStore};
 pub use types::*;

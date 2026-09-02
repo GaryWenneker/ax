@@ -1126,3 +1126,72 @@ pub async fn run_review_reject(path: Option<String>, id: String) -> Result<(), S
     println!("Rejected {} {}", result.kind, result.id);
     Ok(())
 }
+
+fn split_csv(s: Option<String>) -> Vec<String> {
+    s.unwrap_or_default()
+        .split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
+}
+
+pub async fn run_pack_zip(
+    path: Option<String>,
+    out: String,
+    name: String,
+    description: Option<String>,
+    rules: Option<String>,
+    skills: Option<String>,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let spec = ax_policy::PackSpec {
+        name,
+        description: description.unwrap_or_default(),
+        rule_ids: split_csv(rules),
+        skill_names: split_csv(skills),
+        ax_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    let bytes = ax_policy::build_policy_zip(&root, &spec).map_err(|e| e.to_string())?;
+    if let Some(parent) = std::path::Path::new(&out).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    std::fs::write(&out, bytes).map_err(|e| e.to_string())?;
+    println!("Wrote {}", out);
+    Ok(())
+}
+
+pub async fn run_policy_restore(
+    path: Option<String>,
+    zip: String,
+    preview: bool,
+    decisions: Option<String>,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let bytes = std::fs::read(&zip).map_err(|e| format!("{zip}: {e}"))?;
+    if preview {
+        let p = ax_policy::preview_policy_zip(&root, &bytes).map_err(|e| e.to_string())?;
+        println!("{}", serde_json::to_string_pretty(&p).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+    let decisions: std::collections::HashMap<String, ax_policy::RestoreAction> = match decisions {
+        Some(p) => {
+            let raw = std::fs::read_to_string(&p).map_err(|e| format!("{p}: {e}"))?;
+            serde_json::from_str(&raw).map_err(|e| format!("decisions: {e}"))?
+        }
+        None => std::collections::HashMap::new(),
+    };
+    let result = ax_policy::restore_policy_zip(&root, &bytes, &decisions).map_err(|e| e.to_string())?;
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    ax_policy::index_policy(ax.db_pool(), &root, true)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!(
+        "Restored: written {}, skipped {}, errors {}",
+        result.written.len(),
+        result.skipped.len(),
+        result.errors.len()
+    );
+    Ok(())
+}

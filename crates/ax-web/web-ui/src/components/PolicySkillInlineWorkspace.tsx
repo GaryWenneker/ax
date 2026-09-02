@@ -5,6 +5,7 @@ import PolicyMetaResizeHandle from './PolicyEditorResize';
 import { PageCard, PageCardBody, PageRow } from './ui/PageLayout';
 import { Spinner } from './ui/Spinner';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
+import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
   skillName: string;
@@ -25,6 +26,7 @@ function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
     tags: fm.tags ?? [],
     scope: fm.scope || 'project',
     status: fm.status || 'approved',
+    group: resolveSkillGroup(fm.group, fm.name, fm.tags ?? []),
   };
 }
 
@@ -197,6 +199,18 @@ export default function PolicySkillInlineWorkspace({ skillName, onClose, onSaved
                   onChange={(e) => setFm({ ...fm, rootId: e.target.value || null })}
                   placeholder="team-shared"
                 />
+              </PageRow>
+              <PageRow title="Group" description="Catalog folder on the Skills list.">
+                <select
+                  className="settings-select"
+                  value={fm.group || 'ungrouped'}
+                  onChange={(e) => setFm({ ...fm, group: e.target.value })}
+                  aria-label="Skill group"
+                >
+                  {SKILL_GROUPS.map((g) => (
+                    <option key={g.id} value={g.id}>{g.label}</option>
+                  ))}
+                </select>
               </PageRow>
               <PageRow title="Priority">
                 <input

@@ -814,6 +814,16 @@ enum PolicyCommands {
         id: String,
         path: Option<String>,
     },
+    /// Restore a portable `.ax-policy.zip` into `.agents/`
+    Restore {
+        /// Zip path
+        zip: String,
+        path: Option<String>,
+        #[arg(long, help = "Print preview JSON and do not write")]
+        preview: bool,
+        #[arg(long, help = "JSON file of rule:<id>|skill:<name> → overwrite|skip")]
+        decisions: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -855,6 +865,20 @@ enum PolicyPackCommands {
         list: bool,
         #[arg(long)]
         json: bool,
+    },
+    /// Build a portable zip of selected rules and skills
+    Zip {
+        path: Option<String>,
+        #[arg(long, help = "Output .ax-policy.zip path")]
+        out: String,
+        #[arg(long, help = "Package display name")]
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, help = "Comma-separated rule ids")]
+        rules: Option<String>,
+        #[arg(long, help = "Comma-separated skill names")]
+        skills: Option<String>,
     },
 }
 
@@ -1349,6 +1373,14 @@ async fn async_main() {
                     list,
                     json,
                 } => commands::policy::run_pack_install(path, name, force, list, json).await,
+                PolicyPackCommands::Zip {
+                    path,
+                    out,
+                    name,
+                    description,
+                    rules,
+                    skills,
+                } => commands::policy::run_pack_zip(path, out, name, description, rules, skills).await,
             },
             PolicyCommands::Review { action } => match action {
                 PolicyReviewCommands::List { path, json } => {
@@ -1374,6 +1406,12 @@ async fn async_main() {
             },
             PolicyCommands::Enable { id, path } => commands::policy::run_enable(path, id).await,
             PolicyCommands::Disable { id, path } => commands::policy::run_disable(path, id).await,
+            PolicyCommands::Restore {
+                zip,
+                path,
+                preview,
+                decisions,
+            } => commands::policy::run_policy_restore(path, zip, preview, decisions).await,
         },
         Some(Commands::Auth { action }) => match action {
             AuthCommands::Microsoft { action } => match action {

@@ -1186,7 +1186,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
         {!verboseEnabled && (
           <div className="settings-toast settings-toast--ok mcp-trace-hint">
-            Enable <strong>Verbose MCP logging</strong> above to record new tool calls. History
+            Enable <strong>Verbose MCP logging</strong> in Settings to record new tool calls. History
             below still tails the project log file.
           </div>
         )}

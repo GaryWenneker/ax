@@ -146,6 +146,33 @@ export default function SettingsPage() {
     }
   }
 
+  async function setUiVerboseMcp(verbose_mcp: boolean) {
+    const next = {
+      ...config,
+      ui: { ...(config.ui ?? {}), verbose_mcp },
+    };
+    setConfig(next);
+    setErr(null);
+    setMsg(null);
+    try {
+      await saveShipConfig(next);
+      window.dispatchEvent(
+        new CustomEvent('ax-ship-config-updated', { detail: { verbose_mcp } }),
+      );
+      setMsg(
+        verbose_mcp
+          ? 'Verbose MCP logging on — reconnect ax MCP to record new calls'
+          : 'Verbose MCP logging off',
+      );
+    } catch (e) {
+      setConfig((c) => ({
+        ...c,
+        ui: { ...(c.ui ?? {}), verbose_mcp: !verbose_mcp },
+      }));
+      setErr(String(e));
+    }
+  }
+
   async function setUiTimezone(timezone: string) {
     const prev = config.ui?.timezone ?? '';
     const next = {
@@ -316,6 +343,18 @@ export default function SettingsPage() {
                 label="Show Savings page"
                 checked={config.ui?.show_savings ?? config.ui?.show_tokens ?? true}
                 onChange={setUiSavings}
+              />
+            </SettingRow>
+
+            <SettingRow
+              title="Verbose MCP logging"
+              description="Record MCP tool calls to .ax/mcp-verbose-YYYY-MM-DD.log for this project. Reconnect ax MCP after enabling. Off by default — never changes tool responses. AX_MCP_VERBOSE=1 in MCP env still forces on."
+            >
+              <Toggle
+                label="Verbose MCP logging"
+                checked={config.ui?.verbose_mcp ?? false}
+                disabled={!configLoaded || !!busy}
+                onChange={setUiVerboseMcp}
               />
             </SettingRow>
 

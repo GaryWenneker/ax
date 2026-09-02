@@ -104,7 +104,7 @@ fn tokenizer_path(model: &Path) -> Option<PathBuf> {
 mod runtime {
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
 
     use ort::session::builder::GraphOptimizationLevel;
     use ort::session::Session;
@@ -129,7 +129,7 @@ mod runtime {
         out
     }
 
-    static SESSION: OnceLock<Option<Session>> = OnceLock::new();
+    static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
     static VOCAB: OnceLock<Option<WordPieceVocab>> = OnceLock::new();
 
     struct WordPieceVocab {
@@ -235,19 +235,23 @@ mod runtime {
         }
     }
 
-    fn session() -> Option<&'static Session> {
+    fn lock_session() -> Option<std::sync::MutexGuard<'static, Option<Session>>> {
         SESSION
             .get_or_init(|| {
-                let path = model_path()?;
-                tracing::info!(path = %path.display(), "loading ONNX embedding model");
-                Session::builder()
-                    .ok()?
-                    .with_optimization_level(GraphOptimizationLevel::Level3)
-                    .ok()?
-                    .commit_from_file(path)
-                    .ok()
+                let loaded = (|| {
+                    let path = model_path()?;
+                    tracing::info!(path = %path.display(), "loading ONNX embedding model");
+                    Session::builder()
+                        .ok()?
+                        .with_optimization_level(GraphOptimizationLevel::Level3)
+                        .ok()?
+                        .commit_from_file(path)
+                        .ok()
+                })();
+                Mutex::new(loaded)
             })
-            .as_ref()
+            .lock()
+            .ok()
     }
 
     fn vocab() -> Option<&'static WordPieceVocab> {
@@ -277,7 +281,8 @@ mod runtime {
     /// Run the ONNX session. Prefer WordPiece ids from `tokenizer.json`; fall
     /// back to hashed token-id stand-in when no vocab is available.
     pub fn try_embed(text: &str) -> Option<Vec<f32>> {
-        let session = session()?;
+        let mut guard = lock_session()?;
+        let session = guard.as_mut()?;
         let tokens: Vec<i64> = if let Some(v) = vocab() {
             v.encode(text, 128)
         } else {

@@ -90,6 +90,7 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
         root_id: get_str(&map, "rootId")
             .or_else(|| get_str(&map, "root_id"))
             .filter(|s| !s.is_empty()),
+        group: get_str(&map, "group").filter(|s| !s.is_empty()),
     })
 }
 
@@ -138,6 +139,7 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
         root_id: get_str(&map, "rootId")
             .or_else(|| get_str(&map, "root_id"))
             .filter(|s| !s.is_empty()),
+        group: get_str(&map, "group").filter(|s| !s.is_empty()),
     })
 }
 
@@ -242,6 +244,9 @@ pub fn serialize_rule(fm: &RuleFrontmatter, body: &str) -> String {
     if let Some(ref r) = fm.root_id {
         lines.push(format!("rootId: {r}"));
     }
+    if let Some(ref g) = fm.group {
+        lines.push(format!("group: {g}"));
+    }
     lines.push("---".into());
     lines.push(String::new());
     lines.push(body.trim().to_string());
@@ -295,6 +300,9 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     }
     if let Some(ref t) = fm.context_task {
         lines.push(format!("contextTask: {}", yaml_string(t)));
+    }
+    if let Some(ref g) = fm.group {
+        lines.push(format!("group: {g}"));
     }
     lines.push("---".into());
     lines.push(String::new());
@@ -394,6 +402,7 @@ mod tests {
             storage: None,
             source: None,
             root_id: None,
+            group: None,
         };
         let raw = serialize_rule(&fm, "Always say Hello World");
         let doc = parse_rule_file(Path::new("hello-world.mdc"), &raw).unwrap();
@@ -410,5 +419,27 @@ mod tests {
         let again = parse_skill_file(Path::new("SKILL.md"), &round).unwrap();
         assert!(again.frontmatter.always_apply);
         assert!(round.contains("alwaysApply: true"));
+    }
+
+    #[test]
+    fn parse_skill_group_roundtrip() {
+        let raw = "---\nname: perf-skill\ndescription: latency\ngroup: performance\n---\n\nTune it.\n";
+        let doc = parse_skill_file(Path::new("SKILL.md"), raw).unwrap();
+        assert_eq!(doc.frontmatter.group.as_deref(), Some("performance"));
+        let round = serialize_skill(&doc.frontmatter, &doc.body);
+        let again = parse_skill_file(Path::new("SKILL.md"), &round).unwrap();
+        assert_eq!(again.frontmatter.group.as_deref(), Some("performance"));
+        assert!(round.contains("group: performance"));
+    }
+
+    #[test]
+    fn parse_rule_group_roundtrip() {
+        let raw = "---\nid: explore-before-grep\nlevel: CRITICAL\nalwaysApply: true\ngroup: exploration\n---\n\nExplore first.\n";
+        let doc = parse_rule_file(Path::new("explore-before-grep.mdc"), &raw).unwrap();
+        assert_eq!(doc.frontmatter.group.as_deref(), Some("exploration"));
+        let round = serialize_rule(&doc.frontmatter, &doc.body);
+        let again = parse_rule_file(Path::new("explore-before-grep.mdc"), &round).unwrap();
+        assert_eq!(again.frontmatter.group.as_deref(), Some("exploration"));
+        assert!(round.contains("group: exploration"));
     }
 }

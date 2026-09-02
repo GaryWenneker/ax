@@ -210,7 +210,7 @@ mod tests {
         assert!(!r2.skipped.is_empty());
         assert!(dir
             .path()
-            .join(".ax/policy/rules/azdo-traceability.mdc")
+            .join(".agents/rules/azdo-traceability.mdc")
             .is_file());
     }
 }

@@ -5,7 +5,9 @@ description: ax MCP bootstrap — call ax_preflight every turn before other work
 ---
 # ax
 
-Call **`ax_preflight`** exactly once per turn **before all other work**. This is mandatory whenever the `user-ax` MCP server is available — regardless of whether `.ax/policy/` exists locally. Team rules and skills arrive via MCP inject — do not Read `.ax/policy/` files on disk when MCP policy tools are available.
+Call **`ax_preflight`** exactly once per turn **before all other work**. This is mandatory whenever the `user-ax` MCP server is available — regardless of whether `.agents/` exists locally. Team rules and skills arrive via MCP inject — do not Read `.agents/` or `.ax/policy/` files on disk when MCP policy tools are available.
+
+**Git-shared team files:** `.agents/rules/` and `.agents/skills/` (each skill is a directory with `SKILL.md`). Do not load `.ax/policy-private/` or `.ax/policy-inactive/`.
 
 **Inject fallback:** If the response lacks team policy (no `<ax_policy>` in `inject`, or empty `rules`), call **`ax_skill("startup")`** once — then continue.
 
@@ -34,7 +36,7 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Full index rebuild | `ax_index({ "force": true })` |
 | LSP status / Exact-edge enrich | `ax_lsp` (`action`: `status` \| `enrich`) |
 | Quality gate / CI evaluate | `ax_ship` (`mode`: `evaluate` \| `ci`) |
-| Refresh policy from `.ax/policy/` | `ax_policy_index` |
+| Refresh policy from `.agents/` | `ax_policy_index` |
 | Store / search memories | `ax_remember` / `ax_recall` |
 | File context for a symbol | `ax_node` |
 | Build task context | `ax_context` |

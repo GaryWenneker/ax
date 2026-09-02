@@ -13,10 +13,19 @@ Four layers work together in every project:
 |---|---|
 | **Knowledge graph** | Tree-sitter parsing → SQLite index of symbols, calls, imports, and routes |
 | **Memory vault** | Durable decisions, fixes, and conventions — hybrid recall, git auto-capture, preflight injection |
-| **Policy engine** | IDE-agnostic rules and skills in `.ax/policy/`, matched and injected per turn |
+| **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected per turn |
 | **Command Center** | Git watcher, quality gates, SonarQube, token savings, MCP Logging / Quality, SSE dashboard, draft PRs |
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
+
+## What's new in v4.7.0
+
+- **Portable policy zip** — Command Center Policy → Rules / Skills can **compose** and **restore** `.ax-policy.zip` packs (select all/none, generated descriptions, compare badges, git-style diffs). CLI: `ax policy pack zip` and `ax policy restore [--preview]`. See [Policy Engine](/guides/policy-engine/).
+- **Skill and rule groups** — lists use a shared folder catalog (collapse, **Collapse all** / **Expand all**, **Groups** filter). Optional `group` on skill (schema v18) and rule (schema v19) frontmatter.
+- **Git-shared `.agents/`** — Command Center shows which rules/skills are on the git-shared team path versus private overlays.
+- **Command Center polish** — policy table one-line tags, group-filter collapse, Markdown editor caret, content width on small screens, macOS theme contrast, Settings verbose MCP toggle.
+
+See [Policy Engine](/guides/policy-engine/) and [Command Center](/guides/command-center/).
 
 ## What's new in v4.6.0
 

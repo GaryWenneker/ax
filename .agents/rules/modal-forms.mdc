@@ -1,0 +1,67 @@
+---
+id: modal-forms
+level: CRITICAL
+alwaysApply: false
+globs: ["crates/ax-web/web-ui/**"]
+triggers: [
+  "form", "modal", "dialog", "overlay", "blur", "blurred backdrop",
+  "edit screen", "new screen", "create screen", "add profile", "add rule",
+  "composer", "settings form", "inline form", "new memory", "ProfileEditor",
+  "PolicyRuleEditor", "PolicySkillEditor", "AgentsSettings", "Settings.tsx",
+  "Memory.tsx", "PageCard", "settings page", "web-ui", "Command Center",
+  "edit form", "create form", "multi-field", "wizard"
+]
+tags: ["ax-web", "ui", "modal", "forms"]
+priority: 92
+---
+# ax web UI — modals for forms and edit screens
+
+> **ABSOLUTE**: Create, edit, and multi-field configuration flows MUST NOT render as inline page sections. They open in a **centered modal** with a **blurred backdrop**.
+
+## When this applies
+
+Any new or changed UI under `crates/ax-web/web-ui/` that:
+
+- Creates a new entity (profile, memory, rule, skill, workspace, …)
+- Edits an existing entity via a form
+- Collects multi-field user input (more than one control in a flow)
+
+This rule is matched automatically when prompts mention forms, modals, edit screens, or new screens in the web UI.
+
+## Required pattern
+
+Use `ModalShell` from `components/ModalShell.tsx`:
+
+```text
+1. Page shows a trigger button only (e.g. "Add profile", "New memory", "Edit")
+2. Modal overlay: position fixed, inset 0, semi-transparent backdrop, backdrop-filter: blur(4px)
+3. Centered panel: title, optional subtitle, form body, footer with Cancel + primary action
+4. Close on Esc, backdrop click (outside panel), and Cancel
+5. document.body overflow hidden while open
+6. createPortal(..., document.body) so modals sit above the app shell
+```
+
+## Allowed inline (no modal)
+
+- Single-row `SettingRow` controls on Settings (one select, one toggle)
+- Read-only list + detail split panes (Nodes, Memory list, Files tree)
+- Full-page primary views routed via hash when the entire page *is* the editor (Policy rule/skill page in view mode)
+
+## Forbidden
+
+- Inline expandable form blocks that push page content down (accordion create/edit sections)
+- "Add …" flows embedded in card body without a modal
+- Modals without blurred backdrop
+- Reporting form UI work complete without using `ModalShell` or equivalent shared overlay classes (`.ax-modal-overlay`)
+
+## Reference implementations
+
+- `components/ModalShell.tsx` — shared form modal wrapper
+- `components/ProjectBrowserModal.tsx` — browse/switch dialog (same overlay pattern)
+- `components/AgentsSettingsSection.tsx` — Add profile modal
+- `components/agent/ProfileEditor.tsx` — Edit profile modal
+- `pages/Memory.tsx` — New memory modal
+
+## With web-ui changes
+
+Follow `web-ui-rebuild` — rebuild and reinstall `ax` before handoff.

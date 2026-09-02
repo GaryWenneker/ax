@@ -810,7 +810,7 @@ async fn policy_capture(ax: &mut Ax, params: Value) -> Result<Value, String> {
             "action": "save",
             "id": doc.frontmatter.id,
             "storage": storage_label,
-            "path": format!(".ax/policy/rules/{}.mdc", doc.frontmatter.id),
+            "path": format!(".agents/rules/{}.mdc", doc.frontmatter.id),
             "instruction": format!(
                 "Rule saved to {storage_label}. It will match on future turns via ax_preflight."
             ),

@@ -43,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 
 static WEB_DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/web-ui/dist");
+const _: &str = env!("AX_WEB_DIST_STAMP");
 
 #[derive(Serialize)]
 struct WebStats {

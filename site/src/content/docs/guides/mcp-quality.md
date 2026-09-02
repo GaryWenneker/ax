@@ -67,7 +67,7 @@ Pick one:
 
 | Method | Effect |
 |---|---|
-| **Logging → Verbose MCP logging** | Writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project |
+| **Settings → Interface → Verbose MCP logging** | Writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project |
 | `AX_MCP_VERBOSE=1` | Env on the MCP server process (Cursor MCP config) |
 
 Then **restart / reconnect** the ax MCP server in your agent.
@@ -174,7 +174,7 @@ Auditor softens false positives when possible: recovered MCP errors (same-tool s
 ```bash
 # One-time
 ax savings hook install
-# Command Center → Logging → Verbose MCP logging = on
+# Settings → Interface → Verbose MCP logging = on
 # Restart ax MCP in Cursor
 
 # During / after a session

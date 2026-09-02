@@ -164,6 +164,9 @@ pub struct RuleFrontmatter {
     /// Write under a configured `policy.roots` mount instead of the scope dir.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_id: Option<String>,
+    /// Catalog group id. Display grouping only — not used by matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +198,9 @@ pub struct SkillFrontmatter {
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_id: Option<String>,
+    /// Catalog group id. Display grouping only — not used by matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +258,9 @@ pub struct PolicyRuleRow {
     /// True when `storage` is set on the item (not inheriting default).
     #[serde(default)]
     pub storage_is_override: bool,
+    /// Resolved catalog group id after enrich.
+    #[serde(default)]
+    pub group: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +294,9 @@ pub struct PolicySkillRow {
     pub effective_storage: String,
     #[serde(default)]
     pub storage_is_override: bool,
+    /// Resolved catalog group id after enrich. Stored value lives in frontmatter.
+    #[serde(default)]
+    pub group: String,
 }
 
 #[derive(Debug, Clone, Default)]

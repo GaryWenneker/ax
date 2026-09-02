@@ -11,7 +11,7 @@ ax serve --mcp
 
 When a `.ax/` index exists, the agent gets the tools below. In a workspace with **no** index, the server announces itself inactive and lists **no** graph tools — the agent works normally with its built-in tools, and indexing stays your decision.
 
-When `.ax/policy/` is indexed (**ax v2.0.0+**), policy tools are listed automatically. See [Policy Engine](/guides/policy-engine/).
+When `.agents/` is indexed (**ax v2.0.0+**), policy tools are listed automatically. See [Policy Engine](/guides/policy-engine/).
 
 ## Default catalog: the graph read surface
 
@@ -57,7 +57,7 @@ Opt-in per the section above (e.g. `AX_MCP_TOOLS=all` or `lsp,ship`). Mirror hig
 | `ax_index` | Re-index; optional `force: true` clears and full-indexes (default behaves like `ax_sync`) |
 | `ax_lsp` | `action: "status"` lists language servers; `action: "enrich"` resolves Exact edges (`limit` optional) — same as `ax lsp status\|enrich` |
 | `ax_ship` | Quality-gate pipeline: `mode: "evaluate"` (default) or `"ci"`. Returns the ship report JSON. For `ci`, MCP `isError` is set when the gate fails — **never** exits the MCP process |
-| `ax_policy_index` | Re-index / import rules and skills from `.ax/policy/` (`force` optional) |
+| `ax_policy_index` | Re-index / import rules and skills from `.agents/` (`force` optional) |
 | `ax_diagnostics` | Correlate editor/linter diagnostics with the graph |
 
 `ax_sync` is **not** in this list — it is advertised by default, because `prefer-mcp-ops` requires agents to call it after edits rather than running `ax sync` in a shell.
@@ -81,7 +81,7 @@ When `.ax/policy/` contains indexed rules or skills, the server also exposes:
 | `ax_skill` | Load the full markdown body of a skill by name |
 | `ax_guard` | Block or warn before writes that violate CRITICAL rules. Built-in checks: UTF-8 BOM/encoding, secrets paths. **Generic gate:** any CRITICAL rule can opt in without code changes by adding a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"` (scoped by that rule's `globs` when it has any), `guard: require-content: "<substring or /regex/>"` (scoped by that rule's `globs`), or `guard: require-skill: "<name>"` (skill must be approved and `alwaysApply`) line to its body. |
 
-Agents should **not** read `.ax/policy/` files when these tools are available — policy is indexed locally and returned in MCP responses.
+Agents should **not** read `.agents/` files when these tools are available — policy is indexed locally and returned in MCP responses.
 
 **Cursor:** call `ax_preflight` at turn start (MCP pull only — no prompt-hook).
 
@@ -141,7 +141,7 @@ Set `AX_MCP_FULL=1` to restore the full `structuredContent` for every tool (for 
 
 To watch what each tool receives, how preflight enrichment builds the inject block, and what ax sends back on the wire — without changing agent-facing payloads — follow the full guide: **[MCP Logging & Quality](/guides/mcp-quality/)**. Short version:
 
-1. Enable **Logging → Verbose MCP logging** in Command Center (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
+1. Enable **Settings → Interface → Verbose MCP logging** in Command Center (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
 2. Reconnect / restart the ax MCP server in Cursor.
 3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI).
 
@@ -162,7 +162,7 @@ Lines are prefixed with `[ax-mcp]`. They are written to the log file (and option
 | Variable | Default | Purpose |
 |---|---|---|
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every tool |
-| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` emits inbound/enrichment/outbound traces to stderr (Cursor Output); same as Logging → Verbose MCP logging |
+| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` emits inbound/enrichment/outbound traces to stderr (Cursor Output); same as Settings → Interface → Verbose MCP logging |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
 | `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |

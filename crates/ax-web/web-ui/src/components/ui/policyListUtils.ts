@@ -21,6 +21,18 @@ export function normalizePolicyScope(scope?: string) {
   return scopeOf(scope);
 }
 
+/** Layers that live under `.agents/` and are exportable in a git pack. */
+const GIT_SHARED_SCOPES = new Set(['project', 'workspace']);
+
+/**
+ * True when a rule/skill is git-shared: enabled and project or workspace scope.
+ * Matches packable + enabled (private, company, and disabled are not shared).
+ */
+export function isGitShared(scope?: string, enabled?: boolean): boolean {
+  if (enabled === false) return false;
+  return GIT_SHARED_SCOPES.has(normalizePolicyScope(scope));
+}
+
 /** Unique tags across rows, sorted case-insensitively. */
 export function collectTags(items: { tags: string[] }[]): string[] {
   const seen = new Map<string, string>();

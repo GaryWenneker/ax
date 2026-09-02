@@ -198,7 +198,7 @@ export default function McpQualitySlideout({ open, onClose, highlightFindingId }
 
           {!snap.verboseEnabled && (
             <div className="mcp-q-banner mcp-q-banner--warn">
-              Verbose MCP logging is off. Enable it on the Logging page so the quality loop can score enrichment.
+              Verbose MCP logging is off. Enable it under Settings → Interface so the quality loop can score enrichment.
             </div>
           )}
 

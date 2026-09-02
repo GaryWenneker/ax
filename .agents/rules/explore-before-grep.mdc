@@ -1,0 +1,40 @@
+---
+id: explore-before-grep
+level: CRITICAL
+alwaysApply: true
+triggers: ["grep", "read file", "how does", "architecture", "call path", "who calls", "impact", "find code", "search codebase", "where is", "blast radius", "fix", "how works"]
+tags: ["mcp", "tokens", "explore", "quality"]
+priority: 95
+---
+# Explore before Grep/Read
+
+> **ABSOLUTE**: For structural code questions — how something works, call paths, blast radius, architecture, "where is X", "who calls Y" — call **`ax_explore`** (or `ax_search` / `ax_node` / graph tools) **before** broad `Grep` / `Read` sweeps. Skipping this is a protocol violation and tanks MCP quality (`ExploreBeforeGrep`).
+
+`GetMcpTools` / schema discovery is **not** explore. You must call `ax_explore` (or another graph tool) in the same turn before repo-wide Grep/Read.
+
+## Why
+
+Graph answers usually replace many file reads. One `ax_explore` + targeted `ax_node` / `ax_callers` beats a dozen Greps. Agents that open with repo-wide Grep/Read burn tokens and weaken the quality score.
+
+## Required order
+
+```text
+1. ax_preflight   [once per turn]
+2. ax_explore / ax_search / ax_node / ax_callers / …
+3. Read / Grep only for files the graph already pointed to
+```
+
+Treat numbered source returned by `ax_explore` as already read — do not re-Grep the same symbols.
+
+## Allowed Grep/Read without explore
+
+- Opening a file path the user explicitly named
+- Editing a file you already have in context from this turn
+- MCP unreachable (Mode: DEGRADED) — then Grep/Read is fallback; say so
+
+## Forbidden
+
+- Starting structural investigation with repo-wide Grep/Read while ax MCP is available
+- Re-deriving architecture that `ax_explore` / `ax_insights` already indexes
+- Using Grep to discover call paths when `ax_callers` / `ax_callees` / `ax_impact` exist
+- Treating `GetMcpTools` as a substitute for `ax_explore`

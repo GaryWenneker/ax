@@ -39,7 +39,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function fetchPolicyRules(): Promise<{ rules: PolicyRuleRow[] }> {
+export function fetchPolicyRules(): Promise<{ rules: PolicyRuleRow[]; groups?: unknown }> {
   return request('/rules');
 }
 
@@ -59,7 +59,7 @@ export function deletePolicyRule(id: string): Promise<{ ok: boolean }> {
   return request(`/rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-export function fetchPolicySkills(): Promise<{ skills: PolicySkillRow[] }> {
+export function fetchPolicySkills(): Promise<{ skills: PolicySkillRow[]; groups?: Array<{ id: string; label: string; order: number }> }> {
   return request('/skills');
 }
 
@@ -166,4 +166,89 @@ export function savePolicyCapture(frontmatter: RuleFrontmatter, body: string): P
     method: 'POST',
     body: JSON.stringify({ action: 'save', prompt: '', rule: { frontmatter, body } }),
   });
+}
+
+export interface PolicyPackagePreviewItem {
+  kind: string;
+  id: string;
+  status: string;
+  compare?: string;
+  summary?: string;
+  reason?: string;
+}
+
+export interface PolicyPackageItemDiff {
+  kind: string;
+  id: string;
+  compare: string;
+  unified: string;
+}
+
+export interface PolicyPackagePreview {
+  name: string;
+  items: PolicyPackagePreviewItem[];
+}
+
+export interface PolicyPackageRestoreResult {
+  written: string[];
+  skipped: string[];
+  errors: string[];
+}
+
+async function throwIfNotOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  const body = (await res.json().catch(() => ({}))) as ApiErrorBody;
+  throw new Error(formatApiError(body, res.status));
+}
+
+export async function downloadPolicyPackage(input: {
+  name: string;
+  description?: string;
+  ruleIds: string[];
+  skillNames: string[];
+}): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${POLICY}/package`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  await throwIfNotOk(res);
+  const cd = res.headers.get('content-disposition') ?? '';
+  const match = /filename="([^"]+)"/.exec(cd);
+  const filename = match?.[1] ?? 'package.ax-policy.zip';
+  return { blob: await res.blob(), filename };
+}
+
+export async function previewPolicyPackage(file: File): Promise<PolicyPackagePreview> {
+  const fd = new FormData();
+  fd.append('package', file);
+  const res = await fetch(`${POLICY}/package/preview`, { method: 'POST', body: fd });
+  await throwIfNotOk(res);
+  return res.json() as Promise<PolicyPackagePreview>;
+}
+
+export async function diffPolicyPackageItem(
+  file: File,
+  kind: string,
+  id: string,
+): Promise<PolicyPackageItemDiff> {
+  const fd = new FormData();
+  fd.append('package', file);
+  fd.append('kind', kind);
+  fd.append('id', id);
+  const res = await fetch(`${POLICY}/package/diff`, { method: 'POST', body: fd });
+  await throwIfNotOk(res);
+  return res.json() as Promise<PolicyPackageItemDiff>;
+}
+
+export async function restorePolicyPackage(
+  file: File,
+  decisions: Record<string, 'overwrite' | 'skip'>,
+): Promise<PolicyPackageRestoreResult> {
+  const fd = new FormData();
+  fd.append('package', file);
+  fd.append('decisions', JSON.stringify(decisions));
+  const res = await fetch(`${POLICY}/package/restore`, { method: 'POST', body: fd });
+  await throwIfNotOk(res);
+  return res.json() as Promise<PolicyPackageRestoreResult>;
 }
