@@ -18,6 +18,14 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.7.1
+
+- **Safer policy zip restore** — new items have Skip / Install; conflicts show **Local newer** / **Package newer**. Restore skips older package bytes over a newer local file unless you overwrite. See [Policy Engine](/guides/policy-engine/).
+- **macOS status bar contrast** — footer ink is computed from the painted accent (WCAG AA 4.5:1). Light system blue uses **dark** letters. CRITICAL rule `wcag-contrast`.
+- **Update notice in Command Center** — `ax web` / `ax desktop` check for a newer GitHub release when the UI starts.
+
+See [Policy Engine](/guides/policy-engine/) and [Command Center](/guides/command-center/).
+
 ## What's new in v4.7.0
 
 - **Portable policy zip** — Command Center Policy → Rules / Skills can **compose** and **restore** `.ax-policy.zip` packs (select all/none, generated descriptions, compare badges, **Local newer** / **Package newer**, Skip/Install on new items, git-style diffs). CLI: `ax policy pack zip` and `ax policy restore [--preview]`. See [Policy Engine](/guides/policy-engine/).

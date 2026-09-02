@@ -3,11 +3,11 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v4.7.0](https://github.com/GaryWenneker/ax/releases/tag/v4.7.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v4.7.1](https://github.com/GaryWenneker/ax/releases/tag/v4.7.1)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (`.agents/` rules and skills), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
 
-**v4.7.0** adds **portable policy zip** packs (`ax policy pack zip` / `ax policy restore`, Command Center compose/restore with diffs), **grouped rules and skills**, git-share indicators for `.agents/`, and Command Center polish (one-line tags, Markdown caret, compact layout, macOS contrast, verbose MCP settings).
+**v4.7.1** adds safer policy zip restore (Skip/Install on new items, local-vs-package newer badges, no older overwrite by default), WCAG AA macOS status-bar ink, and the Command Center update notice at `ax web` start.
 
 **v4.6.0** adds **Graph Start here** (Leiden subsystems, god-node tour, suggested questions) and an opt-in **Domain** overlay (`.ax/domain-graph.json`, agent `domain` skill) so you can show business flows without writing those nodes into `ax.db`. See [Architecture Insights](https://getax.wenneker.io/guides/architecture-insights/).
 
