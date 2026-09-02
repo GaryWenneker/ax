@@ -1,0 +1,32 @@
+---
+id: finish-full-ship-pipeline
+level: CRITICAL
+alwaysApply: false
+globs: []
+triggers: ["ship","bump","rebuild","deploy","release","tag","publish"]
+tags: ["release","ship"]
+priority: 90
+enabled: true
+status: approved
+scope: project
+---
+
+# Finish the full ship pipeline yourself
+
+> **ABSOLUTE**: When the user asks to ship, bump, rebuild, deploy, release, tag, or publish ax, complete the pipeline in-session. Do not stop by handing them `git push` or tag commands.
+
+## Required sequence
+
+1. Quality gate (`ax_ship` evaluate, or CLI if MCP has no `ax_ship`).
+2. Commit pending feature work on `main`.
+3. Bump versions, update docs (What's new, README, installation, CLI frontmatter, `latest.txt`).
+4. Create the annotated GitHub tag, **push `origin main`**, **push the tag**.
+5. Wait for `.github/workflows/release.yml` and verify six platform assets.
+6. Local rebuild/reinstall (`scripts/reinstall-cli.sh` on macOS).
+7. Tell the user only to **MCP: Restart Servers** (and `hash -r` if PATH was cached).
+
+A ship/release request **is** authorization to commit, tag, and push. If the sandbox or Auto-review blocks publish, request approval and retry the same command. Do not treat a copy-paste `git push` as the happy path.
+
+If GitHub auth fails after retries: report the exact error, what is already done (commits, local tag, local binary), and the next fix (credentials, `gh auth login`, SSH remote). Still do not mark the release complete.
+
+On macOS without PowerShell: replicate `scripts/release-tag.ps1` (version bump, `latest.txt`, tag, push, wait) instead of skipping publish.

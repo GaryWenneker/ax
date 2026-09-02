@@ -8,7 +8,9 @@ disable-model-invocation: true
 
 # ship — ax release pipeline
 
-Orchestrates the full ax release workflow on Windows. Repo root: `C:\gary\ax`.
+> **ABSOLUTE**: Finish this pipeline **in-session**. A ship/bump/release request authorizes commit, tag, and `git push` of `main` and the release tag. Do **not** stop by handing the user push/tag commands. If Auto-review blocks publish, request approval and retry. If GitHub auth fails, report the exact error and keep the release incomplete.
+
+Orchestrates the full ax release workflow. Windows repo root: `C:\gary\ax`. macOS: `/Users/gary/io/ax` (use `scripts/reinstall-cli.sh`; replicate `release-tag.ps1` if `pwsh` is missing).
 
 ## When to use
 
