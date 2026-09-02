@@ -453,9 +453,14 @@ async fn head_ok(client: &reqwest::Client, url: &str, token: Option<&str>) -> bo
     }
 }
 
-async fn latest_with_cache(repo: &str) -> Option<String> {
+/// Fresh 24h cache is skipped when `force_refresh` is true (`ax web` / `ax desktop` start).
+pub(crate) fn use_cached_latest(force_refresh: bool, cache_fresh: bool) -> bool {
+    !force_refresh && cache_fresh
+}
+
+async fn latest_with_cache_opts(repo: &str, force_refresh: bool) -> Option<String> {
     if let Some(cache) = load_cache() {
-        if cache_is_fresh(&cache) {
+        if use_cached_latest(force_refresh, cache_is_fresh(&cache)) {
             return Some(cache.latest);
         }
     }
@@ -471,6 +476,10 @@ async fn latest_with_cache(repo: &str) -> Option<String> {
     }
 }
 
+async fn latest_with_cache(repo: &str) -> Option<String> {
+    latest_with_cache_opts(repo, false).await
+}
+
 pub fn print_update_notice(current: &str, latest: &str) {
     show_update_notice(
         &strip_v(&normalize_version(current)),
@@ -480,12 +489,17 @@ pub fn print_update_notice(current: &str, latest: &str) {
 
 /// Non-blocking-ish notice after CLI commands (respects cache + env gates).
 pub async fn maybe_notify_update() {
+    maybe_notify_update_with(false).await;
+}
+
+/// `force_refresh`: hit GitHub/CDN even if `~/.ax/update-check.json` is still fresh.
+pub async fn maybe_notify_update_with(force_refresh: bool) {
     if update_check_disabled() {
         return;
     }
     let current = current_version();
     let repo = github_repo();
-    let Some(latest) = latest_with_cache(&repo).await else {
+    let Some(latest) = latest_with_cache_opts(&repo, force_refresh).await else {
         return;
     };
     if is_update_available(current, &latest) {
@@ -586,5 +600,13 @@ mod tests {
             "v2.0.5".into(),
         ]);
         assert_eq!(sorted.first().map(String::as_str), Some("v2.0.12"));
+    }
+
+    #[test]
+    fn long_running_start_bypasses_fresh_cache() {
+        assert!(!use_cached_latest(true, true));
+        assert!(use_cached_latest(false, true));
+        assert!(!use_cached_latest(false, false));
+        assert!(!use_cached_latest(true, false));
     }
 }

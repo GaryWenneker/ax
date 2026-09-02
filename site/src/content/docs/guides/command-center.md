@@ -141,7 +141,7 @@ Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left
 
 Full walkthrough: [MCP Logging & Quality](/guides/mcp-quality/).
 
-Open with `ax web --open` or `ax ship --watch --open`.
+Open with `ax web --open` or `ax ship --watch --open`. If a newer GitHub release exists, `ax web` / `ax desktop` print an update notice on stderr **before** the UI stays running (`ax upgrade` to install).
 
 If pages render but stay empty / forever loading, close extra Command Center tabs and hard-refresh (`Ctrl+Shift+R`). Multiple long-lived SSE streams used to exhaust the browser’s ~6 HTTP/1.1 sockets per host; the UI now shares one EventSource per URL per tab. You can also hit `http://127.0.0.1:PORT/api/reset-client-cache` once if a stale service worker is involved.
 

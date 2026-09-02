@@ -5,7 +5,7 @@ use owo_colors::OwoColorize;
 use super::glyphs::clack_glyphs;
 use super::style::{accent, bold, dim};
 
-/// Print a boxed "update available" notice to stderr (non-blocking post-command hint).
+/// Print a boxed "update available" notice to stderr (after short commands, or at `ax web` start).
 pub fn print_update_notice(current: &str, latest: &str) {
     let g = clack_glyphs();
     let version_line = format!("{current} → {latest}");

@@ -876,6 +876,8 @@ Local web UI — graph browser, policy editor, token usage dashboard, Command Ce
 
 Set `AX_WEB_READONLY=1` for browse-only mode.
 
+On start, `ax web` checks GitHub for a newer release (skips the 24-hour `~/.ax/update-check.json` cache) and prints the boxed notice to stderr **before** the server blocks. Disable with `AX_NO_UPDATE_CHECK=1`. Short commands still check after they exit.
+
 ```bash
 ax web
 ax web ./my-repo --port 8080 --open

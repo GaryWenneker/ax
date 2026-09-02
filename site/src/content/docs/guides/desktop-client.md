@@ -26,6 +26,8 @@ ax desktop
 ax desktop --port 17070
 ```
 
+If a newer GitHub release exists, `ax desktop` prints the same update notice as `ax web` before the window stays open.
+
 Or from a checkout of the ax repo (standalone binary):
 
 ```bash

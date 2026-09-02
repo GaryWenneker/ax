@@ -1050,6 +1050,12 @@ fn run_desktop_on_os_main_thread() {
 
     let result = match cli.command {
         Some(Commands::Desktop { path, port, bind }) => {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                rt.block_on(version_check::maybe_notify_update_with(true));
+            }
             commands::desktop::run(path, port, bind)
         }
         _ => Err("internal: expected `ax desktop`".into()),
@@ -1522,6 +1528,8 @@ async fn async_main() {
 fn should_notify_update(cmd: &Option<Commands>) -> bool {
     match cmd {
         Some(Commands::Serve { .. })
+        | Some(Commands::Web { .. })
+        | Some(Commands::Desktop { .. })
         |         Some(Commands::PromptHook)
         | Some(Commands::SessionHook)
         | Some(Commands::StopHook)
