@@ -12,6 +12,8 @@ import {
 import {
   compareBadgeClass,
   compareLabel,
+  newerBadgeClass,
+  newerLabel,
   policyItemDescription,
   unifiedDiffLines,
 } from '../policyPackage';
@@ -284,7 +286,7 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
       setItems(preview.items);
       const next: Record<string, 'overwrite' | 'skip'> = {};
       for (const item of preview.items) {
-        const action = defaultRestoreAction(item.status);
+        const action = defaultRestoreAction(item.status, item.newer);
         if (action) next[`${item.kind}:${item.id}`] = action;
       }
       setDecisions(next);
@@ -332,7 +334,7 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
       subtitle={
         packName
           ? `Preview: ${packName}. Badges show local vs package. Click a row for a git-style diff.`
-          : 'Upload an .ax-policy.zip, then choose skip or overwrite on conflicts.'
+          : 'Upload an .ax-policy.zip, then choose skip or install/overwrite per item. Local newer files default to skip.'
       }
       onClose={onClose}
       footer={
@@ -388,16 +390,19 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
                         </td>
                         <td>
                           <span className={compareBadgeClass(compare)}>{compareLabel(compare)}</span>
+                          {item.newer && newerLabel(item.newer) ? (
+                            <span className={newerBadgeClass(item.newer)}>{newerLabel(item.newer)}</span>
+                          ) : null}
                           {item.status === 'conflict' ? <span className="muted"> exists locally</span> : null}
                           {item.reason ? <span className="muted"> ({item.reason})</span> : null}
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
                           {item.status === 'invalid' ? (
                             <span className="muted">cannot install</span>
-                          ) : item.status === 'conflict' ? (
+                          ) : (
                             <select
                               className="settings-select"
-                              value={decisions[key] ?? 'skip'}
+                              value={decisions[key] ?? (item.status === 'new' ? 'overwrite' : 'skip')}
                               onChange={(e) =>
                                 setDecisions({
                                   ...decisions,
@@ -406,10 +411,10 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
                               }
                             >
                               <option value="skip">Skip</option>
-                              <option value="overwrite">Overwrite</option>
+                              <option value="overwrite">
+                                {item.status === 'new' ? 'Install' : 'Overwrite'}
+                              </option>
                             </select>
-                          ) : (
-                            <span>Install</span>
                           )}
                         </td>
                       </tr>

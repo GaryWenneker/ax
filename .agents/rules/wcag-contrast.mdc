@@ -1,0 +1,36 @@
+---
+id: wcag-contrast
+level: CRITICAL
+alwaysApply: true
+globs: ["crates/ax-web/web-ui/**"]
+triggers: ["theme", "contrast", "WCAG", "statusbar", "footer", "macOS"]
+tags: ["a11y", "wcag"]
+priority: 92
+enabled: true
+status: approved
+scope: project
+---
+# WCAG contrast — Command Center chrome
+
+> **ABSOLUTE**: Text on Command Center colored chrome (status bar, accent fills, primary-on-accent labels) MUST meet [WCAG 2.2](https://www.w3.org/TR/WCAG22/) contrast.
+
+## Thresholds
+
+| Text | Minimum ratio |
+|------|----------------|
+| Normal text (status bar labels) | **4.5:1** (AA) |
+| Accent used as body text on `--bg` | **7:1** (AAA) |
+
+## Status bar (footer)
+
+The footer background is **`var(--accent)`** (after `themeAccentFill`). Ink MUST be `statusbarInk(fill)` from that same hex, not `theme.statusbarBg`. Light macOS blue (`#64d2ff`) → **dark** ink. Never near-white letters on that fill.
+
+## Enforcement
+
+- `crates/ax-web/web-ui/src/lib/themes.test.ts` W8–W10
+- `bash tools/gauntlet-macos-theme.sh`
+
+## Forbidden
+
+- White / `#f3f3f3` on macOS system blue when dark ink meets AA
+- Darkening `--accent` only so white labels pass (`ensureWhiteOnFill` on the status bar)

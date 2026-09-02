@@ -1174,6 +1174,22 @@ html, body {
   background: color-mix(in srgb, #f85149 22%, transparent);
 }
 
+.policy-pack-badge--newer-local {
+  margin-left: 6px;
+  background: color-mix(in srgb, #3fb950 22%, transparent);
+}
+
+.policy-pack-badge--newer-package {
+  margin-left: 6px;
+  background: color-mix(in srgb, #58a6ff 22%, transparent);
+}
+
+.policy-pack-badge--newer-equal,
+.policy-pack-badge--newer-unknown {
+  margin-left: 6px;
+  background: color-mix(in srgb, var(--text-dim, #8b949e) 22%, transparent);
+}
+
 .policy-pack-preview {
   width: 100%;
 }

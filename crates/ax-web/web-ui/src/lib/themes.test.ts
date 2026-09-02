@@ -5,6 +5,8 @@ import {
   contrastRatioHex,
   ensureTextContrast,
   ensureWhiteOnFill,
+  statusbarInk,
+  themeAccentFill,
   themeById,
 } from './themes.ts';
 
@@ -67,5 +69,30 @@ describe('WCAG AA contrast', () => {
     const fg = ensureTextContrast('#0a84ff', '#1c1c1e');
     const r = contrastRatioHex(fg, '#1c1c1e');
     assert.ok(r >= 7, `${fg} vs #1c1c1e ratio ${r.toFixed(2)}`);
+  });
+
+  it('W8 statusbar ink vs painted accent meets AA 4.5:1 (macOS footer bug)', () => {
+    for (const t of THEMES) {
+      const painted = themeAccentFill(t);
+      const ink = statusbarInk(painted);
+      const r = contrastRatioHex(ink.fg, painted);
+      assert.ok(r >= 4.5, `${t.id} statusbar ${ink.fg} on painted ${painted} ratio ${r.toFixed(2)}`);
+    }
+  });
+
+  it('W9 macOS footer uses dark ink on light system blue', () => {
+    const macos = themeById('macos');
+    const painted = themeAccentFill(macos);
+    const ink = statusbarInk(painted);
+    assert.equal(painted, '#64d2ff');
+    assert.equal(ink.onLight, true);
+    assert.ok(contrastRatioHex(ink.fg, painted) >= 4.5);
+  });
+
+  it('W10 applyTheme computes statusbar ink from painted fill', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('./themes.ts', import.meta.url), 'utf8');
+    assert.match(src, /statusbarInk\(fill\)/);
+    assert.equal(src.includes('statusbarInk(theme.statusbarBg'), false);
   });
 });

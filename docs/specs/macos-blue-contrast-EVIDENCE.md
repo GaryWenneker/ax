@@ -1,27 +1,30 @@
-# EVIDENCE: macOS blue contrast (AAA)
+# EVIDENCE: macOS blue contrast (AAA) + status bar WCAG AA
 
-**SPEC:** `/Users/gary/io/ax/docs/specs/macos-blue-contrast.md`
-**spec approval:** not obtained (autonomous)
+**SPEC:** `/Users/gary/io/ax/docs/specs/macos-blue-contrast.md` (B5)
+**spec approval:** B5 implemented from user "los het op" + WCAG rule request (2026-09-02). Prior B1–B4: autonomous.
+**tier:** 2
 **command:** `bash /Users/gary/io/ax/tools/gauntlet-macos-theme.sh`
+**rule:** `.agents/rules/wcag-contrast.mdc` (CRITICAL, `ax_policy_capture` save)
+
+Fresh run after last edit:
 
 ```
 == theme unit tests ==
-  10 pass, 0 fail
+  13 passed (themes.test.ts)
 == wiring ==
 == negative control (grep gate) ==
 == tsc ==
 == manual mutation ==
 killed rename-id
 killed wrong-accent
-killed wrong-label
+killed ink-from-statusbarBg
 gauntlet-macos-theme: ok
 ```
 
 | Behavior | Check |
 |----------|--------|
-| B1 | M1 `macos.accent === #64d2ff`; W6 ratio ≥ 7 vs `#1c1c1e` |
-| B2 | W7 `ensureTextContrast('#0a84ff', '#1c1c1e')` ≥ 7 |
-| B3 | `applyTheme` lightens fill; no `ensureWhiteOnFill` on `--accent` |
-| B4 | `--accent-on-fill` + macos `.nav-item.active` |
+| B1–B4 | M1–M3, W6–W7, `--accent-on-fill` |
+| B5 footer | W8 every theme statusbar fg vs `themeAccentFill` ≥ 4.5:1; W9 macOS dark ink on `#64d2ff`; W10 `statusbarInk(fill)` not `statusbarBg` |
+| Rule | `id: wcag-contrast` CRITICAL alwaysApply |
 
-Skipped: browser (restart `ax web`). Relink Mach-O after embed (do not `cp` onto existing `target-dev/release/ax`).
+Skipped: browser E2E (rebuild/reinstall `ax web`, hard refresh, macOS theme). Independent verification: not performed.

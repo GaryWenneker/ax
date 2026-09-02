@@ -290,9 +290,17 @@ export function ensureWhiteOnFill(fill: string, min = WCAG_AA): string {
   return '#000000';
 }
 
+export function themeAccentFill(theme: ThemePreset): string {
+  let fill = theme.accent;
+  if (relativeLuminance(theme.bg) < 0.5 && contrastRatioHex(fill, theme.bg) < WCAG_AAA) {
+    fill = ensureTextContrast(fill, theme.bg);
+  }
+  return fill;
+}
+
 /**
- * Pick status-bar foreground for a solid accent background.
- * Light accents (ax Mint) → dark ink; dark accents → light ink.
+ * Pick status-bar foreground for the painted accent fill (the footer uses `--accent`).
+ * Chooses dark vs light ink by measured contrast, then lifts to WCAG AA 4.5:1.
  */
 export function statusbarInk(accentHex: string): {
   fg: string;
@@ -301,11 +309,16 @@ export function statusbarInk(accentHex: string): {
   hoverBg: string;
   onLight: boolean;
 } {
-  const L = relativeLuminance(accentHex);
-  const preferDark = contrastRatio(L, 0) >= contrastRatio(L, 1);
+  const dark = '#0d1412';
+  const light = '#f3f3f3';
+  const preferDark = contrastRatioHex(dark, accentHex) >= contrastRatioHex(light, accentHex);
+  let fg = preferDark ? dark : light;
+  if (contrastRatioHex(fg, accentHex) < WCAG_AA) {
+    fg = ensureTextContrast(fg, accentHex, WCAG_AA);
+  }
   if (preferDark) {
     return {
-      fg: '#0d1412',
+      fg,
       muted: 'color-mix(in srgb, #0d1412 88%, transparent)',
       sep: 'color-mix(in srgb, #0d1412 35%, transparent)',
       hoverBg: 'rgba(0, 0, 0, 0.1)',
@@ -313,7 +326,7 @@ export function statusbarInk(accentHex: string): {
     };
   }
   return {
-    fg: '#f3f3f3',
+    fg,
     muted: 'color-mix(in srgb, #ffffff 88%, transparent)',
     sep: 'color-mix(in srgb, #ffffff 35%, transparent)',
     hoverBg: 'rgba(255, 255, 255, 0.12)',
@@ -324,10 +337,7 @@ export function statusbarInk(accentHex: string): {
 export function applyTheme(theme: ThemePreset): void {
   const root = document.documentElement;
   const accentText = ensureTextContrast(theme.accent, theme.bg);
-  let fill = theme.accent;
-  if (relativeLuminance(theme.bg) < 0.5 && contrastRatioHex(fill, theme.bg) < WCAG_AAA) {
-    fill = ensureTextContrast(fill, theme.bg);
-  }
+  const fill = themeAccentFill(theme);
   const onFill = ensureTextContrast('#ffffff', fill, WCAG_AA);
   root.style.setProperty('--accent', fill);
   root.style.setProperty('--accent-text', accentText);
@@ -346,8 +356,8 @@ export function applyTheme(theme: ThemePreset): void {
   root.style.setProperty('--text', theme.text);
   root.style.setProperty('--text-dim', theme.textDim);
   root.style.setProperty('--text-hi', theme.textHi);
-  root.style.setProperty('--statusbar-bg', theme.statusbarBg);
-  const ink = statusbarInk(theme.statusbarBg || theme.accent);
+  root.style.setProperty('--statusbar-bg', fill);
+  const ink = statusbarInk(fill);
   root.style.setProperty('--statusbar-fg', ink.fg);
   root.style.setProperty('--statusbar-fg-muted', ink.muted);
   root.style.setProperty('--statusbar-fg-sep', ink.sep);

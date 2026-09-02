@@ -82,6 +82,57 @@ Preview items include `compare`: `new` | `identical` | `changed` | `invalid`. `s
 
 POST `/api/policy/package/diff` multipart: `package` + `kind` + `id` → `{ compare, unified }`.
 
+### B8 — Action on new items + which side is newer
+
+**Spec approval:** B8 approved 2026-09-02 (user: "approve").
+
+**Problem:** Restore auto-writes every `new` item (UI shows a static “Install”, no skip). Conflicts have skip/overwrite, but the preview does not say which copy is newer, so Restore can overwrite a newer local file with an older package.
+
+**Pack:** Each `rules[]` / `skills[]` manifest entry may include optional `mtime` (Unix seconds of the source file at pack time). Skills use `SKILL.md` mtime only. No new cargo/npm deps. Old zips without `mtime` remain valid (`formatVersion` stays 1).
+
+**Preview JSON (additive):** each item has `newer`: `local` | `package` | `equal` | `none` | `unknown`.
+
+| Situation | `newer` |
+|-----------|---------|
+| No local file (`compare=new`) | `none` |
+| Bytes identical | `equal` |
+| Bytes differ, both mtimes present, local mtime > package mtime | `local` |
+| Bytes differ, both mtimes present, package mtime > local mtime | `package` |
+| Bytes differ, mtimes equal (same Unix second) | `equal` |
+| Bytes differ, package `mtime` missing or local mtime unreadable | `unknown` |
+
+**UI:** Every non-invalid row has Skip / Install-or-Overwrite. New items: labels **Skip** and **Install** (`overwrite`). Conflicts: **Skip** and **Overwrite**. Show a second badge: **Local newer**, **Package newer**, **Same age**, or **Age unknown**. New items do not show an age badge.
+
+**Default action (modal + missing CLI/HTTP decision key):**
+
+| Item | Default |
+|------|---------|
+| `invalid` | no write |
+| `new` | **overwrite** (install) |
+| `conflict` and `newer=local` | **skip** (must not write older package over newer local unless the user explicitly overwrites) |
+| any other `conflict` | **skip** (unchanged; includes identical, package newer, unknown) |
+
+Explicit `overwrite` still writes, including when local is newer.
+
+**CLI preview** prints `newer` next to compare. Docs: policy-engine + `ax policy restore`.
+
+**Tests (named):**
+
+1. `preview_new_has_newer_none` — dest empty → status `new`, `newer=none`.
+2. `restore_new_honors_skip` — empty dest, decision `skip` → file not created (today it is written).
+3. `restore_new_default_installs` — empty dest, empty decisions → file created (regression).
+4. `preview_changed_local_newer` — pack, then local file rewritten later → `compare=changed`, `newer=local`; restore with empty decisions leaves local bytes.
+5. `preview_changed_package_newer` — local older mtime than packaged `mtime` → `newer=package`; empty decisions still skip (user must overwrite).
+6. `restore_explicit_overwrite_when_local_newer` — `newer=local` + decision overwrite → package bytes win.
+7. `preview_legacy_zip_without_mtime_is_unknown` — zip whose manifest paths have no `mtime`, local differs → `newer=unknown`; empty decisions skip.
+8. UI helper: `defaultRestoreAction` uses `newer`; `newerLabel('local')` → `Local newer`.
+
+**Must not:** change git/OneDrive share; pack private/inactive; write invalid items; bump `formatVersion`; add dependencies; Dutch UI strings.
+
+**API gates:** internal Command Center; existing `/api/policy/package/*`; additive `newer` on preview items and optional `mtime` on manifest paths (consumers ignore unknown fields); restore `decisions` map unchanged (`overwrite` now also applies to `new`).
+
+**Isolation:** none (lands on current branch). **Tier:** 2 (restore defaults + preview fields; not a new public API). **Gauntlet files:** existing `tools/gauntlet-policy-zip-package.sh` plus unit tests in `zip_package.rs` / `policyPackage.test.ts`.
+
 ## HTTP (internal Command Center)
 
 | Method | Path | Body | Response |

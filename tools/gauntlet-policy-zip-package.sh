@@ -35,8 +35,12 @@ grep -q 'ax-modal--xl' crates/ax-web/web-ui/src/index.css \
   || { echo "FAIL: missing .ax-modal--xl" >&2; exit 1; }
 grep -q 'package/diff' crates/ax-web/src/policy.rs \
   || { echo "FAIL: missing POST /package/diff" >&2; exit 1; }
-grep -q 'pub compare: String' crates/ax-policy/src/zip_package.rs \
-  || { echo "FAIL: preview items must include compare" >&2; exit 1; }
+grep -q 'pub newer: String' crates/ax-policy/src/zip_package.rs \
+  || { echo "FAIL: preview items must include newer" >&2; exit 1; }
+grep -q 'Local newer' crates/ax-web/web-ui/src/policyPackage.ts \
+  || { echo "FAIL: missing Local newer label" >&2; exit 1; }
+grep -q 'Install' crates/ax-web/web-ui/src/components/PolicyZipPackageModals.tsx \
+  || { echo "FAIL: new items must have Install action" >&2; exit 1; }
 grep -q 'ax policy pack zip' site/src/content/docs/reference/cli.md \
   || { echo "FAIL: cli.md missing pack zip" >&2; exit 1; }
 grep -q 'ax policy restore' site/src/content/docs/reference/cli.md \

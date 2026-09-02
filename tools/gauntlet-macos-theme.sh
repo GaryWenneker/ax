@@ -22,8 +22,10 @@ grep -q 'policy-table thead th:first-child' crates/ax-web/web-ui/src/index.css \
   || { echo "FAIL: missing grouped-table header indent" >&2; exit 1; }
 grep -q 'flex-direction: row' crates/ax-web/web-ui/src/index.css \
   || { echo "FAIL: missing tag row wrap" >&2; exit 1; }
-grep -q 'macOS' site/src/content/docs/guides/command-center.md \
-  || { echo "FAIL: docs missing macOS theme" >&2; exit 1; }
+grep -q 'statusbarInk(fill)' crates/ax-web/web-ui/src/lib/themes.ts \
+  || { echo "FAIL: statusbar ink must use painted fill" >&2; exit 1; }
+grep -q 'id: wcag-contrast' .agents/rules/wcag-contrast.mdc \
+  || { echo "FAIL: missing CRITICAL wcag-contrast rule" >&2; exit 1; }
 
 echo "== negative control (grep gate) =="
 if grep -q 'data-ax-theme="macos-does-not-exist"' crates/ax-web/web-ui/src/index.css; then
@@ -57,8 +59,8 @@ perl -i -pe "s/accent: '#64d2ff'/accent: '#0a84ff'/" "$THEMES"
 kill_mutant "wrong-accent"
 cp "$ORIG" "$THEMES"
 
-perl -i -pe "s/label: 'macOS'/label: 'Mac OS X'/" "$THEMES"
-kill_mutant "wrong-label"
+perl -i -pe "s/statusbarInk\(fill\)/statusbarInk(theme.statusbarBg || theme.accent)/" "$THEMES"
+kill_mutant "ink-from-statusbarBg"
 cp "$ORIG" "$THEMES"
 
 diff -q "$ORIG" "$THEMES" >/dev/null

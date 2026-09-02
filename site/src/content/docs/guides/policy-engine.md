@@ -385,7 +385,7 @@ Install writes project files under `.ax/policy/`, then **imports into `ax.db`** 
 Sitecore-style **item pick → zip → restore with conflict preview**. This is not git pack sync and not OneDrive.
 
 1. Command Center **Rules** or **Skills**: **Package** — large modal, **Select all** / **Select none**, rule and skill **descriptions** (generated from the body when missing), click a name to inspect the local file, then **Download** `*.ax-policy.zip`.
-2. On the other machine: **Restore package** — upload, compare badges (`New` / `Identical` / `Different` / `Invalid`), click a row for a git-style unified diff vs local, set **Skip** or **Overwrite** per conflict, confirm. Files land in `.agents/`, then policy re-index.
+2. On the other machine: **Restore package** — upload, compare badges (`New` / `Identical` / `Different` / `Invalid`) plus **Local newer** / **Package newer** when bytes differ. Click a row for a git-style unified diff vs local. **New** items have Skip / Install. Conflicts have Skip / Overwrite. Local-newer files default to skip so an older package does not replace a newer local file unless you choose Overwrite. Confirm writes into `.agents/`, then policy re-index.
 
 ```bash
 ax policy pack zip --out team.ax-policy.zip --name "Team pack" --rules utf8-no-bom --skills startup
@@ -393,7 +393,7 @@ ax policy restore --preview team.ax-policy.zip
 ax policy restore team.ax-policy.zip --decisions decisions.json
 ```
 
-`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite` or `skip`. Missing conflict keys default to skip. Private and disabled items are never packed.
+`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite` or `skip`. Missing keys: **new** → install, **conflict** → skip (never overwrite a newer local file unless listed as overwrite). Private and disabled items are never packed.
 
 ### IDE-agnostic delivery (Cursor ↔ Continue ↔ …)
 

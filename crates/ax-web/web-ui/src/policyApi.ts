@@ -173,6 +173,7 @@ export interface PolicyPackagePreviewItem {
   id: string;
   status: string;
   compare?: string;
+  newer?: string;
   summary?: string;
   reason?: string;
 }

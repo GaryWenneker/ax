@@ -1223,12 +1223,14 @@ ax policy pack zip --out team.ax-policy.zip --name "Team pack" --rules utf8-no-b
 
 ### `ax policy restore`
 
-Preview or install a portable zip into `.agents/`. Conflicts default to skip unless listed as overwrite in `--decisions`.
+Preview or install a portable zip into `.agents/`. New items default to install. Conflicts default to skip (including when the local file is newer). Pass `--decisions` to skip a new item or overwrite a conflict.
 
 ```bash
 ax policy restore --preview team.ax-policy.zip
 ax policy restore team.ax-policy.zip --decisions decisions.json
 ```
+
+`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite` or `skip`. Preview JSON includes `newer`: `local`, `package`, `equal`, `none`, or `unknown`.
 
 ### `ax policy review`
 

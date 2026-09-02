@@ -5,6 +5,8 @@ import {
   allIdsSelected,
   compareBadgeClass,
   compareLabel,
+  newerBadgeClass,
+  newerLabel,
   policyItemDescription,
   toggleSelectAll,
   unifiedDiffLines,
@@ -19,10 +21,18 @@ describe('policy zip package helpers', () => {
     assert.equal(isShareablePolicyItem('project', false), false);
   });
 
-  it('conflict defaults to skip, new to overwrite', () => {
+  it('conflict defaults to skip, new to overwrite, local newer stays skip', () => {
     assert.equal(defaultRestoreAction('new'), 'overwrite');
     assert.equal(defaultRestoreAction('conflict'), 'skip');
+    assert.equal(defaultRestoreAction('conflict', 'local'), 'skip');
     assert.equal(defaultRestoreAction('invalid'), null);
+  });
+
+  it('newerLabel distinguishes local vs package', () => {
+    assert.equal(newerLabel('local'), 'Local newer');
+    assert.equal(newerLabel('package'), 'Package newer');
+    assert.equal(newerLabel('none'), null);
+    assert.match(newerBadgeClass('local'), /policy-pack-badge--newer-local/);
   });
 
   it('toggleSelectAll selects every id then clears', () => {

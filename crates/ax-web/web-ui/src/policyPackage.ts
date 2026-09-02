@@ -67,6 +67,26 @@ export function compareBadgeClass(compare: string): string {
   return `policy-pack-badge policy-pack-badge--${kind}`;
 }
 
+export function newerLabel(newer: string): string | null {
+  switch (newer) {
+    case 'local':
+      return 'Local newer';
+    case 'package':
+      return 'Package newer';
+    case 'equal':
+      return 'Same age';
+    case 'unknown':
+      return 'Age unknown';
+    default:
+      return null;
+  }
+}
+
+export function newerBadgeClass(newer: string): string {
+  const kind = ['local', 'package', 'equal', 'unknown'].includes(newer) ? newer : 'unknown';
+  return `policy-pack-badge policy-pack-badge--newer-${kind}`;
+}
+
 export type UnifiedDiffLineKind = 'meta' | 'add' | 'del' | 'ctx';
 
 export function unifiedDiffLines(unified: string): Array<{ kind: UnifiedDiffLineKind; text: string }> {

@@ -51,6 +51,8 @@ pub struct Manifest {
 pub struct ManifestPath {
     pub id: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtime: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +66,7 @@ pub struct PreviewItem {
     pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    pub newer: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -153,6 +156,29 @@ fn zip_opts() -> SimpleFileOptions {
     SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)
 }
 
+fn path_mtime_unix(path: &Path) -> Option<u64> {
+    path.metadata()
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
+pub fn default_restore_action(status: &str, newer: &str) -> Option<RestoreAction> {
+    if status == "invalid" {
+        return None;
+    }
+    if status == "new" {
+        return Some(RestoreAction::Overwrite);
+    }
+    if newer == "local" {
+        return Some(RestoreAction::Skip);
+    }
+    Some(RestoreAction::Skip)
+}
+
 pub fn build_policy_zip(project_root: &Path, spec: &PackSpec) -> Result<Vec<u8>, ZipPkgError> {
     if spec.name.trim().is_empty() {
         return Err(ZipPkgError::BadZip("package name is required".into()));
@@ -162,7 +188,7 @@ pub fn build_policy_zip(project_root: &Path, spec: &PackSpec) -> Result<Vec<u8>,
     }
     let agents = agents_dir(project_root);
     let mut unknown = Vec::new();
-    let mut rule_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut rule_files: Vec<(String, Vec<u8>, Option<u64>)> = Vec::new();
     let mut skill_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen_rules = HashSet::new();
     let mut seen_skills = HashSet::new();
@@ -175,7 +201,7 @@ pub fn build_policy_zip(project_root: &Path, spec: &PackSpec) -> Result<Vec<u8>,
         }
         let path = agents.join(RULES_DIR).join(format!("{id}.mdc"));
         match read_shareable_rule(&path) {
-            Ok(bytes) => rule_files.push((id.to_string(), bytes)),
+            Ok(bytes) => rule_files.push((id.to_string(), bytes, path_mtime_unix(&path))),
             Err(_) => unknown.push(id.to_string()),
         }
     }
@@ -199,10 +225,11 @@ pub fn build_policy_zip(project_root: &Path, spec: &PackSpec) -> Result<Vec<u8>,
     }
 
     let mut rules_meta = Vec::new();
-    for (id, _) in &rule_files {
+    for (id, _, mtime) in &rule_files {
         rules_meta.push(ManifestPath {
             id: id.clone(),
             path: format!("rules/{id}.mdc"),
+            mtime: *mtime,
         });
     }
     let mut skill_ids: Vec<String> = skill_files
@@ -217,9 +244,13 @@ pub fn build_policy_zip(project_root: &Path, spec: &PackSpec) -> Result<Vec<u8>,
     skill_ids.dedup();
     let skills_meta: Vec<ManifestPath> = skill_ids
         .iter()
-        .map(|n| ManifestPath {
-            id: n.clone(),
-            path: format!("skills/{n}/{SKILL_FILENAME}"),
+        .map(|n| {
+            let skill_md = agents.join(SKILLS_DIR).join(n).join(SKILL_FILENAME);
+            ManifestPath {
+                id: n.clone(),
+                path: format!("skills/{n}/{SKILL_FILENAME}"),
+                mtime: path_mtime_unix(&skill_md),
+            }
         })
         .collect();
 
@@ -246,7 +277,7 @@ pub fn build_policy_zip(project_root: &Path, spec: &PackSpec) -> Result<Vec<u8>,
         zw.start_file("ax-package.json", zip_opts())
             .map_err(|e| ZipPkgError::Io(e.to_string()))?;
         zw.write_all(manifest_json.as_bytes())?;
-        for (id, bytes) in &rule_files {
+        for (id, bytes, _) in &rule_files {
             zw.start_file(format!("rules/{id}.mdc"), zip_opts())
                 .map_err(|e| ZipPkgError::Io(e.to_string()))?;
             zw.write_all(bytes)?;
@@ -338,7 +369,7 @@ fn preview_rule(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &Manifest
         return invalid_item("rule", &meta.id, "missing file in zip");
     };
     let dest = agents.join(RULES_DIR).join(format!("{}.mdc", meta.id));
-    let (status, compare) = compare_local(&dest, packaged);
+    let (status, compare, newer) = compare_local(&dest, packaged, meta.mtime);
     let summary = std::str::from_utf8(packaged).ok().map(|raw| match parse_rule_file(&dest, raw) {
         Ok(d) => summarize_item_description(&d.frontmatter.id, None, &d.body),
         Err(_) => summarize_item_description(&meta.id, None, raw),
@@ -350,6 +381,7 @@ fn preview_rule(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &Manifest
         compare,
         summary,
         reason: None,
+        newer,
     }
 }
 
@@ -361,7 +393,7 @@ fn preview_skill(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &Manifes
         return invalid_item("skill", &meta.id, "missing file in zip");
     };
     let dest = agents.join(SKILLS_DIR).join(&meta.id).join(SKILL_FILENAME);
-    let (status, compare) = compare_local(&dest, packaged);
+    let (status, compare, newer) = compare_local(&dest, packaged, meta.mtime);
     let summary = std::str::from_utf8(packaged).ok().map(|raw| match parse_skill_file(&dest, raw) {
         Ok(d) => summarize_item_description(&meta.id, Some(d.frontmatter.description.as_str()), &d.body),
         Err(_) => summarize_item_description(&meta.id, None, raw),
@@ -373,6 +405,7 @@ fn preview_skill(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &Manifes
         compare,
         summary,
         reason: None,
+        newer,
     }
 }
 
@@ -452,19 +485,25 @@ fn invalid_item(kind: &str, id: &str, reason: &str) -> PreviewItem {
         compare: "invalid".into(),
         summary: None,
         reason: Some(reason.into()),
+        newer: "none".into(),
     }
 }
 
-fn compare_local(dest: &Path, packaged: &[u8]) -> (String, String) {
+fn compare_local(dest: &Path, packaged: &[u8], pack_mtime: Option<u64>) -> (String, String, String) {
     if !dest.is_file() {
-        return ("new".into(), "new".into());
+        return ("new".into(), "new".into(), "none".into());
     }
     let local = std::fs::read(dest).unwrap_or_default();
     if local == packaged {
-        ("conflict".into(), "identical".into())
-    } else {
-        ("conflict".into(), "changed".into())
+        return ("conflict".into(), "identical".into(), "equal".into());
     }
+    let newer = match (path_mtime_unix(dest), pack_mtime) {
+        (Some(local_m), Some(pack_m)) if local_m > pack_m => "local",
+        (Some(local_m), Some(pack_m)) if pack_m > local_m => "package",
+        (Some(_), Some(_)) => "equal",
+        _ => "unknown",
+    };
+    ("conflict".into(), "changed".into(), newer.into())
 }
 
 pub fn unified_diff(old: &str, new: &str, old_label: &str, new_label: &str) -> String {
@@ -524,7 +563,7 @@ pub fn diff_policy_zip_item(
     let files = read_zip_map(bytes)?;
     let manifest = parse_manifest(&files)?;
     let agents = agents_dir(project_root);
-    let (dest, zip_path) = match kind {
+    let (dest, zip_path, pack_mtime) = match kind {
         "rule" => {
             let meta = manifest
                 .rules
@@ -534,6 +573,7 @@ pub fn diff_policy_zip_item(
             (
                 agents.join(RULES_DIR).join(format!("{id}.mdc")),
                 meta.path.clone(),
+                meta.mtime,
             )
         }
         "skill" => {
@@ -545,6 +585,7 @@ pub fn diff_policy_zip_item(
             (
                 agents.join(SKILLS_DIR).join(id).join(SKILL_FILENAME),
                 meta.path.clone(),
+                meta.mtime,
             )
         }
         _ => return Err(ZipPkgError::BadZip("kind must be rule or skill".into())),
@@ -553,7 +594,7 @@ pub fn diff_policy_zip_item(
         .get(&zip_path)
         .ok_or_else(|| ZipPkgError::BadZip("missing file in zip".into()))?;
     let packaged_text = String::from_utf8_lossy(packaged).into_owned();
-    let (status, compare) = compare_local(&dest, packaged);
+    let (status, compare, _newer) = compare_local(&dest, packaged, pack_mtime);
     let local_text = if dest.is_file() {
         std::fs::read_to_string(&dest).unwrap_or_default()
     } else {
@@ -597,11 +638,9 @@ pub fn restore_policy_zip(
             result.errors.push(format!("{key}: {}", item.reason.clone().unwrap_or_else(|| "invalid".into())));
             continue;
         }
-        let action = if item.status == "conflict" {
-            *decisions.get(&key).unwrap_or(&RestoreAction::Skip)
-        } else {
-            RestoreAction::Overwrite
-        };
+        let action = decisions.get(&key).copied().unwrap_or_else(|| {
+            default_restore_action(&item.status, &item.newer).unwrap_or(RestoreAction::Skip)
+        });
         if action == RestoreAction::Skip {
             result.skipped.push(key);
             continue;
@@ -894,5 +933,132 @@ mod tests {
     fn slug_and_rfc3339() {
         assert_eq!(slug_package_filename("Team Pack!"), "team-pack.ax-policy.zip");
         assert!(unix_secs_to_rfc3339(0).starts_with("1970-01-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn preview_new_has_newer_none() {
+        let src = tempfile::tempdir().unwrap();
+        write_rule_file(src.path(), "alpha", true, "project");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        let preview = preview_policy_zip(dest.path(), &zip).unwrap();
+        assert_eq!(preview.items[0].status, "new");
+        assert_eq!(preview.items[0].newer, "none");
+    }
+
+    #[test]
+    fn restore_new_honors_skip() {
+        let src = tempfile::tempdir().unwrap();
+        write_rule_file(src.path(), "alpha", true, "project");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        let mut dec = HashMap::new();
+        dec.insert("rule:alpha".into(), RestoreAction::Skip);
+        restore_policy_zip(dest.path(), &zip, &dec).unwrap();
+        let dest_file = agents_dir(dest.path()).join("rules/alpha.mdc");
+        assert!(!dest_file.is_file());
+    }
+
+    #[test]
+    fn restore_new_default_installs() {
+        let src = tempfile::tempdir().unwrap();
+        write_rule_file(src.path(), "alpha", true, "project");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        assert!(agents_dir(dest.path()).join("rules/alpha.mdc").is_file());
+    }
+
+    fn set_mtime(path: &Path, unix: u64) {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+    }
+
+    #[test]
+    fn preview_changed_local_newer() {
+        let src = tempfile::tempdir().unwrap();
+        write_rule_file(src.path(), "alpha", true, "project");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        let dest_file = agents_dir(dest.path()).join("rules/alpha.mdc");
+        std::fs::write(&dest_file, "LOCAL\n").unwrap();
+        set_mtime(&dest_file, 2_000_000_000);
+        let preview = preview_policy_zip(dest.path(), &zip).unwrap();
+        assert_eq!(preview.items[0].compare, "changed");
+        assert_eq!(preview.items[0].newer, "local");
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest_file).unwrap(), "LOCAL\n");
+    }
+
+    #[test]
+    fn preview_changed_package_newer() {
+        let src = tempfile::tempdir().unwrap();
+        write_rule_file(src.path(), "alpha", true, "project");
+        let src_file = agents_dir(src.path()).join("rules/alpha.mdc");
+        set_mtime(&src_file, 2_000_000_000);
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        let dest_file = agents_dir(dest.path()).join("rules/alpha.mdc");
+        std::fs::write(&dest_file, "LOCAL\n").unwrap();
+        set_mtime(&dest_file, 1_000);
+        let preview = preview_policy_zip(dest.path(), &zip).unwrap();
+        assert_eq!(preview.items[0].compare, "changed");
+        assert_eq!(preview.items[0].newer, "package");
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest_file).unwrap(), "LOCAL\n");
+    }
+
+    #[test]
+    fn restore_explicit_overwrite_when_local_newer() {
+        let src = tempfile::tempdir().unwrap();
+        write_rule_file(src.path(), "alpha", true, "project");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        let dest_file = agents_dir(dest.path()).join("rules/alpha.mdc");
+        std::fs::write(&dest_file, "LOCAL\n").unwrap();
+        set_mtime(&dest_file, 2_000_000_000);
+        let mut dec = HashMap::new();
+        dec.insert("rule:alpha".into(), RestoreAction::Overwrite);
+        restore_policy_zip(dest.path(), &zip, &dec).unwrap();
+        assert!(std::fs::read_to_string(&dest_file).unwrap().contains("id: alpha"));
+    }
+
+    #[test]
+    fn preview_legacy_zip_without_mtime_is_unknown() {
+        let src = tempfile::tempdir().unwrap();
+        write_rule_file(src.path(), "alpha", true, "project");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let files = read_zip_map(&zip).unwrap();
+        let mut man: Manifest = serde_json::from_slice(&files["ax-package.json"]).unwrap();
+        for r in &mut man.rules {
+            r.mtime = None;
+        }
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zw = ZipWriter::new(&mut cursor);
+            zw.start_file("ax-package.json", zip_opts()).unwrap();
+            zw.write_all(serde_json::to_string(&man).unwrap().as_bytes()).unwrap();
+            zw.start_file("rules/alpha.mdc", zip_opts()).unwrap();
+            zw.write_all(&files["rules/alpha.mdc"]).unwrap();
+            zw.finish().unwrap();
+        }
+        let legacy = cursor.into_inner();
+        let dest = tempfile::tempdir().unwrap();
+        restore_policy_zip(dest.path(), &legacy, &HashMap::new()).unwrap();
+        let dest_file = agents_dir(dest.path()).join("rules/alpha.mdc");
+        std::fs::write(&dest_file, "LOCAL\n").unwrap();
+        let preview = preview_policy_zip(dest.path(), &legacy).unwrap();
+        assert_eq!(preview.items[0].compare, "changed");
+        assert_eq!(preview.items[0].newer, "unknown");
+        restore_policy_zip(dest.path(), &legacy, &HashMap::new()).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest_file).unwrap(), "LOCAL\n");
     }
 }

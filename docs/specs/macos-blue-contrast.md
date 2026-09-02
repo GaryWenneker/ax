@@ -25,6 +25,14 @@ Preset `macos.accent` is `#64d2ff` (not `#0a84ff`). Contrast vs `macos.bg` (`#1c
 
 `--accent-on-fill` is `ensureTextContrast('#ffffff', fill)` so selected sidebar / primary-on-accent labels use dark ink on `#64d2ff`. macOS `.nav-item.active` uses that token, not `#ffffff`.
 
+### B5 — Status bar ink matches the painted fill (WCAG AA)
+
+The footer CSS uses `background: var(--accent)`. `applyTheme` must call `statusbarInk(themeAccentFill(theme))` — the same fill written to `--accent` — not `theme.statusbarBg` (macOS charcoal `#2c2c2e` produced **white** letters on **light blue**).
+
+`statusbarInk` picks dark vs light by measured contrast of `#0d1412` / `#f3f3f3` against the fill, then `ensureTextContrast(..., 4.5)` so every theme meets AA. macOS: dark ink on `#64d2ff`.
+
+Enforced by CRITICAL rule `.agents/rules/wcag-contrast.mdc` and tests W8/W9.
+
 ## Invariants
 
 - Theme id `macos`, label `macOS`, charcoal surfaces unchanged.

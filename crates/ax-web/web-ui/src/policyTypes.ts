@@ -24,10 +24,11 @@ export function isShareablePolicyItem(scope?: string, enabled?: boolean): boolea
   return s === 'project' || s === 'workspace';
 }
 
-export function defaultRestoreAction(status: string): 'overwrite' | 'skip' | null {
+export function defaultRestoreAction(status: string, newer?: string): 'overwrite' | 'skip' | null {
   if (status === 'invalid') return null;
-  if (status === 'conflict') return 'skip';
-  return 'overwrite';
+  if (status === 'new') return 'overwrite';
+  if (newer === 'local') return 'skip';
+  return 'skip';
 }
 
 export type PolicyItemStorage = 'files' | 'database';

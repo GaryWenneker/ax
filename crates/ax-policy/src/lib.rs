@@ -76,7 +76,8 @@ pub use paths::{
 pub use ide_seed::{seed_ide_agent_workflow, sync_ide_bootstrap, verify_ide_bootstrap, IdeSeedResult};
 pub use zip_package::{
     build_policy_zip, decision_key, diff_policy_zip_item, preview_policy_zip, restore_policy_zip,
-    slug_package_filename, ItemDiff, PackSpec, PreviewItem, RestoreAction, RestoreResult,
+    default_restore_action, slug_package_filename, ItemDiff, PackSpec, PreviewItem, RestoreAction,
+    RestoreResult,
     ZipPkgError, ZipPreview, ZIP_PACKAGE_MAX_BYTES,
 };
 pub use seed::{

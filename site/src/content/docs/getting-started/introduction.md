@@ -20,7 +20,7 @@ Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead o
 
 ## What's new in v4.7.0
 
-- **Portable policy zip** — Command Center Policy → Rules / Skills can **compose** and **restore** `.ax-policy.zip` packs (select all/none, generated descriptions, compare badges, git-style diffs). CLI: `ax policy pack zip` and `ax policy restore [--preview]`. See [Policy Engine](/guides/policy-engine/).
+- **Portable policy zip** — Command Center Policy → Rules / Skills can **compose** and **restore** `.ax-policy.zip` packs (select all/none, generated descriptions, compare badges, **Local newer** / **Package newer**, Skip/Install on new items, git-style diffs). CLI: `ax policy pack zip` and `ax policy restore [--preview]`. See [Policy Engine](/guides/policy-engine/).
 - **Skill and rule groups** — lists use a shared folder catalog (collapse, **Collapse all** / **Expand all**, **Groups** filter). Optional `group` on skill (schema v18) and rule (schema v19) frontmatter.
 - **Git-shared `.agents/`** — Command Center shows which rules/skills are on the git-shared team path versus private overlays.
 - **Command Center polish** — policy table one-line tags, group-filter collapse, Markdown editor caret, content width on small screens, macOS theme contrast, Settings verbose MCP toggle.
