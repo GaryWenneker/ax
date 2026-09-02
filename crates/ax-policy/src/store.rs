@@ -70,6 +70,21 @@ impl PolicyStore {
         list_skills_enriched(&self.pool, &self.project_root).await
     }
 
+    async fn record_save_revision(
+        &self,
+        kind: &str,
+        id: &str,
+        raw: &str,
+    ) -> Result<(), ValidationError> {
+        crate::revisions::record_if_changed(&self.pool, kind, id, raw, crate::revisions::SOURCE_SAVE)
+            .await
+            .map_err(|e| ValidationError {
+                error: e.to_string(),
+                fields: Default::default(),
+            })?;
+        Ok(())
+    }
+
     pub async fn get_rule_doc(&self, id: &str) -> Result<Option<PolicyRuleDoc>, AxError> {
         if let Some(row) = crate::index::get_rule(&self.pool, id).await? {
             return Ok(Some(rule_row_to_doc(&row, &self.project_root)));
@@ -147,6 +162,8 @@ impl PolicyStore {
                     error: e.to_string(),
                     fields: Default::default(),
                 })?;
+            self.record_save_revision("rule", &doc.frontmatter.id, &doc.raw)
+                .await?;
             return Ok(doc);
         }
 
@@ -160,6 +177,8 @@ impl PolicyStore {
                 error: e.to_string(),
                 fields: Default::default(),
             })?;
+        self.record_save_revision("rule", &doc.frontmatter.id, &doc.raw)
+            .await?;
         Ok(doc)
     }
 
@@ -361,6 +380,8 @@ impl PolicyStore {
                     error: e.to_string(),
                     fields: Default::default(),
                 })?;
+            self.record_save_revision("skill", &doc.frontmatter.name, &doc.raw)
+                .await?;
             return Ok(doc);
         }
 
@@ -373,6 +394,8 @@ impl PolicyStore {
                 error: e.to_string(),
                 fields: Default::default(),
             })?;
+        self.record_save_revision("skill", &doc.frontmatter.name, &doc.raw)
+            .await?;
         Ok(doc)
     }
 

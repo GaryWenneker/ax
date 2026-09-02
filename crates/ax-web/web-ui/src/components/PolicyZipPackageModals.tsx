@@ -10,11 +10,11 @@ import {
   type PolicyPackagePreviewItem,
 } from '../policyApi';
 import {
-  compareBadgeClass,
-  compareLabel,
-  newerBadgeClass,
-  newerLabel,
+  compareStatusClass,
+  compareSummary,
+  emptyDiffCopy,
   policyItemDescription,
+  restoreDecisionLabels,
   unifiedDiffLines,
 } from '../policyPackage';
 import { defaultRestoreAction, isShareablePolicyItem, type PolicyRuleRow, type PolicySkillRow } from '../policyTypes';
@@ -53,9 +53,9 @@ export default function PolicyZipPackageButtons({ onRestored }: { onRestored?: (
   );
 }
 
-function UnifiedDiffView({ unified }: { unified: string }) {
+function UnifiedDiffView({ unified, compare }: { unified: string; compare: string }) {
   if (!unified) {
-    return <p className="muted">No differences — local matches the package.</p>;
+    return <p className="muted">{emptyDiffCopy(compare)}</p>;
   }
   return (
     <pre className="policy-pack-diff" aria-label="Unified diff">
@@ -333,8 +333,8 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
       title="Restore package"
       subtitle={
         packName
-          ? `Preview: ${packName}. Badges show local vs package. Click a row for a git-style diff.`
-          : 'Upload an .ax-policy.zip, then choose skip or install/overwrite per item. Local newer files default to skip.'
+          ? `Preview: ${packName}. Click a row for a git-style diff.`
+          : 'Upload an .ax-policy.zip, then Accept or Reject each item. Local newer files default to Reject.'
       }
       onClose={onClose}
       footer={
@@ -371,6 +371,8 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
                   {items.map((item) => {
                     const key = `${item.kind}:${item.id}`;
                     const compare = item.compare ?? item.status;
+                    const action = decisions[key] ?? (item.status === 'new' ? 'overwrite' : 'skip');
+                    const labels = restoreDecisionLabels();
                     return (
                       <tr
                         key={key}
@@ -388,33 +390,37 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
                             </span>
                           )}
                         </td>
-                        <td>
-                          <span className={compareBadgeClass(compare)}>{compareLabel(compare)}</span>
-                          {item.newer && newerLabel(item.newer) ? (
-                            <span className={newerBadgeClass(item.newer)}>{newerLabel(item.newer)}</span>
-                          ) : null}
-                          {item.status === 'conflict' ? <span className="muted"> exists locally</span> : null}
+                        <td className="policy-pack-compare">
+                          <span className={compareStatusClass(compare)}>{compareSummary(compare, item.newer)}</span>
                           {item.reason ? <span className="muted"> ({item.reason})</span> : null}
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
                           {item.status === 'invalid' ? (
                             <span className="muted">cannot install</span>
                           ) : (
-                            <select
-                              className="settings-select"
-                              value={decisions[key] ?? (item.status === 'new' ? 'overwrite' : 'skip')}
-                              onChange={(e) =>
-                                setDecisions({
-                                  ...decisions,
-                                  [key]: e.target.value === 'overwrite' ? 'overwrite' : 'skip',
-                                })
-                              }
-                            >
-                              <option value="skip">Skip</option>
-                              <option value="overwrite">
-                                {item.status === 'new' ? 'Install' : 'Overwrite'}
-                              </option>
-                            </select>
+                            <div className="policy-pack-action" role="group" aria-label={`Action for ${item.id}`}>
+                              <button
+                                type="button"
+                                className="policy-pack-action-btn"
+                                aria-pressed={action === 'skip'}
+                                onClick={() => setDecisions({ ...decisions, [key]: 'skip' })}
+                              >
+                                {labels.reject}
+                              </button>
+                              <button
+                                type="button"
+                                className="policy-pack-action-btn"
+                                aria-pressed={action === 'overwrite'}
+                                onClick={() =>
+                                  setDecisions({
+                                    ...decisions,
+                                    [key]: 'overwrite',
+                                  })
+                                }
+                              >
+                                {labels.accept}
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -431,11 +437,11 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
                     {diffCompare ? (
                       <>
                         {' '}
-                        <span className={compareBadgeClass(diffCompare)}>{compareLabel(diffCompare)}</span>
+                        <span className={compareStatusClass(diffCompare)}>{compareSummary(diffCompare)}</span>
                       </>
                     ) : null}
                   </h3>
-                  <UnifiedDiffView unified={diffUnified} />
+                  <UnifiedDiffView unified={diffUnified} compare={diffCompare} />
                 </>
               ) : (
                 <p className="muted">Click a row to compare local files with the package (git-style unified diff).</p>

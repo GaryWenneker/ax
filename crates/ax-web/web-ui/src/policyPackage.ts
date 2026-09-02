@@ -87,6 +87,29 @@ export function newerBadgeClass(newer: string): string {
   return `policy-pack-badge policy-pack-badge--newer-${kind}`;
 }
 
+/** One-line Compare cell: status, then age when it is meaningful. */
+export function compareSummary(compare: string, newer?: string | null): string {
+  const status = compareLabel(compare);
+  const age = newer ? newerLabel(newer) : null;
+  return age ? `${status} · ${age}` : status;
+}
+
+export function compareStatusClass(compare: string): string {
+  const kind = ['new', 'identical', 'changed', 'invalid'].includes(compare) ? compare : 'invalid';
+  return `policy-pack-compare-status policy-pack-compare-status--${kind}`;
+}
+
+export function emptyDiffCopy(compare: string): string {
+  if (compare === 'changed') {
+    return 'No line-level diff. The files still differ (line endings or encoding).';
+  }
+  return 'No differences — local matches the package.';
+}
+
+export function restoreDecisionLabels(): { reject: string; accept: string } {
+  return { reject: 'Reject', accept: 'Accept' };
+}
+
 export type UnifiedDiffLineKind = 'meta' | 'add' | 'del' | 'ctx';
 
 export function unifiedDiffLines(unified: string): Array<{ kind: UnifiedDiffLineKind; text: string }> {

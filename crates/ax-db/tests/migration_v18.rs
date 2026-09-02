@@ -65,7 +65,7 @@ async fn v17_database_upgrades_to_v18_without_losing_skills() {
         let db = Database::open(&path).await.expect("reopen and migrate");
         let version = get_current_version(db.pool()).await.expect("version");
         assert_eq!(version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 19);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 20);
 
         let kept: Option<String> =
             sqlx::query_scalar("SELECT description FROM policy_skills WHERE name = 'startup'")

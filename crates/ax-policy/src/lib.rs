@@ -13,6 +13,7 @@ pub mod parse;
 pub mod paths;
 pub mod ide_seed;
 pub mod review;
+pub mod revisions;
 pub mod seed;
 pub mod skill_groups;
 pub mod store;
@@ -74,6 +75,10 @@ pub use paths::{
     rules_dir, skills_dir, STUB_BODY_MARKER,
 };
 pub use ide_seed::{seed_ide_agent_workflow, sync_ide_bootstrap, verify_ide_bootstrap, IdeSeedResult};
+pub use revisions::{
+    get_revision, list_revisions, record_if_changed, record_restore_writes, PolicyRevision,
+    SOURCE_RESTORE, SOURCE_SAVE,
+};
 pub use zip_package::{
     build_policy_zip, decision_key, diff_policy_zip_item, preview_policy_zip, restore_policy_zip,
     default_restore_action, slug_package_filename, ItemDiff, PackSpec, PreviewItem, RestoreAction,

@@ -1,6 +1,6 @@
 [package]
 name = "ax-installer"
-version = "4.7.1"
+version = "4.8.0"
 edition = "2021"
 
 [dependencies]

@@ -385,7 +385,13 @@ Install writes project files under `.ax/policy/`, then **imports into `ax.db`** 
 Sitecore-style **item pick → zip → restore with conflict preview**. This is not git pack sync and not OneDrive.
 
 1. Command Center **Rules** or **Skills**: **Package** — large modal, **Select all** / **Select none**, rule and skill **descriptions** (generated from the body when missing), click a name to inspect the local file, then **Download** `*.ax-policy.zip`.
-2. On the other machine: **Restore package** — upload, compare badges (`New` / `Identical` / `Different` / `Invalid`) plus **Local newer** / **Package newer** when bytes differ. Click a row for a git-style unified diff vs local. **New** items have Skip / Install. Conflicts have Skip / Overwrite. Local-newer files default to skip so an older package does not replace a newer local file unless you choose Overwrite. Confirm writes into `.agents/`, then policy re-index.
+2. On the other machine: **Restore package** — upload, then a table of items with a one-line compare (`Different · Package newer`, `New`, …) and **Reject** / **Accept**. Click a row for a git-style unified diff vs local. **New** items default to Accept. Conflicts default to Reject (including local-newer files) so an older package does not replace a newer local file unless you Accept. Packs include a blake3 `contentHash` per file so “changed” does not depend on zip timestamps; a mismatched hash is invalid. Confirm writes into `.agents/`, then policy re-index. Accepted writes are also stored in a **local revision log** (blake3 hash-on-change, 20 per item) so you can Restore from **History** in the rule/skill editor. Identical Command Center saves are not listed.
+
+Team-wide moderation stays on git: merge a PR, then pack a zip (or attach the zip as a CI artifact). Command Center restore is local Accept/Reject, not a substitute for pull-request review.
+
+### Local revision history
+
+Command Center **History** on a rule or skill lists up to 20 snapshots. A snapshot is stored only when the serialized file hash changes (`save` from the editor, `restore` from an accepted zip item). Restore from History writes through the normal save path. Disk edits that never go through Command Center or `ax policy restore` are not recorded. This is not git history.
 
 ```bash
 ax policy pack zip --out team.ax-policy.zip --name "Team pack" --rules utf8-no-bom --skills startup

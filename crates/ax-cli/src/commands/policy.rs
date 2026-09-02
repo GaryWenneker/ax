@@ -1150,6 +1150,8 @@ pub async fn run_pack_zip(
         rule_ids: split_csv(rules),
         skill_names: split_csv(skills),
         ax_version: env!("CARGO_PKG_VERSION").into(),
+        package_version: None,
+        author: None,
     };
     let bytes = ax_policy::build_policy_zip(&root, &spec).map_err(|e| e.to_string())?;
     if let Some(parent) = std::path::Path::new(&out).parent() {
@@ -1185,6 +1187,9 @@ pub async fn run_policy_restore(
     let result = ax_policy::restore_policy_zip(&root, &bytes, &decisions).map_err(|e| e.to_string())?;
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     ax_policy::index_policy(ax.db_pool(), &root, true)
+        .await
+        .map_err(|e| e.to_string())?;
+    ax_policy::record_restore_writes(ax.db_pool(), &root, &result.written)
         .await
         .map_err(|e| e.to_string())?;
     println!(

@@ -253,3 +253,33 @@ export async function restorePolicyPackage(
   await throwIfNotOk(res);
   return res.json() as Promise<PolicyPackageRestoreResult>;
 }
+
+export interface PolicyRevisionRow {
+  id: number;
+  kind: string;
+  itemId: string;
+  contentHash: string;
+  body: string;
+  source: string;
+  createdAt: number;
+}
+
+export function fetchPolicyRevisions(
+  kind: 'rule' | 'skill',
+  id: string,
+): Promise<{ revisions: PolicyRevisionRow[] }> {
+  const base = kind === 'rule' ? 'rules' : 'skills';
+  return request(`/${base}/${encodeURIComponent(id)}/revisions`);
+}
+
+export function restorePolicyRevision(
+  kind: 'rule' | 'skill',
+  id: string,
+  revId: number,
+): Promise<unknown> {
+  const base = kind === 'rule' ? 'rules' : 'skills';
+  return request(`/${base}/${encodeURIComponent(id)}/revisions/${revId}/restore`, {
+    method: 'POST',
+    body: '{}',
+  });
+}

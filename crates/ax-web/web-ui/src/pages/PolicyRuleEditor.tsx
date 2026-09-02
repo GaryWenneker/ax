@@ -3,6 +3,7 @@ import { fetchPolicyRule, savePolicyRule } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
 import MarkdownPreview from '../components/MarkdownPreview';
 import PolicyMetaResizeHandle from '../components/PolicyEditorResize';
+import PolicyRevisionHistory from '../components/PolicyRevisionHistory';
 import { RuleMetaView } from '../components/PolicyMetaView';
 import {
   PageCard,
@@ -135,6 +136,25 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
         actions={
           <>
             <button type="button" className="btn" onClick={cancelEdit}>Cancel</button>
+            {!isNew && ruleId ? (
+              <PolicyRevisionHistory
+                kind="rule"
+                itemId={ruleId}
+                onRestored={() => {
+                  setLoading(true);
+                  fetchPolicyRule(ruleId)
+                    .then((doc) => {
+                      setFm(normalizeRuleFm(doc.frontmatter));
+                      setBody(doc.body);
+                      setGlobsText(doc.frontmatter.globs.join(', '));
+                      setTriggersText(doc.frontmatter.triggers.join(', '));
+                      setTagsText(doc.frontmatter.tags.join(', '));
+                    })
+                    .catch((e: Error) => setError(e.message))
+                    .finally(() => setLoading(false));
+                }}
+              />
+            ) : null}
             <button type="button" className="btn primary" disabled={saving || loading} onClick={save}>
               {saving ? 'Saving…' : 'Save'}
             </button>

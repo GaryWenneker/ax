@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill } from '../policyApi';
 import MarkdownEditor from './MarkdownEditor';
 import PolicyMetaResizeHandle from './PolicyEditorResize';
+import PolicyRevisionHistory from './PolicyRevisionHistory';
 import { PageCard, PageCardBody, PageRow } from './ui/PageLayout';
 import { Spinner } from './ui/Spinner';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
@@ -106,6 +107,24 @@ export default function PolicySkillInlineWorkspace({ skillName, onClose, onSaved
           {skillName}
         </span>
         <div className="policy-inline-workspace-actions">
+          <PolicyRevisionHistory
+            kind="skill"
+            itemId={skillName}
+            onRestored={() => {
+              setLoading(true);
+              fetchPolicySkill(skillName)
+                .then((doc) => {
+                  const normalized = normalizeSkillFm(doc.frontmatter);
+                  setFm(normalized);
+                  setBody(doc.body);
+                  setTriggersText(normalized.triggers.join(', '));
+                  setTagsText(normalized.tags.join(', '));
+                  onSaved?.();
+                })
+                .catch((e: Error) => setError(e.message))
+                .finally(() => setLoading(false));
+            }}
+          />
           <button type="button" className="btn primary" disabled={saving || loading || !fm} onClick={() => void save()}>
             {saving ? 'Saving…' : 'Save'}
           </button>

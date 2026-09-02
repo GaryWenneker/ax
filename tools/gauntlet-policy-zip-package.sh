@@ -39,8 +39,26 @@ grep -q 'pub newer: String' crates/ax-policy/src/zip_package.rs \
   || { echo "FAIL: preview items must include newer" >&2; exit 1; }
 grep -q 'Local newer' crates/ax-web/web-ui/src/policyPackage.ts \
   || { echo "FAIL: missing Local newer label" >&2; exit 1; }
-grep -q 'Install' crates/ax-web/web-ui/src/components/PolicyZipPackageModals.tsx \
-  || { echo "FAIL: new items must have Install action" >&2; exit 1; }
+grep -q 'Accept' crates/ax-web/web-ui/src/components/PolicyZipPackageModals.tsx \
+  || { echo "FAIL: restore must label Accept" >&2; exit 1; }
+grep -q 'Reject' crates/ax-web/web-ui/src/components/PolicyZipPackageModals.tsx \
+  || { echo "FAIL: restore must label Reject" >&2; exit 1; }
+grep -q 'contentHash' crates/ax-policy/src/zip_package.rs \
+  || { echo "FAIL: missing contentHash on zip manifest paths" >&2; exit 1; }
+grep -q 'content_hash_bytes' crates/ax-policy/src/zip_package.rs \
+  || { echo "FAIL: missing blake3 content_hash_bytes" >&2; exit 1; }
+grep -q 'policy-pack-action' crates/ax-web/web-ui/src/components/PolicyZipPackageModals.tsx \
+  || { echo "FAIL: restore actions must be a segmented control" >&2; exit 1; }
+grep -q 'compareSummary' crates/ax-web/web-ui/src/components/PolicyZipPackageModals.tsx \
+  || { echo "FAIL: restore compare must use compareSummary" >&2; exit 1; }
+if grep -q 'settings-select' crates/ax-web/web-ui/src/components/PolicyZipPackageModals.tsx; then
+  echo "FAIL: restore must not use native settings-select combos" >&2
+  exit 1
+fi
+if grep -q 'exists locally' crates/ax-web/web-ui/src/components/PolicyZipPackageModals.tsx; then
+  echo "FAIL: restore compare must not stack exists locally" >&2
+  exit 1
+fi
 grep -q 'ax policy pack zip' site/src/content/docs/reference/cli.md \
   || { echo "FAIL: cli.md missing pack zip" >&2; exit 1; }
 grep -q 'ax policy restore' site/src/content/docs/reference/cli.md \
@@ -78,6 +96,10 @@ cp "$ORIG" "$SRC"
 
 perl -i -pe 's/RestoreAction::Skip/RestoreAction::Overwrite/' "$SRC"
 kill_mutant "default-overwrite"
+cp "$ORIG" "$SRC"
+
+perl -i -pe 's/h != content_hash_bytes/h == content_hash_bytes/' "$SRC"
+kill_mutant "hash-mismatch-inverted"
 cp "$ORIG" "$SRC"
 
 diff -q "$ORIG" "$SRC" >/dev/null

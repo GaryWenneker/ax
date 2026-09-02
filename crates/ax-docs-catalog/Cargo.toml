@@ -1,6 +1,6 @@
 [package]
 name = "ax-docs-catalog"
-version = "4.7.1"
+version = "4.8.0"
 edition = "2021"
 description = "Sync AzDO wiki + workspace docs into ax.db (documentation-catalog memories)"
 

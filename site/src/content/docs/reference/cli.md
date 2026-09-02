@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v4.7.1).
+description: Complete reference for every ax command, argument, and flag (v4.8.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -1230,7 +1230,7 @@ ax policy restore --preview team.ax-policy.zip
 ax policy restore team.ax-policy.zip --decisions decisions.json
 ```
 
-`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite` or `skip`. Preview JSON includes `newer`: `local`, `package`, `equal`, `none`, or `unknown`.
+`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite` or `skip`. Preview JSON includes `newer` and each packed path may include `contentHash` (blake3). Missing decision keys: **new** → install (`overwrite`), **conflict** → skip. Accepted writes are recorded in the local hash-on-change revision log (Command Center **History**).
 
 ### `ax policy review`
 

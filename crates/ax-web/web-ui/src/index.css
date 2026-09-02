@@ -1190,8 +1190,88 @@ html, body {
   background: color-mix(in srgb, var(--text-dim, #8b949e) 22%, transparent);
 }
 
+.policy-pack-compare {
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+
+.policy-pack-compare-status {
+  font-weight: 650;
+}
+
+.policy-pack-compare-status--new {
+  color: var(--accent-text);
+}
+
+.policy-pack-compare-status--identical {
+  color: var(--ok);
+}
+
+.policy-pack-compare-status--changed {
+  color: var(--warn);
+}
+
+.policy-pack-compare-status--invalid {
+  color: var(--danger);
+}
+
+.policy-pack-action {
+  display: inline-flex;
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-input);
+}
+
+.policy-pack-action-btn {
+  margin: 0;
+  padding: 5px 11px;
+  border: 0;
+  border-right: 1px solid var(--border-hi);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.policy-pack-action-btn:last-child {
+  border-right: 0;
+}
+
+.policy-pack-action-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.policy-pack-action-btn[aria-pressed="true"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent, #58a6ff) 22%, transparent);
+  font-weight: 650;
+}
+
+.policy-pack-action-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+  z-index: 1;
+}
+
 .policy-pack-preview {
   width: 100%;
+}
+
+.policy-pack-preview th:nth-child(3),
+.policy-pack-preview td:nth-child(3) {
+  width: 1%;
+}
+
+.policy-pack-preview th:nth-child(4),
+.policy-pack-preview td:nth-child(4) {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .policy-pack-preview-row {
@@ -7860,6 +7940,28 @@ body.policy-list-resizing .policy-list-resize-handle {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.policy-rev-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.policy-rev-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.policy-rev-meta {
+  font-size: var(--fs-sm);
 }
 
 .policy-inline-workspace-error {

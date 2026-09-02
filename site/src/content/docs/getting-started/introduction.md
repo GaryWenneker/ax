@@ -18,6 +18,13 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.8.0
+
+- **Policy revision history** — Command Center **History** keeps up to 20 hash-on-change snapshots per rule/skill (editor Save and accepted zip restores). Identical saves are skipped. See [Policy Engine](/guides/policy-engine/).
+- **Zip pack integrity** — packs carry blake3 `contentHash`; restore actions are **Reject** / **Accept**. See [Policy Engine](/guides/policy-engine/).
+
+See [Policy Engine](/guides/policy-engine/) and [Command Center](/guides/command-center/).
+
 ## What's new in v4.7.1
 
 - **Safer policy zip restore** — new items have Skip / Install; conflicts show **Local newer** / **Package newer**. Restore skips older package bytes over a newer local file unless you overwrite. See [Policy Engine](/guides/policy-engine/).

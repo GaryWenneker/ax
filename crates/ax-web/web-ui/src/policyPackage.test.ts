@@ -5,9 +5,12 @@ import {
   allIdsSelected,
   compareBadgeClass,
   compareLabel,
+  compareSummary,
+  emptyDiffCopy,
   newerBadgeClass,
   newerLabel,
   policyItemDescription,
+  restoreDecisionLabels,
   toggleSelectAll,
   unifiedDiffLines,
 } from './policyPackage.ts';
@@ -49,6 +52,24 @@ describe('policy zip package helpers', () => {
     assert.equal(compareLabel('identical'), 'Identical');
     assert.match(compareBadgeClass('changed'), /policy-pack-badge--changed/);
     assert.match(compareBadgeClass('identical'), /policy-pack-badge--identical/);
+  });
+
+  it('compareSummary is one line of status and optional age', () => {
+    assert.equal(compareSummary('changed', 'package'), 'Different · Package newer');
+    assert.equal(compareSummary('changed', 'local'), 'Different · Local newer');
+    assert.equal(compareSummary('identical', 'equal'), 'Identical · Same age');
+    assert.equal(compareSummary('new', 'none'), 'New');
+    assert.equal(compareSummary('invalid'), 'Invalid');
+  });
+
+  it('emptyDiffCopy does not claim a match when compare is changed', () => {
+    assert.match(emptyDiffCopy('identical'), /matches the package/);
+    assert.match(emptyDiffCopy('changed'), /line endings or encoding/);
+    assert.doesNotMatch(emptyDiffCopy('changed'), /matches the package/);
+  });
+
+  it('restoreDecisionLabels are Accept and Reject', () => {
+    assert.deepEqual(restoreDecisionLabels(), { reject: 'Reject', accept: 'Accept' });
   });
 
   it('unifiedDiffLines classifies git-style add and delete', () => {

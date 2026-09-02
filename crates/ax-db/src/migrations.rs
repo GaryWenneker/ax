@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 19;
+pub const CURRENT_SCHEMA_VERSION: i32 = 20;
 
 struct Migration {
     version: i32,
@@ -251,6 +251,23 @@ const MIGRATIONS: &[Migration] = &[
         version: 19,
         description: "Policy rule catalog group (Command Center grouping)",
         sql: "ALTER TABLE policy_rules ADD COLUMN skill_group TEXT;",
+    },
+    Migration {
+        version: 20,
+        description: "Capped hash-on-change policy revisions",
+        sql: "
+            CREATE TABLE IF NOT EXISTS policy_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                body TEXT NOT NULL,
+                source TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_policy_revisions_item
+              ON policy_revisions(kind, item_id, created_at DESC);
+        ",
     },
 ];
 

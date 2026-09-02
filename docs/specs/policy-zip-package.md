@@ -131,7 +131,48 @@ Explicit `overwrite` still writes, including when local is newer.
 
 **API gates:** internal Command Center; existing `/api/policy/package/*`; additive `newer` on preview items and optional `mtime` on manifest paths (consumers ignore unknown fields); restore `decisions` map unchanged (`overwrite` now also applies to `new`).
 
-**Isolation:** none (lands on current branch). **Tier:** 2 (restore defaults + preview fields; not a new public API). **Gauntlet files:** existing `tools/gauntlet-policy-zip-package.sh` plus unit tests in `zip_package.rs` / `policyPackage.test.ts`.
+### B9 — Restore Compare and Action chrome (2026-09-02)
+
+**Spec approval:** not obtained (autonomous run; user asked to restyle ugly Compare + combos).
+
+**Problem:** Compare stacks a status pill, an age capsule, and “exists locally”. Action uses a native `<select>` that does not match Command Center chrome.
+
+**UI (restore table only):**
+
+1. Compare is **one line** of text: `compareLabel` then, when `newerLabel` is non-null, ` · ` plus the age. No second pill, no “exists locally”. Invalid reason stays on that same line in muted type.
+2. Action is a **segmented control** (`role="group"`): two buttons Skip and Install/Overwrite. The chosen action has `aria-pressed="true"`. No `<select>` in the restore table.
+3. Clicking a row still opens the diff. Clicking a segment does not change the selected row.
+4. When `compare` is `changed` but the unified diff is empty (bytes differ, `.lines()` match — typically CRLF vs LF), the pane must **not** say local matches the package. Show a line-ending/encoding note instead.
+
+**Helpers (testable):** `compareSummary(compare, newer)` and `emptyDiffCopy(compare)`.
+
+**Must not:** change restore defaults, decision JSON, or pack format.
+
+### B10 — contentHash + Accept/Reject (2026-09-02)
+
+**Spec approval:** plan “Policy zip: hashes + in-IDE Accept/Reject” implemented on request (user: implement the attached plan). Hash algorithm is **blake3** hex (`contentHash`), already a crate dep — not SHA-256.
+
+**Tracking:** `formatVersion` stays 1. Additive optional fields:
+
+- Manifest: `packageVersion`, `author` (omit when empty).
+- Each `rules[]` / `skills[]` path: `contentHash` (blake3 of that zip member). Skills hash `SKILL.md` only.
+
+On pack, every new zip writes `contentHash`. On preview, if `contentHash` is present and does not match the member bytes → item `invalid` (`contentHash mismatch`). Missing `contentHash` (legacy zip) is not invalid; compare still uses local vs packaged bytes. `mtime` remains only the `newer` hint.
+
+**Moderation UI:** Restore action labels **Reject** (`skip`) and **Accept** (`overwrite`). Decision JSON and CLI `--decisions` unchanged. Defaults unchanged. No Merge, no Review-queue staging, no git unpack, no signed zips.
+
+**Out of scope / follow-ups:** Git as compare engine; Policy Review staging; three-way merge; HMAC/PGP. Team-wide moderation: keep `.agents` in git, PR to main, then pack zip / CI artifact.
+
+**Tests (named):**
+
+1. `pack_writes_blake3_content_hash` — packed rule member hash equals `contentHash`.
+2. `preview_invalid_when_content_hash_mismatches` — tampered manifest hash → `invalid`.
+3. `preview_legacy_zip_without_content_hash_still_previews` — strip `contentHash`, dest empty → `new`, not invalid.
+4. UI: restore modal uses Accept/Reject, not Install/Overwrite/Skip as the primary labels.
+
+**Must not:** bump `formatVersion`; add cargo/npm deps; change Review queue or OneDrive/GitHub share; Dutch UI.
+
+**Isolation:** none. **Tier:** 2. **Gauntlet:** `tools/gauntlet-policy-zip-package.sh`.
 
 ## HTTP (internal Command Center)
 

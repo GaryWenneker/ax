@@ -3,6 +3,7 @@ import { fetchPolicySkill, savePolicySkill } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
 import MarkdownPreview from '../components/MarkdownPreview';
 import PolicyMetaResizeHandle from '../components/PolicyEditorResize';
+import PolicyRevisionHistory from '../components/PolicyRevisionHistory';
 import { SkillMetaView } from '../components/PolicyMetaView';
 import {
   PageCard,
@@ -142,6 +143,24 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
         actions={
           <>
             <button type="button" className="btn" onClick={onBack}>Back</button>
+            {!isNew && skillName ? (
+              <PolicyRevisionHistory
+                kind="skill"
+                itemId={skillName}
+                onRestored={() => {
+                  setLoading(true);
+                  fetchPolicySkill(skillName)
+                    .then((doc) => {
+                      setFm(normalizeSkillFm(doc.frontmatter));
+                      setBody(doc.body);
+                      setTriggersText(doc.frontmatter.triggers.join(', '));
+                      setTagsText(doc.frontmatter.tags.join(', '));
+                    })
+                    .catch((e: Error) => setError(e.message))
+                    .finally(() => setLoading(false));
+                }}
+              />
+            ) : null}
             {!isNew && !editing && (
               <button type="button" className="btn primary" onClick={() => setEditing(true)}>
                 Edit
