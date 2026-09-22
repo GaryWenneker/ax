@@ -388,6 +388,12 @@ enum Commands {
         #[command(subcommand)]
         action: DocsCatalogAction,
     },
+    /// Aggregate this project's ax.db into ~/.ax/global.db
+    #[command(long_about = help_text::GLOBAL_LONG)]
+    Global {
+        #[command(subcommand)]
+        action: GlobalAction,
+    },
     /// Policy rules and skills
     Policy {
         #[command(subcommand)]
@@ -451,6 +457,18 @@ enum DocsCatalogAction {
         #[arg(long, help = "JSON output")]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum GlobalAction {
+    /// Create ~/.ax/global.db (or AX_GLOBAL_DB) and apply schema
+    Init,
+    /// Copy this project's .ax/ax.db into the global database
+    Sync {
+        path: Option<String>,
+    },
+    /// Show project / node / shared-knowledge counts
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -966,18 +984,22 @@ enum PolicyStorageCommands {
         global: bool,
         #[arg(long, help = "Scan repo and import rules/skills into database")]
         migrate: bool,
-        #[arg(long, help = "Apply migration with parsed defaults (skip per-item interview)")]
+        #[arg(long, help = "Apply exclusive switch: import/export and drop the other source")]
         yes: bool,
+        #[arg(long, help = "With --yes, import into ax.db but keep markdown on disk")]
+        keep_files: bool,
         #[arg(long)]
         json: bool,
     },
-    /// Store policy on disk in .ax/policy/ (files source of truth)
+    /// Store policy on disk in .agents/ (files source of truth)
     Files {
         path: Option<String>,
         #[arg(long, help = "Write to ~/.ax/config.json instead of project ax.json")]
         global: bool,
-        #[arg(long, help = "Export database policy to .ax/policy/ files")]
+        #[arg(long, help = "Preview or (with --yes) export database policy to .agents/")]
         migrate: bool,
+        #[arg(long, help = "Apply exclusive switch: export ax.db to .agents/")]
+        yes: bool,
         #[arg(long)]
         json: bool,
     },
@@ -1327,23 +1349,25 @@ async fn async_main() {
                 PolicyStorageCommands::Status { path, json } => {
                     commands::policy::run_storage_status(path, json).await
                 }
-                PolicyStorageCommands::Database { path, global, migrate, yes, json } => {
+                PolicyStorageCommands::Database { path, global, migrate, yes, keep_files, json } => {
                     commands::policy::run_storage_set(
                         path,
                         PolicyStorage::Database,
                         global,
                         migrate,
                         yes,
+                        keep_files,
                         json,
                     )
                     .await
                 }
-                PolicyStorageCommands::Files { path, global, migrate, json } => {
+                PolicyStorageCommands::Files { path, global, migrate, yes, json } => {
                     commands::policy::run_storage_set(
                         path,
                         PolicyStorage::Files,
                         global,
                         migrate,
+                        yes,
                         false,
                         json,
                     )
@@ -1478,6 +1502,11 @@ async fn async_main() {
                 json,
             } => commands::docs_catalog::run_sync(skip_wiki_pull, dry_run, json).await,
         },
+        Some(Commands::Global { action }) => match action {
+            GlobalAction::Init => commands::global::run_init().await,
+            GlobalAction::Sync { path } => commands::global::run_sync(path).await,
+            GlobalAction::Status => commands::global::run_status().await,
+        },
         Some(Commands::Mcp { action }) => match action {
             McpAction::Audit {
                 path,
@@ -1586,6 +1615,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Savings { .. }) => Some("savings".into()),
         Some(Commands::Pricing { .. }) => Some("pricing".into()),
         Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
+        Some(Commands::Global { .. }) => Some("global".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
         Some(Commands::Web { .. }) => Some("web".into()),

@@ -46,10 +46,10 @@ export default function UnresolvedPage({
   const [selectedNodeId, setSelectedNodeId] = useState('');
 
   useEffect(() => {
-    const fromUrl = route.kind ?? '';
-    if (fromUrl !== kind) setKind(fromUrl);
+    if (route.kind == null || route.kind === '') return;
+    if (route.kind !== kind) setKind(route.kind);
   }, [route.kind, kind, setKind]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [enrichOpen, setEnrichOpen] = useState(false);
@@ -155,7 +155,7 @@ export default function UnresolvedPage({
       (entries) => {
         if (entries[0]?.isIntersecting) loadMore();
       },
-      { root, rootMargin: '320px', threshold: 0 },
+      { root: rootEl, rootMargin: '320px', threshold: 0 },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -422,12 +422,22 @@ export default function UnresolvedPage({
           <PageCard title="Breakdown" description="Unresolved references grouped by link type.">
             <StatusPanel title="By kind">
               {summary.by_kind.map((k) => (
-                <StatusPill
+                <button
                   key={k.kind}
-                  label={k.kind}
-                  value={k.count.toLocaleString()}
-                  tone={kind === k.kind ? 'ok' : 'neutral'}
-                />
+                  type="button"
+                  className="unresolved-kind-btn"
+                  onClick={() => {
+                    const nextKind = kind === k.kind ? '' : k.kind;
+                    setKind(nextKind);
+                    onRouteChange({ ...route, kind: nextKind || null }, true);
+                  }}
+                >
+                  <StatusPill
+                    label={k.kind}
+                    value={k.count.toLocaleString()}
+                    tone={kind === k.kind ? 'ok' : 'neutral'}
+                  />
+                </button>
               ))}
             </StatusPanel>
           </PageCard>
@@ -486,7 +496,7 @@ export default function UnresolvedPage({
                   : 'All symbol references resolved — or run an index first.'}
               </PageEmpty>
             ) : (
-              <div className={selectedNodeId ? 'page-split page-split--with-detail' : 'page-split'}>
+              <div className={selectedNodeId ? 'page-split page-split--with-detail unresolved-split' : 'page-split unresolved-split'}>
                 <div className="page-split-main" ref={scrollRootRef}>
                   <ItemList>
                     {refs.map((r) => (

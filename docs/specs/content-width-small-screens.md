@@ -1,25 +1,22 @@
-# SPEC: Wider content container on smaller screens
+# SPEC: Full-bleed chrome, staged inner content
 
-**Tier:** 1 (layout CSS)
-**spec approval:** not obtained (autonomous; user asked to fill width on smaller screens)
+Tier 1. Spec approval: not obtained (autonomous run).
 
-## B1 — Laptop band (1377–1919px)
+## B1 — Header and footer paint full viewport
 
-`.workspace > .container:not(.container--full)` must **not** use `max-width: calc(var(--layout-max) - var(--sidebar-w))`. It fills the workspace (`max-width: none`).
+`.app` is `width: 100%`. `.titlebar` and `.statusbar` span the full grid (edge to edge).
 
-## B2 — Tablet (max-width 899px)
+## B2 — Inner chrome matches the article stage
 
-The same container is `max-width: none` with `margin-inline: 0` (not centered `layout-max`).
+`.titlebar-inner` and `.statusbar-inner` use `width: min(100%, var(--stage-w))` and `margin-inline: auto`.
 
-## B3 — Ultrawide (1920+)
+## B3 — Nav + article sit in the same stage
 
-Still `max-width: none` (existing). Letterbox `html` background applies only from 1920px, not 1377px.
+`.app` columns: `1fr | sidebar | sizer | minmax(0, layout-max) | 1fr` so gutters center the nav+content block with the header/footer inner.
 
-## Invariants
+## B4 — Ultrawide widths
 
-- Sidebar layout unchanged.
-- `container--full` still unconstrained.
-- Do not copy Mach-O onto `~/.local/bin`.
+`--layout-max`: 1100 / 1320 @1920 / 1480 @2560.
 
 ## Gauntlet
 

@@ -1,4 +1,4 @@
-//! Hidden `ax session-hook` — Cursor sessionStart stdin JSON hook.
+//! Hidden `ax session-hook` — Cursor sessionStart and beforeSubmitPrompt hook.
 
 use std::io::{self, IsTerminal, Read};
 
@@ -26,6 +26,24 @@ pub async fn run() -> Result<(), String> {
     // Without this, verbose lines lack `session=` and audit correlation collapses.
     if let Some(session_id) = parse_cursor_hook_session_id(&input) {
         let _ = write_active_cursor_session(&session_id);
+    }
+
+    let event = input
+        .get("hook_event_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if event == "beforeSubmitPrompt" {
+        let prompt = input
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !prompt.is_empty() {
+            let session = parse_cursor_hook_session_id(&input);
+            let _ = ax_usage::note_session_event(session.as_deref(), "user_prompt", &prompt, None)
+                .await;
+        }
     }
 
     if let Some((session_id, model)) = parse_cursor_hook_model(&input) {

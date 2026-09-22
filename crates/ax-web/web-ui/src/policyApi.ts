@@ -9,6 +9,8 @@ import type {
   RuleFrontmatter,
   SkillFrontmatter,
 } from './policyTypes';
+import type { RestoreDecisionValue } from './policyPackage';
+import { hydratePolicyListItem, originQs } from './components/ui/policyListUtils';
 
 const POLICY = '/api/policy';
 
@@ -27,6 +29,8 @@ function formatApiError(body: ApiErrorBody, status: number): string {
   return body.error ?? `HTTP ${status}`;
 }
 
+export type PolicyOriginQuery = { origin?: string; projectId?: number };
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${POLICY}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
@@ -40,17 +44,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function fetchPolicyRules(): Promise<{ rules: PolicyRuleRow[]; groups?: unknown }> {
-  return request('/rules');
+  return request<{ rules: PolicyRuleRow[]; groups?: unknown }>('/rules').then((r) => ({
+    ...r,
+    rules: (r.rules ?? []).map((row) => hydratePolicyListItem(row as unknown as Record<string, unknown>) as unknown as PolicyRuleRow),
+  }));
 }
 
-export function fetchPolicyRule(id: string): Promise<PolicyRuleDoc> {
-  return request(`/rules/${encodeURIComponent(id)}`);
+export function fetchPolicyRule(id: string, origin?: PolicyOriginQuery): Promise<PolicyRuleDoc> {
+  return request(`/rules/${encodeURIComponent(id)}${originQs(origin)}`);
 }
 
-export function savePolicyRule(id: string | null, frontmatter: RuleFrontmatter, body: string): Promise<PolicyRuleDoc> {
+export function savePolicyRule(
+  id: string | null,
+  frontmatter: RuleFrontmatter,
+  body: string,
+  origin?: PolicyOriginQuery,
+): Promise<PolicyRuleDoc> {
   const payload = { frontmatter, body };
   if (id) {
-    return request(`/rules/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+    return request(`/rules/${encodeURIComponent(id)}${originQs(origin)}`, { method: 'PUT', body: JSON.stringify(payload) });
   }
   return request('/rules', { method: 'POST', body: JSON.stringify(payload) });
 }
@@ -60,27 +72,54 @@ export function deletePolicyRule(id: string): Promise<{ ok: boolean }> {
 }
 
 export function fetchPolicySkills(): Promise<{ skills: PolicySkillRow[]; groups?: Array<{ id: string; label: string; order: number }> }> {
-  return request('/skills');
+  return request<{ skills: PolicySkillRow[]; groups?: Array<{ id: string; label: string; order: number }> }>('/skills').then((r) => ({
+    ...r,
+    skills: (r.skills ?? []).map((row) => hydratePolicyListItem(row as unknown as Record<string, unknown>) as unknown as PolicySkillRow),
+  }));
 }
 
-export function fetchPolicySkill(name: string): Promise<PolicySkillDoc> {
-  return request(`/skills/${encodeURIComponent(name)}`);
+export function fetchPolicySkill(name: string, origin?: PolicyOriginQuery): Promise<PolicySkillDoc> {
+  return request(`/skills/${encodeURIComponent(name)}${originQs(origin)}`);
 }
 
 export function savePolicySkill(
   name: string | null,
   frontmatter: SkillFrontmatter,
   body: string,
+  origin?: PolicyOriginQuery,
 ): Promise<PolicySkillDoc> {
   const payload = { frontmatter, body };
   if (name) {
-    return request(`/skills/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(payload) });
+    return request(`/skills/${encodeURIComponent(name)}${originQs(origin)}`, { method: 'PUT', body: JSON.stringify(payload) });
   }
   return request('/skills', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export function deletePolicySkill(name: string): Promise<{ ok: boolean }> {
   return request(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+export function relocatePolicyItem(
+  kind: 'rule' | 'skill',
+  id: string,
+  to: 'global' | 'project',
+  projectId?: number,
+): Promise<{ ok: boolean; already?: boolean; to?: string }> {
+  return request('/relocate', {
+    method: 'POST',
+    body: JSON.stringify({ kind, id, to, projectId }),
+  });
+}
+
+export function deletePolicyCopy(
+  kind: 'rule' | 'skill',
+  id: string,
+  projectId?: number,
+): Promise<{ ok: boolean }> {
+  return request('/copies/delete', {
+    method: 'POST',
+    body: JSON.stringify({ kind, id, projectId }),
+  });
 }
 
 export function setPolicyRuleEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }> {
@@ -178,11 +217,20 @@ export interface PolicyPackagePreviewItem {
   reason?: string;
 }
 
+export interface PolicyPackageDiffHunk {
+  index: number;
+  local: string[];
+  package: string[];
+  localStart?: number;
+  packageStart?: number;
+}
+
 export interface PolicyPackageItemDiff {
   kind: string;
   id: string;
   compare: string;
   unified: string;
+  hunks?: PolicyPackageDiffHunk[];
 }
 
 export interface PolicyPackagePreview {
@@ -244,7 +292,7 @@ export async function diffPolicyPackageItem(
 
 export async function restorePolicyPackage(
   file: File,
-  decisions: Record<string, 'overwrite' | 'skip'>,
+  decisions: Record<string, RestoreDecisionValue>,
 ): Promise<PolicyPackageRestoreResult> {
   const fd = new FormData();
   fd.append('package', file);

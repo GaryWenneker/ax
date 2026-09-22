@@ -5,10 +5,13 @@ Optional Language Server enrichment for unresolved references.
 ## Commands
 
 ```bash
-ax lsp status              # which servers are on PATH
+ax lsp status              # which servers are runnable (PATH, rustup which, node_modules/.bin)
 ax lsp enrich              # resolve up to 200 unresolved refs
 ax lsp enrich --limit 50 --json
 ```
+
+Install rust-analyzer with `rustup component add rust-analyzer`. A cargo-bin rustup proxy alone is a shim, not a server.
+
 
 ## Servers
 

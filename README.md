@@ -198,7 +198,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax auth microsoft login\|logout\|status` | Microsoft device-code sign-in for OneDrive share sync |
 | `ax policy review list\|show\|approve\|reject` | Review pending pack imports |
 | `ax policy enable\|disable <id>` | Toggle a rule or skill without deleting it |
-| `ax policy storage status\|set-item\|…` | Project default + per-item files/database storage; `policy.roots` mounts |
+| `ax policy storage status\|database\|files\|set-item` | Default files vs database; exclusive migrate with `--yes` |
 | `ax watch [path]` | Alias for `ax sync --watch` |
 | `ax status [--json]` | Node/edge/file counts, doc inventory by extension, pending sync |
 | `ax query <text> [--json]` | FTS symbol search |
@@ -296,9 +296,11 @@ Advertised by default — the turn contract plus the whole graph read surface:
 | `ax_report` | Full Markdown architecture report |
 | `ax_remember` | Store a durable project memory (flags near-duplicates) |
 | `ax_recall` | Hybrid memory search (FTS5 + local vector embeddings) |
+| `ax_expand` | Read a cached oversized MCP reply by id (`offset` / `limit` in characters) |
+| `ax_stash` | Store a chat slice or other tool result; returns an id, does not echo the body |
 | `ax_preflight` | Turn-start policy: matched rules + skills (when `.agents/` or `.ax/policy/` exists) |
 | `ax_rules` | List or match policy rules |
-| `ax_skill` | Load a skill by name |
+| `ax_skill` | Load a skill by name (`~/.ax/global.db` wins over project `ax.db`) |
 | `ax_guard` | Pre-write guard for CRITICAL rules — built-in (encoding, secrets) plus generic `guard: forbid-path/forbid-content/require-content/require-skill` directives declared in any rule body |
 
 Opt-in via `AX_MCP_TOOLS` (comma-separated names, or `all`) — these mutate the index, spawn language servers, or run the quality gate. They stay callable by name either way; the allowlist only controls discovery:

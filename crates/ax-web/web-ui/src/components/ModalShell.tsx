@@ -9,8 +9,8 @@ export interface ModalShellProps {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
-  /** Default 520px; lg = 720px */
-  size?: 'md' | 'lg' | 'xl';
+  /** Default 520px; lg = 720px; xl = 1120px; full = near-viewport restore inspect */
+  size?: 'md' | 'lg' | 'xl' | 'full';
   ariaLabel?: string;
 }
 

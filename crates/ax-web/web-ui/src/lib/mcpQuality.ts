@@ -173,7 +173,7 @@ function suggestedWork(check: string): string[] {
     case 'UncorrelatedTool':
       return [
         'Improve transcript↔verbose correlation (Cursor `CallDynamicTool` + timestamps / optional session_id on verbose lines).',
-        'Ensure Verbose MCP logging is on for the active project and MCP was restarted after enabling it.',
+        'Confirm ax MCP is writing `.ax/mcp-verbose-*.log` for this project (Logging page). Reconnect MCP if the file is empty.',
         'For `ax_guard` path-required errors: pass `path` (or `paths[]`) and `operation`/`action` — recovered retries no longer penalize the score.',
       ];
     case 'GuardBeforeWrite':

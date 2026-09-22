@@ -1,5 +1,6 @@
 //! Context-token savings metrics stored in `~/.ax/usage.db`.
 
+mod context_cache;
 mod cursor_state;
 mod domain_log;
 mod log_brand;
@@ -55,6 +56,12 @@ pub use savings::{
     SavingsQuery, SavingsSummary, PREVIEW_MAX_BYTES,
 };
 pub use store::{open_pool, usage_db_path};
+pub use context_cache::{
+    cache_enabled, cache_oversized_reply, expand_cached, format_catalog, format_session_ledger,
+    ingest_jsonl_oversized, note_session_event, recent_catalog, recent_session_catalog,
+    session_ledger, spawn_note_session_event, stash_text, tool_chunks_from_jsonl,
+    CacheOutcome, CatalogEntry, ExpandPage, StashReceipt,
+};
 pub use tokenizer::{
     count_file_tokens, count_tokens, tokenize_text, tokenizer_available, truncate_utf8,
     TokenizeResult, TOKENIZE_MAX_INPUT_BYTES, TOKENIZE_MAX_TOKENS,

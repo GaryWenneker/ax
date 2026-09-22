@@ -10,7 +10,10 @@ mod enrich;
 mod servers;
 
 pub use enrich::EnrichReport;
-pub use servers::{discover_servers, server_available, ServerStatus, SERVERS};
+pub use servers::{
+    discover_servers, discover_servers_in, server_available, server_available_in, ServerStatus,
+    SERVERS,
+};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -49,7 +52,7 @@ pub async fn enrich_project(
             report.skipped_no_server += file_refs.len() as u32;
             continue;
         };
-        if !crate::servers::server_available(spec) {
+        if !crate::servers::server_available_in(spec, Some(project_root)) {
             report.examined += file_refs.len() as u32;
             report.skipped_no_server += file_refs.len() as u32;
             continue;

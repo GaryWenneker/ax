@@ -359,6 +359,18 @@ Examples:
   ax docs-catalog sync --dry-run
   ax docs-catalog sync --json";
 
+pub const GLOBAL_LONG: &str = "Aggregate project indexes into ~/.ax/global.db.
+
+Copies nodes, files, and edges from this project's .ax/ax.db. Duplicate
+file hashes across projects become shared_knowledge and cross_project_refs.
+
+Override the database path with AX_GLOBAL_DB.
+
+Examples:
+  ax global init
+  ax global sync
+  ax global status";
+
 pub const PRICING_LONG: &str = "Sync and inspect daily model prices from OpenRouter.
 
 Snapshots land in ~/.ax/usage.db and drive Savings cost estimates and the Command Center
@@ -378,9 +390,7 @@ pub const MCP_LONG: &str = "Audit MCP quality by correlating Cursor transcripts 
 
 Scores preflight/enrichment/policy-tool usage and estimates token waste when agents
 fall back to Read/Grep instead of ax graph tools. Same engine powers the Command Center
-Quality slide-out (status-bar Q chip).
-
-Enable Verbose MCP logging in Settings → Interface (or AX_MCP_VERBOSE=1) first.
+Quality slide-out (status-bar Q chip). Verbose MCP logs are always written.
 
 Exit code 2 when critical findings are present (CI-friendly).
 

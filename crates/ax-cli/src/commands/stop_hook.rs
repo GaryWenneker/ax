@@ -52,6 +52,8 @@ pub async fn run() -> Result<(), String> {
         .map(PathBuf::from)
         .unwrap_or_else(|| resolve_path(None));
 
+    let _ = ingest_transcript_tail(&cwd, &input).await;
+
     let Ok(ax) = ax_core::Ax::open(&cwd).await else {
         return Ok(());
     };
@@ -150,6 +152,63 @@ fn parse_porcelain_status(text: &str) -> Vec<String> {
         }
     }
     files
+}
+
+async fn ingest_transcript_tail(cwd: &Path, input: &serde_json::Value) {
+    if !ax_usage::cache_enabled() {
+        return;
+    }
+    let session = input
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(ax_usage::read_active_cursor_session);
+    let path = ax_usage::find_cursor_transcripts(cwd)
+        .into_iter()
+        .next()
+        .or_else(|| newest_claude_jsonl(cwd));
+    let Some(path) = path else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let tail: Vec<&str> = text.lines().rev().take(200).collect();
+    let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+    let _ = ax_usage::ingest_jsonl_oversized(session.as_deref(), &tail).await;
+}
+
+fn newest_claude_jsonl(cwd: &Path) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let projects = home.join(".claude").join("projects");
+    if !projects.is_dir() {
+        return None;
+    }
+    let slug = cwd.to_string_lossy().replace(['/', '\\', ':'], "-");
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    let entries = std::fs::read_dir(&projects).ok()?;
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let name = dir.file_name()?.to_string_lossy();
+        if !name.contains(slug.as_str()) && !slug.contains(name.as_ref()) {
+            continue;
+        }
+        let files = std::fs::read_dir(&dir).ok()?;
+        for file in files.flatten() {
+            let path = file.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let modified = file.metadata().ok().and_then(|m| m.modified().ok())?;
+            if best.as_ref().is_none_or(|(t, _)| modified > *t) {
+                best = Some((modified, path));
+            }
+        }
+    }
+    best.map(|(_, path)| path)
 }
 
 #[cfg(test)]

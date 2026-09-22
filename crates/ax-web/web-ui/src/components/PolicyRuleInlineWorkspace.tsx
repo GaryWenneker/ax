@@ -10,6 +10,8 @@ import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
   ruleId: string;
+  origin?: string;
+  projectId?: number;
   onClose: () => void;
   onSaved?: () => void;
 }
@@ -32,7 +34,7 @@ function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
   };
 }
 
-export default function PolicyRuleInlineWorkspace({ ruleId, onClose, onSaved }: Props) {
+export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, onClose, onSaved }: Props) {
   const [fm, setFm] = useState<RuleFrontmatter | null>(null);
   const [body, setBody] = useState('');
   const [globsText, setGlobsText] = useState('');
@@ -54,7 +56,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, onClose, onSaved }: 
     setError('');
     setFm(null);
     setBody('');
-    fetchPolicyRule(ruleId)
+    fetchPolicyRule(ruleId, { origin, projectId })
       .then((doc) => {
         if (cancelled) return;
         const normalized = normalizeRuleFm(doc.frontmatter);
@@ -73,7 +75,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, onClose, onSaved }: 
     return () => {
       cancelled = true;
     };
-  }, [ruleId]);
+  }, [ruleId, origin, projectId]);
 
   async function save() {
     if (!fm) return;
@@ -99,7 +101,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, onClose, onSaved }: 
         triggers,
         tags,
       };
-      await savePolicyRule(ruleId, frontmatter, body);
+      await savePolicyRule(ruleId, frontmatter, body, { origin, projectId });
       onSaved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -118,12 +120,13 @@ export default function PolicyRuleInlineWorkspace({ ruleId, onClose, onSaved }: 
           {ruleId}
         </span>
         <div className="policy-inline-workspace-actions">
+          {origin === 'global' ? null : (
           <PolicyRevisionHistory
             kind="rule"
             itemId={ruleId}
             onRestored={() => {
               setLoading(true);
-              fetchPolicyRule(ruleId)
+              fetchPolicyRule(ruleId, { origin, projectId })
                 .then((doc) => {
                   const normalized = normalizeRuleFm(doc.frontmatter);
                   setFm(normalized);
@@ -137,6 +140,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, onClose, onSaved }: 
                 .finally(() => setLoading(false));
             }}
           />
+          )}
           <button type="button" className="btn primary" disabled={saving || loading || !fm} onClick={() => void save()}>
             {saving ? 'Saving…' : 'Save'}
           </button>

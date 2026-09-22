@@ -69,11 +69,13 @@ Saved rules go to **database** or **files** depending on `policy.storage` in `ax
 **Hybrid storage:** `ax.json` sets the **project default**. Each rule/skill may override with frontmatter `storage: files|database` (Command Center list toggle or `ax policy storage set-item`). Delivery to agents remains via MCP from `ax.db` either way — the toggle chooses where edits are authoritative.
 
 ```bash
-ax policy storage status                 # show project + global mode + policy.roots
-ax policy storage database --migrate           # propose: scan repo + interview questions
-ax policy storage database --migrate --yes     # apply: switch + import all candidates
-ax policy storage files --migrate              # export DB → files when switching
-ax policy storage database --global            # set default in ~/.ax/config.json
+ax policy storage status                 # show project + global default (files vs database)
+ax policy storage database               # preview: scan rules/skills (no writes)
+ax policy storage database --yes         # import all into ax.db and delete .agents/.ax/policy files
+ax policy storage database --yes --keep-files
+ax policy storage files                  # preview export
+ax policy storage files --yes            # export ax.db → .agents/ (files become source of truth)
+ax policy storage database --global      # set default in ~/.ax/config.json
 ax policy storage set-item utf8-no-bom database
 ax policy storage set-item startup files --keep-file
 ```
@@ -134,6 +136,8 @@ Both modes support the same **scopes**. Frontmatter field `scope` (and the DB co
 
 Merge order on index: company → workspace → project → inactive overlay → private_user → private_project (later wins on the same id/name).
 
+**Agent lookup (`ax_preflight`, `ax_skill`, `ax policy skill`):** merge the current project `ax.db` with `~/.ax/global.db` (`global_policy_skills`). A **global** row with the same name wins.
+
 ### Database migration scan (v2.1.2+)
 
 When switching to **database** with `--migrate`, ax does not import only `.ax/policy/`. It **recursively scans the project** for:
@@ -147,8 +151,8 @@ Skipped automatically: `node_modules`, `target`, `dist`, IDE bootstrap (`.cursor
 
 **Two-step flow:**
 
-1. **Propose** — `ax policy storage database --migrate` (no `--yes`): prints each candidate with interview questions (import yes/no, storage destination, id/name, level, alwaysApply, triggers, globs, priority, tags, keep/remove source file). Does **not** change storage or import yet.
-2. **Apply** — after interview: `ax policy storage database --migrate --yes` switches to database mode and upserts all candidates into `ax.db`.
+1. **Propose** — `ax policy storage database` (no `--yes`): prints each candidate. Does **not** change storage or import yet.
+2. **Apply exclusive** — `ax policy storage database --yes` switches to database mode, upserts candidates into `ax.db`, and **deletes** `.agents/` / `.ax/policy/` markdown. `--keep-files` skips deletion. `.cursor/` bootstrap files stay.
 
 Use `--json` on either step for agent-driven interviews.
 
@@ -376,7 +380,7 @@ ax policy pack install azdo-fullstack
 ax policy pack install azdo-fullstack --force
 ```
 
-`azdo-fullstack` adds Azure DevOps ticket-to-release **skills** (full workflows with checklists — refinement → development → testing → PR → pipelines → release) and matching **rules**. It complements built-in methodology skills (`design-first`, `tdd`, `systematic-debugging`) rather than replacing them. Re-run with `--force` after upgrading ax to refresh expanded skill bodies.
+`azdo-fullstack` adds Azure DevOps ticket-to-release **skills** (full workflows with checklists — refinement → development → testing → PR → pipelines → release) and matching **rules**. The `azdo-code-review` skill reviews against the Story: scope creep, sibling patterns in the repo, both ends of a bound (not only the max), and a named test for each gap. It complements built-in methodology skills (`design-first`, `tdd`, `systematic-debugging`) rather than replacing them. Re-run with `--force` after upgrading ax to refresh expanded skill bodies.
 
 Install writes project files under `.ax/policy/`, then **imports into `ax.db`** when `policy.storage` is `database` (so MCP/`ax policy skill` show the new bodies without a separate `ax policy index --force`).
 
@@ -385,7 +389,7 @@ Install writes project files under `.ax/policy/`, then **imports into `ax.db`** 
 Sitecore-style **item pick → zip → restore with conflict preview**. This is not git pack sync and not OneDrive.
 
 1. Command Center **Rules** or **Skills**: **Package** — large modal, **Select all** / **Select none**, rule and skill **descriptions** (generated from the body when missing), click a name to inspect the local file, then **Download** `*.ax-policy.zip`.
-2. On the other machine: **Restore package** — upload, then a table of items with a one-line compare (`Different · Package newer`, `New`, …) and **Reject** / **Accept**. Click a row for a git-style unified diff vs local. **New** items default to Accept. Conflicts default to Reject (including local-newer files) so an older package does not replace a newer local file unless you Accept. Packs include a blake3 `contentHash` per file so “changed” does not depend on zip timestamps; a mismatched hash is invalid. Confirm writes into `.agents/`, then policy re-index. Accepted writes are also stored in a **local revision log** (blake3 hash-on-change, 20 per item) so you can Restore from **History** in the rule/skill editor. Identical Command Center saves are not listed.
+2. On the other machine: **Restore package** — drop or choose an `.ax-policy.zip` (compact modal until the zip loads, then a near-full-width preview), then a table of items with a one-line compare (`Different · Package newer` in orange, `Different · Local newer` in red, `Identical` in green, `New`, …) and **Reject** / **Accept**. Click a row for a two-column hunk view with **line numbers**. The file list stays readable (ids do not wrap letter-by-letter); Compare moves into the inspect title while a row is open. Each column is labeled **Old** (local file) and **New** (package) above the code. Check the box on a column (or both) for each change (or the whole file). Mixed hunks show **Partial**. **New** items default to Accept. Conflicts default to Reject (including local-newer files) so an older package does not replace a newer local file unless you Accept. Packs include a blake3 `contentHash` per file so “changed” does not depend on zip timestamps; a mismatched hash is invalid. Confirm writes into `.agents/`, then policy re-index. Files that are not ax schema (typical Cursor `.mdc` / `SKILL.md` without ax `id`/`level` or skill `description`) stay on disk and are **skipped** during index and during MCP session policy refresh (`ensure_policy_ready`); they do not abort restore or `ax_preflight` as `validation_failed`. Parsed disabled or private-scope files under `.agents/` still fail the leak gate. Accepted writes are also stored in a **local revision log** (blake3 hash-on-change, 20 per item) so you can Restore from **History** in the rule/skill editor. Identical Command Center saves are not listed.
 
 Team-wide moderation stays on git: merge a PR, then pack a zip (or attach the zip as a CI artifact). Command Center restore is local Accept/Reject, not a substitute for pull-request review.
 
@@ -399,7 +403,7 @@ ax policy restore --preview team.ax-policy.zip
 ax policy restore team.ax-policy.zip --decisions decisions.json
 ```
 
-`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite` or `skip`. Missing keys: **new** → install, **conflict** → skip (never overwrite a newer local file unless listed as overwrite). Private and disabled items are never packed.
+`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite`, `skip`, `{ "action": "merge", "acceptHunks": [0, 2] }`, or `{ "action": "merge", "hunks": [{ "index": 0, "take": "both" }] }`. Missing keys: **new** → install, **conflict** → skip (never overwrite a newer local file unless listed as overwrite). Private and disabled items are never packed.
 
 ### IDE-agnostic delivery (Cursor ↔ Continue ↔ …)
 
@@ -480,8 +484,8 @@ ax policy review list|show|approve|reject
 ax policy guard --file path        # test CRITICAL guard on a path
 ax policy capture <prompt> [--yes] [--json] [--file path]
 ax policy storage status [--json]
-ax policy storage database [--migrate] [--yes] [--global] [--json]
-ax policy storage files [--migrate] [--global] [--json]
+ax policy storage database [--yes] [--keep-files] [--global] [--json]
+ax policy storage files [--yes] [--global] [--json]
 ```
 
 ---
@@ -495,6 +499,8 @@ ax web --port 7070 --open
 Open **Policy → Rules** or **Policy → Skills** in the sidebar to edit frontmatter and markdown, save to disk, and re-index automatically.
 
 Selecting a row opens a master-detail blade (slides in once). Switching to another row while the blade is open keeps the panel in place and reveals the new metadata/body (no repeat slide-in).
+
+**Project vs global database:** `ax global sync` copies each project’s `policy_rules` / `policy_skills` into `~/.ax/global.db`. Command Center lists **this project’s** `ax.db` as **Project** (teal `#3ee4b2`) and parked copies as **Global** (gold `#e0b341`, read-only). The source project is in the badge tooltip, not on the chip — global.db is storage, not agent-wide matching. Right-click a row for **Open / Edit / Enable / Move to global.db / Delete**, or **Open / Edit / Move to this project** and **Delete from global.db** on global rows. Global copies can be opened and saved in Command Center; GET/PUT use `?origin=global&projectId=`. Agents still match only the current project database.
 
 In the rule/skill editor, drag the handle between **Metadata** and the markdown panel to resize the meta column (persisted in the browser). In edit mode, drag the bar between the markdown source and the live preview to resize those panes. Double-click the meta handle to reset its width.
 

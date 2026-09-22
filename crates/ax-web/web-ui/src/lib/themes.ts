@@ -180,6 +180,26 @@ export const THEMES: ThemePreset[] = [
     textHi: '#ffffff',
     statusbarBg: '#2c2c2e',
   },
+  {
+    id: 'mono',
+    label: 'Mono',
+    accent: '#d0d0d0',
+    ok: '#a8a8a8',
+    danger: '#8a8a8a',
+    warn: '#b8b8b8',
+    bg: '#141414',
+    bgSide: '#0e0e0e',
+    bgInput: '#242424',
+    bgHover: '#1c1c1c',
+    bgActive: '#2a2a2a',
+    bgPanel: '#141414',
+    border: '#2c2c2c',
+    borderHi: '#4a4a4a',
+    text: '#d8d8d8',
+    textDim: '#a0a0a0',
+    textHi: '#f4f4f4',
+    statusbarBg: '#d0d0d0',
+  },
 ];
 
 const STORAGE_KEY = 'ax-theme';

@@ -39,7 +39,11 @@ pub async fn call_tool(
     args: Value,
 ) -> Result<Value, String> {
     if is_policy_tool(name) {
-        engine.ensure_policy_fresh().await?;
+        if let Err(e) = engine.ensure_policy_fresh().await {
+            tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");
+            engine.ensure_initialized().await?;
+            engine.reopen_if_replaced().await?;
+        }
     } else {
         engine.ensure_initialized().await?;
         engine.reopen_if_replaced().await?;

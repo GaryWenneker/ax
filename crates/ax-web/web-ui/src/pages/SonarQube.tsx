@@ -43,7 +43,7 @@ const DEFAULT_CONFIG: ShipConfig = {
   ui: {
     show_savings: true,
     show_agent_terminal: true,
-    verbose_mcp: false,
+    verbose_mcp: true,
     timezone: '',
   },
   reviewers: {},

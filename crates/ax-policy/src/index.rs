@@ -135,8 +135,20 @@ async fn import_one_policy_dir(
             if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
                 continue;
             }
-            let raw = std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
-            let mut doc = parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
+            let raw = match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[ax policy] skip rule {}: {e}", path.display());
+                    continue;
+                }
+            };
+            let mut doc = match parse_rule_file(path, &raw) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("[ax policy] skip rule {}: {}", path.display(), e.error);
+                    continue;
+                }
+            };
             if !preserve_item_scope {
                 doc.frontmatter.scope = scope_s.clone();
             }
@@ -168,8 +180,20 @@ async fn import_one_policy_dir(
             if !skill_path.is_file() {
                 continue;
             }
-            let raw = std::fs::read_to_string(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
-            let mut doc = parse_skill_file(&skill_path, &raw).map_err(|e| AxError::Other(e.error))?;
+            let raw = match std::fs::read_to_string(&skill_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[ax policy] skip skill {}: {e}", skill_path.display());
+                    continue;
+                }
+            };
+            let mut doc = match parse_skill_file(&skill_path, &raw) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("[ax policy] skip skill {}: {}", skill_path.display(), e.error);
+                    continue;
+                }
+            };
             if !preserve_item_scope {
                 doc.frontmatter.scope = scope_s.clone();
             }
@@ -242,6 +266,16 @@ pub async fn export_policy_to_files(
     project_root: &Path,
     out_dir: &Path,
 ) -> Result<ExportResult, AxError> {
+    export_policy_to_files_filtered(pool, project_root, out_dir, true).await
+}
+
+/// When `git_export_only` is false, every DB rule/skill is written (exclusive files mode).
+pub async fn export_policy_to_files_filtered(
+    pool: &SqlitePool,
+    project_root: &Path,
+    out_dir: &Path,
+    git_export_only: bool,
+) -> Result<ExportResult, AxError> {
     let rules_out = out_dir.join("rules");
     let skills_out = out_dir.join("skills");
     std::fs::create_dir_all(&rules_out).map_err(|e| AxError::Other(e.to_string()))?;
@@ -254,7 +288,7 @@ pub async fn export_policy_to_files(
     for row in &rules {
         let scope = crate::types::PolicyScope::parse(&row.scope)
             .unwrap_or(crate::types::PolicyScope::Project);
-        if !crate::agents_share::is_git_export_candidate(scope, row.enabled) {
+        if git_export_only && !crate::agents_share::is_git_export_candidate(scope, row.enabled) {
             continue;
         }
         let doc = rule_row_to_doc(row, project_root);
@@ -267,7 +301,7 @@ pub async fn export_policy_to_files(
     for row in &skills {
         let scope = crate::types::PolicyScope::parse(&row.scope)
             .unwrap_or(crate::types::PolicyScope::Project);
-        if !crate::agents_share::is_git_export_candidate(scope, row.enabled) {
+        if git_export_only && !crate::agents_share::is_git_export_candidate(scope, row.enabled) {
             continue;
         }
         let doc = skill_row_to_doc(row, project_root);
@@ -399,8 +433,12 @@ async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<b
             if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
                 continue;
             }
-            let raw = std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
-            let doc = parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
+            let Ok(raw) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            let Ok(doc) = parse_rule_file(path, &raw) else {
+                continue;
+            };
             let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
             let db_hash: Option<String> = sqlx::query_scalar(
                 "SELECT content_hash FROM policy_rules WHERE id = ?",
@@ -432,8 +470,12 @@ async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<b
             if !skill_path.is_file() {
                 continue;
             }
-            let raw = std::fs::read_to_string(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
-            let doc = parse_skill_file(&skill_path, &raw).map_err(|e| AxError::Other(e.error))?;
+            let Ok(raw) = std::fs::read_to_string(&skill_path) else {
+                continue;
+            };
+            let Ok(doc) = parse_skill_file(&skill_path, &raw) else {
+                continue;
+            };
             let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
             let db_hash: Option<String> = sqlx::query_scalar(
                 "SELECT content_hash FROM policy_skills WHERE name = ?",
@@ -1034,6 +1076,121 @@ mod tests {
         // index without force should not wipe DB-only rows
         let result = index_policy(&pool, root, false).await.unwrap();
         assert_eq!(result.rules_indexed, 1);
+    }
+
+    #[tokio::test]
+    async fn import_skips_unparseable_cursor_files() {
+        let (_dir, pool) = test_pool().await;
+        let root = _dir.path();
+        std::fs::create_dir_all(root.join(".agents/rules")).unwrap();
+        std::fs::write(
+            root.join(".agents/rules/no-ab-prefix.mdc"),
+            "---\ndescription: Cursor rule\nalwaysApply: true\n---\n\nNo AB prefix.\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(".agents/skills/vfpf-pr")).unwrap();
+        std::fs::write(
+            root.join(".agents/skills/vfpf-pr/SKILL.md"),
+            "---\nname: vfpf-pr\n---\n\nPR workflow.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".agents/rules/ok.mdc"),
+            "---\nid: ok\nlevel: INFO\nalwaysApply: true\nscope: project\n---\n\nax body\n",
+        )
+        .unwrap();
+
+        let result = import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .expect("cursor-native neighbors must not fail index");
+        assert!(result.rules_indexed >= 1);
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(rules.iter().any(|r| r.id == "ok"));
+        assert!(
+            !rules.iter().any(|r| r.id.contains("no-ab-prefix") || r.id == "vfpf-pr"),
+            "cursor-native files must not be upserted: {:?}",
+            rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_policy_ready_skips_cursor_files_when_checking_stale() {
+        let (_dir, pool) = test_pool().await;
+        let root = _dir.path();
+        std::fs::write(
+            root.join("ax.json"),
+            r#"{"policy":{"storage":"database"}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(".agents/rules")).unwrap();
+        std::fs::write(
+            root.join(".agents/rules/ok.mdc"),
+            "---\nid: ok\nlevel: INFO\nalwaysApply: true\nscope: project\n---\n\nax body\n",
+        )
+        .unwrap();
+        ensure_policy_ready(&pool, root)
+            .await
+            .expect("first import of valid ax rule");
+
+        std::fs::write(
+            root.join(".agents/rules/no-ab-prefix.mdc"),
+            "---\ndescription: Cursor rule\nalwaysApply: true\n---\n\nNo AB prefix.\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(".agents/skills/vfpf-pr")).unwrap();
+        std::fs::write(
+            root.join(".agents/skills/vfpf-pr/SKILL.md"),
+            "---\nname: vfpf-pr\n---\n\nPR workflow.\n",
+        )
+        .unwrap();
+
+        ensure_policy_ready(&pool, root)
+            .await
+            .expect("stale check must skip Cursor-native files (MCP session / ax_preflight)");
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(rules.iter().any(|r| r.id == "ok"));
+    }
+
+    #[tokio::test]
+    async fn restore_then_index_with_cursor_native_neighbor() {
+        let (_dir, pool) = test_pool().await;
+        let dest = _dir.path();
+        std::fs::create_dir_all(dest.join(".agents/rules")).unwrap();
+        std::fs::write(
+            dest.join(".agents/rules/no-ab-prefix.mdc"),
+            "---\ndescription: Cursor rule\nalwaysApply: true\n---\n\nNo AB prefix.\n",
+        )
+        .unwrap();
+
+        let src = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(src.path().join(".agents/rules")).unwrap();
+        std::fs::write(
+            src.path().join(".agents/rules/packed.mdc"),
+            "---\nid: packed\nlevel: INFO\nalwaysApply: true\nenabled: true\nscope: project\n---\n\nfrom zip\n",
+        )
+        .unwrap();
+        let zip = crate::zip_package::build_policy_zip(
+            src.path(),
+            &crate::zip_package::PackSpec {
+                name: "t".into(),
+                description: "d".into(),
+                rule_ids: vec!["packed".into()],
+                skill_names: vec![],
+                ax_version: "4.8.0".into(),
+                package_version: None,
+                author: None,
+            },
+        )
+        .unwrap();
+        crate::zip_package::restore_policy_zip(dest, &zip, &std::collections::HashMap::new())
+            .unwrap();
+
+        let result = import_policy_from_files(&pool, dest, ImportMode::Replace)
+            .await
+            .expect("restore + index must succeed with cursor-native neighbor");
+        assert!(result.rules_indexed >= 1);
+        let rules = list_rules(&pool).await.unwrap();
+        assert!(rules.iter().any(|r| r.id == "packed"));
     }
 
     #[tokio::test]

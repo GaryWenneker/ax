@@ -27,7 +27,7 @@ const DEFAULT_CONFIG: ShipConfig = {
   ui: {
     show_savings: true,
     show_agent_terminal: true,
-    verbose_mcp: false,
+    verbose_mcp: true,
     timezone: '',
   },
   reviewers: {},
@@ -141,33 +141,6 @@ export default function SettingsPage() {
       setConfig((c) => ({
         ...c,
         ui: { ...(c.ui ?? {}), show_savings: !show_savings },
-      }));
-      setErr(String(e));
-    }
-  }
-
-  async function setUiVerboseMcp(verbose_mcp: boolean) {
-    const next = {
-      ...config,
-      ui: { ...(config.ui ?? {}), verbose_mcp },
-    };
-    setConfig(next);
-    setErr(null);
-    setMsg(null);
-    try {
-      await saveShipConfig(next);
-      window.dispatchEvent(
-        new CustomEvent('ax-ship-config-updated', { detail: { verbose_mcp } }),
-      );
-      setMsg(
-        verbose_mcp
-          ? 'Verbose MCP logging on — reconnect ax MCP to record new calls'
-          : 'Verbose MCP logging off',
-      );
-    } catch (e) {
-      setConfig((c) => ({
-        ...c,
-        ui: { ...(c.ui ?? {}), verbose_mcp: !verbose_mcp },
       }));
       setErr(String(e));
     }
@@ -328,12 +301,13 @@ export default function SettingsPage() {
             <div className="settings-divider" />
             <div className="settings-subsection-label">Interface</div>
 
-            <SettingRow
-              title="Theme"
-              description="Accent color and palette for the Command Center UI."
-            >
+            <div className="settings-theme-block">
+              <span className="settings-row-title">Theme</span>
+              <span className="settings-row-desc">
+                Accent and palette for Command Center. Mono is grayscale chrome with WCAG AA status-bar ink.
+              </span>
               <ThemeChooser activeId={themeId} onSelect={setThemeId} />
-            </SettingRow>
+            </div>
 
             <SettingRow
               title="Show Savings page"
@@ -343,18 +317,6 @@ export default function SettingsPage() {
                 label="Show Savings page"
                 checked={config.ui?.show_savings ?? config.ui?.show_tokens ?? true}
                 onChange={setUiSavings}
-              />
-            </SettingRow>
-
-            <SettingRow
-              title="Verbose MCP logging"
-              description="Record MCP tool calls to .ax/mcp-verbose-YYYY-MM-DD.log for this project. Reconnect ax MCP after enabling. Off by default — never changes tool responses. AX_MCP_VERBOSE=1 in MCP env still forces on."
-            >
-              <Toggle
-                label="Verbose MCP logging"
-                checked={config.ui?.verbose_mcp ?? false}
-                disabled={!configLoaded || !!busy}
-                onChange={setUiVerboseMcp}
               />
             </SettingRow>
 

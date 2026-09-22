@@ -73,7 +73,6 @@ const KIND_LABELS: Record<TraceKind, string> = {
 };
 
 type Props = {
-  verboseEnabled: boolean;
   variant?: 'page' | 'embedded';
 };
 
@@ -334,13 +333,13 @@ async function exitBrowserFullscreen() {
  * Newest events render at the top; scroll down for older days.
  * Table layout; tap a row for the compact Call Inspector.
  */
-export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: Props) {
+export default function McpTraceLive({ variant = 'embedded' }: Props) {
   const [entries, setEntries] = useState<TraceEntry[]>([]);
   const [live, setLive] = useState(false);
   /** When true, keep the viewport pinned to the newest rows (top). */
   const [follow, setFollow] = useState(true);
   const isPage = variant === 'page';
-  const [maximized, setMaximized] = useState(isPage);
+  const [maximized, setMaximized] = useState(false);
   const [browserFs, setBrowserFs] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cursorId, setCursorId] = useState<string | null>(null);
@@ -351,6 +350,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [projectLabel, setProjectLabel] = useState('…');
   const [projectRoot, setProjectRoot] = useState('');
+  const [fallbackLabel, setFallbackLabel] = useState('');
+  const [verboseFromApi, setVerboseFromApi] = useState<boolean | null>(null);
+  const [logExists, setLogExists] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [quality, setQuality] = useState<QualitySnapshot>(emptyQualitySnapshot);
@@ -387,6 +389,10 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     projectRoot?: string;
     projectLabel?: string;
     logDay?: string;
+    followLabel?: string;
+    fallbackLabel?: string | null;
+    verboseMcp?: boolean;
+    logExists?: boolean;
   }) {
     if (d.path) setPath(d.path);
     if (d.logDay) {
@@ -400,6 +406,9 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
       const parts = d.projectRoot.replace(/[\\/]+$/, '').split(/[\\/]/);
       setProjectLabel(parts[parts.length - 1] || d.projectRoot);
     }
+    setFallbackLabel(typeof d.fallbackLabel === 'string' ? d.fallbackLabel : '');
+    if (typeof d.verboseMcp === 'boolean') setVerboseFromApi(d.verboseMcp);
+    if (typeof d.logExists === 'boolean') setLogExists(d.logExists);
   }
 
   const visibleEntries = useMemo(
@@ -598,12 +607,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
     let cancelled = false;
     fetch(MCP_TRACE_PATH_URL)
       .then((r) => r.json())
-      .then((d: {
-        path?: string;
-        projectRoot?: string;
-        projectLabel?: string;
-        logDay?: string;
-      }) => {
+      .then((d) => {
         if (!cancelled) applyProjectMeta(d);
       })
       .catch(() => {});
@@ -651,31 +655,13 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
 
   useEffect(() => {
     function onFsChange() {
-      setBrowserFs(Boolean(document.fullscreenElement));
-      if (!document.fullscreenElement && isPage) {
-        setMaximized(true);
-      }
+      const on = Boolean(document.fullscreenElement);
+      setBrowserFs(on);
+      if (!on) setMaximized(false);
     }
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
-  }, [isPage]);
-
-  useEffect(() => {
-    if (!isPage) return;
-    setMaximized(true);
-    let cancelled = false;
-    const tryFs = () => {
-      if (cancelled) return;
-      // Fullscreen the whole app so the status bar (log stats) stays visible.
-      void enterBrowserFullscreen(document.documentElement);
-    };
-    const t = window.setTimeout(tryFs, 0);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-      void exitBrowserFullscreen();
-    };
-  }, [isPage]);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -716,14 +702,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
           const raw = ((ev as MessageEvent).data as string) ?? '';
           if (!raw) return;
           try {
-            applyProjectMeta(
-              JSON.parse(raw) as {
-                path?: string;
-                projectRoot?: string;
-                projectLabel?: string;
-                logDay?: string;
-              },
-            );
+            applyProjectMeta(JSON.parse(raw));
           } catch {
             // ignore malformed project events
           }
@@ -1056,7 +1035,7 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
   async function toggleMaximize() {
     if (maximized && (browserFs || document.fullscreenElement)) {
       await exitBrowserFullscreen();
-      if (!isPage) setMaximized(false);
+      setMaximized(false);
       return;
     }
     setMaximized(true);
@@ -1092,6 +1071,12 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
               <span className="mcp-trace-project-chip-label">Project</span>
               <strong className="mcp-trace-project-chip-name">{projectLabel}</strong>
             </span>
+            {fallbackLabel ? (
+              <span className="mcp-trace-project-chip" title={path}>
+                <span className="mcp-trace-project-chip-label">Logs</span>
+                <strong className="mcp-trace-project-chip-name">{fallbackLabel}</strong>
+              </span>
+            ) : null}
             {live ? (
               <span className="settings-log-live">live</span>
             ) : (
@@ -1183,13 +1168,6 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
             </button>
           </div>
         </div>
-
-        {!verboseEnabled && (
-          <div className="settings-toast settings-toast--ok mcp-trace-hint">
-            Enable <strong>Verbose MCP logging</strong> in Settings to record new tool calls. History
-            below still tails the project log file.
-          </div>
-        )}
 
         {isPage && <McpQualityStrip snap={quality} />}
       </div>
@@ -1375,7 +1353,11 @@ export default function McpTraceLive({ verboseEnabled, variant = 'embedded' }: P
             {loadingHistory ? (
               'Loading earlier history…'
             ) : historyExhausted ? (
-              'Waiting for MCP tool calls… (enable verbose + reconnect ax MCP)'
+              verboseFromApi === false && !logExists && !fallbackLabel ? (
+                `No MCP log in ${projectLabel || 'this project'} yet. Enable verbose MCP in Settings → Interface and reconnect ax MCP with this folder as --path.`
+              ) : (
+                'Waiting for MCP tool calls… (enable verbose + reconnect ax MCP)'
+              )
             ) : (
               <>
                 Nothing logged for {logDay || 'today'} yet.{' '}

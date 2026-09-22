@@ -179,7 +179,7 @@ pub fn run_hook_install() -> Result<(), String> {
 
     merge_hooks_json(&cursor_dir.join("hooks.json"), script_name)?;
 
-    println!("Installed Cursor sessionStart hook:");
+    println!("Installed Cursor sessionStart and beforeSubmitPrompt hooks:");
     println!("  {}", script_path.display());
     println!("  {}", cursor_dir.join("hooks.json").display());
     println!("Start a new Composer chat to tag the model, then run `ax savings import --all`.");
@@ -217,7 +217,20 @@ fn merge_hooks_json(path: &Path, script_name: &str) -> Result<(), String> {
         .ok_or("hooks.sessionStart must be an array")?;
 
     if !arr.iter().any(|item| hook_points_to_ax_session_model(item, &command)) {
-        arr.push(entry);
+        arr.push(entry.clone());
+    }
+
+    let before_submit = hooks
+        .entry("beforeSubmitPrompt")
+        .or_insert_with(|| Value::Array(vec![]));
+    let before_arr = before_submit
+        .as_array_mut()
+        .ok_or("hooks.beforeSubmitPrompt must be an array")?;
+    if !before_arr
+        .iter()
+        .any(|item| hook_points_to_ax_session_model(item, &command))
+    {
+        before_arr.push(entry);
     }
 
     let pretty = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;

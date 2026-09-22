@@ -165,7 +165,11 @@ async fn call_tool_and_wrap(
     verbose: bool,
 ) -> Result<Value, String> {
     if is_policy_tool(name) {
-        engine.ensure_policy_fresh().await?;
+        if let Err(e) = engine.ensure_policy_fresh().await {
+            tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");
+            engine.ensure_initialized().await?;
+            engine.reopen_if_replaced().await?;
+        }
     } else {
         engine.ensure_initialized().await?;
         engine.reopen_if_replaced().await?;
@@ -228,13 +232,48 @@ async fn call_tool_and_wrap(
                 .map(ax_sync::global_pending_files)
                 .unwrap_or_default();
             let annotated = crate::staleness::annotate_staleness(&text, value, &pending);
-            let text_source = if annotated == text {
-                value.clone()
-            } else {
-                // Prefer annotated text for the model-facing content while
-                // keeping structuredContent on the original tool payload.
-                json!({ "text": annotated })
-            };
+            let cached = ax_usage::cache_oversized_reply(name, &annotated).await;
+            let (model_text, structured, hint, response_tokens, response_chars, tokens_saved) =
+                match &cached {
+                    ax_usage::CacheOutcome::Stubbed {
+                        text: stub,
+                        id,
+                        original_tokens,
+                        sent_tokens,
+                        removed_tokens,
+                    } => {
+                        let saved = if est.savings_eligible {
+                            est.tokens_saved_est.saturating_add(*removed_tokens)
+                        } else {
+                            est.tokens_saved_est
+                        };
+                        (
+                            stub.clone(),
+                            Some(json!({
+                                "contextCacheId": id,
+                                "originalTokens": original_tokens,
+                                "sentTokens": sent_tokens,
+                                "removedTokens": removed_tokens,
+                            })),
+                            None,
+                            *sent_tokens,
+                            stub.len() as i64,
+                            saved,
+                        )
+                    }
+                    ax_usage::CacheOutcome::Passthrough => {
+                        let model_text = annotated.clone();
+                        (
+                            model_text.clone(),
+                            structured,
+                            token_budget_hint(name, est.response_tokens_est),
+                            est.response_tokens_est,
+                            model_text.len() as i64,
+                            est.tokens_saved_est,
+                        )
+                    }
+                };
+            let text_source = json!({ "text": model_text });
             let wrapped = wrap_call_tool_result_parts(
                 &text_source,
                 structured,
@@ -242,16 +281,26 @@ async fn call_tool_and_wrap(
                     .get("isError")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
-                token_budget_hint(name, est.response_tokens_est),
+                hint,
             );
             if verbose {
                 push_outbound(name, &wrapped, full, duration_ms);
             }
+            let cache_id = match &cached {
+                ax_usage::CacheOutcome::Stubbed { id, .. } => Some(id.clone()),
+                ax_usage::CacheOutcome::Passthrough => None,
+            };
+            ax_usage::spawn_note_session_event(
+                ax_usage::read_active_cursor_session(),
+                name.to_string(),
+                annotated,
+                cache_id,
+            );
             spawn_record_mcp_call(McpCallRecord {
                 tool: name.to_string(),
                 project,
-                response_chars: text.len() as i64,
-                response_tokens_est: est.response_tokens_est,
+                response_chars,
+                response_tokens_est: response_tokens,
                 counterfactual_files: if est.savings_eligible {
                     Some(est.counterfactual_files)
                 } else {
@@ -268,7 +317,7 @@ async fn call_tool_and_wrap(
                     None
                 },
                 tokens_saved_est: if est.savings_eligible {
-                    Some(est.tokens_saved_est)
+                    Some(tokens_saved)
                 } else {
                     None
                 },

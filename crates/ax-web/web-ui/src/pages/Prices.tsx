@@ -22,6 +22,19 @@ import {
   PageToasts,
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
+import {
+  CHART_INPUT,
+  CHART_OUTPUT,
+  allZeroPrices,
+  chartDomain,
+  chartX,
+  chartY,
+  formatContextLength,
+  mergeCatalog,
+  pickDefaultModelId,
+  providerLabel,
+  providerSlug,
+} from '../lib/pricesUi';
 
 function fmtUsd(n: number): string {
   if (!Number.isFinite(n)) return '—';
@@ -33,11 +46,11 @@ function fmtUsd(n: number): string {
 }
 
 function RateChart({ points }: { points: PricingHistoryPoint[] }) {
-  const series = points.filter((p) => p.source === 'openrouter');
-  if (series.length < 2) {
+  const series = points.filter((p) => p.source === 'openrouter' || p.source === 'builtin');
+  if (series.length < 1) {
     return (
       <p className="page-hint">
-        Price-over-time appears after at least two daily syncs for this model.
+        Price-over-time appears after a daily sync for this model.
       </p>
     );
   }
@@ -48,56 +61,71 @@ function RateChart({ points }: { points: PricingHistoryPoint[] }) {
   const padR = 16;
   const padT = 16;
   const padB = 28;
+  const innerW = w - padL - padR;
+  const innerH = h - padT - padB;
   const inputs = series.map((p) => p.input_per_mtok);
   const outputs = series.map((p) => p.output_per_mtok);
-  const max = Math.max(...inputs, ...outputs, 0.01);
-  const x = (i: number) => padL + (i / (series.length - 1)) * (w - padL - padR);
-  const y = (v: number) => padT + ((max - v) / max) * (h - padT - padB);
-  const line = (vals: number[]) =>
-    vals.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
-  const ticks = [max, max / 2, 0];
+  const zeros = allZeroPrices([...inputs, ...outputs]);
+  const { min, max } = chartDomain([...inputs, ...outputs]);
+  const overlap = !zeros && inputs.every((v, i) => v === outputs[i]);
+  const x = (i: number) => chartX(i, series.length, padL, innerW);
+  const yIn = (v: number) => chartY(v, min, max, padT, innerH) - (overlap || zeros ? 5 : 0);
+  const yOut = (v: number) => chartY(v, min, max, padT, innerH) + (overlap || zeros ? 5 : 0);
+  const line = (vals: number[], yFn: (v: number) => number) =>
+    vals.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${yFn(v).toFixed(1)}`).join(' ');
+  const ticks = zeros ? [0] : [max, (max + min) / 2, min];
+  const yTick = (t: number) => chartY(t, min, max, padT, innerH);
 
   return (
     <div className="prices-chart-wrap">
-      <div className="prices-chart-legend">
-        <span className="prices-chart-legend-item">
+      <div className="prices-chart-legend" role="list" aria-label="Chart legend">
+        <span className="prices-chart-legend-item" role="listitem">
           <span className="prices-chart-swatch prices-chart-swatch--in" />
           Input $/MTok
         </span>
-        <span className="prices-chart-legend-item">
+        <span className="prices-chart-legend-item" role="listitem">
           <span className="prices-chart-swatch prices-chart-swatch--out" />
           Output $/MTok
         </span>
       </div>
+      {zeros ? (
+        <p className="page-hint">
+          This model is free: input and output are $0 / MTok. The chart sits on the zero line.
+        </p>
+      ) : null}
       <svg className="prices-chart" viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Price over time">
         {ticks.map((t) => (
           <g key={`tick-${t}`}>
             <line
               x1={padL}
               x2={w - padR}
-              y1={y(t)}
-              y2={y(t)}
+              y1={yTick(t)}
+              y2={yTick(t)}
               stroke="var(--border)"
               strokeWidth="1"
             />
-            <text x={padL - 6} y={y(t) + 3} fontSize="10" fill="var(--muted)" textAnchor="end">
+            <text x={padL - 6} y={yTick(t) + 3} fontSize="10" fill="var(--text-dim)" textAnchor="end">
               {fmtUsd(t)}
             </text>
           </g>
         ))}
-        <path fill="none" stroke="var(--accent, #3b82f6)" strokeWidth="2.5" d={line(inputs)} />
-        <path fill="none" stroke="var(--ok, #22c55e)" strokeWidth="2.5" d={line(outputs)} />
+        {series.length > 1 ? (
+          <>
+            <path fill="none" stroke={CHART_INPUT} strokeWidth="2.5" d={line(inputs, yIn)} />
+            <path fill="none" stroke={CHART_OUTPUT} strokeWidth="2.5" d={line(outputs, yOut)} />
+          </>
+        ) : null}
         {series.map((p, i) => (
-          <g key={p.date}>
-            <circle cx={x(i)} cy={y(p.input_per_mtok)} r="3.5" fill="var(--accent, #3b82f6)" />
-            <circle cx={x(i)} cy={y(p.output_per_mtok)} r="3.5" fill="var(--ok, #22c55e)" />
+          <g key={`${p.date}-${i}`}>
+            <circle cx={x(i)} cy={yIn(p.input_per_mtok)} r="3.5" fill={CHART_INPUT} />
+            <circle cx={x(i)} cy={yOut(p.output_per_mtok)} r="3.5" fill={CHART_OUTPUT} />
           </g>
         ))}
-        <text x={padL} y={h - 6} fontSize="10" fill="var(--muted)">
-          {series[0].date}
+        <text x={padL} y={h - 6} fontSize="10" fill="var(--text-dim)">
+          {series[0].date || 'today'}
         </text>
-        <text x={w - padR} y={h - 6} fontSize="10" fill="var(--muted)" textAnchor="end">
-          {series[series.length - 1].date}
+        <text x={w - padR} y={h - 6} fontSize="10" fill="var(--text-dim)" textAnchor="end">
+          {series[series.length - 1].date || 'today'}
         </text>
       </svg>
     </div>
@@ -122,14 +150,18 @@ export default function PricesPage() {
     setErr(null);
     try {
       const catalog = await fetchPricingCatalog('openrouter');
+      const models = mergeCatalog(catalog.models ?? []);
       setStatus(catalog.status);
-      setModels(catalog.models);
+      setModels(models);
       setSelected((prev) => {
-        if (prev && catalog.models.some((m) => m.model_id === prev)) return prev;
-        return catalog.models[0]?.model_id ?? null;
+        if (prev && models.some((m) => m.model_id === prev)) return prev;
+        return pickDefaultModelId(models);
       });
     } catch (e) {
       setErr(String(e));
+      const models = mergeCatalog([]);
+      setModels(models);
+      setSelected((prev) => prev ?? pickDefaultModelId(models));
     } finally {
       setBusy(false);
     }
@@ -147,11 +179,25 @@ export default function PricesPage() {
     let cancelled = false;
     void (async () => {
       try {
-        const rows = await fetchPricingHistory({
+        let rows = await fetchPricingHistory({
           model: selected,
-          source: 'openrouter',
+          source: selected.startsWith('cursor/') ? undefined : 'openrouter',
           days: 60,
         });
+        if (selected.startsWith('cursor/') && rows.length === 0) {
+          const curated = mergeCatalog([]).find((m) => m.model_id === selected);
+          if (curated) {
+            rows = [
+              {
+                date: new Date().toISOString().slice(0, 10),
+                source: 'builtin',
+                input_per_mtok: curated.input_per_mtok,
+                output_per_mtok: curated.output_per_mtok,
+                blended_3_to_1: null,
+              },
+            ];
+          }
+        }
         if (!cancelled) setHistory(rows);
       } catch {
         if (!cancelled) setHistory([]);
@@ -172,6 +218,23 @@ export default function PricesPage() {
         (m.provider ?? '').toLowerCase().includes(q),
     );
   }, [models, filter]);
+
+  const groupedByProvider = useMemo(() => {
+    const map = new Map<string, PricingCatalogRow[]>();
+    for (const row of filtered) {
+      const key = providerSlug(row);
+      const list = map.get(key) ?? [];
+      list.push(row);
+      map.set(key, list);
+    }
+    return [...map.entries()]
+      .map(([provider, rows]) => {
+        const inputs = rows.map((r) => r.input_per_mtok).filter((n) => Number.isFinite(n));
+        const minIn = inputs.length ? Math.min(...inputs) : 0;
+        return { provider, rows, minIn };
+      })
+      .sort((a, b) => a.provider.replace(/^~/, '').localeCompare(b.provider.replace(/^~/, '')));
+  }, [filtered]);
 
   async function onSync() {
     setSyncing(true);
@@ -264,37 +327,61 @@ export default function PricesPage() {
           </PageEmpty>
         ) : (
           <PageCard
-            title="Models"
-            description={`${filtered.length.toLocaleString()} OpenRouter models with current input/output rates.`}
+            title="Models by provider"
+            description={`${filtered.length.toLocaleString()} models (OpenRouter plus curated Cursor). Click a row for price over time.`}
             className="prices-list-card"
           >
             <PageCardBody>
-              <div className="prices-table-scroll">
-                <DataTable>
-                  <thead>
-                    <tr>
-                      <th>Model</th>
-                      <th>Input $/M</th>
-                      <th>Output $/M</th>
-                      <th>Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((m) => (
-                      <tr
-                        key={m.model_id}
-                        className={selected === m.model_id ? 'is-selected' : undefined}
-                        onClick={() => setSelected(m.model_id)}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        <td className="mono">{m.display_name || m.model_id}</td>
-                        <td className="num">{fmtUsd(m.input_per_mtok)}</td>
-                        <td className="num">{fmtUsd(m.output_per_mtok)}</td>
-                        <td className="mono">{m.date}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </DataTable>
+              <nav className="prices-provider-legend" aria-label="Providers">
+                {groupedByProvider.map((g) => (
+                  <a key={g.provider} className="prices-provider-chip" href={`#prices-provider-${g.provider}`}>
+                    {providerLabel(g.provider)}
+                    <span>{g.rows.length}</span>
+                  </a>
+                ))}
+              </nav>
+              <div className="prices-provider-grid">
+                {groupedByProvider.map((g) => (
+                  <section
+                    key={g.provider}
+                    id={`prices-provider-${g.provider}`}
+                    className="prices-provider-card"
+                  >
+                    <header className="prices-provider-head">
+                      <h3>{providerLabel(g.provider)}</h3>
+                      <p>
+                        {g.rows.length} {g.rows.length === 1 ? 'model' : 'models'} · from {fmtUsd(g.minIn)}/MTok in
+                      </p>
+                    </header>
+                    <div className="prices-table-scroll">
+                      <DataTable>
+                        <thead>
+                          <tr>
+                            <th>Model</th>
+                            <th>Input $/M</th>
+                            <th>Output $/M</th>
+                            <th>Context</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {g.rows.map((m) => (
+                            <tr
+                              key={m.model_id}
+                              className={selected === m.model_id ? 'is-selected' : undefined}
+                              onClick={() => setSelected(m.model_id)}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <td>{m.display_name || m.model_id}</td>
+                              <td className="num">{fmtUsd(m.input_per_mtok)}</td>
+                              <td className="num">{fmtUsd(m.output_per_mtok)}</td>
+                              <td className="num">{formatContextLength(m.context_length)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </DataTable>
+                    </div>
+                  </section>
+                ))}
               </div>
             </PageCardBody>
           </PageCard>

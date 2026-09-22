@@ -5,6 +5,7 @@ pub mod telemetry;
 pub mod savings;
 pub mod pricing;
 pub mod docs_catalog;
+pub mod global;
 pub mod upgrade;
 pub mod affected;
 pub mod diff;

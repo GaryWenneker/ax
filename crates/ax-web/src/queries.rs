@@ -15,6 +15,10 @@ pub struct GraphNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub community_label: Option<String>,
     pub degree: i64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub selected: bool,
 }
 
 #[derive(Serialize)]
@@ -32,6 +36,8 @@ pub struct GraphPayload {
     pub edges: Vec<GraphEdge>,
     pub total_nodes: i64,
     pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub palette: Option<String>,
 }
 
 /// Build a force-directed graph payload: the top-`limit` nodes by degree
@@ -73,13 +79,15 @@ pub async fn get_graph(pool: &SqlitePool, limit: i64) -> anyhow::Result<GraphPay
             community_id: community_id.unwrap_or(-1),
             community_label,
             degree,
+            shared: false,
+            selected: false,
         })
         .collect();
 
     let truncated = total_nodes > nodes.len() as i64;
 
     if nodes.is_empty() {
-        return Ok(GraphPayload { nodes, edges: Vec::new(), total_nodes, truncated });
+        return Ok(GraphPayload { nodes, edges: Vec::new(), total_nodes, truncated, palette: None });
     }
 
     let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
@@ -99,7 +107,7 @@ pub async fn get_graph(pool: &SqlitePool, limit: i64) -> anyhow::Result<GraphPay
         .map(|(source, target, kind, confidence)| GraphEdge { source, target, kind, confidence })
         .collect();
 
-    Ok(GraphPayload { nodes, edges, total_nodes, truncated })
+    Ok(GraphPayload { nodes, edges, total_nodes, truncated, palette: None })
 }
 
 // ---- Stats ----------------------------------------------------------------

@@ -72,8 +72,39 @@ pub async fn cached_rules_and_skills(
     Ok((rules, skills))
 }
 
+/// Global rows (`extras`) win on the same `name`. Project rows fill names global does not have.
+pub fn merge_skills(local: Vec<PolicySkillRow>, extras: Vec<PolicySkillRow>) -> Vec<PolicySkillRow> {
+    let mut by_name = HashMap::new();
+    for skill in local {
+        by_name.insert(skill.name.clone(), skill);
+    }
+    for skill in extras {
+        by_name.insert(skill.name.clone(), skill);
+    }
+    let mut out: Vec<PolicySkillRow> = by_name.into_values().collect();
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+pub fn find_skill<'a>(skills: &'a [PolicySkillRow], name: &str) -> Option<&'a PolicySkillRow> {
+    skills.iter().find(|s| s.name == name)
+}
+
 pub async fn match_policy(pool: &SqlitePool, input: &MatchInput) -> Result<MatchResult, AxError> {
+    match_policy_with_extra_skills(pool, input, Vec::new()).await
+}
+
+pub async fn match_policy_with_extra_skills(
+    pool: &SqlitePool,
+    input: &MatchInput,
+    extras: Vec<PolicySkillRow>,
+) -> Result<MatchResult, AxError> {
     let (rules, skills) = cached_rules_and_skills(pool).await?;
+    let skills = if extras.is_empty() {
+        skills
+    } else {
+        Arc::new(merge_skills((*skills).clone(), extras))
+    };
     let prompt_lc = input.prompt.to_lowercase();
     let files = collect_relative_files(&input.cwd, &input.open_files, &input.changed_files);
 
@@ -347,5 +378,27 @@ mod tests {
         let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["b", "a", "c", "d"]);
         assert!(out.iter().filter(|s| s.always_apply).count() == 2);
+    }
+
+    #[test]
+    fn merge_skills_global_name_wins() {
+        let local = vec![skill_row("azdo-pr-review", false, &["local"], 1)];
+        let mut extra = skill_row("azdo-pr-review", false, &["global"], 80);
+        extra.body = "GLOBAL".into();
+        extra.description = "from global.db".into();
+        let merged = merge_skills(local, vec![extra]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].triggers, vec!["global".to_string()]);
+        assert_eq!(merged[0].body, "GLOBAL");
+    }
+
+    #[test]
+    fn merge_skills_adds_global_only_name() {
+        let local = vec![skill_row("startup", true, &[], 100)];
+        let extra = skill_row("azdo-pr-review", false, &["azdo pr review"], 80);
+        let merged = merge_skills(local, vec![extra]);
+        let names: Vec<&str> = merged.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["azdo-pr-review", "startup"]);
+        assert!(find_skill(&merged, "azdo-pr-review").is_some());
     }
 }

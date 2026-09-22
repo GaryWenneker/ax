@@ -1304,7 +1304,7 @@ pub fn parse_cursor_hook_session_id(input: &Value) -> Option<String> {
         .get("hook_event_name")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if event != "sessionStart" {
+    if event != "sessionStart" && event != "beforeSubmitPrompt" {
         return None;
     }
     cursor_hook_session_id(input)
@@ -1916,6 +1916,19 @@ mod tests {
         assert!(
             parse_cursor_hook_model(&input).is_none(),
             "model-less payload should not parse as model tag"
+        );
+    }
+
+    #[test]
+    fn parse_cursor_before_submit_session_id() {
+        let input = json!({
+            "hook_event_name": "beforeSubmitPrompt",
+            "session_id": "cursor-prompt-session",
+            "prompt": "hello"
+        });
+        assert_eq!(
+            parse_cursor_hook_session_id(&input).as_deref(),
+            Some("cursor-prompt-session")
         );
     }
 

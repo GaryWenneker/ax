@@ -17,6 +17,7 @@ fn main() {
     if std::env::var("AX_SKIP_WEB_BUILD").is_ok() {
         register_dist_rerun(&dist);
         stamp_embedded_index(&dist);
+        stage_web_dist_for_embed(&dist);
         return;
     }
 
@@ -56,6 +57,7 @@ fn main() {
 
     register_dist_rerun(&dist);
     stamp_embedded_index(&dist);
+    stage_web_dist_for_embed(&dist);
 }
 
 /// Force rustc to rerun `include_dir!` after Vite writes a new `dist/index.html`.
@@ -93,6 +95,38 @@ fn walk_dist(root: &Path, dir: &Path) {
         } else if let Ok(rel) = path.strip_prefix(root) {
             let key = rel.to_string_lossy().replace('\\', "/");
             println!("cargo:rerun-if-changed=web-ui/dist/{key}");
+        }
+    }
+}
+
+/// Copy Vite output into OUT_DIR so `include_dir!` cannot reuse a stale compile of `web-ui/dist`.
+fn stage_web_dist_for_embed(dist: &Path) {
+    let out = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("web_dist");
+    let _ = std::fs::remove_dir_all(&out);
+    copy_dir(dist, &out);
+    let index = std::fs::read_to_string(out.join("index.html")).unwrap_or_default();
+    if let Some(src) = index.split("src=\"").nth(1).and_then(|s| s.split('"').next()) {
+        println!("cargo:warning=ax-web embedding {src}");
+    }
+    let path_lit = out.to_string_lossy().replace('\\', "\\\\");
+    let gen = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("web_dist.rs");
+    std::fs::write(
+        &gen,
+        format!("static WEB_DIST: Dir = include_dir::include_dir!(\"{path_lit}\");\n"),
+    )
+    .expect("write web_dist.rs");
+}
+
+fn copy_dir(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).expect("create OUT_DIR/web_dist");
+    for entry in std::fs::read_dir(src).expect("read web-ui/dist") {
+        let entry = entry.expect("dist entry");
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir(&from, &to);
+        } else {
+            std::fs::copy(&from, &to).expect("copy dist file");
         }
     }
 }

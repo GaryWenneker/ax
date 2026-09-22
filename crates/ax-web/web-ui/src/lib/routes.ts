@@ -35,6 +35,8 @@ export interface RouteState {
   ruleEditMode?: boolean;
   /** Full-page skill editor (policy-skill-edit with an existing name). */
   skillEditMode?: boolean;
+  origin?: string | null;
+  projectId?: number | null;
 }
 
 const VALID_PAGES: Page[] = [
@@ -64,13 +66,6 @@ const VALID_PAGES: Page[] = [
 /** Pages that use the full workspace width (split panes, graph canvas, terminal). */
 export const FULL_BLEED_PAGES: ReadonlySet<Page> = new Set([
   'graph',
-  'files',
-  'search',
-  'nodes',
-  'unresolved',
-  'agent',
-  'sonar',
-  'ship',
   'logging',
 ]);
 
@@ -146,6 +141,9 @@ export function parseLocation(loc: Location = window.location): RouteState & { v
   const params = new URLSearchParams(loc.search);
   const sonarTab = params.get('tab') === 'setup' ? 'setup' : 'dashboard';
   const edit = params.get('mode') === 'edit';
+  const origin = params.get('origin');
+  const pidRaw = params.get('projectId');
+  const projectId = pidRaw != null && pidRaw !== '' ? Number(pidRaw) : null;
   return {
     page,
     valid,
@@ -155,6 +153,8 @@ export function parseLocation(loc: Location = window.location): RouteState & { v
     sonarTab,
     ruleEditMode: edit && page === 'policy-rule-edit',
     skillEditMode: edit && page === 'policy-skill-edit',
+    origin,
+    projectId: Number.isFinite(projectId) ? projectId : null,
   };
 }
 
@@ -172,6 +172,10 @@ export function buildPath(state: Partial<RouteState> & Pick<RouteState, 'page'>)
   }
   if (state.page === 'policy-skill-edit' && state.skillName && state.skillEditMode) {
     params.set('mode', 'edit');
+  }
+  if (state.origin === 'global') {
+    params.set('origin', 'global');
+    if (state.projectId != null) params.set('projectId', String(state.projectId));
   }
   if (state.page === 'unresolved' && state.kind) params.set('kind', state.kind);
   if (state.page === 'logging' && state.kind) params.set('kind', state.kind);

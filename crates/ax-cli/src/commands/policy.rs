@@ -292,7 +292,7 @@ pub async fn run_rules(path: Option<String>, json: bool) -> Result<(), String> {
 pub async fn run_skills(path: Option<String>, json: bool) -> Result<(), String> {
     let root = resolve_path(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let skills = ax_policy::list_skills(ax.db_pool()).await.map_err(|e| e.to_string())?;
+    let skills = ax.list_policy_skills().await.map_err(|e| e.to_string())?;
     if json {
         println!("{}", serde_json::to_string_pretty(&skills).unwrap_or_default());
     } else {
@@ -306,7 +306,8 @@ pub async fn run_skills(path: Option<String>, json: bool) -> Result<(), String> 
 pub async fn run_skill(path: Option<String>, name: String) -> Result<(), String> {
     let root = resolve_path(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let skill = ax_policy::get_skill(ax.db_pool(), &name)
+    let skill = ax
+        .get_policy_skill(&name)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("skill not found: {name}"))?;
@@ -633,7 +634,10 @@ pub async fn run_storage_status(path: Option<String>, json: bool) -> Result<(), 
             }
         }
         println!();
-        println!("Set default: ax policy storage database|files [--migrate] [--yes] [--global]");
+        println!("Set default: ax policy storage database|files --yes");
+        println!("  database --yes   import all + delete .agents/.ax/policy files");
+        println!("  files --yes      export ax.db → .agents/ (files become source of truth)");
+        println!("  --keep-files     with database --yes, leave markdown on disk");
         println!("Set item:    ax policy storage set-item <id> files|database [--keep-file]");
     }
     Ok(())
@@ -677,12 +681,15 @@ pub async fn run_storage_set(
     global: bool,
     migrate: bool,
     yes: bool,
+    keep_files: bool,
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    let _ = migrate;
+    let do_migrate = !global;
 
     // Propose migration plan without changing storage or importing.
-    if migrate && target == PolicyStorage::Database && !yes && !global {
+    if do_migrate && target == PolicyStorage::Database && !yes && !global {
         let plan = ax_policy::scan_policy_candidates(&root);
         if json {
             println!("{}", serde_json::to_string_pretty(&plan).unwrap_or_default());
@@ -713,13 +720,32 @@ pub async fn run_storage_set(
             }
             println!("{}", plan.interview_instruction);
             println!();
-            println!("After interview: ax policy storage database --migrate --yes");
+            println!("Apply exclusive database mode: ax policy storage database --yes");
+            println!("Keep markdown on disk:         ax policy storage database --yes --keep-files");
+        }
+        return Ok(());
+    }
+
+    if do_migrate && target == PolicyStorage::Files && !yes && !global {
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "ok": true,
+                    "preview": true,
+                    "target": "files",
+                    "hint": "ax policy storage files --yes"
+                })
+            );
+        } else {
+            println!("Preview: export ax.db rules/skills into .agents/ and set default storage to files.");
+            println!("Apply: ax policy storage files --yes");
         }
         return Ok(());
     }
 
     let current = ax_policy::load_policy_config(&root).storage;
-    if current == target && !migrate {
+    if current == target && !yes {
         let status = ax_policy::policy_storage_status(&root);
         if json {
             println!(
@@ -734,6 +760,7 @@ pub async fn run_storage_set(
             );
         } else {
             println!("Policy storage already set to {}.", target.as_str());
+            println!("Re-run with --yes to migrate and drop the other source.");
         }
         return Ok(());
     }
@@ -744,11 +771,11 @@ pub async fn run_storage_set(
         ax_policy::write_project_policy_storage(&root, target)?
     };
 
-    if migrate {
+    if yes && !global {
         let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
         match target {
             PolicyStorage::Database => {
-                let (plan, apply) = ax_policy::migrate_to_database(ax.db_pool(), &root)
+                let (plan, apply) = ax_policy::exclusive_to_database(ax.db_pool(), &root, keep_files)
                     .await
                     .map_err(|e| e.to_string())?;
                 if !json {
@@ -759,14 +786,21 @@ pub async fn run_storage_set(
                         plan.candidates.len(),
                         plan.skipped.len()
                     );
-                    if !plan.skipped.is_empty() {
-                        println!("  skipped {} files (bootstrap, invalid, or duplicate)", plan.skipped.len());
+                    if keep_files {
+                        println!("  markdown left on disk (--keep-files)");
+                    } else {
+                        println!("  removed {} .agents/.ax/policy files", apply.files_removed);
                     }
                 }
             }
             PolicyStorage::Files => {
-                let out = root.join(".ax").join("policy");
-                let result = ax_policy::export_policy_to_files(ax.db_pool(), &root, &out)
+                let out = ax_policy::agents_dir(&root);
+                let result = ax_policy::export_policy_to_files_filtered(
+                    ax.db_pool(),
+                    &root,
+                    &out,
+                    false,
+                )
                     .await
                     .map_err(|e| e.to_string())?;
                 ax.index_policy(true).await.map_err(|e| e.to_string())?;
@@ -787,9 +821,10 @@ pub async fn run_storage_set(
             "storage": target.as_str(),
             "configPath": config_path.display().to_string(),
             "scope": if global { "global" } else { "project" },
-            "migrated": migrate,
+            "migrated": yes && !global,
+            "keepFiles": keep_files,
         });
-        if migrate && target == PolicyStorage::Database {
+        if yes && target == PolicyStorage::Database {
             let plan = ax_policy::scan_policy_candidates(&root);
             payload["rulesFound"] = serde_json::json!(plan.rules_found);
             payload["skillsFound"] = serde_json::json!(plan.skills_found);
@@ -799,15 +834,8 @@ pub async fn run_storage_set(
     } else {
         println!("Policy storage set to {}.", target.as_str());
         println!("  updated: {}", config_path.display());
-        if !migrate {
-            match target {
-                PolicyStorage::Database => {
-                    println!("  hint: run `ax policy import` to load .ax/policy/ files into ax.db");
-                }
-                PolicyStorage::Files => {
-                    println!("  hint: run `ax policy export --out .ax/policy` to write DB rules to disk");
-                }
-            }
+        if !yes {
+            println!("  (config only; pass --yes to migrate sources)");
         }
     }
     Ok(())

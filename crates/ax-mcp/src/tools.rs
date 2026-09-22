@@ -209,6 +209,8 @@ impl ToolHandler {
             }
             "ax_remember" => remember(ax, params).await,
             "ax_recall" => recall(ax, params).await,
+            "ax_expand" => expand_tool(params).await,
+            "ax_stash" => stash_tool(params).await,
             "ax_insights" => insights(ax, params).await,
             "ax_report" => report(ax, params).await,
             _ => Err(format!("unknown tool: {}", name)),
@@ -334,7 +336,7 @@ async fn lsp_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let root = ax.project_root().to_path_buf();
     match action {
         "status" => {
-            let servers = ax_lsp::discover_servers();
+            let servers = ax_lsp::discover_servers_in(Some(&root));
             let text = {
                 let mut lines = vec!["LSP servers:".to_string()];
                 for s in &servers {
@@ -596,6 +598,40 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         crate::verbose::push_line("enrich memories none");
     }
 
+    if ax_usage::cache_enabled() {
+        if !inject.is_empty() {
+            inject.push('\n');
+        }
+        inject.push_str("<ax_context_cache>Oversized MCP replies are stored locally. A stub includes an id; call ax_expand with that id to read the original. Use ax_stash to store a chat slice or another tool result.</ax_context_cache>");
+        if let Ok(Some(ledger)) =
+            ax_usage::session_ledger(ax_usage::read_active_cursor_session().as_deref()).await
+        {
+            inject.push('\n');
+            inject.push_str(&ledger);
+        }
+        if let Ok(entries) = {
+            let session = ax_usage::read_active_cursor_session();
+            ax_usage::recent_session_catalog(session.as_deref(), 20).await
+        } {
+            if !entries.is_empty() {
+                inject.push('\n');
+                inject.push_str(&ax_usage::format_catalog(&entries, 1_500));
+            } else if let Ok(entries) = ax_usage::recent_catalog(20).await {
+                if !entries.is_empty() {
+                    inject.push('\n');
+                    inject.push_str(&ax_usage::format_catalog(&entries, 1_500));
+                }
+            }
+        }
+        if let Ok((rows, _)) = ax_memory::list(ax.db_pool(), 40, 0).await {
+            let titles = format_memory_titles(&rows, 800);
+            if !titles.is_empty() {
+                inject.push('\n');
+                inject.push_str(&titles);
+            }
+        }
+    }
+
     let has_directive = detect_directive(&prompt);
 
     // When the prompt carries a durable directive, build the rule proposal
@@ -709,6 +745,66 @@ async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "matches": matches,
         "inject": text,
     }))
+}
+
+async fn expand_tool(params: Value) -> Result<Value, String> {
+    let id = params
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("id required")?;
+    let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
+    match ax_usage::expand_cached(id, offset, limit).await {
+        Ok(page) => Ok(json!({
+            "text": page.text,
+            "id": id,
+            "offset": offset,
+            "nextOffset": page.next_offset,
+        })),
+        Err(msg) => Ok(json!({ "text": msg, "isError": true })),
+    }
+}
+
+async fn stash_tool(params: Value) -> Result<Value, String> {
+    let text = params
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or("text required")?;
+    let label = params.get("label").and_then(|v| v.as_str());
+    match ax_usage::stash_text(label, text).await {
+        Ok(receipt) => Ok(json!({
+            "text": format!(
+                "Stashed {} tokens as {}. Call ax_expand with that id. The body is not repeated here.",
+                receipt.original_tokens, receipt.id
+            ),
+            "id": receipt.id,
+            "originalTokens": receipt.original_tokens,
+        })),
+        Err(msg) => Ok(json!({ "text": msg, "isError": true })),
+    }
+}
+
+fn format_memory_titles(rows: &[ax_memory::MemoryRow], max_tokens: i64) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec!["<ax_memory_titles>Titles only. Call ax_recall for a body.".to_string()];
+    for row in rows {
+        if !row.enabled {
+            continue;
+        }
+        lines.push(format!("- {} {}", row.id, row.title.replace('\n', " ")));
+        let draft = lines.join("\n") + "\n</ax_memory_titles>";
+        if ax_usage::count_tokens(&draft) as i64 > max_tokens {
+            lines.pop();
+            break;
+        }
+    }
+    if lines.len() == 1 {
+        return String::new();
+    }
+    lines.push("</ax_memory_titles>".to_string());
+    lines.join("\n")
 }
 
 async fn insights(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -848,7 +944,8 @@ async fn policy_capture(ax: &mut Ax, params: Value) -> Result<Value, String> {
 
 async fn skill(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let name = params.get("name").and_then(|v| v.as_str()).ok_or("name required")?;
-    let row = ax_policy::get_skill(ax.db_pool(), name)
+    let row = ax
+        .get_policy_skill(name)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("skill not found: {name}"))?;
@@ -1139,9 +1236,14 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
 }
 
 fn string_array(v: Option<&Value>) -> Vec<String> {
-    v.and_then(|a| a.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-        .unwrap_or_default()
+    match v {
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|x| x.as_str().map(String::from))
+            .collect(),
+        Some(Value::String(s)) => vec![s.clone()],
+        _ => vec![],
+    }
 }
 
 /// One compact line for a node: `qualifiedName — file:start-end (Kind)`.
@@ -1228,13 +1330,17 @@ fn preflight_tool() -> Value {
             "type": "object",
             "properties": {
                 "prompt": { "type": "string" },
-                "files": { "type": "array", "items": { "type": "string" } },
+                "files": {
+                    "anyOf": [
+                        { "type": "array", "items": { "type": "string" } },
+                        { "type": "string" }
+                    ]
+                },
                 "projectPath": {
                     "type": "string",
                     "description": "Optional project root when cwd differs from the MCP --path index (monorepos). Resolves to the nearest ax root."
                 }
-            },
-            "required": ["prompt"]
+            }
         }
     })
 }
@@ -1469,6 +1575,31 @@ fn extra_tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "ax_expand",
+            "description": "Read a cached oversized MCP reply by id. offset and limit are character indexes. Default limit is 8000 characters, clamped to 12000.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Cache id from an [ax context cache] stub (cc_…)" },
+                    "offset": { "type": "number", "description": "Character offset into the stored body (default 0)" },
+                    "limit": { "type": "number", "description": "Max characters to return (default 8000, max 12000)" }
+                },
+                "required": ["id"]
+            }
+        }),
+        json!({
+            "name": "ax_stash",
+            "description": "Store arbitrary text (a chat slice or another tool result) in the context cache. Returns an id. The body is not echoed. Read it later with ax_expand.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string" },
+                    "label": { "type": "string", "description": "Short label stored as the tool name (default stash)" }
+                },
+                "required": ["text"]
+            }
+        }),
+        json!({
             "name": "ax_recall",
             "description": "Search durable project memories (decisions, fixes, conventions) by free text. Fresh memories outrank stale ones via confidence decay.",
             "inputSchema": {
@@ -1523,6 +1654,7 @@ pub fn server_instructions(has_policy: bool) -> String {
          Use ax_search for quick symbol lookup. Use ax_node for one symbol's file context. Use ax_callers / ax_callees / ax_impact for focused graph queries.\n\n\
          Whole-graph understanding: call ax_insights for Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Call ax_report for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous) and Markdown docs are indexed as Doc nodes linked to the code they reference.\n\n\
          Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
+         Context cache: an oversized tool reply is replaced by a short stub with an id. Call ax_expand with that id to read the original. ax_stash stores a chat slice or another tool result the same way. Preflight lists recent ids and memory titles, not bodies. This is not a dump of the memory vault.\n\n\
          Ops (prefer MCP — do NOT shell ax CLI when MCP is connected):\n\
          - ax_sync after local edits that should refresh the graph\n\
          - ax_index with force=true for a full rebuild\n\
@@ -1569,9 +1701,26 @@ mod tests {
 
     #[test]
     fn preflight_tool_schema_includes_project_path() {
-        let schema = preflight_tool()["inputSchema"]["properties"].clone();
-        assert!(schema.get("projectPath").is_some());
-        assert!(schema.get("prompt").is_some());
+        let schema = preflight_tool()["inputSchema"].clone();
+        let props = schema["properties"].clone();
+        assert!(props.get("projectPath").is_some());
+        assert!(props.get("prompt").is_some());
+        assert!(
+            schema.get("required").is_none(),
+            "session-start clients call ax_preflight with no args; required prompt causes Cursor validation_failed"
+        );
+    }
+
+    #[test]
+    fn string_array_accepts_single_string() {
+        assert_eq!(
+            string_array(Some(&json!("C:\\\\gary\\\\VfPf\\\\src\\\\a.cs"))),
+            vec!["C:\\\\gary\\\\VfPf\\\\src\\\\a.cs"]
+        );
+        assert_eq!(
+            string_array(Some(&json!(["a.rs", "b.rs"]))),
+            vec!["a.rs", "b.rs"]
+        );
     }
 
     #[test]

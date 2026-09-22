@@ -1,6 +1,6 @@
 import { LevelBadge, ScopeBadge } from './ui/PageLayout';
 import { GitShareDot } from './ui/GitShareDot';
-import { isGitShared } from './ui/policyListUtils';
+import { isGitShared, POLICY_DB_INK, policyDbAccent } from './ui/policyListUtils';
 import { scopeLabel } from '../policyTypes';
 import { skillGroupLabel } from '../skillGroups';
 
@@ -14,6 +14,45 @@ function GitShareStatus({ scope, enabled }: { scope?: string; enabled?: boolean 
     );
   }
   return <span>Not git-shared</span>;
+}
+
+export function OriginDbBadge({
+  origin,
+  projectName,
+}: {
+  origin?: string;
+  projectName?: string;
+}) {
+  const global = origin === 'global';
+  const label = global ? 'Global' : 'Project';
+  const title = global
+    ? `Parked in ~/.ax/global.db${projectName ? ` (source: ${projectName})` : ''}. Agents still match only this project's ax.db.`
+    : 'Stored in this project ax.db';
+  const accent = policyDbAccent(origin);
+  return (
+    <span
+      className={`page-item-badge page-origin-badge page-origin-badge--${global ? 'global' : 'project'}`}
+      title={title}
+      style={{ background: accent, color: POLICY_DB_INK }}
+    >
+      {label}
+    </span>
+  );
+}
+
+export function PolicyDbLegend() {
+  return (
+    <span className="policy-db-legend" aria-label="Database colors">
+      <span className="policy-db-legend-item">
+        <span className="policy-db-legend-swatch" style={{ background: policyDbAccent('project') }} />
+        This project ax.db
+      </span>
+      <span className="policy-db-legend-item">
+        <span className="policy-db-legend-swatch" style={{ background: policyDbAccent('global') }} />
+        Other projects global.db
+      </span>
+    </span>
+  );
 }
 
 export function TagList({

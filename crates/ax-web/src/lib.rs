@@ -38,12 +38,13 @@ use axum::{
     http::{Response, StatusCode, Uri},
     response::{IntoResponse, Json},
 };
-use include_dir::{include_dir, Dir};
+use include_dir::Dir;
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 
-static WEB_DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/web-ui/dist");
+include!(concat!(env!("OUT_DIR"), "/web_dist.rs"));
 const _: &str = env!("AX_WEB_DIST_STAMP");
+const WEB_DIST_DISK_HINT: &str = "disk-first-20260916b";
 
 #[derive(Serialize)]
 struct WebStats {
@@ -416,26 +417,84 @@ fn graph_max_limit() -> i64 {
     3_000
 }
 
-/// Ensure community assignments exist (compute + persist on first use or when
-/// `recompute` is requested), then return the force-directed graph payload.
-async fn handle_graph(
-    State(hub): State<WebHub>,
-    Query(p): Query<GraphQuery>,
-) -> impl IntoResponse {
+async fn load_graph_payload(
+    hub: &WebHub,
+    p: GraphQuery,
+) -> Result<queries::GraphPayload, String> {
     let ws = hub.read().await;
+    let limit = p.limit.clamp(1, graph_max_limit());
+    if let Ok(gpath) = ax_global_db::global_db_path() {
+        if gpath.is_file() {
+            if let Ok(gpool) = ax_global_db::open_and_init(&gpath).await {
+                let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects")
+                    .fetch_one(&gpool)
+                    .await
+                    .unwrap_or(0);
+                if n > 0 {
+                    match ax_global_db::graph::graph_slice(&gpool, limit, &ws.project_root).await {
+                        Ok(slice) => {
+                            let payload = queries::GraphPayload {
+                                nodes: slice
+                                    .nodes
+                                    .into_iter()
+                                    .map(|n| queries::GraphNode {
+                                        id: n.id,
+                                        name: n.name,
+                                        kind: n.kind,
+                                        file_path: n.file_path,
+                                        community_id: n.project_id,
+                                        community_label: Some(n.project_name),
+                                        degree: n.degree,
+                                        shared: n.shared,
+                                        selected: n.selected,
+                                    })
+                                    .collect(),
+                                edges: slice
+                                    .edges
+                                    .into_iter()
+                                    .map(|e| queries::GraphEdge {
+                                        source: e.source,
+                                        target: e.target,
+                                        kind: e.kind,
+                                        confidence: None,
+                                    })
+                                    .collect(),
+                                total_nodes: slice.total_nodes,
+                                truncated: slice.truncated,
+                                palette: Some("project".into()),
+                            };
+                            return Ok(payload);
+                        }
+                        Err(e) => tracing::warn!("global graph slice failed: {e}"),
+                    }
+                }
+            }
+        }
+    }
+
     let qb = QueryBuilder::new(ws.graph_pool.clone());
     let needs_compute = p.recompute
         || matches!(qb.communities_computed_at().await, Ok(None) | Err(_));
     if needs_compute && !hub.readonly {
         let gm = ax_graph::GraphQueryManager::new(QueryBuilder::new(ws.graph_pool.clone()));
         if let Err(e) = gm.compute_insights(1.0, 30, 30).await {
-            return api_err(format!("community detection failed: {e}")).into_response();
+            return Err(format!("community detection failed: {e}"));
         }
     }
-    let limit = p.limit.clamp(1, graph_max_limit());
-    match queries::get_graph(&ws.graph_pool, limit).await {
+    queries::get_graph(&ws.graph_pool, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Ensure community assignments exist (compute + persist on first use or when
+/// `recompute` is requested), then return the force-directed graph payload.
+async fn handle_graph(
+    State(hub): State<WebHub>,
+    Query(p): Query<GraphQuery>,
+) -> impl IntoResponse {
+    match load_graph_payload(&hub, p).await {
         Ok(payload) => (StatusCode::OK, Json(payload)).into_response(),
-        Err(e) => api_err(e.to_string()).into_response(),
+        Err(e) => api_err(e).into_response(),
     }
 }
 
@@ -449,35 +508,25 @@ async fn handle_graph_stream(
 ) -> impl IntoResponse {
     use axum::response::sse::{Event, KeepAlive, Sse};
 
-    let ws = hub.read().await;
-    let qb = QueryBuilder::new(ws.graph_pool.clone());
-    let needs_compute =
-        p.recompute || matches!(qb.communities_computed_at().await, Ok(None) | Err(_));
-    if needs_compute && !hub.readonly {
-        let gm = ax_graph::GraphQueryManager::new(QueryBuilder::new(ws.graph_pool.clone()));
-        if let Err(e) = gm.compute_insights(1.0, 30, 30).await {
-            return api_err(format!("community detection failed: {e}")).into_response();
-        }
-    }
-    let limit = p.limit.clamp(1, graph_max_limit());
-    let payload = match queries::get_graph(&ws.graph_pool, limit).await {
+    let payload = match load_graph_payload(&hub, p).await {
         Ok(payload) => payload,
-        Err(e) => return api_err(e.to_string()).into_response(),
+        Err(e) => return api_err(e).into_response(),
     };
-    drop(ws);
 
     const NODE_BATCH: usize = 200;
     const EDGE_BATCH: usize = 800;
 
     let stream = async_stream::stream! {
-        let meta = format!(
-            "{{\"type\":\"meta\",\"total_nodes\":{},\"truncated\":{},\"node_count\":{},\"edge_count\":{}}}",
-            payload.total_nodes,
-            payload.truncated,
-            payload.nodes.len(),
-            payload.edges.len()
-        );
-        yield Ok::<Event, std::convert::Infallible>(Event::default().data(meta));
+        let palette = payload.palette.clone().unwrap_or_default();
+        let meta = serde_json::json!({
+            "type": "meta",
+            "total_nodes": payload.total_nodes,
+            "truncated": payload.truncated,
+            "node_count": payload.nodes.len(),
+            "edge_count": payload.edges.len(),
+            "palette": if palette.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(palette) },
+        });
+        yield Ok::<Event, std::convert::Infallible>(Event::default().data(meta.to_string()));
 
         for chunk in payload.nodes.chunks(NODE_BATCH) {
             let arr = serde_json::to_string(chunk).unwrap_or_else(|_| "[]".to_string());
@@ -594,6 +643,34 @@ pub async fn handle_reset_client_cache() -> impl IntoResponse {
         .unwrap()
 }
 
+fn dist_file(path: &str) -> Option<(Vec<u8>, &'static str)> {
+    let _ = WEB_DIST_DISK_HINT;
+    for root in dist_roots() {
+        let disk = root.join(path);
+        if disk.is_file() {
+            return std::fs::read(disk).ok().map(|b| (b, "disk"));
+        }
+    }
+    WEB_DIST
+        .get_file(path)
+        .map(|f| (f.contents().to_vec(), "embed"))
+}
+
+fn dist_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(p) = std::env::var("AX_WEB_DIST") {
+        roots.push(PathBuf::from(p));
+    }
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web-ui/dist"));
+    if let Ok(exe) = std::env::current_exe() {
+        // target-dev/release/ax → <repo>/crates/ax-web/web-ui/dist
+        if let Some(repo) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            roots.push(repo.join("crates/ax-web/web-ui/dist"));
+        }
+    }
+    roots
+}
+
 async fn handle_spa(uri: Uri) -> impl IntoResponse {
     let raw_path = uri.path();
     let path = raw_path.trim_start_matches('/');
@@ -625,32 +702,24 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
             .unwrap();
     }
 
-    if let Some(file) = WEB_DIST.get_file(path) {
+    if let Some((bytes, src)) = dist_file(path) {
         let mime = mime_guess::from_path(path).first_or_text_plain();
         let cache = if path == "index.html" {
             "no-cache, no-store, must-revalidate"
         } else if path.starts_with("assets/") {
-            // Vite content-hashes filenames under assets/, so it is safe to cache
-            // these forever: a changed file gets a new URL.
             "public, max-age=31536000, immutable"
         } else {
-            // sw.js, manifest.webmanifest, icons, etc. keep stable filenames across
-            // builds. Caching these as immutable poisons the browser's HTTP cache
-            // for a year and prevents the service worker from ever picking up
-            // fixes (see: localhost stuck on a stale sw.js while 127.0.0.1 worked).
             "no-cache, no-store, must-revalidate"
         };
         let mut builder = Response::builder()
             .status(200)
             .header("Content-Type", mime.as_ref())
-            .header("Cache-Control", cache);
-        // Extra belt for SW updates: never let intermediaries treat sw.js as immutable.
+            .header("Cache-Control", cache)
+            .header("X-Ax-Web-Dist", src);
         if path == "sw.js" {
             builder = builder.header("Service-Worker-Allowed", "/");
         }
-        builder
-            .body(Body::from(file.contents().to_vec()))
-            .unwrap()
+        builder.body(Body::from(bytes)).unwrap()
     } else if path.starts_with("assets/") || path.contains('.') {
         Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -659,10 +728,7 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
             .body(Body::from("Not found"))
             .unwrap()
     } else {
-        let index = WEB_DIST
-            .get_file("index.html")
-            .map(|f| f.contents().to_vec())
-            .unwrap_or_default();
+        let index = dist_file("index.html").map(|(b, _)| b).unwrap_or_default();
         Response::builder()
             .status(200)
             .header("Content-Type", "text/html; charset=utf-8")

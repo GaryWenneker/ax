@@ -19,6 +19,14 @@ grep -q '\.agents/skills/' crates/ax-policy/templates/ide/cursor/ax.mdc \
   || { echo "FAIL: cursor template missing .agents/skills/" >&2; exit 1; }
 grep -q '\.agents/rules/' crates/ax-policy/templates/ide/claude/ax.md \
   || { echo "FAIL: claude template missing .agents/rules/" >&2; exit 1; }
+grep -q 'skip rule' crates/ax-policy/src/index.rs \
+  || { echo "FAIL: index must skip unparseable .agents rules" >&2; exit 1; }
+if grep -q 'parse_rule_file(path, &raw).map_err' crates/ax-policy/src/index.rs; then
+  echo "FAIL: stale check must skip unparseable rules, not map_err validation_failed" >&2
+  exit 1
+fi
+grep -q 'INDEXED_DOT_DIRS' crates/ax-extraction/src/orchestrator.rs \
+  || { echo "FAIL: indexer must whitelist .scripts" >&2; exit 1; }
 
 echo "== leak-gate negative control (disable check, expect test fail, restore) =="
 SRC="crates/ax-policy/src/agents_share.rs"

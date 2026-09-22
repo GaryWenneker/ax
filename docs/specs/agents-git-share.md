@@ -97,9 +97,10 @@ Even when `enabled` is false, private stays under `policy-private` (not `.agents
 
 ### A11 — Leak gate (fail closed)
 
-`agents_share_violations(P)` returns a non-empty list when `.agents/rules/x.mdc` has `enabled: false` or `scope: private_project` / `private_user`.  
-Empty list when only enabled project/workspace files sit under `.agents`.  
-Negative control: a known-bad file is detected.
+`agents_share_violations(P)` returns a non-empty list when `.agents/rules/x.mdc` **parses as ax schema** and has `enabled: false` or `scope: private_project` / `private_user`.  
+Empty list when only enabled project/workspace **ax** files sit under `.agents`.  
+Cursor-native / unparseable `.mdc` and `SKILL.md` are **not** leaks (index skips them). See `/Users/gary/io/ax/docs/specs/agents-cursor-native-index.md`.  
+Negative control: a known-bad **parsed disabled** file is detected.
 
 ### A12 — IDE bootstrap pointers
 
@@ -124,7 +125,8 @@ If symlink fails, the function returns an error string (caller may copy); the te
 
 | Behavior | Check |
 |---|---|
-| A1–A6, A9, A11, A13 | `cargo test -p ax-policy --lib agents_share` + hierarchy tests |
+| A1–A6, A9, A13 | `cargo test -p ax-policy --lib agents_share` + hierarchy tests |
+| A11 | leak_gate_detects_disabled_and_private + leak_gate_ignores_cursor_native_files |
 | A7–A8 | `cargo test -p ax-policy --lib agents_share::tests::disable_` |
 | A10 | `cargo test -p ax-policy --lib agents_share::tests::git_export` + index export test |
 | A12 | `cargo test -p ax-policy --lib ide_seed` grep assertions + gauntlet grep |

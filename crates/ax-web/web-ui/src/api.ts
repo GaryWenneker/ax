@@ -358,6 +358,8 @@ export interface GraphNode {
   community_id: number;
   community_label?: string;
   degree: number;
+  shared?: boolean;
+  selected?: boolean;
 }
 
 export interface GraphEdge {
@@ -387,6 +389,7 @@ export interface GraphStreamMeta {
   truncated: boolean;
   node_count: number;
   edge_count: number;
+  palette?: string | null;
 }
 
 export interface GraphStreamHandlers {

@@ -187,7 +187,7 @@ fn default_show_agent() -> bool {
 }
 
 fn default_verbose_mcp() -> bool {
-    false
+    true
 }
 
 fn default_timezone() -> String {
@@ -199,7 +199,7 @@ impl Default for UiSection {
         Self {
             show_savings: true,
             show_agent_terminal: true,
-            verbose_mcp: false,
+            verbose_mcp: true,
             timezone: String::new(),
         }
     }

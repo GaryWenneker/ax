@@ -14,13 +14,13 @@ export function skillGroupLabel(id: string): string {
   return SKILL_GROUPS.find((g) => g.id === id)?.label ?? id;
 }
 
-export function resolveSkillGroup(explicit: string | undefined | null, name: string, tags: string[]): string {
+export function resolveSkillGroup(explicit: string | undefined | null, name: string | undefined | null, tags: string[]): string {
   const trimmed = (explicit ?? '').trim();
   if (trimmed) {
     return SKILL_GROUPS.some((g) => g.id === trimmed) ? trimmed : 'ungrouped';
   }
-  const nameL = name.trim().toLowerCase();
-  const tagL = tags.map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const nameL = (name ?? '').trim().toLowerCase();
+  const tagL = (tags ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
   for (const g of SKILL_GROUPS) {
     if (g.id === 'ungrouped') continue;
     for (const alias of g.aliases ?? []) {

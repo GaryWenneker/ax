@@ -20,6 +20,7 @@ const CONTINUE_RULE_FILE: &str = "ax.md";
 const CONTINUE_RULE_BODY: &str = include_str!("../templates/ide/continue/ax.md");
 const CONTINUE_MCP_FILE: &str = "ax.json";
 const CONTINUE_MCP_BODY: &str = include_str!("../templates/ide/continue/mcp-ax.json");
+const CLINE_RULE_BODY: &str = include_str!("../templates/ide/cline/clinerules.md");
 
 const CLAUDE_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
 ## ax
@@ -60,7 +61,7 @@ Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreacha
 const GEMINI_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
 const COPILOT_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
 const WINDSURF_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
-const CLINE_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
+const CLINE_INSTRUCTIONS_BLOCK: &str = include_str!("../templates/ide/cline/ax-block.md");
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct IdeSeedResult {
@@ -415,15 +416,50 @@ fn seed_windsurf_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> s
     Ok(())
 }
 
+fn cline_bootstrap_stale(content: &str) -> bool {
+    !crate::seed::verify_content(
+        content
+            .find(AX_SECTION_START)
+            .map(|start| {
+                content
+                    .find(AX_SECTION_END)
+                    .map(|end| &content[start..end + AX_SECTION_END.len()])
+            })
+            .flatten()
+            .unwrap_or(content),
+    )
+    .is_empty()
+        || content.trim() != CLINE_RULE_BODY.trim()
+}
+
 fn seed_cline_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
     let path = project_root.join(".clinerules");
-    let action = replace_or_append_marked_section(
-        &path,
-        CLINE_INSTRUCTIONS_BLOCK,
-        AX_SECTION_START,
-        AX_SECTION_END,
-    )?;
-    record_upsert(result, ".clinerules", action);
+    let rel = ".clinerules";
+
+    if !path.exists() {
+        std::fs::write(&path, format!("{CLINE_RULE_BODY}\n"))?;
+        record_upsert(result, rel, UpsertAction::Created);
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&path)?;
+    if !cline_bootstrap_stale(&content) {
+        record_upsert(result, rel, UpsertAction::Unchanged);
+        return Ok(());
+    }
+
+    // Preserve any custom content above the ax block; replace ax block + Cline sections.
+    let custom_prefix = content
+        .find(AX_SECTION_START)
+        .map(|start| content[..start].trim_end())
+        .filter(|prefix| !prefix.is_empty());
+
+    let body = match custom_prefix {
+        Some(prefix) => format!("{prefix}\n\n{CLINE_RULE_BODY}\n"),
+        None => format!("{CLINE_RULE_BODY}\n"),
+    };
+    std::fs::write(&path, body)?;
+    record_upsert(result, rel, UpsertAction::Updated);
     Ok(())
 }
 

@@ -5,12 +5,20 @@ import {
   allIdsSelected,
   compareBadgeClass,
   compareLabel,
+  compareStatusClass,
   compareSummary,
   emptyDiffCopy,
   newerBadgeClass,
   newerLabel,
+  pickDroppedPolicyZipFile,
   policyItemDescription,
   restoreDecisionLabels,
+  restoreFileActionLabel,
+  toRestoreApiDecision,
+  setHunkTake,
+  hunkTakeFromChecks,
+  numberedHunkLines,
+  changeNavLabel,
   toggleSelectAll,
   unifiedDiffLines,
 } from './policyPackage.ts';
@@ -62,6 +70,12 @@ describe('policy zip package helpers', () => {
     assert.equal(compareSummary('invalid'), 'Invalid');
   });
 
+  it('compareStatusClass is red for local newer, orange for package newer, green for identical', () => {
+    assert.match(compareStatusClass('changed', 'local'), /policy-pack-compare-status--local/);
+    assert.match(compareStatusClass('changed', 'package'), /policy-pack-compare-status--changed/);
+    assert.match(compareStatusClass('identical', 'equal'), /policy-pack-compare-status--identical/);
+  });
+
   it('emptyDiffCopy does not claim a match when compare is changed', () => {
     assert.match(emptyDiffCopy('identical'), /matches the package/);
     assert.match(emptyDiffCopy('changed'), /line endings or encoding/);
@@ -70,6 +84,37 @@ describe('policy zip package helpers', () => {
 
   it('restoreDecisionLabels are Accept and Reject', () => {
     assert.deepEqual(restoreDecisionLabels(), { reject: 'Reject', accept: 'Accept' });
+  });
+
+  it('restoreFileActionLabel is partial when some hunks are accepted', () => {
+    assert.equal(restoreFileActionLabel('skip', 2), 'reject');
+    assert.equal(restoreFileActionLabel('overwrite', 2), 'accept');
+    assert.equal(restoreFileActionLabel({ action: 'merge', acceptHunks: [] }, 2), 'reject');
+    assert.equal(restoreFileActionLabel({ action: 'merge', acceptHunks: [0, 1] }, 2), 'accept');
+    assert.equal(restoreFileActionLabel({ action: 'merge', acceptHunks: [0] }, 2), 'partial');
+    assert.deepEqual(toRestoreApiDecision({ action: 'merge', acceptHunks: [0] }, 2), {
+      action: 'merge',
+      acceptHunks: [0],
+      hunks: [
+        { index: 0, take: 'package' },
+        { index: 1, take: 'local' },
+      ],
+    });
+    assert.equal(toRestoreApiDecision({ action: 'merge', acceptHunks: [0, 1] }, 2), 'overwrite');
+    assert.equal(toRestoreApiDecision({ action: 'merge', acceptHunks: [] }, 2), 'skip');
+    assert.equal(restoreFileActionLabel(setHunkTake('skip', 0, 2, 'package'), 2), 'partial');
+    assert.equal(setHunkTake({ action: 'merge', acceptHunks: [0] }, 0, 2, 'local'), 'skip');
+    assert.equal(hunkTakeFromChecks(true, true), 'both');
+    assert.equal(hunkTakeFromChecks(true, false), 'local');
+    assert.deepEqual(numberedHunkLines(['b', 'c'], 2), [
+      { n: 2, text: 'b' },
+      { n: 3, text: 'c' },
+    ]);
+  });
+
+  it('changeNavLabel is 1-based Change N of M', () => {
+    assert.equal(changeNavLabel(0, 2), 'Change 1 of 2');
+    assert.equal(changeNavLabel(1, 2), 'Change 2 of 2');
   });
 
   it('unifiedDiffLines classifies git-style add and delete', () => {
@@ -95,5 +140,16 @@ describe('policy zip package helpers', () => {
       'Never use UTF-16.',
     );
     assert.equal(policyItemDescription({ id: 'utf8-no-bom', body: '' }), 'utf8 no bom');
+  });
+
+  it('pickDroppedPolicyZipFile takes the first zip from a drop and ignores other types', () => {
+    const zip = new File(['pk'], 'team.ax-policy.zip', { type: 'application/zip' });
+    const txt = new File(['no'], 'readme.txt', { type: 'text/plain' });
+    assert.equal(pickDroppedPolicyZipFile([txt, zip])?.name, 'team.ax-policy.zip');
+    assert.equal(pickDroppedPolicyZipFile([txt]), null);
+    assert.equal(pickDroppedPolicyZipFile([]), null);
+    assert.equal(pickDroppedPolicyZipFile(null), null);
+    const typed = new File(['pk'], 'pack.bin', { type: 'application/x-zip-compressed' });
+    assert.equal(pickDroppedPolicyZipFile([typed])?.name, 'pack.bin');
   });
 });

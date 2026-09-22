@@ -51,6 +51,8 @@ pub const CORE_TOOLS: &[&str] = &[
     "ax_sync",
     "ax_remember",
     "ax_recall",
+    "ax_expand",
+    "ax_stash",
 ];
 
 /// Every `ax_*` tool named by the shipped policy rules and IDE bootstrap text

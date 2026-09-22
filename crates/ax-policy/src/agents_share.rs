@@ -187,28 +187,25 @@ pub fn agents_share_violations(project_root: &Path) -> Vec<String> {
                     continue;
                 }
                 let Ok(raw) = std::fs::read_to_string(&path) else {
-                    out.push(format!("unreadable {}", path.display()));
                     continue;
                 };
-                match parse_rule_file(&path, &raw) {
-                    Ok(doc) => {
-                        if !doc.frontmatter.enabled {
-                            out.push(format!(
-                                "disabled rule {} under .agents/rules",
-                                doc.frontmatter.id
-                            ));
-                        }
-                        if let Some(scope) = PolicyScope::parse(&doc.frontmatter.scope) {
-                            if !scope.is_packable() {
-                                out.push(format!(
-                                    "non-packable scope {} on {} under .agents/rules",
-                                    scope.as_str(),
-                                    doc.frontmatter.id
-                                ));
-                            }
-                        }
+                let Ok(doc) = parse_rule_file(&path, &raw) else {
+                    continue;
+                };
+                if !doc.frontmatter.enabled {
+                    out.push(format!(
+                        "disabled rule {} under .agents/rules",
+                        doc.frontmatter.id
+                    ));
+                }
+                if let Some(scope) = PolicyScope::parse(&doc.frontmatter.scope) {
+                    if !scope.is_packable() {
+                        out.push(format!(
+                            "non-packable scope {} on {} under .agents/rules",
+                            scope.as_str(),
+                            doc.frontmatter.id
+                        ));
                     }
-                    Err(e) => out.push(format!("invalid rule {}: {}", path.display(), e.error)),
                 }
             }
         }
@@ -225,28 +222,25 @@ pub fn agents_share_violations(project_root: &Path) -> Vec<String> {
                     continue;
                 }
                 let Ok(raw) = std::fs::read_to_string(&skill_md) else {
-                    out.push(format!("unreadable {}", skill_md.display()));
                     continue;
                 };
-                match parse_skill_file(&skill_md, &raw) {
-                    Ok(doc) => {
-                        if !doc.frontmatter.enabled {
-                            out.push(format!(
-                                "disabled skill {} under .agents/skills",
-                                doc.frontmatter.name
-                            ));
-                        }
-                        if let Some(scope) = PolicyScope::parse(&doc.frontmatter.scope) {
-                            if !scope.is_packable() {
-                                out.push(format!(
-                                    "non-packable scope {} on skill {} under .agents/skills",
-                                    scope.as_str(),
-                                    doc.frontmatter.name
-                                ));
-                            }
-                        }
+                let Ok(doc) = parse_skill_file(&skill_md, &raw) else {
+                    continue;
+                };
+                if !doc.frontmatter.enabled {
+                    out.push(format!(
+                        "disabled skill {} under .agents/skills",
+                        doc.frontmatter.name
+                    ));
+                }
+                if let Some(scope) = PolicyScope::parse(&doc.frontmatter.scope) {
+                    if !scope.is_packable() {
+                        out.push(format!(
+                            "non-packable scope {} on skill {} under .agents/skills",
+                            scope.as_str(),
+                            doc.frontmatter.name
+                        ));
                     }
-                    Err(e) => out.push(format!("invalid skill {}: {}", skill_md.display(), e.error)),
                 }
             }
         }
@@ -504,6 +498,29 @@ mod tests {
         assert!(agents_share_violations(p)
             .iter()
             .any(|v| v.contains("non-packable")));
+    }
+
+    #[test]
+    fn leak_gate_ignores_cursor_native_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        std::fs::create_dir_all(p.join(".agents/rules")).unwrap();
+        std::fs::write(
+            p.join(".agents/rules/no-ab-prefix.mdc"),
+            "---\ndescription: Cursor rule\nalwaysApply: true\n---\n\nNo AB prefix.\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(p.join(".agents/skills/vfpf-pr")).unwrap();
+        std::fs::write(
+            p.join(".agents/skills/vfpf-pr/SKILL.md"),
+            "---\nname: vfpf-pr\n---\n\nPR workflow.\n",
+        )
+        .unwrap();
+        assert!(
+            agents_share_violations(p).is_empty(),
+            "parse failures must not be reported as private/inactive leaks: {:?}",
+            agents_share_violations(p)
+        );
     }
 
     #[test]

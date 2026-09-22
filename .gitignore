@@ -85,3 +85,7 @@ crates/ax-web/web-ui/test-results/
 crates/ax-web/web-ui/playwright-report/
 crates/ax-web/web-ui/blob-report/
 
+# Private app clones (not part of ax)
+/MorbusApis/
+/bijengezondheid/
+

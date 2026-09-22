@@ -338,6 +338,7 @@ export default function StatusBar() {
       data-accent={accent}
       data-theme={themeId}
     >
+      <div className="statusbar-inner">
       {isLogging ? (
         <div className="statusbar-left">
           <StatusChip
@@ -888,6 +889,7 @@ export default function StatusBar() {
             )}
           </>
         )}
+      </div>
       </div>
     </footer>
   );

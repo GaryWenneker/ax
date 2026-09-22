@@ -1163,7 +1163,7 @@ fn score_and_findings(
                     check: "UncorrelatedTool".into(),
                     severity: "medium".into(),
                     title: "Transcript ax calls outside verbose window".into(),
-                    detail: "Verbose log files exist but have no clusters in this window. Widen `--window-minutes`, pass `--session <uuid>`, or enable Verbose MCP logging and restart MCP."
+                    detail: "Verbose log files exist but have no clusters in this window. Widen `--window-minutes`, pass `--session <uuid>`, or reconnect ax MCP so new traces land in today's file."
                         .into(),
                     waste_hint: "Window mismatch blocks enrichment measurement for this slice.".into(),
                     tokens_est: 0,
@@ -1179,7 +1179,7 @@ fn score_and_findings(
                 check: "UncorrelatedTool".into(),
                 severity: "critical".into(),
                 title: "Ax tools in transcript but no verbose log".into(),
-                detail: "Enable Verbose MCP logging in Settings → Interface to close the quality loop."
+                detail: "No matching lines in .ax/mcp-verbose-*.log for this window. Confirm ax MCP is running against this project."
                     .into(),
                 waste_hint: "Without verbose traces, enrichment quality cannot be measured.".into(),
                 tokens_est: 0,

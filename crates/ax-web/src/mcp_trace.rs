@@ -18,9 +18,68 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::workspace_state::WebHub;
+use ax_agent::config::load_workspace_config;
+use ax_usage::verbose_enabled;
 
 const BATCH_LINES: usize = 400;
 const POLL_MS: u64 = 350;
+
+/// Follow this project's verbose log, or the most recently written log among
+/// recent workspaces when this project has never produced one (typical when
+/// Command Center is on MijnVF but Cursor MCP `--path` is another repo).
+pub fn pick_trace_project_root(hub_root: &Path, recent: &[PathBuf]) -> (PathBuf, Option<String>) {
+    if project_has_verbose_logs(hub_root) {
+        return (hub_root.to_path_buf(), None);
+    }
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for cand in recent {
+        if same_path(cand, hub_root) {
+            continue;
+        }
+        for (_day, file) in ax_usage::list_dated_log_files(cand) {
+            let Ok(meta) = std::fs::metadata(&file) else {
+                continue;
+            };
+            let Ok(mtime) = meta.modified() else {
+                continue;
+            };
+            let take = best.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true);
+            if take {
+                best = Some((mtime, cand.clone()));
+            }
+        }
+    }
+    match best {
+        Some((_, p)) => {
+            let label = project_label(&p);
+            (p, Some(label))
+        }
+        None => (hub_root.to_path_buf(), None),
+    }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    a.canonicalize().ok() == b.canonicalize().ok() || a == b
+}
+
+fn project_has_verbose_logs(root: &Path) -> bool {
+    if ax_usage::current_log_path(Some(root)).is_file() {
+        return true;
+    }
+    !ax_usage::list_dated_log_files(root).is_empty()
+}
+
+fn recent_project_paths() -> Vec<PathBuf> {
+    load_workspace_config()
+        .recent
+        .into_iter()
+        .map(|r| PathBuf::from(r.path))
+        .collect()
+}
+
+fn resolve_follow_root(hub_root: &Path) -> (PathBuf, Option<String>) {
+    pick_trace_project_root(hub_root, &recent_project_paths())
+}
 
 pub fn mcp_verbose_log_path(project_root: &Path) -> PathBuf {
     ax_usage::current_log_path(Some(project_root))
@@ -34,15 +93,21 @@ fn project_label(project_root: &Path) -> String {
         .unwrap_or_else(|| project_root.display().to_string())
 }
 
-fn project_meta(hub_root: &Path, log_path: &Path) -> serde_json::Value {
-    let today = ax_usage::rotation_calendar_date(Some(hub_root), Utc::now());
+fn project_meta(hub_root: &Path, follow_root: &Path, fallback_label: Option<&str>) -> serde_json::Value {
+    let log_path = mcp_verbose_log_path(follow_root);
+    let today = ax_usage::rotation_calendar_date(Some(follow_root), Utc::now());
     json!({
         "path": log_path.display().to_string(),
         "projectRoot": hub_root.display().to_string(),
         "projectLabel": project_label(hub_root),
+        "followRoot": follow_root.display().to_string(),
+        "followLabel": project_label(follow_root),
+        "fallbackLabel": fallback_label,
         "scope": "project",
         "logDay": today.format("%Y-%m-%d").to_string(),
         "logPattern": "mcp-verbose-YYYY-MM-DD.log",
+        "logExists": log_path.is_file() || !ax_usage::list_dated_log_files(follow_root).is_empty(),
+        "verboseMcp": verbose_enabled(Some(hub_root)),
     })
 }
 
@@ -60,9 +125,9 @@ async fn hub_project(hub: &WebHub) -> PathBuf {
 }
 
 async fn handle_mcp_trace_path(State(hub): State<WebHub>) -> Json<serde_json::Value> {
-    let ws = hub.read().await;
-    let path = mcp_verbose_log_path(&ws.project_root);
-    Json(project_meta(&ws.project_root, &path))
+    let hub_root = hub_project(&hub).await;
+    let (follow, fallback) = resolve_follow_root(&hub_root);
+    Json(project_meta(&hub_root, &follow, fallback.as_deref()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,7 +139,8 @@ async fn handle_mcp_trace_chunk(
     State(hub): State<WebHub>,
     Query(q): Query<ChunkQuery>,
 ) -> Json<serde_json::Value> {
-    let root = hub_project(&hub).await;
+    let hub_root = hub_project(&hub).await;
+    let (root, _fallback) = resolve_follow_root(&hub_root);
     let before = match NaiveDate::parse_from_str(q.day.trim(), "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => {
@@ -121,20 +187,22 @@ async fn handle_mcp_trace_events(
         let mut project_following = String::new();
 
         loop {
-            let (path, root) = {
+            let (path, root, hub_root, fallback) = {
                 let ws = hub.read().await;
-                (mcp_verbose_log_path(&ws.project_root), ws.project_root.clone())
+                let hub_root = ws.project_root.clone();
+                let (follow, fallback) = resolve_follow_root(&hub_root);
+                (mcp_verbose_log_path(&follow), follow, hub_root, fallback)
             };
             let path_key = path.display().to_string();
-            let root_key = root.display().to_string();
+            let follow_key = format!("{}|{}", hub_root.display(), root.display());
 
-            if root_key != project_following {
-                project_following = root_key.clone();
+            if follow_key != project_following {
+                project_following = follow_key;
                 following_path.clear();
                 seeded_path.clear();
                 offset = 0;
                 pending.clear();
-                yield Ok(Event::default().event("reset").data(format!("project {root_key}")));
+                yield Ok(Event::default().event("reset").data(format!("project {}", hub_root.display())));
             }
 
             if path_key != following_path {
@@ -147,7 +215,7 @@ async fn handle_mcp_trace_events(
                 yield Ok(
                     Event::default()
                         .event("project")
-                        .data(project_meta(&root, &path).to_string()),
+                        .data(project_meta(&hub_root, &root, fallback.as_deref()).to_string()),
                 );
                 if is_rotation {
                     yield Ok(Event::default().event("rotate").data(path_key.clone()));
@@ -221,6 +289,7 @@ async fn read_new_chunk(path: &Path, offset: u64) -> Result<(String, u64), std::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
 
     #[test]
@@ -228,5 +297,32 @@ mod tests {
         let p = mcp_verbose_log_path(Path::new(r"C:\gary\ax"));
         assert!(p.to_string_lossy().contains("mcp-verbose-"));
         assert!(p.to_string_lossy().contains(".ax"));
+    }
+
+    #[test]
+    fn pick_trace_keeps_hub_when_it_has_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = dir.path().join("mijnvf");
+        let other = dir.path().join("ax");
+        fs::create_dir_all(hub.join(".ax")).unwrap();
+        fs::create_dir_all(other.join(".ax")).unwrap();
+        fs::write(hub.join(".ax").join("mcp-verbose-2026-09-01.log"), "hub\n").unwrap();
+        fs::write(other.join(".ax").join("mcp-verbose-2026-09-15.log"), "other\n").unwrap();
+        let (got, fallback) = pick_trace_project_root(&hub, &[other]);
+        assert_eq!(got, hub);
+        assert!(fallback.is_none());
+    }
+
+    #[test]
+    fn pick_trace_falls_back_to_recent_with_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = dir.path().join("mijnvf");
+        let other = dir.path().join("ax");
+        fs::create_dir_all(hub.join(".ax")).unwrap();
+        fs::create_dir_all(other.join(".ax")).unwrap();
+        fs::write(other.join(".ax").join("mcp-verbose-2026-09-14.log"), "from-ax\n").unwrap();
+        let (got, fallback) = pick_trace_project_root(&hub, &[other.clone()]);
+        assert_eq!(got, other);
+        assert_eq!(fallback.as_deref(), Some("ax"));
     }
 }

@@ -4,8 +4,8 @@ export type SortDir = 'asc' | 'desc';
 
 const LEVEL_RANK: Record<string, number> = { CRITICAL: 0, WARNING: 1, INFO: 2 };
 
-function cmpStr(a: string, b: string) {
-  return a.localeCompare(b, undefined, { sensitivity: 'base' });
+function cmpStr(a: string | undefined | null, b: string | undefined | null) {
+  return (a ?? '').localeCompare(b ?? '', undefined, { sensitivity: 'base' });
 }
 
 function cmpNum(a: number, b: number) {
@@ -34,10 +34,10 @@ export function isGitShared(scope?: string, enabled?: boolean): boolean {
 }
 
 /** Unique tags across rows, sorted case-insensitively. */
-export function collectTags(items: { tags: string[] }[]): string[] {
+export function collectTags(items: { tags?: string[] }[]): string[] {
   const seen = new Map<string, string>();
   for (const item of items) {
-    for (const tag of item.tags) {
+    for (const tag of item.tags ?? []) {
       const key = tag.trim().toLowerCase();
       if (!key || seen.has(key)) continue;
       seen.set(key, tag.trim());
@@ -57,6 +57,93 @@ export function hasAllTags(itemTags: string[], selected: string[]) {
   return selected.every((t) => hasTag(itemTags, t));
 }
 
+export function isGlobalPolicy(item: { origin?: string }): boolean {
+  return item.origin === 'global';
+}
+
+/** Relocate stores Policy*Doc JSON (`frontmatter`). List rows must be flat. */
+export function hydratePolicyListItem<T extends Record<string, unknown>>(raw: T): T {
+  const fm =
+    raw && typeof raw.frontmatter === 'object' && raw.frontmatter !== null
+      ? (raw.frontmatter as Record<string, unknown>)
+      : {};
+  const tags = Array.isArray(raw.tags) ? raw.tags : Array.isArray(fm.tags) ? fm.tags : [];
+  const triggers = Array.isArray(raw.triggers)
+    ? raw.triggers
+    : Array.isArray(fm.triggers)
+      ? fm.triggers
+      : [];
+  const globs = Array.isArray(raw.globs) ? raw.globs : Array.isArray(fm.globs) ? fm.globs : [];
+  return {
+    ...fm,
+    ...raw,
+    name: typeof raw.name === 'string' && raw.name ? raw.name : typeof fm.name === 'string' ? fm.name : raw.name,
+    id: typeof raw.id === 'string' && raw.id ? raw.id : typeof fm.id === 'string' ? fm.id : raw.id,
+    description:
+      typeof raw.description === 'string'
+        ? raw.description
+        : typeof fm.description === 'string'
+          ? fm.description
+          : raw.description,
+    tags,
+    triggers,
+    globs,
+  };
+}
+
+export function originQs(q?: { origin?: string; projectId?: number }): string {
+  if (q?.origin !== 'global') return '';
+  const p = new URLSearchParams();
+  p.set('origin', 'global');
+  if (q.projectId != null) p.set('projectId', String(q.projectId));
+  return `?${p.toString()}`;
+}
+
+export type PolicyMenuId =
+  | 'open'
+  | 'edit'
+  | 'enable'
+  | 'disable'
+  | 'move-global'
+  | 'move-project'
+  | 'delete';
+
+export function policyOverviewMenuItems(origin: string | undefined, enabled: boolean | undefined): {
+  id: PolicyMenuId;
+  label: string;
+  danger?: boolean;
+}[] {
+  if (origin === 'global') {
+    return [
+      { id: 'open', label: 'Open' },
+      { id: 'edit', label: 'Edit' },
+      { id: 'move-project', label: 'Move to this project (ax.db)' },
+      { id: 'delete', label: 'Delete from global.db', danger: true },
+    ];
+  }
+  const on = enabled !== false;
+  return [
+    { id: 'open', label: 'Open' },
+    { id: 'edit', label: 'Edit' },
+    { id: on ? 'disable' : 'enable', label: on ? 'Disable' : 'Enable' },
+    { id: 'move-global', label: 'Move to global.db' },
+    { id: 'delete', label: 'Delete', danger: true },
+  ];
+}
+
+/** Solid fill for this project ax.db vs ~/.ax/global.db (WCAG dark ink). */
+export const PROJECT_DB_COLOR = '#3ee4b2';
+export const GLOBAL_DB_COLOR = '#e0b341';
+export const POLICY_DB_INK = '#141414';
+
+export function policyDbAccent(origin?: string): string {
+  return origin === 'global' ? GLOBAL_DB_COLOR : PROJECT_DB_COLOR;
+}
+
+export function policyDbRowStyle(origin?: string): { boxShadow: string } {
+  return { boxShadow: `inset 5px 0 0 ${policyDbAccent(origin)}` };
+}
+
 export function filterRules(
   rules: PolicyRuleRow[],
   {
@@ -65,14 +152,16 @@ export function filterRules(
     always,
     scope,
     tags,
-  }: { q: string; level: string; always: string; scope?: string; tags?: string[] },
+    origin,
+  }: { q: string; level: string; always: string; scope?: string; tags?: string[]; origin?: string },
 ) {
   const needle = q.trim().toLowerCase();
   const selectedTags = tags ?? [];
   return rules.filter((r) => {
+    if (origin && (r.origin ?? 'project') !== origin) return false;
     if (level && r.level !== level) return false;
     if (scope && scopeOf(r.scope) !== scope) return false;
-    if (!hasAllTags(r.tags, selectedTags)) return false;
+    if (!hasAllTags(r.tags ?? [], selectedTags)) return false;
     if (always === 'yes' && !r.alwaysApply) return false;
     if (always === 'no' && r.alwaysApply) return false;
     if (!needle) return true;
@@ -80,9 +169,11 @@ export function filterRules(
       r.id,
       r.level,
       scopeOf(r.scope),
-      r.tags.join(' '),
-      r.triggers.join(' '),
-      r.globs.join(' '),
+      (r.tags ?? []).join(' '),
+      (r.triggers ?? []).join(' '),
+      (r.globs ?? []).join(' '),
+      r.projectName ?? '',
+      r.origin ?? 'project',
     ].join(' ').toLowerCase();
     return hay.includes(needle);
   });
@@ -107,10 +198,10 @@ export function sortRules(rules: PolicyRuleRow[], key: RuleSortKey, dir: SortDir
         c = cmpNum(a.priority, b.priority);
         break;
       case 'globs':
-        c = cmpNum(a.globs.length, b.globs.length);
+        c = cmpNum((a.globs ?? []).length, (b.globs ?? []).length);
         break;
       case 'triggers':
-        c = cmpNum(a.triggers.length, b.triggers.length);
+        c = cmpNum((a.triggers ?? []).length, (b.triggers ?? []).length);
         break;
     }
     return dir === 'asc' ? c : -c;
@@ -120,20 +211,23 @@ export function sortRules(rules: PolicyRuleRow[], key: RuleSortKey, dir: SortDir
 
 export function filterSkills(
   skills: PolicySkillRow[],
-  { q, scope, tags }: { q: string; scope?: string; tags?: string[] },
+  { q, scope, tags, origin }: { q: string; scope?: string; tags?: string[]; origin?: string },
 ) {
   const needle = q.trim().toLowerCase();
   const selectedTags = tags ?? [];
   return skills.filter((s) => {
+    if (origin && (s.origin ?? 'project') !== origin) return false;
     if (scope && scopeOf(s.scope) !== scope) return false;
-    if (!hasAllTags(s.tags, selectedTags)) return false;
+    if (!hasAllTags(s.tags ?? [], selectedTags)) return false;
     if (!needle) return true;
     const hay = [
       s.name,
       s.description,
       scopeOf(s.scope),
-      s.tags.join(' '),
-      s.triggers.join(' '),
+      (s.tags ?? []).join(' '),
+      (s.triggers ?? []).join(' '),
+      s.projectName ?? '',
+      s.origin ?? 'project',
     ].join(' ').toLowerCase();
     return hay.includes(needle);
   });
@@ -155,7 +249,7 @@ export function sortSkills(skills: PolicySkillRow[], key: SkillSortKey, dir: Sor
         c = cmpNum(a.priority, b.priority);
         break;
       case 'triggers':
-        c = cmpNum(a.triggers.length, b.triggers.length);
+        c = cmpNum((a.triggers ?? []).length, (b.triggers ?? []).length);
         break;
     }
     return dir === 'asc' ? c : -c;

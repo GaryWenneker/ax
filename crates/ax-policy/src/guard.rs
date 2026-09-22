@@ -14,7 +14,26 @@ pub async fn guard_operation(
     op: GuardOp,
     content: Option<&[u8]>,
 ) -> Result<GuardResult, AxError> {
+    guard_operation_with_extra_skills(pool, project_root, path, op, content, Vec::new()).await
+}
+
+pub async fn guard_operation_with_extra_skills(
+    pool: &SqlitePool,
+    project_root: &Path,
+    path: &Path,
+    op: GuardOp,
+    content: Option<&[u8]>,
+    extra_skills: Vec<crate::types::PolicySkillRow>,
+) -> Result<GuardResult, AxError> {
     let (rules, skills) = cached_rules_and_skills(pool).await?;
+    let skills = if extra_skills.is_empty() {
+        skills
+    } else {
+        std::sync::Arc::new(crate::matcher::merge_skills(
+            (*skills).clone(),
+            extra_skills,
+        ))
+    };
     let mut violations = Vec::new();
 
     let rel = path

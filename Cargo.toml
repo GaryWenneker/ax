@@ -30,6 +30,7 @@ members = [
     "crates/ax-plugins",
     "crates/ax-lsp",
     "crates/ax-docs-catalog",
+    "crates/ax-global-db",
 ]
 resolver = "2"
 
@@ -103,3 +104,4 @@ ax-plugins = { path = "crates/ax-plugins" }
 ax-lsp = { path = "crates/ax-lsp" }
 ax-docs-catalog = { path = "crates/ax-docs-catalog" }
 ax-agent = { path = "crates/ax-agent" }
+ax-global-db = { path = "crates/ax-global-db" }

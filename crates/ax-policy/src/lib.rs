@@ -42,7 +42,7 @@ pub use review::{
     PendingDiff, PendingItem, ReviewActionResult,
 };
 pub use format::{build_preflight_meta, format_inject_block};
-pub use guard::{guard_operation, guard_with_context};
+pub use guard::{guard_operation, guard_operation_with_extra_skills, guard_with_context};
 pub use agents_share::{
     agents_dir, agents_share_violations, ensure_ax_share_gitignore, inactive_dir,
     is_git_export_candidate, legacy_policy_dir, link_cursor_skills_to_agents,
@@ -54,18 +54,22 @@ pub use hierarchy::{
     policy_layer_dirs, policy_layers, PolicyLayer,
 };
 pub use index::{
-    enrich_rule_row, enrich_skill_row, ensure_policy_ready, export_policy_to_files, get_rule,
+    enrich_rule_row, enrich_skill_row, ensure_policy_ready, export_policy_to_files,
+    export_policy_to_files_filtered, get_rule,
     get_skill, import_policy_from_files, index_policy, list_rules, list_rules_enriched,
     list_skills, list_skills_enriched, policy_exists, policy_exists_filesystem, policy_has_content,
     policy_status, policy_tools_enabled, rule_row_to_doc, skill_row_to_doc, ExportResult,
     ImportMode,
 };
 pub use migrate::{
-    import_migrate_candidates, migrate_interview_instruction, migrate_rule_questions,
-    migrate_skill_questions, migrate_to_database, scan_policy_candidates, MigrateApplyResult,
-    MigrateCandidate, MigratePlan, MigrateSkipped,
+    exclusive_to_database, import_migrate_candidates, migrate_interview_instruction,
+    migrate_rule_questions, migrate_skill_questions, migrate_to_database,
+    remove_ax_policy_file_sources, scan_policy_candidates, MigrateApplyResult, MigrateCandidate,
+    MigratePlan, MigrateSkipped,
 };
-pub use matcher::{match_policy, max_inject_chars};
+pub use matcher::{
+    find_skill, match_policy, match_policy_with_extra_skills, max_inject_chars, merge_skills,
+};
 pub use parse::{
     parse_rule_file, parse_skill_file, serialize_rule, serialize_rule_stub, serialize_skill,
     serialize_skill_stub,

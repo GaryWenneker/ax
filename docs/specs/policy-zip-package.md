@@ -139,14 +139,22 @@ Explicit `overwrite` still writes, including when local is newer.
 
 **UI (restore table only):**
 
-1. Compare is **one line** of text: `compareLabel` then, when `newerLabel` is non-null, ` · ` plus the age. No second pill, no “exists locally”. Invalid reason stays on that same line in muted type.
+1. Compare is **one line** of text: `compareLabel` then, when `newerLabel` is non-null, ` · ` plus the age. No second pill, no “exists locally”. Invalid reason stays on that same line in muted type. Color: Local newer red (`--danger`), Package newer / Different orange (`--warn`), Identical green (`--ok`).
 2. Action is a **segmented control** (`role="group"`): two buttons Skip and Install/Overwrite. The chosen action has `aria-pressed="true"`. No `<select>` in the restore table.
 3. Clicking a row still opens the diff. Clicking a segment does not change the selected row.
 4. When `compare` is `changed` but the unified diff is empty (bytes differ, `.lines()` match — typically CRLF vs LF), the pane must **not** say local matches the package. Show a line-ending/encoding note instead.
 
-**Helpers (testable):** `compareSummary(compare, newer)` and `emptyDiffCopy(compare)`.
+**Helpers (testable):** `compareSummary(compare, newer)`, `emptyDiffCopy(compare)`, and `compareStatusClass(compare, newer)` (`newer === 'local'` → `--local` / red).
 
 **Must not:** change restore defaults, decision JSON, or pack format.
+
+### B11 — Compact restore table (2026-09-02)
+
+**Spec approval:** not obtained (autonomous run; user: make it better / more compact). Screenshot: Kind and Action broke letter-by-letter because `overflow-wrap: anywhere` applied to 3.4rem / 7.5rem columns.
+
+**UI:** Kind and Action stay **one line** (`white-space: nowrap`). Action column is wide enough for **Reject** and **Accept** in full (`13.75rem` + `scrollbar-gutter: stable`). Diff pane is shown only after a row is selected (`policy-pack-split--with-diff`). Id description is a single ellipsis line.
+
+**Must not:** change restore decisions, colors (local newer remains `--danger`), or pack format.
 
 ### B10 — contentHash + Accept/Reject (2026-09-02)
 
@@ -174,6 +182,14 @@ On pack, every new zip writes `contentHash`. On preview, if `contentHash` is pre
 
 **Isolation:** none. **Tier:** 2. **Gauntlet:** `tools/gauntlet-policy-zip-package.sh`.
 
+### B12 — Compact restore until a zip is loaded; drag-and-drop (2026-09-02)
+
+Empty **Restore package** uses `ModalShell` size `md` (≈520px), not `xl`. After preview items exist, restore grows to `xl`. The native locale file picker is hidden. Users drop an `.ax-policy.zip` onto a dashed English drop zone, or click the zone to choose a file. Non-zip drops show an English error and do not preview. Compose stays `xl`. Restore decisions, pack format, and index skip-Cursor behavior are unchanged.
+
+### B13 — Per-hunk Accept on restore (2026-09-03)
+
+Approved spec: `/Users/gary/io/ax/docs/specs/policy-zip-hunk-restore.md`. Restore can Accept or Reject individual LCS hunks. File-level mixed selection is **Partial**. `decisions` JSON still accepts `"overwrite"` / `"skip"` and adds `{ "action": "merge", "acceptHunks": [0, 2] }`. Diff JSON adds optional `hunks[]`. Invalid hunk indexes are `400`. Skill extra files stay whole-file.
+
 ## HTTP (internal Command Center)
 
 | Method | Path | Body | Response |
@@ -181,7 +197,7 @@ On pack, every new zip writes `contentHash`. On preview, if `contentHash` is pre
 | POST | `/api/policy/package` | JSON `{ name, description?, ruleIds[], skillNames[] }` | `200` zip bytes |
 | POST | `/api/policy/package/preview` | multipart zip | `200` `{ name, items[] }` |
 | POST | `/api/policy/package/restore` | multipart zip + `decisions` JSON | `200` `{ written, skipped, errors }` |
-| POST | `/api/policy/package/diff` | multipart zip + `kind` + `id` | `200` `{ compare, unified }` |
+| POST | `/api/policy/package/diff` | multipart zip + `kind` + `id` | `200` `{ compare, unified, hunks? }` |
 
 Empty pack or unknown ids: `422`. Bad zip: `400`. Auth: same as other Command Center policy routes (local server, not public).
 
@@ -209,6 +225,6 @@ No new dependencies. Files (planned):
 - Existing or greenfield: **greenfield** paths under `/api/policy/package`.
 - Boring: POST resource `package` with preview/restore actions (justified: zip is not JSON REST).
 - Auth: same as existing `/api/policy/*`.
-- Idempotency: restore overwrite is idempotent for the same bytes; optional key not required (low-stakes local file write).
+- Idempotency: restore overwrite is idempotent for the same bytes; merge with the same `acceptHunks` is idempotent; optional key not required (low-stakes local file write).
 - Blast radius: zip size cap (e.g. 8 MiB) on upload.
 - Pagination: N/A (bounded item list in one package).

@@ -21,7 +21,7 @@ Each skill is a full agent workflow (when to load, checklists, hard rules, relat
 | `azdo-refinement` | Story breakdown, DoR, hierarchy, vertical slices, right-sizing |
 | `azdo-development` | Branching, commits, craftsmanship, migrations, code DoD |
 | `azdo-testing` | Unit/integration/E2E, AC→tests, pipeline green (uses `tdd`) |
-| `azdo-code-review` | Author/reviewer checklists, merge gates, git hygiene |
+| `azdo-code-review` | Author/reviewer checklists: story scope, sibling patterns, both bounds, named tests, merge gates, git hygiene |
 | `azdo-pipelines` | Multi-stage YAML, build-once, environments, IaC, secrets |
 | `azdo-release` | Smoke, observability, flags, rollback, closing the work item |
 

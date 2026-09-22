@@ -28,6 +28,26 @@ CREATE TABLE IF NOT EXISTS mcp_call_log (
 CREATE INDEX IF NOT EXISTS idx_mcp_call_log_created_at ON mcp_call_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_mcp_call_log_tool ON mcp_call_log(tool);
 
+CREATE TABLE IF NOT EXISTS mcp_session_index (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT,
+  tool TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  original_tokens INTEGER NOT NULL,
+  cache_id TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_session_index_created ON mcp_session_index(created_at);
+
+CREATE TABLE IF NOT EXISTS mcp_context_cache (
+  id TEXT PRIMARY KEY,
+  tool TEXT NOT NULL,
+  body TEXT NOT NULL,
+  original_tokens INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_session_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   agent TEXT NOT NULL,

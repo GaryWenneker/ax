@@ -9,7 +9,7 @@ use ax_types::{
 };
 
 use crate::client::{column_for_name, language_id_for_ext, LspClient};
-use crate::servers::{server_available, spec_for_extension, ServerSpec};
+use crate::servers::{server_available_in, spec_for_extension, ServerSpec};
 
 #[derive(Debug, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,7 +52,7 @@ pub(crate) fn enrich_files_blocking(
             report.skipped_no_server += refs.len() as u32;
             continue;
         };
-        if !server_available(spec) {
+        if !server_available_in(spec, Some(project_root)) {
             report.skipped_no_server += refs.len() as u32;
             continue;
         }

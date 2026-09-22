@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
+use serde::de::{self, Deserializer};
+use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
@@ -31,9 +33,86 @@ pub struct PackSpec {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum HunkTake {
+    Local,
+    Package,
+    Both,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HunkPick {
+    pub index: usize,
+    pub take: HunkTake,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreAction {
     Overwrite,
     Skip,
+    Merge {
+        accept_hunks: Vec<usize>,
+        hunks: Vec<HunkPick>,
+    },
+}
+
+impl Serialize for RestoreAction {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            RestoreAction::Overwrite => serializer.serialize_str("overwrite"),
+            RestoreAction::Skip => serializer.serialize_str("skip"),
+            RestoreAction::Merge {
+                accept_hunks,
+                hunks,
+            } => {
+                #[derive(Serialize)]
+                struct Obj<'a> {
+                    action: &'static str,
+                    #[serde(rename = "acceptHunks", skip_serializing_if = "<[usize]>::is_empty")]
+                    accept_hunks: &'a [usize],
+                    #[serde(skip_serializing_if = "<[HunkPick]>::is_empty")]
+                    hunks: &'a [HunkPick],
+                }
+                Obj {
+                    action: "merge",
+                    accept_hunks,
+                    hunks,
+                }
+                .serialize(serializer)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for RestoreAction {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Named(String),
+            Obj {
+                action: String,
+                #[serde(default, rename = "acceptHunks")]
+                accept_hunks: Vec<usize>,
+                #[serde(default)]
+                hunks: Vec<HunkPick>,
+            },
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Named(s) if s == "overwrite" => Ok(Self::Overwrite),
+            Raw::Named(s) if s == "skip" => Ok(Self::Skip),
+            Raw::Named(s) => Err(de::Error::custom(format!("unknown restore action {s}"))),
+            Raw::Obj {
+                action,
+                accept_hunks,
+                hunks,
+            } if action == "merge" => Ok(Self::Merge {
+                accept_hunks,
+                hunks,
+            }),
+            Raw::Obj { action, .. } => Err(de::Error::custom(format!("unknown restore action {action}"))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +175,18 @@ pub struct RestoreResult {
     pub errors: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffHunk {
+    pub index: usize,
+    pub local: Vec<String>,
+    pub package: Vec<String>,
+    /// 1-based first local line in this hunk, or 0 when the hunk has no local lines.
+    pub local_start: usize,
+    /// 1-based first package line in this hunk, or 0 when the hunk has no package lines.
+    pub package_start: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemDiff {
@@ -103,6 +194,8 @@ pub struct ItemDiff {
     pub id: String,
     pub compare: String,
     pub unified: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hunks: Vec<DiffHunk>,
 }
 
 #[derive(Debug)]
@@ -543,12 +636,7 @@ fn compare_local(dest: &Path, packaged: &[u8], pack_mtime: Option<u64>) -> (Stri
     ("conflict".into(), "changed".into(), newer.into())
 }
 
-pub fn unified_diff(old: &str, new: &str, old_label: &str, new_label: &str) -> String {
-    let a: Vec<&str> = old.lines().collect();
-    let b: Vec<&str> = new.lines().collect();
-    if a == b {
-        return String::new();
-    }
+fn lcs_ops<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(char, &'a str)> {
     let n = a.len();
     let m = b.len();
     let mut dp = vec![vec![0usize; m + 1]; n + 1];
@@ -578,6 +666,195 @@ pub fn unified_diff(old: &str, new: &str, old_label: &str, new_label: &str) -> S
         }
     }
     ops.reverse();
+    ops
+}
+
+fn join_lines(lines: &[String], trailing_nl: bool) -> String {
+    let mut s = lines.join("\n");
+    if trailing_nl && (s.is_empty() || !s.ends_with('\n')) {
+        s.push('\n');
+    }
+    s
+}
+
+/// Consecutive insert/delete ops from the same LCS walk as `unified_diff`.
+pub fn split_diff_hunks(old: &str, new: &str) -> Vec<DiffHunk> {
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    if a == b {
+        return Vec::new();
+    }
+    let ops = lcs_ops(&a, &b);
+    let mut hunks = Vec::new();
+    let mut i = 0;
+    let mut local_line = 1usize;
+    let mut package_line = 1usize;
+    while i < ops.len() {
+        if ops[i].0 == ' ' {
+            local_line += 1;
+            package_line += 1;
+            i += 1;
+            continue;
+        }
+        let local_start = local_line;
+        let package_start = package_line;
+        let mut local = Vec::new();
+        let mut package = Vec::new();
+        while i < ops.len() && ops[i].0 != ' ' {
+            match ops[i].0 {
+                '-' => {
+                    local.push(ops[i].1.to_string());
+                    local_line += 1;
+                }
+                '+' => {
+                    package.push(ops[i].1.to_string());
+                    package_line += 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        hunks.push(DiffHunk {
+            index: hunks.len(),
+            local_start: if local.is_empty() { 0 } else { local_start },
+            package_start: if package.is_empty() { 0 } else { package_start },
+            local,
+            package,
+        });
+    }
+    hunks
+}
+
+pub fn merge_selected_hunks(old: &str, new: &str, accept: &[usize]) -> Result<String, ZipPkgError> {
+    let n = split_diff_hunks(old, new).len();
+    let takes = resolve_hunk_takes(n, accept, &[])?;
+    merge_hunk_takes(old, new, &takes)
+}
+
+fn resolve_hunk_takes(
+    hunk_count: usize,
+    accept_hunks: &[usize],
+    picks: &[HunkPick],
+) -> Result<Vec<HunkTake>, ZipPkgError> {
+    let mut takes = vec![HunkTake::Local; hunk_count];
+    for &idx in accept_hunks {
+        if idx >= hunk_count {
+            return Err(ZipPkgError::BadZip(format!("invalid hunk index {idx}")));
+        }
+        takes[idx] = HunkTake::Package;
+    }
+    for pick in picks {
+        if pick.index >= hunk_count {
+            return Err(ZipPkgError::BadZip(format!("invalid hunk index {}", pick.index)));
+        }
+        takes[pick.index] = pick.take;
+    }
+    Ok(takes)
+}
+
+pub fn merge_hunk_takes(old: &str, new: &str, takes: &[HunkTake]) -> Result<String, ZipPkgError> {
+    let hunks = split_diff_hunks(old, new);
+    if takes.len() != hunks.len() {
+        return Err(ZipPkgError::BadZip("hunk take count mismatch".into()));
+    }
+    if hunks.is_empty() {
+        return Ok(old.to_string());
+    }
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    let ops = lcs_ops(&a, &b);
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    let mut hunk_i = 0;
+    while i < ops.len() {
+        if ops[i].0 == ' ' {
+            out.push(ops[i].1.to_string());
+            i += 1;
+            continue;
+        }
+        let mut local = Vec::new();
+        let mut package = Vec::new();
+        while i < ops.len() && ops[i].0 != ' ' {
+            match ops[i].0 {
+                '-' => local.push(ops[i].1.to_string()),
+                '+' => package.push(ops[i].1.to_string()),
+                _ => {}
+            }
+            i += 1;
+        }
+        match takes[hunk_i] {
+            HunkTake::Local => out.extend(local),
+            HunkTake::Package => out.extend(package),
+            HunkTake::Both => {
+                out.extend(local);
+                out.extend(package);
+            }
+            HunkTake::None => {}
+        }
+        hunk_i += 1;
+    }
+    let all_package = takes.iter().all(|t| *t == HunkTake::Package);
+    let trailing = if all_package {
+        new.ends_with('\n')
+    } else {
+        old.ends_with('\n')
+    };
+    Ok(join_lines(&out, trailing))
+}
+
+enum WritePlan {
+    Skip,
+    Bytes(Vec<u8>),
+}
+
+fn write_plan(
+    dest: &Path,
+    packaged: &[u8],
+    action: &RestoreAction,
+    key: &str,
+    is_new: bool,
+) -> Result<WritePlan, ZipPkgError> {
+    match action {
+        RestoreAction::Skip => Ok(WritePlan::Skip),
+        RestoreAction::Overwrite => Ok(WritePlan::Bytes(packaged.to_vec())),
+        RestoreAction::Merge {
+            accept_hunks,
+            hunks: picks,
+        } => {
+            if is_new || !dest.is_file() {
+                if accept_hunks.is_empty() && picks.is_empty() {
+                    return Ok(WritePlan::Skip);
+                }
+                return Ok(WritePlan::Bytes(packaged.to_vec()));
+            }
+            let local = std::fs::read_to_string(dest).unwrap_or_default();
+            let pkg = String::from_utf8_lossy(packaged).into_owned();
+            let hunks = split_diff_hunks(&local, &pkg);
+            let takes = resolve_hunk_takes(hunks.len(), accept_hunks, picks).map_err(|e| match e {
+                ZipPkgError::BadZip(m) => ZipPkgError::BadZip(format!("{key}: {m}")),
+                other => other,
+            })?;
+            if takes.iter().all(|t| *t == HunkTake::Local) {
+                return Ok(WritePlan::Skip);
+            }
+            if !hunks.is_empty() && takes.iter().all(|t| *t == HunkTake::Package) {
+                return Ok(WritePlan::Bytes(packaged.to_vec()));
+            }
+            let merged = merge_hunk_takes(&local, &pkg, &takes)?;
+            Ok(WritePlan::Bytes(merged.into_bytes()))
+        }
+    }
+}
+
+pub fn unified_diff(old: &str, new: &str, old_label: &str, new_label: &str) -> String {
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    if a == b {
+        return String::new();
+    }
+    let n = a.len();
+    let m = b.len();
+    let ops = lcs_ops(&a, &b);
     let mut out = format!("--- {old_label}\n+++ {new_label}\n");
     out.push_str(&format!("@@ -1,{} +1,{} @@\n", n.max(1), m.max(1)));
     for (op, line) in ops {
@@ -651,6 +928,7 @@ pub fn diff_policy_zip_item(
         id: id.into(),
         compare,
         unified,
+        hunks: split_diff_hunks(&local_text, &packaged_text),
     })
 }
 
@@ -678,9 +956,16 @@ pub fn restore_policy_zip(
             result.errors.push(format!("{key}: {}", item.reason.clone().unwrap_or_else(|| "invalid".into())));
             continue;
         }
-        let action = decisions.get(&key).copied().unwrap_or_else(|| {
+        let action = decisions.get(&key).cloned().unwrap_or_else(|| {
             default_restore_action(&item.status, &item.newer).unwrap_or(RestoreAction::Skip)
         });
+        let action = match action {
+            RestoreAction::Merge {
+                accept_hunks,
+                hunks,
+            } if accept_hunks.is_empty() && hunks.is_empty() => RestoreAction::Skip,
+            other => other,
+        };
         if action == RestoreAction::Skip {
             result.skipped.push(key);
             continue;
@@ -697,15 +982,39 @@ pub fn restore_policy_zip(
                     continue;
                 };
                 let dest = agents.join(RULES_DIR).join(format!("{}.mdc", item.id));
-                if let Some(p) = dest.parent() {
-                    std::fs::create_dir_all(p)?;
+                match write_plan(&dest, content, &action, &key, item.status == "new")? {
+                    WritePlan::Skip => result.skipped.push(key),
+                    WritePlan::Bytes(bytes) => {
+                        if let Some(p) = dest.parent() {
+                            std::fs::create_dir_all(p)?;
+                        }
+                        std::fs::write(&dest, bytes)?;
+                        result.written.push(key);
+                    }
                 }
-                std::fs::write(&dest, content)?;
-                result.written.push(key);
             }
             "skill" => {
                 let prefix = format!("skills/{}/", item.id);
                 let dest_root = agents.join(SKILLS_DIR).join(&item.id);
+                let merge_skill_md_only = matches!(&action, RestoreAction::Merge { .. })
+                    && item.status != "new";
+                if merge_skill_md_only {
+                    let zip_path = format!("{prefix}{SKILL_FILENAME}");
+                    let Some(content) = files.get(&zip_path) else {
+                        result.errors.push(format!("{key}: missing zip member"));
+                        continue;
+                    };
+                    let dest = dest_root.join(SKILL_FILENAME);
+                    match write_plan(&dest, content, &action, &key, false)? {
+                        WritePlan::Skip => result.skipped.push(key),
+                        WritePlan::Bytes(bytes) => {
+                            std::fs::create_dir_all(&dest_root)?;
+                            std::fs::write(&dest, bytes)?;
+                            result.written.push(key);
+                        }
+                    }
+                    continue;
+                }
                 std::fs::create_dir_all(&dest_root)?;
                 for (path, content) in &files {
                     if !path.starts_with(&prefix) {
@@ -1177,5 +1486,136 @@ mod tests {
         let diff = diff_policy_zip_item(dest.path(), &zip, "rule", "alpha").unwrap();
         assert_eq!(diff.compare, "changed");
         assert!(diff.unified.contains("line endings or encoding"));
+    }
+
+    #[test]
+    fn split_lcs_into_hunks_separates_distant_edits() {
+        let old = "a\nb\nc\nd\ne\n";
+        let new = "a\nX\nc\nY\ne\n";
+        let hunks = split_diff_hunks(old, new);
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].index, 0);
+        assert_eq!(hunks[0].local, vec!["b"]);
+        assert_eq!(hunks[0].package, vec!["X"]);
+        assert_eq!(hunks[0].local_start, 2);
+        assert_eq!(hunks[0].package_start, 2);
+        assert_eq!(hunks[1].index, 1);
+        assert_eq!(hunks[1].local, vec!["d"]);
+        assert_eq!(hunks[1].package, vec!["Y"]);
+        assert_eq!(hunks[1].local_start, 4);
+        assert_eq!(hunks[1].package_start, 4);
+    }
+
+    #[test]
+    fn merge_accepts_first_hunk_keeps_second_local() {
+        let old = "a\nb\nc\nd\ne\n";
+        let new = "a\nX\nc\nY\ne\n";
+        let merged = merge_selected_hunks(old, new, &[0]).unwrap();
+        assert_eq!(merged, "a\nX\nc\nd\ne\n");
+        let none = merge_selected_hunks(old, new, &[]).unwrap();
+        assert_eq!(none, old);
+        let all = merge_selected_hunks(old, new, &[0, 1]).unwrap();
+        assert_eq!(all, new);
+        let err = merge_selected_hunks(old, new, &[2]).unwrap_err();
+        assert!(err.to_string().contains("hunk"));
+        let both = merge_hunk_takes(
+            old,
+            new,
+            &[HunkTake::Both, HunkTake::Local],
+        )
+        .unwrap();
+        assert_eq!(both, "a\nb\nX\nc\nd\ne\n");
+    }
+
+    fn write_two_hunk_rule(root: &Path, id: &str, mid1: &str, mid2: &str) {
+        let path = agents_dir(root).join(RULES_DIR).join(format!("{id}.mdc"));
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        std::fs::write(
+            path,
+            format!(
+                "---\nid: {id}\nlevel: INFO\nalwaysApply: true\nenabled: true\nscope: \"project\"\n---\n\nkeep-a\n{mid1}\nkeep-b\n{mid2}\nkeep-c\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn restore_merge_accepts_first_hunk_keeps_second_local() {
+        let src = tempfile::tempdir().unwrap();
+        write_two_hunk_rule(src.path(), "alpha", "PACK-ONE", "PACK-TWO");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        let dest_file = agents_dir(dest.path()).join("rules/alpha.mdc");
+        write_two_hunk_rule(dest.path(), "alpha", "LOCAL-ONE", "LOCAL-TWO");
+        let mut dec = HashMap::new();
+        dec.insert(
+            "rule:alpha".into(),
+            RestoreAction::Merge {
+                accept_hunks: vec![0],
+                hunks: vec![],
+            },
+        );
+        restore_policy_zip(dest.path(), &zip, &dec).unwrap();
+        let body = std::fs::read_to_string(&dest_file).unwrap();
+        assert!(body.contains("PACK-ONE"));
+        assert!(body.contains("LOCAL-TWO"));
+        assert!(!body.contains("PACK-TWO"));
+        assert!(!body.contains("LOCAL-ONE"));
+    }
+
+    #[test]
+    fn restore_merge_string_overwrite_still_full_file() {
+        let src = tempfile::tempdir().unwrap();
+        write_two_hunk_rule(src.path(), "alpha", "PACK-ONE", "PACK-TWO");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        write_two_hunk_rule(dest.path(), "alpha", "LOCAL-ONE", "LOCAL-TWO");
+        let parsed: HashMap<String, RestoreAction> =
+            serde_json::from_str(r#"{"rule:alpha":"overwrite"}"#).unwrap();
+        restore_policy_zip(dest.path(), &zip, &parsed).unwrap();
+        let body = std::fs::read_to_string(agents_dir(dest.path()).join("rules/alpha.mdc")).unwrap();
+        assert!(body.contains("PACK-ONE"));
+        assert!(body.contains("PACK-TWO"));
+    }
+
+    #[test]
+    fn restore_merge_invalid_hunk_index_errors() {
+        let src = tempfile::tempdir().unwrap();
+        write_two_hunk_rule(src.path(), "alpha", "PACK-ONE", "PACK-TWO");
+        let zip = build_policy_zip(src.path(), &spec(&["alpha"], &[])).unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        restore_policy_zip(dest.path(), &zip, &HashMap::new()).unwrap();
+        write_two_hunk_rule(dest.path(), "alpha", "LOCAL-ONE", "LOCAL-TWO");
+        let mut dec = HashMap::new();
+        dec.insert(
+            "rule:alpha".into(),
+            RestoreAction::Merge {
+                accept_hunks: vec![99],
+                hunks: vec![],
+            },
+        );
+        let err = restore_policy_zip(dest.path(), &zip, &dec).unwrap_err();
+        assert!(err.to_string().contains("hunk"));
+    }
+
+    #[test]
+    fn restore_merge_json_roundtrip() {
+        let parsed: HashMap<String, RestoreAction> =
+            serde_json::from_str(r#"{"rule:alpha":{"action":"merge","acceptHunks":[0,2]}}"#)
+                .unwrap();
+        assert_eq!(
+            parsed.get("rule:alpha"),
+            Some(&RestoreAction::Merge {
+                accept_hunks: vec![0, 2],
+                hunks: vec![],
+            })
+        );
+        let json = serde_json::to_string(&parsed).unwrap();
+        assert!(json.contains("acceptHunks"));
+        assert!(json.contains("merge"));
     }
 }

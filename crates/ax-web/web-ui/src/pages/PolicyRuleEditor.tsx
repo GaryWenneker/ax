@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchPolicyRule, savePolicyRule } from '../policyApi';
+import { fetchPolicyRule, savePolicyRule, type PolicyOriginQuery } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
 import MarkdownPreview from '../components/MarkdownPreview';
 import PolicyMetaResizeHandle from '../components/PolicyEditorResize';
@@ -21,6 +21,8 @@ import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
   ruleId: string | null;
+  origin?: string;
+  projectId?: number;
   onBack: () => void;
 }
 
@@ -57,8 +59,9 @@ function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
   };
 }
 
-export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
+export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: Props) {
   const isNew = !ruleId;
+  const originQ: PolicyOriginQuery | undefined = origin === 'global' ? { origin: 'global', projectId } : undefined;
   const [editing, setEditing] = useState(true);
   const [fm, setFm] = useState<RuleFrontmatter>(emptyFm());
   const [body, setBody] = useState('');
@@ -73,7 +76,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
     if (!ruleId) return;
     setLoading(true);
     setError('');
-    fetchPolicyRule(ruleId)
+    fetchPolicyRule(ruleId, originQ)
       .then((doc) => {
         setFm(normalizeRuleFm(doc.frontmatter));
         setBody(doc.body);
@@ -83,7 +86,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [ruleId]);
+  }, [ruleId, origin, projectId]);
 
   usePageContext(isNew ? 'New rule' : `Edit rule: ${ruleId}`, ruleId ?? 'new rule');
 
@@ -110,7 +113,7 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
         triggers,
         tags,
       };
-      await savePolicyRule(ruleId, frontmatter, body);
+      await savePolicyRule(ruleId, frontmatter, body, originQ);
       onBack();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -136,13 +139,13 @@ export default function PolicyRuleEditor({ ruleId, onBack }: Props) {
         actions={
           <>
             <button type="button" className="btn" onClick={cancelEdit}>Cancel</button>
-            {!isNew && ruleId ? (
+            {!isNew && ruleId && origin !== 'global' ? (
               <PolicyRevisionHistory
                 kind="rule"
                 itemId={ruleId}
                 onRestored={() => {
                   setLoading(true);
-                  fetchPolicyRule(ruleId)
+                  fetchPolicyRule(ruleId, originQ)
                     .then((doc) => {
                       setFm(normalizeRuleFm(doc.frontmatter));
                       setBody(doc.body);

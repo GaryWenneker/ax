@@ -22,8 +22,6 @@ pub struct LoggingPage {
     selected: Option<usize>,
     rx: Option<Receiver<Result<(String, String), String>>>,
     next_id: u64,
-    verbose_mcp: bool,
-    verbose_loaded: bool,
 }
 
 impl LoggingPage {
@@ -47,44 +45,13 @@ impl LoggingPage {
             selected: None,
             rx,
             next_id: 0,
-            verbose_mcp: false,
-            verbose_loaded: false,
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, ctx: &mut PageCtx<'_>) {
+    pub fn ui(&mut self, ui: &mut Ui, _ctx: &mut PageCtx<'_>) {
         heading(ui, "Logging", "Live MCP verbose trace (newest at top).");
 
-        if !self.verbose_loaded {
-            if let Ok(resp) = ctx.client.ship_config() {
-                self.verbose_mcp = resp.config.ui.verbose_mcp;
-            }
-            self.verbose_loaded = true;
-        }
-
         self.poll();
-
-        if ui
-            .checkbox(
-                &mut self.verbose_mcp,
-                "Verbose MCP logging (reconnect MCP after enabling)",
-            )
-            .changed()
-        {
-            match ctx.client.ship_config() {
-                Ok(mut resp) => {
-                    resp.config.ui.verbose_mcp = self.verbose_mcp;
-                    if let Err(e) = ctx.client.save_ship_config(&resp.config) {
-                        self.err = Some(e.to_string());
-                        self.verbose_mcp = !self.verbose_mcp;
-                    }
-                }
-                Err(e) => {
-                    self.err = Some(e.to_string());
-                    self.verbose_mcp = !self.verbose_mcp;
-                }
-            }
-        }
 
         ui.horizontal(|ui| {
             if self.live {

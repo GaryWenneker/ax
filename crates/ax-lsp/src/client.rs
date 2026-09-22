@@ -39,7 +39,9 @@ impl LspClient {
                 .canonicalize()
                 .unwrap_or_else(|_| project_root.to_path_buf()),
         );
-        let mut cmd = Command::new(spec.command);
+        let bin = crate::servers::working_binary(spec.command, Some(&project_root))
+            .ok_or_else(|| format!("{} is not installed or not runnable", spec.command))?;
+        let mut cmd = Command::new(&bin);
         cmd.args(spec.args)
             .current_dir(&project_root)
             .stdin(Stdio::piped())
@@ -50,7 +52,7 @@ impl LspClient {
         }
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("spawn {}: {e}", spec.command))?;
+            .map_err(|e| format!("spawn {}: {e}", bin.display()))?;
         let stdin = child.stdin.take().ok_or("missing stdin")?;
         let stdout = child.stdout.take().ok_or("missing stdout")?;
         let stderr = child.stderr.take().ok_or("missing stderr")?;

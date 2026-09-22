@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
+  deletePolicyCopy,
   deletePolicyRule,
   fetchPolicyRules,
   fetchPolicySyncSettings,
   proposePolicyCapture,
+  relocatePolicyItem,
   savePolicyCapture,
   savePolicySyncSettings,
   setPolicyRuleEnabled,
@@ -28,7 +30,8 @@ import {
   PolicyToolbar,
   SortTh,
 } from '../components/ui/PolicyTable';
-import { TagList } from '../components/PolicyMetaView';
+import { PolicyContextMenu } from '../components/ui/PolicyContextMenu';
+import { TagList, OriginDbBadge, PolicyDbLegend } from '../components/PolicyMetaView';
 import PolicyRuleInlineWorkspace from '../components/PolicyRuleInlineWorkspace';
 import { PolicyListResizeHandle } from '../components/PolicyEditorResize';
 import PolicyZipPackageButtons from '../components/PolicyZipPackageModals';
@@ -36,9 +39,14 @@ import { LabelAutocomplete } from '../components/ui/LabelAutocomplete';
 import {
   collectTags,
   filterRules,
+  hydratePolicyListItem,
+  isGlobalPolicy,
   normalizePolicyScope,
+  policyDbRowStyle,
+  policyOverviewMenuItems,
   sortRules,
   toggleSort,
+  type PolicyMenuId,
   type RuleSortKey,
   type SortDir,
 } from '../components/ui/policyListUtils';
@@ -56,30 +64,70 @@ import { PolicyGroupListControls } from '../components/ui/PolicyGroupListControl
 import { GitShareDot } from '../components/ui/GitShareDot';
 import Codicon from '../components/Codicon';
 import { loadJson, saveJson } from '../lib/uiStorage';
+import { menuTargets, nextRowSelection, toggleVisibleSelection } from '../lib/policySelection';
+import {
+  POLICY_BLADE_DISMISS_MS,
+  policyDetailOpen,
+  policyWorkspaceHostClass,
+} from '../lib/policyBladeMotion';
 
 interface Props {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onEditFull: (id: string | null) => void;
+  onEditFull: (id: string | null, origin?: string, projectId?: number) => void;
   onMatch: () => void;
 }
 
 export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSelect, onEditFull, onMatch }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(selectedIdFromRoute);
+  const [openOrigin, setOpenOrigin] = useState<string | undefined>();
+  const [openProjectId, setOpenProjectId] = useState<number | undefined>();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(selectedIdFromRoute ? [selectedIdFromRoute] : []));
+  const [anchorId, setAnchorId] = useState<string | null>(selectedIdFromRoute);
+  const [bladeClosing, setBladeClosing] = useState(false);
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
   useEffect(() => {
     setSelectedId(selectedIdFromRoute);
+    if (selectedIdFromRoute) {
+      setSelectedIds(new Set([selectedIdFromRoute]));
+      setAnchorId(selectedIdFromRoute);
+    }
   }, [selectedIdFromRoute]);
 
   function selectRule(id: string | null) {
+    setBladeClosing(false);
     setSelectedId(id);
     onSelectRef.current(id);
+    if (id) {
+      setSelectedIds(new Set([id]));
+      setAnchorId(id);
+    } else if (selectedIds.size <= 1) {
+      setSelectedIds(new Set());
+    }
   }
+
+  function requestCloseBlade() {
+    if (!selectedId || bladeClosing) return;
+    setBladeClosing(true);
+  }
+
+  useEffect(() => {
+    if (!bladeClosing) return;
+    const t = window.setTimeout(() => {
+      setBladeClosing(false);
+      setSelectedId(null);
+      onSelectRef.current(null);
+      setSelectedIds((prev) => (prev.size <= 1 ? new Set() : prev));
+    }, POLICY_BLADE_DISMISS_MS);
+    return () => window.clearTimeout(t);
+  }, [bladeClosing]);
   const [rules, setRules] = useState<PolicyRuleRow[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: PolicyRuleRow } | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [capturePrompt, setCapturePrompt] = useState('');
   const [captureProposal, setCaptureProposal] = useState<CaptureProposal | null>(null);
@@ -89,6 +137,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
   const [q, setQ] = useState('');
   const [level, setLevel] = useState('');
   const [scope, setScope] = useState('');
+  const [origin, setOrigin] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [always, setAlways] = useState('');
   const [sortKey, setSortKey] = useState<RuleSortKey>('id');
@@ -131,11 +180,20 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
       .catch((e: Error) => setError(e.message));
   }
 
-  const tagOptions = useMemo(() => collectTags(rules), [rules]);
+  const listed = useMemo(
+    () =>
+      rules.map(
+        (r) =>
+          hydratePolicyListItem(r as unknown as Record<string, unknown>) as unknown as PolicyRuleRow,
+      ),
+    [rules],
+  );
+
+  const tagOptions = useMemo(() => collectTags(listed), [listed]);
 
   const searchVisible = useMemo(
-    () => sortRules(filterRules(rules, { q, level, always, scope, tags }), sortKey, sortDir),
-    [rules, q, level, always, scope, tags, sortKey, sortDir],
+    () => sortRules(filterRules(listed, { q, level, always, scope, tags, origin }), sortKey, sortDir),
+    [listed, q, level, always, scope, tags, origin, sortKey, sortDir],
   );
 
   const groupOptions = useMemo(
@@ -155,6 +213,51 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
 
   const grouped = useMemo(() => visibleRuleGroups(visible), [visible]);
   const listedIds = useMemo(() => grouped.map((g) => g.id), [grouped]);
+  const visibleRowIds = useMemo(() => visible.map((r) => r.id), [visible]);
+
+  useEffect(() => {
+    function onPtr(e: PointerEvent) {
+      if (!selectedId) return;
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (editorRef.current?.contains(t)) return;
+      if ((t as HTMLElement).closest?.('.policy-context-menu')) return;
+      if ((t as HTMLElement).closest?.('.policy-table-row')) return;
+      if ((t as HTMLElement).closest?.('.policy-list-resize-handle')) return;
+      requestCloseBlade();
+    }
+    document.addEventListener('pointerdown', onPtr);
+    return () => document.removeEventListener('pointerdown', onPtr);
+  }, [selectedId, bladeClosing]);
+
+  function onRuleRowClick(e: MouseEvent, r: PolicyRuleRow) {
+    const next = nextRowSelection({
+      id: r.id,
+      visibleIds: visibleRowIds,
+      selected: selectedIds,
+      anchor: anchorId,
+      metaKey: e.metaKey || e.ctrlKey,
+      shiftKey: e.shiftKey,
+    });
+    setSelectedIds(next.selected);
+    setAnchorId(next.anchor);
+    setBladeClosing(false);
+    setSelectedId(next.openId);
+    onSelectRef.current(next.openId);
+    if (next.openId) {
+      setOpenOrigin(r.origin);
+      setOpenProjectId(r.projectId);
+    }
+  }
+
+  function onRuleContext(e: MouseEvent, r: PolicyRuleRow) {
+    e.preventDefault();
+    if (!selectedIds.has(r.id)) {
+      setSelectedIds(new Set([r.id]));
+      setAnchorId(r.id);
+    }
+    setCtxMenu({ x: e.clientX, y: e.clientY, row: r });
+  }
 
   function toggleFilterTag(tag: string) {
     const key = tag.trim().toLowerCase();
@@ -180,7 +283,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
     }
   }, [selectedId, visible]);
 
-  usePageContext('Rules', !loading && !error ? `${visible.length}/${rules.length} rules` : undefined);
+  usePageContext('Rules', !loading && !error ? `${visible.length}/${listed.length} rules` : undefined);
 
   function setSort(key: RuleSortKey) {
     const next = toggleSort(sortKey, sortDir, key);
@@ -205,6 +308,51 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
       setRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled } : r)));
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to update rule "${id}"`);
+    }
+  }
+
+  async function onPolicyMenu(action: PolicyMenuId) {
+    const r = ctxMenu?.row;
+    if (!r) return;
+    const targets = menuTargets(r, selectedIds, listed, (row) => row.id);
+    if (action === 'delete') {
+      const ok = isGlobalPolicy(r)
+        ? confirm(`Delete ${targets.length} item(s) from global.db?`)
+        : confirm(`Delete ${targets.length} rule(s)?`);
+      if (!ok) return;
+    }
+    try {
+      for (const row of targets) {
+        if (action === 'open' && targets.length === 1) {
+          selectRule(row.id);
+          setOpenOrigin(row.origin);
+          setOpenProjectId(row.projectId);
+        }
+        if (action === 'edit' && targets.length === 1) onEditFull(row.id, row.origin, row.projectId);
+        if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, true);
+        if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, false);
+        if (action === 'move-global' && !isGlobalPolicy(row)) {
+          await relocatePolicyItem('rule', row.id, 'global', row.projectId);
+        }
+        if (action === 'move-project' && isGlobalPolicy(row)) {
+          await relocatePolicyItem('rule', row.id, 'project', row.projectId);
+        }
+        if (action === 'delete') {
+          if (isGlobalPolicy(row)) await deletePolicyCopy('rule', row.id, row.projectId);
+          else {
+            await deletePolicyRule(row.id);
+            setRules((prev) => prev.filter((x) => x.id !== row.id));
+          }
+        }
+      }
+      if (action === 'move-global' || action === 'move-project' || (action === 'delete' && targets.some(isGlobalPolicy))) {
+        reloadRules();
+      }
+      if (action === 'move-global' || action === 'delete') {
+        if (targets.some((t) => t.id === selectedId)) selectRule(null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Context menu action failed');
     }
   }
 
@@ -423,6 +571,16 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
             </select>
             <select
               className="settings-select policy-toolbar-select"
+              value={origin}
+              onChange={(e) => setOrigin(e.target.value)}
+              aria-label="Filter by database"
+            >
+              <option value="">All databases</option>
+              <option value="project">This project (ax.db)</option>
+              <option value="global">Other projects (global.db)</option>
+            </select>
+            <select
+              className="settings-select policy-toolbar-select"
               value={always}
               onChange={(e) => setAlways(e.target.value)}
               aria-label="Filter by always apply"
@@ -440,22 +598,31 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
               collapseAllDisabled={allListedCollapsed(listedIds, collapsed)}
               expandAllDisabled={allListedExpanded(listedIds, collapsed)}
             />
-            <PolicyCount shown={visible.length} total={rules.length} />
+            <PolicyCount shown={visible.length} total={listed.length} />
+            <PolicyDbLegend />
           </PolicyToolbar>
 
           <PageCardBody>
-            {rules.length === 0 ? (
+            {listed.length === 0 ? (
               <PageEmpty title="No rules yet">Create your first rule or capture one from a prompt.</PageEmpty>
             ) : visible.length === 0 ? (
               <PageEmpty title="No matching rules">Adjust your filters or search query.</PageEmpty>
             ) : (
-              <div className={`page-split policy-rules-split${selectedId ? ' page-split--with-detail' : ''}`}>
+              <div className={`page-split policy-rules-split${policyDetailOpen(selectedId, bladeClosing) ? ' page-split--with-detail' : ''}`}>
                 <div className="page-split-main">
                   {selectedId ? (
                     <div className="policy-split-id-table">
                     <DataTable dense>
                       <thead>
                         <tr>
+                          <th className="policy-col-check">
+                            <input
+                              type="checkbox"
+                              aria-label="Select all visible rules"
+                              checked={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
+                              onChange={() => setSelectedIds(toggleVisibleSelection(visibleRowIds, selectedIds))}
+                            />
+                          </th>
                           <th>ID</th>
                         </tr>
                       </thead>
@@ -464,7 +631,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                           const open = !collapsed.has(g.id);
                           const header = (
                             <tr key={`group-${g.id}`} className="policy-skill-group-row">
-                              <td>
+                              <td colSpan={2}>
                                 <button
                                   type="button"
                                   className="policy-skill-group-toggle"
@@ -481,16 +648,33 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                           const children = open
                             ? g.rules.map((r) => (
                                 <tr
-                                  key={r.id}
-                                  className={`policy-table-row policy-table-row--nested${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedId === r.id ? ' policy-table-row--selected' : ''}`}
-                                  onClick={() => selectRule(r.id)}
+                                  key={r.rowKey ?? r.id}
+                                  className={`policy-table-row policy-table-row--nested${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedIds.has(r.id) ? ' policy-table-row--selected' : ''}`}
+                                  style={policyDbRowStyle(r.origin)}
+                                  onContextMenu={(e) => onRuleContext(e, r)}
+                                  onClick={(e) => onRuleRowClick(e, r)}
                                 >
+                                  <td className="policy-col-check" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedIds.has(r.id)}
+                                      aria-label={`Select ${r.id}`}
+                                      onChange={(e) => {
+                                        const next = new Set(selectedIds);
+                                        if (e.target.checked) next.add(r.id);
+                                        else next.delete(r.id);
+                                        setSelectedIds(next);
+                                        setAnchorId(r.id);
+                                      }}
+                                    />
+                                  </td>
                                   <td className="mono">
                                     <span className="policy-id-with-git">
-                                      <button type="button" className="policy-link" onClick={() => selectRule(r.id)}>
+                                      <button type="button" className="policy-link" onClick={(e) => { e.stopPropagation(); onRuleRowClick(e, r); }}>
                                         {r.id}
                                       </button>
                                       <GitShareDot scope={r.scope} enabled={r.enabled} />
+                                      <OriginDbBadge origin={r.origin} projectName={r.projectName} />
                                     </span>
                                   </td>
                                 </tr>
@@ -504,8 +688,17 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                   ) : (
                   <DataTable dense>
                     <thead>
-                      <tr>
-                        <SortTh label="ID" active={sortKey === 'id'} dir={sortDir} onClick={() => setSort('id')} />
+                        <tr>
+                          <th className="policy-col-check">
+                            <input
+                              type="checkbox"
+                              aria-label="Select all visible rules"
+                              checked={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
+                              onChange={() => setSelectedIds(toggleVisibleSelection(visibleRowIds, selectedIds))}
+                            />
+                          </th>
+                          <SortTh label="ID" active={sortKey === 'id'} dir={sortDir} onClick={() => setSort('id')} />
+                        <th>Database</th>
                         <SortTh label="Level" active={sortKey === 'level'} dir={sortDir} onClick={() => setSort('level')} className="policy-col-filter" />
                         <SortTh label="Layer" active={sortKey === 'scope'} dir={sortDir} onClick={() => setSort('scope')} className="policy-col-filter" />
                         <SortTh label="Pri" active={sortKey === 'priority'} dir={sortDir} onClick={() => setSort('priority')} className="col-num" />
@@ -523,7 +716,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                         const open = !collapsed.has(g.id);
                         const header = (
                           <tr key={`group-${g.id}`} className="policy-skill-group-row">
-                            <td colSpan={11}>
+                            <td colSpan={13}>
                               <button
                                 type="button"
                                 className="policy-skill-group-toggle"
@@ -540,22 +733,39 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                         const children = open
                           ? g.rules.map((r) => (
                         <tr
-                          key={r.id}
-                          className={`policy-table-row policy-table-row--nested${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedId === r.id ? ' policy-table-row--selected' : ''}`}
+                          key={r.rowKey ?? r.id}
+                          className={`policy-table-row policy-table-row--nested${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedIds.has(r.id) ? ' policy-table-row--selected' : ''}`}
+                          style={policyDbRowStyle(r.origin)}
+                          onContextMenu={(e) => onRuleContext(e, r)}
                           onClick={(e) => {
                             const t = e.target as HTMLElement;
                             if (t.closest('button, a, input, select, textarea, label')) return;
-                            selectRule(r.id);
+                            onRuleRowClick(e, r);
                           }}
                         >
+                          <td className="policy-col-check" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(r.id)}
+                              aria-label={`Select ${r.id}`}
+                              onChange={(e) => {
+                                const next = new Set(selectedIds);
+                                if (e.target.checked) next.add(r.id);
+                                else next.delete(r.id);
+                                setSelectedIds(next);
+                                setAnchorId(r.id);
+                              }}
+                            />
+                          </td>
                           <td className="mono">
                             <span className="policy-id-with-git">
-                              <button type="button" className="policy-link" onClick={() => selectRule(r.id)}>
+                              <button type="button" className="policy-link" onClick={(e) => { e.stopPropagation(); onRuleRowClick(e, r); }}>
                                 {r.id}
                               </button>
                               <GitShareDot scope={r.scope} enabled={r.enabled} />
                             </span>
                           </td>
+                          <td><OriginDbBadge origin={r.origin} projectName={r.projectName} /></td>
                           <td className="policy-col-filter">
                             <LevelBadge
                               level={r.level}
@@ -572,10 +782,13 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                           </td>
                           <td className="num">{r.priority}</td>
                           <td className="policy-table-tags policy-col-filter">
-                            <TagList items={r.tags} onTagClick={toggleFilterTag} activeTags={tags} />
+                            <TagList items={r.tags ?? []} onTagClick={toggleFilterTag} activeTags={tags} />
                           </td>
                           <td className="policy-table-flag">{r.alwaysApply ? 'yes' : '—'}</td>
                           <td>
+                            {isGlobalPolicy(r) ? (
+                              <span className="muted">—</span>
+                            ) : (
                             <button
                               type="button"
                               className={`settings-toggle${r.enabled !== false ? ' on' : ''}`}
@@ -586,8 +799,12 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                             >
                               <span className="settings-toggle-thumb" />
                             </button>
+                            )}
                           </td>
                           <td>
+                            {isGlobalPolicy(r) ? (
+                              <span className="muted">—</span>
+                            ) : (
                             <div className="policy-storage-cell">
                               <button
                                 type="button"
@@ -609,11 +826,23 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                                 {r.storageIsOverride ? ' · override' : ''}
                               </span>
                             </div>
+                            )}
                           </td>
-                          <td className="num">{r.globs.length}</td>
-                          <td className="num">{r.triggers.length}</td>
+                          <td className="num">{(r.globs ?? []).length}</td>
+                          <td className="num">{(r.triggers ?? []).length}</td>
                           <td className="col-actions">
-                            <PolicyRowActions onEdit={() => onEditFull(r.id)} onDelete={() => remove(r.id)} />
+                            <PolicyRowActions
+                              onEdit={() => onEditFull(r.id, r.origin, r.projectId)}
+                              onDelete={() => {
+                                if (isGlobalPolicy(r)) {
+                                  if (confirm(`Delete rule "${r.id}" from global.db?`)) {
+                                    void deletePolicyCopy('rule', r.id, r.projectId).then(reloadRules);
+                                  }
+                                  return;
+                                }
+                                void remove(r.id);
+                              }}
+                            />
                           </td>
                         </tr>
                               ))
@@ -624,21 +853,34 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
                   </DataTable>
                   )}
                 </div>
-                {selectedId && (
+                {policyDetailOpen(selectedId, bladeClosing) && selectedId ? (
                   <>
                     <PolicyListResizeHandle />
-                    <PolicyRuleInlineWorkspace
-                      ruleId={selectedId}
-                      onClose={() => selectRule(null)}
-                      onSaved={reloadRules}
-                    />
+                    <div ref={editorRef} className={policyWorkspaceHostClass(bladeClosing)}>
+                      <PolicyRuleInlineWorkspace
+                        ruleId={selectedId}
+                        origin={openOrigin}
+                        projectId={openProjectId}
+                        onClose={() => requestCloseBlade()}
+                        onSaved={reloadRules}
+                      />
+                    </div>
                   </>
-                )}
+                ) : null}
               </div>
             )}
           </PageCardBody>
         </PageCard>
       </PageStack>
+      {ctxMenu ? (
+        <PolicyContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={policyOverviewMenuItems(ctxMenu.row.origin, ctxMenu.row.enabled)}
+          onPick={onPolicyMenu}
+          onClose={() => setCtxMenu(null)}
+        />
+      ) : null}
     </PageShell>
   );
 }

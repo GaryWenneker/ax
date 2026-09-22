@@ -109,7 +109,7 @@ ax uninit ./old-project
 
 ### `ax index [path]`
 
-Full re-index from scratch (scan → extract → resolve). Use when the watcher is off or after large git operations.
+Full re-index from scratch (scan → extract → resolve). Use when the watcher is off or after large git operations. Dot-directories such as `.git` and `.ax` are skipped; **`.scripts/` is indexed** (for example `.scripts/wcag`).
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -611,11 +611,13 @@ ax share --open
 ### `ax lsp status` / `ax lsp enrich`
 
 Optional Language Server enrichment. `enrich` calls `textDocument/definition` on
-unresolved refs and writes edges with confidence `exact`.
+unresolved refs and writes edges with confidence `exact`. Status uses `rustup which`
+and project `node_modules/.bin`, not PATH shims alone.
 
 ```bash
 ax lsp status
 ax lsp enrich --limit 100
+rustup component add rust-analyzer
 ```
 
 ---
@@ -1008,7 +1010,7 @@ ax policy skill startup
 
 ### `ax policy skill <name> [path]`
 
-Print one skill body (markdown).
+Print one skill body (markdown). `~/.ax/global.db` wins over the project `ax.db` on the same name.
 
 | Argument | Description |
 |---|---|
@@ -1016,6 +1018,7 @@ Print one skill body (markdown).
 
 ```bash
 ax policy skill release
+ax policy skill azdo-pr-review
 ```
 
 ### `ax policy guard <file>`
@@ -1097,32 +1100,36 @@ ax policy storage status --json
 
 #### `ax policy storage database [path]`
 
-Set **database** as the project default source of truth (`ax.db`). Does not rewrite existing per-item overrides.
+Set **database** as the project default (`ax.db`). Without `--yes`, prints a scan/plan only.
 
 | Flag | Description |
 |---|---|
 | `--global` | Write to `~/.ax/config.json` instead of project `ax.json` |
-| `--migrate` | Scan repo for rules/skills; propose or import |
-| `--yes` | With `--migrate`: import all candidates with parsed defaults |
+| `--migrate` | Same as running without `--yes`: print the scan plan |
+| `--yes` | Import all candidates into `ax.db` and **delete** `.agents/` / `.ax/policy/` markdown |
+| `--keep-files` | With `--yes`, import but leave markdown on disk |
 | `--json` | JSON output |
 
 ```bash
-ax policy storage database --migrate          # propose (interview questions)
-ax policy storage database --migrate --yes    # apply import
+ax policy storage database                # preview scan (no writes)
+ax policy storage database --yes          # exclusive: DB is source of truth, files removed
+ax policy storage database --yes --keep-files
 ```
 
 #### `ax policy storage files [path]`
 
-Set **files** as the project default source of truth (`.ax/policy/` on disk).
+Set **files** as the project default source of truth (`.agents/` on disk).
 
 | Flag | Description |
 |---|---|
 | `--global` | Write to `~/.ax/config.json` |
-| `--migrate` | Export database policy to `.ax/policy/` files |
+| `--migrate` | Preview export |
+| `--yes` | Export every rule/skill from `ax.db` into `.agents/` |
 | `--json` | JSON output |
 
 ```bash
-ax policy storage files --migrate
+ax policy storage files                   # preview
+ax policy storage files --yes             # exclusive: files are source of truth
 ax policy storage files --global
 ```
 
@@ -1205,7 +1212,7 @@ Install a built-in pack into **project** scope (`.ax/policy/`), then import/re-i
 | `--force` | Overwrite existing rules/skills with the same id/name (use after upgrading to refresh expanded skill bodies) |
 | `--json` | JSON output |
 
-Built-in pack `azdo-fullstack` ships full Azure DevOps ticket-to-release **skills** (workflows + checklists) and matching **rules**.
+Built-in pack `azdo-fullstack` ships full Azure DevOps ticket-to-release **skills** (workflows + checklists) and matching **rules**. `azdo-code-review` requires Story scope, sibling-pattern checks, both bounds, and a named test per finding.
 
 ```bash
 ax policy pack install --list
@@ -1223,14 +1230,14 @@ ax policy pack zip --out team.ax-policy.zip --name "Team pack" --rules utf8-no-b
 
 ### `ax policy restore`
 
-Preview or install a portable zip into `.agents/`. New items default to install. Conflicts default to skip (including when the local file is newer). Pass `--decisions` to skip a new item or overwrite a conflict.
+Preview or install a portable zip into `.agents/`. New items default to install. Conflicts default to skip (including when the local file is newer). Pass `--decisions` to skip a new item, overwrite a conflict, or merge selected hunks.
 
 ```bash
 ax policy restore --preview team.ax-policy.zip
 ax policy restore team.ax-policy.zip --decisions decisions.json
 ```
 
-`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite` or `skip`. Preview JSON includes `newer` and each packed path may include `contentHash` (blake3). Missing decision keys: **new** → install (`overwrite`), **conflict** → skip. Accepted writes are recorded in the local hash-on-change revision log (Command Center **History**).
+`decisions.json` maps `"rule:<id>"` / `"skill:<name>"` to `overwrite`, `skip`, `{ "action": "merge", "acceptHunks": [0] }`, or `{ "action": "merge", "hunks": [{ "index": 0, "take": "both" }] }` (`take` is `local`, `package`, `both`, or `none`). Preview JSON includes `newer` and each packed path may include `contentHash` (blake3). Missing decision keys: **new** → install (`overwrite`), **conflict** → skip. Invalid hunk indexes fail the restore. Accepted writes are recorded in the local hash-on-change revision log (Command Center **History**).
 
 ### `ax policy review`
 

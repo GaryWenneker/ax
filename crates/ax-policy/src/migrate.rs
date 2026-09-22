@@ -74,6 +74,8 @@ pub struct MigrateApplyResult {
     pub rules_imported: u32,
     pub skills_imported: u32,
     pub skipped: u32,
+    #[serde(default)]
+    pub files_removed: u32,
 }
 
 /// Recursively scan the project for policy rules (`.mdc`) and skills (`SKILL.md`).
@@ -204,13 +206,15 @@ pub async fn import_migrate_candidates(
     let mut skills_imported = 0u32;
 
     for candidate in candidates {
-        if let Some(rule) = &candidate.rule {
-            upsert_rule_doc(pool, rule)
+        if let Some(mut rule) = candidate.rule.clone() {
+            rule.frontmatter.storage = Some("database".into());
+            upsert_rule_doc(pool, &rule)
                 .await
                 .map_err(|e| e.to_string())?;
             rules_imported += 1;
-        } else if let Some(skill) = &candidate.skill {
-            upsert_skill_doc(pool, skill)
+        } else if let Some(mut skill) = candidate.skill.clone() {
+            skill.frontmatter.storage = Some("database".into());
+            upsert_skill_doc(pool, &skill)
                 .await
                 .map_err(|e| e.to_string())?;
             skills_imported += 1;
@@ -221,6 +225,7 @@ pub async fn import_migrate_candidates(
         rules_imported,
         skills_imported,
         skipped: 0,
+        files_removed: 0,
     })
 }
 
@@ -234,8 +239,41 @@ pub async fn migrate_to_database(
     Ok((plan, apply))
 }
 
+/// Import into ax.db then delete `.agents/` and `.ax/policy/` sources (not `.cursor/`).
+pub async fn exclusive_to_database(
+    pool: &SqlitePool,
+    project_root: &Path,
+    keep_files: bool,
+) -> Result<(MigratePlan, MigrateApplyResult), String> {
+    let (plan, mut apply) = migrate_to_database(pool, project_root).await?;
+    if !keep_files {
+        apply.files_removed = remove_ax_policy_file_sources(project_root, &plan.candidates);
+    }
+    Ok((plan, apply))
+}
+
+/// Delete markdown for imported ax-policy candidates. Returns how many files were removed.
+pub fn remove_ax_policy_file_sources(project_root: &Path, candidates: &[MigrateCandidate]) -> u32 {
+    let mut n = 0u32;
+    for c in candidates {
+        if c.source != "ax-policy" {
+            continue;
+        }
+        let path = project_root.join(&c.source_path);
+        if path.is_file() && std::fs::remove_file(&path).is_ok() {
+            n += 1;
+            if c.kind == "skill" {
+                if let Some(dir) = path.parent() {
+                    let _ = std::fs::remove_dir(dir);
+                }
+            }
+        }
+    }
+    n
+}
+
 pub fn migrate_interview_instruction() -> String {
-    "For each candidate in order: ask every question in questions[], apply answers to frontmatter/body, then import only items the user confirms (yes). Database mode stores rows in ax.db — source files outside .ax/policy/ are not deleted. Run `ax policy storage database --migrate --yes` to import all with parsed defaults.".into()
+    "For each candidate in order: ask every question in questions[]. Then run `ax policy storage database --yes` to import all with parsed defaults and delete `.agents/` / `.ax/policy/` files. Use `--keep-files` to leave markdown on disk. `.cursor/` bootstrap files are never deleted.".into()
 }
 
 pub fn migrate_rule_questions(doc: &PolicyRuleDoc, source: &str) -> Vec<CaptureInterviewQuestion> {
@@ -311,11 +349,11 @@ pub fn migrate_rule_questions(doc: &PolicyRuleDoc, source: &str) -> Vec<CaptureI
         CaptureInterviewQuestion {
             field: "sourceAction".into(),
             question: format!(
-                "After import, keep original file at {} or note for removal?",
+                "After exclusive database import, delete original file at {}?",
                 doc.source_path
             ),
-            current: "keep".into(),
-            options: vec!["keep".into(), "remove-later".into()],
+            current: "remove".into(),
+            options: vec!["remove".into(), "keep".into()],
             required: false,
         },
     ]
@@ -387,11 +425,11 @@ pub fn migrate_skill_questions(doc: &PolicySkillDoc, source: &str) -> Vec<Captur
         CaptureInterviewQuestion {
             field: "sourceAction".into(),
             question: format!(
-                "After import, keep original file at {} or note for removal?",
+                "After exclusive database import, delete original file at {}?",
                 doc.source_path
             ),
-            current: "keep".into(),
-            options: vec!["keep".into(), "remove-later".into()],
+            current: "remove".into(),
+            options: vec!["remove".into(), "keep".into()],
             required: false,
         },
     ]
@@ -569,5 +607,22 @@ triggers: [test]
         let c = plan.candidates.first().unwrap();
         assert!(c.questions.iter().any(|q| q.field == "storage"));
         assert!(c.questions.iter().any(|q| q.field == "import"));
+    }
+
+    #[test]
+    fn remove_ax_policy_files_leaves_cursor_bootstrap() {
+        let dir = tempfile::tempdir().unwrap();
+        write_rule(dir.path(), ".agents/rules/team.mdc", "team");
+        write_skill(dir.path(), ".agents/skills/deploy/SKILL.md", "deploy");
+        write_rule(dir.path(), ".cursor/rules/custom.mdc", "custom");
+        write_rule(dir.path(), ".cursor/rules/ax.mdc", "ax-bootstrap");
+
+        let plan = scan_policy_candidates(dir.path());
+        let n = remove_ax_policy_file_sources(dir.path(), &plan.candidates);
+        assert_eq!(n, 2);
+        assert!(!dir.path().join(".agents/rules/team.mdc").is_file());
+        assert!(!dir.path().join(".agents/skills/deploy/SKILL.md").is_file());
+        assert!(dir.path().join(".cursor/rules/custom.mdc").is_file());
+        assert!(dir.path().join(".cursor/rules/ax.mdc").is_file());
     }
 }

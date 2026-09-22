@@ -47,7 +47,7 @@ import {
 import { formatLogLine, liveActivityLabel } from '../logFormat';
 
 interface Props {
-  onOpenSonar: () => void;
+  onOpenSonar?: () => void;
 }
 
 function RunLogPanel({
@@ -677,9 +677,11 @@ export default function ShipPage({ onOpenSonar }: Props) {
         subtitle="Git-aware quality gate with live pipeline updates via SSE."
         actions={
           <>
-            <button type="button" className="btn" disabled={!!busy} onClick={onOpenSonar}>
-              SonarQube
-            </button>
+            {onOpenSonar ? (
+              <button type="button" className="btn" disabled={!!busy} onClick={onOpenSonar}>
+                SonarQube
+              </button>
+            ) : null}
             <button type="button" className="btn primary" disabled={!!busy} onClick={() => runCommand('evaluate')}>
               {busy === 'evaluate' ? <BusyLabel label="Evaluating…" /> : 'Evaluate'}
             </button>
@@ -885,9 +887,11 @@ export default function ShipPage({ onOpenSonar }: Props) {
               >
                 Refresh
               </button>
-              <button type="button" className="btn btn-subtle" onClick={onOpenSonar}>
-                SonarQube page
-              </button>
+              {onOpenSonar ? (
+                <button type="button" className="btn btn-subtle" onClick={onOpenSonar}>
+                  SonarQube page
+                </button>
+              ) : null}
             </div>
 
             {/* Project cards grid */}

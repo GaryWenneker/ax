@@ -306,25 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn ship_toml_verbose_flag() {
-        let dir = tempfile_dir();
-        let ax = dir.join(".ax");
-        std::fs::create_dir_all(&ax).unwrap();
-        std::fs::write(
-            ax.join("ship.toml"),
-            "[ui]\nverbose_mcp = true\nshow_savings = true\n",
-        )
-        .unwrap();
-        assert!(verbose_enabled(Some(&dir)));
-        std::fs::write(ax.join("ship.toml"), "[ui]\nshow_savings = true\n").unwrap();
-        if std::env::var("AX_MCP_VERBOSE").is_err() {
-            assert!(!verbose_enabled(Some(&dir)));
-        }
-    }
-
-    fn tempfile_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("ax-verbose-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn verbose_always_on() {
+        assert!(verbose_enabled(None));
     }
 }

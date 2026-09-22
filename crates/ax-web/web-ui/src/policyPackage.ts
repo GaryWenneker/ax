@@ -94,7 +94,10 @@ export function compareSummary(compare: string, newer?: string | null): string {
   return age ? `${status} · ${age}` : status;
 }
 
-export function compareStatusClass(compare: string): string {
+export function compareStatusClass(compare: string, newer?: string | null): string {
+  if (newer === 'local') {
+    return 'policy-pack-compare-status policy-pack-compare-status--local';
+  }
   const kind = ['new', 'identical', 'changed', 'invalid'].includes(compare) ? compare : 'invalid';
   return `policy-pack-compare-status policy-pack-compare-status--${kind}`;
 }
@@ -108,6 +111,111 @@ export function emptyDiffCopy(compare: string): string {
 
 export function restoreDecisionLabels(): { reject: string; accept: string } {
   return { reject: 'Reject', accept: 'Accept' };
+}
+
+export type HunkTake = 'local' | 'package' | 'both' | 'none';
+export type HunkPick = { index: number; take: HunkTake };
+export type RestoreMergeDecision = {
+  action: 'merge';
+  acceptHunks?: number[];
+  hunks?: HunkPick[];
+};
+export type RestoreDecisionValue = 'overwrite' | 'skip' | RestoreMergeDecision;
+
+export function hunkTakeFromChecks(localOn: boolean, packageOn: boolean): HunkTake {
+  if (localOn && packageOn) return 'both';
+  if (packageOn) return 'package';
+  if (localOn) return 'local';
+  return 'none';
+}
+
+export function checksFromHunkTake(take: HunkTake): { local: boolean; package: boolean } {
+  return {
+    local: take === 'local' || take === 'both',
+    package: take === 'package' || take === 'both',
+  };
+}
+
+export function hunkTakesForDecision(decision: RestoreDecisionValue | undefined, hunkCount: number): HunkTake[] {
+  const takes: HunkTake[] = Array.from({ length: hunkCount }, () => 'local');
+  if (!decision || decision === 'skip') return takes;
+  if (decision === 'overwrite') return takes.map(() => 'package');
+  for (const i of decision.acceptHunks ?? []) {
+    if (i >= 0 && i < hunkCount) takes[i] = 'package';
+  }
+  for (const pick of decision.hunks ?? []) {
+    if (pick.index >= 0 && pick.index < hunkCount) takes[pick.index] = pick.take;
+  }
+  return takes;
+}
+
+export function restoreFileActionLabel(
+  decision: RestoreDecisionValue | undefined,
+  hunkCount: number,
+): 'accept' | 'reject' | 'partial' {
+  if (!decision || decision === 'skip') return 'reject';
+  if (decision === 'overwrite') return 'accept';
+  const takes = hunkTakesForDecision(decision, hunkCount);
+  if (takes.length === 0) return 'reject';
+  if (takes.every((t) => t === 'local')) return 'reject';
+  if (takes.every((t) => t === 'package')) return 'accept';
+  return 'partial';
+}
+
+export function toRestoreApiDecision(
+  decision: RestoreDecisionValue,
+  hunkCount: number,
+): RestoreDecisionValue {
+  const takes = hunkTakesForDecision(decision, hunkCount);
+  if (takes.every((t) => t === 'local')) return 'skip';
+  if (takes.length > 0 && takes.every((t) => t === 'package')) return 'overwrite';
+  const acceptHunks = takes.map((t, i) => (t === 'package' ? i : -1)).filter((i) => i >= 0);
+  const hunks = takes.map((take, index) => ({ index, take }));
+  return { action: 'merge', acceptHunks, hunks };
+}
+
+export function changeNavLabel(index: number, total: number): string {
+  if (total <= 0) return 'Change 0 of 0';
+  return `Change ${index + 1} of ${total}`;
+}
+
+export function setHunkTake(
+  decision: RestoreDecisionValue | undefined,
+  hunkIndex: number,
+  hunkCount: number,
+  take: HunkTake,
+): RestoreDecisionValue {
+  const takes = hunkTakesForDecision(decision, hunkCount);
+  if (hunkIndex >= 0 && hunkIndex < hunkCount) takes[hunkIndex] = take;
+  return toRestoreApiDecision({ action: 'merge', hunks: takes.map((t, index) => ({ index, take: t })) }, hunkCount);
+}
+
+export function numberedHunkLines(
+  lines: string[],
+  start: number,
+): Array<{ n: number | null; text: string }> {
+  const rows = lines.length ? lines : [''];
+  return rows.map((text, i) => ({
+    n: start > 0 ? start + i : null,
+    text,
+  }));
+}
+
+/** First zip in a drag-and-drop FileList, or null if the drop is not a zip. */
+export function pickDroppedPolicyZipFile(files: ArrayLike<File> | null | undefined): File | null {
+  if (!files || files.length === 0) return null;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const name = file.name.toLowerCase();
+    if (
+      name.endsWith('.zip') ||
+      file.type === 'application/zip' ||
+      file.type === 'application/x-zip-compressed'
+    ) {
+      return file;
+    }
+  }
+  return null;
 }
 
 export type UnifiedDiffLineKind = 'meta' | 'add' | 'del' | 'ctx';

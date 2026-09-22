@@ -1,0 +1,10 @@
+{
+  "name": "ax",
+  "version": "0.x",
+  "type": "module",
+  "description": "AI2 agent framework — core engine",
+  "scripts": {
+    "build": "npx tsc -p tsconfig.json --outDir dist",
+    "dev": "npx tsc -p tsconfig.json"
+  }
+}

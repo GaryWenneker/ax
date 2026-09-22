@@ -25,7 +25,7 @@ describe('macOS theme preset', () => {
 
   it('M3 existing presets stay registered', () => {
     const ids = THEMES.map((t) => t.id);
-    for (const id of ['ax', 'vscode-dark', 'ember', 'emerald', 'nightfall', 'crimson', 'ocean', 'macos']) {
+    for (const id of ['ax', 'vscode-dark', 'ember', 'emerald', 'nightfall', 'crimson', 'ocean', 'macos', 'mono']) {
       assert.ok(ids.includes(id), `missing ${id}`);
     }
   });
@@ -87,6 +87,14 @@ describe('WCAG AA contrast', () => {
     assert.equal(painted, '#64d2ff');
     assert.equal(ink.onLight, true);
     assert.ok(contrastRatioHex(ink.fg, painted) >= 4.5);
+  });
+
+  it('M4 THEMES includes Mono grayscale preset', () => {
+    const mono = THEMES.find((t) => t.id === 'mono');
+    assert.ok(mono, 'missing mono preset');
+    assert.equal(mono.label, 'Mono');
+    assert.equal(mono.accent, '#d0d0d0');
+    assert.equal(themeById('mono').id, 'mono');
   });
 
   it('W10 applyTheme computes statusbar ink from painted fill', async () => {

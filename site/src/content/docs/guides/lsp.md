@@ -13,16 +13,19 @@ ax lsp enrich              # resolve up to 200 unresolved refs
 ax lsp enrich --limit 50 --json
 ```
 
-`ax lsp status` marks a server `--` when the binary is a rustup shim that is not installed yet. On Windows/Rust that usually means:
+`ax lsp status` marks a server `--` when the binary is a rustup shim that is not installed yet. Install the real server:
 
 ```bash
 rustup component add rust-analyzer
 ```
 
+ax also uses `rustup which rust-analyzer` (so a working toolchain binary wins over a cargo-bin proxy) and `{project}/node_modules/.bin` plus `crates/ax-web/web-ui/node_modules/.bin` for `typescript-language-server`.
+
 Install the other servers (examples):
 
 ```bash
 npm install -g typescript typescript-language-server pyright
+# or: npm --prefix crates/ax-web/web-ui install -D typescript-language-server
 go install golang.org/x/tools/gopls@latest
 ```
 
@@ -57,9 +60,9 @@ On **Unresolved**, use **Enrich with LSP** (ModalShell) — calls `POST /api/lsp
 
 | Badge | Meaning |
 |-------|---------|
-| `available` | Binary on PATH and `--version` succeeds |
+| `available` | Runnable binary (`rustup which`, PATH, or project `node_modules/.bin`) |
 | `shim` | On PATH but not runnable (common: rustup shim without the component) |
-| `missing` | Not found on PATH |
+| `missing` | Not found |
 
 With Verbose MCP logging on, Logging shows `lsp` domain lines; Activity chip deep-links filter to `/logging?kind=lsp`.
 

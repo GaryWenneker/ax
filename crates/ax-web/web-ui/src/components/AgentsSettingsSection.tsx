@@ -29,10 +29,6 @@ function SettingRow({ title, description, children }: { title: string; descripti
   );
 }
 
-function StatusPill({ label, tone }: { label: string; tone: 'ok' | 'warn' | 'muted' }) {
-  return <span className={`settings-status-pill settings-status-pill--${tone}`}>{label}</span>;
-}
-
 function LogConsole({ lines }: { lines: string[] }) {
   const ref = useCallback((el: HTMLPreElement | null) => {
     if (el) el.scrollTop = el.scrollHeight;
@@ -302,16 +298,24 @@ export default function AgentsSettingsSection() {
         </SettingRow>
 
         <div className="settings-subsection-label">Agent targets</div>
+        <div className="agent-target-grid">
         {targets.map((t) => {
           const cli = targetCliLabel(t);
           return (
-            <div key={t.id} className="agent-target-row">
-              <label className="settings-row settings-row--check">
+            <label
+              key={t.id}
+              className={`agent-target-card${selected.has(t.id) ? ' agent-target-card--selected' : ''}`}
+            >
+              <div className="agent-target-card-top">
                 <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleTarget(t.id)} />
-                <span className="settings-row-title">{t.display_name}</span>
-                <StatusPill label={cli.label} tone={cli.tone} />
-                <StatusPill label={t.configured ? 'MCP wired' : 'MCP not wired'} tone={t.configured ? 'ok' : 'warn'} />
-              </label>
+                <span className="agent-target-card-name">{t.display_name}</span>
+                <span className="agent-target-pills">
+                  <span className={`agent-chip${cli.tone === 'ok' ? ' agent-chip--ok' : ''}`}>{cli.label}</span>
+                  <span className={`agent-chip${t.configured ? ' agent-chip--ok' : ''}`}>
+                    {t.configured ? 'MCP wired' : 'MCP not wired'}
+                  </span>
+                </span>
+              </div>
               {t.config_paths.length > 0 && (
                 <div className="agent-target-paths">
                   {t.config_paths.map((p) => (
@@ -319,9 +323,10 @@ export default function AgentsSettingsSection() {
                   ))}
                 </div>
               )}
-            </div>
+            </label>
           );
         })}
+        </div>
         <div className="settings-card-footer" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             type="button"

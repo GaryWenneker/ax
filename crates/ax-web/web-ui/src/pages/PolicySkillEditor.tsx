@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchPolicySkill, savePolicySkill } from '../policyApi';
+import { fetchPolicySkill, savePolicySkill, type PolicyOriginQuery } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
 import MarkdownPreview from '../components/MarkdownPreview';
 import PolicyMetaResizeHandle from '../components/PolicyEditorResize';
@@ -21,6 +21,8 @@ import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
   skillName: string | null;
+  origin?: string;
+  projectId?: number;
   onBack: () => void;
 }
 
@@ -55,8 +57,9 @@ function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
   };
 }
 
-export default function PolicySkillEditor({ skillName, onBack }: Props) {
+export default function PolicySkillEditor({ skillName, origin, projectId, onBack }: Props) {
   const isNew = !skillName;
+  const originQ: PolicyOriginQuery | undefined = origin === 'global' ? { origin: 'global', projectId } : undefined;
   const [editing, setEditing] = useState(isNew);
   const [fm, setFm] = useState<SkillFrontmatter>(emptyFm());
   const [body, setBody] = useState('');
@@ -70,7 +73,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
     if (!skillName) return;
     setLoading(true);
     setError('');
-    fetchPolicySkill(skillName)
+    fetchPolicySkill(skillName, originQ)
       .then((doc) => {
         setFm(normalizeSkillFm(doc.frontmatter));
         setBody(doc.body);
@@ -80,7 +83,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [skillName]);
+  }, [skillName, origin, projectId]);
 
   usePageContext(isNew || editing ? 'Skill editor' : 'Skill', skillName ?? 'new skill');
 
@@ -99,7 +102,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
         triggers: parseCsv(triggersText),
         tags,
       };
-      await savePolicySkill(skillName, frontmatter, body);
+      await savePolicySkill(skillName, frontmatter, body, originQ);
       onBack();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -117,7 +120,7 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
     setEditing(false);
     if (!skillName) return;
     setLoading(true);
-    fetchPolicySkill(skillName)
+    fetchPolicySkill(skillName, originQ)
       .then((doc) => {
         setFm(normalizeSkillFm(doc.frontmatter));
         setBody(doc.body);
@@ -143,13 +146,13 @@ export default function PolicySkillEditor({ skillName, onBack }: Props) {
         actions={
           <>
             <button type="button" className="btn" onClick={onBack}>Back</button>
-            {!isNew && skillName ? (
+            {!isNew && skillName && origin !== 'global' ? (
               <PolicyRevisionHistory
                 kind="skill"
                 itemId={skillName}
                 onRestored={() => {
                   setLoading(true);
-                  fetchPolicySkill(skillName)
+                  fetchPolicySkill(skillName, originQ)
                     .then((doc) => {
                       setFm(normalizeSkillFm(doc.frontmatter));
                       setBody(doc.body);

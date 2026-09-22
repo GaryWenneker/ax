@@ -20,6 +20,20 @@ const BUILTIN_SKIP_DIRS: &[&str] = &[
     ".fastembed_cache",
 ];
 
+/// Dot-directories that still contain project source. `ignore` `.hidden(true)`
+/// would skip the whole tree (e.g. `.scripts/wcag`).
+const INDEXED_DOT_DIRS: &[&str] = &[".scripts"];
+
+pub(crate) fn keep_scan_entry_name(name: &str) -> bool {
+    if BUILTIN_SKIP_DIRS.contains(&name) {
+        return false;
+    }
+    if name.starts_with('.') {
+        return INDEXED_DOT_DIRS.contains(&name);
+    }
+    true
+}
+
 #[derive(Clone)]
 pub struct IndexOptions {
     pub force: bool,
@@ -141,7 +155,12 @@ impl ExtractionOrchestrator {
         let mut files = Vec::new();
         let exclude_matcher = build_exclude_matcher(&self.project_root, &opts.exclude);
         let walker = WalkBuilder::new(&self.project_root)
-            .hidden(true).git_ignore(true).git_global(true).git_exclude(true).build();
+            .hidden(false)
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true)
+            .filter_entry(|e| keep_scan_entry_name(&e.file_name().to_string_lossy()))
+            .build();
         let ext_map = extension_map();
         let plugin_exts = ax_plugins::load_plugins(&self.project_root).extensions();
         for entry in walker {
@@ -595,4 +614,39 @@ fn should_skip_path(rel: &str, exclude: Option<&Gitignore>) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn scan_files_includes_scripts_dot_dir() {
+        let dir = std::env::temp_dir().join(format!("ax-scan-scripts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".scripts/wcag")).unwrap();
+        std::fs::write(dir.join(".scripts/wcag/Triage.cs"), "class Triage {}\n").unwrap();
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let orch = ExtractionOrchestrator::new(dir.clone());
+        let files = orch.scan_files(&IndexOptions::default()).await.unwrap();
+        let rels: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert!(
+            rels.iter().any(|r| r == ".scripts/wcag/Triage.cs"),
+            "expected .scripts/wcag in scan, got {rels:?}"
+        );
+        assert!(
+            !rels.iter().any(|r| r.contains(".git")),
+            "must not index .git: {rels:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

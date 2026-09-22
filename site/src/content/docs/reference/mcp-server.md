@@ -20,7 +20,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 | Group | Tools |
 |---|---|
 | Turn contract | `ax_preflight`, `ax_policy_capture`, and (when policy exists) `ax_rules` / `ax_skill` / `ax_guard` |
-| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall` |
+| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_expand`, `ax_stash` |
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 
@@ -76,9 +76,9 @@ When `.ax/policy/` contains indexed rules or skills, the server also exposes:
 
 | Tool | Purpose |
 |---|---|
-| `ax_preflight` | Turn-start: matched rules + skills + `inject` (always-apply rules and always-apply skills always complete; contextual rules/skills may be omitted with an `ax_skill` / `ax_rules` hint) + auto-injected `<ax_index>` snapshot. Policy match failures return a degraded payload, never MCP `isError`. |
+| `ax_preflight` | Turn-start: matched rules + skills + `inject` (always-apply rules and always-apply skills always complete; contextual rules/skills may be omitted with an `ax_skill` / `ax_rules` hint) + auto-injected `<ax_index>` snapshot. `prompt` is optional (empty session-start calls are valid). `files` may be a string or an array. Policy match failures return a degraded payload, never MCP `isError`. Session policy refresh skips Cursor-native `.agents` files so they do not fail the tool with `validation_failed`. |
 | `ax_rules` | List all rules or match against a prompt |
-| `ax_skill` | Load the full markdown body of a skill by name |
+| `ax_skill` | Load the full markdown body of a skill by name (`~/.ax/global.db` wins over project `ax.db`) |
 | `ax_guard` | Block or warn before writes that violate CRITICAL rules. Built-in checks: UTF-8 BOM/encoding, secrets paths. **Generic gate:** any CRITICAL rule can opt in without code changes by adding a `guard: forbid-path: "<glob>"`, `guard: forbid-content: "<substring or /regex/>"` (scoped by that rule's `globs` when it has any), `guard: require-content: "<substring or /regex/>"` (scoped by that rule's `globs`), or `guard: require-skill: "<name>"` (skill must be approved and `alwaysApply`) line to its body. |
 
 Agents should **not** read `.agents/` files when these tools are available — policy is indexed locally and returned in MCP responses.
@@ -117,6 +117,19 @@ The [memory vault](/guides/memory/) adds two tools:
 Git hooks run `ax capture-git --quiet` on every commit — commit messages with real context become `kind: git` memories without agent action. Agents should still call `ax_remember` for durable decisions that commit messages do not capture.
 
 Responses larger than ~3k tokens carry a one-line `[ax] token budget` hint suggesting a narrower query or lower depth, nudging agents to keep context small.
+
+## Context cache
+
+When a tool reply is at least `AX_CONTEXT_CACHE_TOKENS` (default 3000) the full text is stored in `~/.ax/usage.db` and the model sees a short stub with an id. Call `ax_expand` to read it back. `offset` and `limit` are character indexes (default limit 8000, max 12000).
+
+`ax_preflight`, `ax_guard`, and `ax_policy_capture` are never stubbed. Set `AX_CONTEXT_CACHE_TOKENS=0` or `AX_CONTEXT_CACHE=off` to disable. Rows expire after 7 days. This store is not the memory vault.
+
+`ax_stash` stores any text you pass (a chat slice or a result from another tool) and returns only the id. While the cache is on, every successful ax MCP call, each Claude prompt-hook prompt, and each Cursor `beforeSubmitPrompt` is added to a session index. `ax_preflight` lists the current session first (about 1,500 tokens, no bodies) and one ledger line: row count, tokens stored, and tokens that stayed inline. Rows marked `inline` were small enough to stay in the original reply. On stop, ax stashes oversized tool results from the active Cursor or Claude transcript when that text is not already cached. Matching memories still arrive through the existing recall inject. Read a stored body with `ax_expand`. Install the Cursor hook with `ax savings hook install`.
+
+```json
+ax_stash({ "text": "the bulky tool result", "label": "other-mcp" })
+ax_expand({ "id": "cc_0123456789abcdef", "offset": 0, "limit": 8000 })
+```
 
 ## Lean responses (token savings)
 

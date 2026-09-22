@@ -107,6 +107,12 @@ export interface PolicyRuleRow {
   storageIsOverride?: boolean;
   /** Resolved catalog group id from GET /rules. */
   group?: string;
+  /** `project` = this ax.db; `global` = copy from another project in global.db */
+  origin?: 'project' | 'global';
+  projectName?: string;
+  projectId?: number;
+  selected?: boolean;
+  rowKey?: string;
 }
 
 export interface PolicySkillRow {
@@ -130,6 +136,11 @@ export interface PolicySkillRow {
   storageIsOverride?: boolean;
   /** Resolved catalog group id from GET /skills. */
   group?: string;
+  origin?: 'project' | 'global';
+  projectName?: string;
+  projectId?: number;
+  selected?: boolean;
+  rowKey?: string;
 }
 
 export interface PolicyRootInfo {

@@ -14,8 +14,9 @@ pub fn router_hub(hub: WebHub) -> Router {
         .with_state(hub)
 }
 
-async fn handle_status() -> Json<serde_json::Value> {
-    let servers = ax_lsp::discover_servers();
+async fn handle_status(State(hub): State<WebHub>) -> Json<serde_json::Value> {
+    let root = hub.read().await.project_root.clone();
+    let servers = ax_lsp::discover_servers_in(Some(&root));
     Json(serde_json::json!({ "servers": servers }))
 }
 

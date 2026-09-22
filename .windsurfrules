@@ -1,7 +1,9 @@
 <!-- AX_START -->
 ## ax
 
-Call `ax_preflight` exactly once per turn **before all other work** whenever the `user-ax` MCP server is available. Team policy arrives via MCP inject — do not Read `.ax/policy/` files when ax MCP tools are available.
+Call `ax_preflight` exactly once per turn **before all other work** whenever the `user-ax` MCP server is available. Team policy arrives via MCP inject — do not Read `.agents/` or `.ax/policy/` files when ax MCP tools are available.
+
+**Git-shared team files:** `.agents/rules/` and `.agents/skills/` (each skill is a directory with `SKILL.md`). Do not load `.ax/policy-private/` or `.ax/policy-inactive/`.
 
 **Inject fallback:** If preflight lacks `<ax_policy>` (empty inject/rules), call `ax_skill("startup")` once.
 

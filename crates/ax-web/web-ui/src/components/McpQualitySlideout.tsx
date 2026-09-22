@@ -196,12 +196,6 @@ export default function McpQualitySlideout({ open, onClose, highlightFindingId }
         <div className="mcp-q-body">
           {error && <p className="mcp-q-error">{error}</p>}
 
-          {!snap.verboseEnabled && (
-            <div className="mcp-q-banner mcp-q-banner--warn">
-              Verbose MCP logging is off. Enable it under Settings → Interface so the quality loop can score enrichment.
-            </div>
-          )}
-
           <section className="mcp-q-section">
             <h3 className="mcp-q-section-title">Correlation</h3>
             <div className="mcp-q-grid">

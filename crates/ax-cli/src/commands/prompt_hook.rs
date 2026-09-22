@@ -34,6 +34,14 @@ pub async fn run() -> Result<(), String> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    if !prompt.is_empty() {
+        let session = input
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(ax_usage::read_active_cursor_session);
+        let _ = ax_usage::note_session_event(session.as_deref(), "user_prompt", &prompt, None).await;
+    }
     let cwd = input
         .get("cwd")
         .and_then(|v| v.as_str())

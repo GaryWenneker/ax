@@ -14,10 +14,8 @@ import PolicyReviewPage from './pages/PolicyReview';
 import PolicySyncPage from './pages/PolicySync';
 import UnresolvedPage from './pages/Unresolved';
 import ShipPage from './pages/Ship';
-import AgentPage from './pages/Agent';
 import SettingsPage from './pages/Settings';
 import LoggingPage from './pages/Logging';
-import SonarQubePage from './pages/SonarQube';
 import SavingsPage from './pages/Savings';
 import PricesPage from './pages/Prices';
 import MemoryPage from './pages/Memory';
@@ -27,6 +25,7 @@ import HeaderWaves from './components/HeaderWaves';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
 import { initBladeWidth } from './components/BladeResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { UiProvider } from './context/UiContext';
 import { initTheme } from './lib/themes';
 import { AX_FULL_NAME } from './lib/brand';
@@ -51,8 +50,6 @@ const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
   { id: 'savings', label: 'Savings' },
   { id: 'prices', label: 'Prices' },
   { id: 'ship', label: 'Command Center' },
-  { id: 'sonar', label: 'SonarQube' },
-  { id: 'agent', label: 'Agent' },
 ];
 
 const NAV_CONFIG: Array<{ id: NavId; label: string }> = [
@@ -92,20 +89,18 @@ function AppShell() {
   const [route, setRoute] = useState<RouteState>(() => stripValid(parseLocation()));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [fontScale, setFontScale] = useState(loadUiScale);
-  const [showSavings, setShowSavings] = useState(false);
-  const [showAgent, setShowAgent] = useState(true);
+  const [showSavings, setShowSavings] = useState(true);
   const [workspaceKey, setWorkspaceKey] = useState(0);
   const [embedMode] = useState(detectEmbedMode);
   const [mcpReloadBusy, setMcpReloadBusy] = useState(false);
   const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  const { page, ruleId: editRuleId, skillName: editSkillName, sonarTab, ruleEditMode, skillEditMode } = route;
+  const { page, ruleId: editRuleId, skillName: editSkillName, sonarTab, ruleEditMode, skillEditMode, origin: routeOrigin, projectId: routeProjectId } = route;
 
   function refreshNavConfig() {
     fetchShipConfig()
       .then((d) => {
         setShowSavings(d.config.ui?.show_savings ?? d.config.ui?.show_tokens ?? true);
-        setShowAgent(d.config.ui?.show_agent_terminal ?? true);
       })
       .catch(() => {});
   }
@@ -169,20 +164,20 @@ function AppShell() {
   }, [sidebarOpen]);
 
   useEffect(() => {
+    if (page === 'sonar' || page === 'agent') {
+      const next = { ...route, page: 'stats' as const };
+      setRoute(next);
+      navigateRoute(next, true);
+    }
+  }, [page]);
+
+  useEffect(() => {
     if (page === 'savings' && !showSavings) {
       const next = { ...route, page: 'stats' as const };
       setRoute(next);
       navigateRoute(next, true);
     }
   }, [page, showSavings]);
-
-  useEffect(() => {
-    if (page === 'agent' && !showAgent) {
-      const next = { ...route, page: 'stats' as const };
-      setRoute(next);
-      navigateRoute(next, true);
-    }
-  }, [page, showAgent]);
 
   useEffect(() => {
     function onPopState() {
@@ -205,16 +200,20 @@ function AppShell() {
 
   function navigate(
     p: Page,
-    extras?: Partial<Pick<RouteState, 'ruleId' | 'skillName' | 'kind' | 'sonarTab' | 'ruleEditMode' | 'skillEditMode'>>,
+    extras?: Partial<Pick<RouteState, 'ruleId' | 'skillName' | 'kind' | 'sonarTab' | 'ruleEditMode' | 'skillEditMode' | 'origin' | 'projectId'>>,
   ) {
+    const keepRules = p === 'policy-rules' || p === 'policy-rule-edit';
+    const keepSkills = p === 'policy-skills' || p === 'policy-skill-edit';
     const next: RouteState = {
       page: p,
-      ruleId: extras?.ruleId !== undefined ? extras.ruleId : editRuleId,
-      skillName: extras?.skillName !== undefined ? extras.skillName : editSkillName,
-      kind: extras?.kind !== undefined ? extras.kind : route.kind,
+      ruleId: extras?.ruleId !== undefined ? extras.ruleId : keepRules ? editRuleId : null,
+      skillName: extras?.skillName !== undefined ? extras.skillName : keepSkills ? editSkillName : null,
+      kind: extras?.kind !== undefined ? extras.kind : p === 'unresolved' ? route.kind : null,
       sonarTab: extras?.sonarTab ?? route.sonarTab,
       ruleEditMode: false,
       skillEditMode: false,
+      origin: extras?.origin !== undefined ? extras.origin : keepRules || keepSkills ? route.origin : null,
+      projectId: extras?.projectId !== undefined ? extras.projectId : keepRules || keepSkills ? route.projectId : null,
     };
     if (p === 'policy-rule-edit') {
       next.ruleEditMode = extras?.ruleEditMode ?? Boolean(next.ruleId);
@@ -319,7 +318,6 @@ function AppShell() {
 
   const navMain = NAV_MAIN_BASE.filter((n) => {
     if (n.id === 'savings' && !showSavings) return false;
-    if (n.id === 'agent' && !showAgent) return false;
     return true;
   });
 
@@ -462,6 +460,7 @@ function AppShell() {
             </div>
           )}
           <main className={containerClass} id="main-content">
+            <ErrorBoundary key={page} fallbackTitle="This view failed to render">
             {page === 'stats' && <StatsPage key={workspaceKey} />}
             {page === 'nodes' && <NodesPage key={workspaceKey} />}
             {page === 'graph' && <GraphPage key={workspaceKey} />}
@@ -471,11 +470,7 @@ function AppShell() {
             {page === 'unresolved' && <UnresolvedPage key={workspaceKey} route={route} onRouteChange={applyRoute} />}
             {page === 'savings' && showSavings && <SavingsPage key={workspaceKey} />}
             {page === 'prices' && <PricesPage key={workspaceKey} />}
-            {page === 'ship' && <ShipPage key={workspaceKey} onOpenSonar={() => navigate('sonar')} />}
-            {page === 'sonar' && (
-              <SonarQubePage key={workspaceKey} tab={sonarTab} onTabChange={(tab) => navigate('sonar', { sonarTab: tab })} />
-            )}
-            {page === 'agent' && showAgent && <AgentPage key={workspaceKey} />}
+            {page === 'ship' && <ShipPage key={workspaceKey} />}
             {page === 'settings' && <SettingsPage key={workspaceKey} />}
             {page === 'logging' && <LoggingPage key={workspaceKey} />}
             {(page === 'policy-rules' || (page === 'policy-rule-edit' && editRuleId && !ruleEditMode)) && (
@@ -483,7 +478,9 @@ function AppShell() {
                 key={workspaceKey}
                 selectedId={editRuleId}
                 onSelect={selectPolicyRule}
-                onEditFull={(id) => navigate('policy-rule-edit', { ruleId: id, ruleEditMode: true })}
+                onEditFull={(id, origin, projectId) =>
+                  navigate('policy-rule-edit', { ruleId: id, ruleEditMode: true, origin: origin ?? null, projectId: projectId ?? null })
+                }
                 onMatch={() => navigate('policy-match')}
               />
             )}
@@ -491,6 +488,8 @@ function AppShell() {
               <PolicyRuleEditor
                 key={workspaceKey}
                 ruleId={editRuleId}
+                origin={routeOrigin === 'global' ? 'global' : undefined}
+                projectId={routeProjectId ?? undefined}
                 onBack={() => navigate('policy-rules', { ruleId: editRuleId, ruleEditMode: false })}
               />
             )}
@@ -499,7 +498,9 @@ function AppShell() {
                 key={workspaceKey}
                 selectedName={editSkillName}
                 onSelect={selectPolicySkill}
-                onEditFull={(name) => navigate('policy-skill-edit', { skillName: name, skillEditMode: true })}
+                onEditFull={(name, origin, projectId) =>
+                  navigate('policy-skill-edit', { skillName: name, skillEditMode: true, origin: origin ?? null, projectId: projectId ?? null })
+                }
                 onMatch={() => navigate('policy-match')}
               />
             )}
@@ -507,6 +508,8 @@ function AppShell() {
               <PolicySkillEditor
                 key={workspaceKey}
                 skillName={editSkillName}
+                origin={routeOrigin === 'global' ? 'global' : undefined}
+                projectId={routeProjectId ?? undefined}
                 onBack={() => navigate('policy-skills', { skillName: editSkillName, skillEditMode: false })}
               />
             )}
@@ -515,6 +518,7 @@ function AppShell() {
               <PolicySyncPage key={workspaceKey} onOpenReview={() => navigate('policy-review')} />
             )}
             {page === 'policy-review' && <PolicyReviewPage key={workspaceKey} />}
+            </ErrorBoundary>
           </main>
         </div>
 

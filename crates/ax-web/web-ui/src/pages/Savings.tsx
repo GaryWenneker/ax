@@ -902,7 +902,7 @@ export default function SavingsPage() {
         title="Context savings"
         subtitle={
           data
-            ? `${data.from} → ${data.to} · ${fmt(data.graph_calls)} graph calls · priced at ${data.pricing.reference_model}`
+            ? `${data.from} → ${data.to} · ${fmt(data.graph_calls)} graph calls · priced at ${data.pricing?.reference_model ?? 'configured model'}`
             : 'Measured token savings from ax graph MCP tools vs full file reads.'
         }
         actions={

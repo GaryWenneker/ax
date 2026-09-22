@@ -75,8 +75,8 @@ podman_container = "sonarqube"
 [ui]
 show_savings = true
 show_agent_terminal = true
-# Verbose MCP traces → Cursor Output (stderr). Off by default.
-verbose_mcp = false
+# MCP traces → `.ax/mcp-verbose-YYYY-MM-DD.log` (always on).
+verbose_mcp = true
 # IANA timezone for Logging Date/time (e.g. "Europe/Amsterdam").
 # Empty / "local" = browser local timezone in Command Center.
 timezone = ""
@@ -116,7 +116,7 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
 ## Command Center pages (`ax web`)
 
-Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left-aligned content column** that scales by viewport: 720px → 800px → 960px → **1024px** (XXL). The column’s left edge aligns with the main pane next to the sidebar (not centered). Full-bleed pages (Files, Agent terminal, SonarQube, and open detail blades) stay unconstrained.
+Settings-style pages sit in a **centered stage** (nav flush against the article column). **Title bar and status bar paint the full viewport**; only their inner labels/chips stay inside `--stage-w`. Article width is **1100px**, **1320px** from 1920px, **1480px** from 2560px.
 
 **Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging table scrolls horizontally instead of crushing columns, project browser does not autofocus the filter, modals become bottom sheets. Graph and Agent are still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
 
@@ -127,13 +127,12 @@ Settings-style pages (Ship, Savings, Memory, Settings, Policy, …) use a **left
 | **Search** | FTS over indexed symbols |
 | **Ship** | Quality-gate pipeline, SSE logs, git events |
 | **Files** | Indexed file tree — folders expand lazily; root-level files (`README.md`, `Cargo.toml`, …) show as files, not folders |
-| **SonarQube** | Proxied dashboard with auto-login and dark theme |
 | **Memory** | Browse, search, compose memories (modal composer); capture from git |
 | **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
-| **Prices** | Daily OpenRouter model $/MTok catalog and history |
-| **Agent** | Terminal with MCP wired in (when enabled in Settings) |
+| **Prices** | OpenRouter rates grouped by provider (jump legend), plus curated Cursor Composer rates OpenRouter does not list; chart legend uses distinct input/output colors |
+| **Unresolved** | Unresolved graph references with kind filters and a scrolling list |
 | **Logging** | Fullscreen table of the **active project** MCP verbose stream (**newest at top**; **Scroll to new** when you leave the top); **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), **Has query** chip (JSON payloads with a top-level `query` — badge + blue row mark), **date** dropdown (`YYYY-MM-DD`), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **Date / time** column shows full calendar day + clock; **fluid columns** (Date/time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
-| **Policy** | View-first rule/skill editors with **Scope** (company → private); master-detail blade (slide-in on open, content reveal when switching rows); resizable list / metadata / source / preview columns (drag grips; double-click resets); Rules/Skills list **label autocomplete** (tag chips, multi-label AND filter, click table tags to toggle); **Rules and Skills grouped** by a shared catalog (collapsible folders with **Collapse all** / **Expand all**; **Groups** multiselect filter; empty groups hidden on the list but still assignable in the editor); Markdown **source** overlay and textarea share font-size / line-height so caret and selection match visible glyphs; tags required on save; layer filters; **History** (hash-on-change revisions, Restore); **Package** / **Restore package** (large zip modal: select all, skill descriptions, one-line compare plus Reject/Accept, git-style local vs package diff, blake3 content hashes); **Sync** (pack export/import + `policySync` hooks); **Review** queue for staged imports |
+| **Policy** | View-first rule/skill editors with **Scope** (company → private); master-detail blade (slide-in on open, content reveal when switching rows); resizable list / metadata / source / preview columns (drag grips; double-click resets); Rules/Skills list **label autocomplete** (tag chips, multi-label AND filter, click table tags to toggle); **Rules and Skills grouped** by a shared catalog (collapsible folders with **Collapse all** / **Expand all**; **Groups** multiselect filter; empty groups hidden on the list but still assignable in the editor); Markdown **source** overlay and textarea share font-size / line-height so caret and selection match visible glyphs; tags required on save; layer filters; **Database** column plus teal (this project `ax.db`) vs gold (`~/.ax/global.db`) row bars and badges; right-click **context menu** (move between project and global.db); **History** (hash-on-change revisions, Restore); **Package** / **Restore package** (compose stays large; restore starts compact with drag-and-drop zip, then a near-full-width preview: select all, skill descriptions, one-line compare (red Local newer, orange Package newer, green Identical) plus Reject/Accept or **per-change** hunks labeled **Old** / **New** above the code, blake3 content hashes; re-index skips Cursor-native files in `.agents`); **Sync** (pack export/import + `policySync` hooks); **Review** queue for staged imports |
 
 ![MCP Logging — live verbose stream with kind filters, project switcher, and Call Inspector](/screenshots/cc-logging.png)
 
@@ -199,7 +198,7 @@ Results stream to the dashboard via SSE (`/api/ship/events`).
 
 Default port: `7070` (override with `--port` or `[ship].web_port`).
 
-The same `ax web` UI includes **Memory**, **Savings**, **Prices**, **SonarQube**, and **Agent** pages — see the Command Center pages table above. Savings shows estimated context-token and dollar savings from MCP graph queries. Prices tracks daily model rates that feed those dollar estimates. See [`ax savings`](/reference/cli/#ax-savings), [`ax pricing`](/reference/cli/#ax-pricing), and [Token savings](/guides/token-savings/).
+The same `ax web` UI includes **Memory**, **Savings**, and **Prices**. Skills and Rules support single- and multi-select (Shift/Ctrl or Cmd, header checkbox) with the context menu applying to the selection. Package/Restore can list global.db copies and optionally copy restored items into global.db. Clicking outside an open rule/skill editor returns to the list. See [`ax savings`](/reference/cli/#ax-savings), [`ax pricing`](/reference/cli/#ax-pricing), and [Token savings](/guides/token-savings/).
 
 ![Settings — AI agents with terminal mode and profiles, pipeline config, and account profiles](/screenshots/cc-settings.png)
 
@@ -207,7 +206,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 - **SonarQube** — auto-detect Podman/Docker, one-click install & start, admin auto-login, dark theme
 - **Command Center** — target branch, test runner, Azure DevOps / GitHub remote
-- **Interface** — theme chooser (default **ax Mint** `#3ee4b2`; presets include **macOS**, charcoal chrome with `#64d2ff` accent). The **status bar** uses that accent fill with **WCAG AA** ink (`4.5:1`): macOS gets **dark** letters on the light blue, not white-on-blue. Accent/palette apply live. Toggle Savings and Agent pages in the sidebar, **Verbose MCP logging** (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project; records traces to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; off by default; never alters tool responses; reconnect ax MCP after enabling), and **Timezone** for Logging Date/time and **daily log rotation** (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC)
+- **Interface** — theme chooser (default **ax Mint** `#3ee4b2`; presets include **macOS**, charcoal chrome with `#64d2ff` accent, and **Mono**, grayscale chrome with light-gray status bar and dark ink). The **status bar** uses that accent fill with **WCAG AA** ink (`4.5:1`): macOS gets **dark** letters on the light blue, not white-on-blue. Accent/palette apply live. Policy Rules/Skills editor blades **slide in** on open and **slide out** on click-away or Close. Toggle Savings and Agent pages in the sidebar, **Verbose MCP logging** (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project; records traces to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; off by default; never alters tool responses; reconnect ax MCP after enabling), and **Timezone** for Logging Date/time and **daily log rotation** (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC)
 - **Logging** — live MCP verbose stream (**newest at the top**; loads older days on scroll; **Scroll to new** jumps back to the live top). Enable recording under **Settings → Interface**; this page does not include the on/off switch
 - **Sharing** — live share status card (badge, port, copy URL), How to share, Enable PWA / Install / show hint again
 - **Open Knowledge Format (OKF)** — **Generate OKF bundle** / **Validate** (and optional wiki publish) via `/api/okf/*`; writes Markdown under `okf.outDir` from `ax.json` — see [OKF](/guides/okf/)

@@ -364,10 +364,11 @@ struct ScannedDoc {
 fn scan_doc_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedDoc> {
     let exclude_matcher = build_exclude_matcher(project_root, exclude);
     let walker = WalkBuilder::new(project_root)
-        .hidden(true)
+        .hidden(false)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
+        .filter_entry(|e| crate::orchestrator::keep_scan_entry_name(&e.file_name().to_string_lossy()))
         .build();
     let mut files = Vec::new();
     for entry in walker.flatten() {

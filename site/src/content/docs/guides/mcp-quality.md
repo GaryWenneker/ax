@@ -12,9 +12,7 @@ description: End-to-end guide to verbose MCP traces, the Logging page, Quality s
 ## What the loop is
 
 ```text
-Enable Verbose MCP logging
-        ↓
-Agent turns write `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` (one file per calendar day; boundary = Settings timezone)
+Agent turns write `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` (always on; one file per calendar day; boundary = Settings timezone)
         ↓
 Command Center Logging page (live SSE table + Call Inspector)
         ↓

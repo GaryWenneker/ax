@@ -1,6 +1,8 @@
 //! Known language servers ax can spawn for enrichment.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use ax_types::Language;
 
@@ -56,55 +58,122 @@ pub struct ServerStatus {
 }
 
 pub fn discover_servers() -> Vec<ServerStatus> {
+    discover_servers_in(None)
+}
+
+pub fn discover_servers_in(project_root: Option<&Path>) -> Vec<ServerStatus> {
+    let extra = extra_bin_dirs(project_root);
     SERVERS
         .iter()
         .map(|s| {
-            let path = resolve_command(s.command);
-            let available = path
-                .as_ref()
-                .map(|p| server_binary_works(p))
-                .unwrap_or(false);
+            let (display, working) = resolve_command(s.command, &extra);
             ServerStatus {
                 id: s.id.into(),
                 command: s.command.into(),
-                available,
-                path: path.map(|p| p.display().to_string()),
+                available: working.is_some(),
+                path: working
+                    .or(display)
+                    .map(|p| p.display().to_string()),
                 languages: vec![format!("{:?}", s.language).to_ascii_lowercase()],
             }
         })
         .collect()
 }
 
-/// Resolve a language-server command on PATH.
-///
-/// On Windows, prefer `.exe` / `.cmd` / `.bat` over extensionless Unix shims
-/// (Volta installs both a bash script and a `.cmd` wrapper).
-fn resolve_command(command: &str) -> Option<PathBuf> {
-    let candidates: Vec<PathBuf> = which::which_all(command).ok()?.collect();
-    if candidates.is_empty() {
+pub(crate) fn extra_bin_dirs(project_root: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(root) = project_root {
+        dirs.push(root.join("node_modules/.bin"));
+        dirs.push(root.join("crates/ax-web/web-ui/node_modules/.bin"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        dirs.push(cwd.join("node_modules/.bin"));
+        dirs.push(cwd.join("crates/ax-web/web-ui/node_modules/.bin"));
+    }
+    dirs
+}
+
+/// Absolute path of a runnable server, if any.
+pub fn working_binary(command: &str, project_root: Option<&Path>) -> Option<PathBuf> {
+    resolve_command(command, &extra_bin_dirs(project_root)).1
+}
+
+fn rustup_which(command: &str) -> Option<PathBuf> {
+    if command != "rust-analyzer" {
         return None;
+    }
+    let output = Command::new("rustup")
+        .args(["which", command])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(path);
+    p.is_file().then_some(p)
+}
+
+fn join_command(dir: &Path, command: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let base = dir.join(command);
+    if base.is_file() {
+        out.push(base);
     }
     #[cfg(windows)]
     {
-        let preferred = candidates.iter().find(|p| {
-            matches!(
-                p.extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.to_ascii_lowercase())
-                    .as_deref(),
-                Some("exe") | Some("cmd") | Some("bat")
-            )
-        });
-        return preferred.cloned().or_else(|| candidates.into_iter().next());
+        for ext in ["cmd", "exe", "bat"] {
+            let p = dir.join(format!("{command}.{ext}"));
+            if p.is_file() {
+                out.push(p);
+            }
+        }
     }
-    #[cfg(not(windows))]
-    {
-        candidates.into_iter().next()
+    out
+}
+
+fn collect_candidates(command: &str, extra: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let mut push = |p: PathBuf| {
+        if seen.insert(p.clone()) {
+            out.push(p);
+        }
+    };
+    if let Some(p) = rustup_which(command) {
+        push(p);
     }
+    for dir in extra {
+        for p in join_command(dir, command) {
+            push(p);
+        }
+    }
+    if let Ok(iter) = which::which_all(command) {
+        for p in iter {
+            push(p);
+        }
+    }
+    out
+}
+
+/// First PATH/display candidate, and first candidate that actually runs.
+fn resolve_command(command: &str, extra: &[PathBuf]) -> (Option<PathBuf>, Option<PathBuf>) {
+    let candidates = collect_candidates(command, extra);
+    if candidates.is_empty() {
+        return (None, None);
+    }
+    let working = candidates.iter().find(|p| server_binary_works(p)).cloned();
+    let display = working.clone().or_else(|| candidates.into_iter().next());
+    (display, working)
 }
 
 fn probe_args(path: &Path, args: &[&str]) -> Option<std::process::Output> {
-    std::process::Command::new(path)
+    Command::new(path)
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -112,13 +181,14 @@ fn probe_args(path: &Path, args: &[&str]) -> Option<std::process::Output> {
         .ok()
 }
 
-fn looks_like_missing_shim(output: &std::process::Output) -> bool {
+pub fn looks_like_missing_shim(output: &std::process::Output) -> bool {
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
-    );
-    combined.contains("Unknown binary") || combined.contains("is not installed")
+    )
+    .to_ascii_lowercase();
+    combined.contains("unknown binary") || combined.contains("is not installed")
 }
 
 /// True when the binary is runnable for enrich.
@@ -160,12 +230,79 @@ pub fn server_binary_works(path: &Path) -> bool {
 
 /// True when this server's command is on PATH and actually runnable.
 pub fn server_available(spec: &ServerSpec) -> bool {
-    resolve_command(spec.command)
-        .map(|p| server_binary_works(&p))
-        .unwrap_or(false)
+    server_available_in(spec, None)
+}
+
+pub fn server_available_in(spec: &ServerSpec, project_root: Option<&Path>) -> bool {
+    working_binary(spec.command, project_root).is_some()
 }
 
 pub fn spec_for_extension(ext: &str) -> Option<&'static ServerSpec> {
     let e = ext.trim_start_matches('.').to_ascii_lowercase();
     SERVERS.iter().find(|s| s.extensions.iter().any(|x| *x == e))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write_exec(path: &Path, body: &str) {
+        fs::write(path, body).unwrap();
+        let mut p = fs::metadata(path).unwrap().permissions();
+        p.set_mode(0o755);
+        fs::set_permissions(path, p).unwrap();
+    }
+
+    #[test]
+    fn l1_rustup_shim_is_not_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("rust-analyzer");
+        write_exec(
+            &shim,
+            "#!/bin/sh\necho \"error: unknown binary 'rust-analyzer' in toolchain\" >&2\nexit 1\n",
+        );
+        assert!(!server_binary_works(&shim));
+    }
+
+    #[test]
+    fn l2_working_binary_wins_over_shim() {
+        let dir = tempfile::tempdir().unwrap();
+        let named_shim = dir.path().join("pyright-langserver");
+        write_exec(
+            &named_shim,
+            "#!/bin/sh\necho \"error: unknown binary 'pyright-langserver'\" >&2\nexit 1\n",
+        );
+        let extra = vec![dir.path().to_path_buf()];
+        let (_d, w) = resolve_command("pyright-langserver", &extra);
+        assert!(w.is_none());
+        write_exec(
+            &named_shim,
+            "#!/bin/sh\necho pyright-langserver\nexit 0\n",
+        );
+        let (_d, w) = resolve_command("pyright-langserver", &extra);
+        assert!(w.is_some());
+    }
+
+    #[test]
+    fn l3_node_modules_bin_is_searched() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("node_modules/.bin");
+        fs::create_dir_all(&bin).unwrap();
+        let tls = bin.join("typescript-language-server");
+        write_exec(&tls, "#!/bin/sh\necho typescript-language-server 4.0.0\nexit 0\n");
+        let extra = extra_bin_dirs(Some(root.path()));
+        let (_, working) = resolve_command("typescript-language-server", &extra);
+        assert_eq!(working.as_ref(), Some(&tls));
+    }
+
+    #[test]
+    fn l1_shim_text_is_case_insensitive() {
+        let output = std::process::Command::new("sh")
+            .args(["-c", "echo \"error: unknown binary 'rust-analyzer'\" >&2; exit 1"])
+            .output()
+            .unwrap();
+        assert!(looks_like_missing_shim(&output));
+    }
 }

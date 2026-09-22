@@ -5,12 +5,24 @@ CSS="$ROOT/crates/ax-web/web-ui/src/index.css"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 echo "== wiring =="
-# Old laptop letterbox must be gone.
+grep -q -- '--layout-max: 1100px' "$CSS" \
+  || fail "expected --layout-max: 1100px default"
+grep -q -- '--stage-w: calc(var(--sidebar-w) + 4px + var(--layout-max))' "$CSS" \
+  || fail "expected --stage-w"
+grep -A20 '^\.app {' "$CSS" | grep -q 'width: 100%' \
+  || fail ".app must be full viewport width"
+grep -A20 '^\.titlebar-inner {' "$CSS" | grep -q 'var(--stage-w)' \
+  || fail "titlebar-inner must cap at stage-w"
+grep -A12 '^\.statusbar-inner {' "$CSS" | grep -q 'var(--stage-w)' \
+  || fail "statusbar-inner must cap at stage-w"
+grep -q -- '--layout-max: 1320px' "$CSS" \
+  || fail "expected 1320px at 1920+"
+grep -q -- '--layout-max: 1480px' "$CSS" \
+  || fail "expected 1480px at 2560+"
+
 if grep -n 'max-width: calc(var(--layout-max) - var(--sidebar-w))' "$CSS"; then
-  fail "laptop band still caps container at layout-max - sidebar"
+  fail "must not use layout-max minus sidebar"
 fi
-grep -A30 'Tablet: sidebar hidden' "$CSS" | grep -q 'max-width: none' \
-  || fail "tablet container must max-width none"
 
 echo "== negative control =="
 if grep -q 'layout-max-does-not-exist' "$CSS"; then

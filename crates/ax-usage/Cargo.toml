@@ -1,6 +1,6 @@
 [package]
 name = "ax-usage"
-version = "4.8.0"
+version = "4.11.3"
 edition = "2021"
 description = "Context-token savings metrics for ax MCP graph queries"
 
@@ -18,3 +18,4 @@ tiktoken-rs = "0.12.0"
 toml.workspace = true
 reqwest = { workspace = true }
 tracing = { workspace = true }
+sha2 = "0.10"

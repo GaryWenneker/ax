@@ -784,7 +784,30 @@ impl Ax {
         &self,
         input: ax_policy::MatchInput,
     ) -> Result<ax_policy::MatchResult, ax_utils::errors::AxError> {
-        ax_policy::match_policy(self.db.pool(), &input).await
+        let extras = self.global_policy_skills().await;
+        ax_policy::match_policy_with_extra_skills(self.db.pool(), &input, extras).await
+    }
+
+    pub async fn get_policy_skill(
+        &self,
+        name: &str,
+    ) -> Result<Option<ax_policy::types::PolicySkillRow>, ax_utils::errors::AxError> {
+        let extras = self.global_policy_skills().await;
+        if let Some(row) = ax_policy::find_skill(&extras, name) {
+            return Ok(Some(row.clone()));
+        }
+        ax_policy::get_skill(self.db.pool(), name).await
+    }
+
+    pub async fn list_policy_skills(
+        &self,
+    ) -> Result<Vec<ax_policy::types::PolicySkillRow>, ax_utils::errors::AxError> {
+        let local = ax_policy::list_skills(self.db.pool()).await?;
+        Ok(ax_policy::merge_skills(local, self.global_policy_skills().await))
+    }
+
+    async fn global_policy_skills(&self) -> Vec<ax_policy::types::PolicySkillRow> {
+        load_global_policy_skills().await
     }
 
     pub fn policy_exists(&self) -> bool {
@@ -797,8 +820,53 @@ impl Ax {
         op: ax_policy::GuardOp,
         content: Option<&[u8]>,
     ) -> Result<ax_policy::GuardResult, ax_utils::errors::AxError> {
-        ax_policy::guard_operation(self.db.pool(), &self.project_root, path, op, content).await
+        let extras = self.global_policy_skills().await;
+        ax_policy::guard_operation_with_extra_skills(
+            self.db.pool(),
+            &self.project_root,
+            path,
+            op,
+            content,
+            extras,
+        )
+        .await
     }
+}
+
+async fn load_global_policy_skills() -> Vec<ax_policy::types::PolicySkillRow> {
+    let Ok(path) = ax_global_db::global_db_path() else {
+        return Vec::new();
+    };
+    if !path.is_file() {
+        return Vec::new();
+    }
+    let Ok(pool) = ax_global_db::open_pool(&path, false).await else {
+        return Vec::new();
+    };
+    let Ok(payloads) = ax_global_db::policy::list_skill_payloads(&pool).await else {
+        pool.close().await;
+        return Vec::new();
+    };
+    pool.close().await;
+    payloads
+        .into_iter()
+        .filter_map(|(id, value)| skill_row_from_global_payload(&id, value))
+        .collect()
+}
+
+fn skill_row_from_global_payload(
+    item_id: &str,
+    mut value: serde_json::Value,
+) -> Option<ax_policy::types::PolicySkillRow> {
+    if let Some(obj) = value.as_object_mut() {
+        if !obj.contains_key("sourcePath") {
+            obj.insert("sourcePath".into(), serde_json::json!("global.db"));
+        }
+        if obj.get("name").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+            obj.insert("name".into(), serde_json::json!(item_id));
+        }
+    }
+    serde_json::from_value(value).ok()
 }
 
 fn path_matches_module(haystack: &str, needle: &str) -> bool {

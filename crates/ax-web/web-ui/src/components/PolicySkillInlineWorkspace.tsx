@@ -10,6 +10,8 @@ import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
   skillName: string;
+  origin?: string;
+  projectId?: number;
   onClose: () => void;
   onSaved?: () => void;
 }
@@ -31,7 +33,7 @@ function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
   };
 }
 
-export default function PolicySkillInlineWorkspace({ skillName, onClose, onSaved }: Props) {
+export default function PolicySkillInlineWorkspace({ skillName, origin, projectId, onClose, onSaved }: Props) {
   const [fm, setFm] = useState<SkillFrontmatter | null>(null);
   const [body, setBody] = useState('');
   const [triggersText, setTriggersText] = useState('');
@@ -52,7 +54,7 @@ export default function PolicySkillInlineWorkspace({ skillName, onClose, onSaved
     setError('');
     setFm(null);
     setBody('');
-    fetchPolicySkill(skillName)
+    fetchPolicySkill(skillName, { origin, projectId })
       .then((doc) => {
         if (cancelled) return;
         const normalized = normalizeSkillFm(doc.frontmatter);
@@ -70,7 +72,7 @@ export default function PolicySkillInlineWorkspace({ skillName, onClose, onSaved
     return () => {
       cancelled = true;
     };
-  }, [skillName]);
+  }, [skillName, origin, projectId]);
 
   async function save() {
     if (!fm) return;
@@ -88,7 +90,7 @@ export default function PolicySkillInlineWorkspace({ skillName, onClose, onSaved
         triggers: parseCsv(triggersText),
         tags,
       };
-      await savePolicySkill(skillName, frontmatter, body);
+      await savePolicySkill(skillName, frontmatter, body, { origin, projectId });
       onSaved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -107,12 +109,13 @@ export default function PolicySkillInlineWorkspace({ skillName, onClose, onSaved
           {skillName}
         </span>
         <div className="policy-inline-workspace-actions">
+          {origin === 'global' ? null : (
           <PolicyRevisionHistory
             kind="skill"
             itemId={skillName}
             onRestored={() => {
               setLoading(true);
-              fetchPolicySkill(skillName)
+              fetchPolicySkill(skillName, { origin, projectId })
                 .then((doc) => {
                   const normalized = normalizeSkillFm(doc.frontmatter);
                   setFm(normalized);
@@ -125,6 +128,7 @@ export default function PolicySkillInlineWorkspace({ skillName, onClose, onSaved
                 .finally(() => setLoading(false));
             }}
           />
+          )}
           <button type="button" className="btn primary" disabled={saving || loading || !fm} onClick={() => void save()}>
             {saving ? 'Saving…' : 'Save'}
           </button>

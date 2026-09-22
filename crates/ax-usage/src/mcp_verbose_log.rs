@@ -24,40 +24,11 @@ struct ShipUiFile {
 struct UiSection {
     #[serde(default)]
     timezone: String,
-    #[serde(default)]
-    verbose_mcp: bool,
 }
 
-/// True when `AX_MCP_VERBOSE` is truthy or project `[ui].verbose_mcp` is set.
-/// Domain + MCP verbose appends no-op unless this returns true.
-pub fn verbose_enabled(project_root: Option<&Path>) -> bool {
-    if env_flag_truthy("AX_MCP_VERBOSE") {
-        return true;
-    }
-    let Some(root) = project_root else {
-        return false;
-    };
-    read_ship_verbose_mcp(root)
-}
-
-fn env_flag_truthy(name: &str) -> bool {
-    std::env::var(name)
-        .map(|v| {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        })
-        .unwrap_or(false)
-}
-
-fn read_ship_verbose_mcp(project_root: &Path) -> bool {
-    let root = strip_verbatim_prefix(project_root);
-    let path = root.join(".ax").join("ship.toml");
-    let Ok(text) = fs::read_to_string(&path) else {
-        return false;
-    };
-    toml::from_str::<ShipUiFile>(&text)
-        .map(|c| c.ui.verbose_mcp)
-        .unwrap_or(false)
+/// MCP verbose file logging is always on.
+pub fn verbose_enabled(_project_root: Option<&Path>) -> bool {
+    true
 }
 
 /// Path to today's log file for a project (after legacy migration attempt).
@@ -112,7 +83,6 @@ pub fn read_ship_timezone(project_root: Option<&Path>) -> String {
 }
 
 /// Append trace lines with UTC ISO timestamps (one line per event).
-/// No-op when verbose MCP logging is off (`AX_MCP_VERBOSE` / `[ui].verbose_mcp`).
 pub fn append_verbose_log(lines: &[String], project_root: Option<&Path>) {
     if lines.is_empty() || !verbose_enabled(project_root) {
         return;
@@ -345,22 +315,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn verbose_enabled_reads_ship_toml() {
+    fn verbose_enabled_always_on() {
         let dir = tempfile_dir();
-        let ax = dir.join(".ax");
-        fs::create_dir_all(&ax).unwrap();
-        fs::write(
-            ax.join("ship.toml"),
-            "[ui]\nverbose_mcp = true\nshow_savings = true\n",
-        )
-        .unwrap();
         assert!(verbose_enabled(Some(&dir)));
-        fs::write(ax.join("ship.toml"), "[ui]\nshow_savings = true\n").unwrap();
-        // Env may still force-enable in developer shells — only assert ship.toml path
-        // when AX_MCP_VERBOSE is unset.
-        if std::env::var("AX_MCP_VERBOSE").is_err() {
-            assert!(!verbose_enabled(Some(&dir)));
-        }
+        assert!(verbose_enabled(None));
     }
 
     #[test]

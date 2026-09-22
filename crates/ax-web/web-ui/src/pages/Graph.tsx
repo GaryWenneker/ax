@@ -798,6 +798,16 @@ export default function GraphPage() {
         ctx.arc(sx, sy, r, 0, Math.PI * 2);
       }
       ctx.fill();
+      if (!dimmed && n.shared) {
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#e0b341';
+        ctx.stroke();
+      }
+      if (!dimmed && n.selected) {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.stroke();
+      }
       if (!dimmed && (n.id === selected || n === hoverRef.current)) {
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = '#fff';
@@ -1063,6 +1073,7 @@ export default function GraphPage() {
             <span className="graph-meta">
               {nodesShown} of {totalNodes} nodes · {edgeCount} edges
               {meta.truncated && ' · showing top by degree'}
+              {meta.palette === 'project' && ' · color = project'}
             </span>
           )}
         </div>
@@ -1084,7 +1095,7 @@ export default function GraphPage() {
             </select>
           </label>
           <label className="graph-limit">
-            Community:
+            {meta?.palette === 'project' ? 'Project:' : 'Community:'}
             <select value={communityFilter} onChange={(e) => setCommunityFilter(e.target.value)}>
               <option value="">all</option>
               {communityLegend.map((c) => (
@@ -1212,7 +1223,7 @@ export default function GraphPage() {
           )}
 
           <div className="graph-legend">
-            <div className="graph-legend-title">{viewMode === 'domain' ? 'Domain kinds' : 'Communities'}</div>
+            <div className="graph-legend-title">{viewMode === 'domain' ? 'Domain kinds' : meta?.palette === 'project' ? 'Projects' : 'Communities'}</div>
             {viewMode === 'domain' ? (
               <>
                 <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ borderRadius: 3, background: colorFor(0) }} /> domain</div>
@@ -1241,12 +1252,18 @@ export default function GraphPage() {
                 <div className="graph-legend-title" style={{ marginTop: 8 }}>Nodes</div>
                 <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ borderRadius: '50%', background: '#888' }} /> code</div>
                 <div className="graph-legend-row"><span className="graph-legend-swatch" style={{ background: '#e0b341' }} /> doc</div>
+                {meta?.palette === 'project' && (
+                  <>
+                    <div className="graph-legend-row">white ring · this workspace</div>
+                    <div className="graph-legend-row">gold ring · shared hash</div>
+                  </>
+                )}
               </>
             )}
           </div>
         </div>
 
-        {viewMode === 'structure' && selected && (
+        {viewMode === 'structure' && selected && !selected.startsWith('g') && (
           <NodeDetailPanel
             nodeId={selected}
             variant={isMobile ? 'overlay' : 'blade'}

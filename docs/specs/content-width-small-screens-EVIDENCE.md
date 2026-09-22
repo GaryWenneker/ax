@@ -1,20 +1,10 @@
-# EVIDENCE: Wider content container on smaller screens
+# EVIDENCE: Revert full-bleed article
 
-**SPEC:** `/Users/gary/io/ax/docs/specs/content-width-small-screens.md`
-**spec approval:** not obtained (autonomous)
-**command:** `bash /Users/gary/io/ax/tools/gauntlet-content-width.sh`
+spec approval: not obtained (autonomous run)
+tier: 1
 
-```
-== wiring ==
-== negative control ==
-== tsc ==
-gauntlet-content-width: ok
-```
+Reverted the `1fr` workspace column. Restored 5-column stage + `--stage-w` inner chrome.
 
-| Behavior | Check |
-|----------|--------|
-| B1 | no `max-width: calc(var(--layout-max) - var(--sidebar-w))` |
-| B2 | tablet block `max-width: none` |
-| B3 | html letterbox at `min-width: 1920px` |
+## Gauntlet
 
-Skipped: mutation (layout CSS), browser (restart `ax web`). Relink Mach-O after embed (do not `cp` onto existing `target-dev/release/ax`).
+`bash tools/gauntlet-content-width.sh` after revert.
