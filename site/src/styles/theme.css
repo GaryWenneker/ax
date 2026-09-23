@@ -263,10 +263,24 @@ html[data-theme='light'] body {
    Glass lives on .ax-header-glass inside Header.astro — not on the fixed <header>. */
 .page > header.header {
 	overflow: visible !important;
+	padding: 0 !important;
 	background: transparent !important;
 	border-bottom: 1px solid transparent !important;
 	-webkit-backdrop-filter: none !important;
 	backdrop-filter: none !important;
+}
+/* Nav padding moves from the fixed <header> onto the bar inside the glass so the glass spans edge to edge.
+   Mirrors Starlight PageFrame: reserve room for the fixed menu button below 50rem. */
+.ax-header-glass > .header {
+	padding: var(--sl-nav-pad-y) var(--sl-nav-pad-x);
+}
+[data-has-sidebar] .ax-header-glass > .header {
+	padding-inline-end: calc(var(--sl-nav-gap) + var(--sl-nav-pad-x) + var(--sl-menu-button-size));
+}
+@media (min-width: 50rem) {
+	[data-has-sidebar] .ax-header-glass > .header {
+		padding-inline-end: var(--sl-nav-pad-x);
+	}
 }
 .ax-header-wrap {
 	position: relative;
@@ -627,8 +641,16 @@ html[data-ax-motion='paused'] .scroll-line {
 }
 
 /* ---- Mobile menu ---- */
+/* Sits on the dark header glass in both themes, so ink and fill stay fixed. */
 starlight-menu-button button {
-	color: var(--cg-ink);
+	background-color: rgba(243, 241, 234, 0.06);
+	color: #f3f1ea;
+	box-shadow: none;
+	transition: background-color 0.15s;
+}
+starlight-menu-button button:hover,
+starlight-menu-button[aria-expanded='true'] button {
+	background-color: rgba(243, 241, 234, 0.14);
 }
 
 /* ---- Layout balance ---- */

@@ -18,6 +18,10 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v5.0.2
+
+v5.0.2 fixes the docs site on phones. The menu button was a blank square (a light icon on a light background) and now shows its icon on the dark header. The header bar also runs edge to edge instead of sitting inset. The CLI behaves the same as v5.0.1.
+
 ## What's new in v5.0.1
 
 v5.0.1 removes built-in defaults that only made sense for one team.

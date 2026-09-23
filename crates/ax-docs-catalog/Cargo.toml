@@ -1,6 +1,6 @@
 [package]
 name = "ax-docs-catalog"
-version = "5.0.1"
+version = "5.0.2"
 edition = "2021"
 description = "Sync an optional git wiki + workspace docs into ax.db (documentation-catalog memories)"
 

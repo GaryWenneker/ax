@@ -3,9 +3,11 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v5.0.1](https://github.com/GaryWenneker/ax/releases/tag/v5.0.1)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v5.0.2](https://github.com/GaryWenneker/ax/releases/tag/v5.0.2)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+
+**v5.0.2** (patch) fixes the docs site on phones: the menu button is visible again and the header bar runs edge to edge. The binaries are the same as v5.0.1 apart from the version number.
 
 **v5.0.1** (patch) removes built-in defaults that only fit one team: `ax docs-catalog sync` has no built-in wiki (set `docsCatalog.wiki_remote` in `ax.json`), the OneDrive share has no default folder, and the `pr` / `preq` / `pre-pr-check` / `no-ab-prefix` skill templates are generic and in English.
 
