@@ -1,6 +1,6 @@
 ---
 id: drupal-config
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["drupal", "config", "export"]

@@ -122,7 +122,9 @@ Responses larger than ~3k tokens carry a one-line `[ax] token budget` hint sugge
 
 When a tool reply is at least `AX_CONTEXT_CACHE_TOKENS` (default 3000) the full text is stored in `~/.ax/usage.db` and the model sees a short stub with an id. Call `ax_expand` to read it back. `offset` and `limit` are character indexes (default limit 8000, max 12000).
 
-`ax_preflight`, `ax_guard`, and `ax_policy_capture` are never stubbed. Set `AX_CONTEXT_CACHE_TOKENS=0` or `AX_CONTEXT_CACHE=off` to disable. Rows expire after 7 days. This store is not the memory vault.
+Graph reads (`ax_explore`, `ax_node`, `ax_search`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`) are different, because a graph answer replaces file reads. They stay inline up to `AX_GRAPH_INLINE_TOKENS` (default 12000). Above that, the reply keeps whole lines up to the budget and ends with an `[ax context cache]` footer that gives the id and the exact `ax_expand` offset where it stopped. The agent never gets a bare stub for graph output.
+
+`ax_preflight`, `ax_guard`, `ax_policy_capture`, `ax_rules`, and `ax_skill` are never stubbed. Set `AX_CONTEXT_CACHE_TOKENS=0` or `AX_CONTEXT_CACHE=off` to disable. Rows expire after 7 days. This store is not the memory vault.
 
 `ax_stash` stores any text you pass (a chat slice or a result from another tool) and returns only the id. While the cache is on, every successful ax MCP call, each Claude prompt-hook prompt, and each Cursor `beforeSubmitPrompt` is added to a session index. `ax_preflight` lists the current session first (about 1,500 tokens, no bodies) and one ledger line: row count, tokens stored, and tokens that stayed inline. Rows marked `inline` were small enough to stay in the original reply. On stop, ax stashes oversized tool results from the active Cursor or Claude transcript when that text is not already cached. Matching memories still arrive through the existing recall inject. Read a stored body with `ax_expand`. Install the Cursor hook with `ax savings hook install`.
 
@@ -144,7 +146,8 @@ By default ax runs **lean**: it never ships the same data twice. The authoritati
 | `ax_status` | Markdown status summary + doc breakdown | `stats`, `lastIndexedAt`, `pendingFiles`, `policy` — no `text` duplication |
 | `ax_context` | Markdown task context | `query`, `summary`, `stats`, `relatedFiles` — no `subgraph`/`codeBlocks` duplication |
 | `ax_skill` | Skill body | metadata envelope (no `body`) |
-| `ax_search` / `ax_node` / `ax_callers` / `ax_callees` / `ax_impact` / `ax_files` / `ax_affected` | Compact one-line-per-symbol list | omitted (text is authoritative) |
+| `ax_node` | Full numbered source (default up to 400 lines / 24000 chars per match, 3 matches) + direct callers and callees | omitted (text is authoritative) |
+| `ax_search` / `ax_callers` / `ax_callees` / `ax_impact` / `ax_files` / `ax_affected` | Compact one-line-per-symbol list | omitted (text is authoritative) |
 
 Savings measurement (`ax savings`) always runs against the full pre-projection payload, so the leaner wire format never distorts the numbers.
 

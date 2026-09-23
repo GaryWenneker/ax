@@ -1,4 +1,4 @@
 id = "c"
-version = "1.1.0"
+version = "1.2.0"
 description = "C memory, headers, and errors"
 dependsOn = []

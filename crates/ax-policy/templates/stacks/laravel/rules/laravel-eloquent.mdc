@@ -1,6 +1,6 @@
 ---
 id: laravel-eloquent
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["laravel", "eloquent"]

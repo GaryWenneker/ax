@@ -9,6 +9,8 @@ use crate::index::{get_rule, get_skill, rule_row_to_doc, skill_row_to_doc};
 pub const POLICY_REVISION_CAP: i64 = 20;
 pub const SOURCE_SAVE: &str = "save";
 pub const SOURCE_RESTORE: &str = "restore";
+/// Body of a project copy removed because the global level holds this item.
+pub const SOURCE_DEDUP: &str = "dedup";
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]

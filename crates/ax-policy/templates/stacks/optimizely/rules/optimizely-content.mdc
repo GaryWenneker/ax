@@ -1,6 +1,6 @@
 ---
 id: optimizely-content
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["optimizely", "content type", "block"]

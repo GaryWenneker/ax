@@ -1,6 +1,6 @@
 ---
 id: objc-nullability
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["objc", "nullable"]

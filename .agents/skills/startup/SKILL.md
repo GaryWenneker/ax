@@ -106,11 +106,15 @@ Shell `ax …` is only for **Mode: DEGRADED** or ops with no MCP tool (`install`
 
 ## SS-04 — MCP failure
 
-If preflight fails:
+If the MCP **server is unreachable** (connection error, no tools listed):
 
 1. Report: `ax MCP unreachable: [error]`
 2. State: `Mode: DEGRADED — no policy loaded.`
-3. Do not proceed as if policy is active; best-effort only.
+3. Best-effort with editor tools only.
+
+If `ax_preflight` **returns a payload** (including empty inject or `policyError`): continue the turn. Graph and memory tools remain available. Do **not** invent `Mode: PARTIAL` or skip `ax_explore` because policy files failed to parse.
+
+Session-start clients may call `ax_preflight` with no `prompt`; that is valid (`prompt` defaults to empty).
 
 ## SS-05 — Status line
 

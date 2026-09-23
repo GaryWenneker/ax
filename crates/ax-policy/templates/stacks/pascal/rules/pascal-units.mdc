@@ -1,6 +1,6 @@
 ---
 id: pascal-units
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["pascal", "unit"]

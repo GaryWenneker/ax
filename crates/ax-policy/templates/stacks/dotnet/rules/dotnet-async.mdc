@@ -1,6 +1,6 @@
 ---
 id: dotnet-async
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["dotnet", "csharp", "async"]

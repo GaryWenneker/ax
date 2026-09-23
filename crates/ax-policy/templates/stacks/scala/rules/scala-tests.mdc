@@ -1,6 +1,6 @@
 ---
 id: scala-tests
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["scala", "scalatest", "munit"]

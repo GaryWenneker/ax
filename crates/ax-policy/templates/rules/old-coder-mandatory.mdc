@@ -5,6 +5,7 @@ alwaysApply: true
 scope: company
 tags: ["old-coder", "evidence", "tdd", "quality"]
 priority: 90
+seedVersion: 3
 ---
 
 # Old Coder — mandatory for implementation work
@@ -17,11 +18,20 @@ guard: require-skill: "old-coder"
 
 ## Required workflow
 
+SPEC → RED → GREEN → REFACTOR → GAUNTLET → REVIEW LOOP → EVIDENCE
+
 1. **`ax_skill({ name: "old-coder" })`** — load the full workflow before writing implementation code (also injected when `alwaysApply` is set on the skill).
 2. **SPEC first** — write an executable spec; get human approval before coding (unless the user explicitly waived review).
 3. **Gauntlet** — run tests, types/lint, coverage, and domain checks from the skill; never weaken tests to pass.
-4. **EVIDENCE** — deliver a rerunnable evidence report with real numbers from one fresh run.
-5. **HTTP/JSON APIs** — also call **`ax_skill({ name: "old-coder-api" })`** and fold API gates into SPEC and EVIDENCE.
+4. **Review loop** — call **`ax_skill({ name: "review-loop" })`** and follow it:
+   - check which review skills are usable;
+   - review the change per stack;
+   - fix every finding and rerun the gauntlet;
+   - review again until a round has zero findings.
+
+   There is no round cap. The same loop runs for every code review of the user's own change. For a colleague's pull request, call **`ax_skill({ name: "pr-review-comments" })`** instead: do not fix, and ask one question per comment before posting it.
+5. **EVIDENCE** — deliver a rerunnable evidence report with real numbers from one fresh run, including the review rounds table.
+6. **HTTP/JSON APIs** — also call **`ax_skill({ name: "old-coder-api" })`** and fold API gates into SPEC and EVIDENCE.
 
 ## Scope
 
@@ -32,6 +42,7 @@ Skip the full loop only for trivial non-behavior edits (comments, typos in docs 
 ## Forbidden
 
 - Marking implementation work done without EVIDENCE
+- Writing EVIDENCE while a review finding is open
 - Weakening or deleting tests to make the gauntlet pass
 - Reporting checks that did not actually run (`unverified` must stay `unverified`)
 - Turning off `alwaysApply` on the `old-coder` skill or this rule

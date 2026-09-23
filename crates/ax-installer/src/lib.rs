@@ -2,6 +2,7 @@
 
 pub mod cli_catalog;
 pub mod cli_install;
+pub mod hooks;
 pub mod report;
 pub mod targets;
 

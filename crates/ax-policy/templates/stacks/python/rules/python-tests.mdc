@@ -1,6 +1,6 @@
 ---
 id: python-tests
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["python", "pytest"]

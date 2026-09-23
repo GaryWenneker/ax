@@ -190,6 +190,58 @@ body.agent-maximized-active .workspace > .container {
   background: var(--bg);
   overflow: hidden;
   width: 100%;
+  position: relative;
+}
+
+.agent-tool-msg--running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    transparent 42%,
+    rgba(255, 255, 255, 0.16) 50%,
+    transparent 58%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  mix-blend-mode: screen;
+  animation: agent-tool-sweep 1.8s linear infinite;
+}
+
+.agent-tool-msg--running .agent-tool-msg-header {
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text) 55%, transparent) 0%,
+    color-mix(in srgb, var(--text) 55%, transparent) 35%,
+    var(--text-hi) 50%,
+    color-mix(in srgb, var(--text) 55%, transparent) 65%,
+    color-mix(in srgb, var(--text) 55%, transparent) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: agent-tool-sweep 1.8s linear infinite;
+}
+
+@keyframes agent-tool-sweep {
+  from { background-position: 120% 0; }
+  to { background-position: -20% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-tool-msg--running::after {
+    animation: none;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .agent-tool-msg--running .agent-tool-msg-header {
+    animation: none;
+    color: var(--text-hi);
+    background: none;
+  }
 }
 
 .agent-tool-msg-header {

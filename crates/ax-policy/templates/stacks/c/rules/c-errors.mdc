@@ -1,6 +1,6 @@
 ---
 id: c-errors
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["c", "errno"]

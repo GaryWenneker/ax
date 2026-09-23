@@ -1,6 +1,6 @@
 ---
 id: nextjs-app-router
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["next.js", "app router", "layout"]

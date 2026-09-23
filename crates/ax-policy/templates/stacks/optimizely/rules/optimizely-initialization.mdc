@@ -1,6 +1,6 @@
 ---
 id: optimizely-initialization
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["optimizely", "episerver", "IInitializableModule"]

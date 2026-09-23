@@ -1,6 +1,6 @@
 ---
 id: lua-modules
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["lua", "require"]

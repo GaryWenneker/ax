@@ -1,4 +1,4 @@
 id = "drupal"
-version = "1.1.0"
+version = "1.2.0"
 description = "Drupal hook and configuration rules"
 dependsOn = ["php"]

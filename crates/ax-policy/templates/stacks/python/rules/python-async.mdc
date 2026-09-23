@@ -1,6 +1,6 @@
 ---
 id: python-async
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["python", "asyncio", "fastapi"]

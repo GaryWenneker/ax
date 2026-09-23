@@ -1,6 +1,6 @@
 ---
 id: cpp-errors
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["c++", "exception"]

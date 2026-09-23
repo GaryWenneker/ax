@@ -1,6 +1,6 @@
 ---
 id: go-errors
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["go", "error"]

@@ -15,7 +15,7 @@ use crate::stack_catalog::{StackDef, STACKS};
 use crate::types::PolicyScope;
 
 const LOCK_REL: &str = ".ax/stacks.lock.json";
-const MAX_DETECT_DEPTH: usize = 4;
+const MAX_DETECT_DEPTH: usize = 8;
 const IGNORE_DIRS: &[&str] = &[
     "node_modules", "bin", "obj", "target", "vendor", ".git", ".ax", "dist",
 ];
@@ -121,7 +121,7 @@ fn push_resolved(id: &str, out: &mut Vec<String>, seen: &mut BTreeSet<String>) -
     Ok(())
 }
 
-/// Proposal only. Does not add dependency stacks (Next.js does not also report React).
+/// Proposal only. A direct `react` dependency is reported even when Next.js is present.
 pub fn detect(root: &Path) -> Vec<DetectedStack> {
     let mut found: BTreeMap<String, String> = BTreeMap::new();
     let mut saw_next_config = false;
@@ -130,7 +130,11 @@ pub fn detect(root: &Path) -> Vec<DetectedStack> {
     let mut saw_artisan = false;
     let mut saw_drupal = false;
 
-    for entry in WalkDir::new(root).max_depth(MAX_DETECT_DEPTH).into_iter().filter_map(|e| e.ok()) {
+    let walk = WalkDir::new(root).max_depth(MAX_DETECT_DEPTH).into_iter().filter_entry(|entry| {
+        let name = entry.file_name().to_str().unwrap_or("");
+        !IGNORE_DIRS.contains(&name)
+    });
+    for entry in walk.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
             continue;
@@ -205,8 +209,9 @@ pub fn detect(root: &Path) -> Vec<DetectedStack> {
     }
 
     if saw_next_config {
-        found.entry("nextjs".into()).or_insert_with(|| "next.config".into());
-    } else if saw_react_dep {
+        found.entry("nextjs".into()).or_insert_with(|| "package.json next".into());
+    }
+    if saw_react_dep {
         found.entry("react".into()).or_insert_with(|| "package.json react".into());
     }
     if saw_drupal {
@@ -542,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_next_does_not_add_bare_react() {
+    fn detect_next_and_react_from_package_json() {
         let dir = tempdir().unwrap();
         touch(dir.path(), "next.config.js", "module.exports = {};");
         touch(
@@ -552,7 +557,26 @@ mod tests {
         );
         let ids: Vec<_> = detect(dir.path()).into_iter().map(|d| d.id).collect();
         assert!(ids.contains(&"nextjs".into()));
-        assert!(!ids.contains(&"react".into()));
+        assert!(ids.contains(&"react".into()));
+    }
+
+    #[test]
+    fn detect_next_and_react_in_nested_client_app() {
+        let dir = tempdir().unwrap();
+        touch(
+            dir.path(),
+            "AdviseurPortaal/src/WebApp/ClientApp/package.json",
+            r#"{"dependencies":{"next":"16.3.4","react":"19.2.8","react-dom":"19.2.8"}}"#,
+        );
+        touch(
+            dir.path(),
+            "node_modules/next/package.json",
+            r#"{"dependencies":{"left-pad":"1.0.0"}}"#,
+        );
+        let ids: Vec<_> = detect(dir.path()).into_iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"nextjs".into()));
+        assert!(ids.contains(&"react".into()));
+        assert!(!ids.contains(&"javascript".into()));
     }
 
     #[test]
@@ -664,5 +688,271 @@ mod tests {
         let report = upgrade(dir.path()).unwrap();
         assert!(report.skipped_user_edit.iter().any(|s| s.contains("php-review")));
         assert_eq!(fs::read_to_string(&skill).unwrap(), "local change\n");
+    }
+
+    const DOTNET_REVIEW_REL: &str = "skills/dotnet-code-review/SKILL.md";
+
+    fn stack_file_body(stack: &str, rel: &str) -> &'static str {
+        find_stack(stack)
+            .unwrap()
+            .files
+            .iter()
+            .find(|f| f.rel == rel)
+            .unwrap()
+            .body
+    }
+
+    fn dotnet_review_body() -> &'static str {
+        stack_file_body("dotnet", DOTNET_REVIEW_REL)
+    }
+
+    fn bullets(body: &str) -> Vec<String> {
+        body.lines()
+            .filter_map(|line| line.trim().strip_prefix("- "))
+            .map(str::to_lowercase)
+            .collect()
+    }
+
+    fn assert_no_duplicate_bullets(body: &str) -> BTreeSet<String> {
+        let mut seen = BTreeSet::new();
+        for bullet in bullets(body) {
+            assert!(seen.insert(bullet.clone()), "duplicate bullet: {bullet}");
+        }
+        seen
+    }
+
+    /// Apply `stack`, pretend the project still has an older unedited copy of `rel`,
+    /// then upgrade. The temp dir is returned so the project outlives the caller's asserts.
+    fn upgrade_from_older_copy(stack: &str, rel: &str) -> (tempfile::TempDir, ApplyReport, PathBuf) {
+        let dir = tempdir().unwrap();
+        apply(dir.path(), &[stack.into()], false).unwrap();
+        let file = dest_for_rel(&dir.path().join(".agents"), rel);
+        let old = "---\nname: old\n---\nversion 1.1.0 body\n";
+        fs::write(&file, old).unwrap();
+        let mut lock = read_lock(dir.path());
+        lock.stacks.get_mut(stack).unwrap().files.insert(rel.into(), content_hash(old));
+        write_lock(dir.path(), &lock).unwrap();
+        let report = upgrade(dir.path()).unwrap();
+        (dir, report, file)
+    }
+
+    #[test]
+    fn dotnet_review_skill_covers_every_section() {
+        let body = dotnet_review_body();
+        for phrase in [
+            "## 1. Naming and casing",
+            "## 2. Layout and syntax",
+            "## 3. Design",
+            "## 4. Dependency injection",
+            "## 5. CLR and memory",
+            "## 6. Async and concurrency",
+            "## 7. EF Core",
+            "## 8. ASP.NET Core",
+            "## 9. Security",
+            "## 10. Observability and errors",
+            "## 11. Resilience and testability",
+            "## 12. Output format",
+            "_camelCase",
+            "SCREAMING_CAPS",
+            "`Attribute`",
+            "[Flags]",
+            "FrozenDictionary",
+            "System.Threading.Lock",
+            "AsSplitQuery",
+            "HybridCache",
+            "ProblemDetails",
+            "[LoggerMessage]",
+            "TimeProvider",
+            "IHttpClientFactory",
+            "APPROVED WITH WARNINGS",
+            "Captive",
+            "service locator",
+            "No `async void`",
+            "No sync-over-async",
+            "No hardcoded secrets",
+            "never `throw ex;`",
+        ] {
+            assert!(body.contains(phrase), "dotnet-code-review lost {phrase:?}");
+        }
+    }
+
+    #[test]
+    fn dotnet_review_skill_has_no_duplicate_bullets() {
+        let seen = assert_no_duplicate_bullets(dotnet_review_body());
+        assert!(seen.len() > 50, "expected the full rule set, got {} bullets", seen.len());
+    }
+
+    #[test]
+    fn upgrade_rewrites_an_unedited_older_dotnet_review() {
+        let (dir, report, skill) = upgrade_from_older_copy("dotnet", DOTNET_REVIEW_REL);
+        assert!(report.updated.iter().any(|s| s.contains("dotnet-code-review")), "{report:?}");
+        assert_eq!(fs::read_to_string(&skill).unwrap(), dotnet_review_body());
+        assert_eq!(read_lock(dir.path()).stacks["dotnet"].template_version, "1.2.0");
+    }
+
+    const NEXTJS_REVIEW_REL: &str = "skills/nextjs-review/SKILL.md";
+
+    fn nextjs_review_body() -> &'static str {
+        stack_file_body("nextjs", NEXTJS_REVIEW_REL)
+    }
+
+    #[test]
+    fn nextjs_review_skill_covers_every_section() {
+        let body = nextjs_review_body();
+        for phrase in [
+            "## 1. Structure and naming",
+            "## 2. TypeScript",
+            "## 3. Server and client components",
+            "## 4. Server Actions",
+            "## 5. Data fetching and caching",
+            "## 6. Client state and React 19",
+            "## 7. Performance and assets",
+            "## 8. Styling and UI",
+            "## 9. Security",
+            "## 10. Errors and observability",
+            "## 11. Testing",
+            "## 12. Output format",
+            "'use client'",
+            "import 'server-only'",
+            "useActionState",
+            "revalidateTag",
+            "outside `try/catch`",
+            "Promise.all",
+            "next/image",
+            "NEXT_PUBLIC_",
+            "DOMPurify",
+            "global-error.tsx",
+            "MSW",
+            "APPROVED WITH WARNINGS",
+            "No `any`",
+            "validates its input with Zod",
+            "Every Server Action checks the session",
+            "Every Route Handler checks the session",
+        ] {
+            assert!(body.contains(phrase), "nextjs-review lost {phrase:?}");
+        }
+    }
+
+    #[test]
+    fn nextjs_review_skill_has_no_duplicate_bullets() {
+        let seen = assert_no_duplicate_bullets(nextjs_review_body());
+        assert!(seen.len() > 50, "expected the full rule set, got {} bullets", seen.len());
+        let react = bullets(stack_file_body("react", "skills/react-review/SKILL.md"));
+        for bullet in react {
+            assert!(!seen.contains(&bullet), "already in react-review: {bullet}");
+        }
+    }
+
+    #[test]
+    fn upgrade_rewrites_an_unedited_older_nextjs_review() {
+        let (dir, report, skill) = upgrade_from_older_copy("nextjs", NEXTJS_REVIEW_REL);
+        assert!(report.updated.iter().any(|s| s.contains("nextjs-review")), "{report:?}");
+        assert_eq!(fs::read_to_string(&skill).unwrap(), nextjs_review_body());
+        assert_eq!(read_lock(dir.path()).stacks["nextjs"].template_version, "1.2.0");
+    }
+
+    /// Building skill, base skill: the building skill loads the base and must not repeat it.
+    const BUILDS_ON: &[(&str, &str)] = &[
+        ("laravel", "php"),
+        ("drupal", "php"),
+        ("sitecore", "dotnet"),
+        ("optimizely", "dotnet"),
+        ("typescript", "javascript"),
+        ("luau", "lua"),
+        ("cpp", "c"),
+        ("objc", "c"),
+        ("nextjs", "react"),
+    ];
+
+    fn review_rel(stack: &StackDef) -> &'static str {
+        stack
+            .files
+            .iter()
+            .map(|f| f.rel)
+            .find(|rel| rel.starts_with("skills/") && rel.contains("review"))
+            .unwrap_or_else(|| panic!("{} has no review skill", stack.id))
+    }
+
+    fn review_body(id: &str) -> &'static str {
+        stack_file_body(id, review_rel(find_stack(id).unwrap()))
+    }
+
+    fn review_skill_name(id: &str) -> &'static str {
+        review_rel(find_stack(id).unwrap())
+            .trim_start_matches("skills/")
+            .trim_end_matches("/SKILL.md")
+    }
+
+    fn numbered_sections(body: &str) -> Vec<&str> {
+        body.lines()
+            .filter(|line| {
+                line.strip_prefix("## ")
+                    .and_then(|rest| rest.split_once(". "))
+                    .is_some_and(|(n, _)| n.parse::<u32>().is_ok())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_stack_review_skill_is_complete() {
+        for stack in STACKS {
+            let body = review_body(stack.id);
+            let sections = numbered_sections(body);
+            assert!(sections.len() >= 11, "{}: {} numbered sections", stack.id, sections.len());
+            let last = sections.last().unwrap();
+            assert!(last.ends_with(". Output format"), "{}: last section is {last:?}", stack.id);
+            let output = &body[body.find(last).unwrap()..];
+            for phrase in ["**Verdict:**", "**Location:**", "**Section:**", "**Impact:**", "**Suggested code:**"] {
+                assert!(output.contains(phrase), "{}: output format lacks {phrase}", stack.id);
+            }
+            let count = bullets(body).len();
+            assert!(count >= 50, "{}: {count} bullets", stack.id);
+        }
+    }
+
+    #[test]
+    fn every_stack_review_skill_has_no_duplicate_bullets() {
+        for stack in STACKS {
+            let mut seen = BTreeSet::new();
+            for bullet in bullets(review_body(stack.id)) {
+                assert!(seen.insert(bullet.clone()), "{}: duplicate bullet: {bullet}", stack.id);
+            }
+        }
+    }
+
+    #[test]
+    fn building_skills_do_not_repeat_their_base() {
+        for (building, base) in BUILDS_ON {
+            let body = review_body(building);
+            let base_name = review_skill_name(base);
+            let intro = &body[..body.find("\n## ").unwrap_or_else(|| panic!("{building} has no sections"))];
+            assert!(intro.contains(&format!("`{base_name}`")), "{building} intro does not name {base_name}");
+            let base_bullets: BTreeSet<String> = bullets(review_body(base)).into_iter().collect();
+            for bullet in bullets(body) {
+                assert!(!base_bullets.contains(&bullet), "{building} repeats {base_name}: {bullet}");
+            }
+        }
+    }
+
+    #[test]
+    fn upgrade_rewrites_every_unedited_older_review_skill() {
+        for stack in STACKS {
+            let rel = review_rel(stack);
+            let (dir, report, skill) = upgrade_from_older_copy(stack.id, rel);
+            let name = review_skill_name(stack.id);
+            assert!(report.updated.iter().any(|s| s.contains(name)), "{}: {report:?}", stack.id);
+            assert_eq!(fs::read_to_string(&skill).unwrap(), review_body(stack.id));
+            assert_eq!(read_lock(dir.path()).stacks[stack.id].template_version, "1.2.0");
+        }
+    }
+
+    #[test]
+    fn every_stack_pack_is_version_1_2_0() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/stacks");
+        for stack in STACKS {
+            let toml = fs::read_to_string(root.join(stack.id).join("pack.toml")).unwrap();
+            assert!(toml.contains("version = \"1.2.0\""), "{} pack.toml is not 1.2.0", stack.id);
+            assert_eq!(stack.version, "1.2.0", "{} catalog version", stack.id);
+        }
     }
 }

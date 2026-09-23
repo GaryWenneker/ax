@@ -1,6 +1,6 @@
 ---
 id: r-functions
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["r", "function"]

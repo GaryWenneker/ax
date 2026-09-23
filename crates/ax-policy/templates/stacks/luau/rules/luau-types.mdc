@@ -1,6 +1,6 @@
 ---
 id: luau-types
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["luau", "type"]

@@ -36,6 +36,7 @@ pub struct WorkspaceBundle {
     pub ship: ShipApiState,
     _watch_task: Option<JoinHandle<()>>,
     _cleanup_task: Option<JoinHandle<()>>,
+    _dedup_task: Option<JoinHandle<()>>,
 }
 
 impl WebHub {
@@ -182,8 +183,15 @@ impl WorkspaceBundle {
             .await
             .map_err(|e| e.to_string())?;
         ax_policy::ensure_scaffold(&root.join(".ax")).map_err(|e| e.to_string())?;
+        let dedup_pool = policy_pool.clone();
         let store = PolicyStore::new(policy_pool, root.clone());
         let _ = store.reindex(false).await;
+        let dedup_task = spawn_policy_dedup(
+            dedup_pool,
+            root.clone(),
+            readonly,
+            ax_global_db::global_db_path().ok(),
+        );
 
         let policy = PolicyApiState {
             store: Arc::new(store),
@@ -229,6 +237,7 @@ impl WorkspaceBundle {
             ship,
             _watch_task: Some(watch_task),
             _cleanup_task: cleanup_task,
+            _dedup_task: dedup_task,
         })
     }
 
@@ -237,6 +246,9 @@ impl WorkspaceBundle {
             h.abort();
         }
         if let Some(h) = self._cleanup_task {
+            h.abort();
+        }
+        if let Some(h) = self._dedup_task {
             h.abort();
         }
         self.graph_pool.close().await;
@@ -269,6 +281,28 @@ async fn seed_memories_if_empty(pool: SqlitePool, project_root: PathBuf) {
         Ok(_) => {}
         Err(e) => tracing::warn!("graph memory seed failed: {e}"),
     }
+}
+
+const POLICY_DEDUP_EVERY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Keep project policy free of global duplicates: once now, then every [`POLICY_DEDUP_EVERY`].
+fn spawn_policy_dedup(
+    pool: SqlitePool,
+    root: PathBuf,
+    readonly: bool,
+    global_path: Option<PathBuf>,
+) -> Option<JoinHandle<()>> {
+    if readonly {
+        return None;
+    }
+    let global_path = global_path?;
+    Some(tokio::spawn(async move {
+        let mut interval = tokio::time::interval(POLICY_DEDUP_EVERY);
+        loop {
+            interval.tick().await;
+            ax_core::policy_dedup::run(&global_path, Some((&pool, &root)), false).await.log();
+        }
+    }))
 }
 
 async fn spawn_unresolved_cleanup_inner(pool: SqlitePool) {
@@ -309,3 +343,66 @@ fn graph_router(hub: WebHub) -> Router {
 // Re-export policy module for router_hub - will add to policy.rs
 use crate::policy;
 use crate::ship;
+
+#[cfg(test)]
+mod policy_dedup_tests {
+    use super::*;
+    use ax_global_db::policy::{self as gpolicy, PolicyKind};
+
+    async fn fixture(dir: &std::path::Path) -> (SqlitePool, PathBuf, PathBuf) {
+        let root = dir.join("proj");
+        std::fs::create_dir_all(root.join(".ax")).unwrap();
+        let db = ax_db::Database::open(&root.join(".ax").join("ax.db")).await.unwrap();
+        let pool = db.pool().clone();
+        sqlx::query(
+            "INSERT INTO policy_skills (name, description, body, source_path, content_hash, updated_at)
+             VALUES ('noti', 'd', 'same body', 'skills/noti/SKILL.md', 'h', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let global_path = dir.join("global.db");
+        let global = ax_global_db::open_and_init(&global_path).await.unwrap();
+        let machine = gpolicy::ensure_project(&global, &dir.join("machine")).await.unwrap();
+        let payload = serde_json::json!({ "name": "noti", "body": "same body" });
+        gpolicy::upsert_policy_item(&global, machine, PolicyKind::Skills, "noti", &payload)
+            .await
+            .unwrap();
+        global.close().await;
+        (pool, root, global_path)
+    }
+
+    async fn project_skills(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM policy_skills")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn readonly_web_does_not_dedup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pool, root, global_path) = fixture(dir.path()).await;
+        let task = spawn_policy_dedup(pool.clone(), root, true, Some(global_path));
+        assert!(task.is_none());
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(project_skills(&pool).await, 1);
+    }
+
+    #[tokio::test]
+    async fn writable_web_dedups_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pool, root, global_path) = fixture(dir.path()).await;
+        let task = spawn_policy_dedup(pool.clone(), root, false, Some(global_path)).expect("task");
+        let mut remaining = 1;
+        for _ in 0..50 {
+            remaining = project_skills(&pool).await;
+            if remaining == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        task.abort();
+        assert_eq!(remaining, 0);
+    }
+}

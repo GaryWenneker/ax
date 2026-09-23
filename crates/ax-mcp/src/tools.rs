@@ -192,12 +192,7 @@ impl ToolHandler {
                 let files = ax.queries().get_all_files().await.map_err(|e| e.to_string())?;
                 Ok(json!({ "files": files }))
             }
-            "ax_node" => {
-                let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let nodes = ax.search_nodes(name, &SearchOptions { limit: Some(5), ..Default::default() }).await.map_err(|e| e.to_string())?;
-                let text = format_search_results_text(&format!("Symbol(s) for '{name}'"), &nodes);
-                Ok(json!({ "text": text, "nodes": nodes }))
-            }
+            "ax_node" => node(ax, params).await,
             "ax_affected" => {
                 let files: Vec<String> = params
                     .get("files")
@@ -602,7 +597,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         if !inject.is_empty() {
             inject.push('\n');
         }
-        inject.push_str("<ax_context_cache>Oversized MCP replies are stored locally. A stub includes an id; call ax_expand with that id to read the original. Use ax_stash to store a chat slice or another tool result.</ax_context_cache>");
+        inject.push_str("<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result.</ax_context_cache>");
         if let Ok(Some(ledger)) =
             ax_usage::session_ledger(ax_usage::read_active_cursor_session().as_deref()).await
         {
@@ -1423,7 +1418,20 @@ fn guard_tool() -> Value {
 
 fn extra_tools() -> Vec<Value> {
     vec![
-        json!({ "name": "ax_node", "description": "Get symbol or file details", "inputSchema": { "type": "object", "properties": { "name": { "type": "string" } } } }),
+        json!({
+            "name": "ax_node",
+            "description": "Open a symbol from the index: full numbered source (up to 400 lines) plus direct callers and callees for the best matches. Use this instead of Read for a function, class, or method.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Symbol name or qualified name" },
+                    "limit": { "type": "number", "description": "Max matches (default 3)" },
+                    "maxLinesPerSnippet": { "type": "number", "description": "Source lines per match (default 400)" },
+                    "maxSourceChars": { "type": "number", "description": "Source chars per match (default 24000)" }
+                },
+                "required": ["name"]
+            }
+        }),
         json!({ "name": "ax_search", "description": "FTS symbol search", "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } }),
         json!({ "name": "ax_status", "description": "Index stats and staleness", "inputSchema": { "type": "object", "properties": {} } }),
         json!({
@@ -1614,6 +1622,41 @@ fn extra_tools() -> Vec<Value> {
     ]
 }
 
+const NODE_MAX_LINES: u32 = 400;
+const NODE_MAX_SOURCE_CHARS: u32 = 24_000;
+
+/// `ax_node` is the graph's answer to "open this symbol": few matches, full
+/// bodies, direct neighbours only.
+fn node_opts_from_params(params: &Value) -> (String, ExploreOptions) {
+    let name = ["name", "symbol", "query"]
+        .iter()
+        .find_map(|k| params.get(*k).and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let mut opts = explore_opts_from_params(params);
+    opts.limit = opts.limit.or(Some(3));
+    opts.depth = opts.depth.or(Some(1));
+    opts.include_code = Some(true);
+    opts.max_lines_per_snippet = opts.max_lines_per_snippet.or(Some(NODE_MAX_LINES));
+    opts.max_source_chars = opts.max_source_chars.or(Some(NODE_MAX_SOURCE_CHARS));
+    (name, opts)
+}
+
+async fn node(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    let (name, opts) = node_opts_from_params(&params);
+    let result = ax.explore(&name, opts).await.map_err(|e| e.to_string())?;
+    let text = format_explore_text(&result).replacen("# Explore:", "# Node:", 1);
+    let nodes: Vec<&ax_types::Node> = result.entries.iter().map(|e| &e.node).collect();
+    Ok(json!({
+        "text": text,
+        "query": result.query,
+        "summary": result.summary,
+        "blastRadius": result.blast_radius,
+        "entries": result.entries,
+        "nodes": nodes,
+    }))
+}
+
 fn explore_opts_from_params(params: &Value) -> ExploreOptions {
     let mut opts = ExploreOptions::default();
     if let Some(n) = params.get("limit").and_then(|v| v.as_u64()) {
@@ -1651,10 +1694,11 @@ pub fn server_instructions(has_policy: bool) -> String {
     }
     s.push_str(
         "For structural questions — how code works, call paths, impact, dependencies, architecture — call ax_explore FIRST with the user's question or symbol names. Treat returned numbered source as already read; do not re-grep the same symbols.\n\n\
-         Use ax_search for quick symbol lookup. Use ax_node for one symbol's file context. Use ax_callers / ax_callees / ax_impact for focused graph queries.\n\n\
+         Use ax_search for quick symbol lookup. ax_node returns the full numbered source of a symbol plus its direct callers and callees — use it instead of Read. Use ax_callers / ax_callees / ax_impact for focused graph queries.\n\n\
+         Gaps: when a snippet says truncated, call ax_node on that symbol; when a reply ends with an [ax context cache] footer, continue with ax_expand. The index already stores the source: do not Read or Grep a file the graph returned. Read only files the graph does not cover (config, docs, generated output) or a file right before you edit it.\n\n\
          Whole-graph understanding: call ax_insights for Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Call ax_report for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous) and Markdown docs are indexed as Doc nodes linked to the code they reference.\n\n\
          Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
-         Context cache: an oversized tool reply is replaced by a short stub with an id. Call ax_expand with that id to read the original. ax_stash stores a chat slice or another tool result the same way. Preflight lists recent ids and memory titles, not bodies. This is not a dump of the memory vault.\n\n\
+         Context cache: an oversized graph reply keeps its head inline and ends with a footer id; other oversized replies become a short stub with an id. Call ax_expand with that id to read the rest. ax_stash stores a chat slice or another tool result the same way. Preflight lists recent ids and memory titles, not bodies. This is not a dump of the memory vault.\n\n\
          Ops (prefer MCP — do NOT shell ax CLI when MCP is connected):\n\
          - ax_sync after local edits that should refresh the graph\n\
          - ax_index with force=true for a full rebuild\n\
@@ -1879,6 +1923,47 @@ mod tests {
         assert_eq!(entries[0].line, Some(42));
         assert_eq!(entries[1].path, "src/main.rs");
         assert_eq!(entries[1].severity, "error"); // default
+    }
+
+    #[test]
+    fn node_opts_default_to_full_source_for_few_symbols() {
+        let (name, opts) = node_opts_from_params(&json!({ "name": "choose_stacks_for_init" }));
+        assert_eq!(name, "choose_stacks_for_init");
+        assert_eq!(opts.limit, Some(3));
+        assert_eq!(opts.depth, Some(1));
+        assert_eq!(opts.include_code, Some(true));
+        assert_eq!(opts.max_lines_per_snippet, Some(NODE_MAX_LINES));
+        assert_eq!(opts.max_source_chars, Some(NODE_MAX_SOURCE_CHARS));
+        assert!(NODE_MAX_LINES >= 400 && NODE_MAX_SOURCE_CHARS >= 20_000);
+    }
+
+    #[test]
+    fn node_opts_accept_symbol_alias_and_overrides() {
+        let (name, opts) = node_opts_from_params(&json!({
+            "symbol": "detect", "limit": 1, "maxLinesPerSnippet": 50, "maxSourceChars": 999
+        }));
+        assert_eq!(name, "detect");
+        assert_eq!(opts.limit, Some(1));
+        assert_eq!(opts.max_lines_per_snippet, Some(50));
+        assert_eq!(opts.max_source_chars, Some(999));
+    }
+
+    #[test]
+    fn node_schema_says_it_returns_source() {
+        let tool = extra_tools()
+            .into_iter()
+            .find(|t| t["name"] == "ax_node")
+            .unwrap();
+        let desc = tool["description"].as_str().unwrap();
+        assert!(desc.contains("full numbered source"), "{desc}");
+        assert!(tool["inputSchema"]["properties"].get("maxLinesPerSnippet").is_some());
+    }
+
+    #[test]
+    fn server_instructions_steer_gaps_back_to_the_graph() {
+        let s = server_instructions(true);
+        assert!(s.contains("ax_node returns the full numbered source"));
+        assert!(s.contains("do not Read"));
     }
 
     #[test]

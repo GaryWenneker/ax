@@ -1,0 +1,30 @@
+---
+id: frontend-production-build
+level: CRITICAL
+alwaysApply: true
+scope: company
+tags: ["frontend", "vite", "build", "imports"]
+priority: 80
+seedVersion: 1
+---
+
+# Frontend production build
+
+> **ABSOLUTE**: A green unit test does not prove a frontend module resolves. The production bundler compiles the app graph. Unit tests compile only the files those tests import.
+
+## When this applies
+
+The change adds or edits a file under a bundled frontend (a package with a production `build` script: Vite, webpack, `pnpm run build`, `npm run build`).
+
+If the change does not touch such a package, record `frontend production build: n/a` and stop.
+
+## Required
+
+1. From that package directory, run the production build (`pnpm run build` when that is the script in `package.json`).
+2. The command must exit 0 before the work is called done and before a pull request is opened.
+3. An unresolved import, missing module, or other bundler error is a failed check. Fix it and run the build again.
+4. Do not treat `tsc --noEmit` or a single vitest/jest file as a substitute. Those commands never load importers that no test imports.
+
+## Why
+
+A relative import that is one directory short still typechecks in a test that does not import that file. `vite build` follows the real entry (`index.html` → app) and fails with `UNRESOLVED_IMPORT` / `Module not found`.

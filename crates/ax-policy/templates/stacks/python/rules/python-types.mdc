@@ -1,6 +1,6 @@
 ---
 id: python-types
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["python", "type hint"]

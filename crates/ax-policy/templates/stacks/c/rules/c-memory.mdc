@@ -1,6 +1,6 @@
 ---
 id: c-memory
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["c", "malloc", "free"]

@@ -1,6 +1,6 @@
 ---
 id: astro-content
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["astro", "content"]

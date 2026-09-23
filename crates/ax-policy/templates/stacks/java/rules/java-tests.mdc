@@ -1,6 +1,6 @@
 ---
 id: java-tests
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["java", "junit", "test"]

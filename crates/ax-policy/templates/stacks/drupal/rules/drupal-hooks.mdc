@@ -1,6 +1,6 @@
 ---
 id: drupal-hooks
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["drupal", "hook", "module"]

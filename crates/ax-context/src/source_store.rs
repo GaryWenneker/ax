@@ -105,13 +105,13 @@ pub fn numbered_slice(
         .join("\n");
     if out.len() > max_chars {
         format!(
-            "{}\n...(truncated to {} chars; increase maxSourceChars)",
+            "{}\n...(truncated to {} chars; call ax_node on this symbol for the full body, not Read)",
             truncate_on_char_boundary(&out, max_chars),
             max_chars
         )
     } else if truncated_lines {
         format!(
-            "{}\n...(truncated to {} lines; off-spine signatures omitted (adaptive skeleton); increase maxLinesPerSnippet)",
+            "{}\n...(truncated to {} lines; call ax_node on this symbol for the full body, not Read)",
             out, max_lines
         )
     } else {
@@ -227,6 +227,7 @@ mod tests {
         assert!(out.contains("1\tline1"));
         assert!(out.contains("truncated to 3 lines"));
         assert!(!out.contains("line4"), "must stop at the line cap");
+        assert!(out.contains("ax_node"), "marker must point back to the graph: {out}");
     }
 
     #[test]
@@ -234,6 +235,7 @@ mod tests {
         let content = "x".repeat(500);
         let out = numbered_slice(&content, 1, 1, 40, 50, '\t');
         assert!(out.contains("truncated to 50 chars"), "{out}");
+        assert!(out.contains("ax_node"), "marker must point back to the graph: {out}");
     }
 
     /// Byte-slicing a multibyte character used to panic; the boundary walk must

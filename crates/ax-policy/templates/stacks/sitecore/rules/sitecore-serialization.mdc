@@ -1,6 +1,6 @@
 ---
 id: sitecore-serialization
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["sitecore", "serialization", "unicorn"]

@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v4.12.0).
+description: Complete reference for every ax command, argument, and flag (v5.0.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -27,6 +27,8 @@ Running `ax` with **no subcommand** starts the interactive installer (same as `a
 | `AX_NO_UPDATE_CHECK=1` | Skip background upgrade notices after commands |
 | `AX_NO_POLICY=1` | Skip policy injection in prompt-hook |
 | `AX_NO_POLICY_CAPTURE=1` | Skip directive capture hints in prompt-hook |
+| `AX_READ_GUARD=off` | Disable the read-guard hook (every Read/Grep passes) |
+| `AX_READ_GUARD_STATE` | Path of the read-guard state file (default `~/.ax/read-guard.json`) |
 | `AX_POLICY_MAX_CHARS` | Cap contextual policy inject (default `16000`). Always-apply rules are never hard-truncated. |
 | `AX_TELEMETRY=0` / `DO_NOT_TRACK=1` | Disable anonymous telemetry |
 | `AX_MS_CLIENT_ID` | Optional custom Azure AD public client ID for OneDrive policy share — defaults to the built-in Microsoft app if unset |
@@ -48,7 +50,7 @@ See [Configuration](/getting-started/configuration/) for the full schema.
 
 ### `ax` / `ax install`
 
-Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Takumi 匠, Windsurf, Zed). Does **not** index a project. VS Code, Takumi 匠, Windsurf, and Zed are MCP-config-only targets (no prompt-hook or stop-hook — those are Claude Code-specific). See [Integrations](/reference/integrations/) for per-agent details.
+Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Takumi 匠, Windsurf, Zed). Does **not** index a project. Prompt-hook and stop-hook are Claude Code-specific. The [read-guard hook](#ax-read-guard) is added for every agent that can block a tool call: Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. See [Integrations](/reference/integrations/) for per-agent details.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -637,6 +639,33 @@ ax install                       # adds Stop + SubagentStop hooks for Claude Cod
 
 ---
 
+### `ax read-guard`
+
+Pre-tool hook target, wired automatically by `ax install` and not meant to be run by hand. Reads the IDE's hook JSON on stdin and steers agents from raw file reads to the ax graph:
+
+- The **first whole-file read** of an indexed source file in a conversation is denied. The reply lists up to eight of the file's symbols as `ax_node("…")` calls.
+- The **first search for a bare symbol name** that the graph knows (`Grep`, `rg`, `grep`, `git grep`) is denied. The reply lists the matches with file and line and points to `ax_node`, `ax_callers`, and `ax_impact`.
+- **Repeating the identical call is allowed**, so an agent that really needs the raw file (for example right before an edit) is never stuck.
+
+Partial reads (`offset`/`limit`, `head`, `sed -n`, a piped `cat`) pass where the IDE sends the range to the hook. Cursor's `preToolUse` payload carries only `file_path`, so in Cursor a partial Read of an indexed file is denied once too, and the identical retry passes. Non-source files, regex or free-text searches, symbols the graph does not know, and anything outside an indexed project always pass. Shell commands are only inspected for their first simple command. Every error allows the call. Memory of denied calls is kept per conversation for 4 hours in `~/.ax/read-guard.json`.
+
+| `--ide` | Hooks file | Event (matcher) |
+|---|---|---|
+| `cursor` | `~/.cursor/hooks.json` | `preToolUse` (`Read\|Grep\|Shell`) |
+| `claude` | `~/.claude/settings.json` (Claude Code and VS Code Copilot) | `PreToolUse` (`Read\|Grep\|Bash`) |
+| `codex` | `~/.codex/hooks.json` | `PreToolUse` (`^Bash$`). Codex only runs new hooks after you trust them once with `/hooks` |
+| `gemini` | `~/.gemini/settings.json` | `BeforeTool` (`read_file\|search_file_content\|grep\|run_shell_command`) |
+| `windsurf` | `~/.codeium/windsurf/hooks.json` | `pre_read_code`, `pre_run_command` |
+
+Zed, Continue, Kiro, opencode, Antigravity, Hermes, and Takumi 匠 have no blocking tool hook; they get the graph-first instructions only. A hooks file that is not valid JSON is left unchanged and reported by `ax install`. `ax uninstall` removes only the read-guard entries.
+
+| Env var | Effect |
+|---|---|
+| `AX_READ_GUARD=off` | Disable — every call passes (`0`, `false`, `no` also work) |
+| `AX_READ_GUARD_STATE` | Alternative state file path |
+
+---
+
 ## Daemon
 
 ### `ax daemon [path] [status|stop|restart]`
@@ -938,6 +967,16 @@ Import `.mdc` / `SKILL.md` from disk into database (merge — keeps DB-only rows
 ```bash
 ax policy import
 ax policy import ./my-project
+```
+
+### `ax policy dedup [path]`
+
+Remove project rules and skills that `~/.ax/global.db` already holds. A longer project copy is first promoted into the global row as a new version. Every removed body is kept as a revision; files on disk are not touched. This also runs automatically after sync, policy index, `ax global sync`, `ax install`, and in `ax web` every 10 minutes. Exits non-zero when the run stops on an error. `--dry-run` on a `global.db` from before this feature reports that the schema is older; any real run upgrades it.
+
+```bash
+ax policy dedup --dry-run
+ax policy dedup
+ax policy dedup --json
 ```
 
 ### `ax policy pull <git-url> [path]`
@@ -1403,6 +1442,7 @@ Not for daily use — invoked by agents, installers, or upgrade helpers.
 | `ax serve --mcp` | Stdio MCP server (agent-launched) |
 | `ax serve --mcp --daemon` | Background MCP daemon |
 | `ax prompt-hook` | Claude `UserPromptSubmit` hook (stdin JSON) |
+| `ax read-guard --ide <ide>` | Pre-tool hook that redirects whole-file reads and symbol searches to the graph (stdin JSON) |
 | `ax watchdog-child` | MCP liveness watchdog child |
 | `ax upgrade-apply` | Windows upgrade swap helper |
 

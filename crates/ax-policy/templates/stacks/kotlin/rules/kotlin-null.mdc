@@ -1,6 +1,6 @@
 ---
 id: kotlin-null
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["kotlin", "null"]

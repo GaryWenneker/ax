@@ -1,6 +1,6 @@
 ---
 id: nextjs-server-components
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["server component", "use client", "server action"]

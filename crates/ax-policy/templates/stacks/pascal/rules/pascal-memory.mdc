@@ -1,6 +1,6 @@
 ---
 id: pascal-memory
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["pascal", "free", "dispose"]

@@ -5,6 +5,9 @@ pub mod graph;
 pub mod policy;
 pub mod sync;
 
+#[cfg(test)]
+mod policy_level_tests;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -13,18 +16,11 @@ use sqlx::SqlitePool;
 
 use ax_db::{busy_timeout, connect_options};
 
-/// Env override for tests and custom installs.
-pub const AX_GLOBAL_DB_ENV: &str = "AX_GLOBAL_DB";
+pub use ax_utils::paths::AX_GLOBAL_DB_ENV;
 
 pub fn global_db_path() -> Result<PathBuf> {
-    if let Ok(p) = std::env::var(AX_GLOBAL_DB_ENV) {
-        let path = PathBuf::from(p);
-        if !path.as_os_str().is_empty() {
-            return Ok(path);
-        }
-    }
-    let home = dirs::home_dir().context("HOME not set; cannot resolve ~/.ax/global.db")?;
-    Ok(home.join(".ax").join("global.db"))
+    ax_utils::paths::resolve_global_db_path(dirs::home_dir())
+        .context("HOME not set; cannot resolve ~/.ax/global.db")
 }
 
 pub async fn open_pool(path: &Path, create_if_missing: bool) -> Result<SqlitePool> {

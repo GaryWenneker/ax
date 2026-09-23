@@ -1,6 +1,6 @@
 ---
 id: php-types
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["php", "type"]

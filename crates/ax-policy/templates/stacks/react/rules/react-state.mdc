@@ -1,6 +1,6 @@
 ---
 id: react-state
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["react", "state", "props"]

@@ -1,6 +1,6 @@
 ---
 id: dotnet-aspnet
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["dotnet", "aspnet", "ef"]

@@ -1,6 +1,6 @@
 ---
 id: svelte-state
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["svelte", "store", "rune"]

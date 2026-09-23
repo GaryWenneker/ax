@@ -1,6 +1,6 @@
 ---
 id: dart-packages
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["dart", "pubspec"]

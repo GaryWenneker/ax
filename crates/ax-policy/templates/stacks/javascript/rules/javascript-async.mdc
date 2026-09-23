@@ -1,6 +1,6 @@
 ---
 id: javascript-async
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["javascript", "promise", "node"]

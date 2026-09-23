@@ -26,10 +26,22 @@ Graph answers usually replace many file reads. One `ax_explore` + targeted `ax_n
 
 Treat numbered source returned by `ax_explore` as already read — do not re-Grep the same symbols.
 
+## Filling gaps — stay in the graph
+
+| The graph answer… | Do this | Not this |
+|---|---|---|
+| shows a snippet marked `truncated` | `ax_node` on that symbol — full source (up to 400 lines) plus direct callers and callees | Read the file |
+| ends with an `[ax context cache]` footer | `ax_expand` with the footer id and offset | Read the files it named |
+| missed the symbol you need | `ax_search` / `ax_node` with the exact name; `ax_sync` if the file changed | repo-wide Grep |
+| needs who-calls / what-breaks | `ax_callers` / `ax_callees` / `ax_impact` | Grep for the name |
+
+Where the graph covers the code, do not Read or Grep the file to fill the gap. `ax_node` is the full source of a symbol, served from the index.
+
 ## Allowed Grep/Read without explore
 
 - Opening a file path the user explicitly named
-- Editing a file you already have in context from this turn
+- Reading a file right before you edit it (the editor needs exact current text)
+- Files the graph does not index: config, lockfiles, docs, generated output, logs
 - MCP unreachable (Mode: DEGRADED) — then Grep/Read is fallback; say so
 
 ## Forbidden
@@ -38,3 +50,4 @@ Treat numbered source returned by `ax_explore` as already read — do not re-Gre
 - Re-deriving architecture that `ax_explore` / `ax_insights` already indexes
 - Using Grep to discover call paths when `ax_callers` / `ax_callees` / `ax_impact` exist
 - Treating `GetMcpTools` as a substitute for `ax_explore`
+- Reading a whole file to see a function `ax_node` can return

@@ -3,6 +3,7 @@ pub mod builtin_packs;
 pub mod capture;
 pub mod config;
 pub mod format;
+pub mod global_level;
 pub mod guard;
 pub mod hierarchy;
 pub mod index;
@@ -100,7 +101,8 @@ pub use stacks::{
     StackInfo, StackStatus,
 };
 pub use seed::{
-    check_cursor_rule_duplicates, seed_cursor_skills, seed_default_policy, seed_global_cursor_skills,
+    check_cursor_rule_duplicates, global_db_seed_skills, seed_cursor_skills, seed_default_policy,
+    seed_global_cursor_skills,
     seed_global_policy_skills, seed_global_policy, seed_project_cursor_skills, sync_instructions, verify_content,
     verify_instructions, InstructionCheck, SeedResult, SyncResult,
 };

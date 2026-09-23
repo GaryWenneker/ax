@@ -99,11 +99,13 @@ CREATE TABLE IF NOT EXISTS shared_knowledge (
 CREATE INDEX IF NOT EXISTS idx_global_nodes_project_type ON global_nodes(project_id, node_type);
 CREATE INDEX IF NOT EXISTS idx_global_nodes_hash ON global_nodes(content_hash);
 CREATE INDEX IF NOT EXISTS idx_global_documents_project_path ON global_documents(project_id, file_path);
+-- level: 'global' rows apply on every project; 'mirror' rows are copies written by `ax global sync`.
 CREATE TABLE IF NOT EXISTS global_policy_rules (
     project_id INTEGER NOT NULL,
     item_id TEXT NOT NULL,
     payload TEXT NOT NULL,
     synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    level TEXT NOT NULL DEFAULT 'global',
     PRIMARY KEY (project_id, item_id),
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
@@ -113,9 +115,23 @@ CREATE TABLE IF NOT EXISTS global_policy_skills (
     item_id TEXT NOT NULL,
     payload TEXT NOT NULL,
     synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    level TEXT NOT NULL DEFAULT 'global',
     PRIMARY KEY (project_id, item_id),
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
+
+CREATE TABLE IF NOT EXISTS global_policy_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    project_id INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_global_policy_revisions_item
+    ON global_policy_revisions(kind, item_id, version DESC);
 
 CREATE INDEX IF NOT EXISTS idx_sync_log_timestamp ON sync_log(synced_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cross_project_refs_source ON cross_project_refs(source_project, source_node_name);

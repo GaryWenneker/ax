@@ -1,6 +1,6 @@
 ---
 id: java-null-safety
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["java", "null", "optional"]

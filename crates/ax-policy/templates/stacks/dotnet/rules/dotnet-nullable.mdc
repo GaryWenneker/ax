@@ -1,6 +1,6 @@
 ---
 id: dotnet-nullable
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["dotnet", "csharp", "nullable"]

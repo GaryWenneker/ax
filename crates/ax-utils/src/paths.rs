@@ -30,3 +30,16 @@ pub fn validate_path_within_root(root: &Path, candidate: &Path) -> Result<PathBu
 
     Ok(canonical)
 }
+
+/// Env override for the machine-wide `global.db` (tests and custom installs).
+pub const AX_GLOBAL_DB_ENV: &str = "AX_GLOBAL_DB";
+
+/// `AX_GLOBAL_DB` when set and non-empty, else `<home>/.ax/global.db`.
+pub fn resolve_global_db_path(home: Option<PathBuf>) -> Option<PathBuf> {
+    if let Ok(p) = std::env::var(AX_GLOBAL_DB_ENV) {
+        if !p.is_empty() {
+            return Some(PathBuf::from(p));
+        }
+    }
+    home.map(|h| h.join(".ax").join("global.db"))
+}

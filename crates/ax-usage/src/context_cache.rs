@@ -15,9 +15,30 @@ const NEVER_STUB: &[&str] = &[
     "ax_preflight",
     "ax_guard",
     "ax_policy_capture",
+    "ax_rules",
+    "ax_skill",
     "ax_expand",
     "ax_stash",
 ];
+
+/// Graph answers replace file reads, so they stay inline up to a larger budget
+/// and, past it, keep their head inline rather than becoming a bare stub.
+const GRAPH_READ_TOOLS: &[&str] = &[
+    "ax_explore",
+    "ax_node",
+    "ax_search",
+    "ax_callers",
+    "ax_callees",
+    "ax_impact",
+    "ax_path",
+    "ax_cycles",
+    "ax_api",
+    "ax_context",
+    "ax_affected",
+    "ax_insights",
+    "ax_report",
+];
+const DEFAULT_GRAPH_INLINE_TOKENS: i64 = 12_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheOutcome {
@@ -112,17 +133,101 @@ fn render_stub(tool: &str, id: &str, original: i64, summary: &str) -> (String, i
     (text, sent, removed)
 }
 
+pub fn keeps_graph_head(tool: &str) -> bool {
+    GRAPH_READ_TOOLS.contains(&tool)
+}
+
+pub fn graph_inline_budget() -> i64 {
+    match std::env::var("AX_GRAPH_INLINE_TOKENS") {
+        Ok(raw) => raw.trim().parse::<i64>().unwrap_or(DEFAULT_GRAPH_INLINE_TOKENS),
+        Err(_) => DEFAULT_GRAPH_INLINE_TOKENS,
+    }
+}
+
+pub fn threshold_for_with(tool: &str, base: i64, graph: i64) -> i64 {
+    if keeps_graph_head(tool) {
+        base.max(graph)
+    } else {
+        base
+    }
+}
+
+fn head_footer(tool: &str, id: &str, original: i64, shown: usize, total: usize, offset: usize) -> String {
+    format!(
+        "\n[ax context cache] tool={tool} id={id} original_tokens={original} shown_lines={shown}/{total}\n\
+         This graph answer is cut; the rest is stored. Continue with ax_expand id \"{id}\" offset {offset}, \
+         or narrow the question (ax_node <symbol> returns one symbol's full source). \
+         The graph already holds this source: do not Read or Grep the files to fill the gap.\n"
+    )
+}
+
+/// Largest char prefix of `line` whose token count fits `budget`.
+fn fit_prefix(line: &str, budget: i64) -> &str {
+    let mut end = line.len();
+    while end > 0 && count_tokens(&line[..end]) as i64 > budget {
+        end = end * 4 / 5;
+        while end > 0 && !line.is_char_boundary(end) {
+            end -= 1;
+        }
+    }
+    &line[..end]
+}
+
+/// Keep the top of a graph reply inline (whole lines, within `budget` tokens
+/// including the footer) instead of replacing all of it with a bare stub.
+fn render_head_stub(tool: &str, id: &str, body: &str, original: i64, budget: i64) -> (String, i64, i64) {
+    let lines: Vec<&str> = body.split_inclusive('\n').collect();
+    let total = lines.len();
+    let footer_budget = count_tokens(&head_footer(tool, id, original, total, total, body.len())) as i64 + 8;
+    let head_budget = (budget - footer_budget).max(1);
+
+    let mut kept = 0usize;
+    let mut used = 0i64;
+    for line in &lines {
+        let cost = count_tokens(line) as i64;
+        if used + cost > head_budget {
+            break;
+        }
+        used += cost;
+        kept += 1;
+    }
+
+    let build = |kept: usize| -> String {
+        let (head, offset) = if kept == 0 {
+            let prefix = fit_prefix(lines.first().copied().unwrap_or(""), head_budget);
+            (prefix.to_string(), prefix.chars().count())
+        } else {
+            let joined: String = lines[..kept].concat();
+            let offset = joined.chars().count();
+            (joined.trim_end_matches('\n').to_string(), offset)
+        };
+        format!("{head}{}", head_footer(tool, id, original, kept, total, offset))
+    };
+
+    let mut text = build(kept);
+    while kept > 0 && count_tokens(&text) as i64 > budget {
+        kept -= 1;
+        text = build(kept);
+    }
+    let sent = count_tokens(&text) as i64;
+    (text, sent, original.saturating_sub(sent))
+}
+
 pub async fn cache_oversized_reply(tool: &str, body: &str) -> CacheOutcome {
     if !cache_enabled() || exempt_from_cache(tool) {
         return CacheOutcome::Passthrough;
     }
     let original = count_tokens(body) as i64;
-    if original < cache_threshold() {
+    let threshold = threshold_for_with(tool, cache_threshold(), graph_inline_budget());
+    if original < threshold {
         return CacheOutcome::Passthrough;
     }
     let id = cache_id(body);
-    let summary = one_line_summary(body);
-    let (stub, sent, removed) = render_stub(tool, &id, original, &summary);
+    let (stub, sent, removed) = if keeps_graph_head(tool) {
+        render_head_stub(tool, &id, body, original, threshold)
+    } else {
+        render_stub(tool, &id, original, &one_line_summary(body))
+    };
     if sent >= original {
         return CacheOutcome::Passthrough;
     }
@@ -556,7 +661,66 @@ mod tests {
         assert!(exempt_from_cache("ax_guard"));
         assert!(exempt_from_cache("ax_policy_capture"));
         assert!(exempt_from_cache("ax_expand"));
+        assert!(exempt_from_cache("ax_rules"), "policy delivery must never be stubbed");
+        assert!(exempt_from_cache("ax_skill"), "policy delivery must never be stubbed");
         assert!(!exempt_from_cache("ax_explore"));
+    }
+
+    fn numbered_body(lines: usize) -> String {
+        (1..=lines)
+            .map(|i| format!("{i}\tlet value_{i} = compute_something(input_{i});\n"))
+            .collect()
+    }
+
+    #[test]
+    fn graph_reads_get_a_larger_inline_threshold() {
+        assert_eq!(threshold_for_with("ax_explore", 3_000, 12_000), 12_000);
+        assert_eq!(threshold_for_with("ax_node", 3_000, 12_000), 12_000);
+        assert_eq!(threshold_for_with("ax_callers", 3_000, 12_000), 12_000);
+        assert_eq!(threshold_for_with("ax_recall", 3_000, 12_000), 3_000);
+        assert_eq!(threshold_for_with("ax_explore", 20_000, 12_000), 20_000);
+    }
+
+    #[test]
+    fn graph_head_stub_keeps_whole_lines_inline_within_budget() {
+        let body = numbered_body(3_000);
+        let original = count_tokens(&body) as i64;
+        let (text, sent, removed) = render_head_stub("ax_explore", "cc_head", &body, original, 2_000);
+        assert!(text.starts_with("1\tlet value_1"), "head must start at the top");
+        assert!(sent <= 2_000, "sent={sent} exceeds the inline budget");
+        assert!(sent > 1_000, "sent={sent} wastes most of the inline budget");
+        assert_eq!(count_tokens(&text) as i64, sent);
+        assert_eq!(removed, original - sent);
+        let (head, footer) = text.split_once("\n[ax context cache]").expect("footer present");
+        assert!(body.starts_with(head), "head is a verbatim prefix");
+        assert!(body[head.len()..].starts_with('\n'), "head ends on a line boundary");
+        assert!(footer.contains("cc_head"));
+        assert!(footer.contains("ax_expand"));
+        assert!(footer.contains("ax_node"));
+        assert!(footer.contains("do not Read or Grep"));
+    }
+
+    #[test]
+    fn graph_head_offset_resumes_at_the_next_line() {
+        let body = numbered_body(3_000);
+        let original = count_tokens(&body) as i64;
+        let (text, _, _) = render_head_stub("ax_explore", "cc_head", &body, original, 2_000);
+        let head = text.split_once("\n[ax context cache]").unwrap().0;
+        let offset = head.chars().count() + 1;
+        assert!(text.contains(&format!("offset {offset}")), "{text}");
+        let next = page_body(&body, offset, Some(200)).text;
+        let shown = head.lines().count();
+        assert!(next.starts_with(&format!("{}\t", shown + 1)), "{next}");
+    }
+
+    #[test]
+    fn graph_head_cuts_a_single_huge_line() {
+        let body = "x".repeat(200_000);
+        let original = count_tokens(&body) as i64;
+        let (text, sent, _) = render_head_stub("ax_report", "cc_long", &body, original, 1_000);
+        assert!(sent <= 1_000, "sent={sent}");
+        assert!(text.starts_with('x'));
+        assert!(text.contains("cc_long"));
     }
 
     #[test]

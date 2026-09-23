@@ -1,6 +1,6 @@
 ---
 id: svelte-components
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["svelte", "component"]

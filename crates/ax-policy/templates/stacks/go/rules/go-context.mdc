@@ -1,6 +1,6 @@
 ---
 id: go-context
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["go", "context", "goroutine"]

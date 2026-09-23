@@ -1,6 +1,6 @@
 ---
 id: objc-memory
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["objc", "arc", "retain"]

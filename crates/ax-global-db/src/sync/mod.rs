@@ -217,10 +217,20 @@ async fn sync_policy_table(
         if item_id.is_empty() {
             continue;
         }
+        let at_global_level: Option<(i64,)> = sqlx::query_as(&format!(
+            "SELECT 1 FROM {dest_table} WHERE item_id = ? AND level = 'global' LIMIT 1"
+        ))
+        .bind(&item_id)
+        .fetch_optional(global)
+        .await?;
+        if at_global_level.is_some() {
+            continue;
+        }
         let payload = row_to_policy_json(&row, id_col);
         sqlx::query(&format!(
-            "INSERT INTO {dest_table} (project_id, item_id, payload) VALUES (?, ?, ?)
-             ON CONFLICT(project_id, item_id) DO UPDATE SET payload = excluded.payload, synced_at = CURRENT_TIMESTAMP"
+            "INSERT INTO {dest_table} (project_id, item_id, payload, level) VALUES (?, ?, ?, 'mirror')
+             ON CONFLICT(project_id, item_id) DO UPDATE SET payload = excluded.payload, synced_at = CURRENT_TIMESTAMP
+             WHERE level = 'mirror'"
         ))
         .bind(pid)
         .bind(&item_id)
@@ -231,7 +241,8 @@ async fn sync_policy_table(
     Ok(())
 }
 
-fn row_to_policy_json(row: &sqlx::sqlite::SqliteRow, id_col: &str) -> serde_json::Value {
+/// A project `policy_rules` / `policy_skills` row as the JSON payload stored in global.db.
+pub fn row_to_policy_json(row: &sqlx::sqlite::SqliteRow, id_col: &str) -> serde_json::Value {
     use serde_json::{json, Map, Value};
     fn col(row: &sqlx::sqlite::SqliteRow, name: &str) -> Option<Value> {
         if let Ok(v) = row.try_get::<String, _>(name) {

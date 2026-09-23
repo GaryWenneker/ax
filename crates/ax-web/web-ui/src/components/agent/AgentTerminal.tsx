@@ -23,7 +23,7 @@ type ChatLine =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string }
   | { kind: 'system'; text: string }
-  | { kind: 'tool'; text: string };
+  | { kind: 'tool'; text: string; running?: boolean };
 
 interface Props {
   maximized: boolean;
@@ -164,6 +164,7 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
     const ac = new AbortController();
     abortRef.current = ac;
 
+    try {
     await streamAgentChat(
       prompt,
       { sessionId, agent, profileId },
@@ -176,13 +177,23 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
         }
         if (ev.type === 'tool_start') {
           const prefix = ev.name.startsWith('ax_') ? `${AX_LOG_ICON} ` : '';
-          setLines((l) => [...l, { kind: 'tool', text: `${prefix}▶ ${ev.name}` }]);
+          setLines((l) => [...l, { kind: 'tool', text: `${prefix}▶ ${ev.name}`, running: true }]);
         }
         if (ev.type === 'tool_end') {
           const prefix = ev.name.startsWith('ax_') ? `${AX_LOG_ICON} ` : '';
           const preview = ev.preview?.trim();
           const text = preview ? `${prefix}✓ ${ev.name}\n${preview}` : `${prefix}✓ ${ev.name}`;
-          setLines((l) => [...l, { kind: 'tool', text }]);
+          const needle = ev.name;
+          setLines((l) => {
+            let cleared = false;
+            const next = l.map((line) => {
+              if (cleared || line.kind !== 'tool' || !line.running) return line;
+              if (!line.text.includes(needle)) return line;
+              cleared = true;
+              return { ...line, running: false };
+            });
+            return [...next, { kind: 'tool' as const, text }];
+          });
         }
         if (ev.type === 'token') {
           assistantBuf.current += ev.text;
@@ -205,7 +216,10 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
       },
       ac.signal,
     );
-    setBusy(false);
+    } finally {
+      setBusy(false);
+      setLines((l) => l.map((line) => (line.kind === 'tool' && line.running ? { ...line, running: false } : line)));
+    }
   }
 
   async function onProfileChange(id: string) {
@@ -287,6 +301,7 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
                 <AgentMessageBody
                   text={line.text || (line.kind === 'assistant' && busy ? '…' : '')}
                   kind={line.kind}
+                  running={line.kind === 'tool' && line.running === true}
                 />
               </div>
             ))}

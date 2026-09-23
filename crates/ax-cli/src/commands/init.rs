@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use owo_colors::OwoColorize;
+
 use ax_context::directory::is_initialized;
 use ax_extraction::orchestrator::IndexOptions;
 use ax_reasoning::seed_offload_on_init;
@@ -408,6 +410,152 @@ fn choose_agents_dir_for_init(root: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+const STACK_GROUPS: &[(&str, &[&str])] = &[
+    ("Platforms", &["dotnet", "java", "kotlin", "scala"]),
+    ("Web", &["javascript", "typescript", "react", "nextjs", "angular", "vue", "svelte", "astro"]),
+    ("PHP", &["php", "laravel", "drupal"]),
+    ("CMS", &["sitecore", "optimizely"]),
+    ("Systems", &["rust", "go", "c", "cpp", "swift", "objc"]),
+    ("Languages", &["python", "ruby", "dart", "lua", "luau", "r", "pascal"]),
+];
+
+fn grouped_stacks(catalog: &[ax_policy::StackInfo]) -> Vec<(String, &ax_policy::StackInfo)> {
+    let mut ordered = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (group, ids) in STACK_GROUPS {
+        for id in *ids {
+            if let Some(stack) = catalog.iter().find(|stack| stack.id == *id) {
+                ordered.push(((*group).to_string(), stack));
+                seen.insert(stack.id.as_str());
+            }
+        }
+    }
+    for stack in catalog {
+        if seen.insert(stack.id.as_str()) {
+            ordered.push(("Other".to_string(), stack));
+        }
+    }
+    ordered
+}
+
+struct StackMenuLine {
+    item: Option<usize>,
+    text: String,
+}
+
+fn stack_menu_lines(
+    grouped: &[(String, &ax_policy::StackInfo)],
+    checked: &[bool],
+    cursor: usize,
+) -> Vec<StackMenuLine> {
+    let mut lines = Vec::new();
+    let mut last_group = "";
+    for (index, (group, stack)) in grouped.iter().enumerate() {
+        if group != last_group {
+            lines.push(StackMenuLine {
+                item: None,
+                text: format!("  {}", group.yellow().bold()),
+            });
+            last_group = group;
+        }
+        let active = index == cursor;
+        let pointer = if active {
+            "❯".cyan().bold().to_string()
+        } else {
+            " ".to_string()
+        };
+        let mark = if checked[index] {
+            "[x]".green().bold().to_string()
+        } else {
+            "[ ]".dimmed().to_string()
+        };
+        let id = if active {
+            stack.id.cyan().bold().to_string()
+        } else {
+            stack.id.cyan().to_string()
+        };
+        lines.push(StackMenuLine {
+            item: Some(index),
+            text: format!(
+                "{pointer} {mark} {:<12} {}",
+                id,
+                stack.description.dimmed()
+            ),
+        });
+    }
+    lines
+}
+
+/// Arrow keys move the cursor. Space toggles. Enter confirms.
+/// Esc keeps the defaults that were already checked.
+fn prompt_stack_menu(checked: &mut [bool], grouped: &[(String, &ax_policy::StackInfo)]) -> Result<(), String> {
+    let term = console::Term::stderr();
+    let original = checked.to_vec();
+    let mut cursor = 0;
+    let mut top = 0usize;
+    let mut drawn = 0usize;
+    let _ = term.hide_cursor();
+    let result = loop {
+        let lines = stack_menu_lines(grouped, checked, cursor);
+        let page = (term.size().0 as usize).saturating_sub(8).clamp(8, 18);
+        let cursor_line = lines
+            .iter()
+            .position(|line| line.item == Some(cursor))
+            .unwrap_or(0);
+        if cursor_line < top {
+            top = cursor_line;
+        } else if cursor_line >= top + page {
+            top = cursor_line + 1 - page;
+        }
+        if drawn > 0 {
+            let _ = term.clear_last_lines(drawn);
+        }
+        let mut shown = 0usize;
+        for line in lines.iter().skip(top).take(page) {
+            let _ = term.write_line(&line.text);
+            shown += 1;
+        }
+        let _ = term.write_line(&dim(
+            "↑↓ or j/k move    space toggle    enter confirm    esc keep defaults",
+        ));
+        shown += 1;
+        drawn = shown;
+        let key = match term.read_key() {
+            Ok(key) => key,
+            Err(err) => break Err(err.to_string()),
+        };
+        match key {
+            console::Key::ArrowUp | console::Key::Char('k') => {
+                if cursor > 0 {
+                    cursor -= 1;
+                }
+            }
+            console::Key::ArrowDown | console::Key::Char('j') => {
+                if cursor + 1 < grouped.len() {
+                    cursor += 1;
+                }
+            }
+            console::Key::PageUp | console::Key::Char('u') => {
+                cursor = cursor.saturating_sub(page);
+            }
+            console::Key::PageDown | console::Key::Char('d') => {
+                cursor = (cursor + page).min(grouped.len().saturating_sub(1));
+            }
+            console::Key::Home => cursor = 0,
+            console::Key::End => cursor = grouped.len().saturating_sub(1),
+            console::Key::Char(' ') => checked[cursor] = !checked[cursor],
+            console::Key::Enter => break Ok(()),
+            console::Key::Escape => {
+                checked.copy_from_slice(&original);
+                break Ok(());
+            }
+            _ => {}
+        }
+    };
+    let _ = term.show_cursor();
+    result
+}
+
 /// Ask which stacks to install. Runs on every `ax init`, including a second run.
 /// A non-interactive stdin keeps the saved selection so CI does not block.
 fn choose_stacks_for_init(root: &std::path::Path) -> Result<Vec<String>, String> {
@@ -417,40 +565,44 @@ fn choose_stacks_for_init(root: &std::path::Path) -> Result<Vec<String>, String>
         return Ok(current);
     }
     let catalog = ax_policy::stack_catalog_list();
+    let grouped = grouped_stacks(&catalog);
     println!("{}", info_line("Which stacks should this project use?"));
     if !detected.is_empty() {
-        println!("  {}", dim(format!("Detected: {}", detected.join(", "))));
+        let names = detected
+            .iter()
+            .map(|id| id.green().bold().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("  {} {names}", "Detected:".dimmed());
     }
-    if !current.is_empty() {
-        println!("  {}", dim(format!("Currently installed: {}", current.join(", "))));
+    let mut checked: Vec<bool> = grouped
+        .iter()
+        .map(|(_, stack)| {
+            current.iter().any(|id| id == &stack.id) || detected.iter().any(|id| id == &stack.id)
+        })
+        .collect();
+    if let Err(err) = prompt_stack_menu(&mut checked, &grouped) {
+        println!(
+            "  {}",
+            dim(format!(
+                "Menu unavailable ({err}). Type ids separated by spaces, or 'none'."
+            ))
+        );
+        print!("Stacks: ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+        return ax_policy::parse_stack_choice(&line, &current, &detected);
     }
-    println!("  {}", dim("Available:"));
-    for stack in &catalog {
-        let mark = if detected.iter().any(|id| id == &stack.id) {
-            "*"
-        } else {
-            " "
-        };
-        println!("  {mark} {} — {}", stack.id, stack.description);
-    }
-    let hint = if !current.is_empty() {
-        "Press Enter to keep the installed stacks"
-    } else if !detected.is_empty() {
-        "Press Enter to install the detected stacks"
-    } else {
-        "Press Enter for core policy only"
-    };
-    println!(
-        "  {}",
-        dim(format!(
-            "{hint}. Or type ids separated by spaces, or 'none'."
-        ))
-    );
-    print!("Stacks: ");
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-    let mut line = String::new();
-    std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
-    ax_policy::parse_stack_choice(&line, &current, &detected)
+    let ids: Vec<String> = grouped
+        .iter()
+        .zip(checked)
+        .filter(|(_, on)| *on)
+        .map(|((_, stack), _)| stack.id.clone())
+        .collect();
+    ax_policy::resolve_stacks(&ids)
 }
 
 async fn store_dotnet_code_review_in_global_db(project_root: &std::path::Path) -> Result<(), String> {
@@ -460,8 +612,16 @@ async fn store_dotnet_code_review_in_global_db(project_root: &std::path::Path) -
         .join("SKILL.md");
     let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let doc = ax_policy::parse_skill_file(&path, &raw).map_err(|e| format!("{e:?}"))?;
+    ax_global_db::policy::upsert_machine_skill(&doc.frontmatter.name, &global_skill_payload(&doc))
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("{}", ok_line("Stored dotnet-code-review in ~/.ax/global.db"));
+    Ok(())
+}
+
+fn global_skill_payload(doc: &ax_policy::PolicySkillDoc) -> serde_json::Value {
     let fm = &doc.frontmatter;
-    let payload = serde_json::json!({
+    serde_json::json!({
         "name": fm.name,
         "description": fm.description,
         "alwaysApply": fm.always_apply,
@@ -473,12 +633,65 @@ async fn store_dotnet_code_review_in_global_db(project_root: &std::path::Path) -
         "enabled": fm.enabled,
         "status": fm.status,
         "scope": "company",
-    });
-    ax_global_db::policy::upsert_machine_skill(&fm.name, &payload)
+    })
+}
+
+/// Store the seeded machine skills (`ax_policy::global_db_seed_skills`) in `db_path`
+/// under the `machine_root` project. Returns the stored skill names.
+pub(crate) async fn store_seeded_skills_in_global_db(
+    db_path: &std::path::Path,
+    machine_root: &std::path::Path,
+) -> Result<Vec<String>, String> {
+    let pool = ax_global_db::open_and_init(db_path)
         .await
-        .map_err(|e| e.to_string())?;
-    println!("{}", ok_line("Stored dotnet-code-review in ~/.ax/global.db"));
-    Ok(())
+        .map_err(|e| format!("{e:#}"))?;
+    let result = async {
+        let project_id = ax_global_db::policy::ensure_project(&pool, machine_root)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        let mut stored = Vec::new();
+        for (name, raw) in ax_policy::global_db_seed_skills() {
+            let path = std::path::Path::new(name).join("SKILL.md");
+            let doc = ax_policy::parse_skill_file(&path, raw).map_err(|e| format!("{name}: {e:?}"))?;
+            ax_global_db::policy::upsert_policy_item(
+                &pool,
+                project_id,
+                ax_global_db::policy::PolicyKind::Skills,
+                name,
+                &global_skill_payload(&doc),
+            )
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+            stored.push(name.to_string());
+        }
+        Ok(stored)
+    }
+    .await;
+    pool.close().await;
+    result
+}
+
+/// Blocking wrapper for sync callers (`ax install`). Runs on its own thread and
+/// runtime, so it works inside or outside an async context.
+pub(crate) fn store_seeded_skills_in_global_db_blocking() -> Result<Vec<String>, String> {
+    let db = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
+    let machine = dirs::home_dir().ok_or("no home dir")?.join(".ax");
+    store_seeded_skills_blocking_at(db, machine)
+}
+
+fn store_seeded_skills_blocking_at(
+    db: std::path::PathBuf,
+    machine: std::path::PathBuf,
+) -> Result<Vec<String>, String> {
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?
+            .block_on(store_seeded_skills_in_global_db(&db, &machine))
+    })
+    .join()
+    .map_err(|_| "global.db store thread panicked".to_string())?
 }
 
 /// Cursor savings hook plus a full log import. Failures stay visible and do not undo init.
@@ -488,5 +701,74 @@ async fn run_savings_setup() {
     }
     if let Err(e) = crate::commands::savings::run_import(false, false, true).await {
         eprintln!("{}", dim(format!("Savings import skipped: {e}")));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ax-init-{name}-{}", std::process::id()));
+        cleanup(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn cleanup(dir: &std::path::Path) {
+        // A leftover temp dir only costs disk space; it must not fail the test.
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    async fn skill_rows(db: &std::path::Path, item_id: &str) -> Vec<(String, String)> {
+        let pool = ax_global_db::open_and_init(db).await.unwrap();
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT item_id, payload FROM global_policy_skills WHERE item_id = ?",
+        )
+        .bind(item_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        rows
+    }
+
+    #[tokio::test]
+    async fn seeded_skills_are_stored_once_as_company_skills() {
+        let dir = temp_dir("global-db");
+        let db = dir.join("global.db");
+        let machine = dir.join(".ax");
+        let stored = store_seeded_skills_in_global_db(&db, &machine).await.unwrap();
+        assert_eq!(stored, vec!["review-loop".to_string(), "pr-review-comments".to_string()]);
+        store_seeded_skills_in_global_db(&db, &machine).await.unwrap();
+        let rows = skill_rows(&db, "review-loop").await;
+        assert_eq!(rows.len(), 1, "a second store updates the row instead of duplicating it");
+        let payload: serde_json::Value = serde_json::from_str(&rows[0].1).unwrap();
+        assert_eq!(payload["name"], "review-loop");
+        assert_eq!(payload["scope"], "company");
+        assert!(payload["body"].as_str().unwrap().contains("## 4. Repeat"));
+        assert_eq!(skill_rows(&db, "pr-review-comments").await.len(), 1);
+        cleanup(&dir);
+    }
+
+    #[tokio::test]
+    async fn unusable_global_db_is_an_error_not_a_panic() {
+        let dir = temp_dir("global-db-bad");
+        let result = store_seeded_skills_in_global_db(&dir, &dir.join(".ax")).await;
+        let err = result.expect_err("a directory is not a database");
+        assert!(err.contains(&dir.display().to_string()), "error names the path: {err}");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn blocking_store_works_from_inside_a_runtime() {
+        let dir = temp_dir("global-db-blocking");
+        let db = dir.join("global.db");
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let result =
+            rt.block_on(async { store_seeded_skills_blocking_at(db.clone(), dir.join(".ax")) });
+        assert_eq!(result.unwrap(), vec!["review-loop".to_string(), "pr-review-comments".to_string()]);
+        assert!(db.is_file());
+        cleanup(&dir);
     }
 }

@@ -1,6 +1,6 @@
 ---
 id: rust-tests
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["rust", "cargo test"]

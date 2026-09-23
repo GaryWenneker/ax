@@ -14,6 +14,17 @@ export default defineConfig({
 			favicon: '/logo.png',
 			head: [
 				{
+					tag: 'meta',
+					attrs: { property: 'og:image', content: 'https://getax.wenneker.io/social/v5.0.0/ax-5.0.0-og-1200x630.png' },
+				},
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+				{
+					tag: 'meta',
+					attrs: { name: 'twitter:image', content: 'https://getax.wenneker.io/social/v5.0.0/ax-5.0.0-og-1200x630.png' },
+				},
+				{
 					tag: 'script',
 					content:
 						"if(!localStorage.getItem('starlight-theme')){try{localStorage.setItem('starlight-theme','dark')}catch(e){}document.documentElement.dataset.theme='dark';document.documentElement.style.colorScheme='dark'}",

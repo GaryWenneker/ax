@@ -15,6 +15,14 @@ Approved by the user request to implement the attached plan. Tier 2. Isolation: 
 9. When a reply is stubbed, the savings log records the stub size as `response_tokens_est` and adds `removed_tokens` to `tokens_saved_est` for savings-eligible tools.
 10. When the cache is enabled, `ax_preflight` injects one line telling the agent that oversized replies are recoverable with `ax_expand`.
 
+## Revision 2026-09-23: graph reads keep their head
+
+Agents fell back to Read/Grep when an `ax_explore` answer became a bare stub (and in clients whose tool list lacked `ax_expand`). Behaviors 1–2 and 4 are revised:
+
+11. Graph read tools (`ax_explore`, `ax_node`, `ax_search`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`) use threshold `max(AX_CONTEXT_CACHE_TOKENS, AX_GRAPH_INLINE_TOKENS)`; `AX_GRAPH_INLINE_TOKENS` defaults to 12000.
+12. Above it, the model sees a verbatim prefix of whole lines (a char prefix when the first line alone is too long) plus an `[ax context cache]` footer. The whole text is at most the threshold in tokens. The footer names the id, `shown_lines`, the exact `ax_expand` offset of the next line, `ax_node`, and says not to Read or Grep the files.
+13. `ax_rules` and `ax_skill` (policy delivery) are never stubbed, alongside behavior 4's list.
+
 ## Must not
 
 - Do not route provider API traffic through a proxy.

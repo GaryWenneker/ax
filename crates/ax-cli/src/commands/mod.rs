@@ -43,6 +43,7 @@ pub mod policy;
 pub mod policy_share;
 pub mod share;
 pub mod prompt_hook;
+pub mod read_guard;
 pub mod session_hook;
 pub mod stop_hook;
 pub mod unlock;

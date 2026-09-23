@@ -7,7 +7,12 @@ use ax_installer::report::{FileAction, InstallSummary, TargetReport};
 
 pub fn intro(version: &str) {
     let g = clack_glyphs();
-    println!("{} ax v{version}", g.bar_start.dimmed());
+    println!(
+        "{} {} {}",
+        g.bar_start.cyan(),
+        "ax".cyan().bold(),
+        format!("v{version}").dimmed()
+    );
 }
 
 pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Option<&str>) {
@@ -27,15 +32,11 @@ pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Opt
             if file.action == FileAction::Skipped {
                 continue;
             }
-            log_success(
-                &g,
-                &format!("{}: {}", report.display_name, file.action.verb()),
-                &tildify(&file.path),
-            );
+            log_file(&g, &report.display_name, file.action.verb(), &tildify(&file.path));
             any = true;
         }
         for note in &report.notes {
-            log_info(&g, &format!("{}: {}", report.display_name, note));
+            log_note(&g, &report.display_name, note);
             any = true;
         }
     }
@@ -44,10 +45,16 @@ pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Opt
         log_info(&g, "No agent configs were changed.");
     }
 
-    let next_body = format!(
-        "cd {project_hint}\nax init              # build a project's graph (one time; auto-syncs after)"
-    );
-    clack_note(&g, "Next: index a project", &next_body);
+    let next_lines = vec![
+        format!("{} {}", "cd".green().bold(), project_hint.magenta()),
+        format!(
+            "{} {}  {}",
+            "ax".cyan().bold(),
+            "init".green().bold(),
+            "# build a project's graph (one time; auto-syncs after)".dimmed()
+        ),
+    ];
+    clack_note(&g, "Next: index a project", &next_lines);
 
     let n = summary.configured_targets().len();
     let outro = if n > 0 {
@@ -63,7 +70,13 @@ pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Opt
 
 pub fn render_uninstall(reports: &[TargetReport], version: &str) {
     let g = clack_glyphs();
-    println!("{} ax v{version} — uninstall", g.bar_start.dimmed());
+    println!(
+        "{} {} {} {}",
+        g.bar_start.cyan(),
+        "ax".cyan().bold(),
+        format!("v{version}").dimmed(),
+        "uninstall".yellow().bold()
+    );
     let mut any = false;
 
     for report in reports {
@@ -73,23 +86,16 @@ pub fn render_uninstall(reports: &[TargetReport], version: &str) {
             .filter(|f| matches!(f.action, FileAction::Updated | FileAction::Created))
             .collect();
         if removed.is_empty() {
-            log_info(
-                &g,
-                &format!("{}: not configured — nothing to remove", report.display_name),
-            );
+            log_note(&g, &report.display_name, "not configured — nothing to remove");
             any = true;
         } else {
             for file in removed {
-                log_success(
-                    &g,
-                    &format!("{}: Removed", report.display_name),
-                    &tildify(&file.path),
-                );
+                log_file(&g, &report.display_name, "Removed", &tildify(&file.path));
                 any = true;
             }
         }
         for note in &report.notes {
-            log_info(&g, &format!("{}: {}", report.display_name, note));
+            log_note(&g, &report.display_name, note);
             any = true;
         }
     }
@@ -102,57 +108,103 @@ pub fn render_uninstall(reports: &[TargetReport], version: &str) {
 }
 
 fn log_bar(g: &ClackGlyphs) {
-    println!("{}", g.bar.dimmed());
+    println!("{}", g.bar.bright_black());
 }
 
-fn log_success(g: &ClackGlyphs, head: &str, detail: &str) {
+fn paint_name(name: &str) -> String {
+    name.cyan().bold().to_string()
+}
+
+fn paint_verb(verb: &str) -> String {
+    match verb {
+        "Created" => verb.green().bold().to_string(),
+        "Updated" => verb.yellow().bold().to_string(),
+        "Removed" => verb.red().bold().to_string(),
+        "Unchanged" => verb.green().to_string(),
+        "Skipped" => verb.bright_black().to_string(),
+        _ => verb.white().to_string(),
+    }
+}
+
+fn paint_path(path: &str) -> String {
+    path.magenta().to_string()
+}
+
+fn log_file(g: &ClackGlyphs, name: &str, verb: &str, path: &str) {
     log_bar(g);
-    print!("{} {} ", g.success.green(), head);
-    println!("{}", detail.dimmed());
+    let mark = match verb {
+        "Updated" => g.success.yellow().to_string(),
+        "Removed" => g.success.red().to_string(),
+        "Skipped" => g.success.bright_black().to_string(),
+        _ => g.success.green().to_string(),
+    };
+    println!(
+        "{} {} {} {}",
+        mark,
+        paint_name(name),
+        paint_verb(verb),
+        paint_path(path)
+    );
+}
+
+fn log_note(g: &ClackGlyphs, name: &str, message: &str) {
+    log_bar(g);
+    println!(
+        "{} {} {}",
+        g.info.cyan(),
+        paint_name(name),
+        message.yellow()
+    );
 }
 
 fn log_info(g: &ClackGlyphs, message: &str) {
     log_bar(g);
-    println!("{} {message}", g.info.blue());
+    println!("{} {}", g.info.cyan(), message.white());
 }
 
 fn log_warn(g: &ClackGlyphs, message: &str) {
     log_bar(g);
-    println!("{} {message}", g.warn.yellow());
+    println!("{} {}", g.warn.yellow().bold(), message.yellow());
 }
 
-fn clack_note(g: &ClackGlyphs, title: &str, body: &str) {
+fn clack_note(g: &ClackGlyphs, title: &str, lines: &[String]) {
     log_bar(g);
-    let lines: Vec<&str> = body.lines().collect();
-    let max_w = lines
+    let title_painted = title.cyan().bold().to_string();
+    let widths: Vec<usize> = lines.iter().map(|line| console::measure_text_width(line)).collect();
+    let max_w = widths
         .iter()
-        .map(|l| l.len())
+        .copied()
         .max()
         .unwrap_or(0)
-        .max(title.len());
+        .max(console::measure_text_width(&title_painted));
     let inner = max_w + 2;
-    let title_pad = inner.saturating_sub(title.len() + 1);
-    print!("{} {} ", g.note_mark.green(), title);
-    print!("{}", g.bar_h.repeat(title_pad).dimmed());
-    println!("{}", g.corner_tr.dimmed());
-    for line in lines {
-        let pad = inner.saturating_sub(line.len());
+    let title_pad = inner.saturating_sub(console::measure_text_width(&title_painted) + 1);
+    print!("{} {} ", g.note_mark.cyan(), title_painted);
+    print!("{}", g.bar_h.repeat(title_pad).cyan());
+    println!("{}", g.corner_tr.cyan());
+    for (line, width) in lines.iter().zip(widths) {
+        let pad = inner.saturating_sub(width);
         println!(
             "{} {}{} {}",
-            g.bar.dimmed(),
-            line.dimmed(),
+            g.bar.cyan(),
+            line,
             " ".repeat(pad),
-            g.bar.dimmed()
+            g.bar.cyan()
         );
     }
-    print!("{}", g.connect_left.dimmed());
-    print!("{}", g.bar_h.repeat(inner + 2).dimmed());
-    println!("{}", g.corner_br.dimmed());
+    print!("{}", g.connect_left.cyan());
+    print!("{}", g.bar_h.repeat(inner + 2).cyan());
+    println!("{}", g.corner_br.cyan());
 }
 
 fn clack_outro(g: &ClackGlyphs, message: &str) {
     log_bar(g);
-    println!("{} {message}", g.bar_end.dimmed());
+    let painted = if let Some(rest) = message.strip_prefix("Done!") {
+        format!("{}{}", "Done!".green().bold(), rest.white())
+    } else {
+        message.green().bold().to_string()
+    };
+    println!("{} {painted}", g.bar_end.green());
     println!();
 }
 

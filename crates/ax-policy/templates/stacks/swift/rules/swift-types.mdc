@@ -1,6 +1,6 @@
 ---
 id: swift-types
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["swift", "struct", "class"]

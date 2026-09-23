@@ -419,6 +419,13 @@ enum Commands {
     /// Claude Stop/SubagentStop hook (hidden; reads hook JSON on stdin, may block via decision JSON)
     #[command(hide = true, name = "stop-hook")]
     StopHook,
+    /// Pre-tool read/search guard for agent IDEs (hidden; reads hook JSON on stdin)
+    #[command(hide = true, name = "read-guard")]
+    ReadGuard {
+        /// Hook dialect: cursor, claude (also VS Code), gemini, windsurf, codex
+        #[arg(long)]
+        ide: String,
+    },
     /// Hidden liveness watchdog child (spawned by ax MCP/daemon)
     #[command(hide = true, name = "watchdog-child")]
     WatchdogChild {
@@ -725,6 +732,14 @@ enum PolicyCommands {
     /// Import .mdc / SKILL.md from disk into database (merge; keeps DB-only rows)
     Import {
         path: Option<String>,
+    },
+    /// Remove project copies of rules/skills that global.db already holds (files stay on disk)
+    Dedup {
+        path: Option<String>,
+        #[arg(long, help = "Report what would change without writing")]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// Pull shared policy rules/skills from a git repository URL
     Pull {
@@ -1142,7 +1157,7 @@ fn run_desktop_on_os_main_thread() {
 
     if let Err(e) = result {
         if !e.is_empty() {
-            eprintln!("{e}");
+            eprintln!("{}", ui::err_line(&e));
         }
         std::process::exit(1);
     }
@@ -1391,6 +1406,9 @@ async fn async_main() {
             PolicyCommands::Match { prompt, path, file, json } => {
                 commands::policy::run_match(path, prompt, file, json).await
             }
+            PolicyCommands::Dedup { path, dry_run, json } => {
+                commands::policy::run_dedup(path, dry_run, json).await
+            }
             PolicyCommands::Rules { path, json } => commands::policy::run_rules(path, json).await,
             PolicyCommands::Skills { path, json } => commands::policy::run_skills(path, json).await,
             PolicyCommands::Skill { name, path } => commands::policy::run_skill(path, name).await,
@@ -1535,6 +1553,7 @@ async fn async_main() {
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::SessionHook) => commands::session_hook::run().await,
         Some(Commands::StopHook) => commands::stop_hook::run().await,
+        Some(Commands::ReadGuard { ide }) => commands::read_guard::run(&ide).await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
             ax_mcp::run_watchdog_child(parent_pid, timeout_ms);
             Ok(())
@@ -1644,6 +1663,7 @@ fn should_notify_update(cmd: &Option<Commands>) -> bool {
         |         Some(Commands::PromptHook)
         | Some(Commands::SessionHook)
         | Some(Commands::StopHook)
+        | Some(Commands::ReadGuard { .. })
         | Some(Commands::WatchdogChild { .. })
         | Some(Commands::UpgradeApply { .. })
         | Some(Commands::Upgrade { .. })
@@ -1710,6 +1730,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::PromptHook) => None,
         Some(Commands::SessionHook) => None,
         Some(Commands::StopHook) => None,
+        Some(Commands::ReadGuard { .. }) => None,
         Some(Commands::WatchdogChild { .. }) => None,
         Some(Commands::UpgradeApply { .. }) => None,
         Some(Commands::Serve { .. }) => Some("serve".into()),

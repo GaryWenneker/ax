@@ -1,6 +1,6 @@
 ---
 id: dotnet-ef
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["dotnet", "ef", "entity framework"]

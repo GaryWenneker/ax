@@ -47,6 +47,8 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Explore before Grep/Read:** For structural code questions, call `ax_explore` (or graph tools) before broad Grep/Read.
 
+**Graph answers are source:** `ax_explore` and `ax_node` return numbered source from the index; treat it as already read. `ax_node` returns a symbol's full source plus direct callers and callees, so use it instead of Read. A snippet marked truncated → `ax_node` on that symbol. A reply ending in an `[ax context cache]` footer → `ax_expand` with its id. Where the graph covers the code, do not Read or Grep the file to fill the gap. Read is for files the graph does not index (config, docs, generated output) or a file right before you edit it.
+
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
@@ -772,6 +774,35 @@ pub fn sync_ide_bootstrap(project_root: &Path, fix: bool) -> std::io::Result<Syn
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// Every bootstrap an agent may read must say how to fill a gap in a graph
+    /// answer without falling back to Read/Grep on indexed source.
+    #[test]
+    fn every_bootstrap_steers_gaps_back_to_the_graph() {
+        let surfaces = [
+            ("cursor", CURSOR_RULE_BODY),
+            ("claude", CLAUDE_RULE_BODY),
+            ("continue", CONTINUE_RULE_BODY),
+            ("cline rules", CLINE_RULE_BODY),
+            ("cline block", CLINE_INSTRUCTIONS_BLOCK),
+            ("agents", AGENTS_INSTRUCTIONS_BLOCK),
+            (
+                "explore-before-grep",
+                include_str!("../templates/rules/explore-before-grep.mdc"),
+            ),
+        ];
+        for (name, body) in surfaces {
+            assert!(
+                body.contains("`ax_node`") && body.contains("full source"),
+                "{name}: must say ax_node returns full source"
+            );
+            assert!(body.contains("`ax_expand`"), "{name}: must name ax_expand for cut replies");
+            assert!(
+                body.contains("do not Read or Grep"),
+                "{name}: must forbid re-reading indexed source"
+            );
+        }
+    }
 
     #[test]
     fn creates_mcp_callmcp_shape_rule_on_init() {

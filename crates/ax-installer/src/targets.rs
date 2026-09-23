@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::report::{FileAction, InstallSummary, TargetReport};
+use crate::hooks::{self, GuardIde};
 use crate::cli_catalog::{catalog_entry, detect_cli_available};
 use crate::cli_install::cli_installable;
 
@@ -497,11 +498,29 @@ fn remove_mcp_servers(path: &Path) -> Result<Option<FileAction>, String> {
     Ok(Some(write_json_action(path, &config)?))
 }
 
+/// Register `ax read-guard` (see `hooks`). A hooks file we cannot parse is
+/// reported and left alone instead of failing the whole target.
+fn install_read_guard(report: &mut TargetReport, path: PathBuf, ide: GuardIde) {
+    match hooks::install_file(&path, ide, &ax_bin()) {
+        Ok(action) => report.push_file(path, action),
+        Err(e) => report.note(format!("Read-guard hook not installed: {e}")),
+    }
+}
+
+fn uninstall_read_guard(report: &mut TargetReport, path: PathBuf) {
+    match hooks::uninstall_file(&path) {
+        Ok(Some(action)) => report.push_file(path, action),
+        Ok(None) => {}
+        Err(e) => report.note(format!("Read-guard hook not removed: {e}")),
+    }
+}
+
 fn install_cursor_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("cursor", display_name("cursor"));
     let path = home_dir()?.join(".cursor").join("mcp.json");
     let action = upsert_mcp_servers(&path, "cursor")?;
     report.push_file(path, action);
+    install_read_guard(&mut report, home_dir()?.join(".cursor").join("hooks.json"), GuardIde::Cursor);
     report.note("Restart Cursor for MCP changes to take effect.");
     Ok(report)
 }
@@ -512,6 +531,7 @@ fn uninstall_cursor_mcp() -> Result<TargetReport, String> {
     if let Some(action) = remove_mcp_servers(&path)? {
         report.push_file(path, action);
     }
+    uninstall_read_guard(&mut report, home_dir()?.join(".cursor").join("hooks.json"));
     Ok(report)
 }
 
@@ -534,6 +554,7 @@ fn install_claude_mcp(project_root: &Path) -> Result<TargetReport, String> {
     if let Some((path, action)) = install_claude_hook(&settings, "SubagentStop", "stop-hook")? {
         report.push_file(path, action);
     }
+    install_read_guard(&mut report, settings, GuardIde::Claude);
     Ok(report)
 }
 
@@ -550,8 +571,9 @@ fn uninstall_claude_mcp() -> Result<TargetReport, String> {
     touched |= remove_claude_hook(&settings, "Stop", "stop-hook")?;
     touched |= remove_claude_hook(&settings, "SubagentStop", "stop-hook")?;
     if touched {
-        report.push_file(settings, FileAction::Updated);
+        report.push_file(settings.clone(), FileAction::Updated);
     }
+    uninstall_read_guard(&mut report, settings);
     Ok(report)
 }
 
@@ -637,11 +659,14 @@ fn install_codex_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let out = replace_toml_section(&content, "[mcp_servers.ax]", &block);
     let action = write_text_action(&path, &out)?;
     report.push_file(path, action);
+    install_read_guard(&mut report, dir.join("hooks.json"), GuardIde::Codex);
+    report.note("Codex skips new hooks until trusted: run /hooks once in Codex to approve the ax read-guard hook.");
     Ok(report)
 }
 
 fn uninstall_codex_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("codex", display_name("codex"));
+    uninstall_read_guard(&mut report, home_dir()?.join(".codex").join("hooks.json"));
     let path = home_dir()?.join(".codex").join("config.toml");
     if !path.exists() || !fs::read_to_string(&path).unwrap_or_default().contains("[mcp_servers.ax]") {
         return Ok(report);
@@ -765,6 +790,7 @@ fn install_gemini_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("settings.json");
     report.push_file(path.clone(), upsert_mcp_servers(&path, "gemini")?);
+    install_read_guard(&mut report, path, GuardIde::Gemini);
     report.note("Restart Gemini CLI for MCP changes to take effect.");
     Ok(report)
 }
@@ -773,8 +799,9 @@ fn uninstall_gemini_mcp() -> Result<TargetReport, String> {
     let mut report = TargetReport::new("gemini", display_name("gemini"));
     let path = home_dir()?.join(".gemini").join("settings.json");
     if let Some(action) = remove_mcp_servers(&path)? {
-        report.push_file(path, action);
+        report.push_file(path.clone(), action);
     }
+    uninstall_read_guard(&mut report, path);
     Ok(report)
 }
 
@@ -909,11 +936,14 @@ fn install_vscode_lineage_mcp(
 }
 
 fn install_vscode_mcp(project_root: &Path) -> Result<TargetReport, String> {
-    install_vscode_lineage_mcp(
+    let mut report = install_vscode_lineage_mcp(
         "vscode",
         project_root,
         "Reload the VS Code window and set Copilot Chat to Agent mode for MCP tools.",
-    )
+    )?;
+    // Copilot agent hooks are read from Claude's user settings (same PreToolUse format).
+    install_read_guard(&mut report, home_dir()?.join(".claude").join("settings.json"), GuardIde::Claude);
+    Ok(report)
 }
 
 fn install_takumi_mcp(project_root: &Path) -> Result<TargetReport, String> {
@@ -1037,8 +1067,13 @@ fn install_windsurf_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("windsurf", display_name("windsurf"));
     let path = windsurf_mcp_path()?;
     report.push_file(path.clone(), upsert_mcp_servers(&path, "windsurf")?);
+    install_read_guard(&mut report, windsurf_hooks_path()?, GuardIde::Windsurf);
     report.note("Refresh the MCP server list in the Cascade panel (or restart Windsurf).");
     Ok(report)
+}
+
+fn windsurf_hooks_path() -> Result<PathBuf, String> {
+    Ok(windsurf_config_dir().ok_or("no home dir")?.join("hooks.json"))
 }
 
 fn uninstall_windsurf_mcp() -> Result<TargetReport, String> {
@@ -1047,6 +1082,7 @@ fn uninstall_windsurf_mcp() -> Result<TargetReport, String> {
     if let Some(action) = remove_mcp_servers(&path)? {
         report.push_file(path, action);
     }
+    uninstall_read_guard(&mut report, windsurf_hooks_path()?);
     Ok(report)
 }
 

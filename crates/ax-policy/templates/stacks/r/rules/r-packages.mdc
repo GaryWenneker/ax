@@ -1,6 +1,6 @@
 ---
 id: r-packages
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["r", "namespace"]

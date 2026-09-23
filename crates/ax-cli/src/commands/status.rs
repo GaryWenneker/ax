@@ -1,5 +1,5 @@
 use crate::commands::resolve_path;
-use crate::ui::SpinnerGuard;
+use crate::ui::{dim, info_line, kv_line, ok_line, warn_line, SpinnerGuard};
 
 pub async fn run(path: Option<String>, json: bool) -> Result<(), String> {
     let root = resolve_path(path);
@@ -31,7 +31,33 @@ pub async fn run(path: Option<String>, json: bool) -> Result<(), String> {
                 .unwrap_or_default()
         );
     } else {
-        print!("{}", ax_core::stats_format::format_status_text(&stats, last, &pending));
+        print_colored_status(&ax_core::stats_format::format_status_text(
+            &stats, last, &pending,
+        ));
     }
     Ok(())
+}
+
+fn print_colored_status(text: &str) {
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("## ") {
+            println!("{}", info_line(rest));
+        } else if let Some(rest) = line.strip_prefix("### ") {
+            println!("{}", warn_line(rest));
+        } else if line.starts_with("- ") {
+            println!("  {}", dim(&line[2..]));
+        } else if line.contains("up to date") {
+            println!("{}", ok_line(line));
+        } else if let Some((label, value)) = line.split_once(':') {
+            if !label.contains(' ') || label.split(' ').count() <= 4 {
+                println!("{}", kv_line(label, value.trim()));
+                continue;
+            }
+            println!("{line}");
+        } else if line.is_empty() {
+            println!();
+        } else {
+            println!("{line}");
+        }
+    }
 }

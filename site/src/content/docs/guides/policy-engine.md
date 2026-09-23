@@ -19,12 +19,12 @@ ax policy storage status   # show effective files vs database mode
 ax web --open              # edit rules/skills in the browser
 ```
 
-On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy. Existing files are left alone **unless** the template gained `alwaysApply: true` or a `require-skill` guard the on-disk copy does not have yet (then ax rewrites from the template):
+On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy. Existing files are left alone **unless** the template has a higher `seedVersion` than the on-disk copy, or gained `alwaysApply: true` or a `require-skill` guard the copy does not have yet. In those cases ax rewrites the file from the template, including local edits:
 
 | Location | Content |
 |---|---|
-| `~/.ax/global_policy/rules/` | `old-coder-mandatory` (CRITICAL, **alwaysApply**, `guard: require-skill: "old-coder"`) — agents must follow the old-coder workflow for implementation work |
-| `~/.ax/global_policy/skills/` | `old-coder` (**alwaysApply**, injects on every turn including empty prompts), `old-coder-api` (matched on API triggers; load full body via `ax_skill`) |
+| `~/.ax/global_policy/rules/` | `old-coder-mandatory` (CRITICAL, **alwaysApply**, `guard: require-skill: "old-coder"`) — agents must follow the old-coder workflow for implementation work, including the review loop before EVIDENCE |
+| `~/.ax/global_policy/skills/` | `old-coder` (**alwaysApply**, injects on every turn including empty prompts), `old-coder-api` (matched on API triggers; load full body via `ax_skill`), `review-loop` (code review loop, see below), `pr-review-comments` (review of a colleague's pull request, see below) |
 | `~/.cursor/skills/` | Same skill bundles for Cursor agent discovery |
 
 **Enforcement model:** Rules and skills with `alwaysApply: true` are injected on **every** `ax_preflight` turn (including empty or one-word prompts). Always-apply inject is never hard-truncated. `ax_guard` blocks Write/Delete when a CRITICAL rule declares `guard: require-skill: "old-coder"` unless that skill is indexed, approved, enabled, and `alwaysApply`. Policy files under `.ax/policy/` and `crates/ax-policy/templates/` are exempt so seed/index can repair a missing skill.
@@ -32,6 +32,21 @@ On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy. Existi
 Every `ax init` re-imports all policy layers (including global) into `ax.db`. After install alone, run `ax init` or `ax policy index --force` in any project once.
 
 Source: [AmazingAng/old-coder](https://github.com/AmazingAng/old-coder) (MIT). Project init also copies rollout skills into `<project>/.cursor/skills/`, including `dotnet-code-review` for C# and .NET pull-request review. That skill is also stored in `~/.ax/global.db` so every project can load it.
+
+### Review loop
+
+`old-coder-mandatory` adds a **review loop** between the gauntlet and EVIDENCE: SPEC → RED → GREEN → REFACTOR → GAUNTLET → REVIEW LOOP → EVIDENCE. The agent loads it with `ax_skill({ name: "review-loop" })`. Each round does four things:
+
+1. **Skill check.** It works out the stacks from the diff and `ax.json` `policy.stacks`, then loads each stack's review skill (for example `rust-review`) through `ax_skill`. Each skill is recorded as `usable`, `missing`, or `empty`.
+2. **Stack review.** It reviews the diff against every usable skill plus a generic checklist. Findings get an id (`R<round>-<n>`), a severity, a `file:line`, and the skill section they come from.
+3. **Process findings.** Behavioral findings start with a RED test. The user decides any disputed finding.
+4. **Repeat.** It runs a new round until a round has zero findings. There is no round cap.
+
+EVIDENCE includes a table of review rounds. `review-loop` is also stored as a company skill in `~/.ax/global.db`, so `ax_skill("review-loop")` works in projects that have no local copy. If that store fails, install and init print a note and carry on.
+
+### Reviewing a colleague's pull request
+
+The review loop fixes findings, which is right for your own change but wrong for someone else's pull request. For a colleague's PR, the agent loads `ax_skill({ name: "pr-review-comments" })` instead. It runs the same skill check and stack review, but it does not change any code. Every finding becomes a draft comment, and the agent asks you one question per comment (`AskQuestion` in Cursor, `AskUserQuestion` in Claude Code). Each question offers one or more proposed texts (`Post: …`), `Do not post`, and free text for your own wording. The agent posts only the comments you chose, then lists what it posted and what it skipped. `pr-review-comments` is seeded next to `review-loop` and stored in `~/.ax/global.db` the same way.
 
 Upgrade to **ax v2.1.2+** and restart your agent so MCP exposes `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`, and `ax_policy_capture`.
 
@@ -138,6 +153,26 @@ Merge order on index: company → workspace → project → inactive overlay →
 
 **Agent lookup (`ax_preflight`, `ax_skill`, `ax policy skill`):** merge the current project `ax.db` with `~/.ax/global.db` (`global_policy_skills`). A **global** row with the same name wins.
 
+### One copy per name (dedup)
+
+A rule or skill stored at the global level is not kept again in a project `ax.db`. Rows in `global.db` have a `level`: `global` rows are the machine-wide copies agents load, and `mirror` rows are the per-project copies written by `ax global sync`. Sync never writes a mirror for a name that already has a global row, and only global rows are loaded or counted.
+
+The cleanup compares each duplicate with the global copy:
+
+| Case | Result |
+|---|---|
+| Same text as the global copy (surrounding whitespace and `\r\n` vs `\n` ignored) | The project row is removed |
+| Global copy is longer (trimmed text, line endings ignored) | The project row is removed |
+| Project copy is longer | The project copy replaces the global body as a new version, then the project row is removed |
+| Equal length, different text | The copy changed most recently wins (file time for the project copy, last global revision for the global copy) |
+| Several global rows with one name | The winner by the same rules stays; the others are removed |
+
+Every change is versioned. Global bodies keep up to 20 versions in `global_policy_revisions` (sources `save`, `dedup-promote`, `dedup-removed`, `delete`, and `baseline` for the body a row had before versioning existed); a removed project row gets a project revision with source `dedup`, so `ax policy restore` can bring it back. Files on disk are never edited or deleted: the import skips names that exist at the global level instead.
+
+The cleanup runs after `ax sync`, `ax index` and the watch sync, after every policy index (`ax init`, `ax policy index`, MCP `ax_policy_index`), after `ax global sync`, at the end of `ax install`, and in `ax web` when a workspace opens and every 10 minutes (not in read-only mode). Run it by hand with `ax policy dedup [--dry-run] [--json]`. Without a `~/.ax/global.db` it does nothing. A run that stops on an error (an unreadable row, for example) changes nothing further: the CLI exits non-zero, and `ax web` and the sync hooks log a warning. `AX_GLOBAL_DB` points all of this at another global database.
+
+`ax init` does not write the skills stored in `global.db` (`review-loop`, `pr-review-comments`) into a project's `.agents/skills/`; they reach every project from the global level.
+
 ### Database migration scan (v2.1.2+)
 
 When switching to **database** with `--migrate`, ax does not import only `.ax/policy/`. It **recursively scans the project** for:
@@ -243,6 +278,10 @@ Set `AX_NO_POLICY=1` to skip prompt-hook injection. Set `AX_POLICY_MAX_CHARS` to
 | `ax_context` | Code graph | Task-oriented markdown from the graph |
 
 **`ax_context` is not policy.** Do not read `.ax/policy/` skill files when MCP policy tools work.
+
+### Enforcing graph-first reads
+
+The `explore-before-grep` rule asks agents to use the graph. The `ax read-guard` hook enforces it in every IDE with a blocking tool hook: Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. `ax install` adds it. The first whole-file read of an indexed source file, or the first search for a symbol the graph knows, is denied with the matching `ax_node` / `ax_callers` calls. Repeating the same call is allowed, so an agent is never blocked from the raw file. Turn it off with `AX_READ_GUARD=off`. See [`ax read-guard`](/reference/cli/#ax-read-guard).
 
 ---
 
@@ -402,11 +441,47 @@ Save the choice in project `ax.json`:
 }
 ```
 
-`ax init` asks which stacks to install on every run when stdin is a terminal, including a second init. Press Enter to keep the installed set, or to accept the detection when nothing is installed yet. Type ids separated by spaces, or `none` for core policy only. A non-interactive run keeps the saved `policy.stacks` and does not block.
+`ax init` asks which stacks to install on every run when stdin is a terminal, including a second init. The list is a colored checkbox menu, grouped into Platforms, Web, PHP, CMS, Systems, and Languages. Up and down arrows (or j and k) move through the stacks, Space toggles one, and Enter confirms. Installed stacks and newly detected stacks start checked. Clear every box for core policy only. If the menu cannot open, type ids separated by spaces, or `none`. A non-interactive run keeps the saved `policy.stacks` and does not block.
 
 ![Command Center settings with the rules and skills folder](/screenshots/cc-settings.png) The command writes `.ax/stacks.lock.json` (template version and content hash per file). Re-apply skips a file you edited unless you pass `--force`. `ax policy stack status` reports catalog drift; `ax policy stack upgrade` refreshes files that still match the lock.
 
 Language stacks follow the languages ax indexes: `rust`, `python`, `go`, `typescript`, `javascript`, `c`, `cpp`, `ruby`, `swift`, `kotlin`, `dart`, `svelte`, `astro`, `scala`, `lua`, `luau`, `objc`, `r`, and `pascal`, in addition to `dotnet` (C#), `java`, and `php`. C# stays on the `dotnet` stack. Config formats ax also parses (YAML, XML, properties) are not stacks.
+
+The `dotnet` stack (v1.2.0) ships the `dotnet-code-review` skill. It has twelve sections, and each rule appears once:
+
+1. naming and casing (Framework Design Guidelines)
+2. layout and syntax
+3. design (SOLID, DDD, CQRS)
+4. dependency injection lifetimes
+5. CLR and memory
+6. async and concurrency
+7. EF Core
+8. ASP.NET Core
+9. security
+10. observability and errors
+11. resilience and testability
+12. a fixed output format with a verdict, a score, and a severity per finding
+
+The `nextjs` stack (v1.2.0, which pulls in `react`) ships the `nextjs-review` skill. It also has twelve sections:
+
+1. structure and naming
+2. TypeScript
+3. server and client components
+4. Server Actions
+5. data fetching and caching
+6. client state and React 19
+7. performance and assets
+8. styling and UI (only when the repo already uses Tailwind or a headless UI library)
+9. security
+10. errors and observability
+11. testing
+12. the same output format
+
+It does not repeat rules that are already in `react-review`.
+
+Every other stack (v1.2.0) ships a review skill of the same depth: 10 to 12 stack-specific review sections with 73 to 103 concrete rules, and the same output format. Each rule appears once. Some skills build on another skill: `laravel` and `drupal` build on `php-review`, `sitecore` and `optimizely` on `dotnet-code-review`, `typescript` on `javascript-review`, `luau` on `lua-review`, and `cpp` and `objc` on `c-review`. Such a skill names its base, tells the agent to load it too, and repeats none of its rules. Where the two conflict, the building skill's rule wins.
+
+`ax policy stack upgrade` (or the next `ax init`) replaces an older copy you have not edited.
 
 Install writes project files under `.ax/policy/`, then **imports into `ax.db`** when `policy.storage` is `database` (so MCP/`ax policy skill` show the new bodies without a separate `ax policy index --force`).
 
@@ -579,6 +654,7 @@ Run `ax policy sync` to verify managed policy files and warn about duplicate `.c
 | `AX_NO_POLICY_CAPTURE=1` | Skip directive capture hints in prompt-hook |
 | `AX_POLICY_MAX_CHARS` | Cap **contextual** policy inject (default 16000). Always-apply rules **and** always-apply skills are never hard-truncated. |
 | `AX_WEB_READONLY` | Disable saves in ax web |
+| `AX_READ_GUARD=off` | Disable the read-guard hook |
 
 ---
 

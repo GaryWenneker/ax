@@ -1,6 +1,6 @@
 ---
 id: lua-errors
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["lua", "error", "pcall"]

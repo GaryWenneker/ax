@@ -13,6 +13,8 @@ Call **`ax_preflight`** exactly once per turn **before all other work**. This is
 
 **Explore before Grep/Read (CRITICAL):** For structural code questions, call **`ax_explore`** (or graph tools) **before** broad `Grep` / `Read`. Skipping this burns tokens and lowers MCP quality (`ExploreBeforeGrep`).
 
+**Graph answers are source:** `ax_explore` and `ax_node` return numbered source from the index; treat it as already read. `ax_node` returns a symbol's full source plus direct callers and callees, so use it instead of Read. A snippet marked truncated → `ax_node` on that symbol. A reply ending in an `[ax context cache]` footer → `ax_expand` with its id. Where the graph covers the code, do not Read or Grep the file to fill the gap. Read is for files the graph does not index (config, docs, generated output) or a file right before you edit it.
+
 **Directive capture:** When the user gives durable rules (`je moet`, `always`, `never`, `@rule`), call **`ax_policy_capture`** with `action: "propose"`, ask each question from `questions[]`, and save only after explicit confirmation (stored in ax.db).
 
 ## Capability discovery
@@ -38,7 +40,8 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Quality gate / CI evaluate | `ax_ship` (`mode`: `evaluate` \| `ci`) |
 | Refresh policy from `.agents/` | `ax_policy_index` |
 | Store / search memories | `ax_remember` / `ax_recall` |
-| File context for a symbol | `ax_node` |
+| Full source of a symbol (instead of Read) | `ax_node` |
+| Rest of a cut reply | `ax_expand` (id from the footer) |
 | Build task context | `ax_context` |
 
 **Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** shell `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index`. Shell CLI is only for DEGRADED mode or ops with no MCP tool.

@@ -1,6 +1,6 @@
 ---
 id: php-security
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["php", "sql", "xss"]

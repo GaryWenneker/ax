@@ -1,6 +1,6 @@
 ---
 id: scala-immutability
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["scala", "val"]

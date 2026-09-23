@@ -1,6 +1,7 @@
 interface Props {
   text: string;
   kind: 'user' | 'assistant' | 'system' | 'tool';
+  running?: boolean;
 }
 
 type Block =
@@ -39,7 +40,7 @@ function renderInline(text: string) {
   });
 }
 
-export default function AgentMessageBody({ text, kind }: Props) {
+export default function AgentMessageBody({ text, kind, running }: Props) {
   if (!text) return null;
 
   if (kind === 'tool') {
@@ -47,7 +48,7 @@ export default function AgentMessageBody({ text, kind }: Props) {
     const header = nl >= 0 ? text.slice(0, nl) : text;
     const body = nl >= 0 ? text.slice(nl + 1).trim() : '';
     return (
-      <div className="agent-tool-msg">
+      <div className={`agent-tool-msg${running ? ' agent-tool-msg--running' : ''}`}>
         <div className="agent-tool-msg-header">{header}</div>
         {body && <pre className="agent-code-block">{body}</pre>}
       </div>

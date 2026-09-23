@@ -1,6 +1,6 @@
 ---
 id: vue-sfc
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["vue", "sfc", "pinia"]

@@ -1,6 +1,6 @@
 ---
 id: javascript-modules
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["javascript", "import", "require"]

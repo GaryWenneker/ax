@@ -1,6 +1,6 @@
 ---
 id: ruby-tests
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["ruby", "rspec", "minitest"]

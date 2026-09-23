@@ -1,6 +1,6 @@
 ---
 id: laravel-validation
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["laravel", "validation", "queue"]

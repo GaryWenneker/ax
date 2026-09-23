@@ -9,6 +9,8 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Explore before Grep/Read:** For structural code questions, call `ax_explore` (or graph tools) before broad Grep/Read.
 
+**Graph answers are source:** `ax_explore` and `ax_node` return numbered source from the index; treat it as already read. `ax_node` returns a symbol's full source plus direct callers and callees, so use it instead of Read. A snippet marked truncated → `ax_node` on that symbol. A reply ending in an `[ax context cache]` footer → `ax_expand` with its id. Where the graph covers the code, do not Read or Grep the file to fill the gap. Read is for files the graph does not index (config, docs, generated output) or a file right before you edit it.
+
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.

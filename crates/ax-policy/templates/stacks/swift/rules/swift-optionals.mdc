@@ -1,6 +1,6 @@
 ---
 id: swift-optionals
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["swift", "optional"]

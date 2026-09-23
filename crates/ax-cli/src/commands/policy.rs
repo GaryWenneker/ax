@@ -1,6 +1,9 @@
 use ax_policy::{GuardOp, ImportMode, MatchInput, PolicyStorage};
 
+use owo_colors::OwoColorize;
+
 use crate::commands::resolve_path;
+use crate::ui::{dim, info_line, ok_line, warn_line};
 
 pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> {
     let root = resolve_path(path);
@@ -273,6 +276,39 @@ pub async fn run_match(
         }
     }
     Ok(())
+}
+
+pub async fn run_dedup(path: Option<String>, dry_run: bool, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let report = ax_core::policy_dedup::run_default(Some((ax.db_pool(), &root)), dry_run).await;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+    } else if report.skipped.is_none() && report.error.is_none() && report.actions.is_empty() {
+        println!("policy dedup: nothing to clean");
+    } else {
+        let prefix = if dry_run { "would: " } else { "" };
+        for line in report.lines().iter().filter(|l| !l.starts_with("error: ")) {
+            println!("{prefix}{line}");
+        }
+    }
+    match report.error {
+        Some(error) => Err(format!("policy dedup: {error}")),
+        None => Ok(()),
+    }
+}
+
+/// Global-level cleanup (duplicate global rows, shadowed mirrors) from sync code.
+pub(crate) fn dedup_global_blocking() -> Result<ax_core::policy_dedup::DedupReport, String> {
+    std::thread::spawn(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())
+            .map(|rt| rt.block_on(ax_core::policy_dedup::run_default(None, false)))
+    })
+    .join()
+    .map_err(|_| "policy dedup thread panicked".to_string())?
 }
 
 pub async fn run_rules(path: Option<String>, json: bool) -> Result<(), String> {
@@ -1266,14 +1302,20 @@ pub fn run_stack_list(json: bool) -> Result<(), String> {
     if json {
         println!("{}", serde_json::to_string_pretty(&stacks).unwrap_or_default());
     } else {
-        println!("Stacks:");
+        println!("{}", info_line("Stacks"));
         for s in &stacks {
             let deps = if s.depends_on.is_empty() {
                 String::new()
             } else {
-                format!(" (depends on {})", s.depends_on.join(", "))
+                format!(" depends on {}", s.depends_on.join(", "))
             };
-            println!("  {} {} — {}{}", s.id, s.version, s.description, deps);
+            println!(
+                "  {} {} {}{}",
+                s.id.cyan().bold(),
+                dim(&s.version),
+                dim(&s.description),
+                dim(&deps)
+            );
         }
     }
     Ok(())
@@ -1289,14 +1331,14 @@ pub fn run_stack_detect(path: Option<String>, json: bool) -> Result<(), String> 
             .collect();
         println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
     } else if found.is_empty() {
-        println!("No stacks detected.");
+        println!("{}", warn_line("No stacks detected."));
     } else {
-        println!("Detected stacks (not installed):");
+        println!("{}", info_line("Detected stacks (not installed)"));
         for d in &found {
-            println!("  {} — {}", d.id, d.reason);
+            println!("  {} {}", d.id.cyan().bold(), dim(&d.reason));
         }
         let ids = found.iter().map(|d| d.id.as_str()).collect::<Vec<_>>().join(" ");
-        println!("Install with: ax policy stack apply {ids}");
+        println!("  {}", dim(format!("Install with: ax policy stack apply {ids}")));
     }
     Ok(())
 }
@@ -1330,7 +1372,7 @@ pub async fn run_stack_apply(
                     .map(|d| d.id.as_str())
                     .collect::<Vec<_>>()
                     .join(" ");
-                println!("Apply detected stacks: {list}? [y/N]");
+                println!("{}", info_line(format!("Apply detected stacks: {list}? [y/N]")));
                 let mut line = String::new();
                 std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
                 if !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
@@ -1347,13 +1389,19 @@ pub async fn run_stack_apply(
     if json {
         println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
     } else {
-        println!("Stacks: {}", report.stacks.join(", "));
         println!(
-            "  created={}  updated={}  unchanged={}  skipped_user_edit={}",
-            report.created.len(),
-            report.updated.len(),
-            report.unchanged.len(),
-            report.skipped_user_edit.len()
+            "{}",
+            ok_line(format!("Stacks: {}", report.stacks.join(", ")))
+        );
+        println!(
+            "  {}",
+            dim(format!(
+                "created={}  updated={}  unchanged={}  skipped_user_edit={}",
+                report.created.len(),
+                report.updated.len(),
+                report.unchanged.len(),
+                report.skipped_user_edit.len()
+            ))
         );
     }
     Ok(())
@@ -1366,7 +1414,10 @@ pub async fn run_stack_remove(path: Option<String>, id: String, json: bool) -> R
     if json {
         println!("{}", serde_json::to_string_pretty(&removed).unwrap_or_default());
     } else {
-        println!("Removed {} file(s) for stack {id}", removed.len());
+        println!(
+            "{}",
+            ok_line(format!("Removed {} file(s) for stack {id}", removed.len()))
+        );
     }
     Ok(())
 }
@@ -1377,18 +1428,26 @@ pub fn run_stack_status(path: Option<String>, json: bool) -> Result<(), String> 
     if json {
         println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
     } else if rows.is_empty() {
-        println!("No stacks installed.");
+        println!("{}", warn_line("No stacks installed."));
     } else {
         for row in &rows {
+            let upgrade = if row.upgrade_available {
+                "upgrade available".yellow().bold().to_string()
+            } else {
+                "current".green().to_string()
+            };
             println!(
-                "{} installed={} catalog={} upgrade={}",
-                row.id,
-                row.installed_version.as_deref().unwrap_or("-"),
-                row.catalog_version,
-                row.upgrade_available
+                "  {} {} {}",
+                row.id.cyan().bold(),
+                dim(format!(
+                    "installed={} catalog={}",
+                    row.installed_version.as_deref().unwrap_or("-"),
+                    row.catalog_version
+                )),
+                upgrade
             );
             for f in &row.drifted_files {
-                println!("  drifted {f}");
+                println!("    {}", warn_line(format!("drifted {f}")));
             }
         }
     }
@@ -1403,11 +1462,14 @@ pub async fn run_stack_upgrade(path: Option<String>, json: bool) -> Result<(), S
         println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
     } else {
         println!(
-            "Upgrade created={} updated={} unchanged={} skipped_user_edit={}",
-            report.created.len(),
-            report.updated.len(),
-            report.unchanged.len(),
-            report.skipped_user_edit.len()
+            "{}",
+            ok_line(format!(
+                "Upgrade created={} updated={} unchanged={} skipped_user_edit={}",
+                report.created.len(),
+                report.updated.len(),
+                report.unchanged.len(),
+                report.skipped_user_edit.len()
+            ))
         );
     }
     Ok(())

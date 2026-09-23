@@ -1,6 +1,6 @@
 ---
 id: dart-null
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["dart", "null"]

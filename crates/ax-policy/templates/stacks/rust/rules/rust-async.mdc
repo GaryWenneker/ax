@@ -1,6 +1,6 @@
 ---
 id: rust-async
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["rust", "tokio", "async"]

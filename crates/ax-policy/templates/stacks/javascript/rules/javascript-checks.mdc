@@ -1,6 +1,6 @@
 ---
 id: javascript-checks
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["javascript", "null", "undefined"]

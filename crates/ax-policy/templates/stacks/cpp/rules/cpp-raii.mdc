@@ -1,6 +1,6 @@
 ---
 id: cpp-raii
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["c++", "raii", "unique_ptr"]

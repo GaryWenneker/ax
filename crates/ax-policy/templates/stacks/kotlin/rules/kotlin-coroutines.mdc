@@ -1,6 +1,6 @@
 ---
 id: kotlin-coroutines
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["kotlin", "coroutine", "suspend"]

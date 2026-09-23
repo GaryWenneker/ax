@@ -82,9 +82,17 @@ pub async fn import_policy_from_files(
         layers
     };
 
+    let global = crate::global_level::load_default().await;
     for layer in &layer_list {
-        let (r, s, mut rule_ids, mut skill_ids) =
-            import_one_policy_dir(pool, project_root, &layer.dir, layer.scope, layer.preserve_item_scope).await?;
+        let (r, s, mut rule_ids, mut skill_ids) = import_one_policy_dir(
+            pool,
+            project_root,
+            &layer.dir,
+            layer.scope,
+            layer.preserve_item_scope,
+            global.as_ref(),
+        )
+        .await?;
         rules_indexed += r;
         skills_indexed += s;
         seen_rules.append(&mut rule_ids);
@@ -113,7 +121,12 @@ async fn import_one_policy_dir(
     policy_dir: &Path,
     scope: crate::types::PolicyScope,
     preserve_item_scope: bool,
+    global: Option<&crate::global_level::GlobalLevel>,
 ) -> Result<(u32, u32, Vec<String>, Vec<String>), AxError> {
+    use crate::global_level::{file_changed_ms, Kind};
+    let shadowed = |kind: Kind, name: &str, body: &str, path: &Path| {
+        global.is_some_and(|g| g.shadows(kind, name, body, file_changed_ms(path)))
+    };
     let mut rules_indexed = 0u32;
     let mut skills_indexed = 0u32;
     let mut seen_rules = Vec::new();
@@ -149,6 +162,9 @@ async fn import_one_policy_dir(
                     continue;
                 }
             };
+            if shadowed(Kind::Rule, &doc.frontmatter.id, &doc.body, path) {
+                continue;
+            }
             if !preserve_item_scope {
                 doc.frontmatter.scope = scope_s.clone();
             }
@@ -194,6 +210,9 @@ async fn import_one_policy_dir(
                     continue;
                 }
             };
+            if shadowed(Kind::Skill, &doc.frontmatter.name, &doc.body, &skill_path) {
+                continue;
+            }
             if !preserve_item_scope {
                 doc.frontmatter.scope = scope_s.clone();
             }
@@ -1227,5 +1246,118 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert!(skills[0].always_apply);
         assert_eq!(skills[0].name, "old-coder");
+    }
+
+    async fn global_db_with(path: &Path, rows: &[(&str, &str, &str, &str)]) {
+        let pool = SqlitePoolOptions::new()
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(path)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        for table in ["global_policy_rules", "global_policy_skills"] {
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (project_id INTEGER NOT NULL, item_id TEXT NOT NULL,
+                    payload TEXT NOT NULL, synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    level TEXT NOT NULL DEFAULT 'global', PRIMARY KEY (project_id, item_id))"
+            ))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for (table, name, body, level) in rows {
+            sqlx::query(&format!(
+                "INSERT INTO {table} (project_id, item_id, payload, level) VALUES (1, ?, ?, ?)"
+            ))
+            .bind(name)
+            .bind(serde_json::json!({ "body": body }).to_string())
+            .bind(level)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool.close().await;
+    }
+
+    fn write_skill(root: &Path, name: &str, body: &str) {
+        let dir = root.join(".agents/skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: d\n---\n\n{body}\n"),
+        )
+        .unwrap();
+    }
+
+    fn write_rule(root: &Path, id: &str, body: &str) {
+        std::fs::create_dir_all(root.join(".agents/rules")).unwrap();
+        std::fs::write(
+            root.join(".agents/rules").join(format!("{id}.mdc")),
+            format!("---\nid: {id}\nlevel: INFO\nalwaysApply: true\n---\n\n{body}\n"),
+        )
+        .unwrap();
+    }
+
+    fn fixture_policy(root: &Path) {
+        write_skill(root, "noti", "short");
+        write_skill(root, "extra", "a project copy that is longer than the global one");
+        write_skill(root, "solo", "only here");
+        write_rule(root, "utf8", "short");
+        write_rule(root, "longrule", "a project rule body longer than the global one");
+    }
+
+    #[tokio::test]
+    async fn import_skips_names_at_the_global_level() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        let global = root.join("global.db");
+        global_db_with(
+            &global,
+            &[
+                ("global_policy_skills", "noti", "the global copy is the longer one", "global"),
+                ("global_policy_skills", "extra", "short global", "global"),
+                ("global_policy_skills", "solo", "a mirror only, never shadows a project copy", "mirror"),
+                ("global_policy_rules", "utf8", "the global rule is the longer one", "global"),
+                ("global_policy_rules", "longrule", "short", "global"),
+            ],
+        )
+        .await;
+        fixture_policy(root);
+        crate::global_level::set_test_global_db(Some(global));
+
+        import_policy_from_files(&pool, root, ImportMode::Replace).await.unwrap();
+
+        let skills: Vec<String> = list_skills(&pool).await.unwrap().into_iter().map(|s| s.name).collect();
+        let rules: Vec<String> = list_rules(&pool).await.unwrap().into_iter().map(|r| r.id).collect();
+        crate::global_level::set_test_global_db(None);
+        assert!(!skills.contains(&"noti".to_string()), "{skills:?}");
+        assert!(skills.contains(&"extra".to_string()), "{skills:?}");
+        assert!(skills.contains(&"solo".to_string()), "{skills:?}");
+        assert!(!rules.contains(&"utf8".to_string()), "{rules:?}");
+        assert!(rules.contains(&"longrule".to_string()), "{rules:?}");
+        assert!(root.join(".agents/skills/noti/SKILL.md").is_file());
+    }
+
+    #[tokio::test]
+    async fn import_without_global_db_keeps_everything() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        fixture_policy(root);
+        crate::global_level::set_test_global_db(Some(root.join("missing-global.db")));
+
+        import_policy_from_files(&pool, root, ImportMode::Replace).await.unwrap();
+
+        let skills: Vec<String> = list_skills(&pool).await.unwrap().into_iter().map(|s| s.name).collect();
+        let rules: Vec<String> = list_rules(&pool).await.unwrap().into_iter().map(|r| r.id).collect();
+        crate::global_level::set_test_global_db(None);
+        for name in ["noti", "extra", "solo"] {
+            assert!(skills.contains(&name.to_string()), "{name} missing: {skills:?}");
+        }
+        for id in ["utf8", "longrule"] {
+            assert!(rules.contains(&id.to_string()), "{id} missing: {rules:?}");
+        }
+        assert!(!root.join("missing-global.db").exists());
     }
 }

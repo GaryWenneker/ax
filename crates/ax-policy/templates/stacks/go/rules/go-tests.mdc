@@ -1,6 +1,6 @@
 ---
 id: go-tests
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["go", "go test"]

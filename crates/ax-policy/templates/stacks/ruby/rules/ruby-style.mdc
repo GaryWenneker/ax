@@ -1,6 +1,6 @@
 ---
 id: ruby-style
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["ruby", "gem"]

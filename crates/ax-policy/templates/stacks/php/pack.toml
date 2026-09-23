@@ -1,4 +1,4 @@
 id = "php"
-version = "1.1.0"
+version = "1.2.0"
 description = "PHP type and security rules"
 dependsOn = []

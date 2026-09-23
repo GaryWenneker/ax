@@ -2,6 +2,7 @@
 
 mod project_config;
 pub mod okf;
+pub mod policy_dedup;
 pub mod report;
 pub mod stats_format;
 pub mod workspace;
@@ -203,6 +204,7 @@ impl Ax {
         let _ = self.file_lock.release();
         if result.is_ok() {
             let _ = ax_policy::index_policy(self.db.pool(), &self.project_root, false).await;
+            self.dedup_policy(false).await;
         }
         result
     }
@@ -253,6 +255,7 @@ impl Ax {
         let _ = self.file_lock.release();
         if result.is_ok() {
             let _ = ax_policy::index_policy(self.db.pool(), &self.project_root, false).await;
+            self.dedup_policy(false).await;
         }
         result
     }
@@ -769,7 +772,16 @@ impl Ax {
     }
 
     pub async fn index_policy(&self, force: bool) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {
-        ax_policy::index_policy(self.db.pool(), &self.project_root, force).await
+        let result = ax_policy::index_policy(self.db.pool(), &self.project_root, force).await?;
+        self.dedup_policy(false).await;
+        Ok(result)
+    }
+
+    /// Remove project copies of rules and skills that the global level already holds.
+    pub async fn dedup_policy(&self, dry_run: bool) -> policy_dedup::DedupReport {
+        let report = policy_dedup::run_default(Some((self.db.pool(), &self.project_root)), dry_run).await;
+        report.log();
+        report
     }
 
     pub async fn ensure_policy_ready(&self) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {

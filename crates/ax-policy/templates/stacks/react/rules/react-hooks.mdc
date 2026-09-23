@@ -1,6 +1,6 @@
 ---
 id: react-hooks
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["react", "hooks", "useEffect"]

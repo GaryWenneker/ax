@@ -1,6 +1,6 @@
 ---
 id: luau-modules
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["luau", "require"]

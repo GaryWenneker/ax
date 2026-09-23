@@ -1,6 +1,6 @@
 ---
 id: angular-templates
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["angular", "template", "observable"]

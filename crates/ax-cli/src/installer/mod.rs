@@ -45,6 +45,20 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
             );
         }
     }
+    match crate::commands::init::store_seeded_skills_in_global_db_blocking() {
+        Ok(names) => eprintln!("Stored {} in ~/.ax/global.db", names.join(", ")),
+        Err(e) => eprintln!("Note: seeded skills not stored in ~/.ax/global.db: {e}"),
+    }
+    match crate::commands::policy::dedup_global_blocking() {
+        Ok(ax_core::policy_dedup::DedupReport { error: Some(e), .. }) => {
+            eprintln!("Note: policy dedup stopped: {e}")
+        }
+        Ok(report) if !report.actions.is_empty() => {
+            eprintln!("Cleaned {} duplicate policy row(s) in ~/.ax/global.db", report.actions.len())
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("Note: policy dedup skipped: {e}"),
+    }
 
     install_log::intro(env!("CARGO_PKG_VERSION"));
 

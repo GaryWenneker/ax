@@ -1,4 +1,4 @@
 id = "typescript"
-version = "1.1.0"
+version = "1.2.0"
 description = "TypeScript types and modules"
 dependsOn = []

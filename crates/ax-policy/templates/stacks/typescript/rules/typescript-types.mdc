@@ -1,6 +1,6 @@
 ---
 id: typescript-types
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["typescript", "any", "unknown"]

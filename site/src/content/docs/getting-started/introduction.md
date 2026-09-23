@@ -18,6 +18,24 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v5.0.0
+
+v5.0.0 is a major release because ax now removes duplicate policy rows from your databases on its own and `ax init` seeds less into projects. Nothing on disk is deleted, and every removal is versioned.
+
+- **One copy per rule and skill** — a rule or skill stored at the global level is no longer kept again in a project `ax.db`. The longest copy wins and moves up to `~/.ax/global.db` as a new version. The cleanup runs after sync, index, `ax global sync`, `ax install`, and in `ax web` every 10 minutes. Run it by hand with `ax policy dedup --dry-run`. See [One copy per name](/guides/policy-engine/#one-copy-per-name-dedup).
+- **Read guard hook** — `ax install` adds a blocking tool hook for Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. The first whole-file read of an indexed source file, or the first search for a symbol the graph knows, is denied and points the agent at `ax_node` / `ax_callers`. The identical retry is allowed. Turn it off with `AX_READ_GUARD=off`. See [Enforcing graph-first reads](/guides/policy-engine/#enforcing-graph-first-reads).
+- **Review loop** — old-coder work now runs a code-review loop between the gauntlet and EVIDENCE, one review skill per stack, until a round has zero findings. See [Review loop](/guides/policy-engine/#review-loop).
+- **Colleague PR reviews** — the new `pr-review-comments` skill reviews someone else's pull request without changing their code and asks you per comment what to post. See [Reviewing a colleague's pull request](/guides/policy-engine/#reviewing-a-colleagues-pull-request).
+- **Principal-level stack reviews** — the review skills of 28 stack packs (from Angular and C to Rust and TypeScript) now reach the level of `dotnet-code-review` and `nextjs-review`, both extended in this release: each has 10 to 12 checkable review sections and a fixed output format. Refresh installed stacks with `ax policy stack upgrade`.
+
+**Upgrade notes**
+
+- `global.db` gets a `level` column and a revisions table. The migration runs on first start.
+- `ax init` no longer writes the global skills (`review-loop`, `pr-review-comments`) into `.agents/skills/`; every project gets them from the global level.
+- Restore a removed project row with `ax policy restore`. Run `ax policy dedup --dry-run` first if you want to see what will change.
+
+See [Policy Engine](/guides/policy-engine/) and [CLI](/reference/cli/).
+
 ## What's new in v4.12.0
 
 - **Stack seeding** — `ax init` asks which language, framework, and CMS stacks to install (including on a later init). Core policy stays universal. Stacks such as `dotnet`, `react`, `nextjs`, `rust`, and `python` install only their skills and rules. See [Policy Engine](/guides/policy-engine/).

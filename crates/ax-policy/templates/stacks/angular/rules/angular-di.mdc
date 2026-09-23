@@ -1,6 +1,6 @@
 ---
 id: angular-di
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["angular", "inject", "service"]

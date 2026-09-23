@@ -1,6 +1,6 @@
 ---
 id: sitecore-helix
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["sitecore", "helix", "foundation"]

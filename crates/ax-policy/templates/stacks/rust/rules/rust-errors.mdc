@@ -1,6 +1,6 @@
 ---
 id: rust-errors
-level: HIGH
+level: WARNING
 alwaysApply: false
 globs: []
 triggers: ["rust", "result", "error"]
