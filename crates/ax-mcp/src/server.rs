@@ -750,6 +750,7 @@ mod policy_integration {
         assert!(rules >= 4, "policy.rules should be >= 4, got {rules}");
     }
 }
+
 #[cfg(test)]
 mod hook_repair {
     use super::repair_hooks_at_startup;
