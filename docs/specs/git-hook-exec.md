@@ -43,6 +43,21 @@ A hook runs with the PATH of the program that makes the commit. If `ax` is not o
 - **Git:** commit this spec at approval, one commit for the fix, one release commit, tag `v5.0.3`.
 - **Local repair after the fix:** run the repaired installer on this repo (via `ax init`, which only adds missing lines, or the MCP restart), then `ax capture-git --limit 100` to backfill the 17 missed commits.
 
+## Revision 1 (2026-09-23): quiet hooks — APPROVED ("Approve Revision 1")
+
+Found during real execution (H10): once the hooks run, every commit prints about 50 lines of `ax ship --evaluate` JSON plus the ONNX model's INFO log lines. You chose "make them quiet". This changes the "Must not change: the set of ax lines" clause above for one line.
+
+| # | Given | When | Then |
+|---|---|---|---|
+| Q1 | a passing quality gate | `ax ship --evaluate --quiet` | prints nothing on stdout or stderr, exit 0 |
+| Q2 | a failing quality gate | `ax ship --evaluate --quiet` | prints one line on stderr, `ax: quality gate failed: <step>, <step>`, exit 0 (a post-commit hook cannot block anyway) |
+| Q3 | any command run with `--quiet` | the CLI starts | ax log lines below WARN are not printed (so `ax capture-git --quiet` no longer prints the ONNX INFO lines); without `--quiet` nothing changes |
+| Q4 | new hooks | `install_git_sync_hooks` | the ship line is `ax ship --evaluate --quiet` |
+| Q5 | an existing ax hook with the exact line `ax ship --evaluate` | `install_git_sync_hooks` or `repair_git_hooks` | that line is replaced in place by `ax ship --evaluate --quiet`; the gate is never listed twice |
+| Q6 | a user line that merely contains `ax ship --evaluate` plus other flags | either function | left as it is |
+
+Extra files: `crates/ax-cli/src/main.rs` (the `--quiet` flag on `ship` and the log level), the ship evaluate command file in `crates/ax-cli/src/commands/`, and `site/src/content/docs/reference/cli.md` (document `--quiet`).
+
 ## Gauntlet
 
 - `cargo test -p ax-sync -p ax-mcp`, and the full workspace suite against the known baseline (4 known failures: 3 Windows-only, 1 flaky `ax-usage` test).
