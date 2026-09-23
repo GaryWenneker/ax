@@ -13,7 +13,34 @@ pub const LEGACY_POLICY_DIR: &str = "policy";
 const GITIGNORE_MARKERS: &[&str] = &["policy-private/", "policy-inactive/"];
 
 pub fn agents_dir(project_root: &Path) -> PathBuf {
-    project_root.join(AGENTS_DIR)
+    project_root.join(crate::config::agents_dir_name(project_root))
+}
+
+/// Move an existing rules/skills folder when `policy.agentsDir` changes.
+/// No-op when the names match. Errors when the destination already exists.
+pub fn relocate_agents_dir(project_root: &Path, from_name: &str, to_name: &str) -> Result<(), String> {
+    if from_name == to_name {
+        return Ok(());
+    }
+    let from = project_root.join(from_name);
+    let to = project_root.join(to_name);
+    if !from.is_dir() {
+        return Ok(());
+    }
+    if to.exists() {
+        return Err(format!(
+            "cannot rename policy directory to {to_name}: that folder already exists"
+        ));
+    }
+    std::fs::rename(&from, &to).map_err(|e| e.to_string())
+}
+
+/// Validate, move the existing folder when needed, then save `policy.agentsDir`.
+pub fn set_agents_dir(project_root: &Path, raw: &str) -> Result<String, String> {
+    let name = crate::config::validate_agents_dir_name(raw)?;
+    let previous = crate::config::agents_dir_name(project_root);
+    relocate_agents_dir(project_root, &previous, &name)?;
+    crate::config::write_project_agents_dir(project_root, &name)
 }
 
 pub fn legacy_policy_dir(project_root: &Path) -> PathBuf {

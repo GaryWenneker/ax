@@ -1,0 +1,18 @@
+---
+id: sitecore-helix
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["sitecore", "helix", "foundation"]
+tags: ["sitecore"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Sitecore Helix
+
+- Foundation does not reference Feature or Project.
+- Feature modules do not reference other Feature modules.

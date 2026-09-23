@@ -1,0 +1,19 @@
+---
+id: javascript-async
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["javascript", "promise", "node"]
+tags: ["javascript"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# JavaScript async
+
+- Rejected promises are handled.
+- Node callbacks and promises are not mixed in one function.
+- HTTP clients set a timeout.

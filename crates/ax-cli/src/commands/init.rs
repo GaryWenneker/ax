@@ -14,6 +14,10 @@ use crate::ui::{
 };
 
 pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
+    run_inner(path, workspace, true).await
+}
+
+async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Result<(), String> {
     let root = resolve_path(path);
     check_unsafe_root(&root)?;
 
@@ -52,13 +56,15 @@ pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
                 "{}",
                 info_line(format!("Initializing member {}", tildify(&member_root)))
             );
-            Box::pin(run(
+            Box::pin(run_inner(
                 Some(member_root.to_string_lossy().to_string()),
+                false,
                 false,
             ))
             .await?;
             println!();
         }
+        run_savings_setup().await;
         return Ok(());
     }
 
@@ -85,8 +91,35 @@ pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
 
     let ax_dir = root.join(".ax");
     let seed = ax_policy::seed_default_policy(&ax_dir).ok();
+    if let Err(e) = choose_agents_dir_for_init(&root) {
+        eprintln!("{}", dim(format!("Policy directory prompt skipped: {e}")));
+    }
     let cursor = ax_policy::seed_project_cursor_skills(&root).ok();
     let global_policy = ax_policy::seed_global_policy().ok();
+    match choose_stacks_for_init(&root) {
+        Ok(selected) => match ax_policy::replace_selection(&root, &selected, false) {
+            Ok(report) => {
+                if selected.is_empty() {
+                    println!("{}", ok_line("Core policy only (no stacks)"));
+                } else if !report.stacks.is_empty() {
+                    println!(
+                        "{}",
+                        ok_line(format!("Stacks: {}", report.stacks.join(", ")))
+                    );
+                }
+            }
+            Err(e) => eprintln!("{}", dim(format!("Stack apply skipped: {e}"))),
+        },
+        Err(e) => eprintln!("{}", dim(format!("Stack prompt skipped: {e}"))),
+    }
+    if ax_policy::read_configured_stacks(&root)
+        .iter()
+        .any(|id| id == "dotnet")
+    {
+        if let Err(e) = store_dotnet_code_review_in_global_db(&root).await {
+            eprintln!("{}", dim(format!("Global skill store skipped: {e}")));
+        }
+    }
     let project_name = root.file_name().and_then(|n| n.to_str());
     let ship = ax_ship::seed_ship_config(&ax_dir, project_name).ok();
     let ide = ax_policy::seed_ide_agent_workflow(&root).ok();
@@ -339,5 +372,121 @@ pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
             targets: Vec::new(),
         },
     )?;
+    if savings {
+        run_savings_setup().await;
+    }
     Ok(())
+}
+
+/// Ask for the on-disk rules/skills folder when `policy.agentsDir` is unset.
+/// A non-interactive run saves the default `.agents`.
+fn choose_agents_dir_for_init(root: &std::path::Path) -> Result<(), String> {
+    if ax_policy::configured_agents_dir(root).is_some() {
+        return Ok(());
+    }
+    let name = if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        println!(
+            "{}",
+            info_line("Where should ax store rule and skill files?")
+        );
+        println!(
+            "  {}",
+            dim("Press Enter for .agents, or type another folder name.")
+        );
+        print!("Directory [.agents]: ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+        ax_policy::validate_agents_dir_name(&line)?
+    } else {
+        ax_policy::DEFAULT_AGENTS_DIR.to_string()
+    };
+    let saved = ax_policy::write_project_agents_dir(root, &name)?;
+    println!("{}", ok_line(format!("Policy files directory: {saved}")));
+    Ok(())
+}
+
+/// Ask which stacks to install. Runs on every `ax init`, including a second run.
+/// A non-interactive stdin keeps the saved selection so CI does not block.
+fn choose_stacks_for_init(root: &std::path::Path) -> Result<Vec<String>, String> {
+    let current = ax_policy::read_configured_stacks(root);
+    let detected: Vec<String> = ax_policy::detect_stacks(root).into_iter().map(|d| d.id).collect();
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(current);
+    }
+    let catalog = ax_policy::stack_catalog_list();
+    println!("{}", info_line("Which stacks should this project use?"));
+    if !detected.is_empty() {
+        println!("  {}", dim(format!("Detected: {}", detected.join(", "))));
+    }
+    if !current.is_empty() {
+        println!("  {}", dim(format!("Currently installed: {}", current.join(", "))));
+    }
+    println!("  {}", dim("Available:"));
+    for stack in &catalog {
+        let mark = if detected.iter().any(|id| id == &stack.id) {
+            "*"
+        } else {
+            " "
+        };
+        println!("  {mark} {} — {}", stack.id, stack.description);
+    }
+    let hint = if !current.is_empty() {
+        "Press Enter to keep the installed stacks"
+    } else if !detected.is_empty() {
+        "Press Enter to install the detected stacks"
+    } else {
+        "Press Enter for core policy only"
+    };
+    println!(
+        "  {}",
+        dim(format!(
+            "{hint}. Or type ids separated by spaces, or 'none'."
+        ))
+    );
+    print!("Stacks: ");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+    ax_policy::parse_stack_choice(&line, &current, &detected)
+}
+
+async fn store_dotnet_code_review_in_global_db(project_root: &std::path::Path) -> Result<(), String> {
+    let path = ax_policy::agents_dir(project_root)
+        .join("skills")
+        .join("dotnet-code-review")
+        .join("SKILL.md");
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let doc = ax_policy::parse_skill_file(&path, &raw).map_err(|e| format!("{e:?}"))?;
+    let fm = &doc.frontmatter;
+    let payload = serde_json::json!({
+        "name": fm.name,
+        "description": fm.description,
+        "alwaysApply": fm.always_apply,
+        "triggers": fm.triggers,
+        "tags": fm.tags,
+        "priority": fm.priority,
+        "body": doc.body,
+        "sourcePath": "global.db",
+        "enabled": fm.enabled,
+        "status": fm.status,
+        "scope": "company",
+    });
+    ax_global_db::policy::upsert_machine_skill(&fm.name, &payload)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("{}", ok_line("Stored dotnet-code-review in ~/.ax/global.db"));
+    Ok(())
+}
+
+/// Cursor savings hook plus a full log import. Failures stay visible and do not undo init.
+async fn run_savings_setup() {
+    if let Err(e) = crate::commands::savings::run_hook_install() {
+        eprintln!("{}", dim(format!("Savings hook install skipped: {e}")));
+    }
+    if let Err(e) = crate::commands::savings::run_import(false, false, true).await {
+        eprintln!("{}", dim(format!("Savings import skipped: {e}")));
+    }
 }

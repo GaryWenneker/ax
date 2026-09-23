@@ -1,0 +1,18 @@
+---
+id: pascal-units
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["pascal", "unit"]
+tags: ["pascal"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Pascal units
+
+- Put the public surface in the interface section.
+- Do not use the implementation of another unit.

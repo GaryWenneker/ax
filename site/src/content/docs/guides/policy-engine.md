@@ -31,7 +31,7 @@ On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy. Existi
 
 Every `ax init` re-imports all policy layers (including global) into `ax.db`. After install alone, run `ax init` or `ax policy index --force` in any project once.
 
-Source: [AmazingAng/old-coder](https://github.com/AmazingAng/old-coder) (MIT). Project init also copies rollout skills into `<project>/.cursor/skills/`.
+Source: [AmazingAng/old-coder](https://github.com/AmazingAng/old-coder) (MIT). Project init also copies rollout skills into `<project>/.cursor/skills/`, including `dotnet-code-review` for C# and .NET pull-request review. That skill is also stored in `~/.ax/global.db` so every project can load it.
 
 Upgrade to **ax v2.1.2+** and restart your agent so MCP exposes `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`, and `ax_policy_capture`.
 
@@ -381,6 +381,32 @@ ax policy pack install azdo-fullstack --force
 ```
 
 `azdo-fullstack` adds Azure DevOps ticket-to-release **skills** (full workflows with checklists — refinement → development → testing → PR → pipelines → release) and matching **rules**. The `azdo-code-review` skill reviews against the Story: scope creep, sibling patterns in the repo, both ends of a bound (not only the max), and a named test for each gap. It complements built-in methodology skills (`design-first`, `tdd`, `systematic-debugging`) rather than replacing them. Re-run with `--force` after upgrading ax to refresh expanded skill bodies.
+
+### Stacks
+
+Core policy (startup, debugging, TDD, design-first, and the preflight rules) is seeded for every project. Language, frontend, and CMS skills are **not** copied on init. The on-disk folder is `policy.agentsDir` in `ax.json` (default `.agents`). `ax init` asks for that name when it is not set yet. Change it later with `ax policy agents-dir <name>` or in Command Center settings.
+
+```bash
+ax policy stack detect
+ax policy stack apply dotnet nextjs
+```
+
+Save the choice in project `ax.json`:
+
+```json
+{
+  "policy": {
+    "stacks": ["dotnet", "react"],
+    "stackDetect": "off"
+  }
+}
+```
+
+`ax init` asks which stacks to install on every run when stdin is a terminal, including a second init. Press Enter to keep the installed set, or to accept the detection when nothing is installed yet. Type ids separated by spaces, or `none` for core policy only. A non-interactive run keeps the saved `policy.stacks` and does not block.
+
+![Command Center settings with the rules and skills folder](/screenshots/cc-settings.png) The command writes `.ax/stacks.lock.json` (template version and content hash per file). Re-apply skips a file you edited unless you pass `--force`. `ax policy stack status` reports catalog drift; `ax policy stack upgrade` refreshes files that still match the lock.
+
+Language stacks follow the languages ax indexes: `rust`, `python`, `go`, `typescript`, `javascript`, `c`, `cpp`, `ruby`, `swift`, `kotlin`, `dart`, `svelte`, `astro`, `scala`, `lua`, `luau`, `objc`, `r`, and `pascal`, in addition to `dotnet` (C#), `java`, and `php`. C# stays on the `dotnet` stack. Config formats ax also parses (YAML, XML, properties) are not stacks.
 
 Install writes project files under `.ax/policy/`, then **imports into `ax.db`** when `policy.storage` is `database` (so MCP/`ax policy skill` show the new bodies without a separate `ax policy index --force`).
 

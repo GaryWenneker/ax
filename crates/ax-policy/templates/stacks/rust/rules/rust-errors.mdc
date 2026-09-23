@@ -1,0 +1,19 @@
+---
+id: rust-errors
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["rust", "result", "error"]
+tags: ["rust"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Rust errors
+
+- Libraries return a typed error. Applications attach context where the failure leaves the process boundary.
+- `unwrap` and `expect` are limited to tests and invariants that abort the process on purpose.
+- A ignored `Result` needs a comment that states why the failure cannot matter.

@@ -1,0 +1,18 @@
+---
+id: rust-tests
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["rust", "cargo test"]
+tags: ["rust"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Rust tests
+
+- Put unit tests next to the code in a tests module.
+- Name the behavior under test.

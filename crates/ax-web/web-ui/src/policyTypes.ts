@@ -165,6 +165,7 @@ export interface PolicySyncSettings {
   requireReview: boolean;
   storage: string;
   roots?: PolicyRootInfo[];
+  agentsDir?: string;
 }
 
 export interface PolicyPackStatus {

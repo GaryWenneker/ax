@@ -81,7 +81,9 @@ const SHOTS = [
 			}
 		},
 	},
-	{ name: 'cc-settings.png', path: '/settings', waitMs: 1200 },
+	{ name: 'cc-settings.png', path: '/settings', waitMs: 1500, ready: '.settings-card, main' },
+	{ name: 'cc-policy-sync.png', path: '/policy/sync', waitMs: 1500, ready: 'main' },
+	{ name: 'cc-prices.png', path: '/prices', waitMs: 2000, ready: 'main' },
 	{ name: 'cc-unresolved.png', path: '/unresolved', waitMs: 1500 },
 	{ name: 'cc-policy-rules.png', path: '/policy/rules', waitMs: 1200 },
 	{ name: 'cc-policy-skills.png', path: '/policy/skills', waitMs: 1200 },

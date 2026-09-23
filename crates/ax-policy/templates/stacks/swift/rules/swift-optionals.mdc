@@ -1,0 +1,18 @@
+---
+id: swift-optionals
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["swift", "optional"]
+tags: ["swift"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Swift optionals
+
+- Avoid force unwrap in new code.
+- Use guard for early exits.

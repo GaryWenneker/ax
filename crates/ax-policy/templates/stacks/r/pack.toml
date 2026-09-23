@@ -1,0 +1,4 @@
+id = "r"
+version = "1.1.0"
+description = "R functions, vectors, and packages"
+dependsOn = []

@@ -1,0 +1,18 @@
+---
+id: astro-islands
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["astro", "client"]
+tags: ["astro"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Astro islands
+
+- Hydrate only the component that needs it.
+- Do not mark a whole page as client-rendered.

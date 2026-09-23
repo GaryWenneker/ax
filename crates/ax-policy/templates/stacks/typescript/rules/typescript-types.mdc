@@ -1,0 +1,19 @@
+---
+id: typescript-types
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["typescript", "any", "unknown"]
+tags: ["typescript"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# TypeScript types
+
+- No new `any`. Boundaries use `unknown` and a parser or type guard.
+- States that cannot occur together are a discriminated union.
+- Do not silence the compiler with `as` unless the comment names the invariant.

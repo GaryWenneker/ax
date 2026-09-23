@@ -18,6 +18,14 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v4.12.0
+
+- **Stack seeding** — `ax init` asks which language, framework, and CMS stacks to install (including on a later init). Core policy stays universal. Stacks such as `dotnet`, `react`, `nextjs`, `rust`, and `python` install only their skills and rules. See [Policy Engine](/guides/policy-engine/).
+- **Configurable policy folder** — on-disk rules and skills default to `.agents`. When `policy.agentsDir` is unset, init asks and suggests `.agents`. Change it with `ax policy agents-dir` or Command Center settings.
+- **Stack commands** — `ax policy stack list`, `detect`, `apply`, `remove`, `status`, and `upgrade`. A file you edited is left in place unless you pass `--force`.
+
+See [Policy Engine](/guides/policy-engine/) and [CLI](/reference/cli/).
+
 ## What's new in v4.8.0
 
 - **Policy revision history** — Command Center **History** keeps up to 20 hash-on-change snapshots per rule/skill (editor Save and accepted zip restores). Identical saves are skipped. See [Policy Engine](/guides/policy-engine/).

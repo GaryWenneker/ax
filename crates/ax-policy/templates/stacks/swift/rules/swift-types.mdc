@@ -1,0 +1,18 @@
+---
+id: swift-types
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["swift", "struct", "class"]
+tags: ["swift"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Swift types
+
+- Use a struct unless you need a reference type.
+- Keep public API small.

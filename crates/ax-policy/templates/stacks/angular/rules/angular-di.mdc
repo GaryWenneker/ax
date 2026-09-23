@@ -1,0 +1,18 @@
+---
+id: angular-di
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["angular", "inject", "service"]
+tags: ["angular"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Angular dependency injection
+
+- Inject services. Do not construct them with `new` inside a component.
+- Provide at the narrowest injector that matches the lifetime.

@@ -1,0 +1,18 @@
+---
+id: drupal-hooks
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["drupal", "hook", "module"]
+tags: ["drupal"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Drupal hooks
+
+- Name hooks after the implementing module.
+- Do not patch Drupal core.

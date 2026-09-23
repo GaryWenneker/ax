@@ -1,0 +1,18 @@
+---
+id: kotlin-null
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["kotlin", "null"]
+tags: ["kotlin"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Kotlin null-safety
+
+- Do not use !! on values that can be null.
+- Prefer the safe call or an explicit error.

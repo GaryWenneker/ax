@@ -1,0 +1,18 @@
+---
+id: r-packages
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["r", "namespace"]
+tags: ["r"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# R packages
+
+- Export only the functions the package documents.
+- Declare dependencies in DESCRIPTION.

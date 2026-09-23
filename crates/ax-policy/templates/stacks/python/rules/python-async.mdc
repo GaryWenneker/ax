@@ -1,0 +1,19 @@
+---
+id: python-async
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["python", "asyncio", "fastapi"]
+tags: ["python"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Python async
+
+- An `async def` does not call blocking sockets, files, or ORMs.
+- Outbound HTTP has a timeout.
+- FastAPI dependencies yield resources that are closed. Route handlers stay thin and call a function that can be tested without the framework.

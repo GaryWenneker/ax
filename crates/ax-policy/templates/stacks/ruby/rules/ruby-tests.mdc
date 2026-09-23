@@ -1,0 +1,18 @@
+---
+id: ruby-tests
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["ruby", "rspec", "minitest"]
+tags: ["ruby"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Ruby tests
+
+- Name the example after the behavior.
+- Do not hit external services from a unit example.

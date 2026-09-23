@@ -1,0 +1,18 @@
+---
+id: astro-content
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["astro", "content"]
+tags: ["astro"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Astro content
+
+- Validate content with the collection schema.
+- Do not hard-code locale strings that belong in content.

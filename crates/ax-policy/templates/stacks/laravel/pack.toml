@@ -1,0 +1,4 @@
+id = "laravel"
+version = "1.1.0"
+description = "Laravel Eloquent and validation rules"
+dependsOn = ["php"]

@@ -1,0 +1,19 @@
+---
+id: go-context
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["go", "context", "goroutine"]
+tags: ["go"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Go context and goroutines
+
+- IO functions take `context.Context` first and pass it on.
+- A started goroutine is stopped by its owner on shutdown.
+- Do not copy a context into a struct field.

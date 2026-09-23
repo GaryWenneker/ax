@@ -1,0 +1,19 @@
+---
+id: laravel-validation
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["laravel", "validation", "queue"]
+tags: ["laravel"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Laravel validation and jobs
+
+- Write endpoints validate input.
+- Jobs are safe to run twice.
+- Application code reads `config()`, not `env()`.

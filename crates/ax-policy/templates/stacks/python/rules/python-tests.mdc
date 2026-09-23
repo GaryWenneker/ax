@@ -1,0 +1,18 @@
+---
+id: python-tests
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["python", "pytest"]
+tags: ["python"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Python tests
+
+- One test covers the happy path and one covers an edge case.
+- Do not hit the network from a unit test.

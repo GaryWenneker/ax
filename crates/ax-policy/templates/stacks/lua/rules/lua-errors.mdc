@@ -1,0 +1,18 @@
+---
+id: lua-errors
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["lua", "error", "pcall"]
+tags: ["lua"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Lua errors
+
+- Use pcall at boundaries.
+- Do not throw strings from library code when a nil, err pair is the local style.

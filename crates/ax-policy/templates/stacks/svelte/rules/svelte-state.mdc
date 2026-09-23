@@ -1,0 +1,18 @@
+---
+id: svelte-state
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["svelte", "store", "rune"]
+tags: ["svelte"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Svelte state
+
+- Share state through the existing store.
+- Do not duplicate props into local state.

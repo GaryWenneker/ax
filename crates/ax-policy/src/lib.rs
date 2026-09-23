@@ -15,6 +15,8 @@ pub mod ide_seed;
 pub mod review;
 pub mod revisions;
 pub mod seed;
+pub mod stack_catalog;
+pub mod stacks;
 pub mod skill_groups;
 pub mod store;
 pub mod types;
@@ -28,6 +30,8 @@ pub use config::{
     effective_storage, find_policy_root, load_policy_config, load_policy_roots,
     policy_storage_status, policy_sync_enabled, write_global_policy_storage,
     write_project_policy_storage, write_project_policy_sync, write_project_require_review,
+    write_project_agents_dir, write_project_stacks, agents_dir_name, configured_agents_dir,
+    validate_agents_dir_name, DEFAULT_AGENTS_DIR,
     PolicyConfig, PolicyRoot, PolicyStorage, PolicyStorageStatus,
 };
 pub use builtin_packs::{
@@ -46,8 +50,8 @@ pub use guard::{guard_operation, guard_operation_with_extra_skills, guard_with_c
 pub use agents_share::{
     agents_dir, agents_share_violations, ensure_ax_share_gitignore, inactive_dir,
     is_git_export_candidate, legacy_policy_dir, link_cursor_skills_to_agents,
-    migrate_legacy_policy_to_agents, relocate_rule_file, relocate_skill_dir,
-    resolve_shareable_write_dir,
+    migrate_legacy_policy_to_agents, relocate_agents_dir, relocate_rule_file, relocate_skill_dir,
+    resolve_shareable_write_dir, set_agents_dir,
 };
 pub use hierarchy::{
     ensure_private_gitignore, ensure_scope_dirs, find_workspace_root, policy_dir_for_scope,
@@ -88,6 +92,12 @@ pub use zip_package::{
     default_restore_action, slug_package_filename, ItemDiff, PackSpec, PreviewItem, RestoreAction,
     RestoreResult,
     ZipPkgError, ZipPreview, ZIP_PACKAGE_MAX_BYTES,
+};
+pub use stacks::{
+    apply as apply_stacks, catalog as stack_catalog_list, detect as detect_stacks, parse_stack_choice,
+    read_configured_stacks, remove as remove_stack, replace_selection, resolve as resolve_stacks,
+    status as stack_status, upgrade as upgrade_stacks, ApplyReport as StackApplyReport, DetectedStack,
+    StackInfo, StackStatus,
 };
 pub use seed::{
     check_cursor_rule_duplicates, seed_cursor_skills, seed_default_policy, seed_global_cursor_skills,

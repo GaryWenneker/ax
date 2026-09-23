@@ -1,0 +1,18 @@
+---
+id: optimizely-content
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["optimizely", "content type", "block"]
+tags: ["optimizely"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Optimizely content types
+
+- Give content properties a display name and a backing type that editors can use.
+- Do not store editor content in appsettings.

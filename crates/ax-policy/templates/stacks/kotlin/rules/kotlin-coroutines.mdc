@@ -1,0 +1,18 @@
+---
+id: kotlin-coroutines
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["kotlin", "coroutine", "suspend"]
+tags: ["kotlin"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Kotlin coroutines
+
+- Do not block a coroutine with Thread.sleep.
+- Pass a coroutine scope from the caller.

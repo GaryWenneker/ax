@@ -1,0 +1,18 @@
+---
+id: luau-types
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["luau", "type"]
+tags: ["luau"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Luau types
+
+- Add types on public functions.
+- Do not silence the type checker with any unless the boundary is documented.

@@ -1,0 +1,19 @@
+---
+id: nextjs-app-router
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["next.js", "app router", "layout"]
+tags: ["nextjs"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Next.js App Router
+
+- New routes follow the existing `app/` segment structure.
+- Data-dependent metadata uses `generateMetadata`.
+- Route `params` and `searchParams` are read the way the installed Next.js types require.

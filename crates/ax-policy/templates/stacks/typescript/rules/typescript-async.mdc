@@ -1,0 +1,19 @@
+---
+id: typescript-async
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["typescript", "promise", "await"]
+tags: ["typescript"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# TypeScript async
+
+- Every promise is awaited, returned, or has an error path.
+- `void` async functions are only event handlers.
+- Cancellation or abort signals are passed into `fetch` when the call can outlive the UI or request.

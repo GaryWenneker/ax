@@ -1,0 +1,19 @@
+---
+id: java-tests
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["java", "junit", "test"]
+tags: ["java"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Java tests
+
+- JUnit tests name the behavior, not only the method.
+- Each new branch has a success case and a failure case.
+- Tests do not depend on the system clock or a live network.

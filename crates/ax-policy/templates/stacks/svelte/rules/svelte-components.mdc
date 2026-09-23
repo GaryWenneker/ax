@@ -1,0 +1,18 @@
+---
+id: svelte-components
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["svelte", "component"]
+tags: ["svelte"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Svelte components
+
+- Props are declared.
+- Side effects live in the lifecycle the project already uses.

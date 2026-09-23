@@ -1,0 +1,19 @@
+---
+id: python-types
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["python", "type hint"]
+tags: ["python"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Python types
+
+- New public functions have parameter and return annotations.
+- Do not add `Any` to silence a checker. Narrow the value or fix the source type.
+- Domain records use a dataclass, typed dict, or the model type already in the module, not a bare `dict`.

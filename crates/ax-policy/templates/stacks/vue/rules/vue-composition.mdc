@@ -1,0 +1,19 @@
+---
+id: vue-composition
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["vue", "composition", "composable"]
+tags: ["vue"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Vue composition API
+
+- Use composables for reusable state, not mixins.
+- Clean up subscriptions when the component unmounts.
+- Props and emits are declared.

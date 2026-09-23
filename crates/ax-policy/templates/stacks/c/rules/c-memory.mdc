@@ -1,0 +1,18 @@
+---
+id: c-memory
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["c", "malloc", "free"]
+tags: ["c"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# C memory
+
+- Pair every allocation with a free on every path.
+- Do not return a pointer to a stack local.

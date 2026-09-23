@@ -1,0 +1,22 @@
+---
+id: dotnet-async
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["dotnet", "csharp", "async"]
+tags: ["dotnet"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# .NET async
+
+- Public async methods end in `Async` and take a `CancellationToken` that is passed through.
+- Do not block with `.Result`, `.Wait()`, or `GetAwaiter().GetResult()`.
+- Library code uses `ConfigureAwait(false)` when the project already does. UI and ASP.NET request code awaits directly.
+- `async void` is only an event handler.
+- Parallel independent calls use `Task.WhenAll`. Do not await them in a loop unless order is required.
+- `ValueTask` is for a hot path that often completes synchronously, not a default return type.

@@ -1,0 +1,18 @@
+---
+id: c-errors
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["c", "errno"]
+tags: ["c"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# C errors
+
+- Check return values.
+- Do not ignore compiler warnings that indicate undefined behavior.

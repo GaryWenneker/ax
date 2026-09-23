@@ -133,6 +133,21 @@ pub async fn upsert_policy_item(
     Ok(())
 }
 
+/// Store one machine-wide skill in `~/.ax/global.db` (`global_policy_skills`).
+/// The row is keyed to `~/.ax` so it is not tied to a single project.
+pub async fn upsert_machine_skill(item_id: &str, payload: &Value) -> Result<()> {
+    let db_path = crate::global_db_path()?;
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let pool = crate::open_and_init(&db_path).await?;
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
+    let project_id = ensure_project(&pool, &home.join(".ax")).await?;
+    upsert_policy_item(&pool, project_id, PolicyKind::Skills, item_id, payload).await?;
+    pool.close().await;
+    Ok(())
+}
+
 pub async fn load_policy_item(
     global: &SqlitePool,
     project_id: i64,

@@ -1,0 +1,20 @@
+---
+id: nextjs-server-components
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["server component", "use client", "server action"]
+tags: ["nextjs"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Server and client components
+
+- Default to a server component.
+- `'use client'` is on the leaf that needs interactivity.
+- Secrets and database calls do not run in a client component.
+- Server actions validate input before they write.

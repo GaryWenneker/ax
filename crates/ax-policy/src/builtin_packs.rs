@@ -116,14 +116,22 @@ pub struct BuiltinPackInfo {
 }
 
 pub fn list_builtin_packs() -> Vec<BuiltinPackInfo> {
-    PACKS
+    let mut packs: Vec<BuiltinPackInfo> = PACKS
         .iter()
         .map(|p| BuiltinPackInfo {
             name: p.name.into(),
             description: p.description.into(),
             files: p.files.len(),
         })
-        .collect()
+        .collect();
+    for stack in crate::stacks::catalog() {
+        packs.push(BuiltinPackInfo {
+            name: stack.id,
+            description: stack.description,
+            files: stack.files,
+        });
+    }
+    packs
 }
 
 fn find_pack(name: &str) -> Option<&'static BuiltinPack> {
@@ -149,6 +157,17 @@ pub fn install_builtin_pack(
     name: &str,
     force: bool,
 ) -> Result<BuiltinPackInstallResult, AxError> {
+    if crate::stacks::find_stack(name).is_some() {
+        let report = crate::stacks::apply(project_root, &[name.to_string()], force)
+            .map_err(AxError::Other)?;
+        return Ok(BuiltinPackInstallResult {
+            pack: name.to_string(),
+            created: report.created,
+            skipped: report.unchanged.into_iter().chain(report.skipped_user_edit).collect(),
+            overwritten: report.updated,
+            policy_dir: project_root.join(".agents").display().to_string(),
+        });
+    }
     let pack = find_pack(name).ok_or_else(|| {
         let known = PACKS
             .iter()

@@ -50,7 +50,9 @@ See the [MCP server reference](/reference/mcp-server/#lean-responses-token-savin
 
 ### Context cache
 
-Replies at or above 3,000 tokens (override with `AX_CONTEXT_CACHE_TOKENS`; `0` or `AX_CONTEXT_CACHE=off` disables it) are stored in `usage.db` and replaced with a stub. The savings log records the stub size as the response and adds the removed tokens to `tokens_saved_est` for graph tools. Recover the original with `ax_expand`. `ax_stash` stores a chat slice or a foreign tool result the same way and returns only the id. Each successful ax MCP call, each Claude prompt, and each Cursor `beforeSubmitPrompt` is indexed. `ax_preflight` lists the current session first, then older rows, without bodies, plus one ledger line: row count, tokens stored, and tokens that stayed inline. On stop, oversized transcript tool results are stored unless that text is already in the cache. Install the Cursor hook with `ax savings hook install`. Policy tools `ax_preflight` and `ax_guard` are never cached this way.
+Oversized ax MCP replies, Claude prompts, and Cursor `beforeSubmitPrompt` prompts are indexed in `~/.ax/usage.db`. The body is stored only when it reaches the token threshold. `ax_preflight` lists the current session first (no bodies) and one ledger line: row count, tokens stored, and tokens that stayed inline. Recover a stored body with `ax_expand`. `ax_stash` is the manual path for a slice the hooks did not see. On stop, oversized tool results already written to the Cursor or Claude transcript are stored when that text is not already cached. Nothing here is written to the memory vault, and nothing is summarized by a second model.
+
+Replies at or above 3,000 tokens (override with `AX_CONTEXT_CACHE_TOKENS`; `0` or `AX_CONTEXT_CACHE=off` disables the cache, the index, and the ledger) are replaced with a stub. The savings log records the stub size as the response and adds the removed tokens to `tokens_saved_est` for graph tools. Policy tools `ax_preflight` and `ax_guard` are never stubbed. Install the Cursor prompt hook with `ax savings hook install`.
 
 ### What is measured vs estimated
 

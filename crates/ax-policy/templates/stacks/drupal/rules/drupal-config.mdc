@@ -1,0 +1,18 @@
+---
+id: drupal-config
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["drupal", "config", "export"]
+tags: ["drupal"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Drupal configuration
+
+- Export config that the feature needs so it can be deployed.
+- Keep secrets out of exported configuration.

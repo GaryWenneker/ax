@@ -1,0 +1,19 @@
+---
+id: php-security
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["php", "sql", "xss"]
+tags: ["php"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# PHP security
+
+- SQL is prepared. Identifiers are not concatenated from user input.
+- User-controlled HTML is escaped.
+- Secrets are not committed.

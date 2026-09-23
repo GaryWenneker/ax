@@ -1,0 +1,19 @@
+---
+id: go-errors
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["go", "error"]
+tags: ["go"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Go errors
+
+- Handle every returned error. Wrap with `%w` when callers match on the cause.
+- Do not panic on bad input.
+- Compare errors with `errors.Is` and `errors.As`, not string contains.

@@ -1,0 +1,19 @@
+---
+id: laravel-eloquent
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["laravel", "eloquent"]
+tags: ["laravel"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Eloquent
+
+- Eager-load relations used by the response.
+- Mass assignment lists fillable attributes.
+- Domain code does not call `Model::unguard`.

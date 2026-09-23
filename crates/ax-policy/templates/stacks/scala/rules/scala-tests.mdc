@@ -1,0 +1,18 @@
+---
+id: scala-tests
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["scala", "scalatest", "munit"]
+tags: ["scala"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Scala tests
+
+- Name the test after the behavior.
+- Keep tests free of shared mutable fixtures.

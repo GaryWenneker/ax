@@ -1,0 +1,18 @@
+---
+id: sitecore-serialization
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["sitecore", "serialization", "unicorn"]
+tags: ["sitecore"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Sitecore serialization
+
+- Include new templates and renderings in serialization.
+- Do not commit user-specific or environment-only items.

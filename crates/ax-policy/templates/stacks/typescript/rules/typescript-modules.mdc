@@ -1,0 +1,18 @@
+---
+id: typescript-modules
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["typescript", "import", "module"]
+tags: ["typescript"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# TypeScript modules
+
+- Use the module style already in the repo.
+- Do not mix default and namespace imports for the same module without a reason.

@@ -1,0 +1,18 @@
+---
+id: cpp-errors
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["c++", "exception"]
+tags: ["cpp"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# C++ errors
+
+- Follow the error style already in the repo, exceptions or error codes.
+- Do not mix both in one function.

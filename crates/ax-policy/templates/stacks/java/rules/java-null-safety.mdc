@@ -1,0 +1,19 @@
+---
+id: java-null-safety
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["java", "null", "optional"]
+tags: ["java"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Java null-safety
+
+- Do not return null from new methods. Use `Optional` or an empty collection.
+- Try-with-resources owns every closeable.
+- Do not catch `Exception` or `Throwable` to ignore it.

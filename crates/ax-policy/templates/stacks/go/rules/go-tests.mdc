@@ -1,0 +1,18 @@
+---
+id: go-tests
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["go", "go test"]
+tags: ["go"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Go tests
+
+- Use table-driven tests for several inputs.
+- Tests live in *_test.go.

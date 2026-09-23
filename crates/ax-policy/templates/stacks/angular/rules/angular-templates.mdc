@@ -1,0 +1,19 @@
+---
+id: angular-templates
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["angular", "template", "observable"]
+tags: ["angular"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Angular templates
+
+- Do not call expensive methods from the template.
+- Observables that belong to a view are completed when the view is destroyed.
+- Match the existing control-flow syntax.

@@ -1,0 +1,18 @@
+---
+id: dart-packages
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["dart", "pubspec"]
+tags: ["dart"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Dart packages
+
+- Declare dependencies in pubspec.yaml.
+- Do not import src/ of another package.

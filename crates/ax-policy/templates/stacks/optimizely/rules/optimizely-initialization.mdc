@@ -1,0 +1,18 @@
+---
+id: optimizely-initialization
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["optimizely", "episerver", "IInitializableModule"]
+tags: ["optimizely"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Optimizely initialization
+
+- Initialization modules must be idempotent.
+- Declare module dependencies instead of relying on type-name order.

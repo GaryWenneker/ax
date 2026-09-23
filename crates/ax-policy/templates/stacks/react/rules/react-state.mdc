@@ -1,0 +1,19 @@
+---
+id: react-state
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["react", "state", "props"]
+tags: ["react"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# React state
+
+- Do not duplicate server state in local state.
+- List keys are stable ids.
+- Lift state only when two children must share the same value.

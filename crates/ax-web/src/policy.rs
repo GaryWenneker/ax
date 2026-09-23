@@ -298,6 +298,7 @@ struct PolicySettingsResponse {
     require_review: bool,
     storage: String,
     roots: Vec<ax_policy::PolicyRoot>,
+    agents_dir: String,
 }
 
 #[derive(Deserialize)]
@@ -310,6 +311,9 @@ struct PolicySettingsPayload {
     /// Project default storage: `files` | `database`. Does not rewrite per-item overrides.
     #[serde(default)]
     storage: Option<String>,
+    /// Folder name for on-disk rules and skills. Default `.agents`.
+    #[serde(default)]
+    agents_dir: Option<String>,
 }
 
 fn settings_response(root: &std::path::Path) -> PolicySettingsResponse {
@@ -319,6 +323,7 @@ fn settings_response(root: &std::path::Path) -> PolicySettingsResponse {
         require_review: status.require_review,
         storage: status.effective,
         roots: status.roots,
+        agents_dir: ax_policy::agents_dir_name(root),
     }
 }
 
@@ -354,6 +359,16 @@ async fn put_policy_settings(
         };
         if let Err(e) = ax_policy::write_project_policy_storage(root, mode) {
             return err(StatusCode::INTERNAL_SERVER_ERROR, &e);
+        }
+    }
+    if let Some(ref name) = payload.agents_dir {
+        if let Err(e) = ax_policy::set_agents_dir(root, name) {
+            let status = if e.contains("already exists") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            return err(status, &e);
         }
     }
     (StatusCode::OK, Json(settings_response(root))).into_response()

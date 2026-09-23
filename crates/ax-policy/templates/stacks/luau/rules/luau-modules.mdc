@@ -1,0 +1,18 @@
+---
+id: luau-modules
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["luau", "require"]
+tags: ["luau"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Luau modules
+
+- Use the require style already in the repo.
+- Export a typed table.

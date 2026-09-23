@@ -1,0 +1,18 @@
+---
+id: objc-nullability
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["objc", "nullable"]
+tags: ["objc"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Objective-C nullability
+
+- Mark pointers nullable or nonnull in new headers.
+- Check nil before messaging when the value comes from outside.

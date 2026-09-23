@@ -1,0 +1,20 @@
+---
+id: dotnet-aspnet
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["dotnet", "aspnet", "ef"]
+tags: ["dotnet"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# ASP.NET Core and EF Core
+
+- Controllers and minimal APIs validate input and return one error shape (Problem Details when the app already uses it).
+- Authorization is policy-based and applied on the endpoint, not only in the UI.
+- EF queries that are read many times are async (`ToListAsync`, `SaveChangesAsync`) and do not query inside a loop.
+- Migrations ship with the change that needs them. Secrets stay out of `appsettings` that is committed.

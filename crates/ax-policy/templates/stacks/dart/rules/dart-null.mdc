@@ -1,0 +1,18 @@
+---
+id: dart-null
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["dart", "null"]
+tags: ["dart"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Dart null-safety
+
+- Avoid the bang operator on values that can be null.
+- Use late only when initialization is guaranteed.

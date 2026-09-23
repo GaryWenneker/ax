@@ -1,0 +1,4 @@
+id = "javascript"
+version = "1.1.0"
+description = "JavaScript modules and runtime checks"
+dependsOn = []

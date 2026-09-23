@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v4.8.0).
+description: Complete reference for every ax command, argument, and flag (v4.12.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -79,7 +79,7 @@ ax uninstall
 
 ### `ax init [path]`
 
-Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the project, install git hooks, then offer the agent installer.
+Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the project, install git hooks, install the Cursor savings hook (`ax savings hook install`), import Claude and Cursor savings logs (`ax savings import --all`), then offer the agent installer. A workspace init runs the savings steps once, after every member.
 
 On **first init**, runs a full index. If `.ax/ax.db` already exists, runs an incremental `ax sync` instead — use `ax index` when you need a full rebuild.
 
@@ -1163,6 +1163,66 @@ Disable a rule or skill without deleting it (frontmatter `enabled: false` + DB c
 ```bash
 ax policy disable mobile-first
 ```
+
+### `ax policy agents-dir [name] [path]`
+
+Show or set the folder that holds on-disk rules and skills. The default suggestion is `.agents`. The value is `policy.agentsDir` in project `ax.json`. When you set a new name and the old folder exists, ax renames it. `ax init` asks for this name when it is not saved yet.
+
+```bash
+ax policy agents-dir
+ax policy agents-dir .agents
+ax policy agents-dir team-policy
+```
+
+### `ax policy stack`
+
+Opt-in language, framework, and CMS policy. Core rules and skills still come from `ax init`. Stacks install only their own files under `.agents/` and record the choice in `ax.json` (`policy.stacks`, `policy.stackDetect`) plus `.ax/stacks.lock.json`.
+
+| Id | Depends on |
+|---|---|
+| `dotnet` | |
+| `java` | |
+| `react` | |
+| `nextjs` | `react` |
+| `angular` | |
+| `vue` | |
+| `php` | |
+| `laravel` | `php` |
+| `drupal` | `php` |
+| `sitecore` | `dotnet` |
+| `optimizely` | `dotnet` |
+| `rust` | |
+| `python` | |
+| `go` | |
+| `typescript` | |
+| `javascript` | |
+| `c` | |
+| `cpp` | |
+| `ruby` | |
+| `swift` | |
+| `kotlin` | |
+| `dart` | |
+| `svelte` | |
+| `astro` | |
+| `scala` | |
+| `lua` | |
+| `luau` | |
+| `objc` | |
+| `r` | |
+| `pascal` | |
+
+```bash
+ax policy stack list
+ax policy stack detect
+ax policy stack apply dotnet react
+ax policy stack status
+ax policy stack upgrade
+ax policy stack remove react
+```
+
+`apply` with no ids uses `policy.stacks`. When that list is empty it prints a detection proposal and, on a terminal, asks before writing. Pass `--yes` to apply the proposal without a prompt. `--force` overwrites files you edited. Files you changed are otherwise left in place.
+
+`ax init` asks for stacks every time stdin is a terminal, including when the project was already initialized. Enter keeps the current set (or the detection on a first choice). `none` installs core policy only.
 
 ### `ax policy pack`
 

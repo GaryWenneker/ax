@@ -84,60 +84,6 @@ const TEMPLATES: &[Template] = &[
         rel: "skills/design-first/SKILL.md",
         body: include_str!("../templates/skills/design-first/SKILL.md"),
     },
-    Template {
-        rel: "skills/auti/SKILL.md",
-        body: include_str!("../templates/skills/auti/SKILL.md"),
-    },
-    Template {
-        rel: "skills/deploy/SKILL.md",
-        body: include_str!("../templates/skills/deploy/SKILL.md"),
-    },
-    Template {
-        rel: "skills/feature-information/SKILL.md",
-        body: include_str!("../templates/skills/feature-information/SKILL.md"),
-    },
-    Template {
-        rel: "skills/no-ab-prefix/SKILL.md",
-        body: include_str!("../templates/skills/no-ab-prefix/SKILL.md"),
-    },
-    Template {
-        rel: "skills/noti/SKILL.md",
-        body: include_str!("../templates/skills/noti/SKILL.md"),
-    },
-    Template {
-        rel: "skills/pr/SKILL.md",
-        body: include_str!("../templates/skills/pr/SKILL.md"),
-    },
-    Template {
-        rel: "skills/pre-pr-check/SKILL.md",
-        body: include_str!("../templates/skills/pre-pr-check/SKILL.md"),
-    },
-    Template {
-        rel: "skills/preq/SKILL.md",
-        body: include_str!("../templates/skills/preq/SKILL.md"),
-    },
-    Template {
-        rel: "skills/ship/SKILL.md",
-        body: include_str!("../templates/skills/ship/SKILL.md"),
-    },
-    Template {
-        rel: "skills/domain/SKILL.md",
-        body: include_str!("../templates/skills/domain/SKILL.md"),
-    },
-];
-
-/// Baseline rollout skills — also copied to `.cursor/skills/` on init/install.
-const ROLLOUT_SKILL_RELS: &[&str] = &[
-    "skills/auti/SKILL.md",
-    "skills/deploy/SKILL.md",
-    "skills/feature-information/SKILL.md",
-    "skills/no-ab-prefix/SKILL.md",
-    "skills/noti/SKILL.md",
-    "skills/pr/SKILL.md",
-    "skills/pre-pr-check/SKILL.md",
-    "skills/preq/SKILL.md",
-    "skills/ship/SKILL.md",
-    "skills/domain/SKILL.md",
 ];
 
 /// Relative path + embedded body within a skill directory (e.g. `SKILL.md`, `references/gauntlet.md`).
@@ -316,10 +262,6 @@ pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {
     Ok(result)
 }
 
-fn cursor_skill_rel(name: &str) -> String {
-    format!(".cursor/skills/{name}/{}", crate::paths::SKILL_FILENAME)
-}
-
 fn write_skill_bundle(skills_root: &Path, bundle: &SkillBundle) -> std::io::Result<bool> {
     let skill_dir = skills_root.join(bundle.name);
     let skill_md = skill_dir.join(crate::paths::SKILL_FILENAME);
@@ -374,33 +316,11 @@ fn seed_skill_bundles(skills_root: &Path, label_prefix: &str) -> std::io::Result
     Ok(result)
 }
 
-/// Write baseline rollout skills to a Cursor skills directory (never overwrites).
-/// Bundled skills (old-coder) are rewritten if they are missing `alwaysApply: true`.
+/// Write machine-wide bundled skills to a Cursor skills directory.
+/// Project-specific skills are installed only through stack packs.
 pub fn seed_cursor_skills(skills_root: &Path) -> std::io::Result<SeedResult> {
     std::fs::create_dir_all(skills_root)?;
     let mut result = SeedResult::default();
-    for rel in ROLLOUT_SKILL_RELS {
-        let t = template_by_rel(rel).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, format!("unknown rollout skill: {rel}"))
-        })?;
-        let name = rel
-            .strip_prefix("skills/")
-            .and_then(|s| s.strip_suffix("/SKILL.md"))
-            .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("bad skill rel: {rel}"))
-            })?;
-        let dest = skills_root.join(name).join(crate::paths::SKILL_FILENAME);
-        let label = cursor_skill_rel(name);
-        if dest.exists() {
-            result.skipped.push(label);
-            continue;
-        }
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&dest, t.body.as_bytes())?;
-        result.created.push(label);
-    }
     let bundles = seed_skill_bundles(skills_root, ".cursor/skills")?;
     result.created.extend(bundles.created);
     result.skipped.extend(bundles.skipped);
@@ -718,33 +638,17 @@ mod tests {
     }
 
     #[test]
-    fn rollout_skill_templates_parse() {
-        use crate::parse::parse_skill_file;
-
-        for rel in ROLLOUT_SKILL_RELS {
-            let t = template_by_rel(rel).expect(rel);
-            let tmp = tempdir().unwrap();
-            let path = tmp.path().join("SKILL.md");
-            std::fs::write(&path, t.body).unwrap();
-            parse_skill_file(&path, t.body).expect(rel);
-        }
-    }
-
-    #[test]
     fn seed_cursor_skills_writes_once() {
         let dir = tempdir().unwrap();
         let skills = dir.path().join(".cursor").join("skills");
         let first = seed_cursor_skills(&skills).unwrap();
-        assert_eq!(
-            first.created.len(),
-            ROLLOUT_SKILL_RELS.len() + GLOBAL_SKILL_BUNDLES.len()
-        );
+        assert_eq!(first.created.len(), GLOBAL_SKILL_BUNDLES.len());
+        assert!(!skills.join("noti").exists());
+        assert!(!skills.join("dotnet-code-review").exists());
+        assert!(!skills.join("deploy").exists());
         let second = seed_cursor_skills(&skills).unwrap();
         assert!(second.created.is_empty());
-        assert_eq!(
-            second.skipped.len(),
-            ROLLOUT_SKILL_RELS.len() + GLOBAL_SKILL_BUNDLES.len()
-        );
+        assert_eq!(second.skipped.len(), GLOBAL_SKILL_BUNDLES.len());
     }
 
     #[test]

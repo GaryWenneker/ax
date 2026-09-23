@@ -1,0 +1,18 @@
+---
+id: dotnet-ef
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["dotnet", "ef", "entity framework"]
+tags: ["dotnet"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Entity Framework
+
+- Async queries use ToListAsync and SaveChangesAsync.
+- Do not run queries inside a loop when one query can load the set.

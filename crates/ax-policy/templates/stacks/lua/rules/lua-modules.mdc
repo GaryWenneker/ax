@@ -1,0 +1,18 @@
+---
+id: lua-modules
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["lua", "require"]
+tags: ["lua"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Lua modules
+
+- Return a table from a module.
+- Keep locals local.

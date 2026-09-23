@@ -1,0 +1,18 @@
+---
+id: javascript-checks
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["javascript", "null", "undefined"]
+tags: ["javascript"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# JavaScript checks
+
+- Check null and undefined at boundaries.
+- Do not compare with ==.

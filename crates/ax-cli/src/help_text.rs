@@ -57,7 +57,8 @@ Examples:
 pub const INIT_LONG: &str = "Initialize ax in a project directory and build the index.
 
 Creates .ax/ (ax.db, ax.json, ship.toml, lock file), runs a full index on first init,
-installs git hooks, then offers the interactive agent installer.
+installs git hooks, installs the Cursor savings hook, imports Claude and Cursor
+savings logs, then offers the interactive agent installer.
 
 If the project is already initialized, runs an incremental sync instead of a full re-index.
 Use `ax index` or `ax index --force` when you need a full rebuild.

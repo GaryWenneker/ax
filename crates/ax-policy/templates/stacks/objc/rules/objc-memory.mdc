@@ -1,0 +1,18 @@
+---
+id: objc-memory
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["objc", "arc", "retain"]
+tags: ["objc"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Objective-C memory
+
+- Do not add manual retain and release in ARC files.
+- Break retain cycles with weak delegates.

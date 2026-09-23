@@ -1,0 +1,18 @@
+---
+id: scala-immutability
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["scala", "val"]
+tags: ["scala"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Scala immutability
+
+- Use val by default.
+- Do not use null in new Scala APIs.

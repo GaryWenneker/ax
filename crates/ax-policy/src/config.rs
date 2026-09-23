@@ -76,6 +76,12 @@ struct PolicyConfigFile {
     require_review: Option<bool>,
     #[serde(default)]
     roots: Vec<PolicyRootFile>,
+    #[serde(default)]
+    stacks: Vec<String>,
+    #[serde(default)]
+    stack_detect: Option<String>,
+    #[serde(default)]
+    agents_dir: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -416,6 +422,108 @@ fn write_policy_storage_at(path: &Path, storage: PolicyStorage) -> Result<(), St
     Ok(())
 }
 
+/// Stack ids saved in the project `ax.json` only (not the global config).
+pub fn read_project_stack_ids(project_root: &Path) -> Vec<String> {
+    read_policy_section(&project_root.join(CONFIG_FILENAME)).stacks
+}
+
+/// `policy.stackDetect` from the project `ax.json` (`off` or `suggest`).
+pub fn read_project_stack_detect(project_root: &Path) -> String {
+    read_policy_section(&project_root.join(CONFIG_FILENAME))
+        .stack_detect
+        .unwrap_or_else(|| "off".into())
+}
+
+/// Merge `policy.stacks` and `policy.stackDetect` into project `ax.json`.
+pub fn write_project_stacks(
+    project_root: &Path,
+    stacks: &[String],
+    stack_detect: &str,
+) -> Result<(), String> {
+    let path = project_root.join(CONFIG_FILENAME);
+    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let policy = root
+        .as_object_mut()
+        .ok_or_else(|| "config root must be a JSON object".to_string())?;
+    let mut policy_obj = policy
+        .remove("policy")
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    policy_obj.insert(
+        "stacks".into(),
+        serde_json::Value::Array(
+            stacks
+                .iter()
+                .cloned()
+                .map(serde_json::Value::String)
+                .collect(),
+        ),
+    );
+    policy_obj.insert(
+        "stackDetect".into(),
+        serde_json::Value::String(stack_detect.into()),
+    );
+    policy.insert("policy".into(), serde_json::Value::Object(policy_obj));
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
+    std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub const DEFAULT_AGENTS_DIR: &str = ".agents";
+
+/// `policy.agentsDir` when the project `ax.json` defines it.
+pub fn configured_agents_dir(project_root: &Path) -> Option<String> {
+    read_policy_section(&project_root.join(CONFIG_FILENAME))
+        .agents_dir
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Folder name for on-disk rules and skills. `.agents` when unset.
+pub fn agents_dir_name(project_root: &Path) -> String {
+    configured_agents_dir(project_root).unwrap_or_else(|| DEFAULT_AGENTS_DIR.to_string())
+}
+
+/// A single relative directory name. No absolute paths, slashes, or `..`.
+pub fn validate_agents_dir_name(raw: &str) -> Result<String, String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Ok(DEFAULT_AGENTS_DIR.to_string());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("agents directory must be a single folder name, not a path".into());
+    }
+    if Path::new(name).is_absolute() {
+        return Err("agents directory must be a folder name inside the project".into());
+    }
+    Ok(name.to_string())
+}
+
+/// Save `policy.agentsDir` in the project `ax.json`.
+pub fn write_project_agents_dir(project_root: &Path, raw: &str) -> Result<String, String> {
+    let name = validate_agents_dir_name(raw)?;
+    let path = project_root.join(CONFIG_FILENAME);
+    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let policy = root
+        .as_object_mut()
+        .ok_or_else(|| "config root must be a JSON object".to_string())?;
+    let mut policy_obj = policy
+        .remove("policy")
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    policy_obj.insert("agentsDir".into(), serde_json::Value::String(name.clone()));
+    policy.insert("policy".into(), serde_json::Value::Object(policy_obj));
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
+    std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,5 +602,17 @@ mod tests {
         assert!(roots.iter().any(|r| r.id == "rel" && r.exists));
         let status = policy_storage_status(dir.path());
         assert_eq!(status.roots.len(), 2);
+    }
+
+    #[test]
+    fn agents_dir_defaults_until_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(configured_agents_dir(dir.path()).is_none());
+        assert_eq!(agents_dir_name(dir.path()), ".agents");
+        assert!(validate_agents_dir_name("../x").is_err());
+        assert_eq!(validate_agents_dir_name("").unwrap(), ".agents");
+        let saved = write_project_agents_dir(dir.path(), "team-policy").unwrap();
+        assert_eq!(saved, "team-policy");
+        assert_eq!(configured_agents_dir(dir.path()).as_deref(), Some("team-policy"));
     }
 }

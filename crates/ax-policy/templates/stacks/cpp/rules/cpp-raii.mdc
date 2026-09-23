@@ -1,0 +1,18 @@
+---
+id: cpp-raii
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["c++", "raii", "unique_ptr"]
+tags: ["cpp"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# C++ RAII
+
+- Use RAII for locks and memory.
+- Do not call new and delete in new code when a standard container works.

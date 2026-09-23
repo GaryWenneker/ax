@@ -1,0 +1,19 @@
+---
+id: javascript-modules
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["javascript", "import", "require"]
+tags: ["javascript"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# JavaScript modules
+
+- Match the module system already in the package.
+- Keep side effects out of import time.
+- Do not mutate exported objects.

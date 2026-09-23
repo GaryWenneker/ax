@@ -1,0 +1,4 @@
+id = "vue"
+version = "1.1.0"
+description = "Vue composition API and single-file component rules"
+dependsOn = []

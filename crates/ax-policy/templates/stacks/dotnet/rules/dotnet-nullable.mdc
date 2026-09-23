@@ -1,0 +1,20 @@
+---
+id: dotnet-nullable
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["dotnet", "csharp", "nullable"]
+tags: ["dotnet"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# .NET nullable and API shape
+
+- New projects keep nullable reference types enabled. Entry points check null. Inside the boundary, trust the annotations.
+- Compare with `is null` and `is not null`.
+- Public APIs have XML docs when the repo already documents public surface.
+- Follow `.editorconfig`: file-scoped namespaces, `nameof`, and pattern matching where the surrounding file does.

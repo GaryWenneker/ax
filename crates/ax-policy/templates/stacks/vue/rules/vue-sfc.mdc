@@ -1,0 +1,19 @@
+---
+id: vue-sfc
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["vue", "sfc", "pinia"]
+tags: ["vue"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Vue single-file components
+
+- One component per SFC.
+- Shared state uses the store already in the app.
+- Do not mutate a prop.

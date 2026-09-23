@@ -1,0 +1,4 @@
+id = "angular"
+version = "1.1.0"
+description = "Angular dependency injection and template rules"
+dependsOn = []

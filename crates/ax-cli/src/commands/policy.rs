@@ -594,6 +594,30 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
     Ok(())
 }
 
+pub fn run_agents_dir(path: Option<String>, name: Option<String>) -> Result<(), String> {
+    let root = resolve_path(path);
+    let Some(raw) = name else {
+        let current = ax_policy::agents_dir_name(&root);
+        let defined = ax_policy::configured_agents_dir(&root).is_some();
+        println!(
+            "{current}{}",
+            if defined {
+                ""
+            } else {
+                " (default, not saved in ax.json)"
+            }
+        );
+        return Ok(());
+    };
+    let previous = ax_policy::agents_dir_name(&root);
+    let saved = ax_policy::set_agents_dir(&root, &raw)?;
+    if previous != saved {
+        println!("Moved {previous} → {saved}");
+    }
+    println!("Policy files directory: {saved}");
+    Ok(())
+}
+
 pub async fn run_storage_status(path: Option<String>, json: bool) -> Result<(), String> {
     let root = resolve_path(path);
     let status = ax_policy::policy_storage_status(&root);
@@ -1226,5 +1250,165 @@ pub async fn run_policy_restore(
         result.skipped.len(),
         result.errors.len()
     );
+    Ok(())
+}
+
+async fn reindex_policy(root: &std::path::Path) -> Result<(), String> {
+    let ax = ax_core::Ax::open(root).await.map_err(|e| e.to_string())?;
+    ax_policy::index_policy(ax.db_pool(), root, true)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn run_stack_list(json: bool) -> Result<(), String> {
+    let stacks = ax_policy::stack_catalog_list();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&stacks).unwrap_or_default());
+    } else {
+        println!("Stacks:");
+        for s in &stacks {
+            let deps = if s.depends_on.is_empty() {
+                String::new()
+            } else {
+                format!(" (depends on {})", s.depends_on.join(", "))
+            };
+            println!("  {} {} — {}{}", s.id, s.version, s.description, deps);
+        }
+    }
+    Ok(())
+}
+
+pub fn run_stack_detect(path: Option<String>, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let found = ax_policy::detect_stacks(&root);
+    if json {
+        let rows: Vec<_> = found
+            .iter()
+            .map(|d| serde_json::json!({"id": d.id, "reason": d.reason}))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+    } else if found.is_empty() {
+        println!("No stacks detected.");
+    } else {
+        println!("Detected stacks (not installed):");
+        for d in &found {
+            println!("  {} — {}", d.id, d.reason);
+        }
+        let ids = found.iter().map(|d| d.id.as_str()).collect::<Vec<_>>().join(" ");
+        println!("Install with: ax policy stack apply {ids}");
+    }
+    Ok(())
+}
+
+pub async fn run_stack_apply(
+    path: Option<String>,
+    ids: Vec<String>,
+    force: bool,
+    yes: bool,
+    json: bool,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let chosen = if ids.is_empty() {
+        let configured = ax_policy::read_configured_stacks(&root);
+        if !configured.is_empty() {
+            configured
+        } else {
+            let detected = ax_policy::detect_stacks(&root);
+            if detected.is_empty() {
+                return Err("no stacks configured or detected".into());
+            }
+            let tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
+            if !yes {
+                if !tty {
+                    return Err(
+                        "detected stacks require --yes when stdin is not a terminal".into(),
+                    );
+                }
+                let list = detected
+                    .iter()
+                    .map(|d| d.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!("Apply detected stacks: {list}? [y/N]");
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+                if !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+                    return Err("aborted".into());
+                }
+            }
+            detected.into_iter().map(|d| d.id).collect()
+        }
+    } else {
+        ids
+    };
+    let report = ax_policy::apply_stacks(&root, &chosen, force)?;
+    reindex_policy(&root).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+    } else {
+        println!("Stacks: {}", report.stacks.join(", "));
+        println!(
+            "  created={}  updated={}  unchanged={}  skipped_user_edit={}",
+            report.created.len(),
+            report.updated.len(),
+            report.unchanged.len(),
+            report.skipped_user_edit.len()
+        );
+    }
+    Ok(())
+}
+
+pub async fn run_stack_remove(path: Option<String>, id: String, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let removed = ax_policy::remove_stack(&root, &id)?;
+    reindex_policy(&root).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&removed).unwrap_or_default());
+    } else {
+        println!("Removed {} file(s) for stack {id}", removed.len());
+    }
+    Ok(())
+}
+
+pub fn run_stack_status(path: Option<String>, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let rows = ax_policy::stack_status(&root);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+    } else if rows.is_empty() {
+        println!("No stacks installed.");
+    } else {
+        for row in &rows {
+            println!(
+                "{} installed={} catalog={} upgrade={}",
+                row.id,
+                row.installed_version.as_deref().unwrap_or("-"),
+                row.catalog_version,
+                row.upgrade_available
+            );
+            for f in &row.drifted_files {
+                println!("  drifted {f}");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_stack_upgrade(path: Option<String>, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let report = ax_policy::upgrade_stacks(&root)?;
+    reindex_policy(&root).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+    } else {
+        println!(
+            "Upgrade created={} updated={} unchanged={} skipped_user_edit={}",
+            report.created.len(),
+            report.updated.len(),
+            report.unchanged.len(),
+            report.skipped_user_edit.len()
+        );
+    }
     Ok(())
 }

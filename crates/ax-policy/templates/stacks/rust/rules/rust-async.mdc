@@ -1,0 +1,20 @@
+---
+id: rust-async
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["rust", "tokio", "async"]
+tags: ["rust"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Rust async
+
+- Do not hold a blocking lock across `.await`.
+- Blocking work uses the runtime's blocking pool.
+- Tasks that are spawned store their `JoinHandle` or document why they are detached.
+- Cancellation of the parent future cancels the child work unless the design says otherwise.

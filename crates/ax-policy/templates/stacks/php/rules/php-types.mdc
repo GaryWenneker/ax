@@ -1,0 +1,18 @@
+---
+id: php-types
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["php", "type"]
+tags: ["php"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# PHP types
+
+- New functions declare scalar, object, and return types.
+- Do not use the `@` operator.

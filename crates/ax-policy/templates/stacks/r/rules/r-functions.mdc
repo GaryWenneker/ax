@@ -1,0 +1,18 @@
+---
+id: r-functions
+level: HIGH
+alwaysApply: false
+globs: []
+triggers: ["r", "function"]
+tags: ["r"]
+priority: 60
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# R functions
+
+- Prefer vectorized operations.
+- Do not grow a data frame in a loop.

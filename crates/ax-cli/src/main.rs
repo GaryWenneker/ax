@@ -800,10 +800,21 @@ enum PolicyCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Folder that holds on-disk rules and skills (default `.agents`)
+    AgentsDir {
+        /// New folder name. Omit to print the current name.
+        name: Option<String>,
+        path: Option<String>,
+    },
     /// Show or set policy storage mode (files vs database)
     Storage {
         #[command(subcommand)]
         action: PolicyStorageCommands,
+    },
+    /// Language and CMS policy stacks (opt-in skills and rules)
+    Stack {
+        #[command(subcommand)]
+        action: PolicyStackCommands,
     },
     /// Per-project shared pack export/import (git team sync)
     Pack {
@@ -841,6 +852,52 @@ enum PolicyCommands {
         preview: bool,
         #[arg(long, help = "JSON file of rule:<id>|skill:<name> → overwrite|skip")]
         decisions: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyStackCommands {
+    /// List stack ids shipped with ax
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print detected stacks without writing
+    Detect {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install stacks into project policy and record them in ax.json
+    Apply {
+        /// Stack ids. When omitted, use ax.json or detection.
+        ids: Vec<String>,
+        path: Option<String>,
+        #[arg(long, help = "Overwrite files the user edited")]
+        force: bool,
+        #[arg(long, help = "Apply detected stacks without a prompt")]
+        yes: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove one stack's managed files when they still match the lock
+    Remove {
+        id: String,
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Installed stacks versus the embedded catalog
+    Status {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Refresh lock-matching files from the current catalog
+    Upgrade {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1345,6 +1402,9 @@ async fn async_main() {
             PolicyCommands::Capture { prompt, path, file, yes, json } => {
                 commands::policy::run_capture(path, prompt, file, yes, json).await
             }
+            PolicyCommands::AgentsDir { name, path } => {
+                commands::policy::run_agents_dir(path, name)
+            }
             PolicyCommands::Storage { action } => match action {
                 PolicyStorageCommands::Status { path, json } => {
                     commands::policy::run_storage_status(path, json).await
@@ -1381,6 +1441,28 @@ async fn async_main() {
                     json,
                 } => {
                     commands::policy::run_storage_set_item(path, id, storage, keep_file, json).await
+                }
+            },
+            PolicyCommands::Stack { action } => match action {
+                PolicyStackCommands::List { json } => commands::policy::run_stack_list(json),
+                PolicyStackCommands::Detect { path, json } => {
+                    commands::policy::run_stack_detect(path, json)
+                }
+                PolicyStackCommands::Apply {
+                    ids,
+                    path,
+                    force,
+                    yes,
+                    json,
+                } => commands::policy::run_stack_apply(path, ids, force, yes, json).await,
+                PolicyStackCommands::Remove { id, path, json } => {
+                    commands::policy::run_stack_remove(path, id, json).await
+                }
+                PolicyStackCommands::Status { path, json } => {
+                    commands::policy::run_stack_status(path, json)
+                }
+                PolicyStackCommands::Upgrade { path, json } => {
+                    commands::policy::run_stack_upgrade(path, json).await
                 }
             },
             PolicyCommands::Pack { action } => match action {

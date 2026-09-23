@@ -231,6 +231,35 @@ export default function PolicySyncPage({ onOpenReview }: Props) {
             </div>
             <div className="settings-row">
               <div className="settings-row-label">
+                <span className="settings-row-title">Rules and skills folder</span>
+                <span className="settings-row-desc">
+                  On-disk policy files. Default <code>.agents</code>. Saved as <code>policy.agentsDir</code>.
+                </span>
+              </div>
+              <div className="settings-row-control">
+                <input
+                  className="settings-input"
+                  aria-label="Rules and skills folder"
+                  value={settings?.agentsDir ?? '.agents'}
+                  disabled={!settings || !!busy}
+                  onChange={(e) =>
+                    setSettings((s) => (s ? { ...s, agentsDir: e.target.value } : s))
+                  }
+                  onBlur={(e) => {
+                    const name = e.target.value.trim();
+                    if (name) void patch({ agentsDir: name });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const name = (e.target as HTMLInputElement).value.trim();
+                      if (name) void patch({ agentsDir: name });
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <div className="settings-row">
+              <div className="settings-row-label">
                 <span className="settings-row-title">Require review</span>
                 <span className="settings-row-desc">
                   Imports land in <code>.ax/policy/pending/</code> until approved.
