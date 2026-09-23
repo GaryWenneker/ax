@@ -299,6 +299,50 @@ Blast-radius subgraph — what breaks if you change this symbol. Output is JSON.
 ax impact AuthService
 ```
 
+### `ax cycles`
+
+List call-graph cycles: strongly connected components with more than one symbol, printed as `a → b` chains. Same engine as the `ax_cycles` MCP tool.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--limit` | number | `50` | Max cycles to report |
+| `--json` | flag | — | Machine-readable JSON |
+
+```bash
+ax cycles
+ax cycles --limit 10 --json
+```
+
+### `ax path <from> <to>`
+
+Shortest path between two symbols over Calls / References edges. Prints the chain, or an error when either symbol is not in the index. Same engine as the `ax_path` MCP tool.
+
+| Argument / flag | Type | Description |
+|---|---|---|
+| `from` | required | Start symbol |
+| `to` | required | End symbol |
+| `--json` | flag | Machine-readable JSON |
+
+```bash
+ax path handleRequest saveUser
+ax path handleRequest saveUser --json
+```
+
+### `ax api <module>`
+
+Public API surface of a module: exported symbols whose file path starts with the given prefix, with kind and file. Same engine as the `ax_api` MCP tool.
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `module` | required | — | Module name or path prefix (for example `src/auth`) |
+| `--limit` | number | `200` | Max exported symbols |
+| `--json` | flag | — | Machine-readable JSON |
+
+```bash
+ax api src/auth
+ax api crates/ax-share/src --limit 50 --json
+```
+
 ---
 
 ## Architecture insights
@@ -362,7 +406,23 @@ ax report --out docs/ARCHITECTURE.md
 ax report --stdout
 ```
 
-### `ax export okf [path]`
+### `ax validate [path]`
+
+Graph hygiene report: isolated symbols (no call or import edges), dangling edges (an edge whose target is missing), and orphan docs (Markdown with no documents / references edges). Use `--ci` to fail a pipeline on a dirty graph.
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `path` | optional | cwd | Project root |
+| `--ci` | flag | — | Exit non-zero when dangling edges or isolated symbols exist |
+| `--json` | flag | — | Machine-readable JSON |
+
+```bash
+ax validate
+ax validate --json
+ax validate --ci
+```
+
+### `ax export okf [path]` / `ax export concepts [path]`
 
 Export an **Open Knowledge Format (OKF)** Markdown bundle from the indexed graph — one YAML-frontmatter page per concept with Calls / Called by links. Configure the relative output path under `okf` in `ax.json` (default `.ax/knowledge`). The same export can be started from Command Center **Settings → Open Knowledge Format (OKF)**. See [Open Knowledge Format (OKF)](/guides/okf/).
 
@@ -546,6 +606,27 @@ Configure it in `ax.json` under `docsCatalog`. Every key is optional, and there 
     "wiki_products_page": "Products.md"
   }
 }
+```
+
+---
+
+## Global index
+
+### `ax global`
+
+Aggregate project indexes into one machine-wide database, `~/.ax/global.db`. `sync` copies nodes, files, and edges from a project's `.ax/ax.db`. Files with the same hash in more than one project are recorded as shared knowledge and cross-project references. Set `AX_GLOBAL_DB` to use a different database path.
+
+| Subcommand | Description |
+|---|---|
+| `init` | Create `~/.ax/global.db` (or `AX_GLOBAL_DB`) and apply the schema |
+| `sync [path]` | Copy this project's `.ax/ax.db` into the global database (default: cwd) |
+| `status` | Show the database path and project, node, document, and shared-knowledge counts |
+
+```bash
+ax global init
+ax global sync
+ax global sync ./services/api
+ax global status
 ```
 
 ---
@@ -1302,6 +1383,15 @@ ax policy stack upgrade
 ax policy stack remove react
 ```
 
+| Subcommand | Description |
+|---|---|
+| `list` | List the stack ids shipped with ax (`--json`) |
+| `detect [path]` | Print the stacks detected in the project without writing anything (`--json`) |
+| `apply [ids…] [path]` | Install stacks into project policy and record them in `ax.json` (`--force`, `--yes`, `--json`) |
+| `remove <id> [path]` | Remove one stack's managed files when they still match the lock (`--json`) |
+| `status [path]` | Compare installed stacks with the embedded catalog (`--json`) |
+| `upgrade [path]` | Refresh files that still match the lock from the current catalog (`--json`) |
+
 `apply` with no ids uses `policy.stacks`. When that list is empty it prints a detection proposal and, on a terminal, asks before writing. Pass `--yes` to apply the proposal without a prompt. `--force` overwrites files you edited. Files you changed are otherwise left in place.
 
 `ax init` asks for stacks every time stdin is a terminal, including when the project was already initialized. Enter keeps the current set (or the detection on a first choice). `none` installs core policy only.
@@ -1391,6 +1481,13 @@ ax policy review show mobile-first
 ax policy review approve mobile-first
 ax policy review reject mobile-first
 ```
+
+| Subcommand | Description |
+|---|---|
+| `list [path]` | List pending rules and skills (`--json`) |
+| `show <id> [path]` | Show a pending item and its diff against the local copy (`--json`) |
+| `approve <id> [path]` | Move a pending item into active policy |
+| `reject <id> [path]` | Drop a pending item |
 
 ### `ax policy share`
 
@@ -1503,9 +1600,12 @@ ax status --json
 ax explore "auth flow" --json
 ax query UserService --kind class
 ax callers handleRequest
+ax path handleRequest saveUser
+ax cycles
 
 # Architecture insights
 ax insights --json
+ax validate --ci
 ax domain
 ax report --out AX_REPORT.md
 ax export graph-html --out graph.html

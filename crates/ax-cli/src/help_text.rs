@@ -32,7 +32,7 @@ Environment:
   AX_ASCII=1         Force ASCII glyphs everywhere
   NO_COLOR           Disable ANSI colors (also respected by owo-colors)
 
-Docs: https://garywenneker.github.io/ax/";
+Docs: https://getax.wenneker.io/";
 
 pub const INSTALL_LONG: &str = "Interactive installer for AI agent MCP configs.
 
@@ -402,3 +402,13 @@ Examples:
   ax mcp audit --window-minutes 60
   ax mcp audit --session <uuid>
   ax mcp audit --session path/to/transcript.jsonl --json";
+
+#[cfg(test)]
+mod tests {
+    use super::ROOT_AFTER;
+
+    #[test]
+    fn root_help_links_the_live_docs_site() {
+        assert!(ROOT_AFTER.ends_with("Docs: https://getax.wenneker.io/"));
+    }
+}
