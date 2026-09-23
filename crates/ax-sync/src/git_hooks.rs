@@ -6,7 +6,9 @@ use std::path::Path;
 use ax_utils::errors::{AxError, FileError};
 
 const SYNC_LINE: &str = "ax sync --quiet";
-const SHIP_LINE: &str = "ax ship --evaluate";
+const SHIP_LINE: &str = "ax ship --evaluate --quiet";
+/// Written by ax before v5.0.3; replaced in place so the gate never runs twice.
+const LEGACY_SHIP_LINE: &str = "ax ship --evaluate";
 const CAPTURE_COMMIT_LINE: &str = "ax capture-git --limit 1 --quiet";
 const CAPTURE_MERGE_LINE: &str = "ax capture-git --limit 20 --quiet";
 const MEMORY_EXPORT_LINE: &str = "ax memory export --quiet";
@@ -67,6 +69,27 @@ fn with_shebang(content: &str) -> String {
     }
 }
 
+fn upgrade_legacy_lines(content: &str) -> String {
+    if !content.lines().any(|l| l.trim() == LEGACY_SHIP_LINE) {
+        return content.to_string();
+    }
+    let mut out: String = content
+        .lines()
+        .map(|l| {
+            if l.trim() == LEGACY_SHIP_LINE {
+                SHIP_LINE
+            } else {
+                l
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
 fn file_error(e: std::io::Error, path: &Path) -> AxError {
     AxError::File(FileError::with_path(
         e.to_string(),
@@ -115,7 +138,8 @@ pub fn install_git_sync_hooks(project_root: &Path) -> Result<(), AxError> {
         } else {
             None
         };
-        let content = match existing.as_deref() {
+        let upgraded = existing.as_deref().map(upgrade_legacy_lines);
+        let content = match upgraded.as_deref() {
             Some(e) if required.iter().all(|line| e.contains(line)) => with_shebang(e),
             Some(e) => with_shebang(&merge_hook_content(e, &required)),
             None => with_shebang(&(required.join("\n") + "\n")),
@@ -139,7 +163,8 @@ pub fn repair_git_hooks(project_root: &Path) -> Result<(), AxError> {
         if !existing.lines().any(is_ax_line) {
             continue;
         }
-        write_hook(&hook_path, Some(&existing), &with_shebang(&existing))?;
+        let content = with_shebang(&upgrade_legacy_lines(&existing));
+        write_hook(&hook_path, Some(&existing), &content)?;
     }
     Ok(())
 }
@@ -395,6 +420,89 @@ mod tests {
         write_hook(&dir, "post-commit", &content, 0o755);
         remove_git_sync_hooks(dir.path()).unwrap();
         assert_eq!(read(&hook(&dir, "post-commit")), "#!/bin/sh\necho mine");
+    }
+
+    #[test]
+    fn new_hooks_run_the_gate_quietly() {
+        let dir = repo_with_hooks();
+        install_git_sync_hooks(dir.path()).unwrap();
+        for name in ["post-commit", "post-merge", "post-checkout"] {
+            let content = read(&hook(&dir, name));
+            assert!(
+                content.lines().any(|l| l == "ax ship --evaluate --quiet"),
+                "{name}: {content:?}"
+            );
+            assert!(
+                !content.lines().any(|l| l == "ax ship --evaluate"),
+                "{name}: {content:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_ship_line_is_replaced_in_place_on_install() {
+        let dir = repo_with_hooks();
+        write_hook(
+            &dir,
+            "post-commit",
+            "#!/bin/sh\nax sync --quiet\nax ship --evaluate\nax capture-git --limit 1 --quiet\n",
+            0o755,
+        );
+        install_git_sync_hooks(dir.path()).unwrap();
+        assert_eq!(
+            read(&hook(&dir, "post-commit")),
+            "#!/bin/sh\nax sync --quiet\nax ship --evaluate --quiet\nax capture-git --limit 1 --quiet\n"
+        );
+    }
+
+    #[test]
+    fn repair_replaces_legacy_ship_line() {
+        let dir = repo_with_hooks();
+        write_hook(
+            &dir,
+            "post-checkout",
+            "ax sync --quiet\nax ship --evaluate\n",
+            0o644,
+        );
+        repair_git_hooks(dir.path()).unwrap();
+        let path = hook(&dir, "post-checkout");
+        assert_eq!(
+            read(&path),
+            "#!/bin/sh\nax sync --quiet\nax ship --evaluate --quiet\n"
+        );
+        assert_executable(&path);
+    }
+
+    #[test]
+    fn user_ship_variant_is_left_alone() {
+        let dir = repo_with_hooks();
+        write_hook(
+            &dir,
+            "post-checkout",
+            "#!/bin/sh\nax ship --evaluate --open\n",
+            0o755,
+        );
+        repair_git_hooks(dir.path()).unwrap();
+        assert_eq!(
+            read(&hook(&dir, "post-checkout")),
+            "#!/bin/sh\nax ship --evaluate --open\n"
+        );
+    }
+
+    #[test]
+    fn user_ship_variant_next_to_legacy_line_is_left_alone() {
+        let dir = repo_with_hooks();
+        write_hook(
+            &dir,
+            "post-commit",
+            "#!/bin/sh\nax ship --evaluate\nax ship --evaluate --open\n",
+            0o755,
+        );
+        repair_git_hooks(dir.path()).unwrap();
+        assert_eq!(
+            read(&hook(&dir, "post-commit")),
+            "#!/bin/sh\nax ship --evaluate --quiet\nax ship --evaluate --open\n"
+        );
     }
 
     #[test]

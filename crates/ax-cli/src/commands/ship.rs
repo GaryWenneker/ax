@@ -11,6 +11,7 @@ pub async fn run(
     open: bool,
     auto_commit: bool,
     revert_on_fail: bool,
+    quiet: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
 
@@ -77,7 +78,15 @@ pub async fn run(
                 }
             ),
         );
-        println!("{json}");
+        if quiet {
+            if let Some(line) =
+                quiet_failure_line(report.quality_gate.passed, &report.quality_gate.steps)
+            {
+                eprintln!("{line}");
+            }
+        } else {
+            println!("{json}");
+        }
         return Ok(());
     }
 
@@ -110,4 +119,66 @@ pub async fn run(
     }
 
     Err("usage: ax ship --watch | --evaluate | --ci | --draft".into())
+}
+
+/// The single stderr line `ax ship --evaluate --quiet` prints; `None` when the gate passed.
+pub(crate) fn quiet_failure_line(
+    passed: bool,
+    steps: &[ax_ship::GateStepStatus],
+) -> Option<String> {
+    if passed {
+        return None;
+    }
+    let failed: Vec<&str> = steps
+        .iter()
+        .filter(|s| s.status == "failed")
+        .map(|s| s.step.as_str())
+        .collect();
+    if failed.is_empty() {
+        Some("ax: quality gate failed".into())
+    } else {
+        Some(format!("ax: quality gate failed: {}", failed.join(", ")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quiet_failure_line;
+    use ax_ship::GateStepStatus;
+
+    fn step(name: &str, status: &str) -> GateStepStatus {
+        GateStepStatus {
+            step: name.into(),
+            status: status.into(),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn passing_gate_prints_nothing() {
+        let steps = [step("index", "passed"), step("sonar", "skipped")];
+        assert_eq!(quiet_failure_line(true, &steps), None);
+    }
+
+    #[test]
+    fn failing_gate_lists_failed_steps() {
+        let steps = [
+            step("tests", "failed"),
+            step("sonar", "skipped"),
+            step("policy", "failed"),
+        ];
+        assert_eq!(
+            quiet_failure_line(false, &steps).as_deref(),
+            Some("ax: quality gate failed: tests, policy")
+        );
+    }
+
+    #[test]
+    fn failing_gate_without_failed_step_still_says_so() {
+        let steps = [step("index", "passed")];
+        assert_eq!(
+            quiet_failure_line(false, &steps).as_deref(),
+            Some("ax: quality gate failed")
+        );
+    }
 }

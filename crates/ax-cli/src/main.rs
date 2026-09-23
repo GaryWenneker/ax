@@ -268,6 +268,8 @@ enum Commands {
         auto_commit: bool,
         #[arg(long, help = "With --auto-commit: undo the checkpoint commit (git reset --mixed, never --hard) if the gate fails (this run only)")]
         revert_on_fail: bool,
+        #[arg(long, help = "With --evaluate: print nothing when the gate passes, one line on stderr when it fails")]
+        quiet: bool,
     },
     /// Affected tests
     #[command(long_about = help_text::AFFECTED_LONG)]
@@ -1132,8 +1134,11 @@ fn run_desktop_on_os_main_thread() {
     ui::init_terminal();
     commands::upgrade::apply_pending_upgrade();
 
+    let args: Vec<String> = std::env::args().collect();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("ax=info".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive(log_directive(&args).parse().unwrap()),
+        )
         .with_writer(std::io::stderr)
         .try_init();
 
@@ -1168,8 +1173,11 @@ async fn async_main() {
 
     commands::upgrade::apply_pending_upgrade();
 
+    let args: Vec<String> = std::env::args().collect();
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("ax=info".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive(log_directive(&args).parse().unwrap()),
+        )
         .with_writer(std::io::stderr)
         .init();
 
@@ -1328,6 +1336,7 @@ async fn async_main() {
             open,
             auto_commit,
             revert_on_fail,
+            quiet,
         }) => {
             commands::ship::run(
                 path,
@@ -1340,6 +1349,7 @@ async fn async_main() {
                 open,
                 auto_commit,
                 revert_on_fail,
+                quiet,
             )
             .await
         }
@@ -1734,5 +1744,44 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::WatchdogChild { .. }) => None,
         Some(Commands::UpgradeApply { .. }) => None,
         Some(Commands::Serve { .. }) => Some("serve".into()),
+    }
+}
+
+/// Log filter for the CLI: `--quiet` anywhere on the command line hides ax INFO lines.
+fn log_directive(args: &[String]) -> &'static str {
+    if args.iter().skip(1).any(|a| a == "--quiet") {
+        "ax=warn"
+    } else {
+        "ax=info"
+    }
+}
+
+#[cfg(test)]
+mod log_directive_tests {
+    use super::log_directive;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn quiet_hides_info() {
+        assert_eq!(
+            log_directive(&args(&["ax", "capture-git", "--quiet"])),
+            "ax=warn"
+        );
+    }
+
+    #[test]
+    fn default_keeps_info() {
+        assert_eq!(log_directive(&args(&["ax", "capture-git"])), "ax=info");
+    }
+
+    #[test]
+    fn quiet_as_a_value_does_not_count() {
+        assert_eq!(
+            log_directive(&args(&["ax", "remember", "be --quiet-ish"])),
+            "ax=info"
+        );
     }
 }
