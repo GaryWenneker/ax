@@ -18,6 +18,19 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v5.0.1
+
+v5.0.1 removes built-in defaults that only made sense for one team.
+
+- **`ax docs-catalog sync` has no built-in wiki** — set `docsCatalog.wiki_remote` (and optionally `name`, `wiki_products_page`, `skill`, …) in `ax.json`. Without it, the wiki step is skipped and the local sources are still cataloged. See [`ax docs-catalog sync`](/reference/cli/#ax-docs-catalog-sync).
+- **No default OneDrive share folder** — the OneDrive provider needs `share.onedrive.shareUrl` in `ax.json`; without it, sync fails with a clear message.
+- **Generic PR skills** — the `pr`, `preq`, `pre-pr-check`, and `no-ab-prefix` skill templates are now in English and read the organization, project, and repo from `git remote -v`.
+
+**Upgrade notes**
+
+- The `ax docs-catalog sync --json` report renames `integratiePages` to `integrationPages` and `digitaleProducten` to `products`.
+- A workspace that relied on the old wiki defaults must now set them in `ax.json` under `docsCatalog`. Existing catalog memories keep their ids and are updated in place.
+
 ## What's new in v5.0.0
 
 v5.0.0 is a major release because ax now removes duplicate policy rows from your databases on its own and `ax init` seeds less into projects. Nothing on disk is deleted, and every removal is versioned.

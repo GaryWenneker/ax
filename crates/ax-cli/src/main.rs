@@ -382,7 +382,7 @@ enum Commands {
         #[command(subcommand)]
         action: LspCommands,
     },
-    /// Sync AzDO wiki + workspace docs into ax.db (documentation-catalog)
+    /// Sync an optional git wiki + workspace docs into ax.db (documentation-catalog)
     #[command(name = "docs-catalog", long_about = help_text::DOCS_CATALOG_LONG)]
     DocsCatalog {
         #[command(subcommand)]
@@ -457,7 +457,7 @@ enum Commands {
 enum DocsCatalogAction {
     /// Pull wiki, scan workspace, import memories, sync graph
     Sync {
-        #[arg(long, help = "Skip git pull/clone of AzDO wiki")]
+        #[arg(long, help = "Skip git pull/clone of the configured wiki")]
         skip_wiki_pull: bool,
         #[arg(long, help = "Build JSONL only; skip import and graph sync")]
         dry_run: bool,

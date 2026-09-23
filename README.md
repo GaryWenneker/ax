@@ -3,9 +3,11 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v5.0.0](https://github.com/GaryWenneker/ax/releases/tag/v5.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v5.0.1](https://github.com/GaryWenneker/ax/releases/tag/v5.0.1)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+
+**v5.0.1** (patch) removes built-in defaults that only fit one team: `ax docs-catalog sync` has no built-in wiki (set `docsCatalog.wiki_remote` in `ax.json`), the OneDrive share has no default folder, and the `pr` / `preq` / `pre-pr-check` / `no-ab-prefix` skill templates are generic and in English.
 
 **v5.0.0** (major) keeps **one copy of every rule and skill**: a name stored at the global level is removed from project `ax.db` files automatically (the longest copy wins, every change is versioned, files on disk stay). It also adds the **read guard hook** (the first whole-file read of indexed source is steered to `ax_node`), a **review loop** after the old-coder gauntlet, the **`pr-review-comments`** skill for colleague PRs, and principal-level review skills for every stack pack. `ax init` no longer seeds global skills into projects. See [What's new](https://getax.wenneker.io/getting-started/introduction/) and [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).
 

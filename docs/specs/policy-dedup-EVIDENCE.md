@@ -139,20 +139,20 @@ Web:
 
 ## Real execution on this machine
 
-Backup before the first real run: `~/.ax/backup-dedup-20260923/`, containing `global.db`, `ax.db`, `io.db`, and `mijnvf.db` (SQLite `.backup`).
+Backup before the first real run: `~/.ax/backup-dedup-20260923/`, containing `global.db`, `ax.db`, `io.db`, and the client project database (SQLite `.backup`).
 
 | Database | Before | After | Revisions |
 |---|---|---|---|
 | `~/.ax/global.db` | 8 global skills, 1 rule, 0 mirrors | same | 0 (nothing promoted) |
 | `/Users/gary/io/ax/.ax/ax.db` | 22 skills, 0 duplicates | same | — |
 | `/Users/gary/io/.ax/ax.db` | 24 skills, 4 duplicates | 20 skills, 0 duplicates | 4 × `dedup` |
-| `/Users/gary/io/MijnVF/.ax/ax.db` | 18 skills, 4 duplicates | 14 skills, 0 duplicates | 4 × `dedup` |
+| client project `.ax/ax.db` | 18 skills, 4 duplicates | 14 skills, 0 duplicates | 4 × `dedup` |
 
 - **First dry run:** it would have promoted the four `/Users/gary/io` copies. They differ from the global copies only by Windows line endings, which led to revision 1. After the fix, all 8 duplicates were "identical to the global copy" and were removed.
 - **Second real run:** "nothing to clean" in all three projects.
 - **After the final reinstall,** the dry run reports "nothing to clean" in all three projects.
 - **No return after a reindex:**
-  - `ax policy index --force` in `/Users/gary/io` and `ax sync` in MijnVF: still 0 duplicates.
+  - `ax policy index --force` in `/Users/gary/io` and `ax sync` in the client project: still 0 duplicates.
   - `ax sync` in `/Users/gary/io` panicked once (see Known limits). The row count stayed at 20.
 - **`ax web`,** in a throwaway project with a copy of the backed-up `global.db` via `AX_GLOBAL_DB`: an identical duplicate was removed 4 s after opening, with one `dedup` revision and an info log line.
 - **Error path:** a row stored as a BLOB makes `ax policy dedup` print the reason and exit 1, and nothing is removed.

@@ -14,7 +14,7 @@ Zip restore writes into `.agents/`, then Command Center / CLI re-index (`import_
 ### C1 — Leak gate is only private/inactive
 
 Given `P/.agents/rules/cursor.mdc` with Cursor frontmatter only (`description`, `alwaysApply`, no `id`/`level`)  
-And `P/.agents/skills/vfpf-pr/SKILL.md` with `name` and no `description`  
+And `P/.agents/skills/client-pr/SKILL.md` with `name` and no `description`  
 When `agents_share_violations(P)` runs  
 Then the list is **empty**.
 
@@ -49,7 +49,7 @@ That error is what Windows Cursor shows as **set policy/session failed (ax_prefl
 
 ### C6 — Index `.scripts` (hidden dir whitelist)
 
-`WalkBuilder.hidden(true)` never descends into `.scripts/`, so VfPf `.scripts/wcag` is missing from the code graph and agents fall back to Grep.
+`WalkBuilder.hidden(true)` never descends into `.scripts/`, so a client project's `.scripts/wcag` is missing from the code graph and agents fall back to Grep.
 
 Given `P/.scripts/wcag/Triage.cs`  
 When `scan_files` runs  

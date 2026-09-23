@@ -432,9 +432,9 @@ mod tests {
 
     #[test]
     fn parse_target_extracts_api_base_and_project_id() {
-        let target = parse_target("https://gitlab.example.com/takumi/vfpf.git").unwrap();
+        let target = parse_target("https://gitlab.example.com/acme/contoso-web.git").unwrap();
         assert_eq!(target.api_base, "https://gitlab.example.com/api/v4");
-        assert_eq!(target.project_id, "takumi%2Fvfpf");
+        assert_eq!(target.project_id, "acme%2Fcontoso-web");
     }
 
     #[test]
@@ -456,9 +456,9 @@ mod tests {
     #[tokio::test]
     async fn push_then_pull_round_trips_via_api() {
         let server = MockServer::start().await;
-        let repo_url = format!("{}/takumi/vfpf", server.uri());
+        let repo_url = format!("{}/acme/contoso-web", server.uri());
         let config = cfg(repo_url, "test-token");
-        let project_id = "takumi%2Fvfpf";
+        let project_id = "acme%2Fcontoso-web";
 
         // Push: remote starts empty.
         Mock::given(method("GET"))
@@ -521,9 +521,9 @@ mod tests {
     #[tokio::test]
     async fn pull_fails_clearly_on_sso_redirect_instead_of_following_it() {
         let server = MockServer::start().await;
-        let repo_url = format!("{}/takumi/vfpf", server.uri());
+        let repo_url = format!("{}/acme/contoso-web", server.uri());
         let config = cfg(repo_url, "test-token");
-        let project_id = "takumi%2Fvfpf";
+        let project_id = "acme%2Fcontoso-web";
 
         Mock::given(method("GET"))
             .and(path(format!("/api/v4/projects/{project_id}/repository/tree")))
@@ -545,9 +545,9 @@ mod tests {
     #[tokio::test]
     async fn push_with_no_changes_is_a_noop() {
         let server = MockServer::start().await;
-        let repo_url = format!("{}/takumi/vfpf", server.uri());
+        let repo_url = format!("{}/acme/contoso-web", server.uri());
         let config = cfg(repo_url, "test-token");
-        let project_id = "takumi%2Fvfpf";
+        let project_id = "acme%2Fcontoso-web";
 
         Mock::given(method("GET"))
             .and(path(format!("/api/v4/projects/{project_id}/repository/tree")))

@@ -537,10 +537,10 @@ mod tests {
             "---\ndescription: Cursor rule\nalwaysApply: true\n---\n\nNo AB prefix.\n",
         )
         .unwrap();
-        std::fs::create_dir_all(p.join(".agents/skills/vfpf-pr")).unwrap();
+        std::fs::create_dir_all(p.join(".agents/skills/contoso-pr")).unwrap();
         std::fs::write(
-            p.join(".agents/skills/vfpf-pr/SKILL.md"),
-            "---\nname: vfpf-pr\n---\n\nPR workflow.\n",
+            p.join(".agents/skills/contoso-pr/SKILL.md"),
+            "---\nname: contoso-pr\n---\n\nPR workflow.\n",
         )
         .unwrap();
         assert!(

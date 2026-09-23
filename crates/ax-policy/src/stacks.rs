@@ -565,7 +565,7 @@ mod tests {
         let dir = tempdir().unwrap();
         touch(
             dir.path(),
-            "AdviseurPortaal/src/WebApp/ClientApp/package.json",
+            "ContosoPortal/src/WebApp/ClientApp/package.json",
             r#"{"dependencies":{"next":"16.3.4","react":"19.2.8","react-dom":"19.2.8"}}"#,
         );
         touch(

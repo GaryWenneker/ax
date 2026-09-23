@@ -1,32 +1,32 @@
 ---
 name: no-ab-prefix
 description: >-
-  Verbod op AB#-prefix bij Azure DevOps work items. Gebruik alleen het getal
-  (16295) of een volledige AzDO-URL. Activeer bij PR's, commits, Slack,
-  bugs, wiki, en alle agent-output.
+  Ban the AB# prefix for Azure DevOps work items. Use only the number
+  (16295) or a full Azure DevOps URL. Apply to PRs, commits, Slack, bugs,
+  wiki pages, and all agent output.
 ---
 
-# Geen AB# — work item referenties
+# No AB# — work item references
 
-> **HARD RULE**: Nooit `AB#` — zie ook `c:\gary\VfPf\.cursor\rules\no-ab-prefix.mdc`.
+> **HARD RULE**: never write `AB#`. If the repo also has a `no-ab-prefix` rule, it says the same.
 
-## Wel
+## Do
 
-| Context | Voorbeeld |
-|---------|-----------|
-| Tekst | `16295` |
-| PR-titel | `16295 - Fix storing page middleware` |
-| Branch | `feature/16295-fix-storing-page-middleware` |
-| Commit | `fix(react): skip /storing in middleware 16295` |
-| Link | `[Bug titel](https://dev.azure.com/.../16295)` |
+| Context | Example |
+|---------|---------|
+| Text | `16295` |
+| PR title | `16295 - Fix maintenance page middleware` |
+| Branch | `feature/16295-fix-maintenance-page-middleware` |
+| Commit | `fix(react): skip /maintenance in middleware 16295` |
+| Link | `[Bug title](https://dev.azure.com/.../16295)` |
 
-## Niet
+## Don't
 
 - ❌ `AB#16295`
-- ❌ `AB#16295 - titel`
+- ❌ `AB#16295 - title`
 - ❌ `feature/AB#16295-...`
 
-## Gerelateerde skills
+## Related skills
 
-- `pr` — PR aanmaken (AzDO/GitHub)
-- `vfpf-git` — branch/commit conventies (monorepo)
+- `pr` — create a PR (Azure DevOps / GitHub)
+- the repo's git conventions skill, if it has one — branch and commit naming

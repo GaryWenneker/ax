@@ -6,9 +6,8 @@ use serde::{Deserialize, Serialize};
 
 pub const CONFIG_FILENAME: &str = "ax.json";
 
-/// Default io team OneDrive share folder for shared ax policy.
-pub const DEFAULT_ONEDRIVE_SHARE_URL: &str =
-    "https://ioworkspace-my.sharepoint.com/:f:/r/personal/gary_wenneker_iodigital_com/Documents/.ax";
+/// No default OneDrive share folder: set `share.onedrive.shareUrl` in ax.json.
+pub const DEFAULT_ONEDRIVE_SHARE_URL: &str = "";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -218,15 +217,11 @@ fn read_share_section(path: &Path) -> Option<ShareConfigPatch> {
 
 /// Load share config from project `ax.json` (defaults when missing).
 pub fn load_share_config(project_root: &Path) -> ShareConfig {
-    let mut cfg = ShareConfig::default();
-    let project_path = project_root.join(CONFIG_FILENAME);
-    if let Some(local) = read_share_section(&project_path) {
-        cfg = merge_share(cfg, local);
+    let cfg = ShareConfig::default();
+    match read_share_section(&project_root.join(CONFIG_FILENAME)) {
+        Some(local) => merge_share(cfg, local),
+        None => cfg,
     }
-    if cfg.onedrive.share_url.trim().is_empty() {
-        cfg.onedrive.share_url = DEFAULT_ONEDRIVE_SHARE_URL.to_string();
-    }
-    cfg
 }
 
 /// Path to the project share config file (`ax.json`).
@@ -305,9 +300,14 @@ mod tests {
     }
 
     #[test]
-    fn default_onedrive_url() {
-        let cfg = ShareConfig::default();
-        assert!(cfg.onedrive.share_url.contains("sharepoint.com"));
+    fn default_onedrive_url_is_empty() {
+        assert_eq!(ShareConfig::default().onedrive.share_url, "");
+        let project_dir = TempDir::new().unwrap();
+        write_share_json(
+            &project_dir.path().join(CONFIG_FILENAME),
+            serde_json::json!({ "provider": "onedrive", "onedrive": { "shareUrl": "  " } }),
+        );
+        assert_eq!(load_from_project(project_dir.path()).onedrive.share_url.trim(), "");
     }
 
     #[test]

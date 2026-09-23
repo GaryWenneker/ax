@@ -8,7 +8,7 @@
 
 The same skill is stored at several levels:
 
-| Skill | `~/.ax/global.db` | `ax` ax.db | `io` ax.db | `MijnVF` ax.db |
+| Skill | `~/.ax/global.db` | `ax` ax.db | `io` ax.db | client project ax.db |
 |---|---|---|---|---|
 | auti, noti, old-coder-api, systematic-debugging | yes | yes | yes | yes |
 | pr-review-comments, review-loop | yes | yes | – | – |

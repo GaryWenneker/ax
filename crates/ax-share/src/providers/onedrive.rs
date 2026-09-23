@@ -14,7 +14,7 @@ const GRAPH_V1: &str = "https://graph.microsoft.com/v1.0";
 pub async fn pull_onedrive(config: &OneDriveShareConfig, dest_root: &Path) -> Result<PullResult, String> {
     let share_url = config.share_url.trim();
     if share_url.is_empty() {
-        return Err("OneDrive share URL is not configured".into());
+        return Err("onedrive.shareUrl is not set in ax.json".into());
     }
     let token = get_access_token().await?;
     pull_onedrive_with_token(config, dest_root, GRAPH_V1, &token).await
@@ -29,7 +29,7 @@ pub(crate) async fn pull_onedrive_with_token(
 ) -> Result<PullResult, String> {
     let share_url = config.share_url.trim();
     if share_url.is_empty() {
-        return Err("OneDrive share URL is not configured".into());
+        return Err("onedrive.shareUrl is not set in ax.json".into());
     }
     let client = Client::new();
     let share_id = encode_share_id(share_url);
@@ -422,6 +422,20 @@ mod tests {
         assert!(manifest.is_file(), "expected manifest at {}", manifest.display());
         let pack_dir = result.pack_dir.expect("pack_dir should be set");
         assert_eq!(pack_dir, PathBuf::from(dest.path()).join("pull").join("policy").join("shared"));
+    }
+
+    #[tokio::test]
+    async fn pull_onedrive_without_share_url_names_the_ax_json_key() {
+        let dest = tempfile::TempDir::new().unwrap();
+        let config = OneDriveShareConfig {
+            share_url: "  ".into(),
+        };
+        let err = pull_onedrive(&config, dest.path()).await.unwrap_err();
+        assert_eq!(err, "onedrive.shareUrl is not set in ax.json");
+        let err = pull_onedrive_with_token(&config, dest.path(), "http://127.0.0.1:9", "t")
+            .await
+            .unwrap_err();
+        assert_eq!(err, "onedrive.shareUrl is not set in ax.json");
     }
 
     #[tokio::test]

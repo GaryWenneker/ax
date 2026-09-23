@@ -150,8 +150,8 @@ export interface DocsCatalogSyncReport {
   wikiAction: string;
   wikiPages: number;
   wikiSections: number;
-  integratiePages: number;
-  digitaleProducten: number;
+  integrationPages: number;
+  products: number;
   docsSections: number;
   skills: number;
   scriptReadmes: number;

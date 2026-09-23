@@ -1107,10 +1107,10 @@ mod tests {
             "---\ndescription: Cursor rule\nalwaysApply: true\n---\n\nNo AB prefix.\n",
         )
         .unwrap();
-        std::fs::create_dir_all(root.join(".agents/skills/vfpf-pr")).unwrap();
+        std::fs::create_dir_all(root.join(".agents/skills/contoso-pr")).unwrap();
         std::fs::write(
-            root.join(".agents/skills/vfpf-pr/SKILL.md"),
-            "---\nname: vfpf-pr\n---\n\nPR workflow.\n",
+            root.join(".agents/skills/contoso-pr/SKILL.md"),
+            "---\nname: contoso-pr\n---\n\nPR workflow.\n",
         )
         .unwrap();
         std::fs::write(
@@ -1126,7 +1126,7 @@ mod tests {
         let rules = list_rules(&pool).await.unwrap();
         assert!(rules.iter().any(|r| r.id == "ok"));
         assert!(
-            !rules.iter().any(|r| r.id.contains("no-ab-prefix") || r.id == "vfpf-pr"),
+            !rules.iter().any(|r| r.id.contains("no-ab-prefix") || r.id == "contoso-pr"),
             "cursor-native files must not be upserted: {:?}",
             rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>()
         );
@@ -1156,10 +1156,10 @@ mod tests {
             "---\ndescription: Cursor rule\nalwaysApply: true\n---\n\nNo AB prefix.\n",
         )
         .unwrap();
-        std::fs::create_dir_all(root.join(".agents/skills/vfpf-pr")).unwrap();
+        std::fs::create_dir_all(root.join(".agents/skills/contoso-pr")).unwrap();
         std::fs::write(
-            root.join(".agents/skills/vfpf-pr/SKILL.md"),
-            "---\nname: vfpf-pr\n---\n\nPR workflow.\n",
+            root.join(".agents/skills/contoso-pr/SKILL.md"),
+            "---\nname: contoso-pr\n---\n\nPR workflow.\n",
         )
         .unwrap();
 

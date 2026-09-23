@@ -216,7 +216,7 @@ export default function MemoryPage() {
               {syncingCatalog ? 'Syncing catalog…' : 'Sync docs catalog'}
             </button>
             <InfoHover label="About Sync docs catalog">
-              Pulls the AzDO Frontends-applicaties wiki, scans <code>.docs/</code>, agent skills,
+              Pulls the wiki set in <code>docsCatalog.wiki_remote</code> (if any), scans <code>.docs/</code>, agent skills,
               and script READMEs, then imports <strong>documentation-catalog</strong> memories into
               ax.db. Same as <code>ax docs-catalog sync</code>.
             </InfoHover>

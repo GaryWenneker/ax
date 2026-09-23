@@ -896,37 +896,37 @@ mod tests {
     #[test]
     fn resolve_rel_path_splits_forward_slashes() {
         let root = Path::new(if cfg!(windows) { r"C:\workspace" } else { "/workspace" });
-        let resolved = resolve_rel_path(root, "Mijn-Pf/src/Foo.cs");
-        assert_eq!(resolved, root.join("Mijn-Pf").join("src").join("Foo.cs"));
+        let resolved = resolve_rel_path(root, "Contoso-Web/src/Foo.cs");
+        assert_eq!(resolved, root.join("Contoso-Web").join("src").join("Foo.cs"));
     }
 
     #[test]
     fn groups_dirty_files_per_repo() {
         let repos = vec![
-            "Mijn-Pf".into(),
-            "Klantbeeld".into(),
-            "Teamanalyse".into(),
+            "Contoso-Web".into(),
+            "ContosoPortal".into(),
+            "FabrikamTeams".into(),
         ];
         let files = vec![
-            "Mijn-Pf/src/Foo.cs".into(),
-            "Klantbeeld/src/Bar.cs".into(),
+            "Contoso-Web/src/Foo.cs".into(),
+            "ContosoPortal/src/Bar.cs".into(),
         ];
-        let targets = build_scan_targets("VfPf", &repos, &files, false);
+        let targets = build_scan_targets("Contoso", &repos, &files, false);
         assert_eq!(targets.len(), 2);
-        assert!(targets.iter().all(|t| t.sources != "Teamanalyse"));
-        let mijn = targets.iter().find(|t| t.sources == "Mijn-Pf").unwrap();
-        assert!(mijn.inclusions.contains("Foo.cs"));
-        let klant = targets.iter().find(|t| t.sources == "Klantbeeld").unwrap();
-        assert!(klant.inclusions.contains("Bar.cs"));
+        assert!(targets.iter().all(|t| t.sources != "FabrikamTeams"));
+        let web = targets.iter().find(|t| t.sources == "Contoso-Web").unwrap();
+        assert!(web.inclusions.contains("Foo.cs"));
+        let contoso = targets.iter().find(|t| t.sources == "ContosoPortal").unwrap();
+        assert!(contoso.inclusions.contains("Bar.cs"));
     }
 
     #[test]
     fn single_repo_from_multi_workspace_keeps_prefixed_key() {
-        let repos = vec!["Adviseurportaal".into()];
+        let repos = vec!["AcmeAdvisor".into()];
         let targets = build_scan_targets_with_count("ax", &repos, &[], true, 10);
         assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].project_key, "ax-Adviseurportaal");
-        assert_eq!(targets[0].sources, "Adviseurportaal");
+        assert_eq!(targets[0].project_key, "ax-AcmeAdvisor");
+        assert_eq!(targets[0].sources, "AcmeAdvisor");
     }
 
     #[test]

@@ -51,9 +51,9 @@ mod tests {
     #[test]
     fn seeds_sonar_project_key_from_folder_name() {
         let ax = temp_ax_dir();
-        seed_ship_config(&ax, Some("VfPf")).unwrap();
+        seed_ship_config(&ax, Some("Contoso")).unwrap();
         let text = std::fs::read_to_string(ax.join("ship.toml")).unwrap();
-        assert!(text.contains("project_key = \"VfPf\""));
+        assert!(text.contains("project_key = \"Contoso\""));
         assert!(!text.contains("project_key = \"your-project\""));
         let _ = std::fs::remove_dir_all(&ax);
     }

@@ -1758,8 +1758,8 @@ mod tests {
     #[test]
     fn string_array_accepts_single_string() {
         assert_eq!(
-            string_array(Some(&json!("C:\\\\gary\\\\VfPf\\\\src\\\\a.cs"))),
-            vec!["C:\\\\gary\\\\VfPf\\\\src\\\\a.cs"]
+            string_array(Some(&json!("C:\\\\gary\\\\Contoso\\\\src\\\\a.cs"))),
+            vec!["C:\\\\gary\\\\Contoso\\\\src\\\\a.cs"]
         );
         assert_eq!(
             string_array(Some(&json!(["a.rs", "b.rs"]))),

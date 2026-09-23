@@ -1,4 +1,4 @@
-//! `ax docs-catalog` — sync AzDO wiki + workspace docs into ax.db.
+//! `ax docs-catalog` — sync an optional git wiki + workspace docs into ax.db.
 
 use ax_docs_catalog::{sync_catalog, SyncEvent, SyncOptions, SyncReport};
 
@@ -64,7 +64,9 @@ fn print_summary(report: &SyncReport) {
     println!();
     println!("Next steps:");
     println!("  ax recall documentation-catalog");
-    println!("  Skill: vfpf-docs-catalog");
+    if let Some(skill) = &report.skill {
+        println!("  Skill: {skill}");
+    }
     println!();
     println!(
         "  {}",

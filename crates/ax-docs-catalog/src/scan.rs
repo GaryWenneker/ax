@@ -52,43 +52,37 @@ pub fn wiki_top_sections(apps_root: &Path) -> Vec<String> {
     sections
 }
 
-pub fn digitale_producten_names(path: &Path) -> Vec<String> {
-    if !path.is_file() {
+/// First-cell values of every Markdown table row in `path`, minus header rows,
+/// separator rows, cells starting with `--`, and values listed in `skip`.
+pub fn product_names(path: &Path, skip: &[String]) -> Vec<String> {
+    let Ok(content) = std::fs::read_to_string(path) else {
         return vec![];
-    }
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return vec![],
     };
-    let skip_headers = [
-        "Naam",
-        "Naam -- VfPf Shared",
-        "Naam -- Overig",
-        "Naam -- Onbekend",
-        "-",
-        "actief",
-    ];
+    let lines: Vec<&str> = content.lines().map(str::trim).collect();
     let mut names = Vec::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if !line.starts_with('|') {
+    for (i, line) in lines.iter().enumerate() {
+        if !line.starts_with('|') || is_separator_row(line) {
             continue;
         }
-        // Table separator row
-        if line.chars().all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace()) {
+        if lines.get(i + 1).is_some_and(|next| is_separator_row(next)) {
             continue;
         }
         if let Some(name) = parse_table_first_cell(line) {
-            if skip_headers.contains(&name.as_str()) {
-                continue;
-            }
-            if name.starts_with("--") {
+            if name.starts_with("--") || skip.iter().any(|s| s == &name) {
                 continue;
             }
             names.push(name);
         }
     }
     names
+}
+
+fn is_separator_row(line: &str) -> bool {
+    line.starts_with('|')
+        && line.contains('-')
+        && line
+            .chars()
+            .all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
 }
 
 fn parse_table_first_cell(line: &str) -> Option<String> {
@@ -165,22 +159,63 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    #[test]
-    fn digitale_producten_parses_plain_table_rows() {
-        let dir = std::env::temp_dir().join("ax-docs-catalog-test");
+    fn products_file(tag: &str, lines: &[&str]) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "ax-docs-catalog-products-{tag}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("Digitale-Producten.md");
-        {
-            let mut f = std::fs::File::create(&path).unwrap();
-            writeln!(f, "| Naam | Repo |").unwrap();
-            writeln!(f, "| --- | --- |").unwrap();
-            writeln!(f, "|Adviseurportaal|AdviseurPortaal|").unwrap();
-            writeln!(f, "| **Klantbeeld** | Klantbeeld |").unwrap();
+        let path = dir.join("Products.md");
+        let mut f = std::fs::File::create(&path).unwrap();
+        for line in lines {
+            writeln!(f, "{line}").unwrap();
         }
-        let names = digitale_producten_names(&path);
+        (dir, path)
+    }
+
+    #[test]
+    fn products_parses_plain_and_bold_rows_and_skips_header() {
+        let (dir, path) = products_file(
+            "plain",
+            &[
+                "| Product | Repo |",
+                "| --- | --- |",
+                "|Contoso Portal|contoso-portal|",
+                "| **Fabrikam App** | fabrikam |",
+            ],
+        );
+        let names = product_names(&path, &[]);
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(names.contains(&"Adviseurportaal".to_string()));
-        assert!(names.contains(&"Klantbeeld".to_string()));
+        assert_eq!(
+            names,
+            vec!["Contoso Portal".to_string(), "Fabrikam App".to_string()]
+        );
+    }
+
+    #[test]
+    fn products_skips_configured_values_and_double_dash_cells() {
+        let (dir, path) = products_file(
+            "skip",
+            &[
+                "| Name | Repo |",
+                "|:---|---:|",
+                "| Contoso Portal | a |",
+                "| Name -- Shared | |",
+                "| -- retired | |",
+                "| Fabrikam App | b |",
+            ],
+        );
+        let names = product_names(&path, &["Name -- Shared".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            names,
+            vec!["Contoso Portal".to_string(), "Fabrikam App".to_string()]
+        );
+    }
+
+    #[test]
+    fn products_missing_file_is_empty() {
+        assert!(product_names(Path::new("/nonexistent/Products.md"), &[]).is_empty());
     }
 }

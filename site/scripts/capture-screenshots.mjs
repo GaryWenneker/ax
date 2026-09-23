@@ -5,12 +5,21 @@
  *   node site/scripts/capture-screenshots.mjs
  *   AX_WEB_URL=http://127.0.0.1:7070 node site/scripts/capture-screenshots.mjs
  *
+ *   AX_SHOTS=cc-graph.png,cc-memory-vault.png node site/scripts/capture-screenshots.mjs
+ *
  * Requires: ax web running, and `npx puppeteer` (downloads Chromium on first run).
+ *
+ * Redaction: terms are read from ~/.ax/redact-terms.txt (or AX_REDACT_TERMS_FILE), one
+ * case-insensitive term per line. The script refuses to run without them. Before each
+ * capture it removes the smallest list or table row whose text contains a term, then
+ * fails if a term is still in the page text. Text drawn on a <canvas> is not visible to
+ * this check, so canvas shots still need a look by eye.
  */
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
@@ -107,6 +116,73 @@ async function loadPuppeteer() {
 	}
 }
 
+function loadRedactTerms() {
+	const file = process.env.AX_REDACT_TERMS_FILE || path.join(os.homedir(), '.ax', 'redact-terms.txt');
+	let text;
+	try {
+		text = readFileSync(file, 'utf8');
+	} catch (err) {
+		throw new Error(`redact terms file not readable: ${file} (${err.code || err.message})`);
+	}
+	const terms = text
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.filter((l) => l && !l.startsWith('#'))
+		.map((l) => l.toLowerCase());
+	if (terms.length === 0) throw new Error(`redact terms file has no terms: ${file}`);
+	return terms;
+}
+
+const ROW_SELECTOR = 'tr, li, option, [role="row"], [role="listitem"], [role="option"], [class$="-row"], [class*="-row "], [class$="-item"], [class*="-item "]';
+
+/** Remove rows holding a term; return how many were removed and which terms are still visible. */
+async function redactPage(page, terms) {
+	return page.evaluate(
+		(terms, rowSelector) => {
+			const has = (s) => {
+				const t = (s || '').toLowerCase();
+				return terms.some((term) => t.includes(term));
+			};
+			let removed = 0;
+			const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+			const hits = [];
+			while (walker.nextNode()) {
+				if (has(walker.currentNode.nodeValue)) hits.push(walker.currentNode);
+			}
+			for (const node of hits) {
+				const row = node.parentElement?.closest(rowSelector);
+				if (row && row.isConnected) {
+					row.remove();
+					removed++;
+				}
+			}
+			for (const el of document.querySelectorAll('input, textarea')) {
+				if (has(el.value)) {
+					el.value = '';
+					removed++;
+				}
+			}
+			const text = (document.body.innerText || '').toLowerCase();
+			const inputs = Array.from(document.querySelectorAll('input, textarea')).map((el) => el.value.toLowerCase());
+			const remaining = terms.filter((term) => text.includes(term) || inputs.some((v) => v.includes(term)));
+			const where = [];
+			const rest = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+			while (rest.nextNode() && where.length < 5) {
+				if (!has(rest.currentNode.nodeValue)) continue;
+				const chain = [];
+				for (let el = rest.currentNode.parentElement; el && chain.length < 4; el = el.parentElement) {
+					const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '';
+					chain.push(cls ? `${el.tagName.toLowerCase()}.${cls}` : el.tagName.toLowerCase());
+				}
+				where.push(chain.join(' < '));
+			}
+			return { removed, remaining: remaining.length, where };
+		},
+		terms,
+		ROW_SELECTOR,
+	);
+}
+
 async function waitReady(page, selector, timeoutMs = 15000) {
 	if (!selector) return;
 	try {
@@ -117,6 +193,15 @@ async function waitReady(page, selector, timeoutMs = 15000) {
 }
 
 async function main() {
+	const terms = loadRedactTerms();
+	const only = (process.env.AX_SHOTS || '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean);
+	const unknown = only.filter((name) => !SHOTS.some((s) => s.name === name));
+	if (unknown.length) throw new Error(`unknown AX_SHOTS entries: ${unknown.join(', ')}`);
+	const shots = only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS;
+
 	mkdirSync(outDir, { recursive: true });
 	const puppeteer = await loadPuppeteer();
 
@@ -144,7 +229,7 @@ async function main() {
 		process.exit(1);
 	}
 
-	for (const shot of SHOTS) {
+	for (const shot of shots) {
 		const url = `${baseUrl}${shot.path}`;
 		process.stdout.write(`→ ${shot.name} (${shot.path}) ... `);
 		await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -152,13 +237,21 @@ async function main() {
 		if (shot.waitMs) await new Promise((r) => setTimeout(r, shot.waitMs));
 		if (shot.after) await shot.after(page);
 
+		const { removed, remaining, where } = await redactPage(page, terms);
+		if (remaining > 0) {
+			await browser.close();
+			throw new Error(
+				`${shot.name}: ${remaining} redact term(s) still visible on ${shot.path}; not written\n  at ${where.join('\n  at ')}`,
+			);
+		}
+
 		const out = path.join(outDir, shot.name);
 		await page.screenshot({ path: out, type: 'png', fullPage: false });
-		console.log(existsSync(out) ? 'ok' : 'MISSING');
+		console.log(existsSync(out) ? `ok (${removed} redacted)` : 'MISSING');
 	}
 
 	await browser.close();
-	console.log(`\nDone. ${SHOTS.length} screenshots in ${outDir}`);
+	console.log(`\nDone. ${shots.length} screenshots in ${outDir}`);
 }
 
 main().catch((err) => {

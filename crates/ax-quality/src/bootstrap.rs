@@ -170,7 +170,7 @@ pub fn canonical_repo_project_key(workspace_key: &str, repo_name: &str, multi_re
     }
 }
 
-/// Legacy workspace prefixes that may have been used before `project_key` changed (e.g. VfPf → ax).
+/// Legacy workspace prefixes that may have been used before `project_key` changed (e.g. Contoso → ax).
 pub fn legacy_workspace_prefixes(workspace_key: &str, project_root: &Path) -> Vec<String> {
     let folder_slug = project_root
         .file_name()
@@ -1221,15 +1221,15 @@ mod tests {
 
     #[test]
     fn resolves_placeholder_to_folder_name() {
-        let root = Path::new(r"C:\gary\VfPf");
+        let root = Path::new(r"C:\gary\Contoso");
         let (key, name) = resolve_sonar_project("your-project", root);
-        assert_eq!(key, "VfPf");
-        assert_eq!(name, "VfPf");
+        assert_eq!(key, "Contoso");
+        assert_eq!(name, "Contoso");
     }
 
     #[test]
     fn keeps_explicit_project_key() {
-        let root = Path::new("/projects/VfPf");
+        let root = Path::new("/projects/Contoso");
         let (key, name) = resolve_sonar_project("my-sonar-app", root);
         assert_eq!(key, "my-sonar-app");
         assert_eq!(name, "my-sonar-app");
@@ -1245,18 +1245,18 @@ mod tests {
 
     #[test]
     fn legacy_prefix_from_workspace_folder() {
-        let root = Path::new(r"C:\gary\VfPf");
-        assert_eq!(legacy_workspace_prefixes("ax", root), vec!["VfPf".to_string()]);
-        assert!(legacy_workspace_prefixes("VfPf", root).is_empty());
+        let root = Path::new(r"C:\gary\Contoso");
+        assert_eq!(legacy_workspace_prefixes("ax", root), vec!["Contoso".to_string()]);
+        assert!(legacy_workspace_prefixes("Contoso", root).is_empty());
     }
 
     #[test]
     fn canonical_repo_key_multi_repo() {
         assert_eq!(
-            canonical_repo_project_key("ax", "Mijn-Pf", true),
-            "ax-Mijn-Pf"
+            canonical_repo_project_key("ax", "Contoso-Web", true),
+            "ax-Contoso-Web"
         );
-        assert_eq!(canonical_repo_project_key("ax", "Mijn-Pf", false), "ax");
+        assert_eq!(canonical_repo_project_key("ax", "Contoso-Web", false), "ax");
     }
 
     #[test]

@@ -304,7 +304,7 @@ Close Cursor before `use`, then restart Cursor after applying a profile.
 
 Examples:
   ax cursor auth status
-  ax cursor auth save enterprise --label \"ioDigital\"
+  ax cursor auth save enterprise --label \"Work\"
   ax cursor auth save personal --from-auth-json --email you@gmail.com --membership pro_plus
   ax cursor auth list
   ax cursor auth use personal
@@ -346,13 +346,15 @@ Examples:
   ax export okf --publish-wiki --dry-run
   ax export concepts          # alias for ax export okf";
 
-pub const DOCS_CATALOG_LONG: &str = "Sync AzDO wiki + workspace documentation into ax.db.
+pub const DOCS_CATALOG_LONG: &str = "Sync an optional git wiki + workspace documentation into ax.db.
 
-Pulls the Frontends-Algemeen wiki (git clone/pull), scans .docs/, agent skills, and
-script READMEs, writes .ax/memory/documentation-catalog.jsonl, imports into ax.db,
+Pulls the wiki set in docsCatalog.wiki_remote (git clone/pull; skipped when unset),
+scans .docs/, agent skills, and script READMEs, writes .ax/memory/documentation-catalog.jsonl, imports into ax.db,
 and runs ax sync. Same engine powers the Command Center Memory page.
 
-Configure paths in ax.json under docsCatalog (optional; VfPf defaults apply).
+Configure ax.json under docsCatalog: name, wiki_remote, wiki_local, wiki_apps_subdir,
+wiki_root_url, wiki_integrations_dir, wiki_products_page, wiki_products_skip, skill,
+jsonl_path, docs_root, skills_root, scripts_root. All keys are optional.
 
 Examples:
   ax docs-catalog sync

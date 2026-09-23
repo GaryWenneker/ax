@@ -154,6 +154,7 @@ Manage in **Takumi → Ax → Preferences → Shared policy** (auto-saves to `ax
 | Field | Description |
 |---|---|
 | `provider` | `onedrive` (default) or `github` (any git host, despite the name — kept for config-schema stability) |
+| `onedrive.shareUrl` | Required for the OneDrive provider; there is no default. Without it, sync fails with `onedrive.shareUrl is not set in ax.json` |
 | `importMode` | `review` (stage pending), `merge` (apply without review), or `force` (overwrite conflicts) |
 | `autoSyncMinutes` | Hint for Command Center auto-sync interval (default `15`) |
 | `content.rules` / `skills` / `memory` | Which remote artifacts to import |

@@ -33,7 +33,7 @@ gauntlet-agents-git-share: ok
 
 ## Skipped
 
-- Full `ax index` on `C:\gary\VfPf` (Windows machine). User must install this binary, **MCP: Restart Servers**, then `ax index` (extraction version 7) so `.scripts/wcag` is walked.
+- Full `ax index` on a client project (Windows machine). User must install this binary, **MCP: Restart Servers**, then `ax index` (extraction version 7) so `.scripts/wcag` is walked.
 - Independent verification: not performed (Tier 2).
 
 ## Known limits

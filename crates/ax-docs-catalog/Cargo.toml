@@ -1,8 +1,8 @@
 [package]
 name = "ax-docs-catalog"
-version = "5.0.0"
+version = "5.0.1"
 edition = "2021"
-description = "Sync AzDO wiki + workspace docs into ax.db (documentation-catalog memories)"
+description = "Sync an optional git wiki + workspace docs into ax.db (documentation-catalog memories)"
 
 [dependencies]
 ax-core = { workspace = true }

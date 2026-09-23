@@ -26,7 +26,7 @@ const POLL_MS: u64 = 350;
 
 /// Follow this project's verbose log, or the most recently written log among
 /// recent workspaces when this project has never produced one (typical when
-/// Command Center is on MijnVF but Cursor MCP `--path` is another repo).
+/// Command Center is on one project but Cursor MCP `--path` is another repo).
 pub fn pick_trace_project_root(hub_root: &Path, recent: &[PathBuf]) -> (PathBuf, Option<String>) {
     if project_has_verbose_logs(hub_root) {
         return (hub_root.to_path_buf(), None);
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn pick_trace_keeps_hub_when_it_has_logs() {
         let dir = tempfile::tempdir().unwrap();
-        let hub = dir.path().join("mijnvf");
+        let hub = dir.path().join("contoso-hub");
         let other = dir.path().join("ax");
         fs::create_dir_all(hub.join(".ax")).unwrap();
         fs::create_dir_all(other.join(".ax")).unwrap();
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn pick_trace_falls_back_to_recent_with_logs() {
         let dir = tempfile::tempdir().unwrap();
-        let hub = dir.path().join("mijnvf");
+        let hub = dir.path().join("contoso-hub");
         let other = dir.path().join("ax");
         fs::create_dir_all(hub.join(".ax")).unwrap();
         fs::create_dir_all(other.join(".ax")).unwrap();

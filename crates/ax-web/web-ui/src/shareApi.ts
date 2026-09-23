@@ -139,8 +139,7 @@ export const DEFAULT_SHARE_CONFIG: ShareConfig = {
   importMode: 'review',
   autoSyncMinutes: 15,
   onedrive: {
-    shareUrl:
-      'https://ioworkspace-my.sharepoint.com/:f:/r/personal/gary_wenneker_iodigital_com/Documents/.ax',
+    shareUrl: '',
   },
   github: { repoUrl: '', branch: 'main', subpath: '.ax', token: '' },
 };

@@ -1,19 +1,19 @@
 ---
 name: preq
 description: >-
-  Genereer kopieerbare Slack-tekst om een collega om PR-review te vragen, met
-  klikbare links naar de AzDO pull request en user story. Gebruik wanneer de
-  gebruiker preq, review request slack, collega review vragen, of slack review
-  tekst zegt.
+  Generate copyable Slack text that asks a colleague to review a PR, with
+  clickable links to the Azure DevOps pull request and user story. Use when
+  the user says preq, review request slack, ask a colleague for review, or
+  slack review text.
 ---
 
-# Preq — Slack review-request
+# Preq — Slack review request
 
-Genereer **één kopieerbaar codeblok** voor Slack. Geen uitleg eromheen tenzij de gebruiker om context vraagt.
+Produce **one copyable code block** for Slack. No explanation around it unless the user asks for context.
 
-## Script (VfPf workspace)
+## Script (optional)
 
-From any VfPf git repo:
+If the repo ships a helper script (for example `.scripts/preq/Invoke-Preq.ps1`), prefer it:
 
 ```powershell
 .\.scripts\preq\Invoke-Preq.ps1              # active PR on current branch
@@ -21,117 +21,115 @@ From any VfPf git repo:
 .\.scripts\preq\Invoke-Preq.ps1 -Intro -Copy # intro line + clipboard
 ```
 
-Resolves PR from branch, work item from branch name / PR title / linked items. Output matches the format below.
+It resolves the PR from the branch and the work item from the branch name, PR title, or linked items. Its output matches the format below. Without a script, follow the workflow.
 
 ---
 
-## Outputformaat (verplicht)
+## Output format (required)
 
-`<url|tekst>` is Slack API-only — werkt niet bij handmatig plakken. Gebruik plain tekst met URL op de volgende regel, Slack maakt die automatisch klikbaar.
+`<url|text>` only works through the Slack API, not when pasting by hand. Use plain text with the URL on the next line; Slack makes it clickable.
 
 ```
-PR: {pr-titel}
+PR: {pr-title}
 {pr-url}
-US: {wi-titel}
-{wi-url}
+US: {work-item-title}
+{work-item-url}
 ```
 
-### Voorbeeld (exact dit patroon)
+### Example (exactly this pattern)
 
 PR: 14648 — Fix cookie security attributes (HttpOnly, Secure, SameSite)
-https://dev.azure.com/vfpfweb/Pf_Portal/_git/Pf_Portal/pullrequest/12997
-US: DigiD pentest: sessie cookie missen security gerelateerde attributen
-https://dev.azure.com/VfPf-NL/SomeProject/_workitems/edit/14648
+https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/12997
+US: Pentest: session cookie is missing security attributes
+https://dev.azure.com/<org>/<TeamProject>/_workitems/edit/14648
 
-- Prefix **PR:** en **US:** letterlijk zo laten.
-- Titels uit AzDO overnemen, niet zelf verzinnen.
-- **Nooit** `AB#` — alleen getal (rule `no-ab-prefix`).
+- Keep the prefixes **PR:** and **US:** exactly as written.
+- Take titles from Azure DevOps; never invent them.
+- **Never** `AB#` — only the number (rule `no-ab-prefix`).
 
-Optioneel op verzoek: één korte introregel erboven, bijv. `Hoi, zou iemand deze PR willen reviewen?`
+On request, add one short intro line above it, for example `Hi, could someone review this PR?`
 
 ## Workflow
 
-### 1 — Context ophalen
+### 1 — Get context
 
 ```powershell
 git remote -v
 git branch --show-current
 ```
 
-Org/project uit remote:
-- `https://...@dev.azure.com/vfpfweb/Pf_Portal/_git/Pf_Portal` → org `vfpfweb`, project `Pf_Portal`, repo `Pf_Portal`
+Read org, project, and repo from the remote:
+- `https://<org>@dev.azure.com/<org>/<project>/_git/<repo>` → org `<org>`, project `<project>`, repo `<repo>`
 
-### 2 — PR bepalen
+### 2 — Find the PR
 
-**Gebruiker geeft PR-id** → gebruik die.
+**The user gives a PR id** → use it.
 
-**Anders** — actieve PR op huidige branch:
+**Otherwise** — the active PR on the current branch:
 
 ```powershell
 $branch = git rev-parse --abbrev-ref HEAD
-az repos pr list --source-branch $branch --status active --org https://dev.azure.com/vfpfweb --project Pf_Portal --output json
+az repos pr list --source-branch $branch --status active --org https://dev.azure.com/<org> --project <project> --output json
 ```
 
-Meerdere PRs → vraag welke. Geen PR → vraag PR-id of branch.
+Several PRs → ask which one. No PR → ask for the PR id or branch.
 
-PR-details:
+PR details:
 
 ```powershell
 az repos pr show --id <prId> --org https://dev.azure.com/<org> --project <project> --output json
 ```
 
-Noteer: `pullRequestId`, `title`, `url` (of bouw URL).
+Record `pullRequestId`, `title`, and `url` (or build the URL).
 
-PR-URL patroon:
+PR URL pattern:
 `https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<prId>`
 
-### 3 — Work item bepalen
+### 3 — Find the work item
 
-Volgorde:
-1. ID uit branchnaam: `feature/14648-...` → `14648`
-2. Eerste getal in PR-titel vóór ` - ` (bijv. `14648 - Fix cookie...`)
-3. Gekoppelde work items op PR (`az repos pr work-items list --id <prId> ...`)
-4. Vraag gebruiker
+Order:
+1. ID from the branch name: `feature/14648-...` → `14648`
+2. First number in the PR title before ` - ` (for example `14648 - Fix cookie...`)
+3. Work items linked to the PR (`az repos pr work-items list --id <prId> ...`)
+4. Ask the user
 
-Work item ophalen — probeer orgs in volgorde:
+Fetch the work item. It can live in a different organization than the repo; try the organizations in the order the remotes list them:
 
 ```powershell
-az boards work-item show --id <wiId> --org https://dev.azure.com/VfPf-NL --output json
-# fallback:
-az boards work-item show --id <wiId> --org https://dev.azure.com/vfpfweb --output json
+az boards work-item show --id <wiId> --org https://dev.azure.com/<org> --output json
 ```
 
-Noteer: `System.Title`, `System.WorkItemType`, `System.TeamProject`.
+Record `System.Title`, `System.WorkItemType`, and `System.TeamProject`.
 
-WI-URL:
+Work item URL:
 `https://dev.azure.com/<org>/<TeamProject>/_workitems/edit/<wiId>`
 
-Gebruik de org waar het work item daadwerkelijk staat (uit query-resultaat).
+Use the organization where the work item actually lives (from the query result).
 
-### 4 — Titels opschonen
+### 4 — Clean up titles
 
-AzDO-titels via PowerShell bevatten soms encoding-artefacten. Vervang altijd:
+Titles read through PowerShell sometimes contain encoding artifacts. Always fix them:
 
-| Vuil | Schoon |
-|------|--------|
-| `?`, `â€"`, `â€™`, `Ã©` e.d. | verwijder of vervang door `-`, `'`, `e` |
-| dubbele spaties | enkele spatie |
-| leading/trailing whitespace | trimmen |
+| Dirty | Clean |
+|-------|-------|
+| `?`, `â€"`, `â€™`, `Ã©` and similar | remove, or replace with `-`, `'`, `e` |
+| double spaces | single space |
+| leading/trailing whitespace | trim |
 
-### 5 — Slack-tekst outputten
+### 5 — Output the Slack text
 
-Lever de output altijd in een **kopieerbaar code block** (``` ``` ```) zodat de gebruiker het in één klik kan kopiëren. Inhoud is plain tekst — titel op regel 1, URL op regel 2, voor zowel PR als US. Geen `<url|tekst>` syntax.
+Always deliver the output in a **copyable code block** so the user can copy it in one click. The content is plain text — title on line 1, URL on line 2, for both the PR and the US. No `<url|text>` syntax.
 
-## Foutafhandeling
+## Error handling
 
-| Situatie | Actie |
-|----------|--------|
-| Geen PR gevonden | Vraag PR-id of link |
-| Geen WI-id | Vraag work item-nummer |
-| `az` faalt | Toon draft met placeholders; vraag gebruiker titels/URLs aan te vullen |
-| Meerdere WI's op PR | Gebruik branch-ID; anders kort vragen welke |
+| Situation | Action |
+|-----------|--------|
+| No PR found | Ask for the PR id or link |
+| No work item id | Ask for the work item number |
+| `az` fails | Show a draft with placeholders; ask the user to fill in titles and URLs |
+| Several work items on the PR | Use the branch id; otherwise ask briefly which one |
 
-## Gerelateerde skills
+## Related skills
 
-- `pr` — PR aanmaken
-- `pre-pr-check` — checklist vóór PR
+- `pr` — create a PR
+- `pre-pr-check` — checklist before a PR

@@ -1,181 +1,181 @@
 ---
 name: pr
-description: Create a GitHub/AzDO draft PR with a concise, plain-language description. Always create as draft. Use when the user asks to make a PR, open a pull request, or says "maak een PR".
+description: Create a GitHub or Azure DevOps draft PR with a concise, plain-language description. Always create as draft. Use when the user asks to make a PR or open a pull request.
 ---
 
 # PR
 
-Always create as **draft**.
+Always create the PR as a **draft**.
 
-## Verplichte pre-check
+## Required pre-check
 
-Lees en voer de `pre-pr-check` skill uit VOORDAT je de PR aanmaakt.  
-Sla dit niet over. Open de PR pas als build ✅ en Sonar-scan ✅.
+Read and run the `pre-pr-check` skill BEFORE you create the PR.
+Do not skip it. Open the PR only when the build passes and the Sonar scan passes.
 
 ---
 
-## Remote detectie
+## Detect the remote
 
-Controleer eerst het remote type:
+Check the remote type first:
 
 ```
 git remote -v
 ```
 
-- URL bevat `dev.azure.com` → gebruik `az repos pr create` (zie AzDO-sectie)
-- URL bevat `github.com` → gebruik `gh pr create --draft`
+- URL contains `dev.azure.com` or `visualstudio.com` → use `az repos pr create` (see the Azure DevOps section)
+- URL contains `github.com` → use `gh pr create --draft`
+
+Read `<org>`, `<project>`, and `<repo>` from the remote URL:
+- `https://<org>@dev.azure.com/<org>/<project>/_git/<repo>` → org `<org>`, project `<project>`, repo `<repo>`
+- `git@ssh.dev.azure.com:v3/<org>/<project>/<repo>` → same three parts
+- `https://github.com/<owner>/<repo>` → owner `<owner>`, repo `<repo>`
 
 ---
 
 ## Workflow
 
-### Stap 1 — Haal work item op (VERPLICHT)
+### Step 1 — Fetch the work item (REQUIRED)
 
-Extraheer het work item-nummer uit de branchnaam:
+Extract the work item number from the branch name:
 
 ```powershell
 git branch --show-current
-# voorbeeld: feature/15025-dossieroverdracht → id = 15025
+# example: feature/15025-case-transfer → id = 15025
 ```
 
-Haal titel, project en org op uit AzDO. Probeer VfPf-NL eerst, dan vfpfweb:
+Fetch the title, team project, and URL from Azure DevOps. Work items can live in a different organization than the repo; try the organizations in the order the remotes list them, and ask the user when none resolves:
 
 ```powershell
-az boards work-item show --id <id> --org https://dev.azure.com/VfPf-NL --output json | Select-String "System.Title|System.TeamProject"
+az boards work-item show --id <id> --org https://dev.azure.com/<org> --output json | Select-String "System.Title|System.TeamProject"
 ```
 
-Noteer:
-- **Titel** → letterlijk gebruiken in PR-titel, nooit zelf verzinnen
-- **WI-URL** → `https://dev.azure.com/VfPf-NL/<TeamProject>/_workitems/edit/<id>` — gebruik in description header
-- **App-naam** → de naam van de site/applicatie waarop de PR betrekking heeft (bijv. Participatieplein, Medewerkersportaal, Mijn VF). Haal dit uit de repo-naam, het project, of de branchnaam.
+Record:
+- **Title** → use it verbatim in the PR title; never invent one
+- **Work item URL** → `https://dev.azure.com/<org>/<TeamProject>/_workitems/edit/<id>`, used in the description header
+- **App name** → the site or application the PR is about. Take it from the repo name, the project, or the branch name.
 
-### Stap 2 — Commits en gewijzigde bestanden
+### Step 2 — Commits and changed files
 
 ```
-git log develop...HEAD --oneline
-git diff develop...HEAD --name-only
+git log <target>...HEAD --oneline
+git diff <target>...HEAD --name-only
 ```
 
-### Stap 3 — Schrijf PR description (zie formaat hieronder)
+`<target>` is the repo's integration branch (`develop`, `main`, …). Read it from the repo's branch policy or ask.
 
-### Stap 4 — Maak PR aan (zie platform-sectie)
+### Step 3 — Write the PR description (format below)
+
+### Step 4 — Create the PR (platform section below)
 
 ---
 
-## AzDO (dev.azure.com)
+## Azure DevOps
 
-`az repos pr create` heeft geen werkende `--draft` flag — die wordt genegeerd.
-Maak eerst de PR aan, zet daarna apart op draft:
+`az repos pr create` has no working `--draft` flag; it is ignored.
+Create the PR first, then set it to draft separately:
 
 ```
 az repos pr create \
-  --title "<titel>" \
+  --title "<title>" \
   --description "<body>" \
   --source-branch "<branch>" \
-  --target-branch "develop" \
+  --target-branch "<target>" \
   --org "https://dev.azure.com/<org>" \
   --project "<project>"
 
 az repos pr update --id <pr-id> --draft true --org "https://dev.azure.com/<org>"
 ```
 
-Let op: `az repos pr update` accepteert geen `--project` — weglaten.
-
-Org en project haal je uit `git remote -v`:
-- `https://vfpfweb@dev.azure.com/vfpfweb/Pf_Portal/_git/...` → org=`vfpfweb`, project=`Pf_Portal`
+Note: `az repos pr update` does not accept `--project`; leave it out.
 
 ---
 
-## GitHub (github.com)
+## GitHub
 
 ```
 git push -u origin HEAD
-gh pr create --draft --title "<titel>" --body "<body>"
+gh pr create --draft --title "<title>" --body "<body>"
 ```
 
 ---
 
-## PR title formaat
+## PR title format
 
 ```
-<id> - <work item titel letterlijk overgenomen>
+<id> - <work item title, verbatim>
 ```
 
-- **Geen** `AB#` prefix — alleen het getal (zie rule `no-ab-prefix`)
-- Separator is ` - ` (AzDO converteert em dash `—` naar `-`, gebruik meteen ` - `)
-- Werk item titel letterlijk — nooit zelf vertalen of herformuleren
-- Als branch geen work item-nummer bevat: vraag het na, maak nooit een titel zonder WI-referentie
+- **No** `AB#` prefix — only the number (see rule `no-ab-prefix`)
+- The separator is ` - ` (Azure DevOps turns an em dash into `-`, so use ` - ` directly)
+- Use the work item title verbatim — never translate or rephrase it
+- If the branch has no work item number, ask for it; never create a title without a work item reference
 
 ---
 
-## PR description formaat
+## PR description format
 
-AzDO rendert markdown — gebruik het volledig. Referentie: PR #12998.
+Azure DevOps and GitHub both render Markdown — use it fully.
 
 ```markdown
-**App:** <naam van de site of applicatie, bijv. Participatieplein>
-**User story:** [<work item titel>](<https://dev.azure.com/VfPf-NL/<project>/_workitems/edit/<id>>)
+**App:** <name of the site or application>
+**User story:** [<work item title>](<https://dev.azure.com/<org>/<project>/_workitems/edit/<id>>)
 
 ---
 
-## Samenvatting
+## Summary
 
-<2-3 zinnen: wat was het probleem/context, wat is er nu veranderd>
+<2-3 sentences: what was the problem or context, and what changed>
 
-## Wijzigingen
+## Changes
 
-### <bestandspad of component>
-- <wat er precies gewijzigd is>
-- <nog een wijziging>
+### <file path or component>
+- <what exactly changed>
+- <another change>
 
-### <volgend bestand>
-- <wijziging>
+### <next file>
+- <change>
 
-## Teststappen (<omgeving naam> — <https://volledige-url-van-omgeving>)
+## Test steps (<environment name> — <https://full-url-of-environment>)
 
-> Voer deze stappen uit na deployment naar <URL> om de wijziging te valideren.
+> Run these steps after deployment to <URL> to validate the change.
 
-**Positief scenario (<korte omschrijving>):**
-1. <stap>
-2. <stap>
-3. **Verwacht resultaat:** <wat er moet gebeuren>
+**Positive scenario (<short description>):**
+1. <step>
+2. <step>
+3. **Expected result:** <what must happen>
 
-**Negatief scenario (<korte omschrijving>):**
-1. <stap>
-2. <stap>
-3. **Verwacht resultaat:** <wat er NIET mag gebeuren>
+**Negative scenario (<short description>):**
+1. <step>
+2. <step>
+3. **Expected result:** <what must NOT happen>
 
-## Automatische tests
+## Automated tests
 
-- [x] <test suite naam> <aantal> groen
+- [x] <test suite name> <count> green
 - [x] <linter> 0 errors
-- [x] <build tool> build succesvol
+- [x] <build tool> build succeeded
 
 ## Checklist
 
-- [x] Branch is up-to-date met `develop`
-- [x] Scope beperkt tot <gewijzigde onderdelen> (geen work item-ID herhalen als `AB#`)
-- [x] Geen console.log / debug code achtergebleven
-- [x] Secrets of credentials niet gecommit
-- [x] Work item gekoppeld in PR titel
+- [x] Branch is up to date with `<target>`
+- [x] Scope limited to <changed parts> (no work item ID repeated as `AB#`)
+- [x] No console.log or debug code left behind
+- [x] No secrets or credentials committed
+- [x] Work item linked in the PR title
 ```
 
-### Richtlijnen per sectie
+### Guidelines per section
 
-**Header (App + User story)**: Altijd de allereerste regels van de description. App-naam in platte tekst, user story als klikbare markdown-link naar het AzDO work item. Bij meerdere gekoppelde stories elk op een eigen regel. **Nooit** `AB#`-notatie — alleen getal of volledige link-URL (rule `no-ab-prefix`).
+**Header (App + User story)**: always the very first lines of the description. App name in plain text, user story as a clickable Markdown link to the work item. With several linked stories, put each on its own line. **Never** `AB#` notation — only the number or the full URL (rule `no-ab-prefix`).
 
-**Samenvatting**: Leg uit wat er mis was (of wat er gevraagd was) en wat er nu anders is. Concreet, geen abstracte beschrijving.
+**Summary**: explain what was wrong (or what was asked) and what is different now. Concrete, not abstract.
 
-**Wijzigingen**: Per gewijzigd bestand of logische component een `###` sub-sectie. Beschrijf wat er IN dat bestand veranderd is, niet alleen dát het veranderd is.
+**Changes**: one `###` subsection per changed file or logical component. Describe what changed IN that file, not only that it changed.
 
-**Teststappen**: Altijd de volledige URL van de testomgeving in de sectie-header én in de intro-regel. Formaat: `## Teststappen (DevMaster — https://vfpf-pplein-devmaster.vfpf-nc.nl)`. Zonder URL weet de reviewer niet waar naartoe. Bekende omgevingen:
-- PPlein DevMaster: `https://vfpf-pplein-devmaster.vfpf-nc.nl`
-- PPlein Acceptance: `https://ac.participatieplein.nl`
-- PPlein Test: `https://vfpf-pplein-test.vfpf-nc.nl`
-- Medewerkersportaal / overige apps: zoek URL op in appsettings of pipeline config
+**Test steps**: always put the full URL of the test environment in the section header and in the intro line, for example `## Test steps (Test — https://test.example.com)`. Without a URL the reviewer does not know where to go. Find the environment URLs in the repo: app settings, pipeline config, infrastructure files, or the README. Do not guess them.
 
-Altijd minstens één positief en één negatief scenario als de wijziging observeerbaar gedrag heeft. Met genummerde stappen en expliciet verwacht resultaat.
+Always include at least one positive and one negative scenario when the change has observable behavior, with numbered steps and an explicit expected result.
 
-**Automatische tests**: Toon daadwerkelijke testresultaten (aantallen, namen). Niet "zie CI" — vul het in.
+**Automated tests**: show the actual test results (counts, names). Not "see CI" — fill it in.
 
-**Checklist**: Altijd volledig invullen. Elk item `[x]` of `[ ]` — niet weglaten.
+**Checklist**: always fill it in completely. Every item is `[x]` or `[ ]` — never left out.

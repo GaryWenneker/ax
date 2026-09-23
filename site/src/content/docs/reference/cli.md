@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v5.0.0).
+description: Complete reference for every ax command, argument, and flag (v5.0.1).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -503,6 +503,49 @@ Import JSONL memories (upsert by id). Used after `git pull` or via the post-merg
 ```bash
 ax memory import
 ax memory import --path ./shared-memories.jsonl
+```
+
+### `ax docs-catalog sync`
+
+Build `documentation-catalog` memories from an optional git wiki, `.docs/`, agent skills, and script READMEs, import them into `ax.db`, and run `ax sync`. The Command Center Memory page (**Sync docs catalog**) uses the same engine.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--skip-wiki-pull` | off | Use the existing wiki clone without `git pull` |
+| `--dry-run` | off | Write the JSONL only; skip the import and graph sync |
+| `--json` | off | Print the sync report as JSON |
+
+```bash
+ax docs-catalog sync
+ax docs-catalog sync --dry-run --json
+ax docs-catalog sync --skip-wiki-pull
+```
+
+Configure it in `ax.json` under `docsCatalog`. Every key is optional, and there are no built-in wiki defaults: without `wiki_remote` the wiki step is skipped (`wikiAction: "not-configured"`).
+
+| Key | Default | Description |
+|---|---|---|
+| `name` | project folder name | Used in memory titles |
+| `wiki_remote` | none | Git URL of the wiki to clone and pull |
+| `wiki_local` | `.current/wiki` | Local clone path |
+| `wiki_apps_subdir` | `""` | Wiki subfolder to scan for sections |
+| `wiki_root_url` | `wiki_remote` | Browser URL stored in the catalog |
+| `wiki_integrations_dir` | `Integrations` | Folder of integration pages under `wiki_apps_subdir` |
+| `wiki_products_page` | none | Markdown page whose table rows list products |
+| `wiki_products_skip` | `[]` | First-cell values to leave out of the products list |
+| `skill` | none | Skill name mentioned in the refresh instructions |
+| `jsonl_path` | `.ax/memory/documentation-catalog.jsonl` | Output file |
+| `docs_root` / `skills_root` / `scripts_root` | `.docs` / `.agents/skills` / `.scripts` | Workspace sources |
+
+```json
+{
+  "docsCatalog": {
+    "name": "Contoso",
+    "wiki_remote": "https://dev.azure.com/contoso/Docs/_git/Docs.wiki",
+    "wiki_apps_subdir": "Applications",
+    "wiki_products_page": "Products.md"
+  }
+}
 ```
 
 ---
