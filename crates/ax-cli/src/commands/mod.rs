@@ -46,6 +46,7 @@ pub mod prompt_hook;
 pub mod read_guard;
 pub mod session_hook;
 pub mod stop_hook;
+pub mod turn_hook;
 pub mod unlock;
 pub mod web;
 pub mod desktop;

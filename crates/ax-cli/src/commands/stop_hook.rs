@@ -36,6 +36,8 @@ pub async fn run() -> Result<(), String> {
     }
     let input: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
 
+    super::turn_hook::end_from_input(&input).await;
+
     // Claude sets this true when re-invoking the hook after a prior block —
     // never block twice on the same turn, or the conversation loops forever.
     if input
