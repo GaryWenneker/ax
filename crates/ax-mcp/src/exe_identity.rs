@@ -44,7 +44,9 @@ impl ExeIdentity {
 
 /// `current_exe`, minus the ` (deleted)` Linux appends once the file was replaced.
 pub fn current_exe_path() -> Option<PathBuf> {
-    std::env::current_exe().ok().map(|p| strip_deleted_suffix(&p))
+    std::env::current_exe()
+        .ok()
+        .map(|p| strip_deleted_suffix(&p))
 }
 
 fn strip_deleted_suffix(path: &Path) -> PathBuf {
@@ -96,28 +98,44 @@ mod tests {
     use super::*;
 
     fn id(path: &str, len: u64, mtime_ms: u64) -> ExeIdentity {
-        ExeIdentity { path: path.into(), len, mtime_ms }
+        ExeIdentity {
+            path: path.into(),
+            len,
+            mtime_ms,
+        }
     }
 
     #[test]
     fn e2_the_same_binary_attaches() {
         let a = id("/b/ax", 10, 1000);
-        assert_eq!(decide(Some(&a), "5.1.0", Some(&a.clone()), "5.1.0"), Attach::Same);
+        assert_eq!(
+            decide(Some(&a), "5.1.0", Some(&a.clone()), "5.1.0"),
+            Attach::Same
+        );
     }
 
     #[test]
     fn e3_a_newer_proxy_restarts_an_older_daemon() {
         let old = id("/tmp/g/ax", 10, 1000);
         let new = id("/b/ax", 11, 2000);
-        assert_eq!(decide(Some(&new), "5.1.0", Some(&old), "5.1.0"), Attach::RestartOnMine);
-        assert_eq!(decide(Some(&new), "5.2.0", Some(&old), "5.1.0"), Attach::RestartOnMine);
+        assert_eq!(
+            decide(Some(&new), "5.1.0", Some(&old), "5.1.0"),
+            Attach::RestartOnMine
+        );
+        assert_eq!(
+            decide(Some(&new), "5.2.0", Some(&old), "5.1.0"),
+            Attach::RestartOnMine
+        );
     }
 
     #[test]
     fn e3_an_upgrade_in_place_restarts_the_daemon_still_on_the_old_file() {
         let running = id("/b/ax", 10, 1000);
         let upgraded = id("/b/ax", 12, 2000);
-        assert_eq!(decide(Some(&upgraded), "5.2.0", Some(&running), "5.1.0"), Attach::RestartOnMine);
+        assert_eq!(
+            decide(Some(&upgraded), "5.2.0", Some(&running), "5.1.0"),
+            Attach::RestartOnMine
+        );
     }
 
     #[test]
@@ -132,8 +150,14 @@ mod tests {
     fn e4_an_older_proxy_never_restarts_a_newer_daemon() {
         let old = id("/b/ax", 10, 1000);
         let new = id("/b2/ax", 11, 2000);
-        assert_eq!(decide(Some(&old), "5.1.0", Some(&new), "5.1.0"), Attach::Newer);
-        assert_eq!(decide(Some(&old), "5.1.0", Some(&new), "5.2.0"), Attach::Newer);
+        assert_eq!(
+            decide(Some(&old), "5.1.0", Some(&new), "5.1.0"),
+            Attach::Newer
+        );
+        assert_eq!(
+            decide(Some(&old), "5.1.0", Some(&new), "5.2.0"),
+            Attach::Newer
+        );
     }
 
     #[test]
@@ -147,7 +171,10 @@ mod tests {
     fn e1_a_daemon_from_before_identities_attaches_on_the_same_version() {
         let mine = id("/b/ax", 10, 2000);
         assert_eq!(decide(Some(&mine), "5.1.0", None, "5.1.0"), Attach::Same);
-        assert_eq!(decide(Some(&mine), "5.2.0", None, "5.1.0"), Attach::RestartOnMine);
+        assert_eq!(
+            decide(Some(&mine), "5.2.0", None, "5.1.0"),
+            Attach::RestartOnMine
+        );
     }
 
     #[test]
@@ -171,7 +198,12 @@ mod tests {
 
         let same_size = ExeIdentity::of(&exe).unwrap();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        std::fs::File::options().write(true).open(&exe).unwrap().set_modified(later).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&exe)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
         assert!(same_size.replaced_on_disk(), "mtime changed");
 
         let before_delete = ExeIdentity::of(&exe).unwrap();
@@ -185,7 +217,10 @@ mod tests {
             strip_deleted_suffix(Path::new("/usr/bin/ax (deleted)")),
             PathBuf::from("/usr/bin/ax")
         );
-        assert_eq!(strip_deleted_suffix(Path::new("/usr/bin/ax")), PathBuf::from("/usr/bin/ax"));
+        assert_eq!(
+            strip_deleted_suffix(Path::new("/usr/bin/ax")),
+            PathBuf::from("/usr/bin/ax")
+        );
     }
 
     #[test]
@@ -195,10 +230,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hello.exe, None);
-        let info: crate::daemon::DaemonInfo = serde_json::from_str(
-            r#"{"pid":1,"port":0,"version":"5.1.0","project_root":"/p"}"#,
-        )
-        .unwrap();
+        let info: crate::daemon::DaemonInfo =
+            serde_json::from_str(r#"{"pid":1,"port":0,"version":"5.1.0","project_root":"/p"}"#)
+                .unwrap();
         assert_eq!(info.exe, None);
     }
 }

@@ -4,7 +4,11 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
     assert!(out.status.success(), "git {args:?} failed");
     String::from_utf8(out.stdout).unwrap()
 }
@@ -27,14 +31,30 @@ fn b1_b5_init_leaves_only_shareable_files_untracked() {
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    assert!(out.status.success(), "ax init: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "ax init: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(p.join(".ax/ax.db").is_file());
 
-    let stray: Vec<String> = git(p, &["status", "--porcelain", "--untracked-files=all", "--", ".ax"])
-        .lines()
-        .map(|l| l.trim_start_matches("?? ").to_string())
-        .filter(|f| f != ".ax/.gitignore" && !f.starts_with(".ax/policy/"))
-        .collect();
+    let stray: Vec<String> = git(
+        p,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            ".ax",
+        ],
+    )
+    .lines()
+    .map(|l| l.trim_start_matches("?? ").to_string())
+    .filter(|f| f != ".ax/.gitignore" && !f.starts_with(".ax/policy/"))
+    .collect();
     assert!(stray.is_empty(), "untracked under .ax/: {stray:?}");
-    assert_eq!(std::fs::read_to_string(p.join(".gitignore")).unwrap(), "target/\n");
+    assert_eq!(
+        std::fs::read_to_string(p.join(".gitignore")).unwrap(),
+        "target/\n"
+    );
 }

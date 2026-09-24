@@ -30,8 +30,16 @@ fn git_repo() -> (tempfile::TempDir, tempfile::TempDir) {
 
 fn assert_silent_success(out: &Output, repo: &Path) {
     assert!(out.status.success(), "exit {:?}", out.status.code());
-    assert!(out.stdout.is_empty(), "stdout: {}", String::from_utf8_lossy(&out.stdout));
-    assert!(out.stderr.is_empty(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.stdout.is_empty(),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(!repo.join(".ax").exists(), ".ax/ was created");
 }
 

@@ -68,7 +68,10 @@ impl AxCommand {
     /// Install-report line when the written path is not simply the running binary on PATH.
     pub fn note(&self) -> Option<String> {
         if !self.on_path {
-            return Some(format!("No ax on PATH; agents run this binary: {}", self.path));
+            return Some(format!(
+                "No ax on PATH; agents run this binary: {}",
+                self.path
+            ));
         }
         match &self.running {
             Some(running) if !same_file(&self.path, running) => Some(format!(
@@ -138,7 +141,10 @@ mod tests {
         let good = exe(&t.path().join("good"));
         exe(&t.path().join("rel"));
         let relative = relative_from_cwd(&t.path().join("rel"));
-        assert!(relative.join("ax").is_file(), "the relative entry holds an executable ax");
+        assert!(
+            relative.join("ax").is_file(),
+            "the relative entry holds an executable ax"
+        );
         let env = path_env(&[&relative, &t.path().join("plain"), &t.path().join("good")]);
         let cmd = resolve(Some(&env), Some(running));
         assert_eq!(cmd.path, good.to_string_lossy());
@@ -174,7 +180,10 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let running = exe(&t.path().join("build"));
         let shim = exe(&t.path().join("shim"));
-        let cmd = resolve(Some(&path_env(&[&t.path().join("shim")])), Some(running.clone()));
+        let cmd = resolve(
+            Some(&path_env(&[&t.path().join("shim")])),
+            Some(running.clone()),
+        );
         let note = cmd.note().expect("a note");
         assert!(note.contains(&*shim.to_string_lossy()), "{note}");
         assert!(note.contains(&*running.to_string_lossy()), "{note}");

@@ -61,7 +61,10 @@ fn response_id(msg: &Value) -> Option<&Value> {
     msg.get("id")
 }
 
-async fn write_line<W: AsyncWrite + Unpin + ?Sized>(out: &mut W, line: &str) -> std::io::Result<()> {
+async fn write_line<W: AsyncWrite + Unpin + ?Sized>(
+    out: &mut W,
+    line: &str,
+) -> std::io::Result<()> {
     out.write_all(line.as_bytes()).await?;
     if !line.ends_with('\n') {
         out.write_all(b"\n").await?;
@@ -84,7 +87,8 @@ async fn forward<W: AsyncWrite + Unpin>(
     let msg = parse(trimmed);
     if let Some(msg) = &msg {
         // Daemon hello handshake — not JSON-RPC; must not reach Cursor stdout.
-        if msg.get("type").and_then(|t| t.as_str()) == Some("hello") && msg.get("jsonrpc").is_none() {
+        if msg.get("type").and_then(|t| t.as_str()) == Some("hello") && msg.get("jsonrpc").is_none()
+        {
             return Ok(());
         }
         // Cursor Output surfaces process stderr more reliably than notification traffic.
@@ -99,7 +103,9 @@ async fn forward<W: AsyncWrite + Unpin>(
             pending.retain(|p| p != id);
         }
     }
-    write_line(client_out, line).await.map_err(|_| Stop::ClientLeft)
+    write_line(client_out, line)
+        .await
+        .map_err(|_| Stop::ClientLeft)
 }
 
 async fn fail_pending<W: AsyncWrite + Unpin>(
@@ -119,7 +125,10 @@ async fn fail_pending<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-async fn reconnect_within<C, F>(reconnect: &mut C, deadline: Duration) -> Result<DaemonSession, Stop>
+async fn reconnect_within<C, F>(
+    reconnect: &mut C,
+    deadline: Duration,
+) -> Result<DaemonSession, Stop>
 where
     C: FnMut(u32) -> F,
     F: Future<Output = Option<DaemonSession>>,
@@ -166,6 +175,7 @@ where
     }
 }
 
+#[derive(Debug)]
 enum Stop {
     ClientLeft,
     DaemonLost(String),
@@ -190,29 +200,37 @@ where
     // A client line the lost daemon never accepted; it goes to the next daemon first.
     let mut unsent: Option<String> = None;
     loop {
-        if let Some(line) = unsent.take() {
-            if !send_to_daemon(&mut daemon_tx, line, &mut pending, &mut unsent).await {
-                fail_pending(&mut client_out, &mut pending).await?;
-                (daemon_rx, daemon_tx) = attach(reconnect_within(&mut reconnect, deadline).await?);
-                continue;
-            }
-        }
-        let alive = tokio::select! {
-            line = client_rx.recv() => match line {
-                None => return drain_after_client_left(&mut client_out, daemon_rx, daemon_tx, &mut pending).await,
-                Some(line) => send_to_daemon(&mut daemon_tx, line, &mut pending, &mut unsent).await,
-            },
-            line = daemon_rx.recv() => match line {
-                Some(line) => {
-                    forward(&mut client_out, &line, &mut pending).await?;
-                    true
-                }
-                None => false,
+        let alive = match unsent.take() {
+            Some(line) => send_to_daemon(&mut daemon_tx, line, &mut pending, &mut unsent).await,
+            None => tokio::select! {
+                line = client_rx.recv() => match line {
+                    None => return drain_after_client_left(&mut client_out, daemon_rx, daemon_tx, &mut pending).await,
+                    Some(line) => send_to_daemon(&mut daemon_tx, line, &mut pending, &mut unsent).await,
+                },
+                line = daemon_rx.recv() => match line {
+                    Some(line) => {
+                        forward(&mut client_out, &line, &mut pending).await?;
+                        true
+                    }
+                    None => false,
+                },
             },
         };
-        if !alive {
-            fail_pending(&mut client_out, &mut pending).await?;
-            (daemon_rx, daemon_tx) = attach(reconnect_within(&mut reconnect, deadline).await?);
+        if alive {
+            continue;
+        }
+        fail_pending(&mut client_out, &mut pending).await?;
+        match reconnect_within(&mut reconnect, deadline).await {
+            Ok(session) => (daemon_rx, daemon_tx) = attach(session),
+            Err(stop) => {
+                // Lines that reached the proxy but no daemon: their requests still need an answer.
+                pending.extend(unsent.take().iter().filter_map(|line| request_id(line)));
+                while let Ok(line) = client_rx.try_recv() {
+                    pending.extend(request_id(&line));
+                }
+                fail_pending(&mut client_out, &mut pending).await?;
+                return Err(stop);
+            }
         }
     }
 }
@@ -256,8 +274,7 @@ mod tests {
 
     use serde_json::{json, Value};
     use tokio::io::{
-        duplex, split, AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf,
-        WriteHalf,
+        duplex, split, AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf,
     };
     use tokio::task::JoinHandle;
 
@@ -288,7 +305,10 @@ mod tests {
 
     fn peer(io: DuplexStream) -> Peer {
         let (r, w) = split(io);
-        Peer { reader: BufReader::new(r), writer: w }
+        Peer {
+            reader: BufReader::new(r),
+            writer: w,
+        }
     }
 
     fn daemon() -> (DaemonSession, Peer) {
@@ -331,7 +351,11 @@ mod tests {
             )
             .await
         });
-        Harness { client: peer(client_side), task, attempts }
+        Harness {
+            client: peer(client_side),
+            task,
+            attempts,
+        }
     }
 
     #[tokio::test]
@@ -384,7 +408,11 @@ mod tests {
         h.client.send(request(2, "ax_status")).await;
         let req = d2.line().await.unwrap();
         d2.send(result(&req["id"])).await;
-        assert_eq!(h.client.line().await.unwrap()["id"], 2, "no error for id 1 in between");
+        assert_eq!(
+            h.client.line().await.unwrap()["id"],
+            2,
+            "no error for id 1 in between"
+        );
     }
 
     #[tokio::test]
@@ -448,7 +476,10 @@ mod tests {
         d2.send(result(&req["id"])).await;
         let reply = h.client.line().await.unwrap();
         assert_eq!(reply["id"], 4);
-        assert_eq!(reply["result"]["ok"], true, "no restart error for a request never sent");
+        assert_eq!(
+            reply["result"]["ok"], true,
+            "no restart error for a request never sent"
+        );
     }
 
     #[tokio::test]
@@ -465,7 +496,11 @@ mod tests {
         h.client.send(request(3, "ax_status")).await;
         let req = d2.line().await.unwrap();
         d2.send(result(&req["id"])).await;
-        assert_eq!(h.client.line().await.unwrap()["id"], 3, "first client line is the reply");
+        assert_eq!(
+            h.client.line().await.unwrap()["id"],
+            3,
+            "first client line is the reply"
+        );
     }
 
     #[tokio::test]
@@ -483,6 +518,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn d5_requests_sent_while_reconnecting_are_answered_when_giving_up() {
+        let (s1, d1) = daemon();
+        let mut h = start(s1, vec![], Duration::from_millis(400));
+
+        drop(d1);
+        h.client.send(request(8, "ax_status")).await;
+        h.client
+            .send(json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{}}))
+            .await;
+        h.client.send(request(9, "ax_status")).await;
+        for id in [8, 9] {
+            let reply = h.client.line().await.unwrap();
+            assert_eq!(reply["id"], id);
+            assert_eq!(reply["error"]["code"], -32000);
+        }
+        let outcome = tokio::time::timeout(WAIT, h.task).await.unwrap().unwrap();
+        assert!(outcome.is_err());
+        let mut extra = String::new();
+        let more = tokio::time::timeout(
+            Duration::from_millis(300),
+            h.client.reader.read_line(&mut extra),
+        )
+        .await;
+        assert!(more.is_err(), "nothing for the notification, got {extra:?}");
+    }
+
+    #[tokio::test]
+    async fn d5_a_request_the_dead_daemon_refused_is_answered_when_giving_up() {
+        let mut h = start(
+            DaemonSession::from_io(RefusingDaemon),
+            vec![],
+            Duration::from_millis(400),
+        );
+
+        h.client.send(request(6, "ax_status")).await;
+        let reply = h.client.line().await.unwrap();
+        assert_eq!(reply["id"], 6);
+        assert_eq!(reply["error"]["code"], -32000);
+        let outcome = tokio::time::timeout(WAIT, h.task).await.unwrap().unwrap();
+        assert!(outcome.is_err());
+    }
+
+    #[tokio::test]
     async fn d6_the_client_closing_its_input_ends_the_pump_without_reconnecting() {
         let (s1, mut d1) = daemon();
         let mut h = start(s1, vec![], WAIT);
@@ -491,8 +569,15 @@ mod tests {
         let req = d1.line().await.unwrap();
         h.client.writer.shutdown().await.unwrap();
         d1.send(result(&req["id"])).await;
-        assert_eq!(h.client.line().await.unwrap()["id"], 1, "the last reply still arrives");
-        assert!(d1.line().await.is_none(), "the daemon sees the client leave");
+        assert_eq!(
+            h.client.line().await.unwrap()["id"],
+            1,
+            "the last reply still arrives"
+        );
+        assert!(
+            d1.line().await.is_none(),
+            "the daemon sees the client leave"
+        );
         drop(d1);
         let outcome = tokio::time::timeout(WAIT, h.task).await.unwrap().unwrap();
         assert_eq!(outcome, Ok(()));

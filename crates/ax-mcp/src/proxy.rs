@@ -13,12 +13,12 @@ use crate::daemon::{
     wait_for_daemon, DaemonHello,
 };
 use crate::daemon_conn::DaemonSession;
-use crate::exe_identity::{current_exe_path, decide, Attach, ExeIdentity};
-use crate::proxy_pump::pump;
 use crate::daemon_lock::{is_pid_alive, kill_pid, read_lock_info, release_daemon_lock};
 use crate::daemon_paths::daemon_pid_path;
+use crate::exe_identity::{current_exe_path, decide, Attach, ExeIdentity};
 use crate::liveness_watchdog::install_main_thread_watchdog;
 use crate::ppid_watchdog::spawn_ppid_watchdog;
+use crate::proxy_pump::pump;
 
 /// Result of bouncing the shared per-project MCP daemon.
 #[derive(Debug, Clone, Serialize)]
@@ -61,7 +61,10 @@ pub async fn run_stdio_proxy(project_root: &Path, session: DaemonSession) {
 /// A session with a daemon this proxy may use, restarting or spawning one when allowed.
 async fn connect_or_spawn(project_root: &Path, may_spawn: bool) -> Option<DaemonSession> {
     if let Some((session, hello)) = connect_any(project_root).await {
-        let mine = ExeIdentity::current();
+        let mine = tokio::task::spawn_blocking(ExeIdentity::current)
+            .await
+            .ok()
+            .flatten();
         match decide(
             mine.as_ref(),
             env!("CARGO_PKG_VERSION"),
@@ -83,7 +86,10 @@ async fn connect_or_spawn(project_root: &Path, may_spawn: bool) -> Option<Daemon
             Attach::RestartOnMine if may_spawn => {
                 drop(session);
                 tracing::info!("restarting ax daemon pid {} on this newer build", hello.pid);
-                restart_daemon(project_root).await.ok()?;
+                if let Err(e) = restart_daemon(project_root).await {
+                    tracing::warn!("could not restart the ax daemon: {e}");
+                    return None;
+                }
                 return connect_any(project_root).await.map(|(s, _)| s);
             }
             Attach::RestartOnMine => return None,
@@ -92,7 +98,10 @@ async fn connect_or_spawn(project_root: &Path, may_spawn: bool) -> Option<Daemon
     if !may_spawn {
         return None;
     }
-    spawn_daemon_child(project_root).ok()?;
+    if let Err(e) = spawn_daemon_child(project_root) {
+        tracing::warn!("could not start an ax daemon: {e}");
+        return None;
+    }
     wait_for_any_daemon(project_root, 10_000)
         .await
         .map(|(session, _)| session)

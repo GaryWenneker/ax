@@ -1,0 +1,8 @@
+# Workspace tests that fail on the base commit c6ed438, read by scripts/gauntlet-install-daemon-hygiene.sh.
+# cycles_api_path_handlers_work opens the repo's own .ax/, which a fresh worktree does not have
+# (fails identically with the change stashed). The other three live in ax-quality and ax-usage,
+# which neither depend on nor share a file with this change, and were already failing on main.
+cycles_api_path_handlers_work
+bootstrap::tests::legacy_prefix_from_workspace_folder
+bootstrap::tests::resolves_placeholder_to_folder_name
+savings::tests::cursor_transcript_path_filter

@@ -225,7 +225,11 @@ impl DaemonLifecycle {
             let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
             loop {
                 interval.tick().await;
-                if !me.is_stopping() && exe.replaced_on_disk() {
+                let probe = exe.clone();
+                let replaced = tokio::task::spawn_blocking(move || probe.replaced_on_disk())
+                    .await
+                    .unwrap_or(false);
+                if !me.is_stopping() && replaced {
                     me.shutdown("binary replaced").await;
                     std::process::exit(0);
                 }
@@ -638,6 +642,7 @@ pub async fn wait_for_daemon(project_root: &Path, timeout_ms: u64) -> Option<Dae
     None
 }
 
+/// Waits up to `timeout_ms` for any daemon to serve the project, whatever its version.
 pub async fn wait_for_any_daemon(
     project_root: &Path,
     timeout_ms: u64,

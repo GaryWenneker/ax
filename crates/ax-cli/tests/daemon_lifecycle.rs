@@ -38,8 +38,16 @@ fn project() -> Project {
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    assert!(out.status.success(), "ax init: {}", String::from_utf8_lossy(&out.stderr));
-    Project { _dir: dir, home, root }
+    assert!(
+        out.status.success(),
+        "ax init: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Project {
+        _dir: dir,
+        home,
+        root,
+    }
 }
 
 fn daemon_info(root: &Path) -> Option<Value> {
@@ -89,14 +97,28 @@ fn e5_the_daemon_stops_when_its_binary_is_replaced() {
             .spawn()
             .unwrap(),
     );
-    let info = wait_until("daemon.json", Duration::from_secs(20), || daemon_info(&p.root));
-    assert_eq!(info["exe"]["path"], exe.to_string_lossy().as_ref(), "identity in daemon.json");
+    let info = wait_until("daemon.json", Duration::from_secs(20), || {
+        daemon_info(&p.root)
+    });
+    assert_eq!(
+        info["exe"]["path"],
+        exe.to_string_lossy().as_ref(),
+        "identity in daemon.json"
+    );
     std::thread::sleep(Duration::from_millis(600));
-    assert!(daemon.0.try_wait().unwrap().is_none(), "an untouched binary keeps the daemon up");
+    assert!(
+        daemon.0.try_wait().unwrap().is_none(),
+        "an untouched binary keeps the daemon up"
+    );
 
     let staged = bin_dir.path().join("ax.new");
     std::fs::copy(env!("CARGO_BIN_EXE_ax"), &staged).unwrap();
-    std::fs::OpenOptions::new().append(true).open(&staged).unwrap().write_all(b"\0").unwrap();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&staged)
+        .unwrap()
+        .write_all(b"\0")
+        .unwrap();
     std::fs::rename(&staged, &exe).unwrap();
 
     let status = wait_until("the daemon to exit", Duration::from_secs(10), || {
@@ -135,7 +157,10 @@ impl Client {
         let end = Instant::now() + Duration::from_secs(30);
         loop {
             let left = end.saturating_duration_since(Instant::now());
-            let msg = self.lines.recv_timeout(left).expect("no reply from the proxy");
+            let msg = self
+                .lines
+                .recv_timeout(left)
+                .expect("no reply from the proxy");
             if msg["id"] == id {
                 return msg;
             }
@@ -166,9 +191,11 @@ fn start_proxy(exe: &Path, p: &Project) -> (KillOnDrop, Client) {
         stdin: proxy.0.stdin.take().unwrap(),
         lines: Client::start(proxy.0.stdout.take().unwrap()),
     };
-    client.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+    client.send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
         "protocolVersion":"2024-11-05","capabilities":{},
-        "clientInfo":{"name":"daemon-lifecycle-test","version":"0"}}}));
+        "clientInfo":{"name":"daemon-lifecycle-test","version":"0"}}}),
+    );
     assert!(client.reply(1).get("result").is_some(), "initialize");
     client.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
     (proxy, client)
@@ -200,7 +227,12 @@ fn older_and_newer(dir: &Path) -> (PathBuf, PathBuf) {
     for (exe, mtime) in [(&older, now - Duration::from_secs(60)), (&newer, now)] {
         std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_ax"), exe).unwrap();
-        std::fs::File::options().write(true).open(exe).unwrap().set_modified(mtime).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(exe)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
     }
     (older, newer)
 }
@@ -221,9 +253,17 @@ fn e3_a_newer_proxy_restarts_an_older_daemon_on_its_own_binary() {
 
     let (_proxy, mut client) = start_proxy(&newer, &p);
     let reply = client.call_status(2);
-    assert!(reply.get("result").is_some(), "call through the new daemon: {reply}");
+    assert!(
+        reply.get("result").is_some(),
+        "call through the new daemon: {reply}"
+    );
     let info = daemon_info(&p.root).expect("a daemon serves the project");
-    assert_eq!(daemon_exe_path(&p.root).as_deref(), newer.to_str(), "{}", proxy_stderr(&p));
+    assert_eq!(
+        daemon_exe_path(&p.root).as_deref(),
+        newer.to_str(),
+        "{}",
+        proxy_stderr(&p)
+    );
     assert_ne!(info["pid"].as_u64(), Some(old_pid));
     kill(info["pid"].as_u64().unwrap());
 }
@@ -240,7 +280,10 @@ fn e4_an_older_proxy_attaches_to_a_newer_daemon_without_restarting_it() {
 
     let (_proxy, mut client) = start_proxy(&older, &p);
     let reply = client.call_status(2);
-    assert!(reply.get("result").is_some(), "call through the newer daemon: {reply}");
+    assert!(
+        reply.get("result").is_some(),
+        "call through the newer daemon: {reply}"
+    );
     let info = daemon_info(&p.root).expect("a daemon serves the project");
     assert_eq!(info["pid"].as_u64(), Some(pid), "{}", proxy_stderr(&p));
     assert_eq!(daemon_exe_path(&p.root).as_deref(), newer.to_str());
@@ -258,21 +301,37 @@ fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
     kill(first_pid);
     // A call sent while the daemon is still dying is in flight and gets the retry error (D2);
     // this checks the call after it.
-    wait_until("the killed daemon to stop listening", Duration::from_secs(10), || {
-        std::os::unix::net::UnixStream::connect(&socket).is_err().then_some(())
-    });
+    wait_until(
+        "the killed daemon to stop listening",
+        Duration::from_secs(10),
+        || {
+            std::os::unix::net::UnixStream::connect(&socket)
+                .is_err()
+                .then_some(())
+        },
+    );
 
     let reply = client.call_status(3);
-    assert!(reply.get("result").is_some(), "call after the restart: {reply}");
+    assert!(
+        reply.get("result").is_some(),
+        "call after the restart: {reply}"
+    );
     let second = wait_until("a new daemon", Duration::from_secs(10), || {
         daemon_info(&p.root).filter(|i| i["pid"].as_u64() != Some(first_pid))
     });
-    assert!(proxy.0.try_wait().unwrap().is_none(), "the proxy is still running");
+    assert!(
+        proxy.0.try_wait().unwrap().is_none(),
+        "the proxy is still running"
+    );
 
     drop(client);
     let status = wait_until("the proxy to exit", Duration::from_secs(10), || {
         proxy.0.try_wait().unwrap()
     });
-    assert!(status.success(), "stdin closed means a clean exit, got {status}: {}", proxy_stderr(&p));
+    assert!(
+        status.success(),
+        "stdin closed means a clean exit, got {status}: {}",
+        proxy_stderr(&p)
+    );
     kill(second["pid"].as_u64().unwrap());
 }

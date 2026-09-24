@@ -125,6 +125,8 @@ mutant D7 mcp "$PUMP" 's/    let _ = daemon_tx\.shutdown\(\)\.await;\n//'
 mutant D8 mcp "$PUMP" 's/Ok\(\(\)\) \| Err\(Stop::ClientLeft\) => Ok\(\(\)\),/Ok(()) => Ok(()),\n        Err(Stop::ClientLeft) => Err("client left".into()),/'
 mutant D9 mcp "$PUMP" 's/if msg\.get\("type"\)\.and_then\(\|t\| t\.as_str\(\)\) == Some\("hello"\) && msg\.get\("jsonrpc"\)\.is_none\(\)/if false/'
 mutant D10 mcp "$PROXY" 's/attempt >= FIRST_SPAWNING_ATTEMPT/false/'
+mutant D12 mcp "$PUMP" 's/                while let Ok\(line\) = client_rx\.try_recv\(\) \{\n                    pending\.extend\(request_id\(&line\)\);\n                \}\n//'
+mutant D13 mcp "$PUMP" 's/                pending\.extend\(unsent\.take\(\)\.iter\(\)\.filter_map\(\|line\| request_id\(line\)\)\);\n//'
 mutant D11 mcp "$PUMP" 's/if let Some\(session\) = reconnect\(attempt\)\.await \{/if let Some(session) = None::<DaemonSession> { let _ = \&mut reconnect;/'
 
 # E. Binary identity and newer-wins attach
@@ -132,7 +134,7 @@ mutant E1 mcp "$EXE" 's/\(Some\(m\), Some\(d\)\) if m\.mtime_ms > d\.mtime_ms =>
 mutant E2 mcp "$EXE" 's/\(Some\(m\), Some\(d\)\) if m == d => Attach::Same,/(Some(m), Some(d)) if m.path == d.path => Attach::Same,/'
 mutant E3 mcp "$EXE" 's/\(_, None\) if my_version != daemon_version => Attach::RestartOnMine,\n//'
 mutant E4 mcp "$EXE" 's/Self::of\(Path::new\(&self\.path\)\)\.as_ref\(\) != Some\(self\)/Self::of(Path::new(\&self.path)).is_none()/'
-mutant E5 mcp "$DAEMON" 's/if !me\.is_stopping\(\) && exe\.replaced_on_disk\(\)/if !me.is_stopping() \&\& false/'
+mutant E5 mcp "$DAEMON" 's/if !me\.is_stopping\(\) && replaced \{/if !me.is_stopping() \&\& false {/'
 mutant E6 mcp "$DAEMON" 's/exe: daemon_exe\(\),\n    \};/exe: None,\n    };/'
 mutant E7 mcp "$DAEMON" 's/exe: daemon_exe\(\),\n    \}\n\}/exe: None,\n    }\n}/'
 mutant E8 mcp "$PROXY" 's/Attach::RestartOnMine if may_spawn =>/Attach::RestartOnMine if false =>/'
