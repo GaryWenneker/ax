@@ -1,6 +1,6 @@
 //! Turn history: related past turns for preflight and "when did I change X" (docs/specs/turn-memory-outcomes.md).
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde::Serialize;
@@ -81,7 +81,7 @@ fn shared_words(words: &BTreeSet<String>, row: &MemoryRow) -> usize {
 }
 
 /// Ids of turn memories that `recall` returns for `text`.
-async fn recalled_turn_ids(pool: &SqlitePool, text: &str) -> Result<HashSet<String>, AxError> {
+async fn recalled_turn_ids(pool: &SqlitePool, text: &str) -> Result<Vec<String>, AxError> {
     Ok(crate::store::recall(pool, text, RECALL_CANDIDATES)
         .await?
         .into_iter()
@@ -101,9 +101,12 @@ pub async fn related_turns(
     let recalled = if words.len() >= MIN_SHARED_WORDS {
         recalled_turn_ids(pool, prompt).await?
     } else {
-        HashSet::new()
+        Vec::new()
     };
-    let rows = crate::store::turn_rows(pool, None, None, true).await?;
+    // Only recalled rows can fail the word rule, so `limit + recalled` candidates always suffice.
+    let candidates = limit.saturating_add(recalled.len());
+    let rows =
+        crate::store::matching_turn_rows(pool, None, &recalled, files, None, candidates).await?;
     Ok(rows
         .into_iter()
         .filter(|row| {
@@ -182,11 +185,7 @@ fn looks_like_path(query: &str) -> bool {
 
 /// Indexed files the query names: an exact or trailing path match, or the file of a symbol.
 async fn resolve_paths(pool: &SqlitePool, query: &str) -> Result<Vec<String>, AxError> {
-    let escaped = query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    let suffix = format!("%/{escaped}");
+    let suffix = crate::store::path_suffix_pattern(query);
     let mut paths: Vec<String> = sqlx::query_scalar(
         "SELECT path FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\' ORDER BY path LIMIT 20",
     )
@@ -205,13 +204,6 @@ async fn resolve_paths(pool: &SqlitePool, query: &str) -> Result<Vec<String>, Ax
         .map_err(db_err)?;
     }
     Ok(paths)
-}
-
-fn touches(row: &MemoryRow, paths: &[String], query: &str) -> bool {
-    let trailing = format!("/{query}");
-    row.files
-        .iter()
-        .any(|f| paths.contains(f) || f == query || f.ends_with(&trailing))
 }
 
 fn turn_commits(body: &str) -> Vec<String> {
@@ -239,13 +231,13 @@ fn turn_entry(row: &MemoryRow) -> HistoryEntry {
 }
 
 /// Commits touching `pathspecs`, newest first. Empty outside a git repository.
-fn git_commits(
+async fn git_commits(
     root: &Path,
     pathspecs: &[String],
     since_ms: Option<i64>,
     limit: usize,
 ) -> Vec<HistoryEntry> {
-    let mut cmd = std::process::Command::new("git");
+    let mut cmd = tokio::process::Command::new("git");
     cmd.current_dir(root).args([
         "log",
         "-n",
@@ -257,7 +249,7 @@ fn git_commits(
         cmd.arg(format!("--since=@{}", since.div_euclid(1000)));
     }
     cmd.arg("--").args(pathspecs);
-    let Ok(output) = cmd.output() else {
+    let Ok(output) = cmd.output().await else {
         return Vec::new();
     };
     if !output.status.success() {
@@ -297,26 +289,35 @@ pub async fn history(
     }
     let limit = if query.limit == 0 { 20 } else { query.limit };
     let paths = resolve_paths(pool, text).await?;
-    let turns = crate::store::turn_rows(pool, query.since_ms, None, true).await?;
     let mut entries: Vec<HistoryEntry> = if !paths.is_empty() || looks_like_path(text) {
         let pathspecs = if paths.is_empty() {
             vec![text.to_string()]
         } else {
             paths.clone()
         };
-        let mut found: Vec<HistoryEntry> = turns
-            .iter()
-            .filter(|row| touches(row, &paths, text))
-            .map(turn_entry)
-            .collect();
-        found.extend(git_commits(root, &pathspecs, query.since_ms, limit));
+        let mut files = paths.clone();
+        files.push(text.to_string());
+        let turns =
+            crate::store::matching_turn_rows(pool, query.since_ms, &[], &files, Some(text), limit)
+                .await?;
+        let mut found: Vec<HistoryEntry> = turns.iter().map(turn_entry).collect();
+        found.extend(git_commits(root, &pathspecs, query.since_ms, limit).await);
         found
     } else {
         let words = significant_words(text);
         let recalled = recalled_turn_ids(pool, text).await?;
+        let turns = crate::store::matching_turn_rows(
+            pool,
+            query.since_ms,
+            &recalled,
+            &[],
+            None,
+            recalled.len(),
+        )
+        .await?;
         turns
             .iter()
-            .filter(|row| recalled.contains(&row.id) && shared_words(&words, row) >= 1)
+            .filter(|row| shared_words(&words, row) >= 1)
             .map(turn_entry)
             .collect()
     };

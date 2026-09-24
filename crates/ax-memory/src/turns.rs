@@ -78,21 +78,23 @@ pub async fn prune_turns(
     backup_dir: &Path,
 ) -> Result<u64, AxError> {
     let cutoff = now_ms - max_age_days * 86_400_000;
-    let expired = crate::store::turn_rows(pool, None, Some(cutoff), false).await?;
+    let expired = crate::store::expired_turn_rows(pool, cutoff).await?;
     if expired.is_empty() {
         return Ok(0);
     }
     backup_turns(backup_dir, now_ms, &expired)?;
+    let mut tx = pool.begin().await.map_err(db_err)?;
     let mut deleted = 0;
     for row in &expired {
         let result = sqlx::query("DELETE FROM memories WHERE id = ? AND kind = ?")
             .bind(&row.id)
             .bind(TURN_KIND)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .map_err(db_err)?;
         deleted += result.rows_affected();
     }
+    tx.commit().await.map_err(db_err)?;
     Ok(deleted)
 }
 

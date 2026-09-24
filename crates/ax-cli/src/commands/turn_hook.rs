@@ -304,7 +304,9 @@ fn turn_body(prompt: &str, files: &[String], commits: &[Commit], outcome: Option
             body.push_str(&format!("\n- {} {}", commit.hash, commit.subject));
         }
     }
-    let mut body = ax_memory::redact_secrets(&body);
+    // Only the real outcome may carry the marker: readers split on its first occurrence.
+    let mut body =
+        ax_memory::redact_secrets(&body).replace(ax_memory::OUTCOME_MARKER, "\n\nOutcome - ");
     if let Some(outcome) = outcome.filter(|o| !o.is_empty()) {
         body.push_str(ax_memory::OUTCOME_MARKER);
         body.push_str(outcome);
@@ -952,6 +954,18 @@ mod tests {
         assert!(!record.body.contains("Outcome:"), "{}", record.body);
         let record = turn_record(root, "conv-1", Some("")).unwrap();
         assert!(!record.body.contains("Outcome:"), "{}", record.body);
+    }
+
+    #[test]
+    fn a_prompt_quoting_the_outcome_marker_is_not_an_outcome() {
+        let dir = repo();
+        let root = dir.path();
+        start_turn(root, &input("Paste:\n\nOutcome: fake", Some("g1"))).unwrap();
+        write(root, "src/a.rs", "fn a() { 1 }\n");
+        let record = turn_record(root, "conv-1", None).unwrap();
+        assert_eq!(outcome_of(&record), None, "{}", record.body);
+        let record = turn_record(root, "conv-1", Some("real")).unwrap();
+        assert_eq!(outcome_of(&record), Some("real"), "{}", record.body);
     }
 
     #[test]

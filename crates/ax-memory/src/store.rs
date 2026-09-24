@@ -55,21 +55,57 @@ fn row_from_db(
 const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled
            FROM memories"#;
 
-/// `turn` memories created in `[since, before)`, newest first. `enabled_only` skips disabled ones.
-pub(crate) async fn turn_rows(
+/// `turn` memories created before `before`, enabled or not, oldest first; at most 10,000 per call.
+pub(crate) async fn expired_turn_rows(
     pool: &SqlitePool,
-    since: Option<i64>,
-    before: Option<i64>,
-    enabled_only: bool,
+    before: i64,
 ) -> Result<Vec<MemoryRow>, AxError> {
     let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
-        "{MEMORY_SELECT} WHERE kind = ? AND created_at >= ? AND created_at < ? AND (enabled = 1 OR ? = 0) \
-         ORDER BY created_at DESC, id LIMIT 10000"
+        "{MEMORY_SELECT} WHERE kind = ? AND created_at < ? ORDER BY created_at, id LIMIT 10000"
+    ))
+    .bind(crate::turns::TURN_KIND)
+    .bind(before)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.into_iter().map(row_from_db).collect())
+}
+
+/// `LIKE … ESCAPE '\'` pattern for paths ending in `/<suffix>`.
+pub(crate) fn path_suffix_pattern(suffix: &str) -> String {
+    let escaped = suffix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%/{escaped}")
+}
+
+/// Enabled `turn` memories created at or after `since`, newest first, that have one of `ids`, or
+/// changed a file in `files` or ending in `/<suffix>`. At most `limit` rows.
+pub(crate) async fn matching_turn_rows(
+    pool: &SqlitePool,
+    since: Option<i64>,
+    ids: &[String],
+    files: &[String],
+    suffix: Option<&str>,
+    limit: usize,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let as_json = |v: &[String]| serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
+    let suffix_like = suffix.map(path_suffix_pattern);
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND created_at >= ? \
+         AND (id IN (SELECT value FROM json_each(?)) \
+              OR EXISTS (SELECT 1 FROM json_each(memories.files) AS f \
+                         WHERE f.value IN (SELECT value FROM json_each(?)) \
+                            OR f.value LIKE ? ESCAPE '\\')) \
+         ORDER BY created_at DESC, id LIMIT ?"
     ))
     .bind(crate::turns::TURN_KIND)
     .bind(since.unwrap_or(i64::MIN))
-    .bind(before.unwrap_or(i64::MAX))
-    .bind(i64::from(enabled_only))
+    .bind(as_json(ids))
+    .bind(as_json(files))
+    .bind(suffix_like)
+    .bind(i64::try_from(limit).unwrap_or(i64::MAX))
     .fetch_all(pool)
     .await
     .map_err(db_err)?;

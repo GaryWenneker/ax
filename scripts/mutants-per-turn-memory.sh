@@ -103,7 +103,7 @@ mutant T19 ax-cli "$MAIN" 's/args\.get\(1\)\.is_some_and\(\|a\| a == "turn-hook"
 mutant M1 ax-memory "$MEMLIB" 's/m\.score > 0\.0 && m\.memory\.kind != TURN_KIND/m.score > 0.0/'
 mutant M2 ax-memory "$MEMLIB" 's/recall\(pool, prompt, \(limit \* 4\)\.max\(20\)\)/recall(pool, prompt, limit)/'
 mutant M3 ax-memory "$SYNC"   's/\s*\.filter\(\|m\| m\.kind != crate::turns::TURN_KIND\)//'
-mutant M4 ax-memory "$STORE"  's/WHERE kind = \? AND created_at >= \?/WHERE (kind = ? OR 1) AND created_at >= ?/'
+mutant M4 ax-memory "$STORE"  's/WHERE kind = \? AND created_at < \?/WHERE (kind = ? OR 1) AND created_at < ?/'
 mutant M5 ax-memory "$TURNS"  's/let cutoff = now_ms - max_age_days \* 86_400_000;/let cutoff = now_ms;/'
 mutant M6 ax-memory "$TURNS"  's/token\.starts_with\("sk-"\) && len >= 20/token.starts_with("sk-") \&\& len >= 200/'
 mutant M7 ax-memory "$TURNS"  's/INSERT OR IGNORE INTO memories \(id, kind/INSERT OR REPLACE INTO memories (id, kind/'

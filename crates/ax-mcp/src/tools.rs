@@ -593,7 +593,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     } else {
         crate::verbose::push_line("enrich memories none");
     }
-    let open_files = project_relative_files(ax.project_root(), &files);
+    let open_files = project_relative_files(ax.project_root(), &files).await;
     let turns = ax_memory::related_turns(ax.db_pool(), &prompt, &open_files, 3)
         .await
         .unwrap_or_default();
@@ -808,24 +808,24 @@ async fn history_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 /// Preflight `files` as project-relative `/` paths, the form turn memories store.
-fn project_relative_files(root: &Path, files: &[String]) -> Vec<String> {
-    files
-        .iter()
-        .map(|file| {
-            let path = Path::new(file);
-            let relative = path
-                .strip_prefix(root)
-                .map(Path::to_path_buf)
-                .ok()
-                .or_else(|| {
-                    let canonical = path.canonicalize().ok()?;
-                    canonical.strip_prefix(root).map(Path::to_path_buf).ok()
-                })
-                .unwrap_or_else(|| path.to_path_buf());
-            let text = relative.to_string_lossy().replace('\\', "/");
-            text.trim_start_matches("./").to_string()
-        })
-        .collect()
+async fn project_relative_files(root: &Path, files: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(files.len());
+    for file in files {
+        let path = Path::new(file);
+        let relative = match path.strip_prefix(root) {
+            Ok(relative) => relative.to_path_buf(),
+            Err(_) => match tokio::fs::canonicalize(path).await {
+                Ok(canonical) => canonical
+                    .strip_prefix(root)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|_| path.to_path_buf()),
+                Err(_) => path.to_path_buf(),
+            },
+        };
+        let text = relative.to_string_lossy().replace('\\', "/");
+        out.push(text.trim_start_matches("./").to_string());
+    }
+    out
 }
 
 async fn expand_tool(params: Value) -> Result<Value, String> {

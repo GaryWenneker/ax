@@ -82,6 +82,7 @@ mutant O4 ax-cli "$TURN" 's/let redacted = ax_memory::redact_secrets\(reply\);/l
 mutant O5 ax-cli "$TURN" 's/const OUTCOME_CHARS: usize = 20_000;/const OUTCOME_CHARS: usize = 30_000;/'
 mutant O6 ax-cli "$TURN" 's/        outcome: None,\n    \};/        outcome: read_snapshot(root, \&input.conversation).and_then(|s| s.outcome),\n    };/'
 mutant O7 ax-cli "$TURN" 's/outcome\.filter\(\|o\| !o\.is_empty\(\)\)/outcome/'
+mutant O9 ax-cli "$TURN" 's/ax_memory::redact_secrets\(&body\)\.replace\(ax_memory::OUTCOME_MARKER, "\\n\\nOutcome - "\)/ax_memory::redact_secrets(\&body)/'
 mutant O8 ax-cli "$TURN" 's/format!\("\{\}\[truncated\]", clip\(&redacted, OUTCOME_CHARS\)\)/clip(\&redacted, OUTCOME_CHARS)/'
 
 # Prune with backup (ax-memory)
@@ -91,13 +92,16 @@ mutant P3 ax-memory "$TURNS" 's/    backup_turns\(backup_dir, now_ms, &expired\)
 mutant P4 ax-memory "$TURNS" 's/\.append\(true\)/.write(true).truncate(true)/'
 mutant P5 ax-memory "$TURNS" 's/    if expired\.is_empty\(\) \{\n        return Ok\(0\);\n    \}\n//'
 mutant P6 ax-memory "$TURNS" 's/Some\(outcome\)\.filter\(\|o\| !o\.is_empty\(\)\)/Some(outcome)/'
-mutant P7 ax-memory "$STORE" 's/WHERE kind = \? AND created_at >= \?/WHERE (kind = ? OR 1) AND created_at >= ?/'
+mutant P7 ax-memory "$STORE" 's/WHERE kind = \? AND created_at < \?/WHERE (kind = ? OR 1) AND created_at < ?/'
+mutant P8 ax-memory "$TURNS" 's/    tx\.commit\(\)\.await\.map_err\(db_err\)\?;\n//'
 
 # Related turns and the preflight block (ax-memory)
 mutant R1 ax-memory "$HIST" 's/row\.files\.iter\(\)\.any\(\|f\| files\.contains\(f\)\)\n(\s*)\|\|/false\n$1||/'
 mutant R2 ax-memory "$HIST" 's/const MIN_SHARED_WORDS: usize = 2;/const MIN_SHARED_WORDS: usize = 1;/'
-mutant R3 ax-memory "$HIST" 's/turn_rows\(pool, None, None, true\)/turn_rows(pool, None, None, false)/'
+mutant R3 ax-memory "$STORE" 's/WHERE kind = \? AND enabled = 1 AND/WHERE kind = ? AND (enabled = 1 OR 1) AND/'
 mutant R4 ax-memory "$HIST" 's/        \.take\(limit\)\n//'
+mutant R9 ax-memory "$HIST" 's/let candidates = limit\.saturating_add\(recalled\.len\(\)\);/let candidates = limit;/'
+mutant R10 ax-memory "$STORE" 's/WHERE f\.value IN \(SELECT value FROM json_each\(\?\)\)/WHERE (0 AND f.value IN (SELECT value FROM json_each(?)))/'
 mutant R5 ax-memory "$HIST" 's/        if len > max_chars \{/        if false {/'
 mutant R6 ax-memory "$HIST" 's/const BLOCK_OUTCOME_CHARS: usize = 120;/const BLOCK_OUTCOME_CHARS: usize = 1_000;/'
 mutant R7 ax-memory "$HIST" 's/const BLOCK_FILES: usize = 3;/const BLOCK_FILES: usize = 4;/'
@@ -108,7 +112,8 @@ mutant H1 ax-memory "$HIST" 's/"SELECT path FROM files WHERE path = \? OR path L
 mutant H2 ax-memory "$HIST" 's/    if paths\.is_empty\(\) && !query\.contains\(char::is_whitespace\) \{/    if false {/'
 mutant H3 ax-memory "$HIST" 's/        found\.extend\(git_commits\(root, &pathspecs, query\.since_ms, limit\)\);\n//'
 mutant H4 ax-memory "$HIST" 's/        cmd\.arg\(format!\("--since=@\{\}", since\.div_euclid\(1000\)\)\);/        let _ = since;/'
-mutant H5 ax-memory "$HIST" 's/turn_rows\(pool, query\.since_ms, None, true\)/turn_rows(pool, None, None, true)/'
+mutant H5 ax-memory "$STORE" 's/\.bind\(since\.unwrap_or\(i64::MIN\)\)/.bind(i64::MIN)/'
+mutant H10 ax-memory "$STORE" 's/format!\("%\/\{escaped\}"\)/format!("{escaped}")/'
 mutant H6 ax-memory "$HIST" 's/shared_words\(&words, row\) >= 1\)/shared_words(\&words, row) >= 0)/'
 mutant H7 ax-memory "$HIST" 's/clip\(outcome, outcome_chars\)/outcome.clone()/'
 mutant H8 ax-memory "$HIST" 's/        \.filter\(\|row\| row\.kind == TURN_KIND\)\n        \.map\(\|row\| turn_entry\(&row\)\)\)/        .map(|row| turn_entry(\&row)))/'
@@ -116,7 +121,7 @@ mutant H9 ax-memory "$HIST" 's/entries\.sort_by_key\(\|e\| std::cmp::Reverse\(e\
 
 # MCP (ax-mcp)
 mutant C1 ax-mcp "$TOOLS" 's/        inject\.push_str\(&turn_block\);\n//'
-mutant C2 ax-mcp "$TOOLS" 's/                \.or_else\(\|\| \{\n\s*let canonical = path\.canonicalize\(\)\.ok\(\)\?;\n\s*canonical\.strip_prefix\(root\)\.map\(Path::to_path_buf\)\.ok\(\)\n\s*\}\)\n//'
+mutant C2 ax-mcp "$TOOLS" 's/tokio::fs::canonicalize\(path\)\.await/tokio::fs::canonicalize("\/nonexistent-ax-mutant").await/'
 mutant C3 ax-mcp "$TOOLS" 's/    if ax_memory::is_history_question\(&prompt\) \{/    if true {/'
 mutant C4 ax-mcp "$TOOLS" 's/Some\(date\) => Some\(ax_memory::parse_since\(date\)\.ok_or\("since must be YYYY-MM-DD"\)\?\),/Some(_) => None,/'
 mutant C5 ax-mcp "$TOOLS" 's/const HISTORY_OUTCOME_CHARS: usize = 600;/const HISTORY_OUTCOME_CHARS: usize = 6_000;/'

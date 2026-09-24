@@ -432,6 +432,71 @@ async fn h1_free_text_needs_a_shared_word_beyond_recall() {
 }
 
 #[tokio::test]
+async fn h1_path_suffix_finds_a_turn_on_an_unindexed_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    save(
+        &db,
+        &record(
+            "turn-deep",
+            "Move the widget",
+            "",
+            &["web/src/deep_widget.tsx"],
+        ),
+        NOW,
+    )
+    .await;
+    save(
+        &db,
+        &record(
+            "turn-near",
+            "Other widget",
+            "",
+            &["web/src/xdeep_widget.tsx"],
+        ),
+        NOW,
+    )
+    .await;
+    let entries = history(db.pool(), dir.path(), &query("src/deep_widget.tsx"))
+        .await
+        .unwrap();
+    let found: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(found, vec!["turn-deep"]);
+}
+
+#[tokio::test]
+async fn r3_newer_turns_that_fail_the_word_rule_do_not_crowd_out_file_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for i in 0..3 {
+        let id = format!("turn-file-{i}");
+        save(
+            &db,
+            &record(&id, "Edit settings", "", &[SETTINGS]),
+            NOW - DAY_MS - i,
+        )
+        .await;
+    }
+    for i in 0..3 {
+        let id = format!("turn-word-{i}");
+        save(
+            &db,
+            &record(&id, "Parser dropdown", "", &["src/p.rs"]),
+            NOW - i,
+        )
+        .await;
+    }
+    // Each newer turn shares only "dropdown" with the prompt: recalled, but under the 2-word rule.
+    let rows = related_turns(db.pool(), "dropdown colours", &[SETTINGS.to_string()], 3)
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&rows),
+        vec!["turn-file-0", "turn-file-1", "turn-file-2"]
+    );
+}
+
+#[tokio::test]
 async fn h3_since_drops_older_entries() {
     let (dir, db) = project().await;
     let mut q = query(LANG_FILE);
