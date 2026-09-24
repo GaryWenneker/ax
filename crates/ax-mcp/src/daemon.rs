@@ -20,6 +20,7 @@ use crate::daemon_lock::{
 };
 use crate::daemon_paths::{daemon_pid_path, daemon_socket_candidates};
 use crate::engine::McpEngine;
+use crate::exe_identity::ExeIdentity;
 use crate::liveness_watchdog::install_main_thread_watchdog;
 use crate::server::handle_request;
 use crate::transport::{JsonRpcRequest, JsonRpcResponse, PARSE_ERROR};
@@ -41,6 +42,8 @@ pub struct DaemonHello {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub socket_path: Option<String>,
     pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exe: Option<ExeIdentity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +54,14 @@ pub struct DaemonInfo {
     pub socket_path: Option<String>,
     pub version: String,
     pub project_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exe: Option<ExeIdentity>,
+}
+
+/// The binary this daemon was started from, taken once at startup.
+fn daemon_exe() -> Option<ExeIdentity> {
+    static EXE: std::sync::OnceLock<Option<ExeIdentity>> = std::sync::OnceLock::new();
+    EXE.get_or_init(ExeIdentity::current).clone()
 }
 
 pub fn daemon_info_path(project_root: &Path) -> PathBuf {
@@ -68,6 +79,7 @@ pub fn write_daemon_info(
         socket_path,
         version: env!("CARGO_PKG_VERSION").to_string(),
         project_root: project_root.to_string_lossy().replace('\\', "/"),
+        exe: daemon_exe(),
     };
     let content = serde_json::to_string_pretty(&info)?;
     std::fs::write(daemon_info_path(project_root), content)?;
@@ -180,6 +192,7 @@ impl DaemonLifecycle {
     }
 
     pub fn spawn_watchers(self: &Arc<Self>) {
+        self.spawn_exe_watch();
         let me = Arc::clone(self);
         if me.max_idle_ms > 0 {
             tokio::spawn(async move {
@@ -198,6 +211,26 @@ impl DaemonLifecycle {
                 }
             });
         }
+    }
+
+    /// Old code must not keep serving after its binary was replaced; proxies reconnect
+    /// and start a daemon from their own binary.
+    fn spawn_exe_watch(self: &Arc<Self>) {
+        let interval_ms = crate::exe_identity::exe_check_interval_ms();
+        let Some(exe) = daemon_exe().filter(|_| interval_ms > 0) else {
+            return;
+        };
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
+            loop {
+                interval.tick().await;
+                if !me.is_stopping() && exe.replaced_on_disk() {
+                    me.shutdown("binary replaced").await;
+                    std::process::exit(0);
+                }
+            }
+        });
     }
 
     pub async fn shutdown(self: &Arc<Self>, reason: &str) {
@@ -224,6 +257,7 @@ fn build_hello(project_root: &Path, port: u16, socket_path: Option<String>) -> D
         project: project_root.to_string_lossy().replace('\\', "/"),
         socket_path,
         port,
+        exe: daemon_exe(),
     }
 }
 
@@ -545,11 +579,20 @@ async fn serve_session(
     Ok(())
 }
 
+/// Connects to the project's daemon only when it runs this exact ax version.
 pub async fn try_connect(project_root: &Path) -> Option<(DaemonSession, DaemonHello)> {
     let info = read_daemon_info(project_root)?;
     if info.version != env!("CARGO_PKG_VERSION") {
         return None;
     }
+    connect_any(project_root)
+        .await
+        .filter(|(_, hello)| hello.ax == env!("CARGO_PKG_VERSION"))
+}
+
+/// Connects to whatever daemon serves the project, whatever its version.
+pub async fn connect_any(project_root: &Path) -> Option<(DaemonSession, DaemonHello)> {
+    let info = read_daemon_info(project_root)?;
 
     let socket_candidates: Vec<String> = if let Some(path) = info.socket_path.clone() {
         vec![path]
@@ -560,9 +603,7 @@ pub async fn try_connect(project_root: &Path) -> Option<(DaemonSession, DaemonHe
     for path in socket_candidates {
         if let Some(mut session) = connect_path(&path).await {
             if let Some(hello) = read_hello(&mut session).await {
-                if hello.ax == env!("CARGO_PKG_VERSION") {
-                    return Some((session, hello));
-                }
+                return Some((session, hello));
             }
         }
     }
@@ -570,9 +611,7 @@ pub async fn try_connect(project_root: &Path) -> Option<(DaemonSession, DaemonHe
     if info.port > 0 {
         if let Some(mut session) = connect_tcp(info.port).await {
             if let Some(hello) = read_hello(&mut session).await {
-                if hello.ax == env!("CARGO_PKG_VERSION") {
-                    return Some((session, hello));
-                }
+                return Some((session, hello));
             }
         }
     }
@@ -593,6 +632,20 @@ pub async fn wait_for_daemon(project_root: &Path, timeout_ms: u64) -> Option<Dae
     while tokio::time::Instant::now() < deadline {
         if read_daemon_info(project_root).is_some() && try_connect(project_root).await.is_some() {
             return read_daemon_info(project_root);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    None
+}
+
+pub async fn wait_for_any_daemon(
+    project_root: &Path,
+    timeout_ms: u64,
+) -> Option<(DaemonSession, DaemonHello)> {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    while tokio::time::Instant::now() < deadline {
+        if let Some(found) = connect_any(project_root).await {
+            return Some(found);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

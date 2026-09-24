@@ -1,13 +1,20 @@
 //! Stdio to daemon proxy — CG: mcp/proxy.ts.
 
 use std::path::Path;
+use std::time::Duration;
 
 use serde::Serialize;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::BufReader;
 
 use ax_context::directory::get_ax_dir;
 
-use crate::daemon::{read_daemon_info, remove_daemon_info, try_connect, wait_for_daemon};
+use crate::daemon::{
+    connect_any, read_daemon_info, remove_daemon_info, try_connect, wait_for_any_daemon,
+    wait_for_daemon, DaemonHello,
+};
+use crate::daemon_conn::DaemonSession;
+use crate::exe_identity::{current_exe_path, decide, Attach, ExeIdentity};
+use crate::proxy_pump::pump;
 use crate::daemon_lock::{is_pid_alive, kill_pid, read_lock_info, release_daemon_lock};
 use crate::daemon_paths::daemon_pid_path;
 use crate::liveness_watchdog::install_main_thread_watchdog;
@@ -24,14 +31,74 @@ pub struct DaemonRestartReport {
     pub hint: String,
 }
 
-pub async fn run_stdio_proxy(project_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// How long a proxy keeps trying to reach a daemon after losing its connection.
+const RECONNECT_DEADLINE: Duration = Duration::from_secs(15);
+
+/// Reconnect attempts before this one only connect: a restarting daemon usually comes
+/// back on its own, and spawning too early races the process that is restarting it.
+const FIRST_SPAWNING_ATTEMPT: u32 = 3;
+
+/// Serves the MCP client on stdio through the daemon until the client closes stdin.
+/// Exits the process with status 1 when the daemon is gone and does not come back.
+pub async fn run_stdio_proxy(project_root: &Path, session: DaemonSession) {
     spawn_ppid_watchdog(|| std::process::exit(0));
     let _liveness = install_main_thread_watchdog();
 
-    let (session, hello) = try_connect(project_root)
-        .await
-        .ok_or("failed to connect to ax daemon")?;
+    let outcome = pump(
+        BufReader::new(tokio::io::stdin()),
+        tokio::io::stdout(),
+        session,
+        |attempt| connect_or_spawn(project_root, attempt >= FIRST_SPAWNING_ATTEMPT),
+        RECONNECT_DEADLINE,
+    )
+    .await;
+    if let Err(reason) = outcome {
+        eprintln!("ax: {reason}");
+        std::process::exit(1);
+    }
+}
 
+/// A session with a daemon this proxy may use, restarting or spawning one when allowed.
+async fn connect_or_spawn(project_root: &Path, may_spawn: bool) -> Option<DaemonSession> {
+    if let Some((session, hello)) = connect_any(project_root).await {
+        let mine = ExeIdentity::current();
+        match decide(
+            mine.as_ref(),
+            env!("CARGO_PKG_VERSION"),
+            hello.exe.as_ref(),
+            &hello.ax,
+        ) {
+            Attach::Same => {
+                log_attached(&hello);
+                return Some(session);
+            }
+            Attach::Newer => {
+                tracing::warn!(
+                    "ax daemon pid {} runs a newer build (v{}); attaching to it",
+                    hello.pid,
+                    hello.ax
+                );
+                return Some(session);
+            }
+            Attach::RestartOnMine if may_spawn => {
+                drop(session);
+                tracing::info!("restarting ax daemon pid {} on this newer build", hello.pid);
+                restart_daemon(project_root).await.ok()?;
+                return connect_any(project_root).await.map(|(s, _)| s);
+            }
+            Attach::RestartOnMine => return None,
+        }
+    }
+    if !may_spawn {
+        return None;
+    }
+    spawn_daemon_child(project_root).ok()?;
+    wait_for_any_daemon(project_root, 10_000)
+        .await
+        .map(|(session, _)| session)
+}
+
+fn log_attached(hello: &DaemonHello) {
     if let Some(path) = &hello.socket_path {
         tracing::info!(
             "attached to ax daemon pid {} socket {} v{}",
@@ -47,69 +114,12 @@ pub async fn run_stdio_proxy(project_root: &Path) -> Result<(), Box<dyn std::err
             hello.ax
         );
     }
-
-    let (read_half, mut write_half) = session.into_split();
-
-    let stdin_to_socket = tokio::spawn(async move {
-        let mut stdin = BufReader::new(tokio::io::stdin());
-        let mut line = String::new();
-        while stdin.read_line(&mut line).await.unwrap_or(0) > 0 {
-            if write_half.write_all(line.as_bytes()).await.is_err() {
-                break;
-            }
-            if write_half.flush().await.is_err() {
-                break;
-            }
-            line.clear();
-        }
-    });
-
-    let socket_to_stdout = tokio::spawn(async move {
-        let mut reader = BufReader::new(read_half);
-        let mut stdout = tokio::io::stdout();
-        let mut line = String::new();
-        while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
-            // Daemon hello handshake — not JSON-RPC; must not reach Cursor stdout.
-            let trimmed = line.trim();
-            if trimmed.starts_with("{\"type\":\"hello\"") {
-                line.clear();
-                continue;
-            }
-            // Verbose MCP traces (daemon side-channel): stderr only — never Cursor stdout.
-            if let Some(text) = crate::verbose::parse_ax_log_line(trimmed) {
-                eprintln!("{text}");
-                line.clear();
-                continue;
-            }
-            // Also mirror MCP logging notifications to stderr (Cursor Output often
-            // surfaces process stderr more reliably than notification traffic).
-            if trimmed.contains("\"notifications/message\"") && trimmed.contains("\"ax-mcp\"") {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                    if let Some(data) = v
-                        .pointer("/params/data")
-                        .and_then(|d| d.as_str())
-                    {
-                        eprintln!("{data}");
-                    }
-                }
-            }
-            if stdout.write_all(line.as_bytes()).await.is_err() {
-                break;
-            }
-            if stdout.flush().await.is_err() {
-                break;
-            }
-            line.clear();
-        }
-    });
-
-    let _ = stdin_to_socket.await;
-    let _ = socket_to_stdout.await;
-    Ok(())
 }
 
 pub fn spawn_daemon_child(project_root: &Path) -> std::io::Result<std::process::Child> {
-    let exe = std::env::current_exe()?;
+    let exe = current_exe_path().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "cannot locate the ax binary")
+    })?;
     std::process::Command::new(exe)
         .arg("serve")
         .arg("--mcp")
@@ -122,16 +132,14 @@ pub fn spawn_daemon_child(project_root: &Path) -> std::io::Result<std::process::
         .spawn()
 }
 
+/// Serves stdio through the project daemon. `Err` only when no daemon could be reached at
+/// all, so the caller can fall back to an in-process server.
 pub async fn attach_or_spawn(project_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if try_connect(project_root).await.is_some() {
-        return run_stdio_proxy(project_root).await;
-    }
-    let _ = read_daemon_info(project_root);
-    spawn_daemon_child(project_root)?;
-    if wait_for_daemon(project_root, 10_000).await.is_none() {
-        return Err("daemon failed to start within 10s".into());
-    }
-    run_stdio_proxy(project_root).await
+    let session = connect_or_spawn(project_root, true)
+        .await
+        .ok_or("no ax daemon could be reached or started within 10s")?;
+    run_stdio_proxy(project_root, session).await;
+    Ok(())
 }
 
 /// Stop the shared MCP daemon (if any), clear stale locks, and start a fresh daemon.
