@@ -77,7 +77,7 @@ mutant T4  ax-cli "$TURN" 's/let id_source = format!\("\{conversation\}\\n\{\}",
 mutant T5  ax-cli "$TURN" 's/map_or\(1, \|s\| s\.counter \+ 1\)/map_or(1, |s| s.counter)/'
 mutant T6  ax-cli "$TURN" 's/prompt: clip\(&ax_memory::redact_secrets\(&input\.prompt\), PROMPT_CHARS\)/prompt: clip(&input.prompt, PROMPT_CHARS)/'
 mutant T7  ax-cli "$TURN" 's/\.and_then\(\|v\| v\.as_bool\(\)\) != Some\(false\)/.and_then(|v| v.as_bool()) != Some(true)/'
-mutant T8  ax-cli "$TURN" 's/    if !per_turn_enabled\(root\) \{\n        return None;\n    \}\n    let record/    let record/'
+mutant T8  ax-cli "$TURN" 's/    if !per_turn_enabled\(root\) \{\n        return None;\n    \}\n    let \(dir, id\)/    let (dir, id)/'
 mutant T9  ax-cli "$TURN" 's/    let _ = ax_memory::prune_turns\([^\n]*\n//'
 mutant T10 ax-cli "$TURN" 's/    value == Some\("1"\)/    value.is_some()/'
 mutant T11 ax-cli "$TURN" 's/\.and_then\(\|r\| r\.get\(0\)\)/.and_then(|r| r.get(1))/'
