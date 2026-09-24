@@ -1390,11 +1390,17 @@ mod mcp_path_tests {
         fs::write(&path, serde_json::to_string_pretty(&before).unwrap()).unwrap();
 
         let result = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
-        assert!(matches!(result, Some((_, FileAction::Updated))), "{result:?}");
+        assert!(
+            matches!(result, Some((_, FileAction::Updated))),
+            "{result:?}"
+        );
         let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         let groups = value["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0]["hooks"][0]["command"], format!("{} stop-hook", ax_bin()));
+        assert_eq!(
+            groups[0]["hooks"][0]["command"],
+            format!("{} stop-hook", ax_bin())
+        );
         assert_eq!(groups[1], before["hooks"]["Stop"][1]);
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
@@ -1406,7 +1412,10 @@ mod mcp_path_tests {
         install_claude_hook(&path, "Stop", "stop-hook").unwrap();
         let first = fs::read(&path).unwrap();
         let again = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
-        assert!(matches!(again, Some((_, FileAction::Unchanged))), "{again:?}");
+        assert!(
+            matches!(again, Some((_, FileAction::Unchanged))),
+            "{again:?}"
+        );
         assert_eq!(fs::read(&path).unwrap(), first);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
@@ -1420,7 +1429,10 @@ mod mcp_path_tests {
         );
         fs::write(&path, &compact).unwrap();
         let result = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
-        assert!(matches!(result, Some((_, FileAction::Unchanged))), "{result:?}");
+        assert!(
+            matches!(result, Some((_, FileAction::Unchanged))),
+            "{result:?}"
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), compact);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }

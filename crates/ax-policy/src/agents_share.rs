@@ -427,9 +427,17 @@ mod tests {
         let p = dir.path();
         git(p, &["init", "-q"]);
         for f in [
-            "ax.db", "ax.db-wal", "ax.db-shm", "daemon.json", "daemon.pid",
-            "mcp-verbose-2026-09-24.log", "backups/turn-memories-1.jsonl", "turns/t.json",
-            "policy-private/rules/p.mdc", "policy-inactive/rules/i.mdc", "policy/rules/team.mdc",
+            "ax.db",
+            "ax.db-wal",
+            "ax.db-shm",
+            "daemon.json",
+            "daemon.pid",
+            "mcp-verbose-2026-09-24.log",
+            "backups/turn-memories-1.jsonl",
+            "turns/t.json",
+            "policy-private/rules/p.mdc",
+            "policy-inactive/rules/i.mdc",
+            "policy/rules/team.mdc",
         ] {
             let path = p.join(".ax").join(f);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -438,7 +446,10 @@ mod tests {
         ensure_ax_share_gitignore(p).unwrap();
         assert_eq!(
             untracked(p),
-            vec![".ax/.gitignore".to_string(), ".ax/policy/rules/team.mdc".to_string()]
+            vec![
+                ".ax/.gitignore".to_string(),
+                ".ax/policy/rules/team.mdc".to_string()
+            ]
         );
     }
 
