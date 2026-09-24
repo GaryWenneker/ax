@@ -527,13 +527,23 @@ async fn h3_since_drops_older_entries() {
 #[tokio::test]
 async fn h3_since_in_the_future_drops_a_commit_made_just_now() {
     // git rejects --since timestamps from 2100 on and falls back to about now, which keeps
-    // commits from the last seconds.
+    // any commit dated after now; an hour ahead makes that deterministic.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     git(root, &[], &["init", "-q"]);
     std::fs::write(root.join("fresh.rs"), "fn f() {}\n").unwrap();
     git(root, &[], &["add", "fresh.rs"]);
-    git(root, &[], &["commit", "-qm", "fresh"]);
+    let in_an_hour = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    let date = format!("@{in_an_hour} +0000");
+    git(
+        root,
+        &[("GIT_COMMITTER_DATE", &date), ("GIT_AUTHOR_DATE", &date)],
+        &["commit", "-qm", "fresh"],
+    );
     let db = open_db(root).await;
 
     let mut q = query("fresh.rs");
