@@ -1,8 +1,8 @@
 # EVIDENCE: turn memories with outcomes, related turns in preflight, and "when did I change X"
 
 **Spec:** `docs/specs/turn-memory-outcomes.md`, Revision 1 approved ("Approve Revision 1, build it on branch feat/turn-memory-outcomes") and Revision 1a approved ("Approve Revision 1a"). Revision 1b (found during implementation and review) is recorded in the spec and changes no behavior row.
-**Tier:** 2. **Branch:** `feat/turn-memory-outcomes` (worktree `/Users/gary/io/ax-turn-outcomes`). **Source state:** `2f8518d` (base `main` `7bfe150`).
-**Entry point:** `bash scripts/gauntlet-turn-outcomes.sh` reruns every layer below and exits nonzero on any failure.
+**Tier:** 2. **Branch:** `feat/turn-memory-outcomes` (worktree `/Users/gary/io/ax-turn-outcomes`). **Source state:** `5d1ebda` (base `7bfe150`, the `main` this branch started from).
+**Entry point:** `bash scripts/gauntlet-turn-outcomes.sh 7bfe150` reruns every layer below and exits nonzero on any failure. Pass the base explicitly: after the merge, `main` itself contains the change.
 **Tools:** cargo 1.98.0, rustfmt 1.9.0-stable, node v26.8.2, sqlite3 3.54.0, macOS.
 
 ## Outcome
@@ -31,7 +31,7 @@
 | R3 | `r3_at_most_three_newest_first_within_1200_characters`, `r3_prompt_matches_are_capped_at_three_newest_first`, `r3_newer_turns_that_fail_the_word_rule_do_not_crowd_out_file_matches` |
 | H1 | `h1_path_lists_the_turn_and_the_commit_newest_first`, `h1_symbol_name_resolves_to_its_file`, `h1_free_text_uses_recall_on_turns`, `h1_free_text_needs_a_shared_word_beyond_recall`, `h1_path_suffix_finds_a_turn_on_an_unindexed_file`, `history_outside_git_still_lists_turns`, `tools::tests::ax_history_lists_turns_and_gives_one_in_full_by_id`, layer 7 (`ax history main.rs`) |
 | H2 | `h2_history_questions_are_recognised`, `tools::tests::h2_history_question_points_the_agent_to_ax_history` |
-| H3 | `h3_since_drops_older_entries`, `h3_since_drops_older_turns`, `tools::tests::ax_history_since_filters_and_rejects_bad_dates`, layer 7 (`--since 2999-01-01`, bad date rejected) |
+| H3 | `h3_since_drops_older_entries`, `h3_since_drops_older_turns`, `h3_since_in_the_future_drops_a_commit_made_just_now`, `tools::tests::ax_history_since_filters_and_rejects_bad_dates`, layer 7 (`--since 2999-01-01`, bad date rejected) |
 | H4 | `h4_listing_cuts_the_outcome_and_the_id_gives_it_in_full`, `history_entry_is_only_for_turn_memories`, layer 7 (`ax history --id`) |
 | P1 | `p1_p2_turn_older_than_retention_is_backed_up_then_deleted`, `backups_append_to_the_same_day_file`, `the_backup_holds_only_turn_memories`, `retention_is_90_days`, layer 7 (91-day-old turn pruned at the next turn end, found in the backup) |
 | P2 | `p1_p2_turn_older_than_retention_is_backed_up_then_deleted` (89 days kept), `nothing_to_prune_writes_no_backup_file` |
@@ -42,23 +42,27 @@
 | Must not change: no-change turns write nothing | existing `t2_turn_without_changes_is_not_recorded` passes; mutants T1–T21 of the per-turn script all killed |
 | Must not change: turns never exported | existing `export_never_writes_turn_memories` passes; per-turn mutant M3 killed |
 | Must not change: hooks never block or print | existing `main::turn_hook_is_always_quiet`; layer 7 runs every `turn-hook` call through `quiet` (no stdout, no stderr, exit 0) |
+| Gauntlet leaves the user's agent hooks alone | layer 7 of both gauntlets runs with a temp `HOME` and fails if `~/.cursor/hooks.json` or `~/.claude/settings.json` changed |
 | Must not change: other memory kinds and preflight blocks | `prune_removes_only_old_turn_memories`, `the_backup_holds_only_turn_memories`, existing preflight tests pass unchanged |
 
-## Gauntlet (one run on `2f8518d`)
+## Gauntlet (one run on `5d1ebda`)
 
 | Layer | Result |
 |---|---|
-| 1. Targeted tests (`ax-cli`, `ax-memory`, `ax-installer`, `ax-mcp` lib + `catalog_payload_size`) | 234 passed, 0 failed; turn hook and memory tests green 5/5 repeats |
-| 2. Workspace suite | 808 passed, 4 failed; all 4 in the baseline: `bootstrap::tests::legacy_prefix_from_workspace_folder`, `bootstrap::tests::resolves_placeholder_to_folder_name`, `savings::tests::cursor_transcript_path_filter` (as on `main`), and `cycles_api_path_handlers_work` (needs the repo's own `.ax/`, which a fresh worktree lacks) |
+| 1. Targeted tests (`ax-cli`, `ax-memory`, `ax-installer`, `ax-mcp` lib + `catalog_payload_size`) | 235 passed, 0 failed; turn hook and memory tests green 5/5 repeats |
+| 2. Workspace suite | 809 passed, 4 failed; all 4 in the baseline: `bootstrap::tests::legacy_prefix_from_workspace_folder`, `bootstrap::tests::resolves_placeholder_to_folder_name`, `savings::tests::cursor_transcript_path_filter` (as on `main`), and `cycles_api_path_handlers_work` (needs the repo's own `.ax/`, which a fresh worktree lacks) |
 | 3. Clippy on changed crates | 0 findings on changed lines |
-| 4. rustfmt | new files 0 hunks; every changed file equal to `main` (for example `tools.rs` 31, `main.rs` 50) |
+| 4. rustfmt | new files 0 hunks; every changed file equal to `7bfe150` (for example `tools.rs` 31, `main.rs` 50) |
 | 5. Release build + CLI docs | all 131 commands documented |
-| 6. Mutants | `scripts/mutants-turn-outcomes.sh` 44/44 killed (O1–O9, P1–P8, R1–R10, H1–H10, C1–C6, I1); `scripts/mutants-per-turn-memory.sh` 33/33 killed |
-| 7. Real execution with the release binary | O1 O2 O4 O6 H1 H3 H4 P1 and the installer verified in a temp repo with an isolated `HOME` |
+| 6. Mutants | `scripts/mutants-turn-outcomes.sh` 44/44 killed (O1–O9, P1–P8, R1–R10, H1–H3, H5–H11, C1–C6, I1); `scripts/mutants-per-turn-memory.sh` 33/33 killed |
+| 7. Real execution with the release binary | O1 O2 O4 O6 H1 H3 H4 P1 and the installer verified in a temp repo with a temp `HOME`; the user's hook files unchanged |
 
 **Negative controls** (each proven once, then restored):
 
-- **Layer 7.** A binary built with the redaction removed from `outcome_text` failed with `O4: snapshot holds the token`. An earlier, stricter version of the backup check failed on a real fresh project (see below).
+- **Layer 7.**
+  - A binary built with the redaction removed from `outcome_text` failed with `O4: snapshot holds the token`.
+  - With the `HOME` isolation removed (run against a synthetic `HOME`), the layer failed with `real execution changed ~/.cursor/hooks.json or ~/.claude/settings.json`.
+  - An earlier, stricter version of the backup check failed on a real fresh project (see below).
 - **Layer 4.** It failed on real drift in `tests/history.rs` before that file was formatted.
 - **Layer 6.** It fails when a mutant pattern does not apply (H3 after the async change) and when a mutant survives (H6, P7, R4, see below).
 
@@ -72,7 +76,11 @@
   - R4 survived: the cap of 3 was only tested with file matches, which the SQL limit already enforces.
   - H3 no longer applied, because the line gained `.await`.
 
-  I added the two tests, both confirmed red under their mutants, and updated the H3 pattern. The next run passed.
+  I added the two tests, both confirmed red under their mutants, and updated the H3 pattern. The next run passed on `2f8518d`.
+- **My gauntlets rewrote the user's global agent hooks.** Layer 7 of both gauntlets ran `ax init` with the real `HOME`. `ax init` writes `~/.cursor/hooks.json` and `~/.claude/settings.json` with the path of the running binary, so those hooks pointed at `/tmp/ax-gauntlet-*/bin/ax`, which only works until `/tmp` is cleaned. I found it while installing: the Claude `turn-hook start` still pointed at the per-turn gauntlet's temp dir. I repaired both files to `~/.local/bin/ax` (only the command paths changed), and layer 7 now uses a temp `HOME` plus the check above.
+- **With `HOME` isolated, H3 failed in every real run.** git rejects `--since` timestamps from 2100-01-01 on and falls back to about "now", so `--since 2999-01-01` listed a commit made seconds earlier. With the real `HOME`, the ax git hooks did not run in the test repo, and the timing happened to pass. I wrote the RED test `h3_since_in_the_future_drops_a_commit_made_just_now` and added a `since` filter in `ax` (spec Revision 1b point 7).
+  - Hand-written mutant H4 (drop git's `--since`) is no longer a bug: after the filter, git's `--since` only shortens the walk. It was replaced by H11 (drop the filter).
+  - H11 first survived one run, because the test's commit only slipped past git within the same second. The commit is now dated an hour ahead, and the kill was 3/3 red.
 
 ## Review rounds
 
@@ -81,6 +89,8 @@
 | 1 | `old-coder` usable, `rust-review` usable | 1 high, 3 medium, 2 low: `git log` blocked the async runtime; preflight loaded every turn body; per-row delete without a transaction; duplicated LIKE escaping; blocking `canonicalize` in preflight; a prompt quoting `"\n\nOutcome: "` posed as the outcome | `5c09558` (plus the RED test for the marker) |
 | 2 | same | 0 | — |
 | 3 | same, after `2f8518d` (two tests, one mutant pattern) | 0 | — |
+| 4 | same, after `5d1ebda` (the `since` filter, `HOME` isolation, one test) | 1 low: `user_hooks` died silently under `pipefail` when `~/.claude/settings.json` does not exist | fixed before `d5e1386` |
+| 5 | same | 0 | — |
 
 ## Known limits
 
