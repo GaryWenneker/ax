@@ -54,7 +54,7 @@ Negative controls (each layer's failure path proven once, then restored from git
 - Layer 6: M9 survived in an earlier run and the script reported 15/16. That led to the Q6 test next to a legacy line.
 - Layer 7: making `log_directive` always return `ax=info` made it fail on an INFO line on stderr.
 
-A noisy-user-hook control for layer 7 was blocked by the approval tool and replaced by the log control above.
+- Layer 7, noisy hook (run after the release, approved by the user; `GAUNTLET_LAYERS=7 GAUNTLET_ALLOW_DIRTY=1`, only the temp repo's hook changed): the unchanged layer passed; an extra `echo noise >&2` in the temp repo's `post-commit` made it fail with "commit printed on stderr: noise"; an extra `echo noise` on stdout failed the same way, because git sends a post-commit hook's stdout to stderr. The script was restored and matches git.
 
 ## What failed along the way
 
