@@ -454,6 +454,7 @@ mod tests {
         let record = turn_record(root, "conv-1").expect("turn made a commit");
         assert_eq!(record.files, vec!["src/a.rs".to_string()]);
         assert!(record.body.contains("Fix cache eviction"), "{}", record.body);
+        assert!(!record.body.contains("initial"), "pre-turn commit listed: {}", record.body);
     }
 
     #[test]
@@ -528,6 +529,7 @@ mod tests {
     async fn t7_per_turn_false_in_ax_json_disables_both_hooks() {
         let dir = repo();
         let root = dir.path();
+        drop(ax_core::Ax::init(root).await.unwrap());
         start_turn(root, &input("Edit", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { 1 }\n");
         write(root, "ax.json", r#"{ "memory": { "perTurn": false } }"#);
@@ -587,6 +589,11 @@ mod tests {
         std::fs::create_dir_all(no_git.path().join(".ax")).unwrap();
         assert_eq!(start_turn(no_git.path(), &input("Edit", Some("g1"))), None);
         assert_eq!(turn_record(no_git.path(), "conv-1"), None);
+
+        let no_ax = repo();
+        std::fs::remove_dir_all(no_ax.path().join(".ax")).unwrap();
+        assert_eq!(start_turn(no_ax.path(), &input("Edit", Some("g1"))), None);
+        assert!(!no_ax.path().join(".ax").exists(), "a git repo without ax got an .ax dir");
     }
 
     #[tokio::test]
