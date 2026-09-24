@@ -625,9 +625,6 @@ fn install_claude_hook(
                 .is_some_and(|s| s.contains(hook_subcommand))
         });
     match existing {
-        Some(entry) if entry["command"].as_str() == Some(hook_cmd.as_str()) => {
-            return Ok(Some((settings_path.to_path_buf(), FileAction::Unchanged)));
-        }
         Some(entry) => entry["command"] = Value::String(hook_cmd),
         None => groups.push(serde_json::json!({
             "hooks": [{ "type": "command", "command": hook_cmd }]
@@ -1411,6 +1408,20 @@ mod mcp_path_tests {
         let again = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
         assert!(matches!(again, Some((_, FileAction::Unchanged))), "{again:?}");
         assert_eq!(fs::read(&path).unwrap(), first);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn c5_a_correct_hook_in_a_hand_formatted_file_keeps_its_formatting() {
+        let path = temp_settings_path("hand-formatted-hook");
+        let compact = format!(
+            r#"{{"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":"{} stop-hook"}}]}}]}}}}"#,
+            ax_bin()
+        );
+        fs::write(&path, &compact).unwrap();
+        let result = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        assert!(matches!(result, Some((_, FileAction::Unchanged))), "{result:?}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), compact);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 

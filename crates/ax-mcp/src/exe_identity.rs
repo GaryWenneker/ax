@@ -56,8 +56,11 @@ fn strip_deleted_suffix(path: &Path) -> PathBuf {
 }
 
 pub fn exe_check_interval_ms() -> u64 {
-    std::env::var(EXE_CHECK_ENV)
-        .ok()
+    interval_from(std::env::var(EXE_CHECK_ENV).ok().as_deref())
+}
+
+fn interval_from(value: Option<&str>) -> u64 {
+    value
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(DEFAULT_EXE_CHECK_MS)
 }
@@ -108,6 +111,21 @@ mod tests {
         let new = id("/b/ax", 11, 2000);
         assert_eq!(decide(Some(&new), "5.1.0", Some(&old), "5.1.0"), Attach::RestartOnMine);
         assert_eq!(decide(Some(&new), "5.2.0", Some(&old), "5.1.0"), Attach::RestartOnMine);
+    }
+
+    #[test]
+    fn e3_an_upgrade_in_place_restarts_the_daemon_still_on_the_old_file() {
+        let running = id("/b/ax", 10, 1000);
+        let upgraded = id("/b/ax", 12, 2000);
+        assert_eq!(decide(Some(&upgraded), "5.2.0", Some(&running), "5.1.0"), Attach::RestartOnMine);
+    }
+
+    #[test]
+    fn e5_the_check_runs_every_30_seconds_unless_configured() {
+        assert_eq!(interval_from(None), 30_000);
+        assert_eq!(interval_from(Some("junk")), 30_000);
+        assert_eq!(interval_from(Some(" 200 ")), 200);
+        assert_eq!(interval_from(Some("0")), 0);
     }
 
     #[test]

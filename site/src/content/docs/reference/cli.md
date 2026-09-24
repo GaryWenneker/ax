@@ -30,6 +30,7 @@ Running `ax` with **no subcommand** starts the interactive installer (same as `a
 | `AX_READ_GUARD=off` | Disable the read-guard hook (every Read/Grep passes) |
 | `AX_READ_GUARD_STATE` | Path of the read-guard state file (default `~/.ax/read-guard.json`) |
 | `AX_POLICY_MAX_CHARS` | Cap contextual policy inject (default `16000`). Always-apply rules are never hard-truncated. |
+| `AX_DAEMON_EXE_CHECK_MS` | How often the MCP daemon checks whether its binary was replaced, in milliseconds (default `30000`; `0` turns the check off). See [`ax daemon`](#ax-daemon-path-statusstoprestart) |
 | `AX_TELEMETRY=0` / `DO_NOT_TRACK=1` | Disable anonymous telemetry |
 | `AX_MS_CLIENT_ID` | Optional custom Azure AD public client ID for OneDrive policy share — defaults to the built-in Microsoft app if unset |
 | `AX_OFFLOAD_URL`, `AX_OFFLOAD_KEY`, … | Override explore offload settings |
@@ -40,7 +41,7 @@ Running `ax` with **no subcommand** starts the interactive installer (same as `a
 |---|---|---|
 | `~/.ax/config.json` | Global | `index`, `offload`, `policy.storage` |
 | `<project>/ax.json` | Per-project | `share`, policy overrides, `memory.perTurn` — each project has its own remote share config |
-| `<project>/.ax/` | Per-project | `ax.db`, lock file, optional `policy/` |
+| `<project>/.ax/` | Per-project | `ax.db`, lock file, optional `policy/`. `.ax/.gitignore` keeps everything except `policy/` out of git |
 
 See [Configuration](/getting-started/configuration/) for the full schema.
 
@@ -58,6 +59,8 @@ Interactive installer — writes MCP config for detected AI agents (Cursor, Clau
 | `--all` | flag | Configure every supported agent, not only detected ones |
 | `--target <id>` | string | Wire a single agent (e.g. `takumi`, `vscode`, `cursor`); ids are case-insensitive |
 | `--path <dir>` | string | Project root for workspace MCP files (default: current directory). Takumi passes this explicitly. |
+
+Agent configs and hooks get the first `ax` on your `PATH`, exactly as found there: a shim such as `~/.local/bin/ax` stays the shim, so a later upgrade of the binary behind it needs no reinstall. With no `ax` on `PATH`, the binary running the install is written, and the report says so. When the two differ, the report names both. A Claude Code hook whose `ax` path is stale is repaired in place; your own hooks stay as they are.
 
 ```bash
 ax install
@@ -84,6 +87,8 @@ ax uninstall
 Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the project, install git hooks, install the Cursor savings hook (`ax savings hook install`), import Claude and Cursor savings logs (`ax savings import --all`), then offer the agent installer. A workspace init runs the savings steps once, after every member.
 
 On **first init**, runs a full index. If `.ax/ax.db` already exists, runs an incremental `ax sync` instead — use `ax index` when you need a full rebuild.
+
+`ax init` also writes `.ax/.gitignore`, so only `.ax/.gitignore` and the team policy in `.ax/policy/` can be committed. The database, logs, backups and `ship.toml` stay local. Lines you add yourself are kept and take precedence: add `!ship.toml` to share the quality-gate config. Your project's own `.gitignore` is not touched.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -140,6 +145,8 @@ Incremental update — re-parses only changed files.
 | `--all` | flag | Sync every workspace member listed in root `ax.json` |
 
 Also refreshes git hooks when the memory-capture line is missing (idempotent upgrade path).
+
+In a directory without `.ax/` (a fresh git worktree, for example), `ax sync --quiet` exits 0, prints nothing and creates nothing, so the git hooks stay silent there. Without `--quiet` it reports `project not initialized - run ax init` and exits 1.
 
 ```bash
 ax sync
@@ -718,7 +725,7 @@ Git-aware quality gates, SSE dashboard, draft PRs. See [Command Center](/guides/
 | `--open` | flag | — | Open browser |
 | `--auto-commit` | flag | — | Force-enable Aider-style checkpoint commit before this evaluation, overriding `.ax/ship.toml` `[auto_commit]` for this run only |
 | `--revert-on-fail` | flag | — | With `--auto-commit`, `git reset --mixed` the checkpoint if the quality gate fails (file contents stay on disk, uncommitted) |
-| `--quiet` | flag | — | With `--evaluate`: print nothing when the gate passes and one line on stderr (`ax: quality gate failed: <steps>`) when it fails. Exits 0 whether the gate passes or fails. The git hooks ax installs use this |
+| `--quiet` | flag | — | With `--evaluate`: print nothing when the gate passes and one line on stderr (`ax: quality gate failed: <steps>`) when it fails. Exits 0 whether the gate passes or fails. The git hooks ax installs use this. In a directory without `.ax/` it does nothing and exits 0 |
 
 ```bash
 ax ship --watch --open
@@ -815,6 +822,8 @@ Zed, Continue, Kiro, opencode, Antigravity, Hermes, and Takumi 匠 have no block
 ### `ax daemon [path] [status|stop|restart]`
 
 MCP background daemon control (shared index connection per project). Cursor / Takumi attach as stdio proxies; `restart` clears a stuck daemon and stale locks without killing every `ax.exe` (unlike `ax unlock`).
+
+The daemon follows its binary. It checks every 30 seconds (`AX_DAEMON_EXE_CHECK_MS`) whether its `ax` file was replaced, for example by `ax upgrade`, and then stops cleanly. A proxy on a newer `ax` build restarts an older daemon on its own binary; a proxy on an older build attaches to a newer daemon and leaves it running. When the daemon goes away, the proxies reconnect or start a new one without the IDE noticing. A call that was in flight gets the error `ax daemon restarted; retry the call`. If no daemon is back within 15 seconds, the proxy exits with the reason on stderr.
 
 | Argument / subcommand | Description |
 |---|---|

@@ -241,7 +241,9 @@ Enforcement lives in `crates/ax-context/tests/no_query_time_disk_reads.rs`, a fa
 
 `ax serve --mcp` prefers a **per-project daemon**: the IDE process is a thin stdio proxy; one daemon owns `.ax/ax.db`. That lets Cursor and Takumi share one writer.
 
-If the daemon cannot start in time, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (hamburger / sidebar Ops) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/docs/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
+When the daemon stops (an upgrade replaced its binary, it was restarted, it crashed), each proxy reconnects to the next daemon, or starts one, on the same stdio connection. Requests that were in flight get the JSON-RPC error `-32000` `ax daemon restarted; retry the call`; requests sent during the reconnect are delivered in order. A proxy on a newer `ax` build restarts an older daemon on its own binary; an older proxy attaches to a newer daemon. See [`ax daemon`](/reference/cli/#ax-daemon-path-statusstoprestart).
+
+If the daemon cannot start when the client first connects, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (hamburger / sidebar Ops) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/docs/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
 
 ## How agents should use it
 

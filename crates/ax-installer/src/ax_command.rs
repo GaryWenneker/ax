@@ -136,9 +136,23 @@ mod tests {
         let plain = exe(&t.path().join("plain"));
         std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o644)).unwrap();
         let good = exe(&t.path().join("good"));
-        let env = path_env(&[Path::new("relative"), &t.path().join("plain"), &t.path().join("good")]);
+        exe(&t.path().join("rel"));
+        let relative = relative_from_cwd(&t.path().join("rel"));
+        assert!(relative.join("ax").is_file(), "the relative entry holds an executable ax");
+        let env = path_env(&[&relative, &t.path().join("plain"), &t.path().join("good")]);
         let cmd = resolve(Some(&env), Some(running));
         assert_eq!(cmd.path, good.to_string_lossy());
+    }
+
+    /// `dir` as a path relative to the current directory (`../../…/dir`).
+    #[cfg(unix)]
+    fn relative_from_cwd(dir: &Path) -> PathBuf {
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let up = cwd.components().count() - 1;
+        let mut rel: PathBuf = std::iter::repeat_n("..", up).collect();
+        rel.push(dir.strip_prefix("/").unwrap());
+        rel
     }
 
     #[test]
