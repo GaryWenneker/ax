@@ -4,8 +4,11 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
+/// Memory kind of per-turn memories; skipped by preflight injection and export.
 pub const TURN_KIND: &str = "turn";
+/// `source` value of memories written by `ax turn-hook`.
 pub const TURN_SOURCE: &str = "turn-hook";
+/// Age after which `prune_turns` deletes a turn memory.
 pub const TURN_RETENTION_DAYS: i64 = 30;
 
 /// One agent turn that changed files or made a commit.

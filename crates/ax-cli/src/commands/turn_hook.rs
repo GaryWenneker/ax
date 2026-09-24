@@ -7,9 +7,12 @@ use std::path::{Path, PathBuf};
 use ax_memory::TurnRecord;
 use serde::{Deserialize, Serialize};
 
+/// Which side of an agent turn the hook runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum TurnPhase {
+    /// Before the prompt is handled: save the snapshot.
     Start,
+    /// After the agent stopped: write the turn memory.
     End,
 }
 
@@ -55,7 +58,8 @@ pub async fn run(phase: TurnPhase) -> Result<(), String> {
                     .root
                     .clone()
                     .unwrap_or_else(|| super::resolve_path(None));
-                let _ = start_turn(&root, &input);
+                // A missing snapshot only means this turn writes no memory.
+                let _ = tokio::task::spawn_blocking(move || start_turn(&root, &input)).await;
             }
         }
         TurnPhase::End => end_from_input(&value).await,
@@ -72,6 +76,7 @@ pub(crate) async fn end_from_input(value: &serde_json::Value) {
         return;
     };
     let root = input.root.unwrap_or_else(|| super::resolve_path(None));
+    // Memory capture must never fail or block the turn; a lost turn memory is acceptable.
     let _ = end_turn(&root, &input.conversation, now_ms()).await;
 }
 
@@ -191,11 +196,15 @@ pub(crate) async fn end_turn(root: &Path, conversation: &str, now_ms: i64) -> Op
     if !per_turn_enabled(root) {
         return None;
     }
-    let record = turn_record(root, conversation)?;
+    let (dir, id) = (root.to_path_buf(), conversation.to_string());
+    let record = tokio::task::spawn_blocking(move || turn_record(&dir, &id))
+        .await
+        .ok()??;
     let ax = ax_core::Ax::open(root).await.ok()?;
     ax_memory::save_turn(ax.db_pool(), &record, now_ms)
         .await
         .ok()?;
+    // A failed prune only delays retention by one turn; the memory itself is saved.
     let _ = ax_memory::prune_turns(ax.db_pool(), now_ms, ax_memory::TURN_RETENTION_DAYS).await;
     Some(record.id)
 }
