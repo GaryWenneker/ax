@@ -13,6 +13,7 @@ use serde_json::{json, Map, Value};
 use crate::report::FileAction;
 
 const MARKER: &str = "read-guard";
+const TURN_MARKER: &str = "turn-hook";
 const GEMINI_NAME: &str = "ax-read-guard";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,20 +37,31 @@ impl GuardIde {
     }
 }
 
-pub fn guard_command(bin: &str, ide: GuardIde) -> String {
-    let bin = if bin.contains(char::is_whitespace) {
+fn quote_bin(bin: &str) -> String {
+    if bin.contains(char::is_whitespace) {
         format!("\"{bin}\"")
     } else {
         bin.to_string()
-    };
-    format!("{bin} {MARKER} --ide {}", ide.dialect())
+    }
 }
 
-fn is_guard(entry: &Value) -> bool {
+pub fn guard_command(bin: &str, ide: GuardIde) -> String {
+    format!("{} {MARKER} --ide {}", quote_bin(bin), ide.dialect())
+}
+
+fn command_contains(entry: &Value, marker: &str) -> bool {
     entry
         .get("command")
         .and_then(Value::as_str)
-        .is_some_and(|c| c.contains(MARKER))
+        .is_some_and(|c| c.contains(marker))
+}
+
+fn is_guard(entry: &Value) -> bool {
+    command_contains(entry, MARKER)
+}
+
+fn is_turn_hook(entry: &Value) -> bool {
+    command_contains(entry, TURN_MARKER)
 }
 
 fn group_has_guard(group: &Value) -> bool {
@@ -128,6 +140,10 @@ fn nested(config: &mut Value, event: &str, matcher: &str, hook: Value) -> Result
 
 /// Remove every read-guard entry, flat or nested. Returns whether anything changed.
 pub fn remove(config: &mut Value) -> bool {
+    remove_marked(config, is_guard)
+}
+
+fn remove_marked(config: &mut Value, is_ours: fn(&Value) -> bool) -> bool {
     let Some(hooks) = config.get_mut("hooks").and_then(Value::as_object_mut) else {
         return false;
     };
@@ -138,12 +154,12 @@ pub fn remove(config: &mut Value) -> bool {
         let before = items.len();
         let mut inner_changed = false;
         items.retain_mut(|item| {
-            if is_guard(item) {
+            if is_ours(item) {
                 return false;
             }
             if let Some(inner) = item.get_mut("hooks").and_then(Value::as_array_mut) {
                 let n = inner.len();
-                inner.retain(|h| !is_guard(h));
+                inner.retain(|h| !is_ours(h));
                 if inner.len() != n {
                     inner_changed = true;
                     return !inner.is_empty();
@@ -161,6 +177,37 @@ pub fn remove(config: &mut Value) -> bool {
         hooks.remove(&event);
     }
     changed
+}
+
+/// Add the Cursor `beforeSubmitPrompt` / `stop` entries for `ax turn-hook start|end`.
+pub fn upsert_cursor_turn_hooks(config: &mut Value, bin: &str) -> Result<(), String> {
+    if config.get("version").is_none() && config.is_object() {
+        config["version"] = json!(1);
+    }
+    let bin = quote_bin(bin);
+    for (event, phase) in [("beforeSubmitPrompt", "start"), ("stop", "end")] {
+        let entry = json!({ "command": format!("{bin} {TURN_MARKER} {phase}"), "timeout": 10 });
+        replace_or_push(event_array(config, event)?, entry, is_turn_hook);
+    }
+    Ok(())
+}
+
+/// Remove every `ax turn-hook` entry. Returns whether anything changed.
+pub fn remove_turn_hooks(config: &mut Value) -> bool {
+    remove_marked(config, is_turn_hook)
+}
+
+pub fn install_cursor_turn_hooks_file(path: &Path, bin: &str) -> Result<FileAction, String> {
+    let existed = path.exists();
+    let before = read_strict(path)?;
+    let mut after = before.clone();
+    upsert_cursor_turn_hooks(&mut after, bin)?;
+    write(path, &before, &after, existed)
+}
+
+/// `Ok(None)` when there was nothing of ours to remove.
+pub fn uninstall_turn_hooks_file(path: &Path) -> Result<Option<FileAction>, String> {
+    uninstall_marked_file(path, remove_turn_hooks)
 }
 
 /// Missing file → `{}`; unreadable or invalid JSON → error (the file is left alone).
@@ -195,12 +242,19 @@ pub fn install_file(path: &Path, ide: GuardIde, bin: &str) -> Result<FileAction,
 
 /// `Ok(None)` when there was nothing of ours to remove.
 pub fn uninstall_file(path: &Path) -> Result<Option<FileAction>, String> {
+    uninstall_marked_file(path, remove)
+}
+
+fn uninstall_marked_file(
+    path: &Path,
+    remove_ours: fn(&mut Value) -> bool,
+) -> Result<Option<FileAction>, String> {
     if !path.exists() {
         return Ok(None);
     }
     let before = read_strict(path)?;
     let mut after = before.clone();
-    if !remove(&mut after) {
+    if !remove_ours(&mut after) {
         return Ok(None);
     }
     write(path, &before, &after, true).map(Some)
@@ -374,6 +428,76 @@ mod tests {
         assert!(err.contains("not valid JSON"), "{err}");
         assert!(uninstall_file(&path).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "{ \"hooks\": { oops");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn cursor_turn_hook_entry_shape() {
+        let mut c = json!({});
+        upsert_cursor_turn_hooks(&mut c, BIN).unwrap();
+        assert_eq!(
+            c,
+            json!({ "version": 1, "hooks": {
+                "beforeSubmitPrompt": [{ "command": "/opt/ax/bin/ax turn-hook start", "timeout": 10 }],
+                "stop": [{ "command": "/opt/ax/bin/ax turn-hook end", "timeout": 10 }]
+            } })
+        );
+        let mut spaced = json!({});
+        upsert_cursor_turn_hooks(&mut spaced, "/Users/me/Application Support/ax").unwrap();
+        assert_eq!(
+            spaced["hooks"]["stop"][0]["command"],
+            "\"/Users/me/Application Support/ax\" turn-hook end"
+        );
+    }
+
+    #[test]
+    fn cursor_turn_hooks_are_idempotent_and_keep_user_entries() {
+        let session = json!({ "command": "./ax-session-model.sh" });
+        let mut c = json!({ "version": 1, "hooks": {
+            "beforeSubmitPrompt": [session.clone(), { "command": "/old/ax turn-hook start" }],
+            "preToolUse": [{ "command": "/opt/ax/bin/ax read-guard --ide cursor" }]
+        } });
+        upsert_cursor_turn_hooks(&mut c, BIN).unwrap();
+        let once = c.clone();
+        upsert_cursor_turn_hooks(&mut c, BIN).unwrap();
+        assert_eq!(c, once, "second install changes nothing");
+        assert_eq!(
+            c["hooks"]["beforeSubmitPrompt"],
+            json!([session, { "command": "/opt/ax/bin/ax turn-hook start", "timeout": 10 }])
+        );
+        assert_eq!(c["hooks"]["stop"].as_array().unwrap().len(), 1);
+        assert_eq!(c["hooks"]["preToolUse"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn turn_hook_and_read_guard_removal_leave_each_other_alone() {
+        let mut c = json!({});
+        upsert(&mut c, GuardIde::Cursor, BIN).unwrap();
+        upsert_cursor_turn_hooks(&mut c, BIN).unwrap();
+        c["hooks"]["stop"].as_array_mut().unwrap().push(json!({ "command": "./notify.sh" }));
+
+        let mut guard_removed = c.clone();
+        assert!(remove(&mut guard_removed));
+        assert_eq!(guard_removed["hooks"]["beforeSubmitPrompt"], c["hooks"]["beforeSubmitPrompt"]);
+        assert_eq!(guard_removed["hooks"]["stop"], c["hooks"]["stop"]);
+
+        assert!(remove_turn_hooks(&mut c));
+        assert!(c["hooks"].get("beforeSubmitPrompt").is_none());
+        assert_eq!(c["hooks"]["stop"], json!([{ "command": "./notify.sh" }]));
+        assert_eq!(c["hooks"]["preToolUse"].as_array().unwrap().len(), 1);
+        assert!(!remove_turn_hooks(&mut c), "second remove is a no-op");
+    }
+
+    #[test]
+    fn turn_hook_files_install_and_uninstall() {
+        let path = temp_file("turn-roundtrip");
+        assert_eq!(install_cursor_turn_hooks_file(&path, BIN).unwrap(), FileAction::Created);
+        assert_eq!(install_cursor_turn_hooks_file(&path, BIN).unwrap(), FileAction::Unchanged);
+        assert_eq!(uninstall_turn_hooks_file(&path).unwrap(), Some(FileAction::Updated));
+        assert_eq!(uninstall_turn_hooks_file(&path).unwrap(), None);
+        fs::write(&path, "{ oops").unwrap();
+        assert!(install_cursor_turn_hooks_file(&path, BIN).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ oops");
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 

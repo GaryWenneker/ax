@@ -520,7 +520,12 @@ fn install_cursor_mcp(_project_root: &Path) -> Result<TargetReport, String> {
     let path = home_dir()?.join(".cursor").join("mcp.json");
     let action = upsert_mcp_servers(&path, "cursor")?;
     report.push_file(path, action);
-    install_read_guard(&mut report, home_dir()?.join(".cursor").join("hooks.json"), GuardIde::Cursor);
+    let cursor_hooks = home_dir()?.join(".cursor").join("hooks.json");
+    install_read_guard(&mut report, cursor_hooks.clone(), GuardIde::Cursor);
+    match hooks::install_cursor_turn_hooks_file(&cursor_hooks, &ax_bin()) {
+        Ok(action) => report.push_file(cursor_hooks, action),
+        Err(e) => report.note(format!("Turn memory hooks not installed: {e}")),
+    }
     report.note("Restart Cursor for MCP changes to take effect.");
     Ok(report)
 }
@@ -531,7 +536,13 @@ fn uninstall_cursor_mcp() -> Result<TargetReport, String> {
     if let Some(action) = remove_mcp_servers(&path)? {
         report.push_file(path, action);
     }
-    uninstall_read_guard(&mut report, home_dir()?.join(".cursor").join("hooks.json"));
+    let cursor_hooks = home_dir()?.join(".cursor").join("hooks.json");
+    uninstall_read_guard(&mut report, cursor_hooks.clone());
+    match hooks::uninstall_turn_hooks_file(&cursor_hooks) {
+        Ok(Some(action)) => report.push_file(cursor_hooks, action),
+        Ok(None) => {}
+        Err(e) => report.note(format!("Turn memory hooks not removed: {e}")),
+    }
     Ok(report)
 }
 
@@ -543,16 +554,10 @@ fn install_claude_mcp(project_root: &Path) -> Result<TargetReport, String> {
     let local = project_root.join(".mcp.json");
     report.push_file(local.clone(), upsert_mcp_servers(&local, "claude")?);
     let settings = home.join(".claude").join("settings.json");
-    if let Some((path, action)) = install_claude_hook(&settings, "UserPromptSubmit", "prompt-hook")? {
-        report.push_file(path, action);
-    }
-    // Stop + SubagentStop: turn-end policy-guard check (see `ax stop-hook`).
-    // Skippable via AX_NO_STOP_HOOK=1 at hook-run time if it proves noisy.
-    if let Some((path, action)) = install_claude_hook(&settings, "Stop", "stop-hook")? {
-        report.push_file(path, action);
-    }
-    if let Some((path, action)) = install_claude_hook(&settings, "SubagentStop", "stop-hook")? {
-        report.push_file(path, action);
+    for (event, hook_subcommand) in CLAUDE_HOOKS {
+        if let Some((path, action)) = install_claude_hook(&settings, event, hook_subcommand)? {
+            report.push_file(path, action);
+        }
     }
     install_read_guard(&mut report, settings, GuardIde::Claude);
     Ok(report)
@@ -567,15 +572,24 @@ fn uninstall_claude_mcp() -> Result<TargetReport, String> {
     }
     let settings = home.join(".claude").join("settings.json");
     let mut touched = false;
-    touched |= remove_claude_hook(&settings, "UserPromptSubmit", "prompt-hook")?;
-    touched |= remove_claude_hook(&settings, "Stop", "stop-hook")?;
-    touched |= remove_claude_hook(&settings, "SubagentStop", "stop-hook")?;
+    for (event, hook_subcommand) in CLAUDE_HOOKS {
+        touched |= remove_claude_hook(&settings, event, hook_subcommand)?;
+    }
     if touched {
         report.push_file(settings.clone(), FileAction::Updated);
     }
     uninstall_read_guard(&mut report, settings);
     Ok(report)
 }
+
+/// Claude Code hooks installed by `ax install`: `(event, ax subcommand)`. `stop-hook` runs the
+/// turn-end policy guard and writes the turn memory; skippable via AX_NO_STOP_HOOK=1 at hook-run time.
+const CLAUDE_HOOKS: [(&str, &str); 4] = [
+    ("UserPromptSubmit", "prompt-hook"),
+    ("UserPromptSubmit", "turn-hook start"),
+    ("Stop", "stop-hook"),
+    ("SubagentStop", "stop-hook"),
+];
 
 /// Register `ax <hook_subcommand>` under `hooks.<event>` in Claude's `settings.json`.
 /// Idempotent — matches on the subcommand name already appearing in a `command` string.
@@ -1396,6 +1410,44 @@ mod mcp_path_tests {
         let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["hooks"]["UserPromptSubmit"].as_array().unwrap().len(), 0);
         assert_eq!(value["hooks"]["Stop"].as_array().unwrap().len(), 1);
+
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    fn event_commands(value: &Value, event: &str) -> Vec<String> {
+        value["hooks"][event]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["hooks"].as_array().unwrap().iter())
+            .map(|h| h["command"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn claude_hooks_include_turn_start_once_and_uninstall_keeps_user_hooks() {
+        let path = temp_settings_path("turn-hook");
+        let user = serde_json::json!({ "hooks": [{ "type": "command", "command": "./my-prompt.sh" }] });
+        fs::write(&path, serde_json::json!({ "hooks": { "UserPromptSubmit": [user] } }).to_string()).unwrap();
+
+        for _ in 0..2 {
+            for (event, hook_subcommand) in CLAUDE_HOOKS {
+                install_claude_hook(&path, event, hook_subcommand).unwrap();
+            }
+        }
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let prompt = event_commands(&value, "UserPromptSubmit");
+        assert_eq!(prompt.len(), 3, "{prompt:?}");
+        assert_eq!(prompt[0], "./my-prompt.sh");
+        assert!(prompt.iter().filter(|c| c.ends_with(" prompt-hook")).count() == 1, "{prompt:?}");
+        assert!(prompt.iter().filter(|c| c.ends_with(" turn-hook start")).count() == 1, "{prompt:?}");
+        assert!(event_commands(&value, "Stop")[0].ends_with(" stop-hook"));
+
+        for (event, hook_subcommand) in CLAUDE_HOOKS {
+            remove_claude_hook(&path, event, hook_subcommand).unwrap();
+        }
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(event_commands(&value, "UserPromptSubmit"), vec!["./my-prompt.sh".to_string()]);
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
