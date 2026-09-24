@@ -12,6 +12,10 @@ pub const LEGACY_POLICY_DIR: &str = "policy";
 
 const GITIGNORE_MARKERS: &[&str] = &["policy-private/", "policy-inactive/"];
 
+/// Everything in `.ax/` is local (ax.db, logs, backups) except `policy/`.
+/// Kept at the top of the file so user lines further down still override it.
+const LOCAL_DATA_BLOCK: &[&str] = &["*", "!.gitignore", "!policy/", "!policy/**"];
+
 pub fn agents_dir(project_root: &Path) -> PathBuf {
     project_root.join(crate::config::agents_dir_name(project_root))
 }
@@ -77,6 +81,15 @@ pub fn ensure_ax_share_gitignore(project_root: &Path) -> std::io::Result<()> {
         String::new()
     };
     let mut changed = false;
+    let missing: Vec<&str> = LOCAL_DATA_BLOCK
+        .iter()
+        .copied()
+        .filter(|line| !content.lines().any(|l| l.trim() == *line))
+        .collect();
+    if !missing.is_empty() {
+        content = format!("{}\n{content}", missing.join("\n"));
+        changed = true;
+    }
     for marker in GITIGNORE_MARKERS {
         if content.lines().any(|l| l.trim() == *marker) {
             continue;
@@ -387,6 +400,74 @@ mod tests {
         let gi = std::fs::read_to_string(dir.path().join(".ax/.gitignore")).unwrap();
         assert!(gi.contains("policy-private/"));
         assert!(gi.contains("policy-inactive/"));
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?} failed");
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    fn untracked(dir: &std::path::Path) -> Vec<String> {
+        let mut paths: Vec<String> = git(dir, &["status", "--porcelain", "--untracked-files=all"])
+            .lines()
+            .map(|l| l.trim_start_matches("?? ").to_string())
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn b2_local_data_is_ignored_and_policy_stays_committable() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        for f in [
+            "ax.db", "ax.db-wal", "ax.db-shm", "daemon.json", "daemon.pid",
+            "mcp-verbose-2026-09-24.log", "backups/turn-memories-1.jsonl", "turns/t.json",
+            "policy-private/rules/p.mdc", "policy-inactive/rules/i.mdc", "policy/rules/team.mdc",
+        ] {
+            let path = p.join(".ax").join(f);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "x").unwrap();
+        }
+        ensure_ax_share_gitignore(p).unwrap();
+        assert_eq!(
+            untracked(p),
+            vec![".ax/.gitignore".to_string(), ".ax/policy/rules/team.mdc".to_string()]
+        );
+    }
+
+    #[test]
+    fn b4_user_lines_survive_and_still_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        std::fs::create_dir_all(p.join(".ax")).unwrap();
+        std::fs::write(p.join(".ax/.gitignore"), "!notes.md\n").unwrap();
+        std::fs::write(p.join(".ax/notes.md"), "x").unwrap();
+        std::fs::write(p.join(".ax/ax.db"), "x").unwrap();
+        ensure_ax_share_gitignore(p).unwrap();
+        let gi = std::fs::read_to_string(p.join(".ax/.gitignore")).unwrap();
+        assert!(gi.lines().any(|l| l == "!notes.md"), "{gi}");
+        assert_eq!(
+            untracked(p),
+            vec![".ax/.gitignore".to_string(), ".ax/notes.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn b4_second_run_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        ensure_ax_share_gitignore(dir.path()).unwrap();
+        let gi = dir.path().join(".ax/.gitignore");
+        let first = std::fs::read_to_string(&gi).unwrap();
+        ensure_ax_share_gitignore(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&gi).unwrap(), first);
     }
 
     #[test]

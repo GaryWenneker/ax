@@ -92,6 +92,7 @@ async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Resu
     println!();
 
     let ax_dir = root.join(".ax");
+    ax_policy::ensure_ax_share_gitignore(&root).map_err(|e| format!(".ax/.gitignore: {e}"))?;
     let seed = ax_policy::seed_default_policy(&ax_dir).ok();
     if let Err(e) = choose_agents_dir_for_init(&root) {
         eprintln!("{}", dim(format!("Policy directory prompt skipped: {e}")));
