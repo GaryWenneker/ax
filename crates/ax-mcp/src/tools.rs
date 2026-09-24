@@ -618,7 +618,8 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 }
             }
         }
-        if let Ok((rows, _)) = ax_memory::list(ax.db_pool(), 40, 0).await {
+        // Recent turn memories are skipped below; fetch enough that they cannot crowd out the rest.
+        if let Ok((rows, _)) = ax_memory::list(ax.db_pool(), 200, 0).await {
             let titles = format_memory_titles(&rows, 800);
             if !titles.is_empty() {
                 inject.push('\n');
@@ -785,7 +786,7 @@ fn format_memory_titles(rows: &[ax_memory::MemoryRow], max_tokens: i64) -> Strin
     }
     let mut lines = vec!["<ax_memory_titles>Titles only. Call ax_recall for a body.".to_string()];
     for row in rows {
-        if !row.enabled {
+        if !row.enabled || row.kind == ax_memory::TURN_KIND {
             continue;
         }
         lines.push(format!("- {} {}", row.id, row.title.replace('\n', " ")));
@@ -1714,6 +1715,36 @@ pub fn server_instructions(has_policy: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn memory_row(id: &str, kind: &str) -> ax_memory::MemoryRow {
+        ax_memory::MemoryRow {
+            id: id.into(),
+            kind: kind.into(),
+            title: format!("title of {id}"),
+            body: String::new(),
+            tags: vec![],
+            files: vec![],
+            confidence: 1.0,
+            source: "manual".into(),
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn memory_titles_skip_turn_memories() {
+        let rows = [memory_row("turn-1", "turn"), memory_row("note-1", "note")];
+        let titles = format_memory_titles(&rows, 800);
+        assert!(titles.contains("note-1"), "{titles}");
+        assert!(!titles.contains("turn-1"), "{titles}");
+    }
+
+    #[test]
+    fn memory_titles_are_empty_when_only_turns_exist() {
+        let rows = [memory_row("turn-1", "turn")];
+        assert_eq!(format_memory_titles(&rows, 800), "");
+    }
 
     fn tool_names(v: &Value) -> Vec<String> {
         v["tools"]

@@ -421,6 +421,12 @@ enum Commands {
     /// Claude Stop/SubagentStop hook (hidden; reads hook JSON on stdin, may block via decision JSON)
     #[command(hide = true, name = "stop-hook")]
     StopHook,
+    /// Agent turn start/end hook for per-turn memories (hidden; reads hook JSON on stdin, prints nothing)
+    #[command(hide = true, name = "turn-hook")]
+    TurnHook {
+        #[arg(value_enum)]
+        phase: commands::turn_hook::TurnPhase,
+    },
     /// Pre-tool read/search guard for agent IDEs (hidden; reads hook JSON on stdin)
     #[command(hide = true, name = "read-guard")]
     ReadGuard {
@@ -1563,6 +1569,7 @@ async fn async_main() {
         Some(Commands::PromptHook) => commands::prompt_hook::run().await,
         Some(Commands::SessionHook) => commands::session_hook::run().await,
         Some(Commands::StopHook) => commands::stop_hook::run().await,
+        Some(Commands::TurnHook { phase }) => commands::turn_hook::run(phase).await,
         Some(Commands::ReadGuard { ide }) => commands::read_guard::run(&ide).await,
         Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
             ax_mcp::run_watchdog_child(parent_pid, timeout_ms);
@@ -1673,6 +1680,7 @@ fn should_notify_update(cmd: &Option<Commands>) -> bool {
         |         Some(Commands::PromptHook)
         | Some(Commands::SessionHook)
         | Some(Commands::StopHook)
+        | Some(Commands::TurnHook { .. })
         | Some(Commands::ReadGuard { .. })
         | Some(Commands::WatchdogChild { .. })
         | Some(Commands::UpgradeApply { .. })
@@ -1740,6 +1748,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::PromptHook) => None,
         Some(Commands::SessionHook) => None,
         Some(Commands::StopHook) => None,
+        Some(Commands::TurnHook { .. }) => None,
         Some(Commands::ReadGuard { .. }) => None,
         Some(Commands::WatchdogChild { .. }) => None,
         Some(Commands::UpgradeApply { .. }) => None,
@@ -1747,9 +1756,11 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
     }
 }
 
-/// Log filter for the CLI: `--quiet` anywhere on the command line hides ax INFO lines.
+/// Log filter for the CLI: `--quiet` anywhere on the command line hides ax INFO lines, and so
+/// does `ax turn-hook`, which runs on every agent prompt.
 fn log_directive(args: &[String]) -> &'static str {
-    if args.iter().skip(1).any(|a| a == "--quiet") {
+    let turn_hook = args.get(1).is_some_and(|a| a == "turn-hook");
+    if turn_hook || args.iter().skip(1).any(|a| a == "--quiet") {
         "ax=warn"
     } else {
         "ax=info"
@@ -1781,6 +1792,15 @@ mod log_directive_tests {
     fn quiet_as_a_value_does_not_count() {
         assert_eq!(
             log_directive(&args(&["ax", "remember", "be --quiet-ish"])),
+            "ax=info"
+        );
+    }
+
+    #[test]
+    fn turn_hook_is_always_quiet() {
+        assert_eq!(log_directive(&args(&["ax", "turn-hook", "end"])), "ax=warn");
+        assert_eq!(
+            log_directive(&args(&["ax", "recall", "turn-hook"])),
             "ax=info"
         );
     }

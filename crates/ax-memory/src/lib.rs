@@ -9,6 +9,7 @@ pub mod format;
 pub mod onnx;
 pub mod store;
 pub mod sync;
+pub mod turns;
 pub mod types;
 
 pub use capture::{capture_git_history, GitCaptureResult};
@@ -21,20 +22,24 @@ pub use sync::{
     default_shared_path, export_shared, import_shared, memory_sync_enabled, MemoryExportResult,
     MemoryImportResult,
 };
+pub use turns::{
+    prune_turns, redact_secrets, save_turn, TurnRecord, TURN_KIND, TURN_RETENTION_DAYS, TURN_SOURCE,
+};
 pub use types::{MemoryMatch, MemoryRow, RememberInput, MEMORY_KINDS};
 
 use ax_utils::errors::{AxError, DatabaseError};
 use sqlx::SqlitePool;
 
 /// Top memories for a user prompt, used by `ax_preflight` injection.
-/// Only returns confident matches to keep the inject small.
+/// Only returns confident matches to keep the inject small. `turn` memories are recall-only.
 pub async fn recall_for_prompt(
     pool: &SqlitePool,
     prompt: &str,
     limit: usize,
 ) -> Result<Vec<MemoryMatch>, AxError> {
-    let mut matches = recall(pool, prompt, limit).await?;
-    matches.retain(|m| m.score > 0.0);
+    let mut matches = recall(pool, prompt, (limit * 4).max(20)).await?;
+    matches.retain(|m| m.score > 0.0 && m.memory.kind != TURN_KIND);
+    matches.truncate(limit);
     Ok(matches)
 }
 

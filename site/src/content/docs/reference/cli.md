@@ -39,7 +39,7 @@ Running `ax` with **no subcommand** starts the interactive installer (same as `a
 | File | Scope | Contents |
 |---|---|---|
 | `~/.ax/config.json` | Global | `index`, `offload`, `policy.storage` |
-| `<project>/ax.json` | Per-project | `share`, policy overrides — each project has its own remote share config |
+| `<project>/ax.json` | Per-project | `share`, policy overrides, `memory.perTurn` — each project has its own remote share config |
 | `<project>/.ax/` | Per-project | `ax.db`, lock file, optional `policy/` |
 
 See [Configuration](/getting-started/configuration/) for the full schema.
@@ -50,7 +50,7 @@ See [Configuration](/getting-started/configuration/) for the full schema.
 
 ### `ax` / `ax install`
 
-Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Takumi 匠, Windsurf, Zed). Does **not** index a project. Prompt-hook and stop-hook are Claude Code-specific. The [read-guard hook](#ax-read-guard) is added for every agent that can block a tool call: Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. See [Integrations](/reference/integrations/) for per-agent details.
+Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Takumi 匠, Windsurf, Zed). Does **not** index a project. Prompt-hook and stop-hook are Claude Code-specific. The turn hooks for [per-turn memories](/guides/memory/#per-turn-memories) are added for Cursor and Claude Code. The [read-guard hook](#ax-read-guard) is added for every agent that can block a tool call: Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. See [Integrations](/reference/integrations/) for per-agent details.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -752,11 +752,11 @@ rustup component add rust-analyzer
 
 ### `ax stop-hook`
 
-Claude Code `Stop` / `SubagentStop` hook target — internal command wired automatically by `ax install` for Claude Code, not meant to be run manually. Reads Claude's JSON payload on stdin, runs `ax_guard`-equivalent checks against every uncommitted file (`git status --porcelain`), and on a CRITICAL violation prints `{"decision": "block", "reason": "..."}` so Claude fixes the issue before the turn actually ends. Honors `stop_hook_active` to avoid infinite loops and no-ops when there's no indexed policy.
+Claude Code `Stop` / `SubagentStop` hook target — internal command wired automatically by `ax install` for Claude Code, not meant to be run manually. Reads Claude's JSON payload on stdin, runs `ax_guard`-equivalent checks against every uncommitted file (`git status --porcelain`), and on a CRITICAL violation prints `{"decision": "block", "reason": "..."}` so Claude fixes the issue before the turn actually ends. Honors `stop_hook_active` to avoid infinite loops and no-ops when there's no indexed policy. It also writes the [per-turn memory](/guides/memory/#per-turn-memories) for the turn.
 
 | Env var | Effect |
 |---|---|
-| `AX_NO_STOP_HOOK=1` | Disable — hook exits immediately without checking |
+| `AX_NO_STOP_HOOK=1` | Disable — hook exits immediately without checking or writing a turn memory |
 
 ```bash
 # Wired automatically:
@@ -783,7 +783,7 @@ Partial reads (`offset`/`limit`, `head`, `sed -n`, a piped `cat`) pass where the
 | `gemini` | `~/.gemini/settings.json` | `BeforeTool` (`read_file\|search_file_content\|grep\|run_shell_command`) |
 | `windsurf` | `~/.codeium/windsurf/hooks.json` | `pre_read_code`, `pre_run_command` |
 
-Zed, Continue, Kiro, opencode, Antigravity, Hermes, and Takumi 匠 have no blocking tool hook; they get the graph-first instructions only. A hooks file that is not valid JSON is left unchanged and reported by `ax install`. `ax uninstall` removes only the read-guard entries.
+Zed, Continue, Kiro, opencode, Antigravity, Hermes, and Takumi 匠 have no blocking tool hook; they get the graph-first instructions only. A hooks file that is not valid JSON is left unchanged and reported by `ax install`. `ax uninstall` removes only the read-guard and turn-hook entries.
 
 | Env var | Effect |
 |---|---|
@@ -1585,6 +1585,7 @@ Not for daily use — invoked by agents, installers, or upgrade helpers.
 | `ax serve --mcp --daemon` | Background MCP daemon |
 | `ax prompt-hook` | Claude `UserPromptSubmit` hook (stdin JSON) |
 | `ax read-guard --ide <ide>` | Pre-tool hook that redirects whole-file reads and symbol searches to the graph (stdin JSON) |
+| `ax turn-hook start\|end` | Cursor `beforeSubmitPrompt` / `stop` and Claude `UserPromptSubmit` hook that writes [per-turn memories](/guides/memory/#per-turn-memories) (stdin JSON, prints nothing) |
 | `ax watchdog-child` | MCP liveness watchdog child |
 | `ax upgrade-apply` | Windows upgrade swap helper |
 

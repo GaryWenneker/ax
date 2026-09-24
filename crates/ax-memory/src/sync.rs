@@ -53,6 +53,7 @@ pub async fn export_shared(
     let tag_l = tag.to_ascii_lowercase();
     let selected: Vec<&MemoryRow> = rows
         .iter()
+        .filter(|m| m.kind != crate::turns::TURN_KIND)
         .filter(|m| {
             m.tags
                 .iter()
