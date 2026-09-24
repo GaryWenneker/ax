@@ -88,6 +88,8 @@ mutant T15 ax-cli "$TURN" 's/files: lines\.filter\(\|l\| !l\.trim\(\)\.is_empty\
 mutant T16 ax-cli "$TURN" 's/    if !ax_context::directory::get_ax_dir\(root\)\.is_dir\(\) \|\| !per_turn_enabled\(root\) \{/    if !per_turn_enabled(root) {/'
 mutant T17 ax-cli "$TURN" 's/prompt: text\("prompt"\)\.unwrap_or_default\(\)/prompt: String::new()/'
 mutant T18 ax-cli "$MAIN" 's/if turn_hook \|\| /if /'
+mutant T20 ax-cli "$TURN" 's/        if is_ax_runtime_file\(path\) \{\n            continue;\n        \}\n//'
+mutant T21 ax-cli "$TURN" 's/!rest\.starts_with\("policy\/"\) && //'
 mutant T19 ax-cli "$MAIN" 's/args\.get\(1\)\.is_some_and\(\|a\| a == "turn-hook"\)/args.iter().any(|a| a == "turn-hook")/'
 
 # Turn memories (ax-memory)

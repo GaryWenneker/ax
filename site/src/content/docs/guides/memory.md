@@ -205,7 +205,7 @@ You can also run `ax capture-git` manually or click "Capture from git" in the Co
 
 Rules:
 
-- **Only turns that did something.** Files whose content changed since the snapshot, new or deleted files, and commits made during the turn count. Files that were already dirty and not touched again do not. A turn that only answered a question writes nothing.
+- **Only turns that did something.** Files whose content changed since the snapshot, new or deleted files, and commits made during the turn count. Files that were already dirty and not touched again do not, and neither do ax's own files under `.ax/` (database, logs, snapshots) except `.ax/policy/` and `.ax/memory/`. A turn that only answered a question writes nothing.
 - **One memory per turn.** The id comes from the conversation and the turn (Cursor's `generation_id`, or a per-conversation counter for Claude Code), so a retried hook never duplicates.
 - **Recall-only and local.** `turn` memories are skipped by `ax_preflight` (the `<ax_memories>` block and the memory titles list) and by `ax memory export`. Find them with `ax_recall` / `ax recall`.
 - **Kept 30 days.** Every turn end that writes deletes `turn` memories older than 30 days. Other kinds are never touched.

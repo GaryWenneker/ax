@@ -277,10 +277,16 @@ fn dirty_files(root: &Path) -> Option<BTreeMap<String, String>> {
             continue;
         }
         let (status, path) = entry.split_at(3);
-        if status.starts_with('R') || status.starts_with('C') {
-            if let Some(source) = entries.next() {
-                dirty.insert(source.to_string(), "-".to_string());
-            }
+        let source = if status.starts_with('R') || status.starts_with('C') {
+            entries.next()
+        } else {
+            None
+        };
+        if is_ax_runtime_file(path) {
+            continue;
+        }
+        if let Some(source) = source {
+            dirty.insert(source.to_string(), "-".to_string());
         }
         let hash = std::fs::read(root.join(path)).map_or_else(
             |_| "-".to_string(),
@@ -289,6 +295,13 @@ fn dirty_files(root: &Path) -> Option<BTreeMap<String, String>> {
         dirty.insert(path.to_string(), hash);
     }
     Some(dirty)
+}
+
+/// ax's own database, logs and snapshots under `.ax/`; the shareable `policy/` and `memory/`
+/// folders still count as changes.
+fn is_ax_runtime_file(path: &str) -> bool {
+    path.strip_prefix(".ax/")
+        .is_some_and(|rest| !rest.starts_with("policy/") && !rest.starts_with("memory/"))
 }
 
 struct Commit {
@@ -530,6 +543,29 @@ mod tests {
         start_turn(root, &input("Explain", Some("g1"))).unwrap();
         start_turn(root, &input("Explain again", Some("g2"))).unwrap();
         assert_eq!(turn_record(root, "conv-1"), None);
+    }
+
+    #[test]
+    fn ax_runtime_files_are_not_changes_but_shared_ax_files_are() {
+        let dir = repo();
+        let root = dir.path();
+        write(root, ".ax/ax.db", "before");
+        start_turn(root, &input("Explain", Some("g1"))).unwrap();
+        write(root, ".ax/ax.db", "after");
+        write(root, ".ax/ax.db-wal", "wal");
+        write(root, ".ax/mcp-verbose-2026-09-24.log", "log");
+        assert_eq!(turn_record(root, "conv-1"), None);
+
+        write(root, ".ax/policy/rules/new.mdc", "rule");
+        write(root, ".ax/memory/shared.jsonl", "{}");
+        let record = turn_record(root, "conv-1").expect("shared ax files changed");
+        assert_eq!(
+            record.files,
+            vec![
+                ".ax/memory/shared.jsonl".to_string(),
+                ".ax/policy/rules/new.mdc".to_string()
+            ]
+        );
     }
 
     #[test]

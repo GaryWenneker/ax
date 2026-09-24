@@ -46,6 +46,10 @@ if want 1; then
 echo "== 1. targeted tests"
 cargo_ test -q "${CRATES[@]}" >"$LOG/targeted.log" 2>&1 || fail "targeted tests"
 grep -E "^test result" "$LOG/targeted.log" | awk '{p+=$4; f+=$6} END {print "   passed="p" failed="f}'
+for run in 1 2 3 4 5; do # suite health: the turn hook tests touch git, the clock-free db and temp dirs
+  cargo_ test -q -p ax-cli --bin ax turn_hook >"$LOG/repeat-$run.log" 2>&1 || fail "turn hook tests failed on repeat $run"
+done
+echo "   turn hook tests green 5/5 repeats"
 fi
 
 if want 2; then
