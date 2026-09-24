@@ -79,6 +79,10 @@ Cursor's `stop` hook does not receive the prompt, and "uncommitted files" would 
 - Edits made outside the agent during a turn (you typing in the editor) are counted as part of that turn.
 - Cursor hook input fields (conversation id, turn id) are checked against Cursor's hook docs during RED. If a field is missing, the spec is revised visibly before coding around it.
 
+### Revision 1a (2026-09-24, during RED): hook input fields checked
+
+Checked against https://cursor.com/docs/agent/hooks. Both Cursor events (`beforeSubmitPrompt`, `stop`) receive `conversation_id`, `generation_id` (changes with every user message) and `workspace_roots`; only `beforeSubmitPrompt` has `prompt`. Claude Code sends `session_id`, `cwd` and (`UserPromptSubmit` only) `prompt`, with no turn id. So the "turn number" in T5 is: Cursor's `generation_id`, or for Claude Code a counter the start hook increments per conversation. The start hook stores it in the snapshot and the end hook takes it from there, so both deliveries of one turn end produce the same memory id. The project root is `workspace_roots[0]` (Cursor) or `cwd` (Claude Code). No behavior changes.
+
 ### Setup plan
 
 - **Isolation:** branch `feat/per-turn-memory` from `main` after v5.0.3 is merged.
