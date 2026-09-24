@@ -213,7 +213,10 @@ set +e
   cursor stop g2 | quiet c2-end ax turn-hook end
   [ "$(sql "select count(*) from memories where id = '$id'")" = 0 ] || { echo "P1: old turn not pruned" >&2; exit 1; }
   grep -q "\"id\":\"$id\"" .ax/backups/turn-memories-*.jsonl || { echo "P1: old turn not in the backup" >&2; exit 1; }
-  git status --porcelain --untracked-files=all | grep -q "\.ax/backups" && { echo "P1: backup is not ignored by git" >&2; exit 1; }
+  # `ax init` does not gitignore .ax/ (ax.db is untracked too); the backup must be no more exposed.
+  db_ignored=0; git check-ignore -q .ax/ax.db && db_ignored=1
+  backup_ignored=0; git check-ignore -q .ax/backups/turn-memories-*.jsonl && backup_ignored=1
+  [ "$backup_ignored" -ge "$db_ignored" ] || { echo "P1: backup is tracked where ax.db is ignored" >&2; exit 1; }
 
   # Installer: afterAgentResponse is wired, once, and removed again.
   mkdir -p "$LOG/installdir" && cd "$LOG/installdir"
