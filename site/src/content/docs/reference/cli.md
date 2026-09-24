@@ -700,10 +700,12 @@ Git-aware quality gates, SSE dashboard, draft PRs. See [Command Center](/guides/
 | `--open` | flag | — | Open browser |
 | `--auto-commit` | flag | — | Force-enable Aider-style checkpoint commit before this evaluation, overriding `.ax/ship.toml` `[auto_commit]` for this run only |
 | `--revert-on-fail` | flag | — | With `--auto-commit`, `git reset --mixed` the checkpoint if the quality gate fails (file contents stay on disk, uncommitted) |
+| `--quiet` | flag | — | With `--evaluate`: print nothing when the gate passes and one line on stderr (`ax: quality gate failed: <steps>`) when it fails. Exits 0 whether the gate passes or fails. The git hooks ax installs use this |
 
 ```bash
 ax ship --watch --open
 ax ship --evaluate
+ax ship --evaluate --quiet       # what the git hooks run
 ax ship --ci                     # CI / GitHub Actions
 ax ship --evaluate --auto-commit --revert-on-fail
 ax ship --draft --title "feat: memory vault"

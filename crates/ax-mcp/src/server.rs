@@ -58,6 +58,7 @@ pub fn resolve_mcp_project_root(explicit: Option<PathBuf>) -> Option<PathBuf> {
 pub async fn run_stdio_server(explicit_root: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let project_root = resolve_mcp_project_root(explicit_root);
     if let Some(ref root) = project_root {
+        repair_hooks_at_startup(root);
         if attach_or_spawn(root).await.is_ok() {
             return Ok(());
         }
@@ -101,6 +102,12 @@ pub async fn run_stdio_server(explicit_root: Option<PathBuf>) -> Result<(), Box<
                 StdioTransport::send_error(None, PARSE_ERROR, &e.to_string())?;
             }
         }
+    }
+}
+
+fn repair_hooks_at_startup(root: &std::path::Path) {
+    if let Err(e) = ax_sync::repair_git_hooks(root) {
+        eprintln!("ax: git hook repair skipped: {e}");
     }
 }
 
@@ -741,5 +748,40 @@ mod policy_integration {
         let policy = structured.get("policy").expect("policy block");
         let rules = policy.get("rules").and_then(|v| v.as_u64()).unwrap_or(0);
         assert!(rules >= 4, "policy.rules should be >= 4, got {rules}");
+    }
+}
+
+#[cfg(test)]
+mod hook_repair {
+    use super::repair_hooks_at_startup;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_repo(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ax-hook-repair-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn startup_repairs_broken_ax_hook() {
+        let dir = temp_repo("broken");
+        let hooks = dir.join(".git").join("hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        fs::write(hooks.join("post-commit"), "ax sync --quiet\n").unwrap();
+        repair_hooks_at_startup(&dir);
+        let content = fs::read_to_string(hooks.join("post-commit")).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(content, "#!/bin/sh\nax sync --quiet\n");
+    }
+
+    #[test]
+    fn startup_repair_never_panics_on_unreadable_repo() {
+        let dir = temp_repo("gitfile");
+        fs::write(dir.join(".git"), "gitdir: elsewhere\n").unwrap();
+        repair_hooks_at_startup(&dir);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
