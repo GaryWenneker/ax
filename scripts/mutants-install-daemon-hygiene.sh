@@ -127,7 +127,7 @@ mutant D9 mcp "$PUMP" 's/if msg\.get\("type"\)\.and_then\(\|t\| t\.as_str\(\)\) 
 mutant D10 mcp "$PROXY" 's/attempt >= FIRST_SPAWNING_ATTEMPT/false/'
 mutant D12 mcp "$PUMP" 's/                while let Ok\(line\) = client_rx\.try_recv\(\) \{\n                    pending\.extend\(request_id\(&line\)\);\n                \}\n//'
 mutant D13 mcp "$PUMP" 's/                pending\.extend\(unsent\.take\(\)\.iter\(\)\.filter_map\(\|line\| request_id\(line\)\)\);\n//'
-mutant D14 mcp "$PROXY" 's/    std::thread::Builder::new\(\)\n        \.name\("ax-daemon-reaper"\.into\(\)\)\n        \.spawn\(move \|\| child\.wait\(\)\)\?;\n/    drop(child);\n/'
+mutant D14 mcp "$PROXY" 's/\.spawn\(move \|\| child\.wait\(\)\)/.spawn(move || { drop(child); Ok::<_, std::io::Error>(std::process::ExitStatus::default()) })/'
 mutant D11 mcp "$PUMP" 's/if let Some\(session\) = reconnect\(attempt\)\.await \{/if let Some(session) = None::<DaemonSession> { let _ = \&mut reconnect;/'
 
 # E. Binary identity and newer-wins attach

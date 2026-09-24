@@ -142,9 +142,12 @@ pub fn spawn_daemon_child(project_root: &Path) -> std::io::Result<u32> {
         .spawn()?;
     let pid = child.id();
     // A daemon that exits before this process does stays a zombie until it is waited on.
-    std::thread::Builder::new()
+    if let Err(e) = std::thread::Builder::new()
         .name("ax-daemon-reaper".into())
-        .spawn(move || child.wait())?;
+        .spawn(move || child.wait())
+    {
+        tracing::warn!("ax daemon pid {pid} started, but will not be reaped: {e}");
+    }
     Ok(pid)
 }
 
