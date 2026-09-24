@@ -1,7 +1,7 @@
 # EVIDENCE: turn memories with outcomes, related turns in preflight, and "when did I change X"
 
 **Spec:** `docs/specs/turn-memory-outcomes.md`, Revision 1 approved ("Approve Revision 1, build it on branch feat/turn-memory-outcomes") and Revision 1a approved ("Approve Revision 1a"). Revision 1b (found during implementation and review) is recorded in the spec and changes no behavior row.
-**Tier:** 2. **Branch:** `feat/turn-memory-outcomes` (worktree `/Users/gary/io/ax-turn-outcomes`). **Source state:** `5d1ebda` (base `7bfe150`, the `main` this branch started from).
+**Tier:** 2. **Branch:** `feat/turn-memory-outcomes` (worktree `/Users/gary/io/ax-turn-outcomes`). **Source state:** `6690c81` (base `7bfe150`, the `main` this branch started from).
 **Entry point:** `bash scripts/gauntlet-turn-outcomes.sh 7bfe150` reruns every layer below and exits nonzero on any failure. Pass the base explicitly: after the merge, `main` itself contains the change.
 **Tools:** cargo 1.98.0, rustfmt 1.9.0-stable, node v26.8.2, sqlite3 3.54.0, macOS.
 
@@ -45,7 +45,7 @@
 | Gauntlet leaves the user's agent hooks alone | layer 7 of both gauntlets runs with a temp `HOME` and fails if `~/.cursor/hooks.json` or `~/.claude/settings.json` changed |
 | Must not change: other memory kinds and preflight blocks | `prune_removes_only_old_turn_memories`, `the_backup_holds_only_turn_memories`, existing preflight tests pass unchanged |
 
-## Gauntlet (one run on `5d1ebda`)
+## Gauntlet (one run on `6690c81`)
 
 | Layer | Result |
 |---|---|
@@ -55,7 +55,7 @@
 | 4. rustfmt | new files 0 hunks; every changed file equal to `7bfe150` (for example `tools.rs` 31, `main.rs` 50) |
 | 5. Release build + CLI docs | all 131 commands documented |
 | 6. Mutants | `scripts/mutants-turn-outcomes.sh` 44/44 killed (O1–O9, P1–P8, R1–R10, H1–H3, H5–H11, C1–C6, I1); `scripts/mutants-per-turn-memory.sh` 33/33 killed |
-| 7. Real execution with the release binary | O1 O2 O4 O6 H1 H3 H4 P1 and the installer verified in a temp repo with a temp `HOME`; the user's hook files unchanged |
+| 7. Real execution with the release binary | O1 O2 O4 O6 H1 H3 H4 P1 and the installer verified in a temp repo with a temp `HOME`; the real `~/.cursor/hooks.json` and `~/.claude/settings.json` unchanged |
 
 **Negative controls** (each proven once, then restored):
 
@@ -81,6 +81,7 @@
 - **With `HOME` isolated, H3 failed in every real run.** git rejects `--since` timestamps from 2100-01-01 on and falls back to about "now", so `--since 2999-01-01` listed a commit made seconds earlier. With the real `HOME`, the ax git hooks did not run in the test repo, and the timing happened to pass. I wrote the RED test `h3_since_in_the_future_drops_a_commit_made_just_now` and added a `since` filter in `ax` (spec Revision 1b point 7).
   - Hand-written mutant H4 (drop git's `--since`) is no longer a bug: after the filter, git's `--since` only shortens the walk. It was replaced by H11 (drop the filter).
   - H11 first survived one run, because the test's commit only slipped past git within the same second. The commit is now dated an hour ahead, and the kill was 3/3 red.
+- **An earlier "final" run checked the wrong hook files.** After an experiment, my shell kept `HOME` at a temp dir. The run on the old `5d1ebda` therefore compared that temp dir's hook files, not the user's, and three commits got a fallback author. I recreated those commits with the right author and identical trees (`1581408`, `a46cdd7`, `6690c81`), then ran the full gauntlet again on `6690c81` with the real `HOME`. The numbers above come from that run.
 
 ## Review rounds
 
@@ -89,7 +90,7 @@
 | 1 | `old-coder` usable, `rust-review` usable | 1 high, 3 medium, 2 low: `git log` blocked the async runtime; preflight loaded every turn body; per-row delete without a transaction; duplicated LIKE escaping; blocking `canonicalize` in preflight; a prompt quoting `"\n\nOutcome: "` posed as the outcome | `5c09558` (plus the RED test for the marker) |
 | 2 | same | 0 | — |
 | 3 | same, after `2f8518d` (two tests, one mutant pattern) | 0 | — |
-| 4 | same, after `5d1ebda` (the `since` filter, `HOME` isolation, one test) | 1 low: `user_hooks` died silently under `pipefail` when `~/.claude/settings.json` does not exist | fixed before `d5e1386` |
+| 4 | same, after `a46cdd7` (the `since` filter, `HOME` isolation, one test) | 1 low: `user_hooks` died silently under `pipefail` when `~/.claude/settings.json` does not exist | fixed before `1581408` |
 | 5 | same | 0 | — |
 
 ## Known limits
