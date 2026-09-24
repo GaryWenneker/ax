@@ -323,6 +323,20 @@ fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
         proxy.0.try_wait().unwrap().is_none(),
         "the proxy is still running"
     );
+    // A zombie still answers `kill -0`: the proxy that spawned the daemon must reap it.
+    wait_until(
+        "the killed daemon to be reaped",
+        Duration::from_secs(5),
+        || {
+            let alive = Command::new("kill")
+                .args(["-0", &first_pid.to_string()])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success();
+            (!alive).then_some(())
+        },
+    );
 
     drop(client);
     let status = wait_until("the proxy to exit", Duration::from_secs(10), || {

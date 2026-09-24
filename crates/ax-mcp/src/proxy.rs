@@ -125,11 +125,12 @@ fn log_attached(hello: &DaemonHello) {
     }
 }
 
-pub fn spawn_daemon_child(project_root: &Path) -> std::io::Result<std::process::Child> {
+/// Starts a daemon for the project in the background and returns its pid.
+pub fn spawn_daemon_child(project_root: &Path) -> std::io::Result<u32> {
     let exe = current_exe_path().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "cannot locate the ax binary")
     })?;
-    std::process::Command::new(exe)
+    let mut child = std::process::Command::new(exe)
         .arg("serve")
         .arg("--mcp")
         .arg("--daemon")
@@ -138,7 +139,13 @@ pub fn spawn_daemon_child(project_root: &Path) -> std::io::Result<std::process::
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn()
+        .spawn()?;
+    let pid = child.id();
+    // A daemon that exits before this process does stays a zombie until it is waited on.
+    std::thread::Builder::new()
+        .name("ax-daemon-reaper".into())
+        .spawn(move || child.wait())?;
+    Ok(pid)
 }
 
 /// Serves stdio through the project daemon. `Err` only when no daemon could be reached at

@@ -259,6 +259,7 @@ async fn drain_after_client_left<W: AsyncWrite + Unpin>(
     mut daemon_tx: DaemonWriter,
     pending: &mut Vec<Value>,
 ) -> Result<(), Stop> {
+    // A daemon that is already gone needs no end-of-input; draining below still ends.
     let _ = daemon_tx.shutdown().await;
     while let Some(line) = daemon_rx.recv().await {
         forward(client_out, &line, pending).await?;
