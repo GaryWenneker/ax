@@ -274,6 +274,8 @@ async fn git_commits(
                 commits: Vec::new(),
             })
         })
+        // git ignores a --since from the year 2100 on, so it is not the only filter.
+        .filter(|entry| since_ms.is_none_or(|since| entry.at_ms >= since))
         .collect()
 }
 

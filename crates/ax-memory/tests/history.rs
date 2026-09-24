@@ -525,6 +525,25 @@ async fn h3_since_drops_older_entries() {
 }
 
 #[tokio::test]
+async fn h3_since_in_the_future_drops_a_commit_made_just_now() {
+    // git rejects --since timestamps from 2100 on and falls back to about now, which keeps
+    // commits from the last seconds.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    git(root, &[], &["init", "-q"]);
+    std::fs::write(root.join("fresh.rs"), "fn f() {}\n").unwrap();
+    git(root, &[], &["add", "fresh.rs"]);
+    git(root, &[], &["commit", "-qm", "fresh"]);
+    let db = open_db(root).await;
+
+    let mut q = query("fresh.rs");
+    assert_eq!(history(db.pool(), root, &q).await.unwrap().len(), 1);
+    q.since_ms = ax_memory::parse_since("2999-01-01");
+    let entries = history(db.pool(), root, &q).await.unwrap();
+    assert!(entries.is_empty(), "{entries:?}");
+}
+
+#[tokio::test]
 async fn h3_since_drops_older_turns() {
     let (dir, db) = project().await;
     save(

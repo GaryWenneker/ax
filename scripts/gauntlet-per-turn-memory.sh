@@ -130,10 +130,19 @@ repo="$LOG/repo"
 bin="$LOG/bin"
 mkdir -p "$repo" "$bin" "$LOG/plain" "$LOG/home/.cursor" "$LOG/home/.claude" "$LOG/installdir"
 ln -s "$ROOT/target-dev/release/ax" "$bin/ax"
+# `ax init` writes the user's global agent hooks with its own path; they must stay untouched.
+user_hooks() { # a missing file hashes as "absent", so creating it counts as a change
+  local f
+  for f in "$HOME/.cursor/hooks.json" "$HOME/.claude/settings.json"; do
+    if [ -e "$f" ]; then shasum <"$f"; else echo "absent $f"; fi
+  done
+}
+hooks_before="$(user_hooks)"
 # Not `( … ) || fail`: bash ignores `set -e` inside a subshell whose status is tested.
 set +e
 (
   set -euo pipefail
+  export HOME="$LOG/home"
   export PATH="$bin:$PATH"
   cd "$repo"
   git init -q
@@ -230,6 +239,7 @@ set +e
 )
 real_exit=$?
 set -e
+[ "$(user_hooks)" = "$hooks_before" ] || fail "real execution changed ~/.cursor/hooks.json or ~/.claude/settings.json"
 [ "$real_exit" -eq 0 ] || fail "real execution"
 echo "   T1 T2 T5 T7 T10 T11 T12 T13 T14 T15 verified with the release binary"
 fi
