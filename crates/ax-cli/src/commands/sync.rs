@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ax_extraction::orchestrator::IndexOptions;
 
-use crate::commands::resolve_path;
+use crate::commands::{quiet_and_uninitialized, resolve_path};
 use crate::ui::{
     finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, info_line,
     ok_line,
@@ -15,6 +15,9 @@ pub async fn run(
     all_members: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    if quiet_and_uninitialized(&root, quiet) {
+        return Ok(());
+    }
 
     if all_members {
         if watch {

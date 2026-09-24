@@ -138,14 +138,9 @@ repo="$LOG/repo"
 bin="$LOG/bin"
 mkdir -p "$repo" "$bin" "$LOG/home/.cursor"
 ln -s "$ROOT/target-dev/release/ax" "$bin/ax"
-# `ax init` writes the user's global agent hooks with its own path; they must stay untouched.
-user_hooks() { # a missing file hashes as "absent", so creating it counts as a change
-  local f
-  for f in "$HOME/.cursor/hooks.json" "$HOME/.claude/settings.json"; do
-    if [ -e "$f" ]; then shasum <"$f"; else echo "absent $f"; fi
-  done
-}
-hooks_before="$(user_hooks)"
+# `ax init` writes the user's global agent configs; they must stay untouched.
+. scripts/lib/user-agent-files.sh
+agent_files_before="$(user_agent_files)"
 # Not `( … ) || fail`: bash ignores `set -e` inside a subshell whose status is tested.
 set +e
 (
@@ -241,7 +236,8 @@ set +e
 )
 real_exit=$?
 set -e
-[ "$(user_hooks)" = "$hooks_before" ] || fail "real execution changed ~/.cursor/hooks.json or ~/.claude/settings.json"
+agent_files_after="$(user_agent_files)"
+[ "$agent_files_after" = "$agent_files_before" ] || fail "real execution changed the user's agent configs"
 [ "$real_exit" -eq 0 ] || fail "real execution"
 echo "   O1 O2 O4 O6 H1 H3 H4 P1 and the installer verified with the release binary"
 fi

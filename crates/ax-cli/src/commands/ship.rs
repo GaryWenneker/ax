@@ -1,4 +1,4 @@
-use crate::commands::resolve_path;
+use crate::commands::{quiet_and_uninitialized, resolve_path};
 
 pub async fn run(
     path: Option<String>,
@@ -14,6 +14,9 @@ pub async fn run(
     quiet: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    if evaluate && quiet_and_uninitialized(&root, quiet) {
+        return Ok(());
+    }
 
     if evaluate || ci {
         let mode = if ci { "ci" } else { "evaluate" };
