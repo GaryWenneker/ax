@@ -474,11 +474,17 @@ mod tests {
         let mut c = json!({});
         upsert(&mut c, GuardIde::Cursor, BIN).unwrap();
         upsert_cursor_turn_hooks(&mut c, BIN).unwrap();
-        c["hooks"]["stop"].as_array_mut().unwrap().push(json!({ "command": "./notify.sh" }));
+        c["hooks"]["stop"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "command": "./notify.sh" }));
 
         let mut guard_removed = c.clone();
         assert!(remove(&mut guard_removed));
-        assert_eq!(guard_removed["hooks"]["beforeSubmitPrompt"], c["hooks"]["beforeSubmitPrompt"]);
+        assert_eq!(
+            guard_removed["hooks"]["beforeSubmitPrompt"],
+            c["hooks"]["beforeSubmitPrompt"]
+        );
         assert_eq!(guard_removed["hooks"]["stop"], c["hooks"]["stop"]);
 
         assert!(remove_turn_hooks(&mut c));
@@ -491,9 +497,18 @@ mod tests {
     #[test]
     fn turn_hook_files_install_and_uninstall() {
         let path = temp_file("turn-roundtrip");
-        assert_eq!(install_cursor_turn_hooks_file(&path, BIN).unwrap(), FileAction::Created);
-        assert_eq!(install_cursor_turn_hooks_file(&path, BIN).unwrap(), FileAction::Unchanged);
-        assert_eq!(uninstall_turn_hooks_file(&path).unwrap(), Some(FileAction::Updated));
+        assert_eq!(
+            install_cursor_turn_hooks_file(&path, BIN).unwrap(),
+            FileAction::Created
+        );
+        assert_eq!(
+            install_cursor_turn_hooks_file(&path, BIN).unwrap(),
+            FileAction::Unchanged
+        );
+        assert_eq!(
+            uninstall_turn_hooks_file(&path).unwrap(),
+            Some(FileAction::Updated)
+        );
         assert_eq!(uninstall_turn_hooks_file(&path).unwrap(), None);
         fs::write(&path, "{ oops").unwrap();
         assert!(install_cursor_turn_hooks_file(&path, BIN).is_err());

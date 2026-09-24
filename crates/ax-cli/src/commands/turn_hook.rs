@@ -51,7 +51,10 @@ pub async fn run(phase: TurnPhase) -> Result<(), String> {
     match phase {
         TurnPhase::Start => {
             if let Some(input) = parse_input(&value) {
-                let root = input.root.clone().unwrap_or_else(|| super::resolve_path(None));
+                let root = input
+                    .root
+                    .clone()
+                    .unwrap_or_else(|| super::resolve_path(None));
                 let _ = start_turn(&root, &input);
             }
         }
@@ -131,7 +134,10 @@ pub(crate) fn start_turn(root: &Path, input: &HookInput) -> Option<()> {
     let dirty = dirty_files(root)?;
     let counter = read_snapshot(root, &input.conversation).map_or(1, |s| s.counter + 1);
     let snapshot = Snapshot {
-        turn: input.generation.clone().unwrap_or_else(|| counter.to_string()),
+        turn: input
+            .generation
+            .clone()
+            .unwrap_or_else(|| counter.to_string()),
         counter,
         prompt: clip(&ax_memory::redact_secrets(&input.prompt), PROMPT_CHARS),
         head: head(root),
@@ -168,7 +174,10 @@ pub(crate) fn turn_record(root: &Path, conversation: &str) -> Option<TurnRecord>
     files.truncate(MAX_FILES);
 
     let id_source = format!("{conversation}\n{}", snapshot.turn);
-    let id = format!("turn-{}", &blake3::hash(id_source.as_bytes()).to_hex()[..16]);
+    let id = format!(
+        "turn-{}",
+        &blake3::hash(id_source.as_bytes()).to_hex()[..16]
+    );
     Some(TurnRecord {
         id,
         title: turn_title(&snapshot.prompt, files.len()),
@@ -184,7 +193,9 @@ pub(crate) async fn end_turn(root: &Path, conversation: &str, now_ms: i64) -> Op
     }
     let record = turn_record(root, conversation)?;
     let ax = ax_core::Ax::open(root).await.ok()?;
-    ax_memory::save_turn(ax.db_pool(), &record, now_ms).await.ok()?;
+    ax_memory::save_turn(ax.db_pool(), &record, now_ms)
+        .await
+        .ok()?;
     let _ = ax_memory::prune_turns(ax.db_pool(), now_ms, ax_memory::TURN_RETENTION_DAYS).await;
     Some(record.id)
 }
@@ -200,7 +211,11 @@ fn turn_title(prompt: &str, file_count: usize) -> String {
 fn turn_body(prompt: &str, files: &[String], commits: &[Commit]) -> String {
     let mut body = prompt.to_string();
     if !files.is_empty() {
-        let shown: Vec<&str> = files.iter().take(MAX_FILES_IN_BODY).map(String::as_str).collect();
+        let shown: Vec<&str> = files
+            .iter()
+            .take(MAX_FILES_IN_BODY)
+            .map(String::as_str)
+            .collect();
         body.push_str(&format!("\n\nFiles: {}", shown.join(", ")));
         if files.len() > shown.len() {
             body.push_str(&format!(" (+{} more)", files.len() - shown.len()));
@@ -241,7 +256,10 @@ fn head(root: &Path) -> Option<String> {
 
 /// Dirty paths (tracked changes and untracked files) mapped to a content hash; `-` when deleted.
 fn dirty_files(root: &Path) -> Option<BTreeMap<String, String>> {
-    let out = git_output(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
+    let out = git_output(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
     let text = String::from_utf8_lossy(&out);
     let mut entries = text.split('\0');
     let mut dirty = BTreeMap::new();
@@ -255,8 +273,10 @@ fn dirty_files(root: &Path) -> Option<BTreeMap<String, String>> {
                 dirty.insert(source.to_string(), "-".to_string());
             }
         }
-        let hash = std::fs::read(root.join(path))
-            .map_or_else(|_| "-".to_string(), |bytes| blake3::hash(&bytes).to_hex().to_string());
+        let hash = std::fs::read(root.join(path)).map_or_else(
+            |_| "-".to_string(),
+            |bytes| blake3::hash(&bytes).to_hex().to_string(),
+        );
         dirty.insert(path.to_string(), hash);
     }
     Some(dirty)
@@ -279,7 +299,14 @@ fn commits_since(root: &Path, since: Option<&str>) -> Option<Vec<Commit>> {
     let range = since.map_or_else(|| "HEAD".to_string(), |s| format!("{s}..HEAD"));
     let out = git_output(
         root,
-        &["log", "-n", MAX_COMMITS, "--format=%x00%h%x09%s", "--name-only", &range],
+        &[
+            "log",
+            "-n",
+            MAX_COMMITS,
+            "--format=%x00%h%x09%s",
+            "--name-only",
+            &range,
+        ],
     )?;
     let text = String::from_utf8_lossy(&out);
     let commits = text
@@ -290,7 +317,10 @@ fn commits_since(root: &Path, since: Option<&str>) -> Option<Vec<Commit>> {
             Some(Commit {
                 hash: hash.to_string(),
                 subject: subject.to_string(),
-                files: lines.filter(|l| !l.trim().is_empty()).map(str::to_string).collect(),
+                files: lines
+                    .filter(|l| !l.trim().is_empty())
+                    .map(str::to_string)
+                    .collect(),
             })
         })
         .collect();
@@ -407,7 +437,11 @@ mod tests {
         let record = turn_record(root, "conv-1").expect("turn changed a file");
         assert_eq!(record.files, vec!["src/a.rs".to_string()]);
         assert_eq!(record.title, "Fix the cache bug in a.rs");
-        assert!(record.body.contains("Fix the cache bug in a.rs"), "{}", record.body);
+        assert!(
+            record.body.contains("Fix the cache bug in a.rs"),
+            "{}",
+            record.body
+        );
         assert!(record.body.contains("src/a.rs"), "{}", record.body);
     }
 
@@ -453,8 +487,16 @@ mod tests {
 
         let record = turn_record(root, "conv-1").expect("turn made a commit");
         assert_eq!(record.files, vec!["src/a.rs".to_string()]);
-        assert!(record.body.contains("Fix cache eviction"), "{}", record.body);
-        assert!(!record.body.contains("initial"), "pre-turn commit listed: {}", record.body);
+        assert!(
+            record.body.contains("Fix cache eviction"),
+            "{}",
+            record.body
+        );
+        assert!(
+            !record.body.contains("initial"),
+            "pre-turn commit listed: {}",
+            record.body
+        );
     }
 
     #[test]
@@ -544,7 +586,11 @@ mod tests {
     fn per_turn_true_or_other_ax_json_keeps_it_on() {
         let dir = repo();
         let root = dir.path();
-        write(root, "ax.json", r#"{ "memory": { "perTurn": true }, "members": [] }"#);
+        write(
+            root,
+            "ax.json",
+            r#"{ "memory": { "perTurn": true }, "members": [] }"#,
+        );
         start_turn(root, &input("Edit", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { 1 }\n");
         assert!(turn_record(root, "conv-1").is_some());
@@ -555,7 +601,11 @@ mod tests {
         let dir = repo();
         let root = dir.path();
         let key = "sk-abcdefghijklmnopqrstuvwx1234";
-        start_turn(root, &input(&format!("Use key {key} for the client"), Some("g1"))).unwrap();
+        start_turn(
+            root,
+            &input(&format!("Use key {key} for the client"), Some("g1")),
+        )
+        .unwrap();
         for entry in std::fs::read_dir(root.join(".ax/turns")).unwrap() {
             let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
             assert!(!text.contains(key), "snapshot leaked the key");
@@ -593,7 +643,10 @@ mod tests {
         let no_ax = repo();
         std::fs::remove_dir_all(no_ax.path().join(".ax")).unwrap();
         assert_eq!(start_turn(no_ax.path(), &input("Edit", Some("g1"))), None);
-        assert!(!no_ax.path().join(".ax").exists(), "a git repo without ax got an .ax dir");
+        assert!(
+            !no_ax.path().join(".ax").exists(),
+            "a git repo without ax got an .ax dir"
+        );
     }
 
     #[tokio::test]
@@ -607,18 +660,29 @@ mod tests {
             body: "old".into(),
             files: vec![],
         };
-        ax_memory::save_turn(ax.db_pool(), &old, NOW - 31 * DAY_MS).await.unwrap();
+        ax_memory::save_turn(ax.db_pool(), &old, NOW - 31 * DAY_MS)
+            .await
+            .unwrap();
         drop(ax);
 
         start_turn(root, &input("Fix the cache bug", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { fixed() }\n");
         let id = end_turn(root, "conv-1", NOW).await.expect("memory written");
-        assert_eq!(end_turn(root, "conv-1", NOW).await.as_deref(), Some(id.as_str()));
+        assert_eq!(
+            end_turn(root, "conv-1", NOW).await.as_deref(),
+            Some(id.as_str())
+        );
 
         let ax = ax_core::Ax::open(root).await.unwrap();
-        let row = ax_memory::get(ax.db_pool(), &id).await.unwrap().expect("saved");
+        let row = ax_memory::get(ax.db_pool(), &id)
+            .await
+            .unwrap()
+            .expect("saved");
         assert_eq!(row.kind, ax_memory::TURN_KIND);
         assert_eq!(row.files, vec!["src/a.rs".to_string()]);
-        assert!(ax_memory::get(ax.db_pool(), "turn-old").await.unwrap().is_none());
+        assert!(ax_memory::get(ax.db_pool(), "turn-old")
+            .await
+            .unwrap()
+            .is_none());
     }
 }

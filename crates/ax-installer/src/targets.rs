@@ -1427,8 +1427,10 @@ mod mcp_path_tests {
     #[test]
     fn claude_hooks_include_turn_start_once_and_uninstall_keeps_user_hooks() {
         let path = temp_settings_path("turn-hook");
-        let user = serde_json::json!({ "hooks": [{ "type": "command", "command": "./my-prompt.sh" }] });
-        fs::write(&path, serde_json::json!({ "hooks": { "UserPromptSubmit": [user] } }).to_string()).unwrap();
+        let user =
+            serde_json::json!({ "hooks": [{ "type": "command", "command": "./my-prompt.sh" }] });
+        let settings = serde_json::json!({ "hooks": { "UserPromptSubmit": [user] } });
+        fs::write(&path, settings.to_string()).unwrap();
 
         for _ in 0..2 {
             for (event, hook_subcommand) in CLAUDE_HOOKS {
@@ -1439,15 +1441,17 @@ mod mcp_path_tests {
         let prompt = event_commands(&value, "UserPromptSubmit");
         assert_eq!(prompt.len(), 3, "{prompt:?}");
         assert_eq!(prompt[0], "./my-prompt.sh");
-        assert!(prompt.iter().filter(|c| c.ends_with(" prompt-hook")).count() == 1, "{prompt:?}");
-        assert!(prompt.iter().filter(|c| c.ends_with(" turn-hook start")).count() == 1, "{prompt:?}");
+        let ending = |suffix: &str| prompt.iter().filter(|c| c.ends_with(suffix)).count();
+        assert_eq!(ending(" prompt-hook"), 1, "{prompt:?}");
+        assert_eq!(ending(" turn-hook start"), 1, "{prompt:?}");
         assert!(event_commands(&value, "Stop")[0].ends_with(" stop-hook"));
 
         for (event, hook_subcommand) in CLAUDE_HOOKS {
             remove_claude_hook(&path, event, hook_subcommand).unwrap();
         }
         let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(event_commands(&value, "UserPromptSubmit"), vec!["./my-prompt.sh".to_string()]);
+        let prompt = event_commands(&value, "UserPromptSubmit");
+        assert_eq!(prompt, vec!["./my-prompt.sh".to_string()]);
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
