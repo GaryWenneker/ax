@@ -10,6 +10,21 @@
 - **New: backup before pruning.** Before turns older than 90 days are deleted, they are appended to `.ax/backups/turn-memories-YYYY-MM-DD.jsonl` in the project. Nothing is deleted unless that write succeeded. New behaviors P1 to P3 cover this.
 **Tier:** 2. It changes what ax stores per turn and what preflight gives back to the agent.
 
+## Revision 1a (found while checking the hook docs and code, before any implementation)
+
+1. **Claude Code outcome source.** The `Stop` payload has a `last_assistant_message` field. The docs say `transcript_path` "may not yet include the current turn's most recent messages" and point to that field instead. ax uses `last_assistant_message` and does not read the transcript. Behavior O2 is unchanged.
+2. **Cursor.** `afterAgentResponse` gives `{ "text": … }` and fires after every assistant message in a turn. ax keeps the latest one, redacted, in the turn snapshot. The `stop` hook uses it. Known limit: if Cursor ran `stop` before the last `afterAgentResponse` finished, the outcome would be the previous message.
+3. **New behavior O6, a v5.1.0 bug.** Claude Code's `SubagentStop` runs the same `ax stop-hook`. So a subagent finishing mid-turn already writes the turn memory. The real `Stop` is then ignored, because it has the same id. With outcomes, the subagent's report would become the turn's outcome. Fix: `SubagentStop` no longer ends the turn. The policy guard on `SubagentStop` stays as it is.
+4. **"Matches the prompt above a score threshold" (R1), made concrete.** The recall scores are rank-based and differ between the hash and ONNX embedders, so a numeric threshold would be arbitrary. A turn matches the prompt when it is in the recall results **and** shares at least 2 distinct words of 4 or more letters with the prompt (case-insensitive, common stop words ignored).
+5. **Dates** are shown in local time as `YYYY-MM-DD HH:MM`, using `chrono`. `chrono` is already in `Cargo.lock` (used by ax-usage, ax-web, ax-ship), so it adds no new package.
+6. **`ax_history` output.** Each entry shows the outcome's first 600 characters, followed by the memory id. `ax_history` with `id` (CLI: `ax history --id <id>`) returns that one turn with the full outcome. The full text, up to 20,000 characters, stays in the database. New behavior H4 covers this.
+7. **Existing Cursor installs** get the new `afterAgentResponse` hook when `ax install` runs again. The memory guide says so.
+
+| # | Given | When | Then |
+|---|---|---|---|
+| O6 | Claude Code `SubagentStop` with changed files | stop-hook | no turn memory is written; the next `Stop` writes it, with the main agent's `last_assistant_message` as the outcome |
+| H4 | a turn with a 5,000-character outcome | `ax_history` lists it, then `ax_history id=<id>` | the list shows 600 characters and the id; the id call shows all 5,000 |
+
 ## Current state (v5.1.0)
 
 - A turn memory holds the prompt (first 300 characters, redacted), the files changed, and the commits made.
