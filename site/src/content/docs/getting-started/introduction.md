@@ -18,6 +18,24 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v5.2.0
+
+v5.2.0 makes turn memories more useful:
+
+- **Outcomes.** A turn memory now also stores the agent's final reply as the outcome (secrets redacted). Cursor delivers it through a new `afterAgentResponse` hook, and Claude Code delivers it on `Stop`.
+- **Related turns in preflight.** Preflight adds up to 3 related past turns: turns that changed a file you have open, or that match your prompt.
+- **`ax_history` and `ax history`.** These list the dated turns and git commits for a file, symbol or topic, so "when did I change X" gets a direct answer.
+- **Retention.** Turns are kept for 90 days, and they are backed up to `.ax/backups/` before they are deleted.
+
+Run `ax install` again to add the new Cursor hook. See [Per-turn memories](/guides/memory/#per-turn-memories).
+
+It also fixes install and daemon hygiene:
+
+- **Agent configs.** The installer writes the `ax` found on your `PATH` into agent configs, instead of whichever binary ran it. It also repairs Claude hooks that point at a stale path.
+- **Local data out of git.** `ax init` writes `.ax/.gitignore`, so the database, logs and backups stay out of git. The team policy in `.ax/policy/` stays committable.
+- **Checkouts without `.ax/`.** Git hooks in a checkout without `.ax/`, such as a fresh worktree, no longer report a failed hook.
+- **Daemon restarts.** The MCP proxy survives a daemon restart, so Cursor no longer shows "Connection closed". A daemon stops by itself when its binary is replaced, and a proxy on a newer build restarts an older daemon.
+
 ## What's new in v5.1.0
 
 v5.1.0 saves a memory after every agent turn that changed files or made a commit, so you no longer depend on the agent calling `ax_remember`. The memory holds the prompt (first 300 characters, secrets redacted), the files changed during the turn, and the commits made. Turns that change nothing are not recorded, and ax's own runtime files under `.ax/` are not counted as changes.
