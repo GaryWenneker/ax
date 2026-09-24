@@ -1,4 +1,4 @@
-//! ax remember / ax recall / ax memory export|import — memory vault CLI.
+//! ax remember / ax recall / ax history / ax memory export|import — memory vault CLI.
 
 use std::path::PathBuf;
 
@@ -105,6 +105,53 @@ pub async fn run_capture_git(limit: Option<u32>, quiet: bool, json: bool) -> Res
             result.scanned, result.captured, result.skipped_existing, result.skipped_trivial
         );
     }
+    Ok(())
+}
+
+pub async fn run_history(
+    query: Option<String>,
+    since: Option<String>,
+    limit: Option<u32>,
+    id: Option<String>,
+    json: bool,
+) -> Result<(), String> {
+    let root = resolve_path(None);
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let by_id = id.is_some();
+    let entries = if let Some(id) = id {
+        let entry = ax_memory::history_entry(ax.db_pool(), &id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let Some(entry) = entry else {
+            return Err(format!("No turn memory with id {id}."));
+        };
+        vec![entry]
+    } else {
+        let query = query
+            .filter(|q| !q.trim().is_empty())
+            .ok_or("give a file, symbol, or topic (or --id)")?;
+        let since_ms = match since.as_deref() {
+            Some(date) => Some(ax_memory::parse_since(date).ok_or("--since must be YYYY-MM-DD")?),
+            None => None,
+        };
+        let history_query = ax_memory::HistoryQuery {
+            query,
+            since_ms,
+            limit: limit.unwrap_or(20).clamp(1, 50) as usize,
+        };
+        ax_memory::history(ax.db_pool(), ax.project_root(), &history_query)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    let outcome_chars = if by_id { usize::MAX } else { 600 };
+    println!("{}", ax_memory::format_history(&entries, outcome_chars));
     Ok(())
 }
 

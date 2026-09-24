@@ -20,7 +20,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 | Group | Tools |
 |---|---|
 | Turn contract | `ax_preflight`, `ax_policy_capture`, and (when policy exists) `ax_rules` / `ax_skill` / `ax_guard` |
-| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_expand`, `ax_stash` |
+| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash` |
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 
@@ -105,12 +105,15 @@ ax_diagnostics({ "diagnostics": [{ "path": "src/lib.rs", "line": 42, "severity":
 
 ## Memory tools
 
-The [memory vault](/guides/memory/) adds two tools:
+The [memory vault](/guides/memory/) adds three tools:
 
 | Tool | Purpose |
 |---|---|
 | `ax_remember` | Store a durable project memory (decision, fix, convention). Returns similar existing memories so contradictions get updated instead of duplicated. |
 | `ax_recall` | Hybrid search (full-text + vector similarity) over stored memories |
+| `ax_history` | When did I change X: dated agent turns (prompt, outcome, files, commits) and git commits for a file, symbol, or topic (`query`, `since`, `limit`; `id` for one turn in full) |
+
+`ax_preflight` also adds an `<ax_turn_history>` block with up to 3 past agent turns related to the open files or the prompt, and an `<ax_history_hint>` when the prompt asks when something changed.
 
 `ax_preflight` also recalls memories relevant to the prompt and injects the top matches automatically, so agents rarely need to call `ax_recall` by hand. It also injects an `<ax_index>` block with node/edge counts and **document inventory by extension** (markdown, office, PDF, other opaque types) on every turn — agents do not need a separate `ax_status` call to see what docs are indexed.
 

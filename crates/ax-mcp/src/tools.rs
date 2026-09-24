@@ -1,6 +1,6 @@
 //! MCP tools - ax_explore, ax_search, ax_status, policy tools, etc.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
@@ -204,6 +204,7 @@ impl ToolHandler {
             }
             "ax_remember" => remember(ax, params).await,
             "ax_recall" => recall(ax, params).await,
+            "ax_history" => history_tool(ax, params).await,
             "ax_expand" => expand_tool(params).await,
             "ax_stash" => stash_tool(params).await,
             "ax_insights" => insights(ax, params).await,
@@ -592,6 +593,28 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     } else {
         crate::verbose::push_line("enrich memories none");
     }
+    let open_files = project_relative_files(ax.project_root(), &files);
+    let turns = ax_memory::related_turns(ax.db_pool(), &prompt, &open_files, 3)
+        .await
+        .unwrap_or_default();
+    let turn_block = ax_memory::format_turn_history_block(&turns, 1_200);
+    if !turn_block.is_empty() {
+        if !inject.is_empty() {
+            inject.push('\n');
+        }
+        inject.push_str(&turn_block);
+        crate::verbose::push_line(format!(
+            "enrich turn history count={} block_chars={}",
+            turns.len(),
+            turn_block.len()
+        ));
+    }
+    if ax_memory::is_history_question(&prompt) {
+        if !inject.is_empty() {
+            inject.push('\n');
+        }
+        inject.push_str("<ax_history_hint>This asks when something changed: call ax_history with the file, symbol, or topic. It lists dated agent turns (prompt, outcome, files, commits) and git commits.</ax_history_hint>");
+    }
 
     if ax_usage::cache_enabled() {
         if !inject.is_empty() {
@@ -741,6 +764,68 @@ async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "matches": matches,
         "inject": text,
     }))
+}
+
+const HISTORY_OUTCOME_CHARS: usize = 600;
+
+async fn history_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    if let Some(id) = params.get("id").and_then(|v| v.as_str()) {
+        let entry = ax_memory::history_entry(ax.db_pool(), id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let text = match entry {
+            Some(entry) => ax_memory::format_history(&[entry], usize::MAX),
+            None => format!("No turn memory with id {id}."),
+        };
+        return Ok(json!({ "text": text }));
+    }
+    let query = params
+        .get("query")
+        .and_then(|v| v.as_str())
+        .filter(|q| !q.trim().is_empty())
+        .ok_or("query or id required")?;
+    let since_ms = match params.get("since").and_then(|v| v.as_str()) {
+        Some(date) => Some(ax_memory::parse_since(date).ok_or("since must be YYYY-MM-DD")?),
+        None => None,
+    };
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .clamp(1, 50) as usize;
+    let history_query = ax_memory::HistoryQuery {
+        query: query.to_string(),
+        since_ms,
+        limit,
+    };
+    let entries = ax_memory::history(ax.db_pool(), ax.project_root(), &history_query)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!({
+        "text": ax_memory::format_history(&entries, HISTORY_OUTCOME_CHARS),
+        "count": entries.len(),
+    }))
+}
+
+/// Preflight `files` as project-relative `/` paths, the form turn memories store.
+fn project_relative_files(root: &Path, files: &[String]) -> Vec<String> {
+    files
+        .iter()
+        .map(|file| {
+            let path = Path::new(file);
+            let relative = path
+                .strip_prefix(root)
+                .map(Path::to_path_buf)
+                .ok()
+                .or_else(|| {
+                    let canonical = path.canonicalize().ok()?;
+                    canonical.strip_prefix(root).map(Path::to_path_buf).ok()
+                })
+                .unwrap_or_else(|| path.to_path_buf());
+            let text = relative.to_string_lossy().replace('\\', "/");
+            text.trim_start_matches("./").to_string()
+        })
+        .collect()
 }
 
 async fn expand_tool(params: Value) -> Result<Value, String> {
@@ -1609,6 +1694,19 @@ fn extra_tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "ax_history",
+            "description": "When did I change X? Dated agent turns (prompt, outcome, files, commits) and git commits that touched a file, symbol, or topic, newest first. Pass id for one turn's full outcome.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "File path, symbol name, or topic" },
+                    "since": { "type": "string", "description": "YYYY-MM-DD" },
+                    "limit": { "type": "number" },
+                    "id": { "type": "string", "description": "Turn memory id from an earlier listing" }
+                }
+            }
+        }),
+        json!({
             "name": "ax_recall",
             "description": "Search durable project memories (decisions, fixes, conventions) by free text. Fresh memories outrank stale ones via confidence decay.",
             "inputSchema": {
@@ -2000,5 +2098,154 @@ mod tests {
     #[test]
     fn diagnostics_from_params_empty_without_diagnostics_key() {
         assert!(diagnostics_from_params(&json!({})).is_empty());
+    }
+
+    const NOW_MS: i64 = 1_790_000_000_000;
+
+    /// An initialised project with one turn memory that changed `src/a.rs`.
+    async fn project_with_turn(outcome: &str) -> (tempfile::TempDir, Ax) {
+        let dir = tempfile::tempdir().unwrap();
+        let ax = Ax::init(dir.path()).await.unwrap();
+        let record = ax_memory::TurnRecord {
+            id: "turn-a".into(),
+            title: "Fix the dropdown".into(),
+            body: format!(
+                "Fix the dropdown\n\nFiles: src/a.rs{}{outcome}",
+                ax_memory::OUTCOME_MARKER
+            ),
+            files: vec!["src/a.rs".into()],
+        };
+        ax_memory::save_turn(ax.db_pool(), &record, NOW_MS)
+            .await
+            .unwrap();
+        (dir, ax)
+    }
+
+    async fn preflight_inject(ax: &mut Ax, params: Value) -> String {
+        let out = ToolHandler::call_tool(ax, "ax_preflight", params)
+            .await
+            .unwrap();
+        out["inject"].as_str().unwrap_or_default().to_string()
+    }
+
+    #[tokio::test]
+    async fn r1_preflight_injects_turns_that_changed_an_open_file() {
+        let (dir, mut ax) = project_with_turn("Fixed it, 11 languages load.").await;
+        let open = ax.project_root().join("src/a.rs");
+        let inject = preflight_inject(
+            &mut ax,
+            json!({ "prompt": "zzz", "files": [open.to_string_lossy()] }),
+        )
+        .await;
+        assert!(inject.contains("<ax_turn_history>"), "{inject}");
+        assert!(inject.contains("Fix the dropdown"), "{inject}");
+        assert!(inject.contains("Fixed it, 11 languages load."), "{inject}");
+
+        let relative =
+            preflight_inject(&mut ax, json!({ "prompt": "zzz", "files": ["src/a.rs"] })).await;
+        assert!(relative.contains("<ax_turn_history>"), "{relative}");
+
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.rs"), "fn a() {}\n").unwrap();
+        let uncanonical = dir.path().join("src/a.rs");
+        let inject = preflight_inject(
+            &mut ax,
+            json!({ "prompt": "zzz", "files": [uncanonical.to_string_lossy()] }),
+        )
+        .await;
+        assert!(inject.contains("<ax_turn_history>"), "{inject}");
+    }
+
+    #[tokio::test]
+    async fn r2_preflight_without_related_turns_has_no_block() {
+        let (_dir, mut ax) = project_with_turn("Done.").await;
+        let inject = preflight_inject(
+            &mut ax,
+            json!({ "prompt": "zzz", "files": ["src/other.rs"] }),
+        )
+        .await;
+        assert!(!inject.contains("<ax_turn_history>"), "{inject}");
+        assert!(!inject.contains("ax_history"), "{inject}");
+    }
+
+    #[tokio::test]
+    async fn h2_history_question_points_the_agent_to_ax_history() {
+        let (_dir, mut ax) = project_with_turn("Done.").await;
+        let inject = preflight_inject(
+            &mut ax,
+            json!({ "prompt": "wanneer heb ik de review-taal aangepast?" }),
+        )
+        .await;
+        assert!(inject.contains("<ax_history_hint>"), "{inject}");
+        assert!(inject.contains("call ax_history"), "{inject}");
+    }
+
+    #[tokio::test]
+    async fn ax_history_lists_turns_and_gives_one_in_full_by_id() {
+        let outcome = "o".repeat(5_000);
+        let (_dir, mut ax) = project_with_turn(&outcome).await;
+        let listed = ToolHandler::call_tool(&mut ax, "ax_history", json!({ "query": "src/a.rs" }))
+            .await
+            .unwrap();
+        let text = listed["text"].as_str().unwrap();
+        assert!(
+            text.contains("turn-a") && text.contains("Fix the dropdown"),
+            "{text}"
+        );
+        assert!(
+            text.contains(&"o".repeat(600)) && !text.contains(&"o".repeat(601)),
+            "cut at 600"
+        );
+        assert_eq!(listed["count"], 1);
+
+        let full = ToolHandler::call_tool(&mut ax, "ax_history", json!({ "id": "turn-a" }))
+            .await
+            .unwrap();
+        assert!(full["text"].as_str().unwrap().contains(&outcome));
+
+        let missing = ToolHandler::call_tool(&mut ax, "ax_history", json!({ "id": "nope" }))
+            .await
+            .unwrap();
+        assert!(
+            missing["text"].as_str().unwrap().contains("No turn memory"),
+            "{missing}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ax_history_since_filters_and_rejects_bad_dates() {
+        let (_dir, mut ax) = project_with_turn("Done.").await;
+        let later = ToolHandler::call_tool(
+            &mut ax,
+            "ax_history",
+            json!({ "query": "src/a.rs", "since": "2026-09-23" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(later["count"], 0, "{later}");
+        let earlier = ToolHandler::call_tool(
+            &mut ax,
+            "ax_history",
+            json!({ "query": "src/a.rs", "since": "2026-09-01" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(earlier["count"], 1, "{earlier}");
+
+        let bad = ToolHandler::call_tool(
+            &mut ax,
+            "ax_history",
+            json!({ "query": "x", "since": "24-09" }),
+        )
+        .await;
+        assert!(bad.unwrap_err().contains("YYYY-MM-DD"));
+        let empty = ToolHandler::call_tool(&mut ax, "ax_history", json!({})).await;
+        assert!(empty.unwrap_err().contains("query"));
+    }
+
+    #[tokio::test]
+    async fn ax_history_is_in_the_default_catalog() {
+        let names = tool_names(&ToolHandler::list_tools(false).await);
+        assert!(names.contains(&"ax_history".to_string()), "{names:?}");
     }
 }

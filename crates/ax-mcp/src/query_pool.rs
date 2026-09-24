@@ -48,6 +48,7 @@ pub fn is_read_tool(name: &str) -> bool {
             | "ax_api"
             | "ax_affected"
             | "ax_recall"
+            | "ax_history"
     )
 }
 

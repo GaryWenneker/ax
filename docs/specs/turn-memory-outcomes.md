@@ -25,6 +25,13 @@
 | O6 | Claude Code `SubagentStop` with changed files | stop-hook | no turn memory is written; the next `Stop` writes it, with the main agent's `last_assistant_message` as the outcome |
 | H4 | a turn with a 5,000-character outcome | `ax_history` lists it, then `ax_history id=<id>` | the list shows 600 characters and the id; the id call shows all 5,000 |
 
+## Revision 1b (found during implementation; no behavior row changes)
+
+1. **Free-text `ax_history`** (H1 with a topic instead of a file or symbol) keeps a recalled turn when it shares at least 1 word of 4 or more letters with the query. Preflight (R1) still needs 2. A short question like "when did I change the language dropdown" should find the turn about that dropdown, and it only runs when asked.
+2. **Open files in preflight** are made project-relative before matching: an absolute path under the project root is stripped of the root, a path that only matches after resolving symlinks (for example `/var` and `/private/var` on macOS) is canonicalized first, and backslashes become `/`. Without this, R1 on file match would never fire for the absolute paths editors send.
+3. **The CLI shows the full outcome only with `--id`**, like the MCP tool. An earlier draft showed it for any list with one entry.
+4. **Mutant scripts** run only the ax-mcp library tests and `catalog_payload_size`. `tests/new_tools_smoke.rs` opens the repo's own `.ax/` and fails in a fresh worktree before and after this change. They also restore files with git hooks disabled, because ax's `post-checkout` hook exits nonzero in a tree without `.ax/`.
+
 ## Current state (v5.1.0)
 
 - A turn memory holds the prompt (first 300 characters, redacted), the files changed, and the commits made.

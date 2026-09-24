@@ -55,6 +55,27 @@ fn row_from_db(
 const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled
            FROM memories"#;
 
+/// `turn` memories created in `[since, before)`, newest first. `enabled_only` skips disabled ones.
+pub(crate) async fn turn_rows(
+    pool: &SqlitePool,
+    since: Option<i64>,
+    before: Option<i64>,
+    enabled_only: bool,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE kind = ? AND created_at >= ? AND created_at < ? AND (enabled = 1 OR ? = 0) \
+         ORDER BY created_at DESC, id LIMIT 10000"
+    ))
+    .bind(crate::turns::TURN_KIND)
+    .bind(since.unwrap_or(i64::MIN))
+    .bind(before.unwrap_or(i64::MAX))
+    .bind(i64::from(enabled_only))
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.into_iter().map(row_from_db).collect())
+}
+
 /// Time-decayed confidence: recently touched memories rank higher.
 pub fn effective_confidence(confidence: f64, updated_at_ms: i64, now_ms: i64) -> f64 {
     let age_days = ((now_ms - updated_at_ms).max(0) as f64) / 86_400_000.0;

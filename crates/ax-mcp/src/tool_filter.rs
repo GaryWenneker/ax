@@ -51,6 +51,7 @@ pub const CORE_TOOLS: &[&str] = &[
     "ax_sync",
     "ax_remember",
     "ax_recall",
+    "ax_history",
     "ax_expand",
     "ax_stash",
 ];

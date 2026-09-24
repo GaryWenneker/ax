@@ -522,6 +522,24 @@ ax recall "why tiktoken"
 ax recall sonar proxy --limit 10 --json
 ```
 
+### `ax history [query]`
+
+When did I change X: dated agent turns (prompt, outcome, files, commits) and git commits that touched a file, symbol, or topic, newest first. See [Memory](/guides/memory/#when-did-i-change-x).
+
+| Argument / flag | Type | Default | Description |
+|---|---|---|---|
+| `query` | optional | — | File path, symbol name, or topic (required unless `--id`) |
+| `--since` | `YYYY-MM-DD` | — | Only entries on or after this date |
+| `--limit` | number | `20` | Max entries (1–50) |
+| `--id` | string | — | Show one turn memory with its full outcome |
+| `--json` | flag | — | JSON output |
+
+```bash
+ax history review_language.rs
+ax history "review comment language" --since 2026-09-01
+ax history --id turn-1a2b3c4d5e6f7a8b
+```
+
 ### `ax capture-git`
 
 Mine recent non-merge git commits into memories (the "why" behind changes). Skips trivial messages and already-captured commits; safe to re-run.
@@ -1585,7 +1603,7 @@ Not for daily use — invoked by agents, installers, or upgrade helpers.
 | `ax serve --mcp --daemon` | Background MCP daemon |
 | `ax prompt-hook` | Claude `UserPromptSubmit` hook (stdin JSON) |
 | `ax read-guard --ide <ide>` | Pre-tool hook that redirects whole-file reads and symbol searches to the graph (stdin JSON) |
-| `ax turn-hook start\|end` | Cursor `beforeSubmitPrompt` / `stop` and Claude `UserPromptSubmit` hook that writes [per-turn memories](/guides/memory/#per-turn-memories) (stdin JSON, prints nothing) |
+| `ax turn-hook start\|response\|end` | Cursor `beforeSubmitPrompt` / `afterAgentResponse` / `stop` and Claude `UserPromptSubmit` hook that writes [per-turn memories](/guides/memory/#per-turn-memories) (stdin JSON, prints nothing) |
 | `ax watchdog-child` | MCP liveness watchdog child |
 | `ax upgrade-apply` | Windows upgrade swap helper |
 

@@ -139,6 +139,18 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// When did I change X: dated agent turns and git commits for a file, symbol, or topic
+    History {
+        query: Option<String>,
+        #[arg(long, help = "Only entries on or after this date (YYYY-MM-DD)")]
+        since: Option<String>,
+        #[arg(long, help = "Max entries (default 20)")]
+        limit: Option<u32>,
+        #[arg(long, help = "Show one turn memory with its full outcome")]
+        id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Mine recent git commits into memories (the "why" behind changes)
     CaptureGit {
         #[arg(long, help = "Number of commits to scan (default 100)")]
@@ -1236,6 +1248,13 @@ async fn async_main() {
         Some(Commands::Recall { query, limit, json }) => {
             commands::memory::run_recall(query, limit, json).await
         }
+        Some(Commands::History {
+            query,
+            since,
+            limit,
+            id,
+            json,
+        }) => commands::memory::run_history(query, since, limit, id, json).await,
         Some(Commands::CaptureGit { limit, quiet, json }) => {
             commands::memory::run_capture_git(limit, quiet, json).await
         }
@@ -1708,6 +1727,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Explore { .. }) => Some("explore".into()),
         Some(Commands::Remember { .. }) => Some("remember".into()),
         Some(Commands::Recall { .. }) => Some("recall".into()),
+        Some(Commands::History { .. }) => Some("history".into()),
         Some(Commands::CaptureGit { .. }) => Some("capture-git".into()),
         Some(Commands::Memory { .. }) => Some("memory".into()),
         Some(Commands::Node { .. }) => Some("node".into()),

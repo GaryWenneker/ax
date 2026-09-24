@@ -2,7 +2,8 @@
 
 use ax_memory::{
     export_shared, prune_turns, recall, recall_for_prompt, redact_secrets, remember, save_turn,
-    RememberInput, TurnRecord, TURN_KIND, TURN_SOURCE,
+    turn_outcome, RememberInput, TurnRecord, OUTCOME_MARKER, TURN_KIND, TURN_RETENTION_DAYS,
+    TURN_SOURCE,
 };
 
 const DAY_MS: i64 = 86_400_000;
@@ -95,7 +96,8 @@ async fn prune_removes_only_old_turn_memories() {
         .await
         .unwrap();
 
-    assert_eq!(prune_turns(db.pool(), NOW, 30).await.unwrap(), 1);
+    let backups = dir.path().join("backups");
+    assert_eq!(prune_turns(db.pool(), NOW, 30, &backups).await.unwrap(), 1);
     assert!(ax_memory::get(db.pool(), "turn-old")
         .await
         .unwrap()
@@ -105,6 +107,138 @@ async fn prune_removes_only_old_turn_memories() {
         .unwrap()
         .is_some());
     assert!(ax_memory::get(db.pool(), &note.id).await.unwrap().is_some());
+}
+
+fn backup_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<_> = entries.map(|e| e.unwrap().path()).collect();
+    files.sort();
+    files
+}
+
+#[test]
+fn retention_is_90_days() {
+    assert_eq!(TURN_RETENTION_DAYS, 90);
+}
+
+#[tokio::test]
+async fn p1_p2_turn_older_than_retention_is_backed_up_then_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    save_turn(
+        db.pool(),
+        &turn("turn-91", "Ninety-one days"),
+        NOW - 91 * DAY_MS,
+    )
+    .await
+    .unwrap();
+    save_turn(
+        db.pool(),
+        &turn("turn-89", "Eighty-nine days"),
+        NOW - 89 * DAY_MS,
+    )
+    .await
+    .unwrap();
+    let backups = dir.path().join(".ax").join("backups");
+
+    assert_eq!(
+        prune_turns(db.pool(), NOW, TURN_RETENTION_DAYS, &backups)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(ax_memory::get(db.pool(), "turn-91")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(ax_memory::get(db.pool(), "turn-89")
+        .await
+        .unwrap()
+        .is_some());
+
+    let files = backup_files(&backups);
+    assert_eq!(files.len(), 1, "{files:?}");
+    let name = files[0].file_name().unwrap().to_string_lossy().to_string();
+    let today = ax_memory::format_when(NOW)[..10].to_string();
+    assert_eq!(name, format!("turn-memories-{today}.jsonl"));
+    let text = std::fs::read_to_string(&files[0]).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "{text}");
+    let row: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(row["id"], "turn-91");
+    assert_eq!(row["kind"], TURN_KIND);
+    assert_eq!(row["title"], "Ninety-one days");
+    assert_eq!(row["body"], "Ninety-one days\nfiles: src/cache.rs");
+    assert_eq!(row["files"], serde_json::json!(["src/cache.rs"]));
+    assert_eq!(row["created_at"], NOW - 91 * DAY_MS);
+}
+
+#[tokio::test]
+async fn backups_append_to_the_same_day_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let backups = dir.path().join("backups");
+    for id in ["turn-a", "turn-b"] {
+        save_turn(db.pool(), &turn(id, id), NOW - 100 * DAY_MS)
+            .await
+            .unwrap();
+        prune_turns(db.pool(), NOW, TURN_RETENTION_DAYS, &backups)
+            .await
+            .unwrap();
+    }
+    let files = backup_files(&backups);
+    assert_eq!(files.len(), 1, "{files:?}");
+    let text = std::fs::read_to_string(&files[0]).unwrap();
+    assert_eq!(text.lines().count(), 2, "{text}");
+    assert!(text.contains("turn-a") && text.contains("turn-b"));
+}
+
+#[tokio::test]
+async fn nothing_to_prune_writes_no_backup_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    save_turn(db.pool(), &turn("turn-new", "New"), NOW)
+        .await
+        .unwrap();
+    let backups = dir.path().join("backups");
+    assert_eq!(
+        prune_turns(db.pool(), NOW, TURN_RETENTION_DAYS, &backups)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(!backups.exists());
+}
+
+#[tokio::test]
+async fn p3_failed_backup_deletes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    save_turn(db.pool(), &turn("turn-old", "Old"), NOW - 100 * DAY_MS)
+        .await
+        .unwrap();
+    let not_a_dir = dir.path().join("backups");
+    std::fs::write(&not_a_dir, "a file, not a directory").unwrap();
+
+    assert!(prune_turns(db.pool(), NOW, TURN_RETENTION_DAYS, &not_a_dir)
+        .await
+        .is_err());
+    assert!(ax_memory::get(db.pool(), "turn-old")
+        .await
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn outcome_is_read_back_from_the_body() {
+    assert_eq!(
+        turn_outcome("Fix it\n\nFiles: a.rs\n\nOutcome: Fixed, 3 tests added."),
+        Some("Fixed, 3 tests added.")
+    );
+    assert_eq!(turn_outcome("Fix it\n\nFiles: a.rs"), None);
+    assert_eq!(turn_outcome(&format!("Fix it{OUTCOME_MARKER}")), None);
 }
 
 #[tokio::test]

@@ -14,6 +14,8 @@ pub enum TurnPhase {
     Start,
     /// After the agent stopped: write the turn memory.
     End,
+    /// After each assistant message (Cursor `afterAgentResponse`): keep the latest reply.
+    Response,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +24,10 @@ pub(crate) struct HookInput {
     pub generation: Option<String>,
     pub prompt: String,
     pub root: Option<PathBuf>,
+    /// Cursor `afterAgentResponse` `text`, or Claude `Stop` `last_assistant_message`.
+    pub reply: Option<String>,
+    /// `hook_event_name` when the IDE sends one.
+    pub event: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,9 +37,12 @@ struct Snapshot {
     prompt: String,
     head: Option<String>,
     dirty: BTreeMap<String, String>,
+    #[serde(default)]
+    outcome: Option<String>,
 }
 
 const PROMPT_CHARS: usize = 300;
+const OUTCOME_CHARS: usize = 20_000;
 const TITLE_CHARS: usize = 80;
 const MAX_COMMITS: &str = "50";
 const MAX_FILES_IN_BODY: usize = 30;
@@ -63,6 +72,16 @@ pub async fn run(phase: TurnPhase) -> Result<(), String> {
             }
         }
         TurnPhase::End => end_from_input(&value).await,
+        TurnPhase::Response => {
+            if let Some(input) = parse_input(&value) {
+                let root = input
+                    .root
+                    .clone()
+                    .unwrap_or_else(|| super::resolve_path(None));
+                // A lost reply only means the turn memory has no outcome.
+                let _ = tokio::task::spawn_blocking(move || record_response(&root, &input)).await;
+            }
+        }
     }
     Ok(())
 }
@@ -75,9 +94,13 @@ pub(crate) async fn end_from_input(value: &serde_json::Value) {
     let Some(input) = parse_input(value) else {
         return;
     };
+    // A subagent finishing is not the end of the main agent's turn.
+    if input.event.as_deref() == Some("SubagentStop") {
+        return;
+    }
     let root = input.root.unwrap_or_else(|| super::resolve_path(None));
     // Memory capture must never fail or block the turn; a lost turn memory is acceptable.
-    let _ = end_turn(&root, &input.conversation, now_ms()).await;
+    let _ = end_turn(&root, &input.conversation, input.reply, now_ms()).await;
 }
 
 pub(crate) fn parse_input(v: &serde_json::Value) -> Option<HookInput> {
@@ -99,6 +122,8 @@ pub(crate) fn parse_input(v: &serde_json::Value) -> Option<HookInput> {
         generation: text("generation_id"),
         prompt: text("prompt").unwrap_or_default(),
         root,
+        reply: text("text").or_else(|| text("last_assistant_message")),
+        event: text("hook_event_name"),
     })
 }
 
@@ -147,18 +172,44 @@ pub(crate) fn start_turn(root: &Path, input: &HookInput) -> Option<()> {
         prompt: clip(&ax_memory::redact_secrets(&input.prompt), PROMPT_CHARS),
         head: head(root),
         dirty,
+        outcome: None,
     };
     let dir = turns_dir(root);
     std::fs::create_dir_all(&dir).ok()?;
     std::fs::write(dir.join(".gitignore"), "*\n").ok()?;
-    let path = snapshot_path(root, &input.conversation);
+    write_snapshot(root, &input.conversation, &snapshot)
+}
+
+fn write_snapshot(root: &Path, conversation: &str, snapshot: &Snapshot) -> Option<()> {
+    let path = snapshot_path(root, conversation);
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(&snapshot).ok()?).ok()?;
+    std::fs::write(&tmp, serde_json::to_vec(snapshot).ok()?).ok()?;
     std::fs::rename(&tmp, &path).ok()
 }
 
+/// Keep the latest assistant reply in the turn snapshot. `None` when there is no snapshot.
+pub(crate) fn record_response(root: &Path, input: &HookInput) -> Option<()> {
+    let mut snapshot = read_snapshot(root, &input.conversation)?;
+    snapshot.outcome = input.reply.as_deref().map(outcome_text);
+    write_snapshot(root, &input.conversation, &snapshot)
+}
+
+/// Redacted reply, cut to `OUTCOME_CHARS`.
+fn outcome_text(reply: &str) -> String {
+    let redacted = ax_memory::redact_secrets(reply);
+    if redacted.chars().count() <= OUTCOME_CHARS {
+        return redacted;
+    }
+    format!("{}[truncated]", clip(&redacted, OUTCOME_CHARS))
+}
+
 /// The memory for the turn since the last snapshot, or `None` when it changed nothing.
-pub(crate) fn turn_record(root: &Path, conversation: &str) -> Option<TurnRecord> {
+/// `reply` (Claude `last_assistant_message`) wins over the reply kept in the snapshot.
+pub(crate) fn turn_record(
+    root: &Path,
+    conversation: &str,
+    reply: Option<&str>,
+) -> Option<TurnRecord> {
     let snapshot = read_snapshot(root, conversation)?;
     let now_dirty = dirty_files(root)?;
     let commits = commits_since(root, snapshot.head.as_deref())?;
@@ -186,18 +237,28 @@ pub(crate) fn turn_record(root: &Path, conversation: &str) -> Option<TurnRecord>
     Some(TurnRecord {
         id,
         title: turn_title(&snapshot.prompt, files.len()),
-        body: ax_memory::redact_secrets(&turn_body(&snapshot.prompt, &files, &commits)),
+        body: turn_body(
+            &snapshot.prompt,
+            &files,
+            &commits,
+            reply.map(outcome_text).or(snapshot.outcome).as_deref(),
+        ),
         files,
     })
 }
 
 /// Write the turn memory and prune expired ones. Returns the memory id when one exists.
-pub(crate) async fn end_turn(root: &Path, conversation: &str, now_ms: i64) -> Option<String> {
+pub(crate) async fn end_turn(
+    root: &Path,
+    conversation: &str,
+    reply: Option<String>,
+    now_ms: i64,
+) -> Option<String> {
     if !per_turn_enabled(root) {
         return None;
     }
     let (dir, id) = (root.to_path_buf(), conversation.to_string());
-    let record = tokio::task::spawn_blocking(move || turn_record(&dir, &id))
+    let record = tokio::task::spawn_blocking(move || turn_record(&dir, &id, reply.as_deref()))
         .await
         .ok()??;
     let ax = ax_core::Ax::open(root).await.ok()?;
@@ -205,7 +266,14 @@ pub(crate) async fn end_turn(root: &Path, conversation: &str, now_ms: i64) -> Op
         .await
         .ok()?;
     // A failed prune only delays retention by one turn; the memory itself is saved.
-    let _ = ax_memory::prune_turns(ax.db_pool(), now_ms, ax_memory::TURN_RETENTION_DAYS).await;
+    let backups = ax_context::directory::get_ax_dir(root).join("backups");
+    let _ = ax_memory::prune_turns(
+        ax.db_pool(),
+        now_ms,
+        ax_memory::TURN_RETENTION_DAYS,
+        &backups,
+    )
+    .await;
     Some(record.id)
 }
 
@@ -217,7 +285,7 @@ fn turn_title(prompt: &str, file_count: usize) -> String {
     }
 }
 
-fn turn_body(prompt: &str, files: &[String], commits: &[Commit]) -> String {
+fn turn_body(prompt: &str, files: &[String], commits: &[Commit], outcome: Option<&str>) -> String {
     let mut body = prompt.to_string();
     if !files.is_empty() {
         let shown: Vec<&str> = files
@@ -235,6 +303,11 @@ fn turn_body(prompt: &str, files: &[String], commits: &[Commit]) -> String {
         for commit in commits {
             body.push_str(&format!("\n- {} {}", commit.hash, commit.subject));
         }
+    }
+    let mut body = ax_memory::redact_secrets(&body);
+    if let Some(outcome) = outcome.filter(|o| !o.is_empty()) {
+        body.push_str(ax_memory::OUTCOME_MARKER);
+        body.push_str(outcome);
     }
     body
 }
@@ -400,6 +473,8 @@ mod tests {
             generation: generation.map(str::to_string),
             prompt: prompt.into(),
             root: None,
+            reply: None,
+            event: None,
         }
     }
 
@@ -418,6 +493,8 @@ mod tests {
                 generation: Some("g1".into()),
                 prompt: "Fix it".into(),
                 root: Some(PathBuf::from("/work/repo")),
+                reply: None,
+                event: None,
             })
         );
     }
@@ -432,6 +509,8 @@ mod tests {
                 generation: None,
                 prompt: "Fix it".into(),
                 root: Some(PathBuf::from("/work/repo")),
+                reply: None,
+                event: None,
             })
         );
     }
@@ -456,7 +535,7 @@ mod tests {
         start_turn(root, &input("Fix the cache bug in a.rs", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { fixed() }\n");
 
-        let record = turn_record(root, "conv-1").expect("turn changed a file");
+        let record = turn_record(root, "conv-1", None).expect("turn changed a file");
         assert_eq!(record.files, vec!["src/a.rs".to_string()]);
         assert_eq!(record.title, "Fix the cache bug in a.rs");
         assert!(
@@ -472,7 +551,7 @@ mod tests {
         let dir = repo();
         let root = dir.path();
         start_turn(root, &input("Explain a.rs", Some("g1"))).unwrap();
-        assert_eq!(turn_record(root, "conv-1"), None);
+        assert_eq!(turn_record(root, "conv-1", None), None);
     }
 
     #[test]
@@ -481,10 +560,10 @@ mod tests {
         let root = dir.path();
         write(root, "src/a.rs", "fn a() { wip() }\n");
         start_turn(root, &input("Explain a.rs", Some("g1"))).unwrap();
-        assert_eq!(turn_record(root, "conv-1"), None);
+        assert_eq!(turn_record(root, "conv-1", None), None);
 
         write(root, "src/b.rs", "fn b() {}\n");
-        let record = turn_record(root, "conv-1").expect("b.rs is new");
+        let record = turn_record(root, "conv-1", None).expect("b.rs is new");
         assert_eq!(record.files, vec!["src/b.rs".to_string()]);
     }
 
@@ -495,7 +574,7 @@ mod tests {
         write(root, "src/a.rs", "fn a() { wip() }\n");
         start_turn(root, &input("Finish a.rs", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { done() }\n");
-        let record = turn_record(root, "conv-1").expect("a.rs changed again");
+        let record = turn_record(root, "conv-1", None).expect("a.rs changed again");
         assert_eq!(record.files, vec!["src/a.rs".to_string()]);
     }
 
@@ -507,7 +586,7 @@ mod tests {
         write(root, "src/a.rs", "fn a() { evict() }\n");
         git(root, &["commit", "-q", "-am", "Fix cache eviction"]);
 
-        let record = turn_record(root, "conv-1").expect("turn made a commit");
+        let record = turn_record(root, "conv-1", None).expect("turn made a commit");
         assert_eq!(record.files, vec!["src/a.rs".to_string()]);
         assert!(
             record.body.contains("Fix cache eviction"),
@@ -529,7 +608,7 @@ mod tests {
         write(root, "src/new/x.rs", "fn x() {}\n");
         std::fs::remove_file(root.join("src/a.rs")).unwrap();
 
-        let record = turn_record(root, "conv-1").expect("files changed");
+        let record = turn_record(root, "conv-1", None).expect("files changed");
         assert_eq!(
             record.files,
             vec!["src/a.rs".to_string(), "src/new/x.rs".to_string()]
@@ -542,7 +621,7 @@ mod tests {
         let root = dir.path();
         start_turn(root, &input("Explain", Some("g1"))).unwrap();
         start_turn(root, &input("Explain again", Some("g2"))).unwrap();
-        assert_eq!(turn_record(root, "conv-1"), None);
+        assert_eq!(turn_record(root, "conv-1", None), None);
     }
 
     #[test]
@@ -554,11 +633,11 @@ mod tests {
         write(root, ".ax/ax.db", "after");
         write(root, ".ax/ax.db-wal", "wal");
         write(root, ".ax/mcp-verbose-2026-09-24.log", "log");
-        assert_eq!(turn_record(root, "conv-1"), None);
+        assert_eq!(turn_record(root, "conv-1", None), None);
 
         write(root, ".ax/policy/rules/new.mdc", "rule");
         write(root, ".ax/memory/shared.jsonl", "{}");
-        let record = turn_record(root, "conv-1").expect("shared ax files changed");
+        let record = turn_record(root, "conv-1", None).expect("shared ax files changed");
         assert_eq!(
             record.files,
             vec![
@@ -588,8 +667,8 @@ mod tests {
         let root = dir.path();
         start_turn(root, &input("Edit", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { 1 }\n");
-        let first = turn_record(root, "conv-1").unwrap();
-        let second = turn_record(root, "conv-1").unwrap();
+        let first = turn_record(root, "conv-1", None).unwrap();
+        let second = turn_record(root, "conv-1", None).unwrap();
         assert_eq!(first.id, second.id);
     }
 
@@ -599,18 +678,18 @@ mod tests {
         let root = dir.path();
         start_turn(root, &input("Edit", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { 1 }\n");
-        let cursor_one = turn_record(root, "conv-1").unwrap().id;
+        let cursor_one = turn_record(root, "conv-1", None).unwrap().id;
         start_turn(root, &input("Edit", Some("g2"))).unwrap();
         write(root, "src/a.rs", "fn a() { 2 }\n");
-        let cursor_two = turn_record(root, "conv-1").unwrap().id;
+        let cursor_two = turn_record(root, "conv-1", None).unwrap().id;
         assert_ne!(cursor_one, cursor_two);
 
         start_turn(root, &input("Edit", None)).unwrap();
         write(root, "src/a.rs", "fn a() { 3 }\n");
-        let claude_one = turn_record(root, "conv-1").unwrap().id;
+        let claude_one = turn_record(root, "conv-1", None).unwrap().id;
         start_turn(root, &input("Edit", None)).unwrap();
         write(root, "src/a.rs", "fn a() { 4 }\n");
-        let claude_two = turn_record(root, "conv-1").unwrap().id;
+        let claude_two = turn_record(root, "conv-1", None).unwrap().id;
         assert_ne!(claude_one, claude_two);
         assert_ne!(claude_one, cursor_two);
     }
@@ -620,10 +699,10 @@ mod tests {
         let dir = repo();
         let root = dir.path();
         write(root, "src/a.rs", "fn a() { 1 }\n");
-        assert_eq!(turn_record(root, "conv-1"), None);
+        assert_eq!(turn_record(root, "conv-1", None), None);
         start_turn(root, &input("Edit", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { 2 }\n");
-        assert_eq!(turn_record(root, "other-conversation"), None);
+        assert_eq!(turn_record(root, "other-conversation", None), None);
     }
 
     #[tokio::test]
@@ -635,7 +714,7 @@ mod tests {
         write(root, "src/a.rs", "fn a() { 1 }\n");
         write(root, "ax.json", r#"{ "memory": { "perTurn": false } }"#);
 
-        assert_eq!(end_turn(root, "conv-1", NOW).await, None);
+        assert_eq!(end_turn(root, "conv-1", None, NOW).await, None);
         std::fs::remove_dir_all(root.join(".ax/turns")).unwrap();
         assert_eq!(start_turn(root, &input("Edit", Some("g2"))), None);
         assert!(!root.join(".ax/turns").exists());
@@ -652,7 +731,7 @@ mod tests {
         );
         start_turn(root, &input("Edit", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { 1 }\n");
-        assert!(turn_record(root, "conv-1").is_some());
+        assert!(turn_record(root, "conv-1", None).is_some());
     }
 
     #[test]
@@ -670,7 +749,7 @@ mod tests {
             assert!(!text.contains(key), "snapshot leaked the key");
         }
         write(root, "src/a.rs", "fn a() { 1 }\n");
-        let record = turn_record(root, "conv-1").unwrap();
+        let record = turn_record(root, "conv-1", None).unwrap();
         assert!(!record.body.contains(key) && !record.title.contains(key));
         assert!(record.body.contains("[redacted]"), "{}", record.body);
     }
@@ -682,7 +761,7 @@ mod tests {
         let prompt = "word ".repeat(100);
         start_turn(root, &input(&prompt, Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { 1 }\n");
-        let record = turn_record(root, "conv-1").unwrap();
+        let record = turn_record(root, "conv-1", None).unwrap();
         assert_eq!(record.title.chars().count(), 80);
         assert!(record.body.contains(&prompt[..300]));
         assert!(!record.body.contains(&prompt[..301]));
@@ -697,7 +776,7 @@ mod tests {
         let no_git = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(no_git.path().join(".ax")).unwrap();
         assert_eq!(start_turn(no_git.path(), &input("Edit", Some("g1"))), None);
-        assert_eq!(turn_record(no_git.path(), "conv-1"), None);
+        assert_eq!(turn_record(no_git.path(), "conv-1", None), None);
 
         let no_ax = repo();
         std::fs::remove_dir_all(no_ax.path().join(".ax")).unwrap();
@@ -719,16 +798,18 @@ mod tests {
             body: "old".into(),
             files: vec![],
         };
-        ax_memory::save_turn(ax.db_pool(), &old, NOW - 31 * DAY_MS)
+        ax_memory::save_turn(ax.db_pool(), &old, NOW - 91 * DAY_MS)
             .await
             .unwrap();
         drop(ax);
 
         start_turn(root, &input("Fix the cache bug", Some("g1"))).unwrap();
         write(root, "src/a.rs", "fn a() { fixed() }\n");
-        let id = end_turn(root, "conv-1", NOW).await.expect("memory written");
+        let id = end_turn(root, "conv-1", None, NOW)
+            .await
+            .expect("memory written");
         assert_eq!(
-            end_turn(root, "conv-1", NOW).await.as_deref(),
+            end_turn(root, "conv-1", None, NOW).await.as_deref(),
             Some(id.as_str())
         );
 
@@ -743,5 +824,192 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+        let backups: Vec<_> = std::fs::read_dir(root.join(".ax/backups"))
+            .expect("pruned turns are backed up under .ax/backups")
+            .collect();
+        assert_eq!(backups.len(), 1);
+    }
+
+    fn reply_input(text: &str) -> HookInput {
+        HookInput {
+            reply: Some(text.into()),
+            ..input("", Some("g1"))
+        }
+    }
+
+    fn outcome_of(record: &TurnRecord) -> Option<&str> {
+        ax_memory::turn_outcome(&record.body)
+    }
+
+    #[test]
+    fn parses_cursor_after_agent_response_and_claude_stop_replies() {
+        let cursor = serde_json::json!({
+            "conversation_id": "c1",
+            "generation_id": "g1",
+            "hook_event_name": "afterAgentResponse",
+            "text": "Fixed the dropdown.",
+            "workspace_roots": ["/work/repo"]
+        });
+        let parsed = parse_input(&cursor).unwrap();
+        assert_eq!(parsed.reply.as_deref(), Some("Fixed the dropdown."));
+        assert_eq!(parsed.event.as_deref(), Some("afterAgentResponse"));
+
+        let claude = serde_json::json!({
+            "session_id": "s1",
+            "cwd": "/work/repo",
+            "hook_event_name": "Stop",
+            "last_assistant_message": "Refactor done."
+        });
+        let parsed = parse_input(&claude).unwrap();
+        assert_eq!(parsed.reply.as_deref(), Some("Refactor done."));
+        assert_eq!(parsed.event.as_deref(), Some("Stop"));
+    }
+
+    #[test]
+    fn o1_cursor_reply_becomes_the_outcome() {
+        let dir = repo();
+        let root = dir.path();
+        start_turn(root, &input("Fix the dropdown", Some("g1"))).unwrap();
+        record_response(root, &reply_input("Looking at Settings.tsx first.")).unwrap();
+        write(root, "src/a.rs", "fn a() { fixed() }\n");
+        record_response(
+            root,
+            &reply_input("Fixed the dropdown, 11 languages now load."),
+        )
+        .unwrap();
+
+        let record = turn_record(root, "conv-1", None).unwrap();
+        assert!(
+            record
+                .body
+                .ends_with("\n\nOutcome: Fixed the dropdown, 11 languages now load."),
+            "{}",
+            record.body
+        );
+        assert_eq!(
+            outcome_of(&record),
+            Some("Fixed the dropdown, 11 languages now load.")
+        );
+    }
+
+    #[test]
+    fn o2_claude_last_assistant_message_wins_over_the_snapshot() {
+        let dir = repo();
+        let root = dir.path();
+        start_turn(root, &input("Refactor", None)).unwrap();
+        record_response(root, &reply_input("older")).unwrap();
+        write(root, "src/a.rs", "fn a() { 1 }\n");
+        let record = turn_record(root, "conv-1", Some("Refactor done.")).unwrap();
+        assert_eq!(outcome_of(&record), Some("Refactor done."));
+    }
+
+    #[test]
+    fn o3_full_reply_is_kept_up_to_20000_characters() {
+        let dir = repo();
+        let root = dir.path();
+        let medium: String = "abcde ".repeat(1_000);
+        start_turn(root, &input("Edit", Some("g1"))).unwrap();
+        write(root, "src/a.rs", "fn a() { 1 }\n");
+        let record = turn_record(root, "conv-1", Some(&medium)).unwrap();
+        assert_eq!(outcome_of(&record), Some(medium.as_str()));
+
+        let huge: String = "x".repeat(25_000);
+        let record = turn_record(root, "conv-1", Some(&huge)).unwrap();
+        let expected = format!("{}[truncated]", "x".repeat(20_000));
+        assert_eq!(outcome_of(&record), Some(expected.as_str()));
+
+        record_response(root, &reply_input(&huge)).unwrap();
+        let record = turn_record(root, "conv-1", None).unwrap();
+        assert_eq!(outcome_of(&record), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn o4_secret_in_the_reply_never_reaches_disk_or_the_record() {
+        let dir = repo();
+        let root = dir.path();
+        let token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";
+        start_turn(root, &input("Set up CI", Some("g1"))).unwrap();
+        record_response(root, &reply_input(&format!("Use token {token} in CI."))).unwrap();
+        for entry in std::fs::read_dir(root.join(".ax/turns")).unwrap() {
+            let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            assert!(!text.contains(token), "snapshot leaked the token");
+        }
+        write(root, "src/a.rs", "fn a() { 1 }\n");
+        let record = turn_record(root, "conv-1", None).unwrap();
+        assert_eq!(outcome_of(&record), Some("Use token [redacted] in CI."));
+
+        let record = turn_record(root, "conv-1", Some(&format!("Done with {token}"))).unwrap();
+        assert_eq!(outcome_of(&record), Some("Done with [redacted]"));
+    }
+
+    #[test]
+    fn o5_no_reply_means_no_outcome_section() {
+        let dir = repo();
+        let root = dir.path();
+        start_turn(root, &input("Edit", Some("g1"))).unwrap();
+        write(root, "src/a.rs", "fn a() { 1 }\n");
+        let record = turn_record(root, "conv-1", None).unwrap();
+        assert!(!record.body.contains("Outcome:"), "{}", record.body);
+        let record = turn_record(root, "conv-1", Some("")).unwrap();
+        assert!(!record.body.contains("Outcome:"), "{}", record.body);
+    }
+
+    #[test]
+    fn reply_without_a_snapshot_writes_nothing() {
+        let dir = repo();
+        let root = dir.path();
+        assert_eq!(record_response(root, &reply_input("Hello")), None);
+        assert!(!root.join(".ax/turns").exists());
+    }
+
+    #[test]
+    fn a_new_turn_starts_without_the_previous_reply() {
+        let dir = repo();
+        let root = dir.path();
+        start_turn(root, &input("First", Some("g1"))).unwrap();
+        record_response(root, &reply_input("First reply")).unwrap();
+        start_turn(root, &input("Second", Some("g2"))).unwrap();
+        write(root, "src/a.rs", "fn a() { 2 }\n");
+        let record = turn_record(root, "conv-1", None).unwrap();
+        assert_eq!(outcome_of(&record), None, "{}", record.body);
+    }
+
+    #[tokio::test]
+    async fn o6_subagent_stop_does_not_end_the_turn() {
+        let dir = repo();
+        let root = dir.path();
+        drop(ax_core::Ax::init(root).await.unwrap());
+        start_turn(root, &input("Refactor", None)).unwrap();
+        write(root, "src/a.rs", "fn a() { 1 }\n");
+        let payload = |event: &str, reply: &str| {
+            serde_json::json!({
+                "session_id": "conv-1",
+                "cwd": root.to_string_lossy(),
+                "hook_event_name": event,
+                "last_assistant_message": reply
+            })
+        };
+
+        end_from_input(&payload("SubagentStop", "Subagent report")).await;
+        let ax = ax_core::Ax::open(root).await.unwrap();
+        let (rows, _) = ax_memory::list(ax.db_pool(), 50, 0).await.unwrap();
+        assert!(
+            rows.iter().all(|r| r.kind != ax_memory::TURN_KIND),
+            "SubagentStop wrote a turn memory"
+        );
+        drop(ax);
+
+        end_from_input(&payload("Stop", "Main agent summary")).await;
+        let ax = ax_core::Ax::open(root).await.unwrap();
+        let (rows, _) = ax_memory::list(ax.db_pool(), 50, 0).await.unwrap();
+        let turns: Vec<_> = rows
+            .iter()
+            .filter(|r| r.kind == ax_memory::TURN_KIND)
+            .collect();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            ax_memory::turn_outcome(&turns[0].body),
+            Some("Main agent summary")
+        );
     }
 }

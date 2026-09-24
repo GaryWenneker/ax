@@ -6,6 +6,7 @@
 pub mod capture;
 pub mod embed;
 pub mod format;
+pub mod history;
 pub mod onnx;
 pub mod store;
 pub mod sync;
@@ -14,6 +15,10 @@ pub mod types;
 
 pub use capture::{capture_git_history, GitCaptureResult};
 pub use format::format_memories_inject_block;
+pub use history::{
+    format_history, format_turn_history_block, format_when, history, history_entry,
+    is_history_question, parse_since, related_turns, HistoryEntry, HistoryQuery,
+};
 pub use store::{
     delete, effective_confidence, find_similar, fts_query_from_text, get, list, recall, remember,
     set_enabled, update,
@@ -23,7 +28,8 @@ pub use sync::{
     MemoryImportResult,
 };
 pub use turns::{
-    prune_turns, redact_secrets, save_turn, TurnRecord, TURN_KIND, TURN_RETENTION_DAYS, TURN_SOURCE,
+    prune_turns, redact_secrets, save_turn, turn_outcome, TurnRecord, OUTCOME_MARKER, TURN_KIND,
+    TURN_RETENTION_DAYS, TURN_SOURCE,
 };
 pub use types::{MemoryMatch, MemoryRow, RememberInput, MEMORY_KINDS};
 

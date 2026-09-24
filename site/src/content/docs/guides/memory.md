@@ -38,7 +38,7 @@ UI: "New memory" ────────────────────┼
 
 1. **Automatic — git commits.** Post-commit and post-merge hooks run `ax capture-git` after every commit. Non-trivial commit messages become `kind: git` memories linked to the files they touched. Trivial subjects (merges, bumps, WIPs, typos, formatting, anything under 12 characters) are skipped. IDs are derived from the commit hash (`git-{hash12}`) so re-running never duplicates.
 
-2. **Automatic — agent turns.** In Cursor and Claude Code, every agent turn that changed files or made a commit becomes a local `kind: turn` memory with the prompt, the files, and the commit subjects. These are found by `ax_recall` but never injected by preflight. See [Per-turn memories](#per-turn-memories).
+2. **Automatic — agent turns.** In Cursor and Claude Code, every agent turn that changed files or made a commit becomes a local `kind: turn` memory with the prompt, the agent's final reply (the outcome), the files, and the commit subjects. Preflight gives related past turns back to the agent, and `ax_history` answers "when did I change X". See [Per-turn memories](#per-turn-memories).
 
 3. **Manual — you or your agent.** Click "New memory" in the Command Center, run `ax remember` from the CLI, or let agents store knowledge by calling `ax_remember` via MCP. All three paths run duplicate detection after saving.
 
@@ -54,7 +54,7 @@ UI: "New memory" ────────────────────┼
 | `convention` | Team rules that are not lintable |
 | `note` | Everything else (default) |
 | `git` | Auto-captured from commit history |
-| `turn` | Auto-captured per agent turn; local, recall-only, kept 30 days |
+| `turn` | Auto-captured per agent turn with its outcome; local, kept 90 days, backed up before pruning |
 
 ## The recall algorithm
 
@@ -196,23 +196,44 @@ You can also run `ax capture-git` manually or click "Capture from git" in the Co
 
 ## Per-turn memories
 
-`ax install` adds two agent hooks next to the read-guard, for Cursor (`~/.cursor/hooks.json`) and Claude Code (`~/.claude/settings.json`):
+`ax install` adds agent hooks next to the read-guard, for Cursor (`~/.cursor/hooks.json`) and Claude Code (`~/.claude/settings.json`). Run `ax install` again after upgrading to get the Cursor reply hook.
 
 | Moment | Cursor | Claude Code | What runs |
 |---|---|---|---|
 | Turn start | `beforeSubmitPrompt` | `UserPromptSubmit` | `ax turn-hook start` saves a snapshot in `.ax/turns/`: the prompt (first 300 characters, secrets redacted), `HEAD`, and a content hash of every dirty file |
-| Turn end | `stop` | `Stop` (inside `ax stop-hook`) | `ax turn-hook end` compares the tree with the snapshot and writes one memory |
+| Agent reply | `afterAgentResponse` | — | `ax turn-hook response` keeps the latest reply in the snapshot, secrets redacted |
+| Turn end | `stop` | `Stop` (inside `ax stop-hook`) | `ax turn-hook end` compares the tree with the snapshot and writes one memory. Claude Code's reply comes from `last_assistant_message` |
 
 Rules:
 
 - **Only turns that did something.** Files whose content changed since the snapshot, new or deleted files, and commits made during the turn count. Files that were already dirty and not touched again do not, and neither do ax's own files under `.ax/` (database, logs, snapshots) except `.ax/policy/` and `.ax/memory/`. A turn that only answered a question writes nothing.
 - **One memory per turn.** The id comes from the conversation and the turn (Cursor's `generation_id`, or a per-conversation counter for Claude Code), so a retried hook never duplicates.
-- **Recall-only and local.** `turn` memories are skipped by `ax_preflight` (the `<ax_memories>` block and the memory titles list) and by `ax memory export`. Find them with `ax_recall` / `ax recall`.
-- **Kept 30 days.** Every turn end that writes deletes `turn` memories older than 30 days. Other kinds are never touched.
+- **With the outcome.** The memory ends with `Outcome:` and the agent's final reply, up to 20,000 characters (longer replies end with `[truncated]`). A turn without a captured reply has no outcome section.
+- **Subagents don't end the turn.** Claude Code's `SubagentStop` still runs the policy check, but the turn memory waits for the main agent's `Stop`.
+- **Given back while you work.** `ax_preflight` adds an `<ax_turn_history>` block with at most 3 related past turns, newest first: turns that changed a file passed in `files`, or turns that `ax_recall` finds for the prompt *and* that share at least 2 words of 4+ letters with it. Each line has the date, the prompt, the first 120 characters of the outcome, and up to 3 files. The block is at most 1,200 characters.
+- **Local.** `turn` memories are still skipped by the `<ax_memories>` block, the memory titles list, and `ax memory export`.
+- **Kept 90 days, backed up first.** Every turn end that writes prunes `turn` memories older than 90 days. They are first appended to `.ax/backups/turn-memories-YYYY-MM-DD.jsonl` (one JSON object per memory). If that write fails, nothing is deleted. Other kinds are never touched.
 - **Secrets redacted.** API keys (`sk-…`, `ghp_…`, `AKIA…`), `password=…` values, and long hex or base64 runs are stored as `[redacted]`.
 - **Never blocks.** The hooks print nothing and always exit 0; outside a git repository or an ax project they do nothing.
 
-The memory says *what* changed, not *why*. Save the why with `ax_remember`.
+The memory says *what* changed and what the agent reported, not *why*. Save the why with `ax_remember`.
+
+### When did I change X?
+
+`ax_history` (MCP) and `ax history` (CLI) list the turns and git commits that touched a file, a symbol, or a topic, newest first, with date and time, the prompt, the outcome (first 600 characters), the files, and the commits.
+
+- A **file path** matches exactly or by its end (`review_language.rs` finds `crates/ax-core/src/review_language.rs`). `git log` for that path adds the commits.
+- A **symbol name** resolves to the file it is defined in, then works like a path.
+- **Anything else** is a topic: turns that `ax_recall` finds and that share a word with it.
+- `since` (`--since`, `YYYY-MM-DD`) drops older entries. `id` (`--id`) shows one turn with its full outcome.
+
+When a prompt asks "wanneer heb ik…", "when did I…" or "what did I change…", preflight adds an `<ax_history_hint>` telling the agent to call `ax_history`.
+
+```bash
+ax history review_language.rs
+ax history resolve_review_language --since 2026-09-01
+ax history --id turn-1a2b3c4d5e6f7a8b
+```
 
 To switch it off for a project, set this in `ax.json`:
 
