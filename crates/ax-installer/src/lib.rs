@@ -1,5 +1,6 @@
 //! Shared AI agent MCP installer — used by ax-cli and ax-web.
 
+pub mod ax_command;
 pub mod cli_catalog;
 pub mod cli_install;
 pub mod hooks;
