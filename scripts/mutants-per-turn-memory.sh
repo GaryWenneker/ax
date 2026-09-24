@@ -84,7 +84,7 @@ mutant T11 ax-cli "$TURN" 's/\.and_then\(\|r\| r\.get\(0\)\)/.and_then(|r| r.get
 mutant T12 ax-cli "$TURN" 's/    std::fs::write\(dir\.join\("\.gitignore"\), "\*\\n"\)\.ok\(\)\?;\n//'
 mutant T13 ax-cli "$TURN" 's/Some\(line\) => clip\(line, TITLE_CHARS\)/Some(line) => line.to_string()/'
 mutant T14 ax-cli "$TURN" 's/\|s\| format!\("\{s\}\.\.HEAD"\)/|_| "HEAD".to_string()/'
-mutant T15 ax-cli "$TURN" 's/files: lines\.filter\(\|l\| !l\.trim\(\)\.is_empty\(\)\)\.map\(str::to_string\)\.collect\(\)/files: Vec::new()/'
+mutant T15 ax-cli "$TURN" 's/files: lines\n\s*\.filter\(\|l\| !l\.trim\(\)\.is_empty\(\)\)\n\s*\.map\(str::to_string\)\n\s*\.collect\(\)/files: Vec::new()/'
 mutant T16 ax-cli "$TURN" 's/    if !ax_context::directory::get_ax_dir\(root\)\.is_dir\(\) \|\| !per_turn_enabled\(root\) \{/    if !per_turn_enabled(root) {/'
 mutant T17 ax-cli "$TURN" 's/prompt: text\("prompt"\)\.unwrap_or_default\(\)/prompt: String::new()/'
 mutant T18 ax-cli "$MAIN" 's/if turn_hook \|\| /if /'

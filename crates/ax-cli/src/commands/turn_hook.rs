@@ -569,6 +569,20 @@ mod tests {
     }
 
     #[test]
+    fn snapshots_are_ignored_by_git() {
+        let dir = repo();
+        let root = dir.path();
+        start_turn(root, &input("Secret plan", Some("g1"))).unwrap();
+        let out = Command::new("git")
+            .current_dir(root)
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .output()
+            .unwrap();
+        let status = String::from_utf8(out.stdout).unwrap();
+        assert!(!status.contains(".ax/turns/"), "{status}");
+    }
+
+    #[test]
     fn t5_same_turn_end_twice_gives_the_same_id() {
         let dir = repo();
         let root = dir.path();
