@@ -109,6 +109,44 @@ async fn prune_removes_only_old_turn_memories() {
     assert!(ax_memory::get(db.pool(), &note.id).await.unwrap().is_some());
 }
 
+#[tokio::test]
+async fn the_backup_holds_only_turn_memories() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    save_turn(db.pool(), &turn("turn-old", "Old turn"), NOW - 91 * DAY_MS)
+        .await
+        .unwrap();
+    let note = remember(
+        db.pool(),
+        RememberInput {
+            title: "Old decision".into(),
+            body: "Keep me".into(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE memories SET created_at = ? WHERE id = ?")
+        .bind(NOW - 400 * DAY_MS)
+        .bind(&note.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let backups = dir.path().join("backups");
+    prune_turns(db.pool(), NOW, TURN_RETENTION_DAYS, &backups)
+        .await
+        .unwrap();
+    let files = backup_files(&backups);
+    assert_eq!(files.len(), 1, "{files:?}");
+    let text = std::fs::read_to_string(&files[0]).unwrap();
+    let ids: Vec<String> = text
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["id"].to_string())
+        .collect();
+    assert_eq!(ids, vec!["\"turn-old\"".to_string()], "{text}");
+}
+
 fn backup_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();

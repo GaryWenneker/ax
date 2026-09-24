@@ -110,7 +110,7 @@ mutant R8 ax-memory "$HIST" 's/    "wanneer heb ik",\n//'
 # History query (ax-memory)
 mutant H1 ax-memory "$HIST" 's/"SELECT path FROM files WHERE path = \? OR path LIKE \? ESCAPE/"SELECT path FROM files WHERE path = ? AND path LIKE ? ESCAPE/'
 mutant H2 ax-memory "$HIST" 's/    if paths\.is_empty\(\) && !query\.contains\(char::is_whitespace\) \{/    if false {/'
-mutant H3 ax-memory "$HIST" 's/        found\.extend\(git_commits\(root, &pathspecs, query\.since_ms, limit\)\);\n//'
+mutant H3 ax-memory "$HIST" 's/        found\.extend\(git_commits\(root, &pathspecs, query\.since_ms, limit\)\.await\);\n//'
 mutant H4 ax-memory "$HIST" 's/        cmd\.arg\(format!\("--since=@\{\}", since\.div_euclid\(1000\)\)\);/        let _ = since;/'
 mutant H5 ax-memory "$STORE" 's/\.bind\(since\.unwrap_or\(i64::MIN\)\)/.bind(i64::MIN)/'
 mutant H10 ax-memory "$STORE" 's/format!\("%\/\{escaped\}"\)/format!("{escaped}")/'

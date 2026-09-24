@@ -210,6 +210,22 @@ async fn r3_at_most_three_newest_first_within_1200_characters() {
     );
 }
 
+#[tokio::test]
+async fn r3_prompt_matches_are_capped_at_three_newest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for i in 0..10 {
+        let id = format!("turn-{i}");
+        let file = format!("src/f{i}.rs");
+        let r = record(&id, "Settings dropdown tweak", "", &[file.as_str()]);
+        save(&db, &r, NOW - (10 - i) * DAY_MS).await;
+    }
+    let rows = related_turns(db.pool(), "settings dropdown colours", &[], 3)
+        .await
+        .unwrap();
+    assert_eq!(ids(&rows), vec!["turn-9", "turn-8", "turn-7"]);
+}
+
 #[test]
 fn h2_history_questions_are_recognised() {
     assert!(is_history_question(
