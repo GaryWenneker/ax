@@ -18,6 +18,12 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v5.0.3
+
+v5.0.3 makes git auto-capture work again on macOS and Linux. ax wrote its git hooks without a `#!/bin/sh` line and without the execute bit, so git skipped them and commits were no longer saved as memories. Hooks are now written correctly, and broken ones are repaired when you run `ax init` or `ax sync` and when the MCP server starts. Run `ax capture-git --limit 100` once to backfill commits you missed.
+
+The hooks are also quiet now. They run `ax ship --evaluate --quiet`, which prints nothing when the quality gate passes and one line when it fails. `--quiet` on any command hides ax's INFO log lines. `ax --help` links to the live docs site.
+
 ## What's new in v5.0.2
 
 v5.0.2 fixes the docs site on phones. The menu button was a blank square (a light icon on a light background) and now shows its icon on the dark header. The header bar also runs edge to edge instead of sitting inset. The CLI behaves the same as v5.0.1.
