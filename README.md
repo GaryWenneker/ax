@@ -3,9 +3,11 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v5.0.3](https://github.com/GaryWenneker/ax/releases/tag/v5.0.3)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v5.1.0](https://github.com/GaryWenneker/ax/releases/tag/v5.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+
+**v5.1.0** (minor) saves a memory after every agent turn that changed files or made a commit: the prompt (secrets redacted), the files changed, and the commits made. Turn memories are found with `ax_recall` / `ax recall`, are never injected into preflight or exported, and are deleted after 30 days. Run `ax install` again to add the turn hooks for Cursor and Claude Code; switch them off with `"memory": { "perTurn": false }` in `ax.json`.
 
 **v5.0.3** (patch) makes git auto-capture work again on macOS and Linux: git hooks are written with a shebang and the execute bit, broken ones are repaired by `ax init`, `ax sync`, and MCP startup, and the hooks run the quality gate quietly (`ax ship --evaluate --quiet`). Run `ax capture-git --limit 100` once to backfill missed commits.
 

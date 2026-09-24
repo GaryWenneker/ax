@@ -1,9 +1,9 @@
 ---
 title: Get Started
-description: Get up and running with ax v5.0.3 in seconds.
+description: Get up and running with ax v5.1.0 in seconds.
 ---
 
-Install **ax v5.0.3** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — knowledge graph, memory vault, policy engine, MCP Logging / Quality, and Command Center in one binary.
+Install **ax v5.1.0** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — knowledge graph, memory vault, policy engine, MCP Logging / Quality, and Command Center in one binary.
 
 ## 1. Install the CLI
 

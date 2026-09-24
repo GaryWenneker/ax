@@ -18,6 +18,12 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v5.1.0
+
+v5.1.0 saves a memory after every agent turn that changed files or made a commit, so you no longer depend on the agent calling `ax_remember`. The memory holds the prompt (first 300 characters, secrets redacted), the files changed during the turn, and the commits made. Turns that change nothing are not recorded, and ax's own runtime files under `.ax/` are not counted as changes.
+
+Turn memories are local and quiet: `ax_recall` and `ax recall` find them, but preflight never injects them, `ax memory export` skips them, and they are deleted after 30 days. Run `ax install` again to add the turn hooks for Cursor and Claude Code. To switch them off, set `"memory": { "perTurn": false }` in `ax.json`. See [Memory](/guides/memory/#per-turn-memories).
+
 ## What's new in v5.0.3
 
 v5.0.3 makes git auto-capture work again on macOS and Linux. ax wrote its git hooks without a `#!/bin/sh` line and without the execute bit, so git skipped them and commits were no longer saved as memories. Hooks are now written correctly, and broken ones are repaired when you run `ax init` or `ax sync` and when the MCP server starts. Run `ax capture-git --limit 100` once to backfill commits you missed.
