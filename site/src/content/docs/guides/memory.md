@@ -18,6 +18,7 @@ INGEST (write path)                              RECALL (read path)
                                                   
 git post-commit ──► ax capture-git ──┐            ax_preflight (every turn)
 git post-merge  ──► ax capture-git ──┤              │
+agent turn end  ──► ax turn-hook ────┤              │
 CLI: ax remember ────────────────────┤              ▼
 MCP: ax_remember ────────────────────┤  embed()   recall_for_prompt(prompt, 3)
 UI: "New memory" ────────────────────┼──────►       │
@@ -33,13 +34,15 @@ UI: "New memory" ────────────────────┼
                                                   injected into agent context
 ```
 
-### Three ingest paths
+### Ingest paths
 
 1. **Automatic — git commits.** Post-commit and post-merge hooks run `ax capture-git` after every commit. Non-trivial commit messages become `kind: git` memories linked to the files they touched. Trivial subjects (merges, bumps, WIPs, typos, formatting, anything under 12 characters) are skipped. IDs are derived from the commit hash (`git-{hash12}`) so re-running never duplicates.
 
-2. **Manual — you or your agent.** Click "New memory" in the Command Center, run `ax remember` from the CLI, or let agents store knowledge by calling `ax_remember` via MCP. All three paths run duplicate detection after saving.
+2. **Automatic — agent turns.** In Cursor and Claude Code, every agent turn that changed files or made a commit becomes a local `kind: turn` memory with the prompt, the files, and the commit subjects. These are found by `ax_recall` but never injected by preflight. See [Per-turn memories](#per-turn-memories).
 
-3. **Injected — every agent turn.** When an agent calls `ax_preflight` (mandatory at the start of every turn per ax policy), the user's prompt is matched against all memories using hybrid search. The top 3 matches are formatted as an `<ax_memories>` XML block and injected into the agent's context alongside policy rules. The agent sees them automatically — no manual recall needed.
+3. **Manual — you or your agent.** Click "New memory" in the Command Center, run `ax remember` from the CLI, or let agents store knowledge by calling `ax_remember` via MCP. All three paths run duplicate detection after saving.
+
+4. **Injected — every agent turn.** When an agent calls `ax_preflight` (mandatory at the start of every turn per ax policy), the user's prompt is matched against all memories using hybrid search. The top 3 matches are formatted as an `<ax_memories>` XML block and injected into the agent's context alongside policy rules. The agent sees them automatically — no manual recall needed.
 
 ## Memory kinds
 
@@ -51,6 +54,7 @@ UI: "New memory" ────────────────────┼
 | `convention` | Team rules that are not lintable |
 | `note` | Everything else (default) |
 | `git` | Auto-captured from commit history |
+| `turn` | Auto-captured per agent turn; local, recall-only, kept 30 days |
 
 ## The recall algorithm
 
@@ -170,6 +174,7 @@ Triggers keep the FTS5 index in sync automatically on INSERT, UPDATE, and DELETE
 | `manual` | CLI `ax remember` or Command Center "New memory" |
 | `mcp` | Agent calling `ax_remember` via MCP |
 | `git` | `ax capture-git` (hooks or manual) |
+| `turn-hook` | `ax turn-hook` (Cursor / Claude Code agent turn hooks) |
 
 ## Git auto-capture
 
@@ -188,6 +193,34 @@ The capture process:
 5. Git memories start at confidence 0.8 (slightly lower than manual 1.0)
 
 You can also run `ax capture-git` manually or click "Capture from git" in the Command Center to backfill history.
+
+## Per-turn memories
+
+`ax install` adds two agent hooks next to the read-guard, for Cursor (`~/.cursor/hooks.json`) and Claude Code (`~/.claude/settings.json`):
+
+| Moment | Cursor | Claude Code | What runs |
+|---|---|---|---|
+| Turn start | `beforeSubmitPrompt` | `UserPromptSubmit` | `ax turn-hook start` saves a snapshot in `.ax/turns/`: the prompt (first 300 characters, secrets redacted), `HEAD`, and a content hash of every dirty file |
+| Turn end | `stop` | `Stop` (inside `ax stop-hook`) | `ax turn-hook end` compares the tree with the snapshot and writes one memory |
+
+Rules:
+
+- **Only turns that did something.** Files whose content changed since the snapshot, new or deleted files, and commits made during the turn count. Files that were already dirty and not touched again do not. A turn that only answered a question writes nothing.
+- **One memory per turn.** The id comes from the conversation and the turn (Cursor's `generation_id`, or a per-conversation counter for Claude Code), so a retried hook never duplicates.
+- **Recall-only and local.** `turn` memories are skipped by `ax_preflight` (the `<ax_memories>` block and the memory titles list) and by `ax memory export`. Find them with `ax_recall` / `ax recall`.
+- **Kept 30 days.** Every turn end that writes deletes `turn` memories older than 30 days. Other kinds are never touched.
+- **Secrets redacted.** API keys (`sk-…`, `ghp_…`, `AKIA…`), `password=…` values, and long hex or base64 runs are stored as `[redacted]`.
+- **Never blocks.** The hooks print nothing and always exit 0; outside a git repository or an ax project they do nothing.
+
+The memory says *what* changed, not *why*. Save the why with `ax_remember`.
+
+To switch it off for a project, set this in `ax.json`:
+
+```json
+{ "memory": { "perTurn": false } }
+```
+
+`AX_NO_STOP_HOOK=1` switches it off (together with the Claude turn-end policy check) for one environment.
 
 ## CLI
 
