@@ -149,11 +149,10 @@ impl Client {
     }
 }
 
-#[test]
-fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
-    let p = project();
+/// An `ax serve --mcp` proxy on `exe`, with the MCP handshake done.
+fn start_proxy(exe: &Path, p: &Project) -> (KillOnDrop, Client) {
     let mut proxy = KillOnDrop(
-        ax(Path::new(env!("CARGO_BIN_EXE_ax")), p.home.path())
+        ax(exe, p.home.path())
             .args(["serve", "--mcp", "--path"])
             .arg(&p.root)
             .current_dir(&p.root)
@@ -163,7 +162,6 @@ fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
             .spawn()
             .unwrap(),
     );
-    let stderr = || std::fs::read_to_string(p.home.path().join("proxy.stderr")).unwrap();
     let mut client = Client {
         stdin: proxy.0.stdin.take().unwrap(),
         lines: Client::start(proxy.0.stdout.take().unwrap()),
@@ -173,6 +171,85 @@ fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
         "clientInfo":{"name":"daemon-lifecycle-test","version":"0"}}}));
     assert!(client.reply(1).get("result").is_some(), "initialize");
     client.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
+    (proxy, client)
+}
+
+fn proxy_stderr(p: &Project) -> String {
+    std::fs::read_to_string(p.home.path().join("proxy.stderr")).unwrap_or_default()
+}
+
+fn start_daemon(exe: &Path, p: &Project) -> KillOnDrop {
+    KillOnDrop(
+        ax(exe, p.home.path())
+            .args(["serve", "--mcp", "--daemon", "--path"])
+            .arg(&p.root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+/// Two copies of the ax binary; the second has the later modification time.
+fn older_and_newer(dir: &Path) -> (PathBuf, PathBuf) {
+    let older = dir.join("older/ax");
+    let newer = dir.join("newer/ax");
+    let now = std::time::SystemTime::now();
+    // `fs::copy` keeps the source's mtime on macOS, so both times are set explicitly.
+    for (exe, mtime) in [(&older, now - Duration::from_secs(60)), (&newer, now)] {
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_ax"), exe).unwrap();
+        std::fs::File::options().write(true).open(exe).unwrap().set_modified(mtime).unwrap();
+    }
+    (older, newer)
+}
+
+fn daemon_exe_path(root: &Path) -> Option<String> {
+    daemon_info(root).and_then(|i| i["exe"]["path"].as_str().map(str::to_string))
+}
+
+#[test]
+fn e3_a_newer_proxy_restarts_an_older_daemon_on_its_own_binary() {
+    let p = project();
+    let bins = tempfile::tempdir().unwrap();
+    let (older, newer) = older_and_newer(bins.path());
+    let _old_daemon = start_daemon(&older, &p);
+    let old_pid = wait_until("the older daemon", Duration::from_secs(20), || {
+        daemon_info(&p.root).and_then(|i| i["pid"].as_u64())
+    });
+
+    let (_proxy, mut client) = start_proxy(&newer, &p);
+    let reply = client.call_status(2);
+    assert!(reply.get("result").is_some(), "call through the new daemon: {reply}");
+    let info = daemon_info(&p.root).expect("a daemon serves the project");
+    assert_eq!(daemon_exe_path(&p.root).as_deref(), newer.to_str(), "{}", proxy_stderr(&p));
+    assert_ne!(info["pid"].as_u64(), Some(old_pid));
+    kill(info["pid"].as_u64().unwrap());
+}
+
+#[test]
+fn e4_an_older_proxy_attaches_to_a_newer_daemon_without_restarting_it() {
+    let p = project();
+    let bins = tempfile::tempdir().unwrap();
+    let (older, newer) = older_and_newer(bins.path());
+    let _daemon = start_daemon(&newer, &p);
+    let pid = wait_until("the newer daemon", Duration::from_secs(20), || {
+        daemon_info(&p.root).and_then(|i| i["pid"].as_u64())
+    });
+
+    let (_proxy, mut client) = start_proxy(&older, &p);
+    let reply = client.call_status(2);
+    assert!(reply.get("result").is_some(), "call through the newer daemon: {reply}");
+    let info = daemon_info(&p.root).expect("a daemon serves the project");
+    assert_eq!(info["pid"].as_u64(), Some(pid), "{}", proxy_stderr(&p));
+    assert_eq!(daemon_exe_path(&p.root).as_deref(), newer.to_str());
+}
+
+#[test]
+fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
+    let p = project();
+    let (mut proxy, mut client) = start_proxy(Path::new(env!("CARGO_BIN_EXE_ax")), &p);
     assert!(client.call_status(2).get("result").is_some(), "first call");
 
     let first = daemon_info(&p.root).expect("the proxy runs through a daemon");
@@ -196,6 +273,6 @@ fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
     let status = wait_until("the proxy to exit", Duration::from_secs(10), || {
         proxy.0.try_wait().unwrap()
     });
-    assert!(status.success(), "stdin closed means a clean exit, got {status}: {}", stderr());
+    assert!(status.success(), "stdin closed means a clean exit, got {status}: {}", proxy_stderr(&p));
     kill(second["pid"].as_u64().unwrap());
 }
