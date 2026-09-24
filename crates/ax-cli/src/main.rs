@@ -1756,9 +1756,10 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
     }
 }
 
-/// Log filter for the CLI: `--quiet` anywhere on the command line hides ax INFO lines.
+/// Log filter for the CLI: `--quiet` anywhere on the command line hides ax INFO lines, and so
+/// does `ax turn-hook`, which runs on every agent prompt.
 fn log_directive(args: &[String]) -> &'static str {
-    if args.iter().skip(1).any(|a| a == "--quiet") {
+    if args.get(1).is_some_and(|a| a == "turn-hook") || args.iter().skip(1).any(|a| a == "--quiet") {
         "ax=warn"
     } else {
         "ax=info"
@@ -1792,5 +1793,11 @@ mod log_directive_tests {
             log_directive(&args(&["ax", "remember", "be --quiet-ish"])),
             "ax=info"
         );
+    }
+
+    #[test]
+    fn turn_hook_is_always_quiet() {
+        assert_eq!(log_directive(&args(&["ax", "turn-hook", "end"])), "ax=warn");
+        assert_eq!(log_directive(&args(&["ax", "recall", "turn-hook"])), "ax=info");
     }
 }

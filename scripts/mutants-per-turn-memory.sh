@@ -16,8 +16,9 @@ SYNC=crates/ax-memory/src/sync.rs
 TOOLS=crates/ax-mcp/src/tools.rs
 HOOKS=crates/ax-installer/src/hooks.rs
 TARGETS=crates/ax-installer/src/targets.rs
+MAIN=crates/ax-cli/src/main.rs
 
-for f in "$TURN" "$TURNS" "$MEMLIB" "$SYNC" "$TOOLS" "$HOOKS" "$TARGETS"; do
+for f in "$TURN" "$TURNS" "$MEMLIB" "$SYNC" "$TOOLS" "$HOOKS" "$TARGETS" "$MAIN"; do
   if ! git diff --quiet -- "$f"; then
     echo "mutants: $f has unstaged changes; stage them first" >&2
     exit 1
@@ -86,6 +87,8 @@ mutant T14 ax-cli "$TURN" 's/\|s\| format!\("\{s\}\.\.HEAD"\)/|_| "HEAD".to_stri
 mutant T15 ax-cli "$TURN" 's/files: lines\.filter\(\|l\| !l\.trim\(\)\.is_empty\(\)\)\.map\(str::to_string\)\.collect\(\)/files: Vec::new()/'
 mutant T16 ax-cli "$TURN" 's/    if !ax_context::directory::get_ax_dir\(root\)\.is_dir\(\) \|\| !per_turn_enabled\(root\) \{/    if !per_turn_enabled(root) {/'
 mutant T17 ax-cli "$TURN" 's/prompt: text\("prompt"\)\.unwrap_or_default\(\)/prompt: String::new()/'
+mutant T18 ax-cli "$MAIN" 's/args\.get\(1\)\.is_some_and\(\|a\| a == "turn-hook"\) \|\| //'
+mutant T19 ax-cli "$MAIN" 's/args\.get\(1\)\.is_some_and\(\|a\| a == "turn-hook"\)/args.iter().any(|a| a == "turn-hook")/'
 
 # Turn memories (ax-memory)
 mutant M1 ax-memory "$MEMLIB" 's/m\.score > 0\.0 && m\.memory\.kind != TURN_KIND/m.score > 0.0/'
