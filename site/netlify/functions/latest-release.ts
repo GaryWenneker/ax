@@ -3,13 +3,16 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Prefer Accept: text/html (browsers / axe) → HTML with lang + title; else plain text for installers. */
-function readLatest(): string {
-	const candidates = [
-		join(process.cwd(), 'public', 'releases', 'latest.txt'),
-		join(process.cwd(), 'releases', 'latest.txt'),
-		join(__dirname, 'public', 'releases', 'latest.txt'),
-		join(__dirname, '..', '..', 'public', 'releases', 'latest.txt'),
-	];
+function readLatest(): string | null {
+	const bases = [process.cwd(), join(process.cwd(), 'site')];
+	// `__dirname` exists in the CJS bundle Netlify deploys, not when this file runs as ESM.
+	if (typeof __dirname !== 'undefined') {
+		bases.push(__dirname, join(__dirname, 'site'), join(__dirname, '..', '..'));
+	}
+	const candidates = bases.flatMap((base) => [
+		join(base, 'public', 'releases', 'latest.txt'),
+		join(base, 'releases', 'latest.txt'),
+	]);
 	for (const p of candidates) {
 		if (!existsSync(p)) continue;
 		try {
@@ -19,7 +22,7 @@ function readLatest(): string {
 			/* try next */
 		}
 	}
-	return 'v3.0.0';
+	return null;
 }
 
 /** True only when the client explicitly prefers HTML (browsers / axe), not wildcard Accept. */
@@ -40,6 +43,13 @@ function wantsHtml(acceptHeader: string): boolean {
 
 const handler: Handler = async (event) => {
 	const version = readLatest();
+	if (!version) {
+		return {
+			statusCode: 503,
+			headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+			body: 'latest release unknown\n',
+		};
+	}
 	const accept = event.headers.accept ?? event.headers.Accept ?? '';
 	const asHtml = wantsHtml(accept);
 
