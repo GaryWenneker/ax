@@ -1,10 +1,16 @@
 ---
 name: tdd
-description: Test-driven development. Use when implementing features or fixing bugs — write the failing test first.
-triggers: ["implement", "feature", "test", "tdd", "red green", "test first", "test-driven"]
-tags: ["testing", "methodology"]
+description: "Test-driven development. Use when implementing features or fixing bugs — write the failing test first."
+alwaysApply: false
+triggers: ["implement","feature","test","tdd","red green","test first","test-driven"]
+tags: ["testing","methodology"]
 priority: 60
+enabled: true
+status: approved
+scope: project
+group: testing
 ---
+
 # Test-Driven Development
 
 Write the test first. Watch it fail. Write minimal code to pass. Refactor.
@@ -36,3 +42,7 @@ Write the test first. Watch it fail. Write minimal code to pass. Refactor.
 "Too simple to test" — simple code breaks; test takes 30 seconds.
 "I'll test after" — tests written after pass immediately and prove nothing.
 "TDD slows me down" — TDD is faster than debugging. Always.
+
+## Related
+
+- [[old-coder]] — RED, GREEN, REFACTOR is old-coder's inner loop

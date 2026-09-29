@@ -152,10 +152,7 @@ pub fn find_indexed_subproject_roots(root: &Path, max_depth: u32, max: usize) ->
 }
 
 fn escape_regexp(s: &str) -> String {
-    regex::Regex::new(r"[.*+?^${}()|[\]\\]")
-        .unwrap()
-        .replace_all(s, "\\$0")
-        .to_string()
+    regex::escape(s)
 }
 
 /// Decide what the front-load hook injects for a prompt from `cwd`.
@@ -238,4 +235,23 @@ pub fn plan_frontload(cwd: &Path, prompt: &str) -> Option<PathBuf> {
 pub fn validate_directory(root: &Path) -> bool {
     let ax_dir = get_ax_dir(root);
     ax_dir.exists() && ax_dir.join(DB_FILENAME).exists()
+}
+
+#[cfg(test)]
+mod escape_tests {
+    use super::escape_regexp;
+
+    #[test]
+    fn escaped_text_matches_only_itself() {
+        let re = regex::Regex::new(&format!("^{}$", escape_regexp("a.b*c"))).unwrap();
+        assert!(re.is_match("a.b*c"));
+        assert!(!re.is_match("axbbc"));
+    }
+
+    #[test]
+    fn brackets_and_parens_are_literal() {
+        let re = regex::Regex::new(&format!("^{}$", escape_regexp("x[1](y)"))).unwrap();
+        assert!(re.is_match("x[1](y)"));
+        assert!(!re.is_match("x1y"));
+    }
 }
