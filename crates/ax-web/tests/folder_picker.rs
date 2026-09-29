@@ -1,5 +1,7 @@
 //! Native folder picker route (P1, P3–P5) from docs/specs/folder-picker-and-ide-install.md.
 //! `AX_FOLDER_PICKER_CMD` is process-global, so every scenario runs in one test.
+//! The picker commands are `#!/bin/sh` scripts, so this file only runs on Unix.
+#![cfg(unix)]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
