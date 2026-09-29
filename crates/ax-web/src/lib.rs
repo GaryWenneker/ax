@@ -417,55 +417,8 @@ fn graph_max_limit() -> i64 {
 async fn load_graph_payload(hub: &WebHub, p: GraphQuery) -> Result<queries::GraphPayload, String> {
     let ws = hub.read().await;
     let limit = p.limit.clamp(1, graph_max_limit());
-    if let Ok(gpath) = ax_global_db::global_db_path() {
-        if gpath.is_file() {
-            if let Ok(gpool) = ax_global_db::open_and_init(&gpath).await {
-                let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects")
-                    .fetch_one(&gpool)
-                    .await
-                    .unwrap_or(0);
-                if n > 0 {
-                    match ax_global_db::graph::graph_slice(&gpool, limit, &ws.project_root).await {
-                        Ok(slice) => {
-                            let payload = queries::GraphPayload {
-                                nodes: slice
-                                    .nodes
-                                    .into_iter()
-                                    .map(|n| queries::GraphNode {
-                                        id: n.id,
-                                        name: n.name,
-                                        kind: n.kind,
-                                        file_path: n.file_path,
-                                        community_id: n.project_id,
-                                        community_label: Some(n.project_name),
-                                        degree: n.degree,
-                                        shared: n.shared,
-                                        selected: n.selected,
-                                    })
-                                    .collect(),
-                                edges: slice
-                                    .edges
-                                    .into_iter()
-                                    .map(|e| queries::GraphEdge {
-                                        source: e.source,
-                                        target: e.target,
-                                        kind: e.kind,
-                                        confidence: None,
-                                    })
-                                    .collect(),
-                                total_nodes: slice.total_nodes,
-                                truncated: slice.truncated,
-                                palette: Some("project".into()),
-                            };
-                            return Ok(payload);
-                        }
-                        Err(e) => tracing::warn!("global graph slice failed: {e}"),
-                    }
-                }
-            }
-        }
-    }
-
+    // The canvas is the open workspace index. ~/.ax/global.db stays a cross-project
+    // store for policy sync; it must not paint other workspaces onto this graph.
     let qb = QueryBuilder::new(ws.graph_pool.clone());
     let needs_compute =
         p.recompute || matches!(qb.communities_computed_at().await, Ok(None) | Err(_));

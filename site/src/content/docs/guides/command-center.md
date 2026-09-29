@@ -132,7 +132,7 @@ The Agent terminal page and the SonarQube page have been removed. Old `/agent` a
 
 | Page | Purpose |
 |---|---|
-| **Graph** | Interactive knowledge graph — Leiden communities, god-node tour, suggested questions; optional **Domain** view from `.ax/domain-graph.json` |
+| **Graph** | Interactive knowledge graph of the **selected workspace** index only — Leiden communities, god-node tour, suggested questions; optional **Domain** view from `.ax/domain-graph.json`. Other workspaces in `~/.ax/global.db` are not drawn here. |
 | **Nodes** | Symbol table with kind/file filters and detail blade |
 | **Search** | FTS over indexed symbols |
 | **Stats** | Index overview for the active project |
