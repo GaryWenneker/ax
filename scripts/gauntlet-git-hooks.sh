@@ -111,9 +111,15 @@ if want 7; then
 echo "== 7. real execution: commit in a temp repo with the fresh binary"
 repo="$LOG/repo"
 bin="$LOG/bin"
-mkdir -p "$repo" "$bin"
+mkdir -p "$repo" "$bin" "$LOG/home"
 ln -s "$ROOT/target-dev/release/ax" "$bin/ax"
+. scripts/lib/user-agent-files.sh
+agent_files_before="$(user_agent_files)"
+# Not `( … ) || fail`: bash ignores `set -e` inside a subshell whose status is tested.
+set +e
 (
+  set -euo pipefail
+  export HOME="$LOG/home"
   export PATH="$bin:$PATH"
   cd "$repo"
   git init -q
@@ -140,7 +146,12 @@ ln -s "$ROOT/target-dev/release/ax" "$bin/ax"
   [ -z "$extra" ] || { echo "commit printed more than git's summary: $extra" >&2; exit 1; }
   ax recall "gauntlet quiet hook" >"$LOG/recall.log" 2>&1
   grep -q "\[git\] feat: gauntlet quiet hook" "$LOG/recall.log" || { echo "no git memory for the commit" >&2; exit 1; }
-) || fail "real execution"
+)
+real_exit=$?
+set -e
+agent_files_after="$(user_agent_files)"
+[ "$agent_files_after" = "$agent_files_before" ] || fail "real execution changed the user's agent configs"
+[ "$real_exit" -eq 0 ] || fail "real execution"
 echo "   hooks executable with shebang and quiet ship line; commit printed only git's summary; git memory captured"
 fi
 

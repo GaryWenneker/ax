@@ -59,6 +59,12 @@ pub fn resolve_path(path: Option<String>) -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
+/// Git hooks call `--quiet` commands in every checkout; one that was never initialized
+/// (a fresh worktree) is not an error for them, and must not get a `.ax/` either.
+pub fn quiet_and_uninitialized(root: &Path, quiet: bool) -> bool {
+    quiet && !ax_context::directory::is_initialized(root)
+}
+
 pub fn check_unsafe_root(path: &Path) -> Result<(), String> {
     if let Some(reason) = ax_context::unsafe_index_root_reason(path) {
         return Err(reason);

@@ -179,13 +179,18 @@ fn remove_marked(config: &mut Value, is_ours: fn(&Value) -> bool) -> bool {
     changed
 }
 
-/// Add the Cursor `beforeSubmitPrompt` / `stop` entries for `ax turn-hook start|end`.
+/// Add the Cursor `beforeSubmitPrompt` / `afterAgentResponse` / `stop` entries for
+/// `ax turn-hook start|response|end`.
 pub fn upsert_cursor_turn_hooks(config: &mut Value, bin: &str) -> Result<(), String> {
     if config.get("version").is_none() && config.is_object() {
         config["version"] = json!(1);
     }
     let bin = quote_bin(bin);
-    for (event, phase) in [("beforeSubmitPrompt", "start"), ("stop", "end")] {
+    for (event, phase) in [
+        ("beforeSubmitPrompt", "start"),
+        ("afterAgentResponse", "response"),
+        ("stop", "end"),
+    ] {
         let entry = json!({ "command": format!("{bin} {TURN_MARKER} {phase}"), "timeout": 10 });
         replace_or_push(event_array(config, event)?, entry, is_turn_hook);
     }
@@ -439,6 +444,7 @@ mod tests {
             c,
             json!({ "version": 1, "hooks": {
                 "beforeSubmitPrompt": [{ "command": "/opt/ax/bin/ax turn-hook start", "timeout": 10 }],
+                "afterAgentResponse": [{ "command": "/opt/ax/bin/ax turn-hook response", "timeout": 10 }],
                 "stop": [{ "command": "/opt/ax/bin/ax turn-hook end", "timeout": 10 }]
             } })
         );
@@ -489,6 +495,7 @@ mod tests {
 
         assert!(remove_turn_hooks(&mut c));
         assert!(c["hooks"].get("beforeSubmitPrompt").is_none());
+        assert!(c["hooks"].get("afterAgentResponse").is_none());
         assert_eq!(c["hooks"]["stop"], json!([{ "command": "./notify.sh" }]));
         assert_eq!(c["hooks"]["preToolUse"].as_array().unwrap().len(), 1);
         assert!(!remove_turn_hooks(&mut c), "second remove is a no-op");

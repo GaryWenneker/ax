@@ -130,10 +130,14 @@ repo="$LOG/repo"
 bin="$LOG/bin"
 mkdir -p "$repo" "$bin" "$LOG/plain" "$LOG/home/.cursor" "$LOG/home/.claude" "$LOG/installdir"
 ln -s "$ROOT/target-dev/release/ax" "$bin/ax"
+# `ax init` writes the user's global agent configs; they must stay untouched.
+. scripts/lib/user-agent-files.sh
+agent_files_before="$(user_agent_files)"
 # Not `( … ) || fail`: bash ignores `set -e` inside a subshell whose status is tested.
 set +e
 (
   set -euo pipefail
+  export HOME="$LOG/home"
   export PATH="$bin:$PATH"
   cd "$repo"
   git init -q
@@ -230,6 +234,8 @@ set +e
 )
 real_exit=$?
 set -e
+agent_files_after="$(user_agent_files)"
+[ "$agent_files_after" = "$agent_files_before" ] || fail "real execution changed the user's agent configs"
 [ "$real_exit" -eq 0 ] || fail "real execution"
 echo "   T1 T2 T5 T7 T10 T11 T12 T13 T14 T15 verified with the release binary"
 fi

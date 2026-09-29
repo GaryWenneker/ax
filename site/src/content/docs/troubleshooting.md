@@ -22,7 +22,7 @@ ax hardens this by default:
 - Stale `ax.lock` / dead daemon PIDs are cleared on open and on `ax daemon restart`
 - Maintenance uses `wal_checkpoint(PASSIVE)` so optimize does not starve readers
 
-Healthy path: each IDE attaches as a thin **stdio proxy** to one **shared per-project daemon**. If the daemon fails to start within ~10s, ax falls back to an **embedded** MCP engine inside each client — multiple writers → locks → DEGRADED.
+Healthy path: each IDE attaches as a thin **stdio proxy** to one **shared per-project daemon**. If the daemon fails to start within ~10s when the IDE first connects, ax falls back to an **embedded** MCP engine inside each client — multiple writers → locks → DEGRADED. Once attached, a proxy reconnects by itself when the daemon restarts.
 
 Mitigations:
 
@@ -32,7 +32,7 @@ Mitigations:
 ax daemon restart
 ```
 
-2. Then in the IDE: **MCP: Restart Servers** (or reload the window) so proxies reconnect.
+2. Proxies reconnect on their own within 15 seconds. If the IDE still shows DEGRADED after that, run **MCP: Restart Servers** (or reload the window).
 3. **Stale lock after a crash** — `ax unlock` (kills orphaned `ax.exe`; heavier than `daemon restart`).
 4. Avoid starting a second long `ax index` / `ax init` while one is already running (the second will wait, then proceed).
 5. **Network filesystem** — WAL may not work reliably on SMB/NFS or WSL2 `/mnt`. Keep the project (with `.ax/`) on a local disk.

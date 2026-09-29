@@ -269,7 +269,7 @@ pub fn uninstall_all(project_root: &Path) -> Result<Vec<TargetReport>, String> {
 }
 
 fn install_target(target: &str, project_root: &Path) -> Result<Option<TargetReport>, String> {
-    let report = match target {
+    let mut report = match target {
         "cursor" => install_cursor_mcp(project_root)?,
         "claude" => install_claude_mcp(project_root)?,
         "codex" => install_codex_mcp(project_root)?,
@@ -285,7 +285,11 @@ fn install_target(target: &str, project_root: &Path) -> Result<Option<TargetRepo
         "jetbrains" => install_jetbrains()?,
         _ => return Ok(None),
     };
-    let mut report = report;
+    if report.touched() {
+        if let Some(note) = crate::ax_command::current().note() {
+            report.note(note);
+        }
+    }
     match target {
         "zed" => install_zed_task(&mut report)?,
         t => {
@@ -327,9 +331,7 @@ fn uninstall_target(target: &str, project_root: &Path) -> Result<Option<TargetRe
 }
 
 fn ax_bin() -> String {
-    std::env::current_exe()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "ax".to_string())
+    crate::ax_command::current().path
 }
 
 /// VS Code / Cursor lineage — resolved per open workspace.
@@ -641,13 +643,21 @@ fn install_claude_hook(
         .get_mut(event)
         .and_then(|v| v.as_array_mut())
         .ok_or_else(|| format!("invalid {event}"))?;
-    let already = hook_group_matches(groups, hook_subcommand);
-    if already {
-        return Ok(Some((settings_path.to_path_buf(), FileAction::Unchanged)));
+    let existing = groups
+        .iter_mut()
+        .filter_map(|g| g.get_mut("hooks").and_then(|h| h.as_array_mut()))
+        .flatten()
+        .find(|e| {
+            e.get("command")
+                .and_then(|c| c.as_str())
+                .is_some_and(|s| s.contains(hook_subcommand))
+        });
+    match existing {
+        Some(entry) => entry["command"] = Value::String(hook_cmd),
+        None => groups.push(serde_json::json!({
+            "hooks": [{ "type": "command", "command": hook_cmd }]
+        })),
     }
-    groups.push(serde_json::json!({
-        "hooks": [{ "type": "command", "command": hook_cmd }]
-    }));
     let action = write_json_action(settings_path, &settings)?;
     Ok(Some((settings_path.to_path_buf(), action)))
 }
@@ -1369,6 +1379,63 @@ mod mcp_path_tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("mkdir");
         dir.join("settings.json")
+    }
+
+    #[test]
+    fn c4_a_stale_claude_hook_path_is_replaced_in_place() {
+        let path = temp_settings_path("stale-hook");
+        let before = serde_json::json!({ "hooks": { "Stop": [
+            { "hooks": [{ "type": "command", "command": "/tmp/ax-gone/bin/ax stop-hook" }] },
+            { "hooks": [{ "type": "command", "command": "user-notify --done" }] }
+        ]}});
+        fs::write(&path, serde_json::to_string_pretty(&before).unwrap()).unwrap();
+
+        let result = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        assert!(
+            matches!(result, Some((_, FileAction::Updated))),
+            "{result:?}"
+        );
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let groups = value["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            groups[0]["hooks"][0]["command"],
+            format!("{} stop-hook", ax_bin())
+        );
+        assert_eq!(groups[1], before["hooks"]["Stop"][1]);
+
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn c5_a_correct_claude_hook_is_left_byte_for_byte() {
+        let path = temp_settings_path("correct-hook");
+        install_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        let first = fs::read(&path).unwrap();
+        let again = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        assert!(
+            matches!(again, Some((_, FileAction::Unchanged))),
+            "{again:?}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), first);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn c5_a_correct_hook_in_a_hand_formatted_file_keeps_its_formatting() {
+        let path = temp_settings_path("hand-formatted-hook");
+        let compact = format!(
+            r#"{{"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":"{} stop-hook"}}]}}]}}}}"#,
+            ax_bin()
+        );
+        fs::write(&path, &compact).unwrap();
+        let result = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
+        assert!(
+            matches!(result, Some((_, FileAction::Unchanged))),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), compact);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
