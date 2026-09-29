@@ -1219,9 +1219,19 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    #[cfg(windows)]
     #[test]
     fn resolves_placeholder_to_folder_name() {
         let root = Path::new(r"C:\gary\Contoso");
+        let (key, name) = resolve_sonar_project("your-project", root);
+        assert_eq!(key, "Contoso");
+        assert_eq!(name, "Contoso");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolves_placeholder_to_folder_name_unix() {
+        let root = Path::new("/home/gary/Contoso");
         let (key, name) = resolve_sonar_project("your-project", root);
         assert_eq!(key, "Contoso");
         assert_eq!(name, "Contoso");
@@ -1243,9 +1253,18 @@ mod tests {
         assert_eq!(name, "ax");
     }
 
+    #[cfg(windows)]
     #[test]
     fn legacy_prefix_from_workspace_folder() {
         let root = Path::new(r"C:\gary\Contoso");
+        assert_eq!(legacy_workspace_prefixes("ax", root), vec!["Contoso".to_string()]);
+        assert!(legacy_workspace_prefixes("Contoso", root).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_prefix_from_workspace_folder_unix() {
+        let root = Path::new("/home/gary/Contoso");
         assert_eq!(legacy_workspace_prefixes("ax", root), vec!["Contoso".to_string()]);
         assert!(legacy_workspace_prefixes("Contoso", root).is_empty());
     }

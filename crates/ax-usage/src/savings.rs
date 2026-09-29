@@ -1865,6 +1865,7 @@ mod tests {
         assert_eq!(acc.ax_calls, 1);
     }
 
+    #[cfg(windows)]
     #[test]
     fn cursor_transcript_path_filter() {
         let ok = PathBuf::from(
@@ -1879,6 +1880,15 @@ mod tests {
             r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\other.jsonl",
         );
         assert!(!cursor_transcript_matches(&bad_name));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cursor_transcript_path_filter_unix() {
+        let dir = "/home/me/.cursor/projects/p/agent-transcripts/uuid";
+        assert!(cursor_transcript_matches(&PathBuf::from(format!("{dir}/uuid.jsonl"))));
+        assert!(!cursor_transcript_matches(&PathBuf::from(format!("{dir}/uuid.txt"))));
+        assert!(!cursor_transcript_matches(&PathBuf::from(format!("{dir}/other.jsonl"))));
     }
 
     #[test]
