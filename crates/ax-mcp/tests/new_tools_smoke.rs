@@ -29,9 +29,27 @@ async fn default_tools_list_shows_graph_surface_and_gates_heavy_ops() {
 
 #[tokio::test]
 async fn cycles_api_path_handlers_work() {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let root = root.canonicalize().expect("repo root");
-    let mut ax = ax_core::Ax::open(&root).await.expect("open ax project");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/server.rs"),
+        "pub fn call_tool_and_wrap() -> u64 { estimate_savings() }\n\
+         pub fn estimate_savings() -> u64 { 1 }\n\
+         pub fn find_call_cycles() -> bool { call_graph_has_cycle() }\n\
+         pub fn call_graph_has_cycle() -> bool { false }\n",
+    )
+    .unwrap();
+    let mut ax = ax_core::Ax::init(root).await.expect("init ax project");
+    ax.index_all(
+        ax_extraction::orchestrator::IndexOptions {
+            quiet: true,
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect("index project");
 
     let cycles = ToolHandler::call_tool(&mut ax, "ax_cycles", json!({ "limit": 2 }))
         .await
@@ -77,5 +95,5 @@ async fn cycles_api_path_handlers_work() {
     let hop_text = hop["text"].as_str().unwrap_or("");
     assert!(hop_text.contains("call_tool_and_wrap"), "{hop_text}");
     assert!(hop_text.contains("estimate_savings"), "{hop_text}");
-    assert!(hop_text.contains("crates/ax-mcp/src/server.rs"), "{hop_text}");
+    assert!(hop_text.contains("src/server.rs"), "{hop_text}");
 }
