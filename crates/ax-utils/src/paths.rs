@@ -34,6 +34,15 @@ pub fn validate_path_within_root(root: &Path, candidate: &Path) -> Result<PathBu
 /// Env override for the machine-wide `global.db` (tests and custom installs).
 pub const AX_GLOBAL_DB_ENV: &str = "AX_GLOBAL_DB";
 
+/// The user's home directory. `AX_HOME_DIR` overrides it: on Windows `dirs::home_dir()`
+/// ignores `HOME` and `USERPROFILE`, so tests need their own way to point ax at a temp dir.
+pub fn home_dir() -> Option<PathBuf> {
+    match std::env::var_os("AX_HOME_DIR") {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => dirs::home_dir(),
+    }
+}
+
 /// `AX_GLOBAL_DB` when set and non-empty, else `<home>/.ax/global.db`.
 pub fn resolve_global_db_path(home: Option<PathBuf>) -> Option<PathBuf> {
     if let Ok(p) = std::env::var(AX_GLOBAL_DB_ENV) {
