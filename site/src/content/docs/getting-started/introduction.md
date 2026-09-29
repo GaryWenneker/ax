@@ -18,6 +18,18 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v6.0.0
+
+v6.0.0 is a major release because `ax install` now also installs a Command Center panel in your IDE, and JetBrains IDEs become a new install target.
+
+- **Command Center in every IDE.** Cursor, VS Code, Windsurf and the other VS Code-family editors get the `ax Command Center` extension. JetBrains IDEs get a tool window plugin, and Zed gets a task that opens `ax web`. **Connect** in Settings → IDEs & agents installs them. Set `AX_NO_IDE_PANEL=1` to skip the panel. See [Command Center inside your IDE](/guides/command-center/#command-center-inside-your-ide).
+- **Turn memories you can continue from.** Turn memories store the request id and a `Changes:` list (added, changed, deleted per file). `ax_history` finds a turn by its request id.
+- **Vault over WebDAV.** The memory vault can be mounted as a network folder, with a folder picker and vault folders in Command Center. See [Obsidian vault](/guides/obsidian-vault/).
+- **Policy links and graph.** Rules and skills can link to each other. A graph overlay shows the links, and a WYSIWYG editor edits the policy body.
+- **Project purge.** Command Center can remove a project's ax data in one step.
+
+Run `ax install` again to add the IDE panel.
+
 ## What's new in v5.2.0
 
 v5.2.0 makes turn memories more useful:
