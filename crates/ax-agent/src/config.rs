@@ -46,7 +46,7 @@ pub struct RecentProject {
 }
 
 pub fn config_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".ax").join("config.json"))
+    ax_utils::paths::home_dir().map(|h| h.join(".ax").join("config.json"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -170,7 +170,7 @@ pub fn forget_recent_project(path: &Path) -> Result<bool, String> {
 
 pub fn default_browse_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = ax_utils::paths::home_dir() {
         roots.push(home.clone());
         for sub in ["projects", "dev", "code", "src", "gary"] {
             let p = home.join(sub);
@@ -308,7 +308,7 @@ fn merge_scanned_projects(recent: Vec<RecentProject>, scanned: &[PathBuf]) -> Ve
 /// Recent projects, plus every initialized ax project the home scan finds.
 pub fn projects_for_switcher() -> Vec<RecentProject> {
     let recent = load_workspace_config().recent;
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = ax_utils::paths::home_dir() else {
         return recent;
     };
     let scanned = scan_initialized_projects(&home, PROJECT_SCAN_DEPTH);

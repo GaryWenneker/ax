@@ -458,7 +458,7 @@ fn seed_global_policy_rules(rules_root: &Path) -> std::io::Result<SeedResult> {
 }
 
 fn global_policy_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".ax").join("global_policy"))
+    ax_utils::paths::home_dir().map(|home| home.join(".ax").join("global_policy"))
 }
 
 /// Seed `~/.ax/global_policy/` with machine-wide rules and skills (company scope via MCP).
@@ -481,7 +481,7 @@ pub fn seed_global_policy_skills() -> std::io::Result<SeedResult> {
 
 /// Seed `~/.cursor/skills/` with baseline rollout skills (machine-wide Cursor agents).
 pub fn seed_global_cursor_skills() -> std::io::Result<SeedResult> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = ax_utils::paths::home_dir() else {
         return Ok(SeedResult::default());
     };
     seed_cursor_skills(&home.join(".cursor").join("skills"))

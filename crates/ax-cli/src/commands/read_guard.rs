@@ -440,7 +440,7 @@ fn absolute(path: &Path, cwd: Option<&Path>) -> PathBuf {
 }
 
 fn project_root(start: &Path) -> Option<PathBuf> {
-    let home = dirs::home_dir();
+    let home = ax_utils::paths::home_dir();
     start
         .ancestors()
         .filter(|a| Some(*a) != home.as_deref())
@@ -607,7 +607,7 @@ pub async fn evaluate(input: &Value, state_path: &Path, now: i64) -> Option<Deni
 fn state_path() -> Option<PathBuf> {
     match std::env::var("AX_READ_GUARD_STATE") {
         Ok(p) if !p.trim().is_empty() => Some(PathBuf::from(p)),
-        _ => dirs::home_dir().map(|h| h.join(".ax").join("read-guard.json")),
+        _ => ax_utils::paths::home_dir().map(|h| h.join(".ax").join("read-guard.json")),
     }
 }
 

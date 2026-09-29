@@ -213,7 +213,7 @@ pub async fn load(path: &Path) -> Option<GlobalLevel> {
 
 #[cfg(not(test))]
 pub fn default_path() -> Option<PathBuf> {
-    ax_utils::paths::resolve_global_db_path(dirs::home_dir())
+    ax_utils::paths::resolve_global_db_path(ax_utils::paths::home_dir())
 }
 
 #[cfg(test)]

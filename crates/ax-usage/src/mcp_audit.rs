@@ -521,7 +521,7 @@ const UNTIMED_EVENT_CAP: usize = 80;
 
 /// Find recent Cursor transcript JSONL files for a workspace.
 pub fn find_cursor_transcripts(project_root: &Path) -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = ax_utils::paths::home_dir() else {
         return Vec::new();
     };
     let slug = cursor_project_slug(project_root);
@@ -596,7 +596,7 @@ fn resolve_session_path(opts: &AuditOptions, project_root: &Path) -> Option<Path
         }
         // Treat as session uuid under agent-transcripts
         let slug = cursor_project_slug(project_root);
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = ax_utils::paths::home_dir() {
             let candidate = home
                 .join(".cursor")
                 .join("projects")
@@ -611,7 +611,7 @@ fn resolve_session_path(opts: &AuditOptions, project_root: &Path) -> Option<Path
     }
     if let Some(id) = &opts.session_id {
         let slug = cursor_project_slug(project_root);
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = ax_utils::paths::home_dir() {
             let candidate = home
                 .join(".cursor")
                 .join("projects")

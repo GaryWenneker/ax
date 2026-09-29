@@ -136,7 +136,7 @@ pub fn usage_db_path() -> PathBuf {
             return PathBuf::from(path);
         }
     }
-    dirs::home_dir()
+    ax_utils::paths::home_dir()
         .map(|h| h.join(".ax").join(USAGE_DB_FILENAME))
         .unwrap_or_else(|| PathBuf::from(".ax").join(USAGE_DB_FILENAME))
 }

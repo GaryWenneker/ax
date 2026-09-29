@@ -19,7 +19,7 @@ use ax_db::{busy_timeout, connect_options};
 pub use ax_utils::paths::AX_GLOBAL_DB_ENV;
 
 pub fn global_db_path() -> Result<PathBuf> {
-    ax_utils::paths::resolve_global_db_path(dirs::home_dir())
+    ax_utils::paths::resolve_global_db_path(ax_utils::paths::home_dir())
         .context("HOME not set; cannot resolve ~/.ax/global.db")
 }
 

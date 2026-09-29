@@ -55,7 +55,7 @@ pub struct ResolvedOffload {
 }
 
 pub fn config_dir() -> PathBuf {
-    dirs::home_dir()
+    ax_utils::paths::home_dir()
         .map(|h| h.join(".ax"))
         .unwrap_or_else(|| PathBuf::from(".ax"))
 }

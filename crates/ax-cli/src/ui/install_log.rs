@@ -209,7 +209,7 @@ fn clack_outro(g: &ClackGlyphs, message: &str) {
 }
 
 pub fn tildify(path: &std::path::Path) -> String {
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = ax_utils::paths::home_dir() {
         if path.starts_with(&home) {
             let rest = path.strip_prefix(&home).unwrap_or(path);
             let rest = rest.to_string_lossy().trim_start_matches(['\\', '/']).to_string();
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn tildify_home() {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = ax_utils::paths::home_dir() {
             let p = home.join(".cursor").join("mcp.json");
             assert!(tildify(&p).starts_with("~/"));
         }

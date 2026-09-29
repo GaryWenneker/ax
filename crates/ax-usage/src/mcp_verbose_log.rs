@@ -256,7 +256,7 @@ fn ax_dir_for(project_root: Option<&Path>) -> PathBuf {
     if let Some(root) = project_root {
         strip_verbatim_prefix(root).join(".ax")
     } else {
-        dirs::home_dir()
+        ax_utils::paths::home_dir()
             .map(|h| h.join(".ax"))
             .unwrap_or_else(|| PathBuf::from(".ax"))
     }

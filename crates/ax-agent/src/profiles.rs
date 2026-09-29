@@ -38,7 +38,7 @@ pub struct ProfileEntry {
 }
 
 pub fn profiles_base() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".ax").join("agent-profiles"))
+    ax_utils::paths::home_dir().map(|h| h.join(".ax").join("agent-profiles"))
 }
 
 pub fn profile_data_dir(agent: &str, profile_id: &str) -> Option<PathBuf> {

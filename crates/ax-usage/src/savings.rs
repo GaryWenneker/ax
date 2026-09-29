@@ -1637,11 +1637,11 @@ async fn import_cursor_file(path: &Path) -> Result<bool, String> {
 }
 
 fn claude_projects_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("projects"))
+    ax_utils::paths::home_dir().map(|h| h.join(".claude").join("projects"))
 }
 
 fn cursor_projects_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".cursor").join("projects"))
+    ax_utils::paths::home_dir().map(|h| h.join(".cursor").join("projects"))
 }
 
 /// Cursor stores one transcript per chat: `agent-transcripts/{id}/{id}.jsonl`.

@@ -423,7 +423,7 @@ fn extract_zip_bundle(bytes: &[u8], dest: &Path, bundle: &str) -> Result<(), Str
 
 #[cfg(windows)]
 fn sync_cargo_shadow(from_bin: &Path) {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = ax_utils::paths::home_dir() else {
         return;
     };
     if std::env::var("AX_KEEP_CARGO_BIN").ok().as_deref() == Some("1") {
@@ -528,7 +528,7 @@ fn spawn_upgrade_cmd_batch(parent_pid: u32, staging: &Path, dest: &Path) -> Resu
     const DETACHED_PROCESS: u32 = 0x0000_0008;
 
     let bin_dir = dest.join("bin");
-    let cargo_ax = dirs::home_dir()
+    let cargo_ax = ax_utils::paths::home_dir()
         .map(|h| h.join(".cargo").join("bin").join("ax.exe"))
         .unwrap_or_default();
     let batch_path = std::env::temp_dir().join(format!("ax-upgrade-{parent_pid}.cmd"));

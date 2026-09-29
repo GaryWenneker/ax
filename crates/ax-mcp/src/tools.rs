@@ -829,7 +829,7 @@ fn session_policy_inject(ax: &Ax, session: &Value, result: &MatchResult) -> (Str
     let client = session.get("client").and_then(|v| v.as_str()).unwrap_or("");
     let client_loaded = if client.to_ascii_lowercase().contains("cursor") {
         let mut roots = vec![ax.project_root().to_path_buf()];
-        roots.extend(dirs::home_dir());
+        roots.extend(ax_utils::paths::home_dir());
         ax_policy::ide_loaded::ide_loaded_keys(&roots, &result.rules, &result.skills)
     } else {
         std::collections::HashSet::new()

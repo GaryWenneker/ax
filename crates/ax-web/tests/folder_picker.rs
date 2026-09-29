@@ -17,6 +17,7 @@ use tower_http::cors::{Any, CorsLayer};
 async fn open_app(readonly: bool) -> (tempfile::TempDir, Router) {
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("HOME", dir.path());
+    std::env::set_var("AX_HOME_DIR", dir.path());
     std::env::set_var("AX_GLOBAL_DB", dir.path().join("global.db"));
     let root = dir.path().join("proj");
     std::fs::create_dir_all(root.join(".ax")).unwrap();

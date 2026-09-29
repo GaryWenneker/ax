@@ -25,6 +25,7 @@ fn b1_b5_init_leaves_only_shareable_files_untracked() {
         .arg("init")
         .current_dir(p)
         .env("HOME", home.path())
+        .env("AX_HOME_DIR", home.path())
         .env("USERPROFILE", home.path())
         .env("AX_NO_UPDATE_CHECK", "1")
         .env("NO_COLOR", "1")

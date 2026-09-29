@@ -54,5 +54,8 @@ jobs:
         with:
           shared-key: ci-lint
 
+      - name: Home dir goes through ax_utils
+        run: ./scripts/check-home-dir.sh
+
       - name: Clippy (deny warnings in libs)
         run: cargo clippy --workspace --locked -- -D clippy::correctness -W clippy::suspicious

@@ -464,7 +464,7 @@ fn replace_hermes_ax_block(content: &str, block: &str) -> String {
 }
 
 fn home_dir() -> Result<PathBuf, String> {
-    dirs::home_dir().ok_or_else(|| "no home dir".to_string())
+    ax_utils::paths::home_dir().ok_or_else(|| "no home dir".to_string())
 }
 
 fn read_json(path: &Path) -> Value {
@@ -1044,7 +1044,7 @@ fn uninstall_vscode_mcp() -> Result<TargetReport, String> {
 /// Windsurf (Cascade) — global-only config at `~/.codeium/windsurf/mcp_config.json`,
 /// same `mcpServers` shape as Cursor.
 fn windsurf_config_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".codeium").join("windsurf"))
+    ax_utils::paths::home_dir().map(|h| h.join(".codeium").join("windsurf"))
 }
 
 fn windsurf_mcp_path() -> Result<PathBuf, String> {

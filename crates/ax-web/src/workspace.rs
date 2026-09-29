@@ -581,7 +581,7 @@ async fn handle_purge(State(hub): State<WebHub>, Json(body): Json<PurgeBody>) ->
 }
 
 async fn forget_global_project_row(path: &Path) -> Result<(), String> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = ax_utils::paths::home_dir() else {
         return Ok(());
     };
     let db = home.join(".ax").join("global.db");

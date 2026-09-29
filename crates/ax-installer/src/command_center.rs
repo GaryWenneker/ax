@@ -250,7 +250,7 @@ impl Runner for SystemRunner {
 
 fn places_here() -> Option<Places> {
     Some(Places {
-        home: dirs::home_dir()?,
+        home: ax_utils::paths::home_dir()?,
         local_app_data: std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
         program_files: std::env::var_os("ProgramFiles").map(PathBuf::from),
     })

@@ -11,6 +11,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 async fn open_app(home: &std::path::Path, readonly: bool) -> Router {
     std::env::set_var("HOME", home);
+    std::env::set_var("AX_HOME_DIR", home);
     std::env::set_var("AX_NO_IDE_PANEL", "1");
     std::env::set_var("AX_GLOBAL_DB", home.join("global.db"));
     let root = home.join(if readonly { "ro" } else { "proj" });

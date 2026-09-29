@@ -801,7 +801,7 @@ pub(crate) async fn store_seeded_skills_in_global_db(
 /// runtime, so it works inside or outside an async context.
 pub(crate) fn store_seeded_skills_in_global_db_blocking() -> Result<Vec<String>, String> {
     let db = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
-    let machine = dirs::home_dir().ok_or("no home dir")?.join(".ax");
+    let machine = ax_utils::paths::home_dir().ok_or("no home dir")?.join(".ax");
     store_seeded_skills_blocking_at(db, machine)
 }
 

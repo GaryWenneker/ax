@@ -380,7 +380,7 @@ pub fn resolve_cli_spawn(id: &str) -> Result<CliSpawn, String> {
     }
 
     // 4. ~/.local/bin fallback (native installers)
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = ax_utils::paths::home_dir() {
         let name = if cfg!(target_os = "windows") {
             format!("{bin}.exe")
         } else {
@@ -739,7 +739,7 @@ fn local_app_data() -> Option<PathBuf> {
             return Some(PathBuf::from(v));
         }
     }
-    dirs::home_dir().map(|h| h.join("AppData").join("Local"))
+    ax_utils::paths::home_dir().map(|h| h.join("AppData").join("Local"))
 }
 
 fn augment_path(env: &mut HashMap<String, String>) {
@@ -750,7 +750,7 @@ fn augment_path(env: &mut HashMap<String, String>) {
     };
 
     let mut extras: Vec<PathBuf> = Vec::new();
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = ax_utils::paths::home_dir() {
         extras.push(home.join(".local").join("bin"));
         extras.push(home.join(".npm-global").join("bin"));
         if cfg!(not(target_os = "windows")) {

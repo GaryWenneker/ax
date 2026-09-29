@@ -161,7 +161,7 @@ pub async fn run_tag_session(agent: String, session_id: String, model: String) -
 }
 
 pub fn run_hook_install() -> Result<(), String> {
-    let cursor_dir = dirs::home_dir()
+    let cursor_dir = ax_utils::paths::home_dir()
         .map(|h| h.join(".cursor"))
         .ok_or("could not resolve home directory")?;
     let hooks_dir = cursor_dir.join("hooks");

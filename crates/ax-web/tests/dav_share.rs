@@ -10,6 +10,7 @@ use tower_http::cors::CorsLayer;
 async fn dav_requires_share_token_when_sharing() {
     let home = tempfile::tempdir().unwrap();
     std::env::set_var("HOME", home.path());
+    std::env::set_var("AX_HOME_DIR", home.path());
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("proj");
     std::fs::create_dir_all(root.join(".ax")).unwrap();

@@ -169,7 +169,7 @@ pub fn is_update_available(current: &str, latest: &str) -> bool {
 }
 
 fn cache_path() -> PathBuf {
-    dirs::home_dir()
+    ax_utils::paths::home_dir()
         .map(|h| h.join(".ax").join("update-check.json"))
         .unwrap_or_else(|| PathBuf::from(".ax/update-check.json"))
 }

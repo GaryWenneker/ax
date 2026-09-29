@@ -92,7 +92,7 @@ fn default_models() -> HashMap<String, ModelPricing> {
 }
 
 pub fn pricing_config_path() -> PathBuf {
-    dirs::home_dir()
+    ax_utils::paths::home_dir()
         .map(|h| h.join(".ax").join(PRICING_FILENAME))
         .unwrap_or_else(|| PathBuf::from(".ax").join(PRICING_FILENAME))
 }

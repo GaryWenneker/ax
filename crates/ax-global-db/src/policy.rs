@@ -293,7 +293,7 @@ pub async fn upsert_machine_skill(item_id: &str, payload: &Value) -> Result<()> 
         std::fs::create_dir_all(parent)?;
     }
     let pool = crate::open_and_init(&db_path).await?;
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
+    let home = ax_utils::paths::home_dir().ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
     let project_id = ensure_project(&pool, &home.join(".ax")).await?;
     upsert_policy_item(&pool, project_id, PolicyKind::Skills, item_id, payload).await?;
     pool.close().await;

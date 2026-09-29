@@ -22,6 +22,7 @@ fn isolate_home() -> &'static Path {
     HOME.get_or_init(|| {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", dir.path());
+        std::env::set_var("AX_HOME_DIR", dir.path());
         std::env::set_var("AX_DAV_MOUNT_DRY_RUN", "1");
         dir
     })

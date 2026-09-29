@@ -19,6 +19,7 @@ fn isolate_home() {
     HOME.get_or_init(|| {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", dir.path());
+        std::env::set_var("AX_HOME_DIR", dir.path());
         std::env::set_var("AX_GLOBAL_DB", dir.path().join("global.db"));
         dir
     });

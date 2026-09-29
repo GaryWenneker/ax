@@ -78,7 +78,7 @@ fn model_path() -> Option<PathBuf> {
     }
     #[cfg(feature = "onnx")]
     {
-        return dirs::home_dir().and_then(|h| {
+        return ax_utils::paths::home_dir().and_then(|h| {
             let p = h.join(".ax").join("models").join("all-MiniLM-L6-v2.onnx");
             p.is_file().then_some(p)
         });

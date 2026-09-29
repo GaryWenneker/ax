@@ -71,7 +71,7 @@ pub fn state_vscdb_path() -> Option<PathBuf> {
 }
 
 pub fn profiles_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".ax").join("cursor-auth"))
+    ax_utils::paths::home_dir().map(|h| h.join(".ax").join("cursor-auth"))
 }
 
 fn manifest_path() -> Option<PathBuf> {

@@ -31,7 +31,7 @@ pub use targets::{
 
 /// Ensure `~/.ax/config.json` exists with index/policy scaffolds.
 pub fn ensure_global_config() {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = ax_utils::paths::home_dir() else {
         return;
     };
     let ax_dir = home.join(".ax");

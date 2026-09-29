@@ -101,7 +101,7 @@ pub fn cursor_state_vscdb_path() -> Option<PathBuf> {
 
 /// Path to the active Cursor session marker written by `ax session-hook`.
 pub fn active_cursor_session_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".ax").join("active-cursor-session"))
+    ax_utils::paths::home_dir().map(|h| h.join(".ax").join("active-cursor-session"))
 }
 
 /// Persist the latest Cursor `session_id` so MCP verbose lines can tag `session=`.

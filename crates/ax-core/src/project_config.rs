@@ -144,7 +144,7 @@ fn read_project_config_file(project_root: &Path) -> ProjectConfigFile {
 }
 
 fn global_config_path() -> PathBuf {
-    dirs::home_dir()
+    ax_utils::paths::home_dir()
         .map(|h| h.join(".ax").join("config.json"))
         .unwrap_or_else(|| PathBuf::from(".ax/config.json"))
 }

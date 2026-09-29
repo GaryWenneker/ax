@@ -19,6 +19,7 @@ struct Project {
 fn ax(exe: &Path, home: &Path) -> Command {
     let mut cmd = Command::new(exe);
     cmd.env("HOME", home)
+        .env("AX_HOME_DIR", home)
         .env("USERPROFILE", home)
         .env("AX_NO_UPDATE_CHECK", "1")
         .env("NO_COLOR", "1")

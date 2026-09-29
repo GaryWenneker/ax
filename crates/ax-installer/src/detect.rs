@@ -96,7 +96,7 @@ impl Probe for System {
 
 /// `app_installed` for this machine.
 pub fn app_installed_here(target: &str) -> bool {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = ax_utils::paths::home_dir() else {
         return false;
     };
     let places = Places {

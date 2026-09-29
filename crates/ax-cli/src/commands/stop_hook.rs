@@ -181,7 +181,7 @@ async fn ingest_transcript_tail(cwd: &Path, input: &serde_json::Value) {
 }
 
 fn newest_claude_jsonl(cwd: &Path) -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
+    let home = ax_utils::paths::home_dir()?;
     let projects = home.join(".claude").join("projects");
     if !projects.is_dir() {
         return None;
