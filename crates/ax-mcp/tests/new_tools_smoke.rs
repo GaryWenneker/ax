@@ -93,6 +93,7 @@ async fn cycles_api_path_handlers_work() {
     .await
     .expect("ax_path hop");
     let hop_text = hop["text"].as_str().unwrap_or("");
+    assert!(hop_text.starts_with("Path (1 hops)"), "{hop_text}");
     assert!(hop_text.contains("call_tool_and_wrap"), "{hop_text}");
     assert!(hop_text.contains("estimate_savings"), "{hop_text}");
     assert!(hop_text.contains("src/server.rs"), "{hop_text}");
