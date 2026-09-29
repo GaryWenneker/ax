@@ -55,7 +55,6 @@
 
 [functions."latest-release"]
   timeout = 5
-  included_files = ["public/releases/latest.txt"]
 
 # Legacy /releases/:version/* CDN URLs redirect to GitHub Releases (binaries no longer mirrored on Netlify).
 [[redirects]]

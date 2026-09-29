@@ -1,29 +1,5 @@
 import type { Handler } from '@netlify/functions';
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-
-/** Prefer Accept: text/html (browsers / axe) → HTML with lang + title; else plain text for installers. */
-function readLatest(): string | null {
-	const bases = [process.cwd(), join(process.cwd(), 'site')];
-	// `__dirname` exists in the CJS bundle Netlify deploys, not when this file runs as ESM.
-	if (typeof __dirname !== 'undefined') {
-		bases.push(__dirname, join(__dirname, 'site'), join(__dirname, '..', '..'));
-	}
-	const candidates = bases.flatMap((base) => [
-		join(base, 'public', 'releases', 'latest.txt'),
-		join(base, 'releases', 'latest.txt'),
-	]);
-	for (const p of candidates) {
-		if (!existsSync(p)) continue;
-		try {
-			const v = readFileSync(p, 'utf8').trim();
-			if (v) return v;
-		} catch {
-			/* try next */
-		}
-	}
-	return null;
-}
+import latest from '../latest-version.json' with { type: 'json' };
 
 /** True only when the client explicitly prefers HTML (browsers / axe), not wildcard Accept. */
 function wantsHtml(acceptHeader: string): boolean {
@@ -41,27 +17,31 @@ function wantsHtml(acceptHeader: string): boolean {
 	return true;
 }
 
-const handler: Handler = async (event) => {
-	const version = readLatest();
-	if (!version) {
-		return {
-			statusCode: 503,
-			headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
-			body: 'latest release unknown\n',
+/** Prefer Accept: text/html (browsers / axe) → HTML with lang + title; else plain text for installers. */
+export function createHandler(version: string): Handler {
+	return async (event) => {
+		if (!version) {
+			return {
+				statusCode: 503,
+				headers: {
+					'Content-Type': 'text/plain; charset=utf-8',
+					'Cache-Control': 'no-store',
+				},
+				body: 'latest release unknown\n',
+			};
+		}
+		const accept = event.headers.accept ?? event.headers.Accept ?? '';
+		const asHtml = wantsHtml(accept);
+
+		const commonHeaders = {
+			// Critical: without Vary, the edge caches HTML and serves it to curl/installers.
+			Vary: 'Accept',
+			'Cache-Control': 'public, max-age=60, must-revalidate',
 		};
-	}
-	const accept = event.headers.accept ?? event.headers.Accept ?? '';
-	const asHtml = wantsHtml(accept);
 
-	const commonHeaders = {
-		// Critical: without Vary, the edge caches HTML and serves it to curl/installers.
-		Vary: 'Accept',
-		'Cache-Control': 'public, max-age=60, must-revalidate',
-	};
-
-	if (asHtml) {
-		const safe = version.replace(/[<>&"]/g, '');
-		const body = `<!DOCTYPE html>
+		if (asHtml) {
+			const safe = version.replace(/[<>&"]/g, '');
+			const body = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -74,24 +54,25 @@ const handler: Handler = async (event) => {
 </body>
 </html>
 `;
+			return {
+				statusCode: 200,
+				headers: {
+					...commonHeaders,
+					'Content-Type': 'text/html; charset=utf-8',
+				},
+				body,
+			};
+		}
+
 		return {
 			statusCode: 200,
 			headers: {
 				...commonHeaders,
-				'Content-Type': 'text/html; charset=utf-8',
+				'Content-Type': 'text/plain; charset=utf-8',
 			},
-			body,
+			body: `${version}\n`,
 		};
-	}
-
-	return {
-		statusCode: 200,
-		headers: {
-			...commonHeaders,
-			'Content-Type': 'text/plain; charset=utf-8',
-		},
-		body: `${version}\n`,
 	};
-};
+}
 
-export { handler };
+export const handler = createHandler(latest.version);
