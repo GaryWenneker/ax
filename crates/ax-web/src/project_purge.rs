@@ -401,6 +401,7 @@ mod tests {
         assert!(dir.path().join(".ax").join("ax.db").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlink_is_refused() {
         let dir = tempfile::tempdir().unwrap();
