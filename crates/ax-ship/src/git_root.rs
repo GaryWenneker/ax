@@ -302,19 +302,15 @@ pub fn diff_all_repos(
 mod tests {
     use super::*;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_workspace() -> PathBuf {
-        let n = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("ax-git-discover-{n}"))
+    fn temp_workspace() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[test]
     fn resolve_sonar_repo_names_skips_missing_git_roots() {
-        let ws = temp_workspace();
+        let dir = temp_workspace();
+        let ws = dir.path();
         fs::create_dir_all(ws.join("alpha")).unwrap();
         fs::create_dir_all(ws.join("alpha/.git")).unwrap();
         fs::create_dir_all(ws.join("ghost")).unwrap();
@@ -330,12 +326,12 @@ mod tests {
         let names = resolve_sonar_repo_names(&ws, &config);
         assert_eq!(names, vec!["alpha"]);
 
-        let _ = fs::remove_dir_all(&ws);
     }
 
     #[test]
     fn discovers_immediate_child_git_repos() {
-        let ws = temp_workspace();
+        let dir = temp_workspace();
+        let ws = dir.path();
         fs::create_dir_all(ws.join("alpha")).unwrap();
         fs::create_dir_all(ws.join("beta")).unwrap();
         fs::create_dir_all(ws.join("alpha/.git")).unwrap();
@@ -345,6 +341,5 @@ mod tests {
         let repos = discover_git_repos(&ws);
         assert_eq!(repos, vec!["alpha", "beta"]);
 
-        let _ = fs::remove_dir_all(&ws);
     }
 }
