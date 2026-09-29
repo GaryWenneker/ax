@@ -1,3 +1,4 @@
+import type { MemoryDiff } from './memoryDetail';
 import type { Stats, NodeRow, NodeDetail, FileRow, FileRoot, SearchResult, UnresolvedSummary, UnresolvedRow } from './types';
 
 const BASE = '/api';
@@ -93,12 +94,34 @@ export interface GitCaptureResult {
   skipped_trivial: number;
 }
 
+export type FileChange = 'added' | 'modified' | 'deleted';
+
+export function fetchMemoryFileChanges(id: string): Promise<{ files: Record<string, FileChange> }> {
+  return get<{ files: Record<string, FileChange> }>(`/memory/${encodeURIComponent(id)}/file-changes`);
+}
+
+export function fetchMemoryFileLinks(id: string): Promise<{ files: Record<string, string> }> {
+  return get<{ files: Record<string, string> }>(`/memory/${encodeURIComponent(id)}/file-links`);
+}
+
+export function fetchMemoryDiff(id: string, query: { path?: string; commit?: string }): Promise<MemoryDiff> {
+  const sp = new URLSearchParams();
+  if (query.path) sp.set('path', query.path);
+  if (query.commit) sp.set('commit', query.commit);
+  const qs = sp.toString();
+  return get<MemoryDiff>(`/memory/${encodeURIComponent(id)}/diff${qs ? `?${qs}` : ''}`);
+}
+
 export function fetchMemories(params: { limit?: number; offset?: number } = {}): Promise<{ memories: MemoryRow[]; total: number }> {
   const sp = new URLSearchParams();
   if (params.limit != null) sp.set('limit', String(params.limit));
   if (params.offset != null) sp.set('offset', String(params.offset));
   const qs = sp.toString();
   return get<{ memories: MemoryRow[]; total: number }>(`/memory${qs ? `?${qs}` : ''}`);
+}
+
+export function fetchMemory(id: string): Promise<MemoryRow> {
+  return get<MemoryRow>(`/memory/${encodeURIComponent(id)}`);
 }
 
 export function recallMemories(q: string, limit = 10): Promise<{ matches: MemoryMatch[] }> {

@@ -50,3 +50,25 @@ check, browser screenshot of each page.
   uncommitted changes; a worktree would miss them).
 - New files: the test files above and a small `ItemGroupHeader` in `PageLayout.tsx`.
 - No new dependencies.
+
+## Revision 2 (user request 2026-09-28 13:48: "badges much smaller, thinner borders, circles not against the edge, balance like the GitLens graph")
+
+7. Calm-list badges are at most 14px high, 10px text, with a hairline border (≤1px, softened color).
+8. Timeline dots sit at least 12px from the row's left edge; the dot is 12px.
+9. Rules/Skills rows lose the 5px inset origin stripe; the dot border shows the origin color instead
+   (project green, global yellow — the colors the legend already uses).
+
+## Revision 1 (during implementation)
+
+- The web-ui has no vitest or Testing Library; tests are `node:test` (pure logic) and Playwright
+  against a running `ax web`. Adding a component-test harness would add dependencies, which the
+  approved setup plan excludes. So:
+  - Row text (title/subtitle/meta) moves into pure helpers in `src/lib/calmRows.ts`, tested by
+    `src/lib/calmRows.test.ts` (`node:test`).
+  - DOM behaviors 1-6 are checked by `e2e/calm-lists.spec.ts` (Playwright, desktop-chrome).
+- Sortable column headers disappear with the table, so sort moves to a toolbar `<select>` plus a
+  direction button. Same sort keys, same `sortRules` / `sortSkills` code.
+- Multi-select checkbox, storage switch, and edit/delete move into the row's right side and appear
+  on hover or when active, like Memory's enable toggle.
+- The Logging page keeps its `mcp-trace-row` data attributes and keyboard navigation. Kind badges
+  become outline `page-item-badge` chips (still clickable filters).

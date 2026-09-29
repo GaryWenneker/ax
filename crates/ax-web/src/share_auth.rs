@@ -55,9 +55,7 @@ pub async fn share_token_middleware(req: Request, next: Next) -> Response {
     let provided = query_token.or(header_token).or(cookie_token);
     if provided.as_deref() == Some(expected.as_str()) {
         let mut res = next.run(req).await;
-        if let Ok(val) =
-            format!("ax_share={expected}; Path=/; HttpOnly; SameSite=Lax").parse()
-        {
+        if let Ok(val) = format!("ax_share={expected}; Path=/; HttpOnly; SameSite=Lax").parse() {
             res.headers_mut().append(header::SET_COOKIE, val);
         }
         return res;

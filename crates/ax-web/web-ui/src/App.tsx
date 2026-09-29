@@ -22,9 +22,10 @@ import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
 import HeaderWaves from './components/HeaderWaves';
+import LoggingProjectSwitch from './components/LoggingProjectSwitch';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
 import { initBladeWidth } from './components/BladeResize';
-import { NavIcon, adjustUiScale, initUiScale, loadUiScale, type NavId } from './components/NavIcons';
+import { NavIcon, adjustUiScale, initUiScale, loadUiScale } from './components/NavIcons';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { UiProvider } from './context/UiContext';
 import { initTheme } from './lib/themes';
@@ -37,44 +38,17 @@ import {
   type Page,
   type RouteState,
 } from './lib/routes';
+import { navItemActive, visibleNav } from './lib/nav';
 import { fetchShipConfig } from './shipApi';
 import { WORKSPACE_SWITCHED } from './workspaceEvents';
 
-const NAV_MAIN_BASE: Array<{ id: NavId; label: string }> = [
-  { id: 'stats', label: 'Stats' },
-  { id: 'nodes', label: 'Nodes' },
-  { id: 'graph', label: 'Graph' },
-  { id: 'files', label: 'Files' },
-  { id: 'search', label: 'Search' },
-  { id: 'unresolved', label: 'Unresolved' },
-  { id: 'savings', label: 'Savings' },
-  { id: 'prices', label: 'Prices' },
-  { id: 'ship', label: 'Command Center' },
-];
-
-const NAV_CONFIG: Array<{ id: NavId; label: string }> = [
-  { id: 'settings', label: 'Settings' },
-  { id: 'logging', label: '🪓 Logging' },
-];
-
-const NAV_KNOWLEDGE: Array<{ id: NavId; label: string }> = [
-  { id: 'policy-rules', label: 'Rules' },
-  { id: 'policy-skills', label: 'Skills' },
-  { id: 'memory', label: 'Memory' },
-];
-
-const NAV_POLICY_SYNC: Array<{ id: NavId; label: string }> = [
-  { id: 'policy-sync', label: 'Sync' },
-  { id: 'policy-review', label: 'Review' },
-];
-
 const SCALE_STEP = 0.05;
 
-/** True when hosted inside Takumi 匠 / IDE webview (`?embed=1` or `?takumi=1`). */
+/** True when hosted inside an IDE webview (`?embed=1`). */
 function detectEmbedMode(): boolean {
   try {
     const q = new URLSearchParams(window.location.search);
-    return q.get('embed') === '1' || q.get('takumi') === '1' || q.get('bonzai') === '1';
+    return q.get('embed') === '1';
   } catch {
     return false;
   }
@@ -231,15 +205,15 @@ function AppShell() {
   }
 
   const selectPolicyRule = useCallback(
-    (id: string | null) => {
-      navigate('policy-rules', { ruleId: id, ruleEditMode: false });
+    (id: string | null, origin?: string, projectId?: number) => {
+      navigate('policy-rules', { ruleId: id, ruleEditMode: false, origin: origin ?? null, projectId: projectId ?? null });
     },
     [editRuleId, editSkillName, route.kind, route.sonarTab],
   );
 
   const selectPolicySkill = useCallback(
-    (name: string | null) => {
-      navigate('policy-skills', { skillName: name, skillEditMode: false });
+    (name: string | null, origin?: string, projectId?: number) => {
+      navigate('policy-skills', { skillName: name, skillEditMode: false, origin: origin ?? null, projectId: projectId ?? null });
     },
     [editRuleId, editSkillName, route.kind, route.sonarTab],
   );
@@ -316,10 +290,7 @@ function AppShell() {
     }
   }
 
-  const navMain = NAV_MAIN_BASE.filter((n) => {
-    if (n.id === 'savings' && !showSavings) return false;
-    return true;
-  });
+  const navSections = visibleNav(showSavings);
 
   const containerClass = FULL_BLEED_PAGES.has(page) ? 'container container--full' : 'container';
 
@@ -354,14 +325,17 @@ function AppShell() {
                 <span>/ graph + policy</span>
               </span>
             </div>
-            <div className="font-ctrl">
-              <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">
-                <i className="codicon codicon-remove" aria-hidden="true" />
-              </button>
-              <span className="font-size-lbl">{Math.round(fontScale * 100)}%</span>
-              <button type="button" className="font-btn" onClick={() => adjFont(SCALE_STEP)} title="Larger text" aria-label="Larger text">
-                <i className="codicon codicon-add" aria-hidden="true" />
-              </button>
+            <div className="titlebar-tools">
+              <LoggingProjectSwitch variant="header" />
+              <div className="font-ctrl">
+                <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">
+                  <i className="codicon codicon-remove" aria-hidden="true" />
+                </button>
+                <span className="font-size-lbl">{Math.round(fontScale * 100)}%</span>
+                <button type="button" className="font-btn" onClick={() => adjFont(SCALE_STEP)} title="Larger text" aria-label="Larger text">
+                  <i className="codicon codicon-add" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
           <HeaderWaves />
@@ -380,64 +354,37 @@ function AppShell() {
         )}
 
         <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
-          {navMain.map((n) => (
-            <button
-              key={n.id}
-              type="button"
-              className={`nav-item${page === n.id ? ' active' : ''}`}
-              onClick={() => navigate(n.id as Page)}
-            >
-              <NavIcon id={n.id} />
-              {n.label}
-            </button>
+          {navSections.map((section) => (
+            <div key={section.id} className="nav-section">
+              <div className="nav-section-label">{section.label}</div>
+              {section.items.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  className={`nav-item${navItemActive(page, n.id) ? ' active' : ''}`}
+                  onClick={() => navigate(n.id as Page)}
+                >
+                  <NavIcon id={n.id} />
+                  {n.label}
+                </button>
+              ))}
+              {section.id === 'system' && (
+                <button
+                  type="button"
+                  className="nav-item nav-item--action"
+                  onClick={() => void reloadMcpDaemon()}
+                  disabled={mcpReloadBusy}
+                  title="Restart the shared MCP daemon and clear stale locks"
+                >
+                  <i className="codicon codicon-refresh" aria-hidden="true" />
+                  {mcpReloadBusy ? 'Reloading MCP…' : 'Reload MCP'}
+                </button>
+              )}
+            </div>
           ))}
-          <div className="nav-section-label">Configuration</div>
-          {NAV_CONFIG.map((n) => (
-            <button
-              key={n.id}
-              type="button"
-              className={`nav-item${page === n.id ? ' active' : ''}`}
-              onClick={() => navigate(n.id as Page)}
-            >
-              <NavIcon id={n.id} />
-              {n.label}
-            </button>
-          ))}
-          <div className="nav-section-label">Rules · Skills · Memory</div>
-          {NAV_KNOWLEDGE.map((n) => (
-            <button
-              key={n.id}
-              type="button"
-              className={`nav-item${page === n.id || (n.id === 'policy-rules' && page === 'policy-rule-edit') || (n.id === 'policy-skills' && page === 'policy-skill-edit') ? ' active' : ''}`}
-              onClick={() => navigate(n.id as Page)}
-            >
-              <NavIcon id={n.id} />
-              {n.label}
-            </button>
-          ))}
-          <div className="nav-divider" aria-hidden="true" />
-          {NAV_POLICY_SYNC.map((n) => (
-            <button
-              key={n.id}
-              type="button"
-              className={`nav-item${page === n.id ? ' active' : ''}`}
-              onClick={() => navigate(n.id as Page)}
-            >
-              <NavIcon id={n.id} />
-              {n.label}
-            </button>
-          ))}
-          <div className="nav-section-label">Ops</div>
-          <button
-            type="button"
-            className="nav-item nav-item--action"
-            onClick={() => void reloadMcpDaemon()}
-            disabled={mcpReloadBusy}
-            title="Restart the shared MCP daemon and clear stale locks"
-          >
-            <i className="codicon codicon-refresh" aria-hidden="true" />
-            {mcpReloadBusy ? 'Reloading MCP…' : 'Reload MCP'}
-          </button>
+          <div className="sidebar-logo">
+            <img src="/ax-logo.png" alt="ax" width={96} height={96} draggable={false} />
+          </div>
         </nav>
 
         <SidebarResizeHandle />
@@ -477,6 +424,8 @@ function AppShell() {
               <PolicyRulesPage
                 key={workspaceKey}
                 selectedId={editRuleId}
+                origin={routeOrigin}
+                projectId={routeProjectId}
                 onSelect={selectPolicyRule}
                 onEditFull={(id, origin, projectId) =>
                   navigate('policy-rule-edit', { ruleId: id, ruleEditMode: true, origin: origin ?? null, projectId: projectId ?? null })
@@ -497,6 +446,8 @@ function AppShell() {
               <PolicySkillsPage
                 key={workspaceKey}
                 selectedName={editSkillName}
+                origin={routeOrigin}
+                projectId={routeProjectId}
                 onSelect={selectPolicySkill}
                 onEditFull={(name, origin, projectId) =>
                   navigate('policy-skill-edit', { skillName: name, skillEditMode: true, origin: origin ?? null, projectId: projectId ?? null })

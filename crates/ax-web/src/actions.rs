@@ -31,7 +31,11 @@ fn bus() -> &'static broadcast::Sender<ActionEvent> {
     })
 }
 
-pub fn publish(kind: impl Into<String>, message: impl Into<String>, meta: Option<serde_json::Value>) {
+pub fn publish(
+    kind: impl Into<String>,
+    message: impl Into<String>,
+    meta: Option<serde_json::Value>,
+) {
     publish_for(None, kind, message, meta);
 }
 

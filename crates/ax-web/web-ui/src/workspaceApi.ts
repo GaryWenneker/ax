@@ -65,6 +65,50 @@ export async function switchWorkspace(path: string): Promise<{
   return res.json();
 }
 
+export interface PurgeGroup {
+  id: string;
+  label: string;
+  detail: string;
+  bytes: number;
+  fileCount: number;
+  defaultOn: boolean;
+  empty: boolean;
+}
+
+export async function fetchPurgePlan(path: string): Promise<{
+  ok: boolean;
+  path?: string;
+  label?: string;
+  current?: boolean;
+  missing?: boolean;
+  note?: string;
+  groups?: PurgeGroup[];
+  error?: string;
+}> {
+  const res = await fetch(`${BASE}/purge-plan?path=${encodeURIComponent(path)}`);
+  return res.json();
+}
+
+export async function purgeWorkspace(
+  path: string,
+  groups: string[],
+): Promise<{
+  ok: boolean;
+  path?: string;
+  removed?: string[];
+  errors?: string[];
+  disconnected?: boolean;
+  forgotRecent?: boolean;
+  error?: string;
+}> {
+  const res = await fetch(`${BASE}/purge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, groups }),
+  });
+  return res.json();
+}
+
 export async function mkdirWorkspace(parent: string, name: string): Promise<{
   ok: boolean;
   path?: string;

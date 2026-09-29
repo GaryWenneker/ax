@@ -31,6 +31,9 @@ export function nextRowSelection(g: SelectionGesture): SelectionResult {
     const only = selected.size === 1 ? [...selected][0] : null;
     return { selected, anchor: id, openId: only };
   }
+  if (g.selected.size === 1 && g.selected.has(id)) {
+    return { selected: new Set(), anchor: null, openId: null };
+  }
   return { selected: new Set([id]), anchor: id, openId: id };
 }
 
@@ -51,4 +54,20 @@ export function menuTargets<T extends { id?: string; name?: string }>(
     return rows.filter((r) => selected.has(keyOf(r)));
   }
   return [clicked];
+}
+
+export type OpenTarget = { origin?: 'global'; projectId?: number };
+
+/** Which copy of a rule or skill to open for a route: its origin and projectId as the API needs them. */
+export function resolveOpenTarget(
+  rows: { key: string; origin?: string; projectId?: number }[],
+  key: string,
+  routeOrigin: string | null | undefined,
+  routeProjectId: number | null | undefined,
+): OpenTarget {
+  const globalRow = rows.find((r) => r.key === key && r.origin === 'global');
+  if (routeOrigin === 'global') return { origin: 'global', projectId: routeProjectId ?? globalRow?.projectId };
+  if (routeOrigin) return {};
+  const hasLocal = rows.some((r) => r.key === key && r.origin !== 'global');
+  return !hasLocal && globalRow ? { origin: 'global', projectId: globalRow.projectId } : {};
 }

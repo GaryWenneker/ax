@@ -146,10 +146,23 @@ pub async fn match_policy_with_extra_skills(
     })
 }
 
-fn is_approved_status(status: &str) -> bool {
+pub fn is_approved_status(status: &str) -> bool {
     status.is_empty()
         || status.eq_ignore_ascii_case("approved")
 }
+
+/// `needle` occurs in `haystack` with no letter or digit directly before or after it.
+fn contains_phrase(haystack: &str, needle: &str) -> bool {
+    let is_word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    haystack.match_indices(needle).any(|(start, _)| {
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[start + needle.len()..].chars().next();
+        !is_word(before) && !is_word(after)
+    })
+}
+
+/// Match reason marker for an always-apply rule whose globs exclude every touched file.
+pub const OUT_OF_SCOPE: &str = "outOfScope";
 
 fn score_rule(rule: &PolicyRuleRow, prompt_lc: &str, files: &[String]) -> Option<MatchedRule> {
     let mut score = 0i32;
@@ -162,19 +175,21 @@ fn score_rule(rule: &PolicyRuleRow, prompt_lc: &str, files: &[String]) -> Option
 
     if !rule.globs.is_empty() && !files.is_empty() {
         if let Ok(set) = build_glob_set(&rule.globs) {
-            for f in files {
-                if set.is_match(f) {
+            let hit = files.iter().find(|f| set.is_match(f.as_str()));
+            match hit {
+                Some(f) => {
                     score += 30;
                     reasons.push(format!("glob:{f}"));
-                    break;
                 }
+                None if rule.always_apply => reasons.push(OUT_OF_SCOPE.into()),
+                None => {}
             }
         }
     }
 
     for trigger in &rule.triggers {
         let t = trigger.to_lowercase();
-        if !t.is_empty() && prompt_lc.contains(&t) {
+        if !t.is_empty() && contains_phrase(prompt_lc, &t) {
             score += 20;
             reasons.push(format!("trigger:{trigger}"));
         }
@@ -191,6 +206,7 @@ fn score_rule(rule: &PolicyRuleRow, prompt_lc: &str, files: &[String]) -> Option
         reason: reasons.join(", "),
         always_apply: rule.always_apply,
         body: rule.body.clone(),
+        properties: rule.properties.clone(),
     })
 }
 
@@ -240,6 +256,7 @@ fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<
         description: skill.description.clone(),
         body: skill.body.clone(),
         always_apply: skill.always_apply,
+        properties: skill.properties.clone(),
     })
 }
 
@@ -312,7 +329,57 @@ mod tests {
             effective_storage: String::new(),
             storage_is_override: false,
             group: String::new(),
+            properties: Default::default(),
         }
+    }
+
+    fn rule_row(id: &str, always: bool, globs: &[&str], triggers: &[&str]) -> PolicyRuleRow {
+        PolicyRuleRow {
+            id: id.into(),
+            level: "CRITICAL".into(),
+            always_apply: always,
+            globs: globs.iter().map(|s| (*s).to_string()).collect(),
+            triggers: triggers.iter().map(|s| (*s).to_string()).collect(),
+            tags: vec![],
+            priority: 50,
+            body: "RULE BODY".into(),
+            source_path: String::new(),
+            enabled: true,
+            status: "approved".into(),
+            scope: "project".into(),
+            storage: None,
+            source: None,
+            root_id: None,
+            stub_path: None,
+            effective_storage: String::new(),
+            storage_is_override: false,
+            group: String::new(),
+            properties: Default::default(),
+        }
+    }
+
+    #[test]
+    fn single_letter_trigger_needs_a_whole_word() {
+        let rule = rule_row("c-memory", false, &[], &["c"]);
+        assert!(score_rule(&rule, "edit crates/ax-db/src/queries.rs. which rules apply?", &[]).is_none());
+        assert!(score_rule(&rule, "fix the c code in main", &[]).is_some());
+    }
+
+    #[test]
+    fn multi_word_trigger_still_matches_as_phrase() {
+        let rule = rule_row("badges", false, &[], &["command center"]);
+        assert!(score_rule(&rule, "restyle the command center list", &[]).is_some());
+    }
+
+    #[test]
+    fn always_rule_with_globs_is_out_of_scope_for_other_files() {
+        let rule = rule_row("wcag", true, &["crates/ax-web/web-ui/**"], &[]);
+        let rs = score_rule(&rule, "edit", &["crates/ax-db/src/queries.rs".into()]).unwrap();
+        assert!(rs.reason.contains(OUT_OF_SCOPE), "{}", rs.reason);
+        let ui = score_rule(&rule, "edit", &["crates/ax-web/web-ui/src/pages/Ship.tsx".into()]).unwrap();
+        assert!(!ui.reason.contains(OUT_OF_SCOPE), "{}", ui.reason);
+        let none = score_rule(&rule, "edit", &[]).unwrap();
+        assert!(!none.reason.contains(OUT_OF_SCOPE), "{}", none.reason);
     }
 
     #[test]
@@ -340,6 +407,7 @@ mod tests {
                 description: String::new(),
                 body: String::new(),
                 always_apply: true,
+                properties: Default::default(),
             }),
             (90, MatchedSkill {
                 name: "b".into(),
@@ -348,6 +416,7 @@ mod tests {
                 description: String::new(),
                 body: String::new(),
                 always_apply: true,
+                properties: Default::default(),
             }),
             (50, MatchedSkill {
                 name: "c".into(),
@@ -356,6 +425,7 @@ mod tests {
                 description: String::new(),
                 body: String::new(),
                 always_apply: false,
+                properties: Default::default(),
             }),
             (40, MatchedSkill {
                 name: "d".into(),
@@ -364,6 +434,7 @@ mod tests {
                 description: String::new(),
                 body: String::new(),
                 always_apply: false,
+                properties: Default::default(),
             }),
             (30, MatchedSkill {
                 name: "e".into(),
@@ -372,6 +443,7 @@ mod tests {
                 description: String::new(),
                 body: String::new(),
                 always_apply: false,
+                properties: Default::default(),
             }),
         ];
         let out = select_matched_skills(matched);

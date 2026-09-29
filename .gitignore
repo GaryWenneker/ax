@@ -89,3 +89,8 @@ crates/ax-web/web-ui/blob-report/
 /MorbusApis/
 /bijengezondheid/
 
+
+# local editor/tool output
+.obsidian/
+obsidian/getax/node_modules/
+scripts/bench-agent-efficiency/out/

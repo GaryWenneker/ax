@@ -381,8 +381,7 @@ export default function PolicyShareSettingsSection() {
         <h2>Remote policy share</h2>
         <p>
           Per project — stored in <code>{configPath}</code>. Pull team rules, skills, and optional
-          memory from GitHub or OneDrive (Microsoft Graph). Manage per workspace in Takumi
-          Preferences or here in Command Center.
+          memory from GitHub or OneDrive (Microsoft Graph). Manage per workspace here in Command Center.
         </p>
       </div>
 

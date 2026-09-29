@@ -44,7 +44,9 @@ pub struct GraphPayload {
 /// (excluding structural `contains` edges) plus the edges between them.
 /// Community ids come from the persisted `node_communities` table.
 pub async fn get_graph(pool: &SqlitePool, limit: i64) -> anyhow::Result<GraphPayload> {
-    let total_nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes").fetch_one(pool).await?;
+    let total_nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes")
+        .fetch_one(pool)
+        .await?;
 
     let node_rows = sqlx::query_as::<_, (String, String, String, String, Option<i64>, Option<String>, i64)>(
         r#"
@@ -71,23 +73,31 @@ pub async fn get_graph(pool: &SqlitePool, limit: i64) -> anyhow::Result<GraphPay
 
     let nodes: Vec<GraphNode> = node_rows
         .into_iter()
-        .map(|(id, name, kind, file_path, community_id, community_label, degree)| GraphNode {
-            id,
-            name,
-            kind,
-            file_path,
-            community_id: community_id.unwrap_or(-1),
-            community_label,
-            degree,
-            shared: false,
-            selected: false,
-        })
+        .map(
+            |(id, name, kind, file_path, community_id, community_label, degree)| GraphNode {
+                id,
+                name,
+                kind,
+                file_path,
+                community_id: community_id.unwrap_or(-1),
+                community_label,
+                degree,
+                shared: false,
+                selected: false,
+            },
+        )
         .collect();
 
     let truncated = total_nodes > nodes.len() as i64;
 
     if nodes.is_empty() {
-        return Ok(GraphPayload { nodes, edges: Vec::new(), total_nodes, truncated, palette: None });
+        return Ok(GraphPayload {
+            nodes,
+            edges: Vec::new(),
+            total_nodes,
+            truncated,
+            palette: None,
+        });
     }
 
     let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
@@ -104,10 +114,21 @@ pub async fn get_graph(pool: &SqlitePool, limit: i64) -> anyhow::Result<GraphPay
     let edges: Vec<GraphEdge> = edge_rows
         .into_iter()
         .filter(|(s, t, _, _)| id_set.contains(s.as_str()) && id_set.contains(t.as_str()))
-        .map(|(source, target, kind, confidence)| GraphEdge { source, target, kind, confidence })
+        .map(|(source, target, kind, confidence)| GraphEdge {
+            source,
+            target,
+            kind,
+            confidence,
+        })
         .collect();
 
-    Ok(GraphPayload { nodes, edges, total_nodes, truncated, palette: None })
+    Ok(GraphPayload {
+        nodes,
+        edges,
+        total_nodes,
+        truncated,
+        palette: None,
+    })
 }
 
 // ---- Stats ----------------------------------------------------------------
@@ -130,23 +151,35 @@ pub struct LangStat {
 }
 
 pub async fn get_stats(pool: &SqlitePool) -> anyhow::Result<Stats> {
-    let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes").fetch_one(pool).await?;
-    let edge_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges").fetch_one(pool).await?;
-    let file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files").fetch_one(pool).await?;
+    let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes")
+        .fetch_one(pool)
+        .await?;
+    let edge_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM edges")
+        .fetch_one(pool)
+        .await?;
+    let file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files")
+        .fetch_one(pool)
+        .await?;
 
     let rows = sqlx::query_as::<_, (String, i64)>(
         "SELECT language, COUNT(*) AS count FROM nodes GROUP BY language ORDER BY count DESC",
     )
     .fetch_all(pool)
     .await?;
-    let languages = rows.into_iter().map(|(language, count)| LangStat { language, count }).collect();
+    let languages = rows
+        .into_iter()
+        .map(|(language, count)| LangStat { language, count })
+        .collect();
 
-    let last_indexed_at: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(indexed_at) FROM files").fetch_one(pool).await?;
+    let last_indexed_at: Option<i64> = sqlx::query_scalar("SELECT MAX(indexed_at) FROM files")
+        .fetch_one(pool)
+        .await?;
     let last_indexed_at = last_indexed_at.unwrap_or(0);
 
-    let unresolved_ref_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM unresolved_refs").fetch_one(pool).await.unwrap_or(0);
+    let unresolved_ref_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM unresolved_refs")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
     let unresolved_ref_count = if unresolved_ref_count > 0 {
         Some(unresolved_ref_count)
     } else {
@@ -196,28 +229,48 @@ pub struct NodePage {
 pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<NodePage> {
     // Build dynamic WHERE clause components.
     let mut wheres: Vec<String> = Vec::new();
-    if f.kind.is_some() { wheres.push("kind = ?".into()); }
-    if f.lang.is_some() { wheres.push("language = ?".into()); }
-    if f.file.is_some() { wheres.push("file_path = ?".into()); }
+    if f.kind.is_some() {
+        wheres.push("kind = ?".into());
+    }
+    if f.lang.is_some() {
+        wheres.push("language = ?".into());
+    }
+    if f.file.is_some() {
+        wheres.push("file_path = ?".into());
+    }
 
     // Full-text query goes via FTS sub-select.
     let use_fts = f.q.filter(|s| !s.trim().is_empty()).is_some();
 
-    let where_sql = if wheres.is_empty() { String::new() } else { format!("WHERE {}", wheres.join(" AND ")) };
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", wheres.join(" AND "))
+    };
 
     if use_fts {
         let q_term = format!("{}*", f.q.unwrap().trim());
         let count_sql = format!(
             r#"SELECT COUNT(*) FROM nodes_fts fts JOIN nodes n ON n.id = fts.id
                WHERE nodes_fts MATCH ? {}"#,
-            if wheres.is_empty() { String::new() } else { format!("AND {}", wheres.join(" AND ")) }
+            if wheres.is_empty() {
+                String::new()
+            } else {
+                format!("AND {}", wheres.join(" AND "))
+            }
         );
 
         // We build queries without sqlx macros since the SQL is dynamic.
         let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql).bind(&q_term);
-        if let Some(k) = f.kind { count_q = count_q.bind(k); }
-        if let Some(l) = f.lang { count_q = count_q.bind(l); }
-        if let Some(fp) = f.file { count_q = count_q.bind(fp); }
+        if let Some(k) = f.kind {
+            count_q = count_q.bind(k);
+        }
+        if let Some(l) = f.lang {
+            count_q = count_q.bind(l);
+        }
+        if let Some(fp) = f.file {
+            count_q = count_q.bind(fp);
+        }
         let total = count_q.fetch_one(pool).await.unwrap_or(0);
 
         let fts_with_match = format!(
@@ -228,13 +281,37 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
                WHERE nodes_fts MATCH ? {}
                ORDER BY rank
                LIMIT ? OFFSET ?"#,
-            if wheres.is_empty() { String::new() } else { format!("AND {}", wheres.join(" AND ")) }
+            if wheres.is_empty() {
+                String::new()
+            } else {
+                format!("AND {}", wheres.join(" AND "))
+            }
         );
-        let mut rows_q = sqlx::query_as::<_, (String, String, String, String, String, String, i64, i64, Option<String>, i64)>(&fts_with_match)
-            .bind(&q_term);
-        if let Some(k) = f.kind { rows_q = rows_q.bind(k); }
-        if let Some(l) = f.lang { rows_q = rows_q.bind(l); }
-        if let Some(fp) = f.file { rows_q = rows_q.bind(fp); }
+        let mut rows_q = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                Option<String>,
+                i64,
+            ),
+        >(&fts_with_match)
+        .bind(&q_term);
+        if let Some(k) = f.kind {
+            rows_q = rows_q.bind(k);
+        }
+        if let Some(l) = f.lang {
+            rows_q = rows_q.bind(l);
+        }
+        if let Some(fp) = f.file {
+            rows_q = rows_q.bind(fp);
+        }
         rows_q = rows_q.bind(f.limit).bind(f.offset);
         let rows = rows_q.fetch_all(pool).await?;
         let nodes = rows.into_iter().map(row_to_node).collect();
@@ -251,15 +328,41 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
     let count_sql = format!("SELECT COUNT(*) FROM nodes {where_sql}");
 
     let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
-    if let Some(k) = f.kind { count_q = count_q.bind(k); }
-    if let Some(l) = f.lang { count_q = count_q.bind(l); }
-    if let Some(fp) = f.file { count_q = count_q.bind(fp); }
+    if let Some(k) = f.kind {
+        count_q = count_q.bind(k);
+    }
+    if let Some(l) = f.lang {
+        count_q = count_q.bind(l);
+    }
+    if let Some(fp) = f.file {
+        count_q = count_q.bind(fp);
+    }
     let total = count_q.fetch_one(pool).await.unwrap_or(0);
 
-    let mut rows_q = sqlx::query_as::<_, (String, String, String, String, String, String, i64, i64, Option<String>, i64)>(&list_sql);
-    if let Some(k) = f.kind { rows_q = rows_q.bind(k); }
-    if let Some(l) = f.lang { rows_q = rows_q.bind(l); }
-    if let Some(fp) = f.file { rows_q = rows_q.bind(fp); }
+    let mut rows_q = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            Option<String>,
+            i64,
+        ),
+    >(&list_sql);
+    if let Some(k) = f.kind {
+        rows_q = rows_q.bind(k);
+    }
+    if let Some(l) = f.lang {
+        rows_q = rows_q.bind(l);
+    }
+    if let Some(fp) = f.file {
+        rows_q = rows_q.bind(fp);
+    }
     rows_q = rows_q.bind(f.limit).bind(f.offset);
 
     let rows = rows_q.fetch_all(pool).await?;
@@ -267,7 +370,20 @@ pub async fn get_nodes(pool: &SqlitePool, f: NodeFilter<'_>) -> anyhow::Result<N
     Ok(NodePage { nodes, total })
 }
 
-fn row_to_node(r: (String, String, String, String, String, String, i64, i64, Option<String>, i64)) -> NodeRow {
+fn row_to_node(
+    r: (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        Option<String>,
+        i64,
+    ),
+) -> NodeRow {
     NodeRow {
         id: r.0,
         kind: r.1,
@@ -321,7 +437,24 @@ pub struct EdgeNode {
 }
 
 pub async fn get_node_detail(pool: &SqlitePool, id: &str) -> anyhow::Result<Option<NodeDetail>> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, String, i64, i64, Option<String>, Option<String>, Option<String>, i64, i64)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+            i64,
+        ),
+    >(
         r#"SELECT id, kind, name, qualified_name, file_path, language,
                   start_line, end_line, signature, docstring, visibility, is_exported, is_async
            FROM nodes WHERE id = ?"#,
@@ -333,39 +466,70 @@ pub async fn get_node_detail(pool: &SqlitePool, id: &str) -> anyhow::Result<Opti
     let Some(r) = row else { return Ok(None) };
 
     let node = NodeDetailRow {
-        id: r.0, kind: r.1, name: r.2, qualified_name: r.3,
-        file_path: r.4, language: r.5, start_line: r.6, end_line: r.7,
-        signature: r.8, docstring: r.9, visibility: r.10,
-        is_exported: r.11, is_async: r.12,
+        id: r.0,
+        kind: r.1,
+        name: r.2,
+        qualified_name: r.3,
+        file_path: r.4,
+        language: r.5,
+        start_line: r.6,
+        end_line: r.7,
+        signature: r.8,
+        docstring: r.9,
+        visibility: r.10,
+        is_exported: r.11,
+        is_async: r.12,
     };
 
-    let callers = sqlx::query_as::<_, (String, String, String, String, i64, String, Option<String>)>(
-        r#"SELECT n.id, n.kind, n.name, n.file_path, n.start_line, e.kind, e.confidence
+    let callers =
+        sqlx::query_as::<_, (String, String, String, String, i64, String, Option<String>)>(
+            r#"SELECT n.id, n.kind, n.name, n.file_path, n.start_line, e.kind, e.confidence
            FROM edges e JOIN nodes n ON n.id = e.source
            WHERE e.target = ?
            ORDER BY n.name LIMIT 50"#,
-    )
-    .bind(id)
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|r| EdgeNode { id: r.0, kind: r.1, name: r.2, file_path: r.3, start_line: r.4, edge_kind: r.5, edge_confidence: r.6 })
-    .collect();
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|r| EdgeNode {
+            id: r.0,
+            kind: r.1,
+            name: r.2,
+            file_path: r.3,
+            start_line: r.4,
+            edge_kind: r.5,
+            edge_confidence: r.6,
+        })
+        .collect();
 
-    let callees = sqlx::query_as::<_, (String, String, String, String, i64, String, Option<String>)>(
-        r#"SELECT n.id, n.kind, n.name, n.file_path, n.start_line, e.kind, e.confidence
+    let callees =
+        sqlx::query_as::<_, (String, String, String, String, i64, String, Option<String>)>(
+            r#"SELECT n.id, n.kind, n.name, n.file_path, n.start_line, e.kind, e.confidence
            FROM edges e JOIN nodes n ON n.id = e.target
            WHERE e.source = ?
            ORDER BY n.name LIMIT 50"#,
-    )
-    .bind(id)
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|r| EdgeNode { id: r.0, kind: r.1, name: r.2, file_path: r.3, start_line: r.4, edge_kind: r.5, edge_confidence: r.6 })
-    .collect();
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|r| EdgeNode {
+            id: r.0,
+            kind: r.1,
+            name: r.2,
+            file_path: r.3,
+            start_line: r.4,
+            edge_kind: r.5,
+            edge_confidence: r.6,
+        })
+        .collect();
 
-    Ok(Some(NodeDetail { node, callers, callees }))
+    Ok(Some(NodeDetail {
+        node,
+        callers,
+        callees,
+    }))
 }
 
 // ---- Files ----------------------------------------------------------------
@@ -531,7 +695,9 @@ pub struct SearchResult {
 }
 
 pub async fn search(pool: &SqlitePool, q: &str, limit: i64) -> anyhow::Result<Vec<SearchResult>> {
-    if q.trim().is_empty() { return Ok(vec![]); }
+    if q.trim().is_empty() {
+        return Ok(vec![]);
+    }
     let term = format!("{}*", q.trim());
 
     let rows = sqlx::query_as::<_, (String, String, String, String, String, i64, String, Option<String>)>(
@@ -547,11 +713,19 @@ pub async fn search(pool: &SqlitePool, q: &str, limit: i64) -> anyhow::Result<Ve
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| SearchResult {
-        id: r.0, kind: r.1, name: r.2, qualified_name: r.3,
-        file_path: r.4, start_line: r.5, language: r.6,
-        snippet: r.7.map(|d| d.chars().take(120).collect()),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| SearchResult {
+            id: r.0,
+            kind: r.1,
+            name: r.2,
+            qualified_name: r.3,
+            file_path: r.4,
+            start_line: r.5,
+            language: r.6,
+            snippet: r.7.map(|d| d.chars().take(120).collect()),
+        })
+        .collect())
 }
 
 // ---- Unresolved references ------------------------------------------------
@@ -629,7 +803,10 @@ pub async fn get_unresolved_summary(pool: &SqlitePool) -> anyhow::Result<Unresol
     })
 }
 
-pub async fn get_unresolved_refs(pool: &SqlitePool, f: UnresolvedFilter<'_>) -> anyhow::Result<UnresolvedPage> {
+pub async fn get_unresolved_refs(
+    pool: &SqlitePool,
+    f: UnresolvedFilter<'_>,
+) -> anyhow::Result<UnresolvedPage> {
     let mut wheres: Vec<String> = Vec::new();
     if f.kind.is_some() {
         wheres.push("reference_kind = ?".into());
@@ -662,7 +839,8 @@ pub async fn get_unresolved_refs(pool: &SqlitePool, f: UnresolvedFilter<'_>) -> 
     }
     let total = count_q.fetch_one(pool).await.unwrap_or(0);
 
-    let mut rows_q = sqlx::query_as::<_, (i64, String, String, String, i64, i64, String, String)>(&list_sql);
+    let mut rows_q =
+        sqlx::query_as::<_, (i64, String, String, String, i64, i64, String, String)>(&list_sql);
     if let Some(k) = f.kind {
         rows_q = rows_q.bind(k);
     }

@@ -155,7 +155,7 @@ function TreeRow({
         <span className="file-tree-meta">
           <span className="file-tree-meta-item">{f.node_count} nodes</span>
           <span className="file-tree-meta-item">{formatBytes(f.size)}</span>
-          <span className="page-item-badge">{f.language}</span>
+          <span className="page-item-badge"><Codicon name="symbol-misc" className="badge-icon" />{f.language}</span>
         </span>
       </button>
     );

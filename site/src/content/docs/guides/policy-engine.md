@@ -3,7 +3,7 @@ title: Policy Engine
 description: IDE-agnostic rules and skills for AI agents — stored in .agents/, indexed locally, delivered via MCP without reading source files.
 ---
 
-**ax v2.0.0+** ships a **policy engine**: project-local rules and skills that work in any IDE or agent harness — not tied to Cursor rules or a single vendor format.
+ax ships a **policy engine**: project-local rules and skills that work in any IDE or agent harness — not tied to Cursor rules or a single vendor format.
 
 Policy files live under `.agents/rules/` and `.agents/skills/`, are indexed into SQLite (`ax.db`), and reach the agent through **MCP tools** or the **prompt-hook**. Agents should **not** open `.mdc` / `SKILL.md` files on disk when policy MCP tools are available — the matched text is returned in the `inject` field. Private overlays stay under `.ax/policy-private/` and `~/.ax/private_policy/`. Disabled items move to `.ax/policy-inactive/` (gitignored). Legacy `.ax/policy/{rules,skills}` is still read for one release and migrated into `.agents/` on index/init.
 
@@ -24,14 +24,14 @@ On **`ax init`** and **`ax install`**, ax also seeds machine-wide policy. Existi
 | Location | Content |
 |---|---|
 | `~/.ax/global_policy/rules/` | `old-coder-mandatory` (CRITICAL, **alwaysApply**, `guard: require-skill: "old-coder"`) — agents must follow the old-coder workflow for implementation work, including the review loop before EVIDENCE |
-| `~/.ax/global_policy/skills/` | `old-coder` (**alwaysApply**, injects on every turn including empty prompts), `old-coder-api` (matched on API triggers; load full body via `ax_skill`), `review-loop` (code review loop, see below), `pr-review-comments` (review of a colleague's pull request, see below) |
+| `~/.ax/global_policy/skills/` | `old-coder` (**alwaysApply**, injects on every turn including empty prompts), `old-coder-api` (matched on API triggers; load full body via `ax_skill`), `review-loop` (code review loop, see below), `pr-review-comments` (review of a colleague's pull request, see below), `pr` (draft pull request, then review until a round has zero findings), `dotnet-code-review`, `typescript-review`, `react-review` |
 | `~/.cursor/skills/` | Same skill bundles for Cursor agent discovery |
 
 **Enforcement model:** Rules and skills with `alwaysApply: true` are injected on **every** `ax_preflight` turn (including empty or one-word prompts). Always-apply inject is never hard-truncated. `ax_guard` blocks Write/Delete when a CRITICAL rule declares `guard: require-skill: "old-coder"` unless that skill is indexed, approved, enabled, and `alwaysApply`. Policy files under `.ax/policy/` and `crates/ax-policy/templates/` are exempt so seed/index can repair a missing skill.
 
 Every `ax init` re-imports all policy layers (including global) into `ax.db`. After install alone, run `ax init` or `ax policy index --force` in any project once.
 
-Source: [AmazingAng/old-coder](https://github.com/AmazingAng/old-coder) (MIT). Project init also copies rollout skills into `<project>/.cursor/skills/`, including `dotnet-code-review` for C# and .NET pull-request review. That skill is also stored in `~/.ax/global.db` so every project can load it.
+Source: [AmazingAng/old-coder](https://github.com/AmazingAng/old-coder) (MIT). Project init also copies rollout skills into `<project>/.agents/skills/` (linked from `.cursor/skills/`): `pr`, `old-coder`, `old-coder-api`, `dotnet-code-review`, `typescript-review`, and `react-review`. `review-loop` and `pr-review-comments` stay machine-wide (`~/.ax/global.db` and `~/.cursor/skills/`) so a project copy does not duplicate them. The `pr` skill reviews the draft it opened and keeps fixing until a review round has zero findings.
 
 ### Review loop
 
@@ -46,13 +46,13 @@ EVIDENCE includes a table of review rounds. `review-loop` is also stored as a co
 
 ### Reviewing a colleague's pull request
 
-The review loop fixes findings, which is right for your own change but wrong for someone else's pull request. For a colleague's PR, the agent loads `ax_skill({ name: "pr-review-comments" })` instead. It runs the same skill check and stack review, but it does not change any code. Every finding becomes a draft comment, and the agent asks you one question per comment (`AskQuestion` in Cursor, `AskUserQuestion` in Claude Code). Each question offers one or more proposed texts (`Post: …`), `Do not post`, and free text for your own wording. The agent posts only the comments you chose, then lists what it posted and what it skipped. `pr-review-comments` is seeded next to `review-loop` and stored in `~/.ax/global.db` the same way.
+The review loop fixes findings, which is right for your own change but wrong for someone else's pull request. For a colleague's PR, the agent loads `ax_skill({ name: "pr-review-comments" })` instead. It runs the same skill check and stack review, but it does not change any code. Every finding becomes a draft comment, and the agent asks you one question per comment (`AskQuestion` in Cursor, `AskUserQuestion` in Claude Code). Each question offers one or more proposed texts (`Post: …`), `Do not post`, and free text for your own wording. The agent posts only the comments you chose, then lists what it posted and what it skipped. Before the comments, it always tries to link the work item to the pull request (`az repos pr work-item add` on Azure DevOps, or an artifact link on GitHub) and reports the error when that attempt fails. `pr-review-comments` is seeded next to `review-loop` and stored in `~/.ax/global.db` the same way. Comments the agent posts on a pull request are Dutch (`dutch-pr-comments`); chat with the user stays English.
 
-Upgrade to **ax v2.1.2+** and restart your agent so MCP exposes `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`, and `ax_policy_capture`.
+Restart your agent so MCP exposes `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`, and `ax_policy_capture`.
 
 ---
 
-## Policy capture (v2.1.1+)
+## Policy capture
 
 When a user gives a **durable directive** — phrases like `always`, `you must`, `never`, `@rule`, or Dutch equivalents — agents can turn it into a team rule without hand-authoring YAML.
 
@@ -74,7 +74,7 @@ Saved rules go to **database** or **files** depending on `policy.storage` in `ax
 
 ---
 
-## Policy storage (v2.1.1+; hybrid in v4.3+)
+## Policy storage
 
 | Mode | Source of truth | Typical workflow |
 |---|---|---|
@@ -173,7 +173,7 @@ The cleanup runs after `ax sync`, `ax index` and the watch sync, after every pol
 
 `ax init` does not write the skills stored in `global.db` (`review-loop`, `pr-review-comments`) into a project's `.agents/skills/`; they reach every project from the global level.
 
-### Database migration scan (v2.1.2+)
+### Database migration scan
 
 When switching to **database** with `--migrate`, ax does not import only `.ax/policy/`. It **recursively scans the project** for:
 
@@ -321,6 +321,10 @@ group: design
 | `group` | Optional catalog folder id for Command Center **Rules** grouping (same catalog as skills). Matching ignores this field |
 | `share` | Optional alias — normalized to tag `shared` on parse (legacy; default export no longer requires it) |
 
+Any other frontmatter key is kept as an extra property (`files`, `kind`, `aliases`, a checkbox, a list). ax stores it, writes it back, and includes it in `ax_preflight`, `ax_rules`, and `ax_skill` under a `Properties:` block when the rule matches. The same applies to skills. Empty values are dropped. Known fields above stay schema fields and are not repeated as properties.
+
+In Command Center, open the rule and use **Metadata → Properties**. **Add property** creates a text, list, number, or checkbox value. Save writes it with the rule. A name that matches a built-in field (for example `tags`) is rejected there.
+
 Disable without deleting:
 
 ```bash
@@ -355,6 +359,14 @@ When `alwaysApply` is `true`, `ax_preflight` injects the skill body on **every**
 
 Give every skill at least one `tags` value (same as rules) so Command Center can filter it.
 
+Extra frontmatter keys on a skill work the same way as on a rule. A skill can carry `globs`, `files`, `kind`, or any other key the rule schema does not use. When the skill is injected, those properties are sent with the body. `ax_skill` returns them on the skill row as `properties`. Command Center edits them under **Metadata → Properties** on the skill.
+
+### Linking rules, skills and memories
+
+A rule, skill, or memory body can link to another item Obsidian-style: `[[pre-pr-check]]`, `[[skills/pr]]`, `[[global/skills/review-loop]]`, or `[[pr|the PR skill]]`. When `ax_preflight` delivers an item, it also delivers what that item links to: one hop, at most five items per turn, and never a disabled or unapproved one. A rule delivered this way has the match reason `link:rule/<id>` (or `link:skill/…`, `link:memory/…`). Links in code blocks are ignored, and the Command Center shows links as clickable, with a **Linked from** list under the body. Name lookup and the vault side are in the [Obsidian Vault](/guides/obsidian-vault/#links) guide.
+
+The shipped `pr` skill opens the pull request as a draft, then reviews that draft. It keeps fixing findings on the same branch until a review round has zero findings. That review follows `review-loop`. Comments are not posted for the author to approve.
+
 ### Guard directives
 
 Any **CRITICAL** rule can opt into the static `ax_guard` gate by putting one of these lines in its body (quotes required):
@@ -388,6 +400,8 @@ On **Policy → Rules** and **Policy → Skills**:
 The rule and skill **source** pane is a highlighted overlay on a textarea. Overlay and textarea use the same font-size, line-height, and font-family so clicks, the caret, and selection sit on the glyphs you see.
 
 Skills on **Policy → Skills** (and rules on **Policy → Rules**) are grouped into a fixed catalog (session, implementation, testing, release, …). Collapse a group header to hide its rows, or use **Collapse all** / **Expand all**. A **Groups** multiselect filters the list to one or more folders (empty selection shows every group that still matches search and other filters). Groups with no items are omitted from the list; the editor still lists every catalog group so a new item can be attached.
+
+**Auto-group.** The **Auto-group** button on the Rules and Skills pages suggests an existing group for every item that has none yet. It compares the item's name, description, tags, triggers, globs, and body with the text of each group's members, label, and aliases (TF-IDF cosine similarity, computed in the browser). A preview lists every ungrouped item with its suggestion; items without a close enough match (score below 0.15) show **No match**. Change a suggestion in the dropdown or untick a row, then **Apply** writes `group` to the selected items. Nothing is saved before you apply, and it never creates a new group.
 
 ---
 
@@ -447,7 +461,7 @@ Save the choice in project `ax.json`:
 
 Language stacks follow the languages ax indexes: `rust`, `python`, `go`, `typescript`, `javascript`, `c`, `cpp`, `ruby`, `swift`, `kotlin`, `dart`, `svelte`, `astro`, `scala`, `lua`, `luau`, `objc`, `r`, and `pascal`, in addition to `dotnet` (C#), `java`, and `php`. C# stays on the `dotnet` stack. Config formats ax also parses (YAML, XML, properties) are not stacks.
 
-The `dotnet` stack (v1.2.0) ships the `dotnet-code-review` skill. It has twelve sections, and each rule appears once:
+The `dotnet` stack ships the `dotnet-code-review` skill. It has twelve sections, and each rule appears once:
 
 1. naming and casing (Framework Design Guidelines)
 2. layout and syntax
@@ -462,7 +476,7 @@ The `dotnet` stack (v1.2.0) ships the `dotnet-code-review` skill. It has twelve 
 11. resilience and testability
 12. a fixed output format with a verdict, a score, and a severity per finding
 
-The `nextjs` stack (v1.2.0, which pulls in `react`) ships the `nextjs-review` skill. It also has twelve sections:
+The `nextjs` stack (which pulls in `react`) ships the `nextjs-review` skill. It also has twelve sections:
 
 1. structure and naming
 2. TypeScript
@@ -479,7 +493,7 @@ The `nextjs` stack (v1.2.0, which pulls in `react`) ships the `nextjs-review` sk
 
 It does not repeat rules that are already in `react-review`.
 
-Every other stack (v1.2.0) ships a review skill of the same depth: 10 to 12 stack-specific review sections with 73 to 103 concrete rules, and the same output format. Each rule appears once. Some skills build on another skill: `laravel` and `drupal` build on `php-review`, `sitecore` and `optimizely` on `dotnet-code-review`, `typescript` on `javascript-review`, `luau` on `lua-review`, and `cpp` and `objc` on `c-review`. Such a skill names its base, tells the agent to load it too, and repeats none of its rules. Where the two conflict, the building skill's rule wins.
+Every other stack ships a review skill of the same depth: 10 to 12 stack-specific review sections with 73 to 103 concrete rules, and the same output format. Each rule appears once. Some skills build on another skill: `laravel` and `drupal` build on `php-review`, `sitecore` and `optimizely` on `dotnet-code-review`, `typescript` on `javascript-review`, `luau` on `lua-review`, and `cpp` and `objc` on `c-review`. Such a skill names its base, tells the agent to load it too, and repeats none of its rules. Where the two conflict, the building skill's rule wins.
 
 `ax policy stack upgrade` (or the next `ax init`) replaces an older copy you have not edited.
 
@@ -582,7 +596,7 @@ ax policy enable <id-or-name>
 ax policy disable <id-or-name>
 ax policy pack export|import|status
 ax policy review list|show|approve|reject
-ax policy guard --file path        # test CRITICAL guard on a path
+ax policy guard path               # test CRITICAL guard on a path
 ax policy capture <prompt> [--yes] [--json] [--file path]
 ax policy storage status [--json]
 ax policy storage database [--yes] [--keep-files] [--global] [--json]

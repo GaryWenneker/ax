@@ -2,11 +2,15 @@
 id: release-all-platforms
 level: CRITICAL
 alwaysApply: false
-globs: ["site/public/releases/**", "docs/PRODUCTION.md", ".github/workflows/release.yml"]
-triggers: ["release", "cut release", "bump version", "publish release", "latest.txt", "verify-release-assets"]
-tags: ["ops", "release"]
+globs: ["site/public/releases/**","docs/PRODUCTION.md",".github/workflows/release.yml"]
+triggers: ["release","cut release","bump version","publish release","latest.txt","verify-release-assets"]
+tags: ["ops","release"]
 priority: 95
+enabled: true
+status: approved
+scope: project
 ---
+
 # Release — all platforms + docs (CRITICAL)
 
 > **Never publish a release or bump `latest.txt` unless every required binary is present and docs/web are updated in the same change.**
@@ -47,3 +51,8 @@ Partial uploads (e.g. Windows-only) caused Mac install failures — forbidden.
 2. `scripts/verify-release-assets.sh dist/` must pass.
 3. Mirror to getax via CI or `scripts/publish-getax-releases.*`.
 4. Confirm `https://getax.wenneker.io/releases/latest.txt` and each asset URL return 200.
+
+## Related
+
+- [[install-version-resolution]] — installers resolve the published assets
+- [[docs-with-features]] — release version strings in docs

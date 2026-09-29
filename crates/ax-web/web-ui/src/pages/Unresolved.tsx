@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchUnresolved, fetchUnresolvedSummary, reconcileUnresolved } from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
 import Codicon from '../components/Codicon';
 import ModalShell from '../components/ModalShell';
+import {
+  groupErrors,
+  installableServers,
+  parseProgress,
+  progressLabel,
+  progressPercent,
+  type EnrichProgress,
+  type LspServer,
+} from '../lspServers';
 import {
   FilterBar,
   ItemList,
@@ -54,23 +63,24 @@ export default function UnresolvedPage({
   const [reconciling, setReconciling] = useState(false);
   const [enrichOpen, setEnrichOpen] = useState(false);
   const [enriching, setEnriching] = useState(false);
+  const [progress, setProgress] = useState<EnrichProgress | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const serverListRef = useRef<HTMLUListElement>(null);
+  const reportRef = useRef<HTMLDivElement>(null);
   const [enrichLimit, setEnrichLimit] = useState(200);
-  const [lspServers, setLspServers] = useState<
-    Array<{
-      id: string;
-      available: boolean;
-      command?: string;
-      path?: string | null;
-      languages?: string[];
-    }>
-  >([]);
+  const [lspServers, setLspServers] = useState<LspServer[]>([]);
   const [lspStatusLoading, setLspStatusLoading] = useState(false);
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [installLog, setInstallLog] = useState<string[]>([]);
   const [enrichReport, setEnrichReport] = useState<{
     examined: number;
     resolved: number;
     skippedNoServer: number;
     skippedNoDefinition: number;
     errors: string[];
+    cancelled: boolean;
+    done: number;
+    total: number;
   } | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -203,13 +213,106 @@ export default function UnresolvedPage({
   async function openEnrich() {
     setEnrichOpen(true);
     setEnrichReport(null);
+    setProgress(null);
+    void fetchProgress();
     await loadLspStatus();
   }
 
   const availableServerCount = lspServers.filter((s) => s.available).length;
+  const missingServers = installableServers(lspServers);
+
+  async function installOne(s: LspServer) {
+    setInstalling(s.id);
+    try {
+      const r = await fetch('/api/lsp/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: s.id }),
+      });
+      const d = await r.json();
+      const body = d.ok ? String(d.output ?? '') : String(d.error ?? 'install failed');
+      setInstallLog((log) => [...log, `$ ${s.install}\n${body.trim()}`]);
+    } catch (e) {
+      setInstallLog((log) => [...log, `$ ${s.install}\n${String(e)}`]);
+    }
+  }
+
+  async function runInstall(servers: LspServer[]) {
+    setInstallLog([]);
+    try {
+      for (const s of servers) {
+        await installOne(s);
+        await loadLspStatus();
+      }
+    } finally {
+      setInstalling(null);
+    }
+  }
+
+  const runActive = enriching || Boolean(progress?.running);
+  const runningServer = runActive ? progress?.server ?? null : null;
+  const enrichErrorGroups = useMemo(
+    () => groupErrors(enrichReport?.errors ?? []),
+    [enrichReport],
+  );
+
+  const progressSeq = useRef(0);
+  const fetchProgress = useCallback(async () => {
+    const seq = ++progressSeq.current;
+    try {
+      const r = await fetch('/api/lsp/progress');
+      const d = parseProgress(await r.json());
+      if (d && seq === progressSeq.current) setProgress(d);
+      return d;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enrichOpen || !runActive) return;
+    const id = setInterval(() => void fetchProgress(), 400);
+    return () => clearInterval(id);
+  }, [enrichOpen, runActive, fetchProgress]);
+
+  useEffect(() => {
+    if (!runningServer) return;
+    serverListRef.current
+      ?.querySelector<HTMLElement>(`[data-server-id="${runningServer}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [runningServer]);
+
+  useEffect(() => {
+    if (!enrichReport) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    reportRef.current?.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+  }, [enrichReport]);
+
+  const wasActive = useRef(false);
+  useEffect(() => {
+    if (wasActive.current && !runActive) {
+      setStopping(false);
+      fetchUnresolvedSummary().then(setSummary).catch(() => {});
+    }
+    wasActive.current = runActive;
+  }, [runActive]);
+
+  async function stopLspEnrich() {
+    setStopping(true);
+    try {
+      const r = await fetch('/api/lsp/cancel', { method: 'POST' });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Could not stop the run');
+    } catch (e) {
+      setStopping(false);
+      setError(String(e));
+    }
+  }
 
   async function runLspEnrich() {
     if (availableServerCount === 0) return;
+    setProgress(null);
+    setStopping(false);
     setEnriching(true);
     setError(null);
     setOk(null);
@@ -230,12 +333,16 @@ export default function UnresolvedPage({
       const errors = Array.isArray(report.errors)
         ? report.errors.map((e: unknown) => String(e))
         : [];
+      const last = await fetchProgress();
       setEnrichReport({
         examined,
         resolved,
         skippedNoServer,
         skippedNoDefinition,
         errors,
+        cancelled: Boolean(report.cancelled),
+        done: last?.done ?? examined,
+        total: last?.total ?? examined,
       });
       setOk(
         `LSP enrich: examined ${examined}, resolved ${resolved}` +
@@ -261,7 +368,7 @@ export default function UnresolvedPage({
             <button
               type="button"
               className="btn"
-              disabled={enriching || loading}
+              disabled={runActive || loading}
               onClick={() => void openEnrich()}
             >
               Enrich with LSP
@@ -282,24 +389,35 @@ export default function UnresolvedPage({
         <ModalShell
           title="Enrich with LSP"
           subtitle="Resolve unresolved references via local language servers (Exact edges)."
-          onClose={() => !enriching && setEnrichOpen(false)}
+          onClose={() => !runActive && setEnrichOpen(false)}
           footer={
             <>
-              <button
-                type="button"
-                className="btn"
-                disabled={enriching}
-                onClick={() => {
-                  setEnrichOpen(false);
-                  setEnrichReport(null);
-                }}
-              >
-                {enrichReport ? 'Close' : 'Cancel'}
-              </button>
+              {runActive ? (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={stopping}
+                  onClick={() => void stopLspEnrich()}
+                >
+                  <Codicon name="debug-stop" />
+                  {stopping ? 'Stopping…' : 'Stop run'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    setEnrichOpen(false);
+                    setEnrichReport(null);
+                  }}
+                >
+                  {enrichReport ? 'Close' : 'Cancel'}
+                </button>
+              )}
               <button
                 type="button"
                 className="btn primary"
-                disabled={enriching || availableServerCount === 0 || lspStatusLoading}
+                disabled={runActive || availableServerCount === 0 || lspStatusLoading}
                 title={
                   availableServerCount === 0
                     ? 'Install a language server on PATH first'
@@ -307,7 +425,7 @@ export default function UnresolvedPage({
                 }
                 onClick={() => void runLspEnrich()}
               >
-                {enriching
+                {runActive
                   ? 'Enriching…'
                   : `Run enrich (limit ${enrichLimit})`}
               </button>
@@ -315,6 +433,12 @@ export default function UnresolvedPage({
           }
         >
           <div className="lsp-enrich-modal">
+            <p className="lsp-enrich-total">
+              Unresolved in total{' '}
+              <strong>{summary ? summary.total.toLocaleString('en-US') : '…'}</strong>
+              <span className="lsp-enrich-total__sep">·</span>
+              this run: up to <strong>{enrichLimit.toLocaleString('en-US')}</strong>
+            </p>
             <div className="lsp-enrich-toolbar">
               <label className="lsp-enrich-limit">
                 Limit
@@ -325,7 +449,7 @@ export default function UnresolvedPage({
                   max={5000}
                   step={50}
                   value={enrichLimit}
-                  disabled={enriching}
+                  disabled={runActive}
                   onChange={(e) =>
                     setEnrichLimit(Math.max(1, Math.min(5000, Number(e.target.value) || 200)))
                   }
@@ -334,24 +458,75 @@ export default function UnresolvedPage({
               <button
                 type="button"
                 className="btn"
-                disabled={enriching || lspStatusLoading}
+                disabled={runActive || lspStatusLoading}
                 onClick={() => void loadLspStatus()}
               >
                 {lspStatusLoading ? 'Checking…' : 'Refresh servers'}
               </button>
+              {missingServers.length > 0 && (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={runActive || lspStatusLoading || installing !== null}
+                  onClick={() => void runInstall(missingServers)}
+                >
+                  <Codicon name="cloud-download" />
+                  {installing ? `Installing ${installing}…` : `Install missing (${missingServers.length})`}
+                </button>
+              )}
             </div>
 
             <p className="settings-help">
               Language servers on PATH <em>and</em> runnable. A rustup shim alone shows as{' '}
               <code>shim</code> until you run{' '}
-              <code>rustup component add rust-analyzer</code>. Unavailable servers are skipped at
-              enrich time. Successful definitions become edges with confidence <code>exact</code>.
+              <code>rustup component add rust-analyzer</code>. <strong>Install</strong> runs the
+              server's own install command (npm, brew, go, dotnet, rustup) on this machine.
+              Unavailable servers are skipped at enrich time. Successful definitions become edges with confidence <code>exact</code>.
               The first enrich on a large Rust workspace can take 1–3 minutes while rust-analyzer
               indexes — leave this dialog open; later refs in the same run are much faster.
               Reconcile only name-matches symbols already in the graph (stdlib noise often stays).
             </p>
 
-            <ul className="lsp-server-list" aria-label="Language servers">
+            {runActive && (
+              <div className="lsp-enrich-progress">
+                <div className="lsp-enrich-progress__head">
+                  <span className="lsp-enrich-progress__what">
+                    {progress?.server ? (
+                      <>
+                        {stopping ? 'Stopping' : 'Running'}{' '}
+                        <strong className="mono">{progress.server}</strong>
+                        {progress.file ? (
+                          <span className="mono lsp-enrich-progress__file">{progress.file}</span>
+                        ) : null}
+                      </>
+                    ) : (
+                      'Preparing…'
+                    )}
+                  </span>
+                  <span className="mono lsp-enrich-progress__count">
+                    {progressLabel(progress ?? { done: 0, total: 0 })}
+                  </span>
+                </div>
+                <div
+                  className="lsp-enrich-progress__bar"
+                  role="progressbar"
+                  aria-label="Enrich progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progressPercent(progress?.done ?? 0, progress?.total ?? 0)}
+                  aria-valuetext={progressLabel(progress ?? { done: 0, total: 0 })}
+                >
+                  <div
+                    className="lsp-enrich-progress__fill"
+                    style={{
+                      width: `${progressPercent(progress?.done ?? 0, progress?.total ?? 0)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <ul className="lsp-server-list" aria-label="Language servers" ref={serverListRef}>
               {lspServers.length === 0 && !lspStatusLoading ? (
                 <li className="lsp-server-list__empty">No servers discovered.</li>
               ) : (
@@ -363,7 +538,11 @@ export default function UnresolvedPage({
                   return (
                     <li
                       key={s.id}
-                      className={`lsp-server-row lsp-server-row--${status}`}
+                      data-server-id={s.id}
+                      aria-current={runningServer === s.id ? 'true' : undefined}
+                      className={`lsp-server-row lsp-server-row--${status}${
+                        runningServer === s.id ? ' lsp-server-row--running' : ''
+                      }`}
                       title={
                         status === 'shim'
                           ? 'On PATH but not runnable — e.g. rustup component add rust-analyzer'
@@ -372,7 +551,19 @@ export default function UnresolvedPage({
                     >
                       <span className="lsp-server-id mono">{s.id}</span>
                       <span className="lsp-server-cmd mono">{s.command ?? s.id}</span>
+                      {!s.available && s.install ? (
+                        <button
+                          type="button"
+                          className="btn lsp-server-install"
+                          title={s.install}
+                          disabled={runActive || installing !== null}
+                          onClick={() => void runInstall([s])}
+                        >
+                          {installing === s.id ? 'Installing…' : 'Install'}
+                        </button>
+                      ) : null}
                       <span className={`lsp-server-badge lsp-server-badge--${status}`}>
+                        <Codicon name={status === 'ok' ? 'pass' : status === 'shim' ? 'warning' : 'error'} className="badge-icon" />
                         {label}
                       </span>
                     </li>
@@ -381,9 +572,20 @@ export default function UnresolvedPage({
               )}
             </ul>
 
+            {installLog.length > 0 && (
+              <details className="lsp-enrich-errors" open={installing !== null}>
+                <summary>Install output</summary>
+                <pre className="mono lsp-install-log">{installLog.join('\n\n')}</pre>
+              </details>
+            )}
+
             {enrichReport && (
-              <div className="lsp-enrich-report" role="status">
-                <div className="lsp-enrich-report__title">Last run</div>
+              <div className="lsp-enrich-report" role="status" ref={reportRef}>
+                <div className="lsp-enrich-report__title">
+                  {enrichReport.cancelled
+                    ? `Stopped at ${progressLabel(enrichReport)}`
+                    : 'Last run'}
+                </div>
                 <div className="lsp-enrich-report__grid">
                   <span>Examined</span>
                   <strong>{enrichReport.examined}</strong>
@@ -394,16 +596,33 @@ export default function UnresolvedPage({
                   <span>Skipped (no definition)</span>
                   <strong>{enrichReport.skippedNoDefinition}</strong>
                 </div>
-                {enrichReport.errors.length > 0 && (
+                {enrichErrorGroups.length > 0 && (
                   <details className="lsp-enrich-errors">
                     <summary>
                       {enrichReport.errors.length} error
                       {enrichReport.errors.length === 1 ? '' : 's'}
+                      {enrichErrorGroups.length !== enrichReport.errors.length &&
+                        ` · ${enrichErrorGroups.length} kind${enrichErrorGroups.length === 1 ? '' : 's'}`}
                     </summary>
                     <ul>
-                      {enrichReport.errors.slice(0, 12).map((err, i) => (
-                        <li key={i} className="mono">
-                          {err}
+                      {enrichErrorGroups.slice(0, 12).map((g) => (
+                        <li key={g.message} className="lsp-enrich-error">
+                          <div className="mono lsp-enrich-error__message">{g.message}</div>
+                          {g.files.length === 1 && (
+                            <div className="mono lsp-enrich-error__file">{g.files[0]}</div>
+                          )}
+                          {g.files.length > 1 && (
+                            <details className="lsp-enrich-error__files">
+                              <summary>in {g.files.length} files</summary>
+                              <ul>
+                                {g.files.map((f) => (
+                                  <li key={f} className="mono">
+                                    {f}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -504,7 +723,7 @@ export default function UnresolvedPage({
                         key={r.id}
                         title={r.reference_name}
                         subtitle={`${r.file_path}:${r.line} · ${r.reference_kind}`}
-                        badges={<span className="page-item-badge">{r.language}</span>}
+                        badges={<span className="page-item-badge"><Codicon name="symbol-misc" className="badge-icon" />{r.language}</span>}
                         icon={<Codicon name="symbol-reference" />}
                         selected={selectedNodeId === r.from_node_id}
                         onClick={() => setSelectedNodeId(r.from_node_id)}

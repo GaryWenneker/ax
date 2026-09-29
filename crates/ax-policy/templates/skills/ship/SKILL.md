@@ -128,12 +128,6 @@ Prefer `.\scripts\release-local.ps1` — it syncs and verifies automatically.
 
 - **Restart ax MCP** in Cursor (Settings → MCP) so agents use the new binary.
 - If site/docs changed outside CI: `.\scripts\deploy-netlify.ps1`
-- Tell user to **Reload Window** in Takumi if `extensions/ax/media/*` changed (separate repo).
-
-## Takumi extension (C:\gary\takumi)
-
-Native Ax pages live in `extensions/ax/media/`. They hot-reload via the VS Code extension — **no ax binary rebuild** needed for JS/CSS-only edits. Commit/push takumi separately; no GitHub release for the extension in this skill.
-
 ## Version rules
 
 - **patch** — 4.2.0 → 4.2.1

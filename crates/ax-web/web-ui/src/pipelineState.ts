@@ -1,6 +1,6 @@
 import type { GateStep, LastRunLog } from './shipApi';
 
-const VISIBLE_STEPS = new Set(['index', 'tia', 'tests', 'sonar', 'policy']);
+const VISIBLE_STEPS = new Set(['index', 'tia', 'tests', 'policy']);
 
 export type SonarProjectStatus = 'pending' | 'active' | 'passed' | 'failed' | 'skipped';
 

@@ -37,6 +37,16 @@ claude -p --strict-mcp-config "$QUERY"
 
 Parse transcript / usage for tool-call count and tokens. Optionally correlate with `ax savings` after WITH runs (MCP calls are logged in `~/.ax/usage.db`).
 
+## Savings gauntlet
+
+Unattended comparison of the same tasks without ax, then with ax. Tasks cover the source graph, rules, skills, and memory, from a single symbol lookup through a multi-tool turn. Recipes are fixed in `tasks.yaml`.
+
+```bash
+./scripts/bench-agent-efficiency/run-savings-gauntlet.sh
+```
+
+The script writes `out/summary.md`, `out/report.md`, and `out/report.json`. With-arms call the ax MCP server over stdio and count `content[0].text`, which is what an agent receives. Deterministic token counts use o200k BPE on the tool output. The report uses a signed net (without minus with) and a previous-net column. The exit code is 1 when a task misses its anchors, a task or feature nets below 50%, the negative control saves more than 5%, or a `without:` block no longer matches `without_hashes.json`. The `savings-gauntlet` skill ("rerun the savings gauntlet") runs it, shows the tables, and proposes an improvement plan before any fix. Set `AX_GAUNTLET_LIVE=0` to skip the Claude Code arm. When `claude` is missing, that arm is recorded as skipped. `AX_GAUNTLET_LIVE_RUNS` defaults to 3 (median).
+
 ## Output
 
-Publish a Markdown table on the site (tokens, tool calls, file reads, cost) — same shape as the competitive WITH/WITHOUT narrative.
+Publish a Markdown table on the site (tokens, tool calls, file reads, cost) — same shape as the competitive WITH/WITHOUT narrative. The gauntlet report is the local evidence; do not copy it to the site until the numbers are from a finished run.

@@ -46,4 +46,4 @@ Doc inventory (counts by extension, grouped into markdown / office / PDF) is **a
 - **Impact** computes the transitive radius affected by a change.
 - **Explore** returns source for several related symbols grouped by file, plus the call path among them, in one call.
 
-See the [CLI](/ax/reference/cli/) and [MCP Server](/ax/reference/mcp-server/) references for how to run these.
+See the [CLI](/reference/cli/) and [MCP Server](/reference/mcp-server/) references for how to run these.

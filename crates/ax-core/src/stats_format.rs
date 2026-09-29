@@ -74,7 +74,7 @@ pub fn format_index_inject_block(stats: &GraphStats, pending: &[PendingFile]) ->
     let refs_edges = stats.edges_by_kind.get("references").copied().unwrap_or(0);
 
     let mut body = String::from(
-        "<ax_index note=\"Indexed project snapshot — auto-injected each turn.\">\n",
+        "<ax_index note=\"Indexed project snapshot — sent again only when it changes.\">\n",
     );
     body.push_str(&format!(
         "Graph: {} nodes, {} edges, {} code files\n",

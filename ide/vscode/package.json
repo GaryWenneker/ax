@@ -1,0 +1,47 @@
+{
+  "name": "ax-command-center",
+  "displayName": "ax Command Center",
+  "description": "Open the ax Command Center (ax web) inside the editor.",
+  "version": "0.1.0",
+  "publisher": "wenneker",
+  "license": "UNLICENSED",
+  "private": true,
+  "repository": { "type": "git", "url": "https://github.com/garywenneker/ax" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "ax.openCommandCenter", "title": "ax: Open Command Center" }
+    ],
+    "configuration": {
+      "title": "ax",
+      "properties": {
+        "ax.webPort": {
+          "type": "integer",
+          "default": 7070,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Port of the local ax web server."
+        },
+        "ax.binary": {
+          "type": "string",
+          "default": "ax",
+          "description": "ax executable used to start ax web when it is not running."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "node --test test/*.test.ts",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o ax-command-center.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.90.0",
+    "@vscode/vsce": "4.0.0",
+    "typescript": "5.9.3"
+  }
+}

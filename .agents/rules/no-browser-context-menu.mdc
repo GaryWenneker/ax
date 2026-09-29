@@ -1,0 +1,31 @@
+---
+id: no-browser-context-menu
+level: CRITICAL
+alwaysApply: false
+globs: ["crates/ax-web/web-ui/src/**"]
+triggers: ["context menu","right-click","contextmenu","onContextMenu"]
+tags: ["command-center","ui"]
+priority: 80
+enabled: true
+status: approved
+scope: project
+---
+
+# No browser right-click in Command Center
+
+Command Center must feel like a persistent desktop application, not a web page.
+
+## Required
+
+- `installContextMenuGuard()` (`src/lib/contextMenuGuard.ts`) stays installed in `main.tsx`. It prevents the browser context menu on every right-click.
+- A right-click on something without an app menu does nothing.
+- Right-click only opens the app's own menus (for example the Rules/Skills row menu). Those handlers keep working because the guard only calls `preventDefault`, never `stopPropagation`.
+- Text fields and editors (`input`, `textarea`, `select`, `[contenteditable]`) keep the browser menu for copy and paste.
+
+## Forbidden
+
+- Removing or bypassing the guard, or adding page-level code that re-enables the browser menu outside text fields.
+
+## Checked by
+
+- `e2e/app-feel.spec.ts` (right-click tests) and mutants M10/M11 in `scripts/calm-lists-mutants.sh`.

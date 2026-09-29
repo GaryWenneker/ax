@@ -1,0 +1,180 @@
+.getax-search-list {
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.getax-hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+
+.getax-hit-kind {
+  font-size: 0.75em;
+  opacity: 0.7;
+  margin-right: 6px;
+}
+
+.getax-detail {
+  padding: 8px 12px;
+  overflow: auto;
+  height: 100%;
+}
+
+.getax-detail pre {
+  white-space: pre-wrap;
+}
+
+.view-content:has(.getax-local) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.getax-local {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  height: 100%;
+  background: var(--background-primary);
+}
+
+.getax-local-canvas {
+  position: relative;
+  min-height: 0;
+}
+
+.getax-local-side {
+  overflow: auto;
+  border-left: 1px solid var(--background-modifier-border);
+  padding: 8px;
+}
+
+.getax-local-links h4,
+.getax-local-links h5 {
+  margin: 8px 0 4px;
+}
+
+.view-content.getax-graph {
+  position: relative;
+  height: 100%;
+  padding: 0;
+}
+
+.getax-graph-host {
+  position: absolute;
+  inset: 0;
+}
+
+.getax-offline {
+  padding: 12px;
+}
+
+a.internal-link.getax-wikilink {
+  color: var(--link-color);
+  opacity: 1;
+}
+
+.view-content:has(.getax-policy) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.getax-policy {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--background-primary);
+}
+
+.getax-policy-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.getax-policy-filter {
+  flex: 1;
+}
+
+.getax-policy-body {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.getax-policy-list {
+  overflow: auto;
+  border-right: 1px solid var(--background-modifier-border);
+}
+
+.getax-policy-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.getax-policy-item.is-active {
+  background: var(--background-modifier-hover);
+}
+
+.getax-policy-item.is-off {
+  opacity: 0.45;
+}
+
+.getax-policy-editor {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  gap: 8px;
+}
+
+.getax-policy-fields {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+}
+
+.getax-policy-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.getax-policy-check {
+  flex: 0;
+  flex-direction: row;
+  align-items: center;
+  padding-bottom: 6px;
+}
+
+.getax-policy-body-input {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  font-family: var(--font-monospace);
+  background: var(--background-primary);
+}
+
+.getax-policy-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.getax-policy-empty {
+  color: var(--text-muted);
+}

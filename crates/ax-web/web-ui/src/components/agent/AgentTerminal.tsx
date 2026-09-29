@@ -107,7 +107,7 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
       const label = labelFor(initialAgent);
       if (target && !isCliReady(target) && target.cli_installable !== false) {
         pushSystem(
-          `${label} CLI not installed — install from Settings → AI Agents, then select ${label} again.`,
+          `${label} CLI not installed — install it manually, then select ${label} again.`,
         );
       } else {
         pushSystem(`Interactive ${label} CLI · profile ${pid}`);

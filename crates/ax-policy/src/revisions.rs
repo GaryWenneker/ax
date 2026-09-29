@@ -290,6 +290,7 @@ mod tests {
             source: None,
             root_id: None,
             group: None,
+            properties: Default::default(),
         }
     }
 

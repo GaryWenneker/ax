@@ -226,6 +226,7 @@ mod tests {
             effective_storage: String::new(),
             storage_is_override: false,
             group: "session-protocol".into(),
+            properties: Default::default(),
         };
         let v = serde_json::to_value(&row).unwrap();
         assert_eq!(v["name"], "startup");

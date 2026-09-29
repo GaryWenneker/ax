@@ -22,3 +22,7 @@ All agent-facing and user-facing text MUST be written in **English**.
 3. If the user writes in another language, understand it but **respond in English**.
 
 Non-English input from the user does not change the output language requirement.
+
+## Exception
+
+Comments posted on a pull request — review comments, thread replies, and suggested-change text — are written in Dutch. See `dutch-pr-comments`. Chat replies, docs, and commit messages stay English.

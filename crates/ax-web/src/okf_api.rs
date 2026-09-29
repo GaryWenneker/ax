@@ -1,5 +1,10 @@
 //! Open Knowledge Format (OKF) export API for the Command Center.
 
+use ax_core::{
+    export_okf_bundle, publish_okf_wiki, validate_okf_bundle, OkfConfig, OkfExportOptions,
+    OkfPublishOptions,
+};
+use ax_db::queries::QueryBuilder;
 use axum::{
     extract::State,
     http::StatusCode,
@@ -7,11 +12,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use ax_core::{
-    export_okf_bundle, publish_okf_wiki, validate_okf_bundle, OkfConfig, OkfExportOptions,
-    OkfPublishOptions,
-};
-use ax_db::queries::QueryBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -28,21 +28,12 @@ pub fn router_hub(hub: WebHub) -> Router {
 }
 
 fn err(status: StatusCode, msg: impl Into<String>) -> axum::response::Response {
-    (
-        status,
-        Json(ApiError {
-            error: msg.into(),
-        }),
-    )
-        .into_response()
+    (status, Json(ApiError { error: msg.into() })).into_response()
 }
 
 fn forbidden_readonly() -> axum::response::Response {
     ax_usage::log_share(None, "readonly write denied");
-    err(
-        StatusCode::FORBIDDEN,
-        "read-only mode (AX_WEB_READONLY=1)",
-    )
+    err(StatusCode::FORBIDDEN, "read-only mode (AX_WEB_READONLY=1)")
 }
 
 #[derive(Serialize)]

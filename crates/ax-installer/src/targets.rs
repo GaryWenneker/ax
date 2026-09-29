@@ -9,10 +9,12 @@ use super::report::{FileAction, InstallSummary, TargetReport};
 use crate::hooks::{self, GuardIde};
 use crate::cli_catalog::{catalog_entry, detect_cli_available};
 use crate::cli_install::cli_installable;
+use crate::command_center;
+use crate::detect::app_installed_here;
 
 pub const TARGETS: &[&str] = &[
     "claude", "cursor", "codex", "opencode", "hermes", "gemini", "antigravity", "kiro",
-    "vscode", "takumi", "windsurf", "zed", "continue",
+    "vscode", "windsurf", "zed", "continue", "jetbrains",
 ];
 
 pub fn display_name(target: &str) -> &'static str {
@@ -26,41 +28,38 @@ pub fn display_name(target: &str) -> &'static str {
         "antigravity" => "Antigravity IDE",
         "kiro" => "Kiro",
         "vscode" => "VS Code (Copilot Chat)",
-        "takumi" => "Takumi 匠",
         "windsurf" => "Windsurf (Cascade)",
         "zed" => "Zed",
         "continue" => "Continue",
+        "jetbrains" => "JetBrains IDEs",
         _ => "Unknown",
     }
 }
 
+/// Installed on this machine: the CLI resolves or the app is present. Config folders don't count.
 pub fn is_detected(target: &str) -> bool {
-    detect_cli_available(target) || has_agent_data_dir(target)
+    detect_cli_available(target) || app_present(target)
 }
 
-fn has_agent_data_dir(target: &str) -> bool {
-    let Ok(home) = home_dir() else {
-        return false;
-    };
+/// JetBrains has no single app; each product creates its own config folder on first launch.
+fn app_present(target: &str) -> bool {
     match target {
-        "claude" => home.join(".claude").is_dir() || home.join(".claude.json").is_file(),
-        "cursor" => home.join(".cursor").is_dir(),
-        "codex" => home.join(".codex").is_dir(),
-        "opencode" => opencode_config_path().map(|p| p.exists()).unwrap_or(false)
-            || home.join(".config").join("opencode").is_dir(),
-        "hermes" => hermes_config_path().map(|p| p.parent().is_some_and(|d| d.is_dir())).unwrap_or(false),
-        "gemini" => home.join(".gemini").is_dir(),
-        "antigravity" => home.join(".gemini").is_dir(),
-        "kiro" => home.join(".kiro").is_dir(),
-        "vscode" => home.join(".vscode").is_dir() || vscode_user_dir().map(|p| p.is_dir()).unwrap_or(false),
-        "takumi" => {
-            home.join(".takumi").is_dir()
-                || takumi_user_dir().map(|p| p.is_dir()).unwrap_or(false)
-        }
-        "windsurf" => windsurf_config_dir().map(|p| p.is_dir()).unwrap_or(false),
-        "zed" => zed_settings_path().map(|p| p.parent().is_some_and(|d| d.is_dir())).unwrap_or(false),
-        "continue" => home.join(".continue").is_dir(),
-        _ => false,
+        "jetbrains" => !command_center::jetbrains_dirs_here().is_empty(),
+        _ => app_installed_here(target),
+    }
+}
+
+/// Whether the Command Center is present in this IDE; `None` for terminal agents.
+fn panel_status(target: &str) -> Option<bool> {
+    match target {
+        "jetbrains" => Some(
+            command_center::jetbrains_dirs_here()
+                .iter()
+                .any(|d| d.join("plugins").join(command_center::JETBRAINS_JAR).is_file()),
+        ),
+        "zed" => Some(zed_tasks_path().ok().and_then(|p| fs::read_to_string(p).ok()).is_some_and(|c| command_center::zed_has_ax_task(&c))),
+        t if command_center::is_vscode_family(t) => Some(command_center::vscode_panel_installed_here(t)),
+        _ => None,
     }
 }
 
@@ -98,11 +97,12 @@ pub struct AgentTargetStatus {
     pub cli_available: bool,
     /// Backward-compatible alias for `cli_available`.
     pub cli_on_path: bool,
-    pub data_dir_detected: bool,
+    pub app_installed: bool,
     pub runnable: bool,
     pub cli_installable: bool,
     pub configured: bool,
     pub config_paths: Vec<String>,
+    pub panel: Option<bool>,
 }
 
 pub fn agent_status(project_root: &Path) -> Result<Vec<AgentTargetStatus>, String> {
@@ -115,20 +115,21 @@ pub fn agent_status(project_root: &Path) -> Result<Vec<AgentTargetStatus>, Strin
 fn target_status(id: &str, project_root: &Path) -> Result<AgentTargetStatus, String> {
     let (configured, paths) = is_ax_configured(id, project_root)?;
     let cli_available = detect_cli_available(id);
-    let data_dir_detected = has_agent_data_dir(id);
+    let app_installed = app_present(id);
     let entry = catalog_entry(id);
     Ok(AgentTargetStatus {
         id: id.to_string(),
         display_name: display_name(id).to_string(),
         bin: entry.map(|e| e.bin.to_string()).unwrap_or_else(|| id.to_string()),
-        detected: cli_available || data_dir_detected,
+        detected: cli_available || app_installed,
         cli_available,
         cli_on_path: cli_available,
-        data_dir_detected,
+        app_installed,
         runnable: entry.map(|e| e.runnable).unwrap_or(false),
         cli_installable: cli_installable(id),
         configured,
         config_paths: paths,
+        panel: panel_status(id),
     })
 }
 
@@ -154,14 +155,14 @@ pub fn install_targets(
     Ok(InstallSummary { reports })
 }
 
-pub fn uninstall_targets(selected: &[String]) -> Result<Vec<TargetReport>, String> {
+pub fn uninstall_targets(project_root: &Path, selected: &[String]) -> Result<Vec<TargetReport>, String> {
     let mut reports = Vec::new();
     for target in selected {
         let id = target.trim().to_ascii_lowercase();
         if id.is_empty() {
             continue;
         }
-        if let Some(report) = uninstall_target(&id)? {
+        if let Some(report) = uninstall_target(&id, project_root)? {
             reports.push(report);
         }
     }
@@ -183,13 +184,22 @@ fn is_ax_configured(target: &str, project_root: &Path) -> Result<(bool, Vec<Stri
         "antigravity" => vec![antigravity_mcp_path()?],
         "kiro" => vec![home.join(".kiro").join("settings").join("mcp.json")],
         "hermes" => vec![hermes_config_path()?],
-        "vscode" | "takumi" => vec![vscode_mcp_path(project_root)],
+        "vscode" => vec![vscode_mcp_path(project_root)],
         "windsurf" => vec![windsurf_mcp_path()?],
         "zed" => vec![zed_settings_path()?],
         "continue" => vec![
             continue_mcp_path(project_root),
             continue_global_mcp_path()?,
         ],
+        "jetbrains" => {
+            let jars: Vec<PathBuf> = command_center::jetbrains_dirs_here()
+                .iter()
+                .map(|d| d.join("plugins").join(command_center::JETBRAINS_JAR))
+                .filter(|p| p.is_file())
+                .collect();
+            let str_paths = jars.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+            return Ok((!jars.is_empty(), str_paths));
+        }
         _ => return Ok((false, Vec::new())),
     };
     let str_paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
@@ -248,10 +258,10 @@ fn config_has_ax(path: &Path, bin: &str, project_root: &Path) -> bool {
     false
 }
 
-pub fn uninstall_all() -> Result<Vec<TargetReport>, String> {
+pub fn uninstall_all(project_root: &Path) -> Result<Vec<TargetReport>, String> {
     let mut reports = Vec::new();
     for target in TARGETS {
-        if let Some(report) = uninstall_target(target)? {
+        if let Some(report) = uninstall_target(target, project_root)? {
             reports.push(report);
         }
     }
@@ -269,19 +279,28 @@ fn install_target(target: &str, project_root: &Path) -> Result<Option<TargetRepo
         "antigravity" => install_antigravity_mcp(project_root)?,
         "kiro" => install_kiro_mcp(project_root)?,
         "vscode" => install_vscode_mcp(project_root)?,
-        "takumi" => install_takumi_mcp(project_root)?,
         "windsurf" => install_windsurf_mcp(project_root)?,
         "zed" => install_zed_mcp(project_root)?,
         "continue" => install_continue_mcp(project_root)?,
+        "jetbrains" => install_jetbrains()?,
         _ => return Ok(None),
     };
+    let mut report = report;
+    match target {
+        "zed" => install_zed_task(&mut report)?,
+        t => {
+            if let Some(note) = command_center::install_vscode_panel_here(t, report.display_name) {
+                report.note(note);
+            }
+        }
+    }
     Ok(Some(report))
 }
 
-fn uninstall_target(target: &str) -> Result<Option<TargetReport>, String> {
+fn uninstall_target(target: &str, project_root: &Path) -> Result<Option<TargetReport>, String> {
     let report = match target {
         "cursor" => uninstall_cursor_mcp()?,
-        "claude" => uninstall_claude_mcp()?,
+        "claude" => uninstall_claude_mcp(project_root)?,
         "codex" => uninstall_codex_mcp()?,
         "opencode" => uninstall_opencode_mcp()?,
         "hermes" => uninstall_hermes_mcp()?,
@@ -289,12 +308,21 @@ fn uninstall_target(target: &str) -> Result<Option<TargetReport>, String> {
         "antigravity" => uninstall_antigravity_mcp()?,
         "kiro" => uninstall_kiro_mcp()?,
         "vscode" => uninstall_vscode_mcp()?,
-        "takumi" => uninstall_takumi_mcp()?,
         "windsurf" => uninstall_windsurf_mcp()?,
         "zed" => uninstall_zed_mcp()?,
         "continue" => uninstall_continue_mcp()?,
+        "jetbrains" => uninstall_jetbrains()?,
         _ => return Ok(None),
     };
+    let mut report = report;
+    match target {
+        "zed" => uninstall_zed_task(&mut report)?,
+        t => {
+            if let Some(note) = command_center::uninstall_vscode_panel_here(t) {
+                report.note(note);
+            }
+        }
+    }
     Ok(Some(report))
 }
 
@@ -563,12 +591,13 @@ fn install_claude_mcp(project_root: &Path) -> Result<TargetReport, String> {
     Ok(report)
 }
 
-fn uninstall_claude_mcp() -> Result<TargetReport, String> {
+fn uninstall_claude_mcp(project_root: &Path) -> Result<TargetReport, String> {
     let mut report = TargetReport::new("claude", display_name("claude"));
     let home = home_dir()?;
-    let global = home.join(".claude.json");
-    if let Some(action) = remove_mcp_servers(&global)? {
-        report.push_file(global, action);
+    for path in [home.join(".claude.json"), project_root.join(".mcp.json")] {
+        if let Some(action) = remove_mcp_servers(&path)? {
+            report.push_file(path, action);
+        }
     }
     let settings = home.join(".claude").join("settings.json");
     let mut touched = false;
@@ -879,49 +908,6 @@ fn vscode_mcp_path(project_root: &Path) -> PathBuf {
     project_root.join(".vscode").join("mcp.json")
 }
 
-fn vscode_user_dir() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var("APPDATA").ok().map(|a| PathBuf::from(a).join("Code").join("User"))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        dirs::home_dir().map(|h| {
-            h.join("Library")
-                .join("Application Support")
-                .join("Code")
-                .join("User")
-        })
-    }
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
-        dirs::home_dir().map(|h| h.join(".config").join("Code").join("User"))
-    }
-}
-
-/// Takumi 匠 product data folder (Code-OSS fork; `product.json` `dataFolderName`).
-fn takumi_user_dir() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var("APPDATA")
-            .ok()
-            .map(|a| PathBuf::from(a).join("Takumi").join("User"))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        dirs::home_dir().map(|h| {
-            h.join("Library")
-                .join("Application Support")
-                .join("Takumi")
-                .join("User")
-        })
-    }
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
-        dirs::home_dir().map(|h| h.join(".config").join("Takumi").join("User"))
-    }
-}
-
 fn vscode_mcp_entry() -> Value {
     let path_token = mcp_path_token("vscode");
     serde_json::json!({
@@ -958,24 +944,6 @@ fn install_vscode_mcp(project_root: &Path) -> Result<TargetReport, String> {
     // Copilot agent hooks are read from Claude's user settings (same PreToolUse format).
     install_read_guard(&mut report, home_dir()?.join(".claude").join("settings.json"), GuardIde::Claude);
     Ok(report)
-}
-
-fn install_takumi_mcp(project_root: &Path) -> Result<TargetReport, String> {
-    // Always resolve to an absolute project root so Takumi / CI can pass --path
-    // even when the process cwd is not the workspace folder.
-    let root = if project_root.is_absolute() {
-        project_root.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(project_root)
-    };
-    let root = root.canonicalize().unwrap_or(root);
-    install_vscode_lineage_mcp(
-        "takumi",
-        &root,
-        "Reload Takumi 匠 — native Ax panels and Copilot Chat Agent mode both use .vscode/mcp.json.",
-    )
 }
 
 fn continue_mcp_path(project_root: &Path) -> PathBuf {
@@ -1061,10 +1029,6 @@ fn uninstall_vscode_lineage_mcp(target: &'static str) -> Result<TargetReport, St
 
 fn uninstall_vscode_mcp() -> Result<TargetReport, String> {
     uninstall_vscode_lineage_mcp("vscode")
-}
-
-fn uninstall_takumi_mcp() -> Result<TargetReport, String> {
-    uninstall_vscode_lineage_mcp("takumi")
 }
 
 /// Windsurf (Cascade) — global-only config at `~/.codeium/windsurf/mcp_config.json`,
@@ -1257,6 +1221,67 @@ fn uninstall_hermes_mcp() -> Result<TargetReport, String> {
     Ok(report)
 }
 
+fn zed_tasks_path() -> Result<PathBuf, String> {
+    Ok(zed_settings_path()?.with_file_name("tasks.json"))
+}
+
+fn install_zed_task(report: &mut TargetReport) -> Result<(), String> {
+    if command_center::panels_disabled() {
+        return Ok(());
+    }
+    let path = zed_tasks_path()?;
+    let existing = fs::read_to_string(&path).ok();
+    let url = format!("http://127.0.0.1:{}", DEFAULT_WEB_PORT);
+    let next = command_center::zed_tasks_with_ax(existing.as_deref(), &command_center::open_url_command(&url));
+    report.push_file(path.clone(), write_text_action(&path, &next)?);
+    report.note(format!("Command Center: run the task \"{}\" (task: spawn).", command_center::ZED_TASK_LABEL));
+    Ok(())
+}
+
+fn uninstall_zed_task(report: &mut TargetReport) -> Result<(), String> {
+    if command_center::panels_disabled() {
+        return Ok(());
+    }
+    let path = zed_tasks_path()?;
+    let Ok(existing) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    if let Some(next) = command_center::zed_tasks_without_ax(&existing) {
+        report.push_file(path.clone(), write_text_action(&path, &next)?);
+    }
+    Ok(())
+}
+
+const DEFAULT_WEB_PORT: u16 = 7070;
+
+fn install_jetbrains() -> Result<TargetReport, String> {
+    let mut report = TargetReport::new("jetbrains", display_name("jetbrains"));
+    if command_center::panels_disabled() {
+        return Ok(report);
+    }
+    let dirs = command_center::jetbrains_dirs_here();
+    if dirs.is_empty() {
+        report.note("No JetBrains IDE found (start it once so it creates its settings folder).");
+        return Ok(report);
+    }
+    for (path, action) in command_center::install_jetbrains_plugin(&dirs, command_center::JETBRAINS_PLUGIN)? {
+        report.push_file(path, action);
+    }
+    report.note("Restart the JetBrains IDE, then open the \"ax\" tool window on the right.");
+    Ok(report)
+}
+
+fn uninstall_jetbrains() -> Result<TargetReport, String> {
+    let mut report = TargetReport::new("jetbrains", display_name("jetbrains"));
+    if command_center::panels_disabled() {
+        return Ok(report);
+    }
+    for path in command_center::uninstall_jetbrains_plugin(&command_center::jetbrains_dirs_here())? {
+        report.push_file(path, FileAction::Updated);
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod mcp_path_tests {
     use super::*;
@@ -1330,29 +1355,6 @@ mod mcp_path_tests {
         let entry = vscode_mcp_entry();
         assert_eq!(entry["type"], "stdio");
         assert!(entry.get("mcpServers").is_none());
-    }
-
-    #[test]
-    fn takumi_install_writes_workspace_mcp_json() {
-        let dir = std::env::temp_dir().join(format!(
-            "ax-takumi-mcp-{}-{}",
-            std::process::id(),
-            "test"
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let report = install_takumi_mcp(&dir).unwrap();
-        assert_eq!(report.id, "takumi");
-        let path = vscode_mcp_path(&dir);
-        assert!(path.is_file());
-        let cfg = read_json(&path);
-        assert_eq!(cfg["servers"]["ax"]["type"], "stdio");
-        assert!(cfg["servers"]["ax"]["args"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|a| a.as_str() == Some("--mcp")));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

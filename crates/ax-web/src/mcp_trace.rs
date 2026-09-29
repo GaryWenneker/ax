@@ -93,7 +93,11 @@ fn project_label(project_root: &Path) -> String {
         .unwrap_or_else(|| project_root.display().to_string())
 }
 
-fn project_meta(hub_root: &Path, follow_root: &Path, fallback_label: Option<&str>) -> serde_json::Value {
+fn project_meta(
+    hub_root: &Path,
+    follow_root: &Path,
+    fallback_label: Option<&str>,
+) -> serde_json::Value {
     let log_path = mcp_verbose_log_path(follow_root);
     let today = ax_usage::rotation_calendar_date(Some(follow_root), Utc::now());
     json!({
@@ -307,7 +311,11 @@ mod tests {
         fs::create_dir_all(hub.join(".ax")).unwrap();
         fs::create_dir_all(other.join(".ax")).unwrap();
         fs::write(hub.join(".ax").join("mcp-verbose-2026-09-01.log"), "hub\n").unwrap();
-        fs::write(other.join(".ax").join("mcp-verbose-2026-09-15.log"), "other\n").unwrap();
+        fs::write(
+            other.join(".ax").join("mcp-verbose-2026-09-15.log"),
+            "other\n",
+        )
+        .unwrap();
         let (got, fallback) = pick_trace_project_root(&hub, &[other]);
         assert_eq!(got, hub);
         assert!(fallback.is_none());
@@ -320,7 +328,11 @@ mod tests {
         let other = dir.path().join("ax");
         fs::create_dir_all(hub.join(".ax")).unwrap();
         fs::create_dir_all(other.join(".ax")).unwrap();
-        fs::write(other.join(".ax").join("mcp-verbose-2026-09-14.log"), "from-ax\n").unwrap();
+        fs::write(
+            other.join(".ax").join("mcp-verbose-2026-09-14.log"),
+            "from-ax\n",
+        )
+        .unwrap();
         let (got, fallback) = pick_trace_project_root(&hub, &[other.clone()]);
         assert_eq!(got, other);
         assert_eq!(fallback.as_deref(), Some("ax"));

@@ -11,7 +11,7 @@ use crate::ui::install_log;
 pub struct InstallOptions {
     pub yes: bool,
     pub install_all: bool,
-    /// When non-empty, only these target ids are wired (e.g. `takumi`).
+    /// When non-empty, only these target ids are wired (e.g. `vscode`).
     pub targets: Vec<String>,
 }
 
@@ -72,7 +72,7 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
         Some(if opts.targets.is_empty() {
             "No supported agents detected. Install Cursor or Claude Code, or run with --all / --target."
         } else {
-            "No files written for the requested --target value(s). Check the id (e.g. takumi, vscode)."
+            "No files written for the requested --target value(s). Check the id (e.g. vscode, cursor)."
         })
     } else {
         None
@@ -105,7 +105,8 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
 }
 
 pub fn run_uninstall() -> Result<(), String> {
-    let reports = ax_installer::uninstall_all()?;
+    let root = std::env::current_dir().map_err(|e| e.to_string())?;
+    let reports = ax_installer::uninstall_all(&root)?;
     install_log::render_uninstall(&reports, env!("CARGO_PKG_VERSION"));
     Ok(())
 }

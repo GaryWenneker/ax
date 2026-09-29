@@ -97,8 +97,64 @@ const SHOTS = [
 	{ name: 'cc-policy-rules.png', path: '/policy/rules', waitMs: 1200 },
 	{ name: 'cc-policy-skills.png', path: '/policy/skills', waitMs: 1200 },
 	{ name: 'cc-policy-match.png', path: '/policy/match', waitMs: 1200 },
-	{ name: 'cc-agent-terminal.png', path: '/agent', waitMs: 1200 },
+	{ name: 'cc-policy-review.png', path: '/policy/review', waitMs: 1200 },
+	{
+		name: 'cc-project-browser.png',
+		path: '/stats',
+		waitMs: 1200,
+		after: async (page) => {
+			await clickOrFail(page, '[aria-label^="Switch project"]');
+			await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
+			await new Promise((r) => setTimeout(r, 1500));
+			await page.evaluate(() => {
+				document.querySelectorAll('.project-browser-recent-label').forEach((el, i) => {
+					el.textContent = `project-${i + 1}`;
+				});
+				document.querySelectorAll('.project-browser-row-name').forEach((el, i) => {
+					el.textContent = `folder-${i + 1}`;
+				});
+			});
+		},
+	},
+	{
+		name: 'cc-modal-composer.png',
+		path: '/memory',
+		waitMs: 1500,
+		after: async (page) => {
+			const clicked = await page.evaluate(() => {
+				const btn = Array.from(document.querySelectorAll('button')).find(
+					(el) => (el.textContent || '').trim() === 'New memory',
+				);
+				if (!(btn instanceof HTMLElement)) return false;
+				btn.click();
+				return true;
+			});
+			if (!clicked) throw new Error('New memory button not found');
+			await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
+			await new Promise((r) => setTimeout(r, 800));
+		},
+	},
 ];
+
+async function clickOrFail(page, selector) {
+	const el = await page.waitForSelector(selector, { timeout: 10000 });
+	if (!el) throw new Error(`not found: ${selector}`);
+	await el.click();
+}
+
+/** Show the home folder as `~` so screenshots do not carry the local user name. */
+async function maskHome(page) {
+	await page.evaluate((home) => {
+		const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) {
+			const n = walker.currentNode;
+			if (n.nodeValue && n.nodeValue.includes(home)) n.nodeValue = n.nodeValue.split(home).join('~');
+		}
+		for (const el of document.querySelectorAll('input, textarea')) {
+			if (el.value.includes(home)) el.value = el.value.split(home).join('~');
+		}
+	}, os.homedir());
+}
 
 async function loadPuppeteer() {
 	const siteDir = path.join(root, 'site');
@@ -237,6 +293,7 @@ async function main() {
 		if (shot.waitMs) await new Promise((r) => setTimeout(r, shot.waitMs));
 		if (shot.after) await shot.after(page);
 
+		await maskHome(page);
 		const { removed, remaining, where } = await redactPage(page, terms);
 		if (remaining > 0) {
 			await browser.close();

@@ -61,9 +61,12 @@ pub fn set_active_profile(agent: &str, profile_id: &str) -> Result<(), String> {
     let mut cfg = load_agents_config();
     let profiles = cfg.profiles.get(agent).cloned().unwrap_or_default();
     if !profiles.iter().any(|p| p.id == profile_id) {
-        return Err(format!("Profile '{profile_id}' not found for agent '{agent}'"));
+        return Err(format!(
+            "Profile '{profile_id}' not found for agent '{agent}'"
+        ));
     }
-    cfg.active_profile.insert(agent.to_string(), profile_id.to_string());
+    cfg.active_profile
+        .insert(agent.to_string(), profile_id.to_string());
     save_agents_config(&cfg)
 }
 
@@ -75,8 +78,13 @@ pub fn create_profile(
     key_env: Option<&str>,
     model: Option<&str>,
 ) -> Result<ProfileEntry, String> {
-    if id.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_') {
-        return Err("Profile id may only contain letters, numbers, hyphens, and underscores".into());
+    if id
+        .chars()
+        .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+    {
+        return Err(
+            "Profile id may only contain letters, numbers, hyphens, and underscores".into(),
+        );
     }
     let mut cfg = load_agents_config();
     let list = cfg.profiles.entry(agent.to_string()).or_default();
@@ -124,7 +132,8 @@ pub fn remove_profile(agent: &str, id: &str, keep_dir: bool) -> Result<(), Strin
     if cfg.active_profile.get(agent) == Some(&id.to_string()) {
         cfg.active_profile.remove(agent);
         if let Some(first) = list.first() {
-            cfg.active_profile.insert(agent.to_string(), first.id.clone());
+            cfg.active_profile
+                .insert(agent.to_string(), first.id.clone());
         }
     }
     save_agents_config(&cfg)?;
@@ -178,7 +187,10 @@ pub fn mark_authenticated(agent: &str, id: &str) -> Result<(), String> {
 pub fn update_auth_status(agent: &str, id: &str, status: AuthStatus) -> Result<(), String> {
     let mut cfg = load_agents_config();
     let list = cfg.profiles.get_mut(agent).ok_or("agent not found")?;
-    let entry = list.iter_mut().find(|p| p.id == id).ok_or("profile not found")?;
+    let entry = list
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or("profile not found")?;
     entry.auth_status = status;
     save_agents_config(&cfg)
 }
@@ -192,12 +204,12 @@ pub fn profile_env(agent: &str, profile_id: &str) -> Result<Vec<(String, String)
     profile_env_for_entry(agent, entry)
 }
 
-fn profile_env_for_entry(agent: &str, entry: &ProfileEntry) -> Result<Vec<(String, String)>, String> {
+fn profile_env_for_entry(
+    agent: &str,
+    entry: &ProfileEntry,
+) -> Result<Vec<(String, String)>, String> {
     match agent {
-        "claude" => Ok(vec![(
-            "CLAUDE_CONFIG_DIR".into(),
-            entry.data_dir.clone(),
-        )]),
+        "claude" => Ok(vec![("CLAUDE_CONFIG_DIR".into(), entry.data_dir.clone())]),
         "cursor" => Ok(vec![(
             "CURSOR_USER_DATA_DIR".into(),
             entry.data_dir.clone(),
@@ -241,9 +253,7 @@ pub fn detect_auth_status(agent: &str, data_dir: &str) -> AuthStatus {
             }
         }
         "cursor" => {
-            if path.join("User").join("globalStorage").exists()
-                || path.join("machineid").exists()
-            {
+            if path.join("User").join("globalStorage").exists() || path.join("machineid").exists() {
                 AuthStatus::Authenticated
             } else {
                 AuthStatus::NeedsAuth

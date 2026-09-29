@@ -1,0 +1,57 @@
+---
+id: docs-with-features
+level: CRITICAL
+alwaysApply: true
+triggers: ["new feature", "new command", "MCP tool", "ax web", "CLI", "release", "document", "docs", "website", "homepage"]
+tags: ["docs", "site", "release"]
+priority: 95
+---
+# Ship docs and site with every new feature
+
+> **ABSOLUTE**: User-facing functionality is not done until it is documented on [getax.wenneker.io](https://getax.wenneker.io) and in the repo README. Agents must update docs in the **same change** as the feature — not as a follow-up.
+
+## When this applies
+
+Any change that adds or materially changes:
+
+- CLI subcommands or flags (`crates/ax-cli/`)
+- MCP tools (`crates/ax-mcp/`)
+- Command Center / `ax web` pages (`crates/ax-web/web-ui/`)
+- Policy rules, skills, or workflows (`.ax/policy/`, `crates/ax-policy/`)
+
+## Required checklist (end of every feature task)
+
+```text
+1. site/src/content/docs/     — guide and/or reference page updated
+2. site/src/content/docs/reference/cli.md — every new/changed command has a bash example
+3. site/src/content/docs/reference/mcp-server.md — new MCP tools listed
+4. README.md                  — command table + one-line description if CLI/MCP changed
+5. site/src/pages/index.astro — homepage features/slogan if the feature is headline-worthy
+6. site/astro.config.mjs      — sidebar link when adding a new guide
+```
+
+## CLI reference rule
+
+Every command section in `reference/cli.md` must include at least one copy-pasteable example block:
+
+```bash
+ax <command> ...
+```
+
+Hidden/internal commands (`serve`, `prompt-hook`, …) are exempt.
+
+## Release alignment
+
+When cutting a release, bump version strings in:
+
+- `site/public/releases/latest.txt`
+- `site/src/content/docs/getting-started/introduction.md` (What's new)
+- CLI page frontmatter description version
+
+Do not pin unreleased versions in install scripts until the GitHub tag exists.
+
+## Forbidden
+
+- Marking feature work complete with only code merged
+- Adding CLI/MCP surface without README + site reference
+- Leaving `next-steps` or introduction links broken (`/ax/` prefix is wrong — use Starlight slugs)

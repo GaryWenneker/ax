@@ -3,7 +3,7 @@ title: Token Savings
 description: How ax cuts agent token usage with graph queries, plus a complete playbook for reducing LLM costs by 60-99% in production.
 ---
 
-**ax v2.1.0+** measures how much context its graph queries save compared to blind file reads, and ships a dashboard to track it over time.
+ax measures how much context its graph queries save compared to blind file reads, and ships a dashboard to track it over time.
 
 ![Context savings — tokens saved, cost reduction, graph call metrics, highlights, and daily activity heatmap](/screenshots/cc-savings-dashboard.png)
 
@@ -48,9 +48,27 @@ Beyond replacing file reads, ax keeps its **own** responses lean so the returned
 
 See the [MCP server reference](/reference/mcp-server/#lean-responses-token-savings) for the full per-tool projection table.
 
+### Policy sent once per session
+
+`ax_preflight` remembers, per MCP connection, which rule and skill bodies it already sent. On later calls it lists unchanged ones by id instead of resending them; a changed body is sent again. The record resets on a new MCP `initialize`, a new Cursor chat, or after `AX_POLICY_SESSION_TTL_SECS` (default 1800) without a call. If the bodies are no longer in your context, call `ax_rules` or `ax_skill` by name.
+
+- **IDE-loaded policy is skipped.** When the MCP client is Cursor and `.cursor/rules/<id>.mdc` or `.cursor/skills/<name>/SKILL.md` (project or home) has `alwaysApply: true` with the same body, preflight lists it instead of sending it, because Cursor already puts it in the chat.
+- **Large always-apply skills are summarized.** Past `AX_POLICY_SKILL_INLINE_TOKENS` (default 1500), preflight sends the description, the section headings, and an `ax_skill` pointer. Load the full body with `ax_skill` before work that skill governs.
+- **Rules scoped to other files are listed, not sent.** An always-apply rule with `globs` that match none of the files passed to preflight is named in one line; its body arrives once you touch a matching file. Triggers match whole words, so a trigger like `c` no longer matches every prompt.
+- **Index snapshot once.** The `<ax_index>` block is sent again only when it changes. Preflight replies carry no token-budget banner.
+- **Session-scoped cache catalog.** The catalog lists only expandable entries from the current Cursor chat. Other MCP clients never see Cursor chat entries.
+- **Repeat skill loads.** A second `ax_skill` for an unchanged skill in the same session returns a one-line notice.
+- **Large always-apply rules are compacted.** Past `AX_POLICY_RULE_INLINE_TOKENS` (default 250), preflight sends the `ABSOLUTE` line and the directive sections (Rules, Required, Forbidden, Hard rules, Scope, Thresholds, Correct shape) and drops rationale and examples. A rule with none of those sections keeps its first three lines. `ax_rules` returns the full body.
+- **Memories as titles.** Preflight lists matched memories by id and title, plus recent memory titles up to `AX_PREFLIGHT_MEMORY_TITLE_TOKENS` (default 200), sent once per session unless they change. `ax_recall` returns a body.
+- `ax policy match --json` prints each body once, inside `inject`. Add `--full` for the old shape that repeats bodies in `rules[]` and `skills[]`.
+
+### Savings gauntlet
+
+`scripts/bench-agent-efficiency/run-savings-gauntlet.sh` runs ten tasks (easy to a 5-turn session) twice: once with plain file reads and once through the ax MCP server, and counts the tokens an agent would receive (o200k). It covers the graph, rules, skills, memory, and sessions. The run fails when a task misses its answer anchors, any task or feature nets below zero, the negative control saves more than 5%, or a frozen baseline changed. Each run writes `out/summary.md` with a per-task and per-feature table and the previous run's net. Ask an agent to "rerun the savings gauntlet" to use the `savings-gauntlet` skill.
+
 ### Context cache
 
-Oversized ax MCP replies, Claude prompts, and Cursor `beforeSubmitPrompt` prompts are indexed in `~/.ax/usage.db`. The body is stored only when it reaches the token threshold. `ax_preflight` lists the current session first (no bodies) and one ledger line: row count, tokens stored, and tokens that stayed inline. Recover a stored body with `ax_expand`. `ax_stash` is the manual path for a slice the hooks did not see. On stop, oversized tool results already written to the Cursor or Claude transcript are stored when that text is not already cached. Nothing here is written to the memory vault, and nothing is summarized by a second model.
+Oversized ax MCP replies, Claude prompts, and Cursor `beforeSubmitPrompt` prompts are indexed in `~/.ax/usage.db`. The body is stored only when it reaches the token threshold. `ax_preflight` lists entries from the current session only (no bodies), each entry once per MCP session, and one ledger line: row count, tokens stored, and tokens that stayed inline. Recover a stored body with `ax_expand`. `ax_stash` is the manual path for a slice the hooks did not see. On stop, oversized tool results already written to the Cursor or Claude transcript are stored when that text is not already cached. Nothing here is written to the memory vault, and nothing is summarized by a second model.
 
 Replies at or above 3,000 tokens (override with `AX_CONTEXT_CACHE_TOKENS`; `0` or `AX_CONTEXT_CACHE=off` disables the cache, the index, and the ledger) are replaced with a stub. Graph reads such as `ax_explore` and `ax_node` stay inline up to `AX_GRAPH_INLINE_TOKENS` (default 12,000), and past that they keep their head inline with an `ax_expand` footer. The savings log records the stub size as the response and adds the removed tokens to `tokens_saved_est` for graph tools. Policy tools `ax_preflight`, `ax_guard`, `ax_rules`, and `ax_skill` are never stubbed. Install the Cursor prompt hook with `ax savings hook install`.
 
@@ -142,7 +160,7 @@ Transcript tool counts (read / grep / ax) are merged without overwriting model o
 
 Weights are derived from o200k token mass / rarity in saved previews — **not** model logits or sampling temperature.
 
-Command Center settings-style pages (including Savings) use a centered content column by breakpoint: **720 → 800 → 960 → 1024px** on XXL. Full-bleed pages (Files, Agent, Sonar, split blades) stay unconstrained.
+Command Center settings-style pages (including Savings) use a centered content column by breakpoint: **720 → 800 → 960 → 1024px** on XXL. Full-bleed pages (Files, Graph, split blades) stay unconstrained.
 
 ---
 
@@ -327,7 +345,7 @@ Import local session logs to correlate tool-call patterns with savings:
 ```bash
 ax savings import --all             # auto-detect and import all agent logs
 ax savings import --cursor          # Cursor only
-ax savings import --claude-code     # Claude Code only
+ax savings import --claude          # Claude Code only
 ```
 
 ---
@@ -341,11 +359,16 @@ ax savings import --claude-code     # Claude Code only
 | `AX_SAVINGS_TOKENS_PER_LINE` | 9 | Tokens per line for unreadable files |
 | `AX_SAVINGS_AVG_FILE_TOKENS` | 3500 | Fallback when no line count or path-only ref |
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every MCP tool |
-| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` logs inbound/enrichment/outbound MCP traces to stderr (Cursor Output); same as Settings → Interface → Verbose MCP logging |
+| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` logs inbound/enrichment/outbound MCP traces to stderr (Cursor Output); same as `[ui] verbose_mcp = true` |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
+| `AX_EXPLORE_MAX_NEIGHBORS` | 15 | Callers or callees listed per entry in `ax_explore` / `ax_node` text (direct edges first; the heading keeps the full count) |
 | `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |
 | `AX_CONTEXT_MAX_BLOCK_CHARS` | 1200 | Max characters per `ax_context` code block |
+| `AX_POLICY_SESSION_TTL_SECS` | 1800 | Seconds without a preflight before its delivered-policy record resets |
+| `AX_POLICY_RULE_INLINE_TOKENS` | 250 | Always-apply rules larger than this are sent as their directive sections in preflight |
+| `AX_PREFLIGHT_MEMORY_TITLE_TOKENS` | 200 | Token budget for the recent-memory title list in preflight |
+| `AX_POLICY_SKILL_INLINE_TOKENS` | 1500 | Always-apply skills larger than this are summarized in preflight |
 
 Data is stored in `~/.ax/usage.db` (local only — no query strings or response bodies are persisted).
 

@@ -43,6 +43,10 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/impact", get(handle_ship_impact))
         .route("/command", post(handle_ship_command))
         .route("/config", get(handle_get_config).put(handle_put_config))
+        .route(
+            "/review-language",
+            get(handle_get_review_language).put(handle_put_review_language),
+        )
         .route("/sonar/discover", get(handle_sonar_discover))
         .route("/sonar/install", post(handle_sonar_install))
         .route("/sonar/install/stream", post(handle_sonar_install_stream))
@@ -54,14 +58,29 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/sonar/setup", get(handle_sonar_setup))
         .route("/sonar/validate-login", post(handle_sonar_validate_login))
         .route("/sonar/validate-token", get(handle_sonar_validate_token))
-        .route("/sonar/regenerate-token", post(handle_sonar_regenerate_token))
+        .route(
+            "/sonar/regenerate-token",
+            post(handle_sonar_regenerate_token),
+        )
         .route("/sonar/scan", post(handle_sonar_scan))
         .route("/sonar/scan/stream", post(handle_sonar_scan_stream))
         .route("/sonar/exclude", post(handle_sonar_exclude))
-        .route("/sonar/ui/info", get(crate::sonar_proxy::handle_sonar_ui_info))
-        .route("/sonar/ui", axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy))
-        .route("/sonar/ui/", axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy))
-        .route("/sonar/ui/{*path}", axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy))
+        .route(
+            "/sonar/ui/info",
+            get(crate::sonar_proxy::handle_sonar_ui_info),
+        )
+        .route(
+            "/sonar/ui",
+            axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy),
+        )
+        .route(
+            "/sonar/ui/",
+            axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy),
+        )
+        .route(
+            "/sonar/ui/{*path}",
+            axum::routing::any(crate::sonar_proxy::handle_sonar_ui_proxy),
+        )
         .with_state(hub)
 }
 
@@ -288,6 +307,56 @@ async fn handle_put_config(
     }
 }
 
+fn review_language_body(language: ax_core::review_language::ReviewLanguage) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "code": language.code,
+        "name": language.name,
+        "languages": ax_core::review_language::REVIEW_LANGUAGES
+            .iter()
+            .map(|(code, name)| serde_json::json!({ "code": code, "name": name }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+async fn handle_get_review_language(State(hub): State<WebHub>) -> impl IntoResponse {
+    let ctx = ship_ctx(&hub).await;
+    match ax_core::review_language::resolve_for_project(&ctx.daemon.project_root) {
+        Ok(language) => Json(review_language_body(language)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ReviewLanguageBody {
+    code: String,
+}
+
+async fn handle_put_review_language(
+    State(hub): State<WebHub>,
+    Json(body): Json<ReviewLanguageBody>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return readonly_err().into_response();
+    }
+    let ctx = ship_ctx(&hub).await;
+    match ax_core::review_language::write_project_review_language(
+        &ctx.daemon.project_root,
+        &body.code,
+    ) {
+        Ok(language) => Json(review_language_body(language)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    }
+}
+
 async fn handle_sonar_discover(State(hub): State<WebHub>) -> impl IntoResponse {
     let ctx = ship_ctx(&hub).await;
     ctx.daemon.reload_config().await;
@@ -322,7 +391,9 @@ struct SonarValidateLoginBody {
     admin_password: String,
 }
 
-async fn handle_sonar_validate_login(Json(body): Json<SonarValidateLoginBody>) -> impl IntoResponse {
+async fn handle_sonar_validate_login(
+    Json(body): Json<SonarValidateLoginBody>,
+) -> impl IntoResponse {
     match validate_sonar_login(&body.host, &body.admin_user, &body.admin_password).await {
         Ok(valid) => Json(serde_json::json!({
             "ok": true,
@@ -398,15 +469,14 @@ async fn handle_sonar_regenerate_token(State(hub): State<WebHub>) -> impl IntoRe
     }
     let ctx = ship_ctx(&hub).await;
     let config = ctx.daemon.config().await;
-    let bootstrap_cfg = SonarBootstrapConfig::resolve_for_project(
-        &config.sonar,
-        &ctx.daemon.project_root,
-    );
+    let bootstrap_cfg =
+        SonarBootstrapConfig::resolve_for_project(&config.sonar, &ctx.daemon.project_root);
 
     match regenerate_sonar_token(&bootstrap_cfg, &ctx.daemon.project_root).await {
         Ok(result) => {
             let discovery = sonar_discovery(&config).await;
-            let setup = sonar_setup_status(&config, &ctx.daemon.project_root, discovery.reachable).await;
+            let setup =
+                sonar_setup_status(&config, &ctx.daemon.project_root, discovery.reachable).await;
             Json(serde_json::json!({
                 "ok": true,
                 "result": result,
@@ -425,10 +495,8 @@ async fn handle_sonar_bootstrap(State(hub): State<WebHub>) -> impl IntoResponse 
     let ctx = ship_ctx(&hub).await;
     ctx.daemon.reload_config().await;
     let mut config = ctx.daemon.config().await;
-    let bootstrap_cfg = SonarBootstrapConfig::resolve_for_project(
-        &config.sonar,
-        &ctx.daemon.project_root,
-    );
+    let bootstrap_cfg =
+        SonarBootstrapConfig::resolve_for_project(&config.sonar, &ctx.daemon.project_root);
 
     if config.sonar.project_key != bootstrap_cfg.project_key {
         config.sonar.project_key = bootstrap_cfg.project_key.clone();
@@ -444,7 +512,8 @@ async fn handle_sonar_bootstrap(State(hub): State<WebHub>) -> impl IntoResponse 
         &repo_names,
         Some(&config.sonar),
     )
-    .await {
+    .await
+    {
         Ok(result) => {
             config.sonar.enabled = true;
             if let Err(e) = ctx.daemon.set_config(config.clone()).await {
@@ -554,7 +623,8 @@ async fn handle_sonar_exclude(
     let mut config = ctx.daemon.config().await;
     let repo = body.repo.trim().to_string();
     if repo.is_empty() {
-        return Json(serde_json::json!({ "ok": false, "error": "repo name required" })).into_response();
+        return Json(serde_json::json!({ "ok": false, "error": "repo name required" }))
+            .into_response();
     }
     if body.excluded {
         if !config.sonar.exclude_repos.contains(&repo) {
@@ -596,7 +666,8 @@ async fn handle_sonar_scan(
         &log,
         project_key.as_deref(),
     )
-    .await {
+    .await
+    {
         Ok(gate) => {
             let _ = ctx.daemon.set_config(config).await;
             Json(serde_json::json!({
@@ -646,7 +717,8 @@ async fn sonar_scan_stream(
             &log,
             project_key.as_deref(),
         )
-        .await {
+        .await
+        {
             Ok(gate) => {
                 let _ = daemon.set_config(config).await;
                 let _ = tx.send(
@@ -925,9 +997,9 @@ async fn scan_sonar_with_log(
     let mut repo_names = sonar_repo_names(config, project_root).await;
     let workspace_repo_count = repo_names.len();
     if let Some(key) = project_key.filter(|k| !k.trim().is_empty()) {
-        let bootstrap_cfg =
-            SonarBootstrapConfig::resolve_for_project(&config.sonar, project_root);
-        let workspace_key = ax_quality::workspace_sonar_key(&bootstrap_cfg.project_key, project_root);
+        let bootstrap_cfg = SonarBootstrapConfig::resolve_for_project(&config.sonar, project_root);
+        let workspace_key =
+            ax_quality::workspace_sonar_key(&bootstrap_cfg.project_key, project_root);
         let multi_repo = workspace_repo_count > 1;
         repo_names.retain(|repo| {
             ax_quality::canonical_repo_project_key(&workspace_key, repo, multi_repo) == key
@@ -935,7 +1007,10 @@ async fn scan_sonar_with_log(
         if repo_names.is_empty() {
             return Err(format!("Unknown Sonar project key '{key}'"));
         }
-        log.push(format!("Scanning SonarQube project {key} ({})…", repo_names[0]));
+        log.push(format!(
+            "Scanning SonarQube project {key} ({})…",
+            repo_names[0]
+        ));
     } else if repo_names.is_empty() {
         log.push("No child git repositories — scanning workspace as a single SonarQube project.");
     } else {
@@ -964,7 +1039,9 @@ async fn scan_sonar_with_log(
 
     log.push("Fetching quality gate status…");
     let gate_client = SonarClient::new(config.sonar.clone());
-    gate_client.fetch_quality_gate(project_root, &repo_names).await
+    gate_client
+        .fetch_quality_gate(project_root, &repo_names)
+        .await
 }
 
 async fn validate_config_change(current: &ShipConfig, next: &ShipConfig) -> Result<(), String> {
@@ -1001,8 +1078,5 @@ async fn validate_config_change(current: &ShipConfig, next: &ShipConfig) -> Resu
 fn parse_host_port(host: &str) -> Option<u16> {
     let trimmed = host.trim_end_matches('/');
     let after_scheme = trimmed.split("//").nth(1).unwrap_or(trimmed);
-    after_scheme
-        .split(':')
-        .nth(1)
-        .and_then(|p| p.parse().ok())
+    after_scheme.split(':').nth(1).and_then(|p| p.parse().ok())
 }

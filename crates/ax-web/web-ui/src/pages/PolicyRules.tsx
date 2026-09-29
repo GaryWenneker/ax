@@ -1,3 +1,4 @@
+import { resolveOpenTarget } from '../lib/policySelection';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   deletePolicyCopy,
@@ -12,9 +13,6 @@ import {
   setPolicyRuleStorage,
 } from '../policyApi';
 import {
-  DataTable,
-  LevelBadge,
-  ScopeBadge,
   PageCard,
   PageCardBody,
   PageEmpty,
@@ -24,14 +22,11 @@ import {
   PageStack,
   PageToasts,
 } from '../components/ui/PageLayout';
-import {
-  PolicyCount,
-  PolicyRowActions,
-  PolicyToolbar,
-  SortTh,
-} from '../components/ui/PolicyTable';
+import { PolicyCount, PolicySortControl, PolicyToolbar } from '../components/ui/PolicyTable';
+import { PolicyCalmList } from '../components/ui/PolicyCalmList';
 import { PolicyContextMenu } from '../components/ui/PolicyContextMenu';
-import { TagList, OriginDbBadge, PolicyDbLegend } from '../components/PolicyMetaView';
+import { PolicyDbLegend } from '../components/PolicyMetaView';
+import { priorityMeta, ruleRowSubtitle } from '../lib/calmRows';
 import PolicyRuleInlineWorkspace from '../components/PolicyRuleInlineWorkspace';
 import { PolicyListResizeHandle } from '../components/PolicyEditorResize';
 import PolicyZipPackageButtons from '../components/PolicyZipPackageModals';
@@ -42,10 +37,8 @@ import {
   hydratePolicyListItem,
   isGlobalPolicy,
   normalizePolicyScope,
-  policyDbRowStyle,
   policyOverviewMenuItems,
   sortRules,
-  toggleSort,
   type PolicyMenuId,
   type RuleSortKey,
   type SortDir,
@@ -61,25 +54,40 @@ import {
   matchesGroupFilter,
 } from '../skillGroupFilter';
 import { PolicyGroupListControls } from '../components/ui/PolicyGroupListControls';
-import { GitShareDot } from '../components/ui/GitShareDot';
-import Codicon from '../components/Codicon';
 import { loadJson, saveJson } from '../lib/uiStorage';
+import AutoGroupModal from '../components/AutoGroupModal';
+import PolicyGraphOverlay from '../components/PolicyGraphOverlay';
 import { menuTargets, nextRowSelection, toggleVisibleSelection } from '../lib/policySelection';
 import {
   POLICY_BLADE_DISMISS_MS,
   policyDetailOpen,
   policyWorkspaceHostClass,
+  selectionHidden,
 } from '../lib/policyBladeMotion';
+
+const RULE_SORT_OPTIONS: Array<{ key: RuleSortKey; label: string }> = [
+  { key: 'id', label: 'ID' },
+  { key: 'level', label: 'Level' },
+  { key: 'scope', label: 'Layer' },
+  { key: 'priority', label: 'Priority' },
+  { key: 'globs', label: 'Globs' },
+  { key: 'triggers', label: 'Triggers' },
+];
 
 interface Props {
   selectedId: string | null;
-  onSelect: (id: string | null) => void;
+  /** `origin`/`projectId` from the URL: which copy of the item to open. */
+  origin?: string | null;
+  projectId?: number | null;
+  onSelect: (id: string | null, origin?: string, projectId?: number) => void;
   onEditFull: (id: string | null, origin?: string, projectId?: number) => void;
   onMatch: () => void;
 }
 
-export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSelect, onEditFull, onMatch }: Props) {
+export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origin: routeOrigin, projectId: routeProjectId, onSelect, onEditFull, onMatch }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(selectedIdFromRoute);
+  const [graphOpen, setGraphOpen] = useState(false);
+  const [autoGroupOpen, setAutoGroupOpen] = useState(false);
   const [openOrigin, setOpenOrigin] = useState<string | undefined>();
   const [openProjectId, setOpenProjectId] = useState<number | undefined>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(selectedIdFromRoute ? [selectedIdFromRoute] : []));
@@ -97,10 +105,16 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
     }
   }, [selectedIdFromRoute]);
 
-  function selectRule(id: string | null) {
+
+  function selectRule(id: string | null, row?: { origin?: string; projectId?: number }) {
     setBladeClosing(false);
     setSelectedId(id);
-    onSelectRef.current(id);
+    const global = row && isGlobalPolicy(row);
+    onSelectRef.current(id, global ? 'global' : undefined, global ? row.projectId : undefined);
+    if (row) {
+      setOpenOrigin(row.origin);
+      setOpenProjectId(row.projectId);
+    }
     if (id) {
       setSelectedIds(new Set([id]));
       setAnchorId(id);
@@ -125,6 +139,18 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
     return () => window.clearTimeout(t);
   }, [bladeClosing]);
   const [rules, setRules] = useState<PolicyRuleRow[]>([]);
+
+  useEffect(() => {
+    if (!selectedIdFromRoute) return;
+    const t = resolveOpenTarget(
+      rules.map((r) => ({ key: r.id, origin: r.origin, projectId: r.projectId })),
+      selectedIdFromRoute,
+      routeOrigin,
+      routeProjectId,
+    );
+    setOpenOrigin(t.origin);
+    setOpenProjectId(t.projectId);
+  }, [selectedIdFromRoute, routeOrigin, routeProjectId, rules]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: PolicyRuleRow } | null>(null);
@@ -214,6 +240,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
   const grouped = useMemo(() => visibleRuleGroups(visible), [visible]);
   const listedIds = useMemo(() => grouped.map((g) => g.id), [grouped]);
   const visibleRowIds = useMemo(() => visible.map((r) => r.id), [visible]);
+  const ruleById = useMemo(() => new Map(visible.map((r) => [r.id, r])), [visible]);
 
   useEffect(() => {
     function onPtr(e: PointerEvent) {
@@ -222,7 +249,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
       if (!t) return;
       if (editorRef.current?.contains(t)) return;
       if ((t as HTMLElement).closest?.('.policy-context-menu')) return;
-      if ((t as HTMLElement).closest?.('.policy-table-row')) return;
+      if ((t as HTMLElement).closest?.('.policy-calm-row')) return;
       if ((t as HTMLElement).closest?.('.policy-list-resize-handle')) return;
       requestCloseBlade();
     }
@@ -241,9 +268,15 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
     });
     setSelectedIds(next.selected);
     setAnchorId(next.anchor);
+    if (next.selected.size === 0 && selectedId === r.id) {
+      requestCloseBlade();
+      return;
+    }
     setBladeClosing(false);
     setSelectedId(next.openId);
-    onSelectRef.current(next.openId);
+    const openRow = next.openId === r.id ? r : next.openId ? rules.find((x) => x.id === next.openId) : undefined;
+    const openGlobal = openRow && isGlobalPolicy(openRow);
+    onSelectRef.current(next.openId, openGlobal ? 'global' : undefined, openGlobal ? openRow.projectId : undefined);
     if (next.openId) {
       setOpenOrigin(r.origin);
       setOpenProjectId(r.projectId);
@@ -278,18 +311,12 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
   }
 
   useEffect(() => {
-    if (selectedId && !visible.some((r) => r.id === selectedId)) {
+    if (selectionHidden(selectedId, visible.map((r) => r.id), loading)) {
       selectRule(null);
     }
-  }, [selectedId, visible]);
+  }, [selectedId, visible, loading]);
 
   usePageContext('Rules', !loading && !error ? `${visible.length}/${listed.length} rules` : undefined);
-
-  function setSort(key: RuleSortKey) {
-    const next = toggleSort(sortKey, sortDir, key);
-    setSortKey(next.key);
-    setSortDir(next.dir);
-  }
 
   async function remove(id: string) {
     if (!confirm(`Delete rule "${id}"?`)) return;
@@ -324,9 +351,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
     try {
       for (const row of targets) {
         if (action === 'open' && targets.length === 1) {
-          selectRule(row.id);
-          setOpenOrigin(row.origin);
-          setOpenProjectId(row.projectId);
+          selectRule(row.id, row);
         }
         if (action === 'edit' && targets.length === 1) onEditFull(row.id, row.origin, row.projectId);
         if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, true);
@@ -466,6 +491,25 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
               </button>
               <span className={`policy-storage-label${projectStorage === 'database' ? ' active' : ''}`}>DB</span>
             </label>
+            <button type="button" className="btn btn-subtle" onClick={() => setGraphOpen(true)}>Graph</button>
+            <button type="button" className="btn btn-subtle" onClick={() => setAutoGroupOpen(true)}>Auto-group</button>
+            {autoGroupOpen && (
+              <AutoGroupModal
+                kind="rule"
+                rows={rules}
+                onClose={() => setAutoGroupOpen(false)}
+                onApplied={() => {
+                  setAutoGroupOpen(false);
+                  void reloadRules();
+                }}
+              />
+            )}
+            {graphOpen && (
+              <PolicyGraphOverlay
+                currentKey={selectedId ? `rule:${openOrigin === 'global' ? 'global' : 'project'}:${selectedId}` : null}
+                onClose={() => setGraphOpen(false)}
+              />
+            )}
             <button type="button" className="btn btn-subtle" onClick={onMatch}>Test match</button>
             <PolicyZipPackageButtons onRestored={() => void reloadRules()} />
             <button type="button" className="btn btn-subtle" onClick={openCapture}>Capture</button>
@@ -589,6 +633,22 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
               <option value="yes">Always apply</option>
               <option value="no">Conditional</option>
             </select>
+            <PolicySortControl
+              options={RULE_SORT_OPTIONS}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onKey={(key) => setSortKey(key)}
+              onDir={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+            />
+            <label className="calm-select-all">
+              <input
+                type="checkbox"
+                aria-label="Select all visible rules"
+                checked={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
+                onChange={() => setSelectedIds(toggleVisibleSelection(visibleRowIds, selectedIds))}
+              />
+              <span className="muted">All</span>
+            </label>
             <PolicyGroupListControls
               options={groupOptions}
               selectedIds={groupIds}
@@ -610,250 +670,64 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, onSel
             ) : (
               <div className={`page-split policy-rules-split${policyDetailOpen(selectedId, bladeClosing) ? ' page-split--with-detail' : ''}`}>
                 <div className="page-split-main">
-                  {selectedId ? (
-                    <div className="policy-split-id-table">
-                    <DataTable dense>
-                      <thead>
-                        <tr>
-                          <th className="policy-col-check">
-                            <input
-                              type="checkbox"
-                              aria-label="Select all visible rules"
-                              checked={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
-                              onChange={() => setSelectedIds(toggleVisibleSelection(visibleRowIds, selectedIds))}
-                            />
-                          </th>
-                          <th>ID</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {grouped.flatMap((g) => {
-                          const open = !collapsed.has(g.id);
-                          const header = (
-                            <tr key={`group-${g.id}`} className="policy-skill-group-row">
-                              <td colSpan={2}>
-                                <button
-                                  type="button"
-                                  className="policy-skill-group-toggle"
-                                  aria-expanded={open}
-                                  onClick={() => toggleGroup(g.id)}
-                                >
-                                  <Codicon name={open ? 'chevron-down' : 'chevron-right'} className="policy-skill-group-chevron" />
-                                  <span>{g.label}</span>
-                                  <span className="muted">{g.rules.length}</span>
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                          const children = open
-                            ? g.rules.map((r) => (
-                                <tr
-                                  key={r.rowKey ?? r.id}
-                                  className={`policy-table-row policy-table-row--nested${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedIds.has(r.id) ? ' policy-table-row--selected' : ''}`}
-                                  style={policyDbRowStyle(r.origin)}
-                                  onContextMenu={(e) => onRuleContext(e, r)}
-                                  onClick={(e) => onRuleRowClick(e, r)}
-                                >
-                                  <td className="policy-col-check" onClick={(e) => e.stopPropagation()}>
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedIds.has(r.id)}
-                                      aria-label={`Select ${r.id}`}
-                                      onChange={(e) => {
-                                        const next = new Set(selectedIds);
-                                        if (e.target.checked) next.add(r.id);
-                                        else next.delete(r.id);
-                                        setSelectedIds(next);
-                                        setAnchorId(r.id);
-                                      }}
-                                    />
-                                  </td>
-                                  <td className="mono">
-                                    <span className="policy-id-with-git">
-                                      <button type="button" className="policy-link" onClick={(e) => { e.stopPropagation(); onRuleRowClick(e, r); }}>
-                                        {r.id}
-                                      </button>
-                                      <GitShareDot scope={r.scope} enabled={r.enabled} />
-                                      <OriginDbBadge origin={r.origin} projectName={r.projectName} />
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))
-                            : [];
-                          return [header, ...children];
-                        })}
-                      </tbody>
-                    </DataTable>
-                    </div>
-                  ) : (
-                  <DataTable dense>
-                    <thead>
-                        <tr>
-                          <th className="policy-col-check">
-                            <input
-                              type="checkbox"
-                              aria-label="Select all visible rules"
-                              checked={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
-                              onChange={() => setSelectedIds(toggleVisibleSelection(visibleRowIds, selectedIds))}
-                            />
-                          </th>
-                          <SortTh label="ID" active={sortKey === 'id'} dir={sortDir} onClick={() => setSort('id')} />
-                        <th>Database</th>
-                        <SortTh label="Level" active={sortKey === 'level'} dir={sortDir} onClick={() => setSort('level')} className="policy-col-filter" />
-                        <SortTh label="Layer" active={sortKey === 'scope'} dir={sortDir} onClick={() => setSort('scope')} className="policy-col-filter" />
-                        <SortTh label="Pri" active={sortKey === 'priority'} dir={sortDir} onClick={() => setSort('priority')} className="col-num" />
-                        <th className="policy-col-filter">Tags</th>
-                        <th>Always</th>
-                        <th>Enabled</th>
-                        <th title="Files (MD) vs Database — override project default">Storage</th>
-                        <SortTh label="Globs" active={sortKey === 'globs'} dir={sortDir} onClick={() => setSort('globs')} className="col-num" />
-                        <SortTh label="Triggers" active={sortKey === 'triggers'} dir={sortDir} onClick={() => setSort('triggers')} className="col-num" />
-                        <th className="col-actions">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {grouped.flatMap((g) => {
-                        const open = !collapsed.has(g.id);
-                        const header = (
-                          <tr key={`group-${g.id}`} className="policy-skill-group-row">
-                            <td colSpan={13}>
-                              <button
-                                type="button"
-                                className="policy-skill-group-toggle"
-                                aria-expanded={open}
-                                onClick={() => toggleGroup(g.id)}
-                              >
-                                <Codicon name={open ? 'chevron-down' : 'chevron-right'} className="policy-skill-group-chevron" />
-                                <span>{g.label}</span>
-                                <span className="muted">{g.rules.length}</span>
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                        const children = open
-                          ? g.rules.map((r) => (
-                        <tr
-                          key={r.rowKey ?? r.id}
-                          className={`policy-table-row policy-table-row--nested${r.enabled === false ? ' policy-table-row--disabled' : ''}${selectedIds.has(r.id) ? ' policy-table-row--selected' : ''}`}
-                          style={policyDbRowStyle(r.origin)}
-                          onContextMenu={(e) => onRuleContext(e, r)}
-                          onClick={(e) => {
-                            const t = e.target as HTMLElement;
-                            if (t.closest('button, a, input, select, textarea, label')) return;
-                            onRuleRowClick(e, r);
-                          }}
-                        >
-                          <td className="policy-col-check" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(r.id)}
-                              aria-label={`Select ${r.id}`}
-                              onChange={(e) => {
-                                const next = new Set(selectedIds);
-                                if (e.target.checked) next.add(r.id);
-                                else next.delete(r.id);
-                                setSelectedIds(next);
-                                setAnchorId(r.id);
-                              }}
-                            />
-                          </td>
-                          <td className="mono">
-                            <span className="policy-id-with-git">
-                              <button type="button" className="policy-link" onClick={(e) => { e.stopPropagation(); onRuleRowClick(e, r); }}>
-                                {r.id}
-                              </button>
-                              <GitShareDot scope={r.scope} enabled={r.enabled} />
-                            </span>
-                          </td>
-                          <td><OriginDbBadge origin={r.origin} projectName={r.projectName} /></td>
-                          <td className="policy-col-filter">
-                            <LevelBadge
-                              level={r.level}
-                              onClick={() => toggleFilterLevel(r.level)}
-                              active={level === r.level}
-                            />
-                          </td>
-                          <td className="policy-col-filter">
-                            <ScopeBadge
-                              scope={r.scope}
-                              onClick={() => toggleFilterScope(r.scope)}
-                              active={scope === normalizePolicyScope(r.scope)}
-                            />
-                          </td>
-                          <td className="num">{r.priority}</td>
-                          <td className="policy-table-tags policy-col-filter">
-                            <TagList items={r.tags ?? []} onTagClick={toggleFilterTag} activeTags={tags} />
-                          </td>
-                          <td className="policy-table-flag">{r.alwaysApply ? 'yes' : '—'}</td>
-                          <td>
-                            {isGlobalPolicy(r) ? (
-                              <span className="muted">—</span>
-                            ) : (
-                            <button
-                              type="button"
-                              className={`settings-toggle${r.enabled !== false ? ' on' : ''}`}
-                              onClick={() => void toggleEnabled(r.id, r.enabled === false)}
-                              aria-pressed={r.enabled !== false}
-                              aria-label={r.enabled !== false ? `Disable ${r.id}` : `Enable ${r.id}`}
-                              title={r.enabled !== false ? 'Enabled — click to disable' : 'Disabled — click to enable'}
-                            >
-                              <span className="settings-toggle-thumb" />
-                            </button>
-                            )}
-                          </td>
-                          <td>
-                            {isGlobalPolicy(r) ? (
-                              <span className="muted">—</span>
-                            ) : (
-                            <div className="policy-storage-cell">
-                              <button
-                                type="button"
-                                role="switch"
-                                aria-checked={(r.effectiveStorage ?? projectStorage) === 'database'}
-                                className={`settings-toggle${(r.effectiveStorage ?? projectStorage) === 'database' ? ' on' : ''}`}
-                                onClick={() => void toggleItemStorage(r.id, r.effectiveStorage ?? projectStorage)}
-                                aria-label={`Storage for ${r.id}`}
-                                title={
-                                  (r.effectiveStorage ?? projectStorage) === 'database'
-                                    ? 'Database — click for Files (MD)'
-                                    : 'Files (MD) — click for Database'
-                                }
-                              >
-                                <span className="settings-toggle-thumb" />
-                              </button>
-                              <span className={`policy-storage-chip${r.storageIsOverride ? ' override' : ''}`}>
-                                {(r.effectiveStorage ?? projectStorage) === 'database' ? 'DB' : 'MD'}
-                                {r.storageIsOverride ? ' · override' : ''}
-                              </span>
-                            </div>
-                            )}
-                          </td>
-                          <td className="num">{(r.globs ?? []).length}</td>
-                          <td className="num">{(r.triggers ?? []).length}</td>
-                          <td className="col-actions">
-                            <PolicyRowActions
-                              onEdit={() => onEditFull(r.id, r.origin, r.projectId)}
-                              onDelete={() => {
-                                if (isGlobalPolicy(r)) {
-                                  if (confirm(`Delete rule "${r.id}" from global.db?`)) {
-                                    void deletePolicyCopy('rule', r.id, r.projectId).then(reloadRules);
-                                  }
-                                  return;
-                                }
-                                void remove(r.id);
-                              }}
-                            />
-                          </td>
-                        </tr>
-                              ))
-                            : [];
-                          return [header, ...children];
-                        })}
-                    </tbody>
-                  </DataTable>
-                  )}
+                  <PolicyCalmList
+                    groups={grouped.map((g) => ({
+                      id: g.id,
+                      label: g.label,
+                      items: g.rules.map((r) => ({
+                        key: r.rowKey ?? r.id,
+                        id: r.id,
+                        subtitle: ruleRowSubtitle(r, projectStorage),
+                        meta: priorityMeta(r.priority),
+                        level: r.level,
+                        scope: r.scope,
+                        origin: r.origin,
+                        projectName: r.projectName,
+                        tags: r.tags ?? [],
+                        enabled: r.enabled !== false,
+                        global: isGlobalPolicy(r),
+                        storage: (r.effectiveStorage ?? projectStorage) === 'database' ? 'database' : 'files',
+                      })),
+                    }))}
+                    collapsed={collapsed}
+                    onToggleGroup={toggleGroup}
+                    selectedIds={selectedIds}
+                    compact={Boolean(selectedId)}
+                    filters={{ level, scope, tags, onLevel: toggleFilterLevel, onScope: toggleFilterScope, onTag: toggleFilterTag }}
+                    onRowClick={(e, id) => {
+                      const r = ruleById.get(id);
+                      if (r) onRuleRowClick(e, r);
+                    }}
+                    onRowContext={(e, id) => {
+                      const r = ruleById.get(id);
+                      if (r) onRuleContext(e, r);
+                    }}
+                    onCheck={(id, checked) => {
+                      const next = new Set(selectedIds);
+                      if (checked) next.add(id);
+                      else next.delete(id);
+                      setSelectedIds(next);
+                      setAnchorId(id);
+                    }}
+                    onToggleEnabled={(id, enabled) => void toggleEnabled(id, enabled)}
+                    onToggleStorage={(id, current) => void toggleItemStorage(id, current)}
+                    onEdit={(id) => {
+                      const r = ruleById.get(id);
+                      onEditFull(id, r?.origin, r?.projectId);
+                    }}
+                    onDelete={(id) => {
+                      const r = ruleById.get(id);
+                      if (r && isGlobalPolicy(r)) {
+                        if (confirm(`Delete rule "${id}" from global.db?`)) {
+                          void deletePolicyCopy('rule', id, r.projectId).then(reloadRules);
+                        }
+                        return;
+                      }
+                      void remove(id);
+                    }}
+                  />
                 </div>
-                {policyDetailOpen(selectedId, bladeClosing) && selectedId ? (
+                {policyDetailOpen(selectedId, bladeClosing) && selectedId && (routeOrigin || !loading) ? (
                   <>
                     <PolicyListResizeHandle />
                     <div ref={editorRef} className={policyWorkspaceHostClass(bladeClosing)}>

@@ -193,6 +193,8 @@ export function navigateRoute(state: Partial<RouteState> & Pick<RouteState, 'pag
     sonarTab: state.sonarTab ?? 'dashboard',
     ruleEditMode: state.ruleEditMode ?? false,
     skillEditMode: state.skillEditMode ?? false,
+    origin: state.origin ?? null,
+    projectId: state.projectId ?? null,
   });
   const current = `${window.location.pathname}${window.location.search}`;
   if (current === path) return;

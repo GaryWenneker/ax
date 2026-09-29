@@ -41,13 +41,13 @@ enum Commands {
             value_name = "ID",
             num_args = 1,
             action = clap::ArgAction::Append,
-            help = "Wire a specific agent target (repeatable), e.g. takumi, vscode, cursor"
+            help = "Wire a specific agent target (repeatable), e.g. vscode, cursor"
         )]
         target: Vec<String>,
         #[arg(
             long,
             value_name = "DIR",
-            help = "Project root for workspace MCP files (default: current directory). Use from Takumi with an explicit folder."
+            help = "Project root for workspace MCP files (default: current directory)."
         )]
         path: Option<String>,
     },
@@ -769,8 +769,12 @@ enum PolicyCommands {
         path: Option<String>,
         #[arg(long)]
         file: Vec<String>,
+        /// JSON with ids and reasons; bodies appear once, inside `inject`
         #[arg(long)]
         json: bool,
+        /// With --json: also repeat every body inside `rules[]` / `skills[]`
+        #[arg(long, requires = "json")]
+        full: bool,
     },
     /// List indexed rules
     Rules {
@@ -1419,8 +1423,8 @@ async fn async_main() {
                 commands::policy::run_pull(url, path, name).await
             }
             PolicyCommands::Export { path, out } => commands::policy::run_export(path, out).await,
-            PolicyCommands::Match { prompt, path, file, json } => {
-                commands::policy::run_match(path, prompt, file, json).await
+            PolicyCommands::Match { prompt, path, file, json, full } => {
+                commands::policy::run_match(path, prompt, file, json, full).await
             }
             PolicyCommands::Dedup { path, dry_run, json } => {
                 commands::policy::run_dedup(path, dry_run, json).await

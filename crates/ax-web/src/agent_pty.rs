@@ -54,8 +54,8 @@ async fn handle_pty_socket(socket: WebSocket, hub: WebHub, query: PtyQuery) {
                 serde_json::json!({"t":"e","m": ax_usage::format_ax_tagged(
                     "Built-in ax uses chat mode — pick an external agent for the interactive CLI."
                 )})
-                    .to_string()
-                    .into(),
+                .to_string()
+                .into(),
             ))
             .await;
         return;
@@ -90,7 +90,9 @@ async fn handle_pty_socket(socket: WebSocket, hub: WebHub, query: PtyQuery) {
 
     let _ = ws_tx
         .send(Message::Text(
-            serde_json::json!({"t":"o","d": pty.banner}).to_string().into(),
+            serde_json::json!({"t":"o","d": pty.banner})
+                .to_string()
+                .into(),
         ))
         .await;
 

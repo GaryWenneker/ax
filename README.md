@@ -5,7 +5,7 @@
 
 **Current release: [v5.1.0](https://github.com/GaryWenneker/ax/releases/tag/v5.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
-**ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP.
+**ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP. The `pr` skill reviews the draft it opened and keeps fixing until a review round has zero findings. `ax init` seeds that skill together with `old-coder`, `old-coder-api`, `review-loop`, `dotnet-code-review`, `typescript-review`, and `react-review`.
 
 **v5.1.0** (minor) saves a memory after every agent turn that changed files or made a commit: the prompt (secrets redacted), the files changed, and the commits made. Turn memories are found with `ax_recall` / `ax recall`, are never injected into preflight or exported, and are deleted after 30 days. Run `ax install` again to add the turn hooks for Cursor and Claude Code; switch them off with `"memory": { "perTurn": false }` in `ax.json`.
 
@@ -16,6 +16,8 @@
 **v5.0.1** (patch) removes built-in defaults that only fit one team: `ax docs-catalog sync` has no built-in wiki (set `docsCatalog.wiki_remote` in `ax.json`), the OneDrive share has no default folder, and the `pr` / `preq` / `pre-pr-check` / `no-ab-prefix` skill templates are generic and in English.
 
 **v5.0.0** (major) keeps **one copy of every rule and skill**: a name stored at the global level is removed from project `ax.db` files automatically (the longest copy wins, every change is versioned, files on disk stay). It also adds the **read guard hook** (the first whole-file read of indexed source is steered to `ax_node`), a **review loop** after the old-coder gauntlet, the **`pr-review-comments`** skill for colleague PRs, and principal-level review skills for every stack pack. `ax init` no longer seeds global skills into projects. See [What's new](https://getax.wenneker.io/getting-started/introduction/) and [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).
+
+**Unreleased:** `ax init` asks which **IDEs** to connect (same menu as stacks), saves the choice in `ax.json` (`agents.ides`), pre-checks it on the next run, and removes ax from every configured IDE you uncheck. "Found" now means the CLI or app is really installed, not that a config folder exists. Disconnecting Claude Code also cleans the project's `.mcp.json`, and `ax policy pack import` no longer reconnects IDEs you turned off. The Code-OSS fork target is removed. `AX_INIT_IDES` answers it in scripts.
 
 **v4.12.0** adds **stack-aware policy seeding** (`ax policy stack`, init asks every time) and a **configurable policy folder** (`policy.agentsDir`, default `.agents`, also in Command Center settings). See [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).
 
@@ -81,7 +83,7 @@
 
 - **100% local** — no source code leaves your machine
 - **Deterministic** — graph data comes from AST extraction, not LLM summaries
-- **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Takumi 匠, Windsurf, Zed, and more
+- **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed, and more
 - **Native Rust** — single binary, no Node.js runtime required
 
 Docs: [getax.wenneker.io](https://getax.wenneker.io) — MCP loop: [MCP Logging & Quality](https://getax.wenneker.io/guides/mcp-quality/)
@@ -249,10 +251,8 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax policy rules` / `skills` | List indexed policy |
 | `ax policy guard` | Pre-write CRITICAL checks (encoding, secrets paths, plus any rule-defined `guard:` directive) |
 | `ax stop-hook` | Claude Code `Stop`/`SubagentStop` post-flight — blocks turn end on a CRITICAL guard violation |
-| `ax web [--open]` | Local web UI — graph browser + policy editor + Command Center |
+| `ax web [--open]` | Local web UI — graph browser + policy editor + Command Center; also serves rules, skills, memories, and global rules and skills as an Obsidian vault over WebDAV at `/dav/`; `[[links]]` between them are clickable and followed by `ax_preflight`; rule and skill bodies edit as Markdown or WYSIWYG, and typing `[[` (or the WYSIWYG link button, ⌘K) opens a picker to link a rule, skill or memory, with kind filters and quick search on name, `#tag` and `s:`/`r:`/`m:`; Settings → Folders adds your own directories under `folders/` (with a native folder picker) and can index their Markdown into memory; Settings → IDEs & agents connects ax to every IDE on the machine with one click ([guide](https://getax.wenneker.io/guides/obsidian-vault/)) |
 | `ax desktop [--port]` | Native wgpu Command Center (embeds ax-web in-process) |
-| `ax install --target takumi` | Wire MCP for the [Takumi 匠](https://getax.wenneker.io/guides/takumi/) Code-OSS fork (`--path` optional project root) |
-
 Run `ax help <command>` for detailed help with examples.
 
 ### Terminal UX

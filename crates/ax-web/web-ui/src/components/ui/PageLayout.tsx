@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode } from 'react';
 
+import Codicon from '../Codicon';
 import { isLiveStatus, Spinner } from './Spinner';
 
 export { BusyLabel, Spinner, isLiveStatus } from './Spinner';
@@ -245,48 +246,106 @@ export function PagePagination({
   );
 }
 
-export function ItemList({ children }: { children: ReactNode }) {
-  return <div className="page-item-list">{children}</div>;
+export function ItemList({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={`page-item-list${className ? ` ${className}` : ''}`}>{children}</div>;
+}
+
+export function ItemGroupHeader({
+  label,
+  count,
+  open,
+  onToggle,
+}: {
+  label: string;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button type="button" className="calm-group-header" aria-expanded={open} onClick={onToggle}>
+      <Codicon name={open ? 'chevron-down' : 'chevron-right'} className="calm-group-chevron" />
+      <span className="calm-group-label">{label}</span>
+      <span className="calm-group-count">{count}</span>
+    </button>
+  );
 }
 
 export function ItemRow({
   icon,
   title,
   subtitle,
+  meta,
+  metaTitle,
   badges,
+  aside,
   selected,
   static: isStatic,
+  variant,
+  disabled,
+  className,
+  style,
+  rowProps,
   onClick,
+  onContextMenu,
 }: {
+  className?: string;
+  style?: CSSProperties;
   icon?: ReactNode;
   title: string;
   subtitle?: string;
+  meta?: string;
+  metaTitle?: string;
   badges?: ReactNode;
+  aside?: ReactNode;
   selected?: boolean;
   static?: boolean;
-  onClick?: () => void;
+  variant?: 'graph';
+  disabled?: boolean;
+  rowProps?: HTMLAttributes<HTMLDivElement> & Record<`data-${string}`, string>;
+  onClick?: (e: MouseEvent<HTMLDivElement>) => void;
+  onContextMenu?: (e: MouseEvent<HTMLDivElement>) => void;
 }) {
   const interactive = !isStatic && onClick;
+  const graph = variant === 'graph';
   return (
     <div
-      className={`page-item${selected ? ' page-item--selected' : ''}${interactive ? '' : ' page-item--static'}`}
-      onClick={onClick}
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
+      {...rowProps}
+      className={`page-item${graph ? ' page-item--graph' : ''}${selected ? ' page-item--selected' : ''}${disabled ? ' page-item--disabled' : ''}${interactive ? '' : ' page-item--static'}${className ? ` ${className}` : ''}`}
+      style={style}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
       onKeyDown={
         interactive
           ? (e) => {
-              if (e.key === 'Enter') onClick?.();
+              if (e.key === 'Enter' && e.target === e.currentTarget) e.currentTarget.click();
             }
           : undefined
       }
     >
-      {icon && <span className="page-item-icon">{icon}</span>}
+      {graph ? <span className="page-item-node" aria-hidden="true" /> : icon && <span className="page-item-icon">{icon}</span>}
       <div className="page-item-body">
-        <div className="page-item-title">{title}</div>
-        {subtitle && <div className="page-item-sub">{subtitle}</div>}
+        {graph ? (
+          <>
+            <div className="page-item-title-line">
+              <div className="page-item-title" title={title}>{title}</div>
+              {badges && <div className="page-item-badges">{badges}</div>}
+            </div>
+            {subtitle && <div className="page-item-sub">{subtitle}</div>}
+          </>
+        ) : (
+          <>
+            <div className="page-item-title" title={title}>{title}</div>
+            {subtitle && <div className="page-item-sub">{subtitle}</div>}
+          </>
+        )}
       </div>
-      {badges && <div className="page-item-badges">{badges}</div>}
+      {graph && meta && (
+        <div className="page-item-meta" title={metaTitle}>{meta}</div>
+      )}
+      {graph && aside}
+      {!graph && badges && <div className="page-item-badges">{badges}</div>}
     </div>
   );
 }
@@ -330,11 +389,12 @@ export function LevelBadge({
         aria-pressed={!!active}
         title={active ? `Remove filter: ${level}` : `Filter by ${level}`}
       >
+        <BadgeIcon name={levelIcon(level)} />
         {short}
       </button>
     );
   }
-  return <span className={className}>{short}</span>;
+  return <span className={className}><BadgeIcon name={levelIcon(level)} />{short}</span>;
 }
 
 export function ScopeBadge({
@@ -378,9 +438,28 @@ export function ScopeBadge({
         aria-pressed={!!active}
         title={active ? `Remove filter: ${label}` : `Filter by ${label}`}
       >
+        <BadgeIcon name={scopeIcon(value)} />
         {label}
       </button>
     );
   }
-  return <span className={className}>{label}</span>;
+  return <span className={className}><BadgeIcon name={scopeIcon(value)} />{label}</span>;
+}
+
+function BadgeIcon({ name }: { name: string }) {
+  return <Codicon name={name} className="badge-icon" />;
+}
+
+function levelIcon(level: string): string {
+  if (level === 'CRITICAL') return 'error';
+  if (level === 'WARNING') return 'warning';
+  return 'info';
+}
+
+function scopeIcon(scope: string): string {
+  if (scope === 'company') return 'organization';
+  if (scope === 'workspace') return 'window';
+  if (scope === 'private_user') return 'person';
+  if (scope === 'private_project') return 'lock';
+  return 'repo';
 }

@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react';
+import {
+  POLICY_LIST_DEFAULT,
+  POLICY_LIST_MAX,
+  POLICY_LIST_MIN,
+  clampPolicyListWidth,
+} from '../lib/policyBodyView';
 
 const META_KEY = 'ax-web-policy-meta-w';
 export const POLICY_META_MIN = 220;
@@ -11,9 +17,7 @@ export const MD_EDIT_PCT_MAX = 72;
 export const MD_EDIT_PCT_DEFAULT = 50;
 
 const LIST_KEY = 'ax-web-policy-list-w';
-export const POLICY_LIST_MIN = 140;
-export const POLICY_LIST_MAX = 480;
-export const POLICY_LIST_DEFAULT = 200;
+export { POLICY_LIST_MIN, POLICY_LIST_MAX, POLICY_LIST_DEFAULT };
 
 export function loadPolicyMetaWidth(): number {
   const raw = localStorage.getItem(META_KEY);
@@ -50,13 +54,11 @@ export function applyMdEditPct(pct: number, el?: HTMLElement | null) {
 
 export function loadPolicyListWidth(): number {
   const raw = localStorage.getItem(LIST_KEY);
-  const n = raw ? Number.parseInt(raw, 10) : POLICY_LIST_DEFAULT;
-  if (Number.isNaN(n)) return POLICY_LIST_DEFAULT;
-  return Math.min(POLICY_LIST_MAX, Math.max(POLICY_LIST_MIN, n));
+  return clampPolicyListWidth(raw ? Number.parseInt(raw, 10) : POLICY_LIST_DEFAULT);
 }
 
 export function applyPolicyListWidth(px: number) {
-  const clamped = Math.min(POLICY_LIST_MAX, Math.max(POLICY_LIST_MIN, px));
+  const clamped = clampPolicyListWidth(px);
   document.documentElement.style.setProperty('--policy-list-w', `${clamped}px`);
   localStorage.setItem(LIST_KEY, String(clamped));
   return clamped;

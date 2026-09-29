@@ -1,0 +1,9 @@
+{
+  "id": "getax",
+  "name": "Getax",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Read the local ax graph, rules, skills, and memories. Writes nothing into the vault.",
+  "author": "ax",
+  "isDesktopOnly": true
+}

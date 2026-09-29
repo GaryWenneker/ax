@@ -1,0 +1,125 @@
+{
+ "source": "ax MCP verbose logs .ax/mcp-verbose-2026-09-*.log, last 20 distinct real ax_preflight prompts, captured 2026-09-28",
+ "prompts": [
+  {
+   "prompt": "Add internal wikilink integration so ordinary Obsidian notes can link to SQLite rows via [[wikilinks]]. Must be fully integrable with Obsidian. Existing plugin is obsidian/getax.",
+   "files": [
+    "obsidian/getax/src/main.ts"
+   ]
+  },
+  {
+   "prompt": "Explain how to install and use the Getax Obsidian plugin immediately.",
+   "files": [
+    "obsidian/getax/manifest.json"
+   ]
+  },
+  {
+   "prompt": "Install the Getax Obsidian plugin into the user's vault and start ax web so they can use it immediately.",
+   "files": [
+    "obsidian/getax/manifest.json"
+   ]
+  },
+  {
+   "prompt": "Fix Obsidian plugin fetch Illegal invocation. Search fails with Failed to execute fetch on Window: Illegal invocation.",
+   "files": [
+    "obsidian/getax/src/api.ts"
+   ]
+  },
+  {
+   "prompt": "Check the Obsidian Getax graph view against the live ax web graph API and fix it if it fails the same way search did.",
+   "files": [
+    "obsidian/getax/src/main.ts",
+    "obsidian/getax/src/api.ts"
+   ]
+  },
+  {
+   "prompt": "Graph node clicks return 404. Global graph slice node ids do not match GET /api/node/{id}. Fix the Obsidian plugin or the id mapping so a click opens the real node.",
+   "files": [
+    "obsidian/getax/src/api.ts",
+    "crates/ax-web/src/lib.rs"
+   ]
+  },
+  {
+   "prompt": "Search modal shows no suggestions for query memory. Also add management of rules and skills inside the Obsidian plugin using the existing ax-web policy API.",
+   "files": [
+    "obsidian/getax/src/main.ts",
+    "obsidian/getax/src/api.ts"
+   ]
+  },
+  {
+   "prompt": "Maak een plan om de betaalde Obsidian-functionaliteit van https://obsidian.md/pricing (Sync en Publish) gratis via Ax te kunnen uitvoeren.",
+   "files": [
+    "obsidian/getax/src/main.ts",
+    "site/src/content/docs/guides/memory.md"
+   ]
+  },
+  {
+   "prompt": "Graph click says sum_extensions is not in this project while the node is visible. Investigate global graph ids versus local nodes and fix the mismatch.",
+   "files": [
+    "obsidian/getax/src/main.ts"
+   ]
+  },
+  {
+   "prompt": "Improve the Obsidian policy rules and skills editor UI. The form overlaps the list in a narrow pane.",
+   "files": [
+    "obsidian/getax/src/policyView.ts",
+    "obsidian/getax/styles.css"
+   ]
+  },
+  {
+   "prompt": "Make the Getax graph work like Obsidian local graph: current node in the center, only neighbors around it, and a linked-mentions list.",
+   "files": [
+    "obsidian/getax/src/main.ts",
+    "obsidian/getax/src/types.ts"
+   ]
+  },
+  {
+   "prompt": "Use Obsidian's standard pages and editor on top of the ax API without files on disk. Option 1: Rust in-memory WebDAV server in ax exposing SQLite rows as a virtual vault. Option 2: monkey-patch Obsidian's vault adapter in the plugin.",
+   "files": []
+  },
+  {
+   "prompt": "ga door: finish WebDAV vault feature (docs, evidence, apply to main tree)",
+   "files": [
+    "crates/ax-web/src/dav/mod.rs",
+    "crates/ax-web/src/dav/fs.rs",
+    "site/src/content/docs/guides/obsidian-vault.md"
+   ]
+  },
+  {
+   "prompt": "leg uit hoe te gebruiken in obsidian (WebDAV vault)",
+   "files": []
+  },
+  {
+   "prompt": "check leftover WebDAV test mounts after background tasks finished",
+   "files": []
+  },
+  {
+   "prompt": "support Obsidian-style [[wikilinks]] in rules, skills and memories; changes made in Obsidian must propagate to ax immediately (WebDAV vault)",
+   "files": [
+    "crates/ax-web/src/dav/fs.rs",
+    "crates/ax-web/src/dav/pages.rs"
+   ]
+  },
+  {
+   "prompt": "maak een plan om de functionaliteit van ax te testen. tokenbesparing is belangrijk. testen eerst zonder ax en daarna met ax, aantoont besparing. Breed van gemakkelijk tot heel complex. Agent voert uit zonder mens. Rules, skills, source graph en memory meenemen.",
+   "files": [
+    "site/src/content/docs/guides/token-savings.md",
+    "scripts/mutants-per-turn-memory.sh"
+   ]
+  },
+  {
+   "prompt": "geeft een tabel met informatie",
+   "files": [
+    "scripts/bench-agent-efficiency/out/report.md"
+   ]
+  },
+  {
+   "prompt": "Continue: finish obsidian links work (EVIDENCE, apply to main tree, rebuild)",
+   "files": []
+  },
+  {
+   "prompt": "nog steeds negatieve getallen",
+   "files": []
+  }
+ ]
+}

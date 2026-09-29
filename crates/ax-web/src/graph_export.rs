@@ -91,11 +91,7 @@ pub async fn handle_export(
     let fmt = match GraphExportFormat::parse(&p.format) {
         Ok(f) => f,
         Err(msg) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": msg })),
-            )
-                .into_response();
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
         }
     };
 
@@ -141,10 +137,7 @@ pub async fn handle_export(
         [
             (header::CONTENT_TYPE, ctype),
             (header::CONTENT_DISPOSITION, disp),
-            (
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("no-store"),
-            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
         ],
         body,
     )

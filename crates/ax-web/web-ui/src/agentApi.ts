@@ -7,18 +7,20 @@ export interface AgentTargetStatus {
   detected: boolean;
   cli_available?: boolean;
   cli_on_path: boolean;
-  data_dir_detected?: boolean;
+  app_installed?: boolean;
   runnable?: boolean;
   cli_installable: boolean;
   configured: boolean;
   config_paths: string[];
+  /** Command Center present in the IDE; absent or null for terminal agents. */
+  panel?: boolean | null;
 }
 
 export function isCliReady(t: AgentTargetStatus): boolean {
   return t.cli_available ?? t.cli_on_path;
 }
 
-/** All external agents that can run headless prompts in the agent terminal. */
+/** All external agents that can run headless prompts. */
 export const TERMINAL_EXTERNAL_AGENTS: { id: string; label: string }[] = [
   { id: 'claude', label: 'Claude Code' },
   { id: 'cursor', label: 'Cursor' },
@@ -259,7 +261,7 @@ export async function ensureAgentReady(
 
   if (!isRunnableAgent(agentId, catalog)) {
     const label = target?.display_name ?? TERMINAL_EXTERNAL_AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
-    return { ok: false, error: `${label} is MCP-only — not available in the agent terminal` };
+    return { ok: false, error: `${label} is MCP-only — cannot run headless prompts` };
   }
 
   const displayName =
@@ -294,7 +296,7 @@ export async function ensureAgentReady(
         ac.abort();
         if (!installErr) {
           installErr =
-            'CLI install timed out — install manually in Settings → AI Agents, then retry';
+            'CLI install timed out — install the CLI manually, then retry';
         }
         finish();
       }, CLI_INSTALL_TIMEOUT_MS);
@@ -326,7 +328,7 @@ export async function ensureAgentReady(
   if (needsCli && target && !isCliReady(target)) {
     return {
       ok: false,
-      error: `${displayName} CLI not available after install — try: Settings → AI Agents → Install CLI`,
+      error: `${displayName} CLI not available after install — install it manually, then run \`ax install\` to wire ax MCP`,
     };
   }
   if (target && !target.configured) {
@@ -352,7 +354,7 @@ export async function ensureAgentReady(
       const timer = setTimeout(() => {
         ac.abort();
         if (!mcpErr) {
-          mcpErr = 'MCP wiring timed out — retry from Settings → AI Agents';
+          mcpErr = 'MCP wiring timed out — run `ax install`, then retry';
         }
         finish();
       }, MCP_WIRING_TIMEOUT_MS);

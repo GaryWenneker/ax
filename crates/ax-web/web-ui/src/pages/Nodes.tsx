@@ -186,8 +186,8 @@ export default function NodesPage() {
                         onClick={() => setSelectedId(n.id)}
                         badges={
                           <>
-                            <span className="page-item-badge">{n.language}</span>
-                            {n.is_exported ? <span className="page-item-badge">pub</span> : null}
+                            <span className="page-item-badge"><Codicon name="symbol-misc" className="badge-icon" />{n.language}</span>
+                            {n.is_exported ? <span className="page-item-badge"><Codicon name="eye" className="badge-icon" />pub</span> : null}
                           </>
                         }
                       />

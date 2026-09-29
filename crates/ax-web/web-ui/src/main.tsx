@@ -6,6 +6,9 @@ import '@uiw/react-markdown-preview/markdown.css';
 import './index.css';
 import './agent-terminal.css';
 import App from './App';
+import { installContextMenuGuard } from './lib/contextMenuGuard';
+
+installContextMenuGuard();
 
 const root = document.getElementById('root');
 if (root) {

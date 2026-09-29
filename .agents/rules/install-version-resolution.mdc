@@ -2,11 +2,15 @@
 id: install-version-resolution
 level: CRITICAL
 alwaysApply: false
-globs: ["install.ps1", "install.sh", "site/public/install.ps1", "site/public/install.sh", "crates/ax-cli/src/version_check.rs"]
-triggers: ["install.ps1", "install.sh", "ax upgrade", "latest available", "Test-AxReleaseAsset", "Resolve-AxVersion", "resolve_latest_installable"]
-tags: ["ops", "release", "install"]
+globs: ["install.ps1","install.sh","site/public/install.ps1","site/public/install.sh","crates/ax-cli/src/version_check.rs"]
+triggers: ["install.ps1","install.sh","ax upgrade","latest available","Test-AxReleaseAsset","Resolve-AxVersion","resolve_latest_installable"]
+tags: ["ops","release","install"]
 priority: 94
+enabled: true
+status: approved
+scope: project
 ---
+
 # Install / upgrade — version resolution (CRITICAL)
 
 > **Never use HTTP HEAD to probe GitHub Release asset URLs.** GitHub redirects to S3 signed URLs that often return 403/405 for HEAD. The installer then skips newer tags and picks the highest *old* release whose HEAD probe still passes (e.g. v2.0.10 while v2.0.14 exists).
@@ -63,3 +67,7 @@ ax version
 ```
 
 Pin when testing: `$env:AX_VERSION = 'v2.0.14'; irm https://getax.wenneker.io/install.ps1 | iex`
+
+## Related
+
+- [[release-all-platforms]] — which assets a release must publish

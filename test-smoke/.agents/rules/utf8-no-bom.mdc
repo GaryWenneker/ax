@@ -1,0 +1,24 @@
+---
+id: utf8-no-bom
+level: CRITICAL
+alwaysApply: true
+tags: ["utf8", "encoding"]
+priority: 100
+---
+# UTF-8 without BOM — never UTF-16
+
+> **ABSOLUTE**: Never use UTF-16 (LE or BE). Always UTF-8 **without BOM** for every text file you create or edit.
+
+## Required on write
+
+1. **Encoding** — UTF-8, no BOM. First bytes must NOT be `EF BB BF`, `FF FE`, or `FE FF`.
+2. **HTML** — include `<meta charset="UTF-8">` in `<head>`.
+3. **HTTP** — text responses use `Content-Type: ...; charset=utf-8`.
+4. **PowerShell 5.1** — never `Set-Content -Encoding UTF8` (adds BOM). Use:
+   ```powershell
+   $utf8 = New-Object System.Text.UTF8Encoding $false
+   [System.IO.File]::WriteAllText($path, $content, $utf8)
+   ```
+5. **Post-write** — read back; scan for mojibake (`Ã`, `ï»¿`, null-padded ASCII). Fix immediately.
+
+Forbidden: UTF-16, UTF-8 with BOM on source/code, Windows-1252 for new files.

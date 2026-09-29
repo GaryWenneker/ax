@@ -1,0 +1,32 @@
+---
+id: calm-lists
+level: CRITICAL
+alwaysApply: false
+globs: ["crates/ax-web/web-ui/**"]
+triggers: ["list","table","rules page","skills page","logging","memory","command center","web-ui"]
+tags: ["ui","lists"]
+priority: 85
+enabled: true
+status: approved
+scope: project
+---
+
+# Calm lists in Command Center
+
+Every list page (Rules, Skills, Logging, Memory, and any new list) uses the shared calm list so all pages look the same.
+
+## Required
+
+- Rows are `ItemRow variant="graph"` inside `ItemList className="calm-list"` (Memory uses `memory-vault-list`, which shares the same CSS).
+- Grouped lists use `ItemGroupHeader` per group; Rules and Skills use `PolicyCalmList`.
+- Row text: title, one quiet subtitle line, meta on the right. Row controls (toggle, checkbox, actions) sit in `aside` and appear on hover or when active.
+- Badges follow [[outline-badges]].
+
+## Forbidden
+
+- Data tables (`<table>`, `DataTable`) for list pages.
+- Page-specific row styles that diverge from the calm list.
+
+## Related
+
+- [[outline-badges]] — badge and selected-row styling

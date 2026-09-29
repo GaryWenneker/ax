@@ -105,6 +105,7 @@ pub fn propose_rule_from_prompt(prompt: &str, open_files: &[String]) -> CaptureP
         source: None,
         root_id: None,
         group: None,
+        properties: Default::default(),
     };
 
     let preview_path = format!(".agents/rules/{suggested_id}.mdc");
@@ -267,6 +268,7 @@ fn empty_proposal() -> CaptureProposal {
             source: None,
             root_id: None,
             group: None,
+            properties: Default::default(),
         },
         body: String::new(),
         preview_path: String::new(),

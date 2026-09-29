@@ -494,15 +494,21 @@ pub async fn recent_session_catalog(
     .fetch_all(&pool)
     .await
     .map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|(cache_id, tool, summary, original_tokens, _session)| CatalogEntry {
-            id: cache_id.unwrap_or_else(|| "inline".to_string()),
-            tool,
-            summary,
-            original_tokens,
+    Ok(scope_catalog(rows, session_id))
+}
+
+/// Entries from other chats and entries without a cache id cannot be expanded here; drop them.
+fn scope_catalog(
+    rows: Vec<(Option<String>, String, String, i64, Option<String>)>,
+    session_id: Option<&str>,
+) -> Vec<CatalogEntry> {
+    let Some(session_id) = session_id else { return Vec::new() };
+    rows.into_iter()
+        .filter(|(_, _, _, _, session)| session.as_deref() == Some(session_id))
+        .filter_map(|(cache_id, tool, summary, original_tokens, _)| {
+            Some(CatalogEntry { id: cache_id?, tool, summary, original_tokens })
         })
-        .collect())
+        .collect()
 }
 
 /// Pull tool-result strings out of a Cursor or Claude JSONL transcript.
@@ -638,6 +644,30 @@ async fn load_body(pool: &SqlitePool, id: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    type Row = (Option<String>, String, String, i64, Option<String>);
+
+    fn row(id: Option<&str>, session: Option<&str>) -> Row {
+        (id.map(str::to_string), "ax_explore".into(), "summary".into(), 900, session.map(str::to_string))
+    }
+
+    #[test]
+    fn catalog_keeps_only_expandable_entries_of_this_session() {
+        let rows = vec![
+            row(Some("mine"), Some("chat-a")),
+            row(Some("other"), Some("chat-b")),
+            row(None, Some("chat-a")),
+            row(Some("orphan"), None),
+        ];
+        let ids: Vec<String> = scope_catalog(rows, Some("chat-a")).into_iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec!["mine".to_string()]);
+    }
+
+    #[test]
+    fn catalog_is_empty_without_a_session() {
+        let rows = vec![row(Some("mine"), Some("chat-a"))];
+        assert!(scope_catalog(rows, None).is_empty());
+    }
 
     fn big_body() -> String {
         "line one of the cached reply\n".repeat(4_000)

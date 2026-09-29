@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
-import AgentsSettingsSection from '../components/AgentsSettingsSection';
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
 import OkfSettingsSection from '../components/OkfSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
 import SharingSettingsSection from '../components/SharingSettingsSection';
+import VaultMountCard from '../components/VaultMountCard';
+import VaultFoldersCard from '../components/VaultFoldersCard';
+import IdeInstallCard from '../components/IdeInstallCard';
 import PolicyShareSettingsSection from '../components/PolicyShareSettingsSection';
 import PolicySyncSettingsSection from '../components/PolicySyncSettingsSection';
 import { BusyLabel } from '../components/ui/PageLayout';
@@ -13,7 +15,28 @@ import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
 import { loadThemeId } from '../lib/themes';
 import { TIMEZONE_OPTIONS, browserTimeZone } from '../lib/timeZone';
-import { fetchShipConfig, saveShipConfig, type ShipConfig } from '../shipApi';
+import {
+  fetchReviewLanguage,
+  fetchShipConfig,
+  saveReviewLanguage,
+  saveShipConfig,
+  type ReviewLanguageChoice,
+  type ShipConfig,
+} from '../shipApi';
+
+const REVIEW_LANGUAGES: ReviewLanguageChoice[] = [
+  { code: 'en', name: 'English' },
+  { code: 'nl', name: 'Nederlands' },
+  { code: 'de', name: 'Deutsch' },
+  { code: 'fr', name: 'Français' },
+  { code: 'es', name: 'Español' },
+  { code: 'pt', name: 'Português' },
+  { code: 'it', name: 'Italiano' },
+  { code: 'pl', name: 'Polski' },
+  { code: 'sv', name: 'Svenska' },
+  { code: 'da', name: 'Dansk' },
+  { code: 'tr', name: 'Türkçe' },
+];
 
 const DEFAULT_CONFIG: ShipConfig = {
   ship: { target_branch: 'main', web_port: 7070, git_root: '', git_roots: [] },
@@ -90,6 +113,8 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [themeId, setThemeId] = useState(loadThemeId);
+  const [reviewLanguage, setReviewLanguage] = useState('en');
+  const [reviewLanguages, setReviewLanguages] = useState<ReviewLanguageChoice[]>(REVIEW_LANGUAGES);
 
   usePageContext('Settings', 'Command Center · pipeline & agents');
 
@@ -100,6 +125,15 @@ export default function SettingsPage() {
       try {
         const d = await fetchShipConfig();
         if (cancelled) return;
+        try {
+          const language = await fetchReviewLanguage();
+          if (!cancelled) {
+            setReviewLanguage(language.code);
+            if (language.languages.length > 0) setReviewLanguages(language.languages);
+          }
+        } catch {
+          // The dropdown already lists every language. A missing endpoint must not blank it.
+        }
         setConfig({
           ...DEFAULT_CONFIG,
           ...d.config,
@@ -142,6 +176,21 @@ export default function SettingsPage() {
         ...c,
         ui: { ...(c.ui ?? {}), show_savings: !show_savings },
       }));
+      setErr(String(e));
+    }
+  }
+
+  async function setReviewCommentLanguage(code: string) {
+    const prev = reviewLanguage;
+    setReviewLanguage(code);
+    setErr(null);
+    setMsg(null);
+    try {
+      const saved = await saveReviewLanguage(code);
+      const label = reviewLanguages.find((opt) => opt.code === saved.code)?.name ?? saved.name;
+      setMsg(`Review comments set to ${label}`);
+    } catch (e) {
+      setReviewLanguage(prev);
       setErr(String(e));
     }
   }
@@ -208,7 +257,6 @@ export default function SettingsPage() {
         <h1 className="settings-hero-title">Settings</h1>
         <p className="settings-hero-sub">
           Command Center pipeline, pull requests, and agents — stored in <code>.ax/ship.toml</code>.
-          SonarQube has its own page in the sidebar.
         </p>
       </header>
 
@@ -216,7 +264,7 @@ export default function SettingsPage() {
       {err && <div className="settings-toast settings-toast--err">{err}</div>}
 
       <div className="settings-stack">
-        <AgentsSettingsSection />
+        <IdeInstallCard />
 
         <section className="settings-card">
           <div className="settings-card-header">
@@ -348,6 +396,25 @@ export default function SettingsPage() {
             <div className="settings-divider" />
             <div className="settings-subsection-label">Pull requests</div>
 
+            <SettingRow
+              title="Review comment language"
+              description="Language of comments the agent posts on a pull request. Chat stays English."
+            >
+              <select
+                className="settings-select"
+                value={reviewLanguage}
+                disabled={!!busy || !configLoaded}
+                aria-label="Review comment language"
+                onChange={(e) => void setReviewCommentLanguage(e.target.value)}
+              >
+                {reviewLanguages.map((opt) => (
+                  <option key={opt.code} value={opt.code}>
+                    {opt.name}
+                  </option>
+                ))}
+              </select>
+            </SettingRow>
+
             <SettingRow title="PR provider" description="Where ship opens and updates pull requests.">
               <select
                 className="settings-select"
@@ -436,6 +503,17 @@ export default function SettingsPage() {
           <div className="settings-card-body">
             <PolicySyncSettingsSection />
             <SharingSettingsSection />
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <h2>Vault connection</h2>
+            <p>Connect rules, skills, and memories as a WebDAV drive (for Obsidian or any editor).</p>
+          </div>
+          <div className="settings-card-body">
+            <VaultMountCard />
+            <VaultFoldersCard />
           </div>
         </section>
 

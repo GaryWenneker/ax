@@ -69,6 +69,20 @@ Place `ax.json` at your project root for project-specific overrides. Values here
 
 Commit the file to share settings with your team.
 
+### Review comment language
+
+`reviews.commentLanguage` chooses the language of comments an agent posts on a pull request. Command Center Settings shows it as a dropdown. The project value wins over the same key in `~/.ax/config.json`. When neither is set, the language is English.
+
+Allowed codes: `en`, `nl`, `de`, `fr`, `es`, `pt`, `it`, `pl`, `sv`, `da`, `tr`.
+
+```json
+{
+  "reviews": { "commentLanguage": "nl" }
+}
+```
+
+Chat, docs, and commit messages stay English.
+
 Re-index (`ax index`) after changing either config file.
 
 ### Open Knowledge Format (OKF) export
@@ -171,7 +185,7 @@ MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Que
 
 ## Policy rules and skills
 
-**ax v2.0.0+** stores agent instructions under `.ax/policy/`:
+ax stores agent instructions under `.ax/policy/`:
 
 | Path | Format |
 |---|---|
@@ -180,7 +194,7 @@ MCP graph calls log estimated context-token savings in **`~/.ax/usage.db`**. Que
 
 Run `ax policy index` after editing policy files (or let `ax init` / `ax sync` re-index automatically). Manage rules and skills in the browser with `ax web --open`.
 
-### Policy storage mode (v2.1.1+)
+### Policy storage mode
 
 Policy can live in **files** (`.ax/policy/` on disk) or **database** (`ax.db` tables). Set per project in `ax.json` or globally in `~/.ax/config.json`:
 
@@ -199,7 +213,7 @@ ax policy storage database --migrate --yes  # switch + import all candidates int
 ax policy storage files --migrate           # export DB → files on switch
 ```
 
-**v2.1.2** migration scan walks the **entire codebase** for `.mdc` rules and `SKILL.md` skills — including `.cursor/rules/`, `.cursor/skills/`, and other paths — not only `.ax/policy/`. Bootstrap files (e.g. `.cursor/rules/ax.mdc`) are skipped. Each candidate includes interview questions (import yes/no, id, level, triggers, globs, priority, storage destination).
+The migration scan walks the **entire codebase** for `.mdc` rules and `SKILL.md` skills — including `.cursor/rules/`, `.cursor/skills/`, and other paths — not only `.ax/policy/`. Bootstrap files (e.g. `.cursor/rules/ax.mdc`) are skipped. Each candidate includes interview questions (import yes/no, id, level, triggers, globs, priority, storage destination).
 
 In **database** mode, edits via ax web or `ax policy capture` write to SQLite; run `ax policy export` to materialize files for git. In **files** mode, `ax policy index` syncs disk → DB for delivery.
 
@@ -207,7 +221,7 @@ See the full [Policy Engine](/guides/policy-engine/) guide.
 
 ## Command Center (`.ax/ship.toml`)
 
-**ax v2.1.0+** seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quality-gate pipeline, optional SonarQube, and the PR remote (Azure DevOps by default):
+ax seeds `.ax/ship.toml` on `ax init` when missing. It configures the ship quality-gate pipeline, optional SonarQube, and the PR remote (Azure DevOps by default):
 
 | Section | Purpose |
 |---|---|

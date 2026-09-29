@@ -13,7 +13,10 @@ async fn hub_open_and_hot_switch() {
     let root = smoke_root();
     let db = root.join(".ax").join("ax.db");
     if !db.exists() {
-        eprintln!("skip hub_open_and_hot_switch: no test-smoke index at {}", db.display());
+        eprintln!(
+            "skip hub_open_and_hot_switch: no test-smoke index at {}",
+            db.display()
+        );
         return;
     }
 
@@ -38,7 +41,9 @@ async fn hub_open_and_hot_switch() {
 
     let ws = hub.read().await;
     assert_eq!(
-        ws.project_root.canonicalize().unwrap_or(ws.project_root.clone()),
+        ws.project_root
+            .canonicalize()
+            .unwrap_or(ws.project_root.clone()),
         target
     );
 }

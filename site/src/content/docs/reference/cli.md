@@ -50,21 +50,21 @@ See [Configuration](/getting-started/configuration/) for the full schema.
 
 ### `ax` / `ax install`
 
-Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Takumi 匠, Windsurf, Zed). Does **not** index a project. Prompt-hook and stop-hook are Claude Code-specific. The turn hooks for [per-turn memories](/guides/memory/#per-turn-memories) are added for Cursor and Claude Code. The [read-guard hook](#ax-read-guard) is added for every agent that can block a tool call: Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. See [Integrations](/reference/integrations/) for per-agent details.
+Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed). Does **not** index a project. Prompt-hook and stop-hook are Claude Code-specific. The turn hooks for [per-turn memories](/guides/memory/#per-turn-memories) are added for Cursor and Claude Code. The [read-guard hook](#ax-read-guard) is added for every agent that can block a tool call: Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. See [Integrations](/reference/integrations/) for per-agent details.
 
 | Argument / flag | Type | Description |
 |---|---|---|
 | `--yes` | flag | Non-interactive: skip prompts, install detected agents |
 | `--all` | flag | Configure every supported agent, not only detected ones |
-| `--target <id>` | string | Wire a single agent (e.g. `takumi`, `vscode`, `cursor`); ids are case-insensitive |
-| `--path <dir>` | string | Project root for workspace MCP files (default: current directory). Takumi passes this explicitly. |
+| `--target <id>` | string | Wire a single agent (e.g. `vscode`, `cursor`); ids are case-insensitive |
+| `--path <dir>` | string | Project root for workspace MCP files (default: current directory). |
 
 ```bash
 ax install
 ax install --yes
 ax install --yes --all
-ax install --target takumi
-ax install --yes --target takumi --path .
+ax install --target vscode
+ax install --yes --target vscode --path .
 ```
 
 ### `ax uninstall`
@@ -89,6 +89,12 @@ On **first init**, runs a full index. If `.ax/ax.db` already exists, runs an inc
 |---|---|---|
 | `path` | optional | Project root (default: current directory) |
 | `--workspace` | flag | Discover monorepo members (Cargo workspace + nested `.ax/`), write `members` to `ax.json`, and init each member |
+
+**Choosing IDEs.** After the stack question, `ax init` asks which IDEs and agents ax should connect, in the same menu (arrow keys or j/k, space toggles, enter confirms, esc keeps the defaults). IDEs installed on this machine are marked "found": the CLI is on PATH, or the app is installed (`/Applications` on macOS, `%LOCALAPPDATA%\Programs` on Windows, the binary or `/usr/share` on Linux; Continue by its VS Code or Cursor extension). A config folder alone does not count, because ax creates those itself.
+
+- The choice is saved in the project's `ax.json` as `agents.ides`. The next `ax init` pre-checks it, so pressing enter keeps it.
+- Every IDE you leave unchecked that still has ax configured is disconnected: ax removes its config from disk, the same way `ax uninstall` does, and lists the files. Most of those configs live in your home folder, so that IDE is disconnected for every project on the machine. IDEs without ax config are not touched.
+- Without a terminal (CI), init connects the saved IDEs, or the found ones when nothing is saved, and saves nothing. Set `AX_INIT_IDES="cursor vscode"` (or `none`) to answer the question in a script. That answer is saved like a typed one.
 
 ```bash
 ax init
@@ -368,26 +374,6 @@ ax insights
 ax insights --resolution 1.4 --god-limit 30
 ax insights --json
 ```
-
-### `ax domain [path]`
-
-Build a **domain overlay** from the indexed graph (Leiden communities → domains, call chains → flows/steps, cross-community edges → `cross_domain`) and write `.ax/domain-graph.json`. Does **not** change `ax.db`. No LLM. Command Center Graph → Domain reads this file.
-
-| Argument / flag | Type | Default | Description |
-|---|---|---|---|
-| `path` | optional | cwd | Project root |
-| `--resolution` | number | `1.0` | Cluster granularity — higher yields more, smaller communities |
-| `--json` | flag | — | Print the overlay JSON |
-| `--dry-run` | flag | — | Do not write the file |
-
-```bash
-ax domain
-ax domain --resolution 1.4
-ax domain --json
-ax domain --dry-run
-```
-
-Empty index exits non-zero (`run ax index first`). Empty Domain view in Command Center points at this command.
 
 ### `ax report [path]`
 
@@ -783,7 +769,7 @@ Partial reads (`offset`/`limit`, `head`, `sed -n`, a piped `cat`) pass where the
 | `gemini` | `~/.gemini/settings.json` | `BeforeTool` (`read_file\|search_file_content\|grep\|run_shell_command`) |
 | `windsurf` | `~/.codeium/windsurf/hooks.json` | `pre_read_code`, `pre_run_command` |
 
-Zed, Continue, Kiro, opencode, Antigravity, Hermes, and Takumi 匠 have no blocking tool hook; they get the graph-first instructions only. A hooks file that is not valid JSON is left unchanged and reported by `ax install`. `ax uninstall` removes only the read-guard and turn-hook entries.
+Zed, Continue, Kiro, opencode, Antigravity, and Hermes have no blocking tool hook; they get the graph-first instructions only. A hooks file that is not valid JSON is left unchanged and reported by `ax install`. `ax uninstall` removes only the read-guard and turn-hook entries.
 
 | Env var | Effect |
 |---|---|
@@ -796,7 +782,7 @@ Zed, Continue, Kiro, opencode, Antigravity, Hermes, and Takumi 匠 have no block
 
 ### `ax daemon [path] [status|stop|restart]`
 
-MCP background daemon control (shared index connection per project). Cursor / Takumi attach as stdio proxies; `restart` clears a stuck daemon and stale locks without killing every `ax.exe` (unlike `ax unlock`).
+MCP background daemon control (shared index connection per project). IDEs attach as stdio proxies; `restart` clears a stuck daemon and stale locks without killing every `ax.exe` (unlike `ax unlock`).
 
 | Argument / subcommand | Description |
 |---|---|
@@ -1417,7 +1403,7 @@ ax policy pack export --tag team
 
 #### `ax policy pack import [path]`
 
-Imports the shared pack into the local policy store, then refreshes **all** IDE bootstraps (Cursor, Continue, Claude, …) and MCP config for detected agents so a teammate on a different IDE picks up the same rules via `ax_preflight`.
+Imports the shared pack into the local policy store, then refreshes **all** IDE bootstraps (Cursor, Continue, Claude, …) and refreshes the MCP config of IDEs that already have ax (limited to `agents.ides` in `ax.json` when saved). It never connects an IDE you left off.
 
 | Flag | Description |
 |---|---|
@@ -1495,7 +1481,7 @@ ax policy review reject mobile-first
 
 Remote policy share sync from any git host (GitHub, GitLab, Azure DevOps, on-prem) or OneDrive / SharePoint. See [Remote Policy Share](/guides/policy-sharing/).
 
-Config is stored in **`<project>/ax.json`** under the `"share"` key (per project only). Manage in Takumi Preferences or Command Center Settings.
+Config is stored in **`<project>/ax.json`** under the `"share"` key (per project only). Manage in Command Center Settings.
 
 #### `ax policy share config [path]`
 
@@ -1609,7 +1595,6 @@ ax cycles
 # Architecture insights
 ax insights --json
 ax validate --ci
-ax domain
 ax report --out AX_REPORT.md
 ax export graph-html --out graph.html
 

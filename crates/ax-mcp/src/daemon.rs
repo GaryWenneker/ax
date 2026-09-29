@@ -467,6 +467,8 @@ async fn serve_session(
     socket_path: Option<String>,
     lifecycle: Arc<DaemonLifecycle>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    static NEXT_CONNECTION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let connection = NEXT_CONNECTION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     send_hello(&mut session, project_root, port, socket_path).await?;
     let mut line = String::new();
 
@@ -498,6 +500,7 @@ async fn serve_session(
         };
 
         let mut eng = engine.lock().await;
+        eng.policy_sessions().set_active(connection);
         let outcome = handle_request(
             &mut *eng,
             &req.method,
@@ -542,6 +545,7 @@ async fn serve_session(
         }
         line.clear();
     }
+    engine.lock().await.policy_sessions().end(connection);
     Ok(())
 }
 

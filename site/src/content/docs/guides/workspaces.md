@@ -5,7 +5,7 @@ description: Discover and sync multiple ax projects from one root with ax.json m
 
 # Workspaces (monorepo)
 
-ax v4 adds **workspace federation**: one root `ax.json` lists member projects, each with its own `.ax/` index.
+ax supports **workspace federation**: one root `ax.json` lists member projects, each with its own `.ax/` index.
 
 ## Discover members
 
@@ -125,4 +125,4 @@ See the [CLI reference](/reference/cli/) for all formats.
 
 ## Further reading
 
-Monorepo federation, `ship --ci`, plugins, optional ONNX, LSP enrich, and `ax share` shipped in **v4.0.0**. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).
+Monorepo federation, `ship --ci`, plugins, optional ONNX, LSP enrich, and `ax share` are all available. See [`docs/ROADMAP.md`](https://github.com/GaryWenneker/ax/blob/main/docs/ROADMAP.md).

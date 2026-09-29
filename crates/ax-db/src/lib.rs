@@ -44,7 +44,7 @@ pub fn source_store_cap_bytes() -> usize {
         .clamp(MIN, MAX)
 }
 
-/// Shared `ax.db` connect options — WAL + busy timeout for multi-process Takumi/CLI use.
+/// Shared `ax.db` connect options — WAL + busy timeout for multi-process IDE/CLI use.
 pub fn connect_options(path: &Path, create_if_missing: bool) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
         .filename(path)

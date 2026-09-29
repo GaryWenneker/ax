@@ -1,17 +1,17 @@
 ---
 title: Command Center
-description: Git-aware quality gates, test-impact analysis, and draft PRs from ax ship.
+description: Local web UI for policy, memory, the code graph, MCP logging, and the ship quality gate.
 ---
 
-**ax v2.1.0+** ships a **Command Center** — a local git watcher, quality-gate pipeline, SSE dashboard, and optional draft PR integration (Azure DevOps or GitHub).
+ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, skills, memory), the code graph, MCP logging and savings, plus a git-aware quality gate with optional draft PRs (Azure DevOps or GitHub).
 
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
 Prefer a native GPU window instead of the browser? Use `ax desktop` — see the [Desktop Client](/guides/desktop-client/) guide (same `/api` surface with an embedded `ax-web` server).
 
-Prefer the IDE shell? **[Takumi 匠](/guides/takumi/)** is a Code-OSS fork that hosts Command Center in a webview. Append `?embed=1` (or `?takumi=1`) to hide the browser titlebar when the UI is embedded.
+Embedding Command Center in an IDE webview? Append `?embed=1` to hide the browser titlebar.
 
-![Command Center — quality gate pipeline with completed evaluation, pipeline steps (Index, TIA, Tests, Sonar, Policy), branch overview, and SonarQube status](/screenshots/cc-ship-full.png)
+![Command Center — Rules page with the Policy, Code, Activity, and System sidebar groups](/screenshots/cc-policy-rules.png)
 
 ## Quick start
 
@@ -74,7 +74,6 @@ podman_container = "sonarqube"
 
 [ui]
 show_savings = true
-show_agent_terminal = true
 # MCP traces → `.ax/mcp-verbose-YYYY-MM-DD.log` (always on).
 verbose_mcp = true
 # IANA timezone for Logging Date/time (e.g. "Europe/Amsterdam").
@@ -118,14 +117,26 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
 Settings-style pages sit in a **centered stage** (nav flush against the article column). **Title bar and status bar paint the full viewport**; only their inner labels/chips stay inside `--stage-w`. Article width is **1100px**, **1320px** from 1920px, **1480px** from 2560px.
 
-**Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging table scrolls horizontally instead of crushing columns, project browser does not autofocus the filter, modals become bottom sheets. Graph and Agent are still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
+**Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging table scrolls horizontally instead of crushing columns, project browser does not autofocus the filter, modals become bottom sheets. Graph is still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
+
+The sidebar has four groups, most-used first:
+
+| Group | Pages |
+|---|---|
+| **Policy** | Rules, Skills, Memory, Sync, Review |
+| **Code** | Graph, Search, Nodes, Files |
+| **Activity** | Logging, Stats, Savings (hidden when turned off in Settings), Unresolved |
+| **System** | Settings, Prices, and the **Reload MCP** action |
+
+The Agent terminal page and the SonarQube page have been removed. Old `/agent` and `/sonar` links open **Stats**. The quality-gate dashboard is still at `/ship`, but it is not in the sidebar.
 
 | Page | Purpose |
 |---|---|
 | **Graph** | Interactive knowledge graph — Leiden communities, god-node tour, suggested questions; optional **Domain** view from `.ax/domain-graph.json` |
 | **Nodes** | Symbol table with kind/file filters and detail blade |
 | **Search** | FTS over indexed symbols |
-| **Ship** | Quality-gate pipeline, SSE logs, git events |
+| **Stats** | Index overview for the active project |
+| **Ship** (`/ship`, not in sidebar) | Branch, changed files, impacted tests, quality gate, pipeline steps, breaking changes, business rules |
 | **Files** | Indexed file tree — folders expand lazily; root-level files (`README.md`, `Cargo.toml`, …) show as files, not folders |
 | **Memory** | Browse, search, compose memories (modal composer); capture from git |
 | **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
@@ -133,6 +144,12 @@ Settings-style pages sit in a **centered stage** (nav flush against the article 
 | **Unresolved** | Unresolved graph references with kind filters and a scrolling list |
 | **Logging** | Fullscreen table of the **active project** MCP verbose stream (**newest at top**; **Scroll to new** when you leave the top); **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), **Has query** chip (JSON payloads with a top-level `query` — badge + blue row mark), **date** dropdown (`YYYY-MM-DD`), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **Date / time** column shows full calendar day + clock; **fluid columns** (Date/time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
 | **Policy** | View-first rule/skill editors with **Scope** (company → private); master-detail blade (slide-in on open, content reveal when switching rows); resizable list / metadata / source / preview columns (drag grips; double-click resets); Rules/Skills list **label autocomplete** (tag chips, multi-label AND filter, click table tags to toggle); **Rules and Skills grouped** by a shared catalog (collapsible folders with **Collapse all** / **Expand all**; **Groups** multiselect filter; empty groups hidden on the list but still assignable in the editor); Markdown **source** overlay and textarea share font-size / line-height so caret and selection match visible glyphs; tags required on save; layer filters; **Database** column plus teal (this project `ax.db`) vs gold (`~/.ax/global.db`) row bars and badges; right-click **context menu** (move between project and global.db); **History** (hash-on-change revisions, Restore); **Package** / **Restore package** (compose stays large; restore starts compact with drag-and-drop zip, then a near-full-width preview: select all, skill descriptions, one-line compare (red Local newer, orange Package newer, green Identical) plus Reject/Accept or **per-change** hunks labeled **Old** / **New** above the code, blake3 content hashes; re-index skips Cursor-native files in `.agents`); **Sync** (pack export/import + `policySync` hooks); **Review** queue for staged imports |
+
+The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, skills, and memories), **Auto-group**, **Test match**, **Package**, **Restore package**, **Capture**, and **New rule** / **New skill**. The **Default MD / DB** switch picks where new items are stored: Markdown files in the policy folder, or the project database.
+
+![Review — staged policy imports waiting for Accept or Reject](/screenshots/cc-policy-review.png)
+
+![Ship — overview, quality gate, and pipeline steps at /ship](/screenshots/cc-ship-full.png)
 
 ![Prices — provider groups, jump legend, and input/output rate colors](/screenshots/cc-prices.png)
 
@@ -173,7 +190,7 @@ Browse is limited to configured `browse_roots` plus home, common project dirs, a
 
 ![New memory modal — centered modal with blurred backdrop, title, kind selector, body field, and save action](/screenshots/cc-modal-composer.png)
 
-Create and edit flows in the Command Center (new memory, new agent profile, profile editing) open as **centered modals with a blurred backdrop** — never as inline page sections. The shared `ModalShell` component handles Escape-to-close, backdrop click, and scroll lock.
+Create and edit flows in the Command Center (new memory, new agent profile, folder picker, project purge) open as **centered modals with a blurred backdrop** — never as inline page sections. The shared `ModalShell` component handles Escape-to-close, backdrop click, and scroll lock.
 
 ## Quality gate pipeline
 
@@ -190,46 +207,60 @@ Results stream to the dashboard via SSE (`/api/ship/events`).
 
 ## Dashboard
 
-`ax ship --watch --open` serves the ax web UI with a **Command Center** tab:
+`ax ship --watch --open` serves the pipeline dashboard at `/ship`. That page is not in the sidebar.
 
-- Live pipeline step status
-- Changed files and impacted tests
-- Quality-gate summary
+The header project switcher lists every initialized ax project on this machine, not only the ones opened from Command Center. It keeps recently opened projects first, then adds any folder under your home directory (four levels deep) that contains `.ax/ax.db`. Hidden directories and build folders such as `node_modules` and `target` are skipped.
+
+The dashboard itself:
+
+- **Overview** — branch, changed files, impacted tests
+- **Quality gate** summary and **Pipeline** step progress (live via SSE)
+- **Changed files**, **Test impact**, **Breaking changes**, and **Business rules** cards after a run
 - Draft PR action (when remote is configured)
-- **SonarQube project cards** — each discovered git repository appears as a card with status, project key, and a per-project **Scan** button. A **Scan all** button triggers all projects at once. Inline logs stream progress during scans.
+
+SonarQube install, setup, and scan buttons are no longer in the dashboard. The `sonar` quality-gate step still runs when `[sonar] enabled = true` in `.ax/ship.toml`.
 
 Default port: `7070` (override with `--port` or `[ship].web_port`).
 
 The same `ax web` UI includes **Memory**, **Savings**, and **Prices**. Skills and Rules support single- and multi-select (Shift/Ctrl or Cmd, header checkbox) with the context menu applying to the selection. Package/Restore can list global.db copies and optionally copy restored items into global.db. Clicking outside an open rule/skill editor returns to the list. See [`ax savings`](/reference/cli/#ax-savings), [`ax pricing`](/reference/cli/#ax-pricing), and [Token savings](/guides/token-savings/).
 
-![Settings — AI agents with terminal mode and profiles, pipeline config, and account profiles](/screenshots/cc-settings.png)
+### Editing a rule or skill body
+
+The body card has three views: **Markdown** (the source), **WYSIWYG** (rich text), and **Preview**. Your choice is remembered in the browser.
+
+- **WYSIWYG** has a formatting toolbar (bold, italic, strikethrough, code, headings, lists, task lists, quotes, code blocks, links) and the shortcuts ⌘B, ⌘I and ⌘K. Edits are saved as Markdown. Opening the view does not change the body; only a real edit does. `[[links]]`, HTML comments, tables, fenced code and task lists survive the round trip. Tables may come back with padded columns.
+- **Link picker.** Type `[[` in the Markdown or WYSIWYG view to link a rule, skill or memory, from this project or global. In WYSIWYG, the toolbar's link button and ⌘K open the same picker with its own search box; with text selected, that text becomes the link label (`[[azdo-pr-review|the review skill]]`). Paste an `http(s)://` address there to make a normal web link instead.
+  - An empty search lists every kind, grouped under Rules, Skills and Memory with a count each. The chips All · Rules · Skills · Memory narrow the list. At most 100 rows show; the rest are counted below the list.
+  - Quick search: plain words match the name, title and tags, and every word must match (`azure review`). `#tag` searches tags only, by exact tag or prefix (`#az` finds `azure` and `azdo`). `rule:`, `skill:`, `memory:` (or `r:`, `s:`, `m:`) set the kind from the keyboard, so `[[s:#azure` lists skills tagged azure. Exact name matches come first, then names that start with the word, then the rest. Up to three tags show on each row, with the matched tag highlighted.
+  - Use the arrow keys to move, Enter (or Tab after `[[`) to insert, and Esc to close. The picker writes the shortest link that still resolves: a bare name when it is unique, otherwise the folder path (`global/rules/review`); memories always use `memories/<title>`. The list comes from `GET /api/links/graph`, whose nodes carry that link text in `target` and their tags in `tags`.
+
+![Settings — IDEs and coding agents found on this machine, with Connect and Disconnect](/screenshots/cc-settings.png)
 
 Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.toml`:
 
-- **SonarQube** — auto-detect Podman/Docker, one-click install & start, admin auto-login, dark theme
-- **Command Center** — target branch, test runner, Azure DevOps / GitHub remote
-- **Interface** — theme chooser (default **ax Mint** `#3ee4b2`; presets include **macOS**, charcoal chrome with `#64d2ff` accent, and **Mono**, grayscale chrome with light-gray status bar and dark ink). The **status bar** uses that accent fill with **WCAG AA** ink (`4.5:1`): macOS gets **dark** letters on the light blue, not white-on-blue. Accent/palette apply live. Policy Rules/Skills editor blades **slide in** on open and **slide out** on click-away or Close. Toggle Savings and Agent pages in the sidebar, **Verbose MCP logging** (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project; records traces to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; off by default; never alters tool responses; reconnect ax MCP after enabling), and **Timezone** for Logging Date/time and **daily log rotation** (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC)
-- **Logging** — live MCP verbose stream (**newest at the top**; loads older days on scroll; **Scroll to new** jumps back to the live top). Enable recording under **Settings → Interface**; this page does not include the on/off switch
-- **Sharing** — live share status card (badge, port, copy URL), How to share, Enable PWA / Install / show hint again
+- **IDEs & agents** — connect ax to the IDEs and coding agents found on this machine (writes the ax MCP server and hooks into their config). **Connect** also puts the Command Center inside the IDE — see [Command Center inside your IDE](#command-center-inside-your-ide)
+- **Command Center** — target branch, git repositories, dashboard port, test runner, index scope, **Review comment language**, and the PR provider (Azure DevOps organization / project / repository ID / token env var, or GitHub)
+- **Interface** — theme chooser (default **ax Mint** `#3ee4b2`; presets include **macOS**, charcoal chrome with `#64d2ff` accent, and **Mono**, grayscale chrome with light-gray status bar and dark ink). The **status bar** uses that accent fill with **WCAG AA** ink (`4.5:1`). **Show Savings page** toggle and **Timezone** for Logging Date/time and daily log rotation (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC). MCP verbose traces are always recorded to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; there is no on/off switch in the UI anymore
+- **Sharing** — policy sync, live share status card (badge, port, copy URL), How to share, Enable PWA / Install
+- **Vault connection** — mount rules, skills, and memories as a WebDAV drive for Obsidian or any editor — see [Obsidian Vault](/guides/obsidian-vault/)
 - **Open Knowledge Format (OKF)** — **Generate OKF bundle** / **Validate** (and optional wiki publish) via `/api/okf/*`; writes Markdown under `okf.outDir` from `ax.json` — see [OKF](/guides/okf/)
 - **Plugins** — live extractor table from `GET /api/plugins` (name, mode, extensions, entry) with Refresh
 - **Embeddings** — memory embed backend (`hash` / `onnx` / …), onnx Cargo feature, model + tokenizer paths from `GET /api/memory/embed-status` with Re-probe
+- **Remote policy share** — pull team rules, skills, and optional memory from a git host or OneDrive for this project — see [Remote Policy Share](/guides/policy-sharing/)
 
-### SonarQube proxy
+## Command Center inside your IDE
 
-![SonarQube dashboard reverse-proxied inside the Command Center with dark theme, project list, and quality gate filters](/screenshots/cc-sonarqube-dark.png)
+**Settings → IDEs & agents → Connect** installs the Command Center into the IDE, next to the MCP server. The ax binary carries the extension and plugin, so nothing is downloaded.
 
-The SonarQube page reverse-proxies your local SonarQube instance through the Command Center. The proxy automatically:
+| IDE | What you get |
+|---|---|
+| Cursor, VS Code, Windsurf, Antigravity, Kiro | Extension **ax Command Center**: run **ax: Open Command Center** or click **ax** in the status bar. Reload the window after Connect. |
+| JetBrains IDEs (IntelliJ IDEA, Rider, WebStorm, PyCharm, GoLand, …) | Plugin with an **ax** tool window on the right, installed in every JetBrains IDE found. Restart the IDE after Connect. |
+| Zed | Zed has no web panels: the task **ax: Open Command Center** (`task: spawn`) opens it in the browser. |
 
-- Injects admin credentials (no login screen)
-- Forces **dark theme** via CSS overrides, localStorage/sessionStorage keys, user-preference API patching, and a MutationObserver that prevents theme resets
-- Rewrites asset URLs and **API paths** (`/api/…`) so SonarQube works behind the `/api/ship/sonar/ui` prefix — including an early `fetch`/`XHR` patch, because Sonar’s axios treats leading-slash URLs as host-absolute and ignores `data-base-url`
-- Scopes `Set-Cookie` `Path=/` to the proxy prefix (needed for HTTPS Cloudflare tunnels)
-- Strips tunnel `Origin` / `Referer` / `X-Forwarded-*` / `CF-*` request headers that confuse Sonar CSRF
-- Caches credentials per session (no health-check probe per request)
-- Falls back to `127.0.0.1` / `localhost` when the configured hostname is unreachable
+The panel shows `http://127.0.0.1:7070/?embed=1`. If `ax web` is not running, the extension or plugin starts it for the open project. Change the port with the `ax.webPort` setting (VS Code family). Each IDE row shows a **Panel** / **No panel** badge; **Disconnect** removes only the ax extension, plugin, or task.
 
-Works the same on `http://127.0.0.1:7070` and via a Cloudflare tunnel to that port — the browser always talks to ax-web; Sonar stays on localhost on the host.
+Set `AX_NO_IDE_PANEL=1` to connect MCP only, without the extension, plugin, or task.
 
 ## Git hooks
 

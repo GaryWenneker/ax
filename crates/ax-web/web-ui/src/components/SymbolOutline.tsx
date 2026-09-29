@@ -75,8 +75,8 @@ function SymbolRow({
           <span className="symbol-tree-name">{node.name}</span>
           <span className="symbol-tree-lines">{lineLabel(node)}</span>
           <span className="symbol-tree-badges">
-            <span className="page-item-badge">{node.kind}</span>
-            {node.is_exported ? <span className="page-item-badge">pub</span> : null}
+            <span className="page-item-badge"><Codicon name="symbol-misc" className="badge-icon" />{node.kind}</span>
+            {node.is_exported ? <span className="page-item-badge"><Codicon name="eye" className="badge-icon" />pub</span> : null}
           </span>
           {node.signature && (
             <span className="symbol-tree-sig" title={node.signature}>

@@ -51,6 +51,8 @@ export interface RuleFrontmatter {
   rootId?: string | null;
   /** Catalog group id. Empty groups stay in this picker, not on the list. */
   group?: string | null;
+  /** Extra frontmatter keys. Sent with the rule in preflight. */
+  properties?: Record<string, unknown>;
 }
 
 export interface SkillFrontmatter {
@@ -70,6 +72,8 @@ export interface SkillFrontmatter {
   rootId?: string | null;
   /** Catalog group id. Empty groups stay in this picker, not on the list. */
   group?: string | null;
+  /** Extra frontmatter keys. Sent with the skill in preflight. */
+  properties?: Record<string, unknown>;
 }
 
 export interface PolicyRuleDoc {

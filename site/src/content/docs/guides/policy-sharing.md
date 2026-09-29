@@ -50,7 +50,7 @@ client ID (Microsoft Graph Command Line Tools) for device code sign-in.
 # 1. Sign in (device code flow) — works out of the box
 ax auth microsoft login
 
-# 2. Configure share URL in this project's ax.json (or use Takumi Preferences → Connect OneDrive)
+# 2. Configure share URL in this project's ax.json (or use Command Center Settings → Remote policy share)
 ax policy share config
 
 # 3. Pull remote pack + optional memory
@@ -58,12 +58,9 @@ ax policy share sync
 ax policy share sync --json
 ```
 
-In Takumi, click **Connect OneDrive** in Preferences → Shared policy: the browser
-opens automatically and shared policy syncs as soon as sign-in completes.
-
 If your tenant restricts consent for first-party Microsoft apps, register your own
 Azure AD app instead (see **Advanced: custom Azure AD app** below) and export
-`AX_MS_CLIENT_ID`, or set it via Takumi Preferences → Shared policy → Advanced.
+`AX_MS_CLIENT_ID`.
 
 ### Git (GitHub, GitLab, Azure DevOps, on-prem)
 
@@ -97,7 +94,7 @@ Some managed/SSO-fronted GitLab instances (e.g. `gitlab.hosted-tools.com`) don't
 1. Generate an SSH key with a genuinely empty passphrase (`ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_gitlab -N ""` — on PowerShell, `-N ""` not `-N '""'`, the latter sets a literal `""` passphrase and hangs later auth silently).
 2. Upload the **public** key at the instance's identity/Bridge portal (for `gitlab.hosted-tools.com`, that's [bridge.hosted-tools.com/myprofile/settings](https://bridge.hosted-tools.com/myprofile/settings)) — not GitLab's own SSH Keys page.
 3. Wire `~/.ssh/config` so the host resolves to that key (`IdentitiesOnly yes`), and verify with `ssh -T git@<host>`.
-4. Use the **SSH** `repoUrl` (`git@host:group/repo.git`), and leave `github.token` **blank** — Takumi's Preferences UI hides the API token field automatically once it detects `gitlab.hosted-tools.com` in the repo URL.
+4. Use the **SSH** `repoUrl` (`git@host:group/repo.git`), and leave `github.token` **blank** — Command Center hides the API token field automatically once it detects `gitlab.hosted-tools.com` in the repo URL.
 
 #### GitLab behind an SSO gate (no Bridge-style portal, no working git/SSH)
 
@@ -117,7 +114,7 @@ If your GitLab instance forces SSH and git-HTTP through a browser SSO login (so 
 }
 ```
 
-When `token` is set (and `repoUrl` is http/https), ax uses GitLab's `/api/v4` REST API instead of raw git — no SSH key or git credential needed. In Takumi, set this under **Preferences → Shared policy → GitHub → API token (optional)**.
+When `token` is set (and `repoUrl` is http/https), ax uses GitLab's `/api/v4` REST API instead of raw git — no SSH key or git credential needed.
 
 ---
 
@@ -125,7 +122,7 @@ When `token` is set (and `repoUrl` is http/https), ax uses GitLab's `/api/v4` RE
 
 Share settings live under the `"share"` key in **`<project>/ax.json` only** — each project has its own remote source, import mode, and sync interval. There is no global share config.
 
-Manage in **Takumi → Ax → Preferences → Shared policy** (auto-saves to `ax.json`) or in Command Center **Settings → Remote policy share**.
+Manage in Command Center **Settings → Remote policy share** (auto-saves to `ax.json`).
 
 ```json
 {
@@ -158,7 +155,7 @@ Manage in **Takumi → Ax → Preferences → Shared policy** (auto-saves to `ax
 | `importMode` | `review` (stage pending), `merge` (apply without review), or `force` (overwrite conflicts) |
 | `autoSyncMinutes` | Hint for Command Center auto-sync interval (default `15`) |
 | `content.rules` / `skills` / `memory` | Which remote artifacts to import |
-| `github.token` | Optional. GitLab personal/project access token. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave blank to use normal `git` credentials. Takumi/Command Center hide this field when `repoUrl` matches `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
+| `github.token` | Optional. GitLab personal/project access token. When set on an http(s) `repoUrl`, sync uses that host's `/api/v4` REST API instead of raw `git` — for instances where SSH/git-HTTP is forced through SSO **and there's no separate SSH key/identity portal**. Leave blank to use normal `git` credentials. Command Center hides this field when `repoUrl` matches `gitlab.hosted-tools.com`, since that instance requires Bridge-managed SSH instead. |
 
 Show this project's config:
 
@@ -253,8 +250,7 @@ export AX_MS_CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
 Add to shell profile or CI secret store. ax reads only `AX_MS_CLIENT_ID` — never
-commit client secrets (public client apps do not use one). In Takumi, set it via
-Preferences → Shared policy → Advanced instead of an env var.
+commit client secrets (public client apps do not use one).
 
 ### 2. SharePoint / OneDrive folder
 
@@ -274,7 +270,7 @@ Preferences → Shared policy → Advanced instead of an env var.
 }
 ```
 
-Commit `ax.json` with the project (or configure in Takumi Preferences) so teammates get the same defaults when they clone the repo.
+Commit `ax.json` with the project so teammates get the same defaults when they clone the repo.
 
 ### 3. Initial pack seed
 

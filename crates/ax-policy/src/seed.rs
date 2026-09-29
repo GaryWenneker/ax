@@ -21,6 +21,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/english-only.mdc"),
     },
     Template {
+        rel: "rules/dutch-pr-comments.mdc",
+        body: include_str!("../templates/rules/dutch-pr-comments.mdc"),
+    },
+    Template {
         rel: "rules/utf8-no-bom.mdc",
         body: include_str!("../templates/rules/utf8-no-bom.mdc"),
     },
@@ -178,6 +182,38 @@ const GLOBAL_SKILL_BUNDLES: &[SkillBundle] = &[
             body: include_str!("../templates/skills/pr-review-comments/SKILL.md"),
         }],
         global_db: true,
+    },
+    SkillBundle {
+        name: "pr",
+        files: &[SkillBundleFile {
+            rel: "SKILL.md",
+            body: include_str!("../templates/skills/pr/SKILL.md"),
+        }],
+        global_db: false,
+    },
+    SkillBundle {
+        name: "dotnet-code-review",
+        files: &[SkillBundleFile {
+            rel: "SKILL.md",
+            body: include_str!("../templates/stacks/dotnet/skills/dotnet-code-review/SKILL.md"),
+        }],
+        global_db: false,
+    },
+    SkillBundle {
+        name: "typescript-review",
+        files: &[SkillBundleFile {
+            rel: "SKILL.md",
+            body: include_str!("../templates/stacks/typescript/skills/typescript-review/SKILL.md"),
+        }],
+        global_db: false,
+    },
+    SkillBundle {
+        name: "react-review",
+        files: &[SkillBundleFile {
+            rel: "SKILL.md",
+            body: include_str!("../templates/stacks/react/skills/react-review/SKILL.md"),
+        }],
+        global_db: false,
     },
 ];
 
@@ -715,7 +751,10 @@ mod tests {
         let first = seed_cursor_skills(&skills).unwrap();
         assert_eq!(first.created.len(), GLOBAL_SKILL_BUNDLES.len());
         assert!(!skills.join("noti").exists());
-        assert!(!skills.join("dotnet-code-review").exists());
+        assert!(skills.join("pr/SKILL.md").is_file());
+        assert!(skills.join("dotnet-code-review/SKILL.md").is_file());
+        assert!(skills.join("typescript-review/SKILL.md").is_file());
+        assert!(skills.join("react-review/SKILL.md").is_file());
         assert!(!skills.join("deploy").exists());
         let second = seed_cursor_skills(&skills).unwrap();
         assert!(second.created.is_empty());
@@ -969,11 +1008,62 @@ mod tests {
     }
 
     #[test]
+    fn seed_includes_pr_and_the_review_skills_it_uses() {
+        let names: Vec<_> = GLOBAL_SKILL_BUNDLES.iter().map(|b| b.name).collect();
+        for name in [
+            "pr",
+            "old-coder",
+            "old-coder-api",
+            "review-loop",
+            "dotnet-code-review",
+            "typescript-review",
+            "react-review",
+        ] {
+            assert!(names.contains(&name), "{name} is not seeded");
+        }
+        let pr = GLOBAL_SKILL_BUNDLES
+            .iter()
+            .find(|b| b.name == "pr")
+            .unwrap()
+            .files[0]
+            .body;
+        assert!(pr.contains("Review the draft until it is clean"));
+        assert!(pr.contains("zero findings"));
+        assert!(pr.contains("az repos pr work-item add"), "creating a PR must try to link the work item");
+        assert!(seed_version(pr) >= 2, "the work-item link must bump seedVersion");
+
+        let dir = tempdir().unwrap();
+        seed_project_cursor_skills(dir.path()).unwrap();
+        let skills = dir.path().join(".agents/skills");
+        for name in [
+            "pr",
+            "old-coder",
+            "old-coder-api",
+            "dotnet-code-review",
+            "typescript-review",
+            "react-review",
+        ] {
+            assert!(skills.join(name).join("SKILL.md").is_file(), "{name}");
+        }
+        let seeded = std::fs::read_to_string(skills.join("pr/SKILL.md")).unwrap();
+        assert!(seeded.contains("Review the draft until it is clean"));
+        assert!(seeded.contains("az repos pr work-item add"));
+        assert!(!skills.join("review-loop").exists());
+        seed_cursor_skills(&dir.path().join(".cursor/skills")).unwrap();
+        assert!(dir
+            .path()
+            .join(".cursor/skills/review-loop/SKILL.md")
+            .is_file());
+    }
+
+    #[test]
     fn global_seed_writes_pr_review_comments() {
         let dir = tempdir().unwrap();
         seed_skill_bundles(&dir.path().join("global"), "g").unwrap();
         seed_cursor_skills(&dir.path().join("cursor")).unwrap();
-        assert!(dir.path().join("global/pr-review-comments/SKILL.md").is_file());
+        let review = std::fs::read_to_string(dir.path().join("global/pr-review-comments/SKILL.md")).unwrap();
+        assert!(review.contains("az repos pr work-item add"), "a PR review must try to link the work item");
+        assert!(seed_version(&review) >= 3, "the work-item link must bump seedVersion");
         assert!(dir.path().join("cursor/pr-review-comments/SKILL.md").is_file());
     }
 

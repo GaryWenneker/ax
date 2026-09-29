@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchPolicyRule, savePolicyRule } from '../policyApi';
-import MarkdownEditor from './MarkdownEditor';
+import PolicyBodyCard from './PolicyBodyCard';
+import { useItemLinks } from './LinkedBody';
 import PolicyMetaResizeHandle from './PolicyEditorResize';
 import PolicyRevisionHistory from './PolicyRevisionHistory';
+import PolicyPropertiesEditor from './PolicyPropertiesEditor';
 import { PageCard, PageCardBody, PageRow } from './ui/PageLayout';
 import { Spinner } from './ui/Spinner';
+import { RULE_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
@@ -37,6 +40,7 @@ function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
 export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, onClose, onSaved }: Props) {
   const [fm, setFm] = useState<RuleFrontmatter | null>(null);
   const [body, setBody] = useState('');
+  const links = useItemLinks('rule', ruleId, origin, body);
   const [globsText, setGlobsText] = useState('');
   const [triggersText, setTriggersText] = useState('');
   const [tagsText, setTagsText] = useState('');
@@ -271,12 +275,17 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
               <PageRow title="Tags">
                 <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
               </PageRow>
+              <PolicyPropertiesEditor
+                key={ruleId}
+                description="Extra keys sent with this rule in preflight. Built-in fields stay in the rows above."
+                properties={fm.properties}
+                reserved={RULE_PROPERTY_RESERVED}
+                onChange={(properties) => setFm({ ...fm, properties })}
+              />
             </PageCardBody>
           </PageCard>
           <PolicyMetaResizeHandle />
-          <PageCard title="Rule body" description="Markdown source." className="policy-inline-pane policy-inline-pane--editor page-md-panel">
-            <MarkdownEditor value={body} onChange={setBody} fill />
-          </PageCard>
+          <PolicyBodyCard title="Rule body" body={body} onChange={setBody} links={links} selfKey={`rule:${origin ?? 'project'}:${ruleId}`} />
         </div>
       ) : null}
     </div>

@@ -861,13 +861,13 @@ export default function StatusBar() {
               <button
                 type="button"
                 className="status-item status-item--clickable status-project"
-                title={`${stats.project_name === 'bonzaicoder' ? 'takumi' : stats.project_name} — browse for ax projects`}
-                aria-label={`Switch project (${stats.project_name === 'bonzaicoder' ? 'takumi' : stats.project_name})`}
+                title={`${stats.project_name} — browse for ax projects`}
+                aria-label={`Switch project (${stats.project_name})`}
                 onClick={() => setProjectModalOpen(true)}
               >
                 <Codicon name="symbol-structure" className="status-project-icon" />
                 <span className="status-lbl">
-                  {stats.project_name === 'bonzaicoder' ? 'takumi' : stats.project_name}
+                  {stats.project_name}
                 </span>
               </button>
             )}

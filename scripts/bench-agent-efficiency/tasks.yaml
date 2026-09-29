@@ -1,0 +1,502 @@
+# Fixed without-recipes. Do not derive the file list from the graph at runtime.
+# `without:` blocks are frozen by without_hashes.json; the harness fails if one changes.
+# With-recipes are MCP tool calls: the counted text is what an agent receives (content.text).
+# Each task opens a fresh MCP session per project, so session state never leaks between tasks.
+fixture_sentence: "Gauntlet fixture: the vault passphrase hint is cobalt-ledger."
+tasks:
+  - id: easy-graph
+    tier: easy
+    feature: graph
+    prompt: "Where is counterfactual_tokens_for_file defined?"
+    include:
+      - counterfactual_tokens_for_file
+      - crates/ax-usage/src/savings.rs
+    exclude_from_with: []
+    without:
+      - kind: rg_read
+        pattern: counterfactual_tokens_for_file
+        glob: "*.rs"
+    with:
+      - kind: mcp
+        tool: ax_node
+        args: {name: counterfactual_tokens_for_file, mode: signature}
+    headroom: "A definition lookup needs the path, lines, and signature. `ax_node` signature mode covers it; full source stays the default."
+
+  - id: easy-rules
+    tier: easy
+    feature: rules
+    prompt: "Write the README in English only. Which rules apply?"
+    include:
+      - "All agent-facing and user-facing text MUST be written in **English**."
+    exclude_from_with:
+      - "Do not hold a blocking lock across `.await`."
+    without:
+      - kind: cat_dir
+        dir: .agents/rules
+        glob: "*.mdc"
+    with:
+      - kind: mcp
+        tool: ax_preflight
+        args: {prompt: "Write the README in English only. Which rules apply?"}
+    shortfall: "Preflight carries every always-apply rule plus the full always-apply skills, memory bodies, and a session catalog. Send each body once, summarize large always-apply skills, and list memory titles only."
+
+  - id: easy-skills
+    tier: easy
+    feature: skills
+    prompt: "Start the session. What does the startup skill require first?"
+    include:
+      - "SS-00 — Preflight"
+    exclude_from_with: []
+    without:
+      - kind: skill_scan
+        root: .agents/skills
+        full: .agents/skills/startup/SKILL.md
+        head_lines: 25
+    with:
+      - kind: mcp
+        tool: ax_skill
+        args: {name: startup}
+    headroom: "`ax_skill` returns the full SKILL.md. That is the right answer for an explicit load; do not paste it again from preflight in the same session."
+
+  - id: easy-memory
+    tier: easy
+    feature: memory
+    prompt: "What is the gauntlet vault passphrase hint?"
+    include:
+      - "cobalt-ledger"
+    exclude_from_with: []
+    without:
+      - kind: sqlite_memories
+    with:
+      - kind: mcp
+        project: fixture
+        tool: ax_recall
+        args: {query: cobalt-ledger}
+    headroom: "Recall should return the matching title and body only, without wrapper notes."
+
+  - id: medium-callers
+    tier: medium
+    feature: graph
+    prompt: "Who calls estimate_savings?"
+    include:
+      - estimate_savings
+      - call_tool_and_wrap
+    exclude_from_with: []
+    without:
+      - kind: rg_read
+        pattern: estimate_savings
+        glob: "*.rs"
+    with:
+      - kind: mcp
+        tool: ax_callers
+        args: {symbol: estimate_savings}
+    headroom: "One line per caller (name, file, lines, kind). Test callers could be grouped per file."
+
+  - id: medium-guard
+    tier: medium
+    feature: rules
+    prompt: "Which CRITICAL rules apply before writing crates/ax-mcp/src/tools.rs?"
+    include:
+      - english-only
+    include_with:
+      - "\"allowed\":true"
+    exclude_from_with:
+      - "Do not hold a blocking lock across `.await`."
+    without:
+      - kind: cat_dir
+        dir: .agents/rules
+        glob: "*.mdc"
+    with:
+      - kind: mcp
+        tool: ax_preflight
+        args: {prompt: "Which CRITICAL rules apply before writing crates/ax-mcp/src/tools.rs?", files: ["crates/ax-mcp/src/tools.rs"]}
+      - kind: mcp
+        tool: ax_guard
+        args: {path: crates/ax-mcp/src/tools.rs, operation: write}
+    shortfall: "The guard answer is tiny; the cost is the preflight that precedes it. Same fix as easy-rules."
+
+  - id: medium-explore
+    tier: medium
+    feature: graph
+    prompt: "How does token savings get logged?"
+    include:
+      - call_tool_and_wrap
+    exclude_from_with: []
+    without:
+      - kind: rg_read
+        pattern: call_tool_and_wrap
+        glob: "*.rs"
+    with:
+      - kind: mcp
+        tool: ax_explore
+        args: {query: "how does token savings get logged"}
+    headroom: "Explore still returns neighbours beyond the logging call. Rank an exact symbol name first and keep neighbours within the snippet budget."
+
+  - id: complex-impact
+    tier: complex
+    feature: graph
+    prompt: "What is the blast radius of changing estimate_savings, including tests?"
+    include:
+      - call_tool_and_wrap
+      - readable_file_counterfactual_is_measured_exactly
+    exclude_from_with: []
+    without:
+      - kind: rg_read
+        pattern: estimate_savings
+        glob: "*.rs"
+    with:
+      - kind: mcp
+        tool: ax_impact
+        args: {symbol: estimate_savings}
+      - kind: mcp
+        tool: ax_affected
+        args: {files: ["crates/ax-usage/src/savings.rs"]}
+    headroom: "Impact plus affected tests should stay two short lists."
+
+  - id: complex-session
+    tier: complex
+    feature: session
+    prompt: "Apply English-only and the startup skill, find where token savings is logged, and recall the vault hint cobalt-ledger."
+    include:
+      - "All agent-facing and user-facing text MUST be written in **English**."
+      - "SS-00 — Preflight"
+      - call_tool_and_wrap
+      - cobalt-ledger
+    exclude_from_with: []
+    without:
+      - kind: cat_dir
+        dir: .agents/rules
+        glob: "*.mdc"
+      - kind: skill_scan
+        root: .agents/skills
+        full: .agents/skills/startup/SKILL.md
+        head_lines: 25
+      - kind: rg_read
+        pattern: call_tool_and_wrap
+        glob: "*.rs"
+      - kind: sqlite_memories
+    with:
+      - kind: mcp
+        tool: ax_preflight
+        args: {prompt: "Apply English-only and the startup skill, find where token savings is logged, and recall the vault hint cobalt-ledger."}
+      - kind: mcp
+        tool: ax_skill
+        args: {name: startup}
+      - kind: mcp
+        tool: ax_explore
+        args: {query: "how does token savings get logged"}
+      - kind: mcp
+        project: fixture
+        tool: ax_recall
+        args: {query: cobalt-ledger}
+    shortfall: "One turn stacks preflight, the startup skill, explore, and recall. Preflight must not carry skill or memory bodies that the later calls return anyway."
+
+  - id: complex-session-5turns
+    tier: complex
+    feature: session
+    prompt: "Five turns in one chat: each turn needs the team rules; the chat also needs the startup skill, one graph hop, and the vault hint."
+    turns: 5
+    include:
+      - "All agent-facing and user-facing text MUST be written in **English**."
+      - "SS-00 — Preflight"
+      - call_tool_and_wrap
+      - cobalt-ledger
+    exclude_from_with: []
+    without:
+      - kind: cat_dir
+        dir: .agents/rules
+        glob: "*.mdc"
+        every_turn: true
+      - kind: skill_scan
+        root: .agents/skills
+        full: .agents/skills/startup/SKILL.md
+        head_lines: 25
+      - kind: rg_read
+        pattern: call_tool_and_wrap
+        glob: "*.rs"
+      - kind: sqlite_memories
+    with:
+      - kind: mcp
+        tool: ax_preflight
+        args: {prompt: "Continue the task: apply the team rules and keep going."}
+        every_turn: true
+      - kind: mcp
+        tool: ax_skill
+        args: {name: startup}
+      - kind: mcp
+        tool: ax_explore
+        args: {query: "how does token savings get logged"}
+      - kind: mcp
+        project: fixture
+        tool: ax_recall
+        args: {query: cobalt-ledger}
+    shortfall: "Every preflight in a session resends identical always-apply bodies. Send them once per session and list unchanged ids afterwards."
+
+  - id: rules-frontend-file
+    tier: medium
+    feature: rules
+    prompt: Edit crates/ax-web/web-ui/src/pages/Ship.tsx. Which rules apply?
+    include:
+    - All agent-facing and user-facing text MUST be written in **English**.
+    - MUST meet [WCAG 2.2](https://www.w3.org/TR/WCAG22/) contrast.
+    exclude_from_with:
+    - Pair every allocation with a free on every path.
+    without:
+    - &id001
+      kind: cat_dir
+      dir: .agents/rules
+      glob: '*.mdc'
+    with:
+    - kind: mcp
+      tool: ax_preflight
+      args:
+        prompt: Edit crates/ax-web/web-ui/src/pages/Ship.tsx. Which rules apply?
+        files:
+        - crates/ax-web/web-ui/src/pages/Ship.tsx
+    shortfall: A UI edit needs the UI rules and the always-apply language rules, not the C or Rust-only rules.
+  - id: rules-precision-rs
+    tier: medium
+    feature: rules
+    prompt: Edit crates/ax-db/src/queries.rs. Which rules apply?
+    include:
+    - All agent-facing and user-facing text MUST be written in **English**.
+    exclude_from_with:
+    - Pair every allocation with a free on every path.
+    - MUST meet [WCAG 2.2](https://www.w3.org/TR/WCAG22/) contrast.
+    - Every list (memory, nodes, files, search
+    without:
+    - *id001
+    with:
+    - kind: mcp
+      tool: ax_preflight
+      args:
+        prompt: Edit crates/ax-db/src/queries.rs. Which rules apply?
+        files:
+        - crates/ax-db/src/queries.rs
+    shortfall: Rules whose globs exclude the touched file must be listed by id, not sent. C rules must not match a Rust file.
+  - id: skill-reload
+    tier: easy
+    feature: skills
+    prompt: Load the old-coder skill, and later in the same chat load it again.
+    turns: 2
+    include:
+    - Reliable Coding Under Constraint and Test
+    exclude_from_with: []
+    without:
+    - kind: skill_scan
+      root: .agents/skills
+      full: .agents/skills/old-coder/SKILL.md
+      head_lines: 25
+    with:
+    - kind: mcp
+      tool: ax_skill
+      args:
+        name: old-coder
+      every_turn: true
+    shortfall: A second load of an unchanged skill in the same session should be a one-line notice.
+  - id: graph-path
+    tier: medium
+    feature: graph
+    prompt: How does call_tool_and_wrap reach estimate_savings?
+    include:
+    - call_tool_and_wrap
+    - estimate_savings
+    exclude_from_with: []
+    without:
+    - kind: rg_read
+      pattern: call_tool_and_wrap
+      glob: '*.rs'
+    - kind: rg_read
+      pattern: estimate_savings
+      glob: '*.rs'
+    with:
+    - kind: mcp
+      tool: ax_path
+      args:
+        from: call_tool_and_wrap
+        to: estimate_savings
+    shortfall: '`ax_path` must name each hop with file and lines, not print node ids.'
+  - id: graph-search
+    tier: easy
+    feature: graph
+    prompt: Where is content_hash defined?
+    include:
+    - content_hash
+    - crates/ax-policy/src/format.rs
+    exclude_from_with: []
+    without:
+    - kind: rg_read
+      pattern: content_hash
+      glob: '*.rs'
+    with:
+    - kind: mcp
+      tool: ax_search
+      args:
+        query: content_hash
+    headroom: 'One line per hit: name, file, lines, kind.'
+  - id: graph-ts
+    tier: medium
+    feature: graph
+    prompt: Who calls splitWikiLinks in the web UI?
+    include:
+    - splitWikiLinks
+    - wikiLinksToMarkdown
+    exclude_from_with: []
+    without:
+    - kind: rg_read
+      pattern: splitWikiLinks
+      glob: '*.{ts,tsx}'
+    with:
+    - kind: mcp
+      tool: ax_callers
+      args:
+        symbol: splitWikiLinks
+    headroom: TypeScript callers resolve like Rust callers.
+  - id: memory-miss
+    tier: easy
+    feature: memory
+    prompt: Is there a memory about the zebra-quartz migration?
+    include: []
+    exclude_from_with:
+    - cobalt-ledger
+    - filler-
+    without:
+    - kind: sqlite_memories
+    with:
+    - kind: mcp
+      tool: ax_recall
+      args:
+        query: zebra-quartz migration
+      project: fixture
+    shortfall: A recall with no match should be one short line.
+  - id: memory-by-title
+    tier: easy
+    feature: memory
+    prompt: Show the memory titled Gauntlet vault hint.
+    include:
+    - cobalt-ledger
+    exclude_from_with:
+    - filler-
+    without:
+    - kind: sqlite_memories
+    with:
+    - kind: mcp
+      tool: ax_recall
+      args:
+        query: Gauntlet vault hint
+      project: fixture
+    headroom: Title and body only.
+  - id: session-10turns-filehop
+    tier: complex
+    feature: session
+    prompt: Ten turns across Rust, TSX, CSS and docs files.
+    turns: 10
+    include:
+    - All agent-facing and user-facing text MUST be written in **English**.
+    exclude_from_with: []
+    without:
+    - kind: cat_dir
+      dir: .agents/rules
+      glob: '*.mdc'
+      every_turn: true
+    with:
+    - kind: mcp
+      tool: ax_preflight
+      args_by_turn:
+      - prompt: 'Turn 1: continue the change in crates/ax-mcp/src/tools.rs.'
+        files: &id002
+        - crates/ax-mcp/src/tools.rs
+      - prompt: 'Turn 2: continue the change in crates/ax-web/web-ui/src/pages/Ship.tsx.'
+        files: &id003
+        - crates/ax-web/web-ui/src/pages/Ship.tsx
+      - prompt: 'Turn 3: continue the change in site/src/content/docs/guides/token-savings.md.'
+        files: &id004
+        - site/src/content/docs/guides/token-savings.md
+      - prompt: 'Turn 4: continue the change in crates/ax-policy/src/format.rs.'
+        files: &id005
+        - crates/ax-policy/src/format.rs
+      - prompt: 'Turn 5: continue the change in crates/ax-web/web-ui/src/index.css.'
+        files: &id006
+        - crates/ax-web/web-ui/src/index.css
+      - prompt: 'Turn 6: continue the change in crates/ax-mcp/src/tools.rs.'
+        files: *id002
+      - prompt: 'Turn 7: continue the change in crates/ax-web/web-ui/src/pages/Ship.tsx.'
+        files: *id003
+      - prompt: 'Turn 8: continue the change in site/src/content/docs/guides/token-savings.md.'
+        files: *id004
+      - prompt: 'Turn 9: continue the change in crates/ax-policy/src/format.rs.'
+        files: *id005
+      - prompt: 'Turn 10: continue the change in crates/ax-web/web-ui/src/index.css.'
+        files: *id006
+      every_turn: true
+    shortfall: Only rules that are new for the touched file type should be sent in a later turn.
+  - id: live-replay
+    tier: complex
+    feature: session
+    prompt: Replay of the last 20 real ax_preflight prompts from this repo (live_prompts.json).
+    turns: 20
+    include:
+    - All agent-facing and user-facing text MUST be written in **English**.
+    exclude_from_with: []
+    without:
+    - kind: cat_dir
+      dir: .agents/rules
+      glob: '*.mdc'
+      every_turn: true
+    with:
+    - kind: mcp
+      tool: ax_preflight
+      prompts_file: live_prompts.json
+      every_turn: true
+    shortfall: 'Real prompts: mostly Obsidian plugin, WebDAV and gauntlet work, some in Dutch.'
+  - id: rules-changed-midsession
+    tier: complex
+    feature: session
+    prompt: Two turns; one team rule is edited between them.
+    turns: 1
+    include:
+    - ALPHA-V1
+    - ALPHA-V2
+    - BETA-V1
+    include_with:
+    - Unchanged since earlier in this session
+    exclude_from_with: []
+    without:
+    - kind: fixture_write
+      path: .agents/rules/alpha.mdc
+      text: "---\nid: alpha\nlevel: CRITICAL\nalwaysApply: true\n---\n\n# alpha\n\n> **ABSOLUTE**: alpha ALPHA-V1 applies to every change.\n\n## Rules\n\n- alpha rule line 0: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 1: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 2: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 3: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 4: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 5: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 6: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 7: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 8: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 9: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 10: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 11: keep alpha behaviour ALPHA-V1 stable across releases.\n\n## Why\n\nalpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. \n"
+    - kind: fixture_write
+      path: .agents/rules/beta.mdc
+      text: "---\nid: beta\nlevel: CRITICAL\nalwaysApply: true\n---\n\n# beta\n\n> **ABSOLUTE**: beta BETA-V1 applies to every change.\n\n## Rules\n\n- beta rule line 0: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 1: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 2: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 3: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 4: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 5: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 6: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 7: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 8: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 9: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 10: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 11: keep beta behaviour BETA-V1 stable across releases.\n\n## Why\n\nbeta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. \n"
+    - kind: cat_dir
+      project: fixture
+      dir: .agents/rules
+      glob: '*.mdc'
+    - kind: fixture_write
+      path: .agents/rules/alpha.mdc
+      text: "---\nid: alpha\nlevel: CRITICAL\nalwaysApply: true\n---\n\n# alpha\n\n> **ABSOLUTE**: alpha ALPHA-V2 applies to every change.\n\n## Rules\n\n- alpha rule line 0: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 1: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 2: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 3: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 4: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 5: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 6: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 7: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 8: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 9: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 10: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 11: keep alpha behaviour ALPHA-V2 stable across releases.\n\n## Why\n\nalpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. \n"
+    - kind: cat_dir
+      project: fixture
+      dir: .agents/rules
+      glob: '*.mdc'
+    with:
+    - kind: fixture_write
+      path: .agents/rules/alpha.mdc
+      text: "---\nid: alpha\nlevel: CRITICAL\nalwaysApply: true\n---\n\n# alpha\n\n> **ABSOLUTE**: alpha ALPHA-V1 applies to every change.\n\n## Rules\n\n- alpha rule line 0: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 1: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 2: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 3: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 4: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 5: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 6: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 7: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 8: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 9: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 10: keep alpha behaviour ALPHA-V1 stable across releases.\n- alpha rule line 11: keep alpha behaviour ALPHA-V1 stable across releases.\n\n## Why\n\nalpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. \n"
+    - kind: fixture_write
+      path: .agents/rules/beta.mdc
+      text: "---\nid: beta\nlevel: CRITICAL\nalwaysApply: true\n---\n\n# beta\n\n> **ABSOLUTE**: beta BETA-V1 applies to every change.\n\n## Rules\n\n- beta rule line 0: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 1: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 2: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 3: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 4: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 5: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 6: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 7: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 8: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 9: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 10: keep beta behaviour BETA-V1 stable across releases.\n- beta rule line 11: keep beta behaviour BETA-V1 stable across releases.\n\n## Why\n\nbeta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. beta background text. \n"
+    - kind: mcp
+      tool: ax_preflight
+      args:
+        prompt: Start the change.
+      project: fixture
+    - kind: fixture_write
+      path: .agents/rules/alpha.mdc
+      text: "---\nid: alpha\nlevel: CRITICAL\nalwaysApply: true\n---\n\n# alpha\n\n> **ABSOLUTE**: alpha ALPHA-V2 applies to every change.\n\n## Rules\n\n- alpha rule line 0: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 1: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 2: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 3: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 4: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 5: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 6: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 7: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 8: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 9: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 10: keep alpha behaviour ALPHA-V2 stable across releases.\n- alpha rule line 11: keep alpha behaviour ALPHA-V2 stable across releases.\n\n## Why\n\nalpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. alpha background text. \n"
+    - kind: mcp
+      tool: ax_preflight
+      args:
+        prompt: Continue the change.
+      project: fixture
+    shortfall: The second preflight must resend only the edited rule.

@@ -93,7 +93,9 @@ fn validate_name(name: &str) -> Result<(), String> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        return Err("profile name may only contain letters, numbers, hyphens, and underscores".into());
+        return Err(
+            "profile name may only contain letters, numbers, hyphens, and underscores".into(),
+        );
     }
     Ok(())
 }
@@ -247,8 +249,11 @@ pub fn jwt_subject(token: &str) -> Option<String> {
 }
 
 pub fn jwt_issued_at(token: &str) -> Option<u64> {
-    decode_jwt_payload(token)
-        .and_then(|v| v.get("time").and_then(|t| t.as_str()).and_then(|s| s.parse().ok()))
+    decode_jwt_payload(token).and_then(|v| {
+        v.get("time")
+            .and_then(|t| t.as_str())
+            .and_then(|s| s.parse().ok())
+    })
 }
 
 fn snapshot_from_parts(
@@ -376,7 +381,10 @@ fn save_manifest(manifest: &Manifest) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-pub fn save_profile(name: &str, mut snapshot: CursorAuthSnapshot) -> Result<SavedProfileMeta, String> {
+pub fn save_profile(
+    name: &str,
+    mut snapshot: CursorAuthSnapshot,
+) -> Result<SavedProfileMeta, String> {
     validate_name(name)?;
     let dir = profiles_dir().ok_or("no home directory")?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -410,7 +418,9 @@ pub fn load_profile(name: &str) -> Result<CursorAuthSnapshot, String> {
     validate_name(name)?;
     let path = profile_path(name)?;
     if !path.exists() {
-        return Err(format!("profile '{name}' not found — run `ax cursor auth save {name}` first"));
+        return Err(format!(
+            "profile '{name}' not found — run `ax cursor auth save {name}` first"
+        ));
     }
     let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     serde_json::from_str(&text).map_err(|e| format!("parse profile: {e}"))

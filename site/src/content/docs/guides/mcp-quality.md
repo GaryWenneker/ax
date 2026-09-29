@@ -3,7 +3,7 @@ title: MCP Logging & Quality
 description: End-to-end guide to verbose MCP traces, the Logging page, Quality slide-out, session hooks, and ax mcp audit.
 ---
 
-**ax v3.0.0+** ships an **MCP observability loop**: record what agents send and receive, score how well they use ax tools, and turn waste into a fixpack you can paste back into chat.
+ax ships an **MCP observability loop**: record what agents send and receive, score how well they use ax tools, and turn waste into a fixpack you can paste back into chat.
 
 ![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging.png)
 

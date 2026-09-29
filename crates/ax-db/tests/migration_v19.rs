@@ -65,7 +65,7 @@ async fn v18_database_upgrades_to_v19_without_losing_rules() {
         let db = Database::open(&path).await.expect("reopen and migrate");
         let version = get_current_version(db.pool()).await.expect("version");
         assert_eq!(version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 20);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
 
         let kept: Option<String> =
             sqlx::query_scalar("SELECT level FROM policy_rules WHERE id = 'utf8-no-bom'")

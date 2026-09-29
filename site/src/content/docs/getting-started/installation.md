@@ -71,22 +71,30 @@ The installer:
 
 The installer **connects agents only — it does not index your code.** Run `ax init` per project (step 4).
 
+### From the Command Center
+
+Run `ax web` and open **Settings → IDEs & agents**. It lists every IDE and agent ax supports (Claude Code, Cursor, Codex CLI, opencode, Hermes, Gemini CLI, Antigravity, Kiro, VS Code, Windsurf, Zed, Continue) as **Connected**, **Found** (installed, ax not connected yet), or **Not found**. "Installed" means the CLI is on PATH or the app (or, for Continue, the extension) is present; a leftover config folder does not count.
+
+- **Connect** writes the same config as `ax install --target=<id>`. **Disconnect** removes it, like `ax uninstall`.
+- **Connect all found** connects every IDE that is installed but not connected yet.
+- After each action it shows the files it changed and any follow-up, such as reloading the VS Code window.
+- It works the same on macOS, Linux, and Windows. Only the browser on your own machine can use it; it is off in read-only mode and in share sessions.
+
 ### Non-interactive (scripting / CI)
 
 ```bash
-ax install --yes                              # auto-detect agents
-ax install --target=cursor,claude --yes       # explicit target list
-ax install --target=auto --location=local     # detected agents, project-local
-ax install --print-config codex               # print snippet, no file writes
+ax install --yes                              # detected agents, no prompts
+ax install --yes --all                        # every supported agent
+ax install --yes --target cursor --target claude   # specific agents
+ax install --yes --path ~/code/my-app         # workspace MCP files for that project
 ```
 
-| Flag | Values | Default |
+| Flag | What it does | Default |
 |---|---|---|
-| `--target` | `auto`, `all`, `none`, or csv (`claude,cursor,…`) | prompt |
-| `--location` | `global`, `local` | prompt |
-| `--yes` | (boolean) | prompt every step |
-| `--no-permissions` | (boolean) skip Claude auto-allow list | permissions on |
-| `--print-config <id>` | dump snippet for one agent and exit | — |
+| `--yes` | Skip prompts, install detected agents | prompt every step |
+| `--all` | Install every supported agent, not only detected ones | detected only |
+| `--target <id>` | Wire one agent (repeatable), e.g. `cursor`, `vscode` | — |
+| `--path <dir>` | Project root for workspace MCP files | current directory |
 
 ## 3. Restart your agent
 
@@ -99,7 +107,9 @@ cd your-project
 ax init
 ```
 
-Creates `.ax/` (SQLite index + lock file) and runs a full index in one step. **v2.0.0+** also scaffolds `.ax/policy/rules/` and `.ax/policy/skills/` for the [policy engine](/guides/policy-engine/).
+Creates `.ax/` (SQLite index + lock file) and runs a full index in one step. It also scaffolds `.ax/policy/rules/` and `.ax/policy/skills/` for the [policy engine](/guides/policy-engine/).
+
+`ax init` asks which stacks and which IDEs to set up. Both choices are saved in `ax.json` and pre-checked on the next run. Unchecking an IDE you chose before removes ax from it. See [`ax init`](/reference/cli/#ax-init-path) for details.
 
 ## Supported platforms
 

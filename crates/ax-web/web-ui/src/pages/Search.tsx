@@ -112,7 +112,7 @@ export default function SearchPage() {
                         subtitle={r.snippet ? r.snippet : `${r.file_path}:${r.start_line}`}
                         selected={selectedId === r.id}
                         onClick={() => setSelectedId(r.id)}
-                        badges={<span className="page-item-badge">{r.language}</span>}
+                        badges={<span className="page-item-badge"><Codicon name="symbol-misc" className="badge-icon" />{r.language}</span>}
                       />
                     ))}
                   </ItemList>

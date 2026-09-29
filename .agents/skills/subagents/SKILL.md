@@ -1,10 +1,15 @@
 ---
 name: subagents
-description: Mandatory ax MCP workflow for Cursor Task and background subagents. Use when delegated via Task tool — preflight is required, not optional.
-triggers: ["Task tool", "subagent", "background agent", "run_in_background", "explore agent"]
-tags: ["subagents", "preflight"]
+description: "Mandatory ax MCP workflow for Cursor Task and background subagents. Use when delegated via Task tool — preflight is required, not optional."
+alwaysApply: false
+triggers: ["Task tool","subagent","background agent","run_in_background","explore agent"]
+tags: ["subagents","preflight"]
 priority: 95
+enabled: true
+status: approved
+scope: project
 ---
+
 # ax Subagent Protocol
 
 > **MANDATORY ax MCP WORKFLOW** — IDE-agnostic policy via `.ax/policy/` + MCP preflight.
@@ -39,3 +44,8 @@ Include `## User prompt (verbatim)` with the user's full message.
 ## MCP failure
 
 Report `ax MCP unreachable`, state `Mode: DEGRADED`, continue best-effort only.
+
+## Related
+
+- [[subagents]] — the rule that mandates this protocol
+- [[startup]] — the parent agent's session start

@@ -6,16 +6,17 @@ use std::process::Stdio;
 
 use ax_agent::chat::chunk_text;
 use ax_agent::config::{load_agents_config, save_agents_config, AgentsConfig};
-use ax_agent::run_agent_turn;
 use ax_agent::profiles::{
     create_profile, list_profiles, refresh_auth_statuses, remove_profile, set_active_profile,
     update_profile, AuthStatus,
 };
+use ax_agent::run_agent_turn;
 use ax_installer::{
     auth_command, build_child_env, detect_cli_available, ensure_agent_ready, headless_command,
-    install_cli_targets, install_selected, uninstall_targets, install_cli, TARGETS,
+    install_cli, install_cli_targets, install_selected, uninstall_targets, TARGETS,
 };
 use axum::extract::{Path as AxPath, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{
     sse::{Event, KeepAlive, Sse},
     IntoResponse, Json,
@@ -49,12 +50,40 @@ struct InstallBody {
     targets: Vec<String>,
 }
 
+/// Install routes write IDE config files, so only the local browser may call them.
+fn refuse_install(hub: &WebHub, headers: &HeaderMap) -> Option<axum::response::Response> {
+    let error = if hub.readonly {
+        "Read-only mode"
+    } else if !crate::dav::mount::allowed(headers, false) {
+        "Only the local browser on this machine can install ax into IDEs"
+    } else {
+        return None;
+    };
+    Some(
+        (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    )
+}
+
+fn report_json(r: &ax_installer::TargetReport) -> serde_json::Value {
+    serde_json::json!({
+        "id": r.id,
+        "display_name": r.display_name,
+        "files": r.files.iter().map(|f| f.path.to_string_lossy()).collect::<Vec<_>>(),
+        "notes": r.notes,
+    })
+}
+
 async fn handle_install(
     State(hub): State<WebHub>,
+    headers: HeaderMap,
     Json(body): Json<InstallBody>,
 ) -> impl IntoResponse {
-    if hub.readonly {
-        return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
+    if let Some(r) = refuse_install(&hub, &headers) {
+        return r;
     }
     let ws = hub.read().await;
     let root = ws.project_root.clone();
@@ -62,12 +91,7 @@ async fn handle_install(
     match install_selected(&root, &body.targets) {
         Ok(summary) => Json(serde_json::json!({
             "ok": true,
-            "reports": summary.reports.iter().map(|r| serde_json::json!({
-                "id": r.id,
-                "display_name": r.display_name,
-                "files": r.files.iter().map(|f| f.path.to_string_lossy()).collect::<Vec<_>>(),
-                "notes": r.notes,
-            })).collect::<Vec<_>>(),
+            "reports": summary.reports.iter().map(report_json).collect::<Vec<_>>(),
         }))
         .into_response(),
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e })).into_response(),
@@ -76,10 +100,11 @@ async fn handle_install(
 
 async fn handle_install_stream(
     State(hub): State<WebHub>,
+    headers: HeaderMap,
     Json(body): Json<InstallBody>,
 ) -> impl IntoResponse {
-    if hub.readonly {
-        return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
+    if let Some(r) = refuse_install(&hub, &headers) {
+        return r;
     }
     let (tx, rx) = mpsc::unbounded_channel::<String>();
     let ws = hub.read().await;
@@ -87,7 +112,10 @@ async fn handle_install_stream(
     drop(ws);
     let targets = body.targets.clone();
     tokio::spawn(async move {
-        let _ = tx.send(serde_json::json!({"type":"line","text":"Installing ax MCP for selected agents…"}).to_string());
+        let _ = tx.send(
+            serde_json::json!({"type":"line","text":"Installing ax MCP for selected agents…"})
+                .to_string(),
+        );
         match install_selected(&root, &targets) {
             Ok(summary) => {
                 for r in &summary.reports {
@@ -99,7 +127,8 @@ async fn handle_install_stream(
                 let _ = tx.send(serde_json::json!({"type":"done","ok":true}).to_string());
             }
             Err(e) => {
-                let _ = tx.send(serde_json::json!({"type":"done","ok":false,"error":e}).to_string());
+                let _ =
+                    tx.send(serde_json::json!({"type":"done","ok":false,"error":e}).to_string());
             }
         }
     });
@@ -108,10 +137,11 @@ async fn handle_install_stream(
 
 async fn handle_cli_install_stream(
     State(hub): State<WebHub>,
+    headers: HeaderMap,
     Json(body): Json<InstallBody>,
 ) -> impl IntoResponse {
-    if hub.readonly {
-        return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
+    if let Some(r) = refuse_install(&hub, &headers) {
+        return r;
     }
     let (tx, rx) = mpsc::unbounded_channel::<String>();
     let targets = body.targets.clone();
@@ -140,13 +170,20 @@ async fn handle_cli_install_stream(
 
 async fn handle_uninstall(
     State(hub): State<WebHub>,
+    headers: HeaderMap,
     Json(body): Json<InstallBody>,
 ) -> impl IntoResponse {
-    if hub.readonly {
-        return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
+    if let Some(r) = refuse_install(&hub, &headers) {
+        return r;
     }
-    match uninstall_targets(&body.targets) {
-        Ok(reports) => Json(serde_json::json!({ "ok": true, "reports": reports.len() })).into_response(),
+    let root = hub.read().await.project_root.clone();
+    match uninstall_targets(&root, &body.targets) {
+        Ok(reports) => Json(serde_json::json!({
+            "ok": true,
+            "reports": reports.len(),
+            "results": reports.iter().map(report_json).collect::<Vec<_>>(),
+        }))
+        .into_response(),
         Err(e) => Json(serde_json::json!({ "ok": false, "error": e })).into_response(),
     }
 }
@@ -284,11 +321,14 @@ async fn handle_auth_stream(
     }
     let profiles = list_profiles(&agent);
     let Some(entry) = profiles.iter().find(|p| p.id == id) else {
-        return Json(serde_json::json!({ "ok": false, "error": "Profile not found" })).into_response();
+        return Json(serde_json::json!({ "ok": false, "error": "Profile not found" }))
+            .into_response();
     };
     if entry.data_dir.is_empty() {
-        return Json(serde_json::json!({ "ok": false, "error": "Builtin profiles do not need auth" }))
-            .into_response();
+        return Json(
+            serde_json::json!({ "ok": false, "error": "Builtin profiles do not need auth" }),
+        )
+        .into_response();
     }
 
     let (tx, rx) = mpsc::unbounded_channel::<String>();
@@ -299,10 +339,14 @@ async fn handle_auth_stream(
         let send = |v: serde_json::Value| {
             let _ = tx.send(v.to_string());
         };
-        send(serde_json::json!({"type":"line","text": format!("Starting auth for {agent_id}/{profile_id}…")}));
+        send(
+            serde_json::json!({"type":"line","text": format!("Starting auth for {agent_id}/{profile_id}…")}),
+        );
 
         if !detect_cli_available(&agent_id) {
-            send(serde_json::json!({"type":"line","text": format!("{} CLI not found — installing…", agent_id)}));
+            send(
+                serde_json::json!({"type":"line","text": format!("{} CLI not found — installing…", agent_id)}),
+            );
             let mut lines = Vec::new();
             match install_cli(&agent_id, &mut |line| lines.push(line.to_string())) {
                 Ok(outcome) => {
@@ -315,12 +359,16 @@ async fn handle_auth_stream(
                             "type":"line",
                             "text":"Install the CLI manually, log in, then click Mark authenticated."
                         }));
-                        send(serde_json::json!({"type":"done","ok":false,"manual":true,"error":"CLI not available"}));
+                        send(
+                            serde_json::json!({"type":"done","ok":false,"manual":true,"error":"CLI not available"}),
+                        );
                         return;
                     }
                 }
                 Err(e) => {
-                    send(serde_json::json!({"type":"line","text": format!("CLI install failed: {e}")}));
+                    send(
+                        serde_json::json!({"type":"line","text": format!("CLI install failed: {e}")}),
+                    );
                     send(serde_json::json!({"type":"done","ok":false,"manual":true,"error":e}));
                     return;
                 }
@@ -348,20 +396,31 @@ async fn handle_auth_stream(
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         match cmd.spawn() {
             Ok(mut child) => {
-                send(serde_json::json!({"type":"line","text":"Auth process started — complete login in the opened window or terminal."}));
+                send(
+                    serde_json::json!({"type":"line","text":"Auth process started — complete login in the opened window or terminal."}),
+                );
                 let status = child.wait();
                 let ok = status.map(|s| s.success()).unwrap_or(false);
-                if ok || ax_agent::profiles::detect_auth_status(&agent_id, &data_dir) == AuthStatus::Authenticated {
+                if ok
+                    || ax_agent::profiles::detect_auth_status(&agent_id, &data_dir)
+                        == AuthStatus::Authenticated
+                {
                     let _ = ax_agent::profiles::mark_authenticated(&agent_id, &profile_id);
                     send(serde_json::json!({"type":"line","text":"Profile marked authenticated."}));
                 } else {
-                    send(serde_json::json!({"type":"line","text":"Auth process ended — if you logged in successfully, click Mark authenticated."}));
+                    send(
+                        serde_json::json!({"type":"line","text":"Auth process ended — if you logged in successfully, click Mark authenticated."}),
+                    );
                 }
                 send(serde_json::json!({"type":"done","ok":true}));
             }
             Err(e) => {
-                send(serde_json::json!({"type":"line","text": format!("Could not start auth ({e}). Log in manually with the CLI, then click Mark authenticated.")}));
-                send(serde_json::json!({"type":"done","ok":false,"manual":true,"error":e.to_string()}));
+                send(
+                    serde_json::json!({"type":"line","text": format!("Could not start auth ({e}). Log in manually with the CLI, then click Mark authenticated.")}),
+                );
+                send(
+                    serde_json::json!({"type":"done","ok":false,"manual":true,"error":e.to_string()}),
+                );
             }
         }
     });
@@ -408,14 +467,19 @@ async fn handle_chat_stream(
         .or_else(|| cfg.active_profile.get(&agent).cloned())
         .unwrap_or_else(|| "default".into());
 
-    let session_id = body
-        .session_id
-        .clone()
-        .unwrap_or_else(|| format!("sess-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)));
+    let session_id = body.session_id.clone().unwrap_or_else(|| {
+        format!(
+            "sess-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        )
+    });
 
     let mode = resolve_agent_mode(&cfg, &agent);
-    let explicit_external = body.agent.as_deref().is_some_and(|a| a != "builtin")
-        || cfg.terminal_mode == "external";
+    let explicit_external =
+        body.agent.as_deref().is_some_and(|a| a != "builtin") || cfg.terminal_mode == "external";
     let (tx, rx) = mpsc::unbounded_channel::<String>();
 
     let prompt = body.prompt.clone();
@@ -432,7 +496,8 @@ async fn handle_chat_stream(
             let tx_ensure = tx.clone();
             let ensure_result = tokio::task::spawn_blocking(move || {
                 ensure_agent_ready(&agent_for_ensure, &root_for_ensure, &mut |line| {
-                    let _ = tx_ensure.send(serde_json::json!({"type":"system","text": line}).to_string());
+                    let _ = tx_ensure
+                        .send(serde_json::json!({"type":"system","text": line}).to_string());
                 })
             })
             .await
@@ -590,8 +655,14 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/profiles/active", put(handle_set_active_profile))
         .route("/profiles/{agent}/{id}", put(handle_update_profile))
         .route("/profiles/{agent}/{id}", delete(handle_delete_profile))
-        .route("/profiles/{agent}/{id}/auth/stream", post(handle_auth_stream))
-        .route("/profiles/{agent}/{id}/authenticated", post(handle_mark_authenticated))
+        .route(
+            "/profiles/{agent}/{id}/auth/stream",
+            post(handle_auth_stream),
+        )
+        .route(
+            "/profiles/{agent}/{id}/authenticated",
+            post(handle_mark_authenticated),
+        )
         .route("/chat/stream", post(handle_chat_stream))
         .route("/pty/ws", get(crate::agent_pty::handle_pty_ws))
         .with_state(hub)

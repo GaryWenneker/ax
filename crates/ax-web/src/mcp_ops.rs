@@ -51,7 +51,7 @@ async fn handle_health(State(hub): State<WebHub>) -> impl IntoResponse {
         } else if info.is_some() && !alive {
             "Daemon metadata is stale — use Reload MCP."
         } else {
-            "No shared daemon — Cursor/Takumi may each embed a full MCP process and contend on ax.db."
+            "No shared daemon — each IDE may embed a full MCP process and contend on ax.db."
         },
     }))
 }

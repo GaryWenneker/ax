@@ -7,6 +7,8 @@ description: Durable project memory for agents — decisions, fixes, and convent
 
 ax keeps a persistent memory vault per project: decisions, bug fixes, architecture notes, and conventions that agents (and humans) should never re-discover from scratch. Memories live in `.ax/ax.db` next to the code graph, work fully offline, and are automatically injected into agent context.
 
+You can also read and edit memories, rules, and skills in Obsidian: `ax web` serves them as a WebDAV drive. See [Obsidian Vault](/guides/obsidian-vault/).
+
 ## Why Memory matters
 
 Without memory, every agent session starts from zero. An agent might re-derive a decision you already made, propose a pattern you already rejected, or miss context about why code was written a certain way. The memory vault closes that gap: it captures the **why** behind changes and replays it automatically when relevant.
@@ -102,6 +104,7 @@ This is the mechanism that makes memories useful without agent action:
 3. Matches with score <= 0.0 are filtered out.
 4. Remaining matches are formatted as an `<ax_memories>` XML block (max 6,000 characters).
 5. The block is appended to the inject string alongside policy rules.
+6. Items that a delivered rule, skill, or memory links to with `[[...]]` are added too: one hop, at most five per turn (see [Linking rules, skills and memories](/guides/policy-engine/#linking-rules-skills-and-memories)). A linked memory joins the `<ax_memories>` block.
 
 The agent receives something like:
 
@@ -208,7 +211,8 @@ Rules:
 - **Only turns that did something.** Files whose content changed since the snapshot, new or deleted files, and commits made during the turn count. Files that were already dirty and not touched again do not, and neither do ax's own files under `.ax/` (database, logs, snapshots) except `.ax/policy/` and `.ax/memory/`. A turn that only answered a question writes nothing.
 - **One memory per turn.** The id comes from the conversation and the turn (Cursor's `generation_id`, or a per-conversation counter for Claude Code), so a retried hook never duplicates.
 - **Recall-only and local.** `turn` memories are skipped by `ax_preflight` (the `<ax_memories>` block and the memory titles list) and by `ax memory export`. Find them with `ax_recall` / `ax recall`.
-- **Kept 30 days.** Every turn end that writes deletes `turn` memories older than 30 days. Other kinds are never touched.
+- **Kept 90 days.** Every turn end that writes deletes `turn` memories older than 90 days, after backing them up under `.ax/backups/`. Other kinds are never touched.
+- **Change kind per file.** The memory body ends with a `Changes:` section (`A path`, `M path`, `D path`) so Command Center can color each file. Turns captured before this section existed only have `Files:` and show their files without a color.
 - **Secrets redacted.** API keys (`sk-…`, `ghp_…`, `AKIA…`), `password=…` values, and long hex or base64 runs are stored as `[redacted]`.
 - **Never blocks.** The hooks print nothing and always exit 0; outside a git repository or an ax project they do nothing.
 
@@ -257,10 +261,10 @@ The MCP server's `initialize` response includes guidance for agents:
 
 The **Memory** page in the Command Center (`ax ship --watch` or `ax web`) provides:
 
-- **Stats strip** — total memories, git-captured count, manual/agent count, search mode indicator
-- **Memory vault list** — all memories sorted by recency, with kind icons, age, tags, and source badges
+- **Overview strip** — one compact row for how memories arrive (git, you or an agent, every turn) and the counts (total, git, manual/agent, search mode)
+- **Memory vault list** — the main view: memories sorted by recency, with kind icons, age, tags, and source badges
 - **Live hybrid search** — the search box runs the same recall algorithm agents use; scores shown per result
-- **Detail panel** — click a memory to see full content, kind, source, confidence percentage, linked files, and a delete button
+- **Detail blade** — click a memory to slide a panel in from the right. It scrolls on its own and shows the id, kind, source, enabled state, created and updated times, confidence, recall score, tags, the full text, linked files, commits, and outcome when those were stored. `[[links]]` in the text are clickable, and **Linked from** lists the rules, skills, and memories that link to this one
 - **New memory modal** — composer with title, body, kind selector, and duplicate warning on save
 - **Capture from git** — one-click button to mine recent git history
 
@@ -278,3 +282,13 @@ The **Memory** page in the Command Center (`ax ship --watch` or `ax web`) provid
 - [Policy Engine](/guides/policy-engine/) — rules and skills injected alongside memories
 - [MCP server reference](/reference/mcp-server/) — `ax_remember` and `ax_recall` tool schemas
 - [CLI reference](/reference/cli/#memory-vault) — `ax remember`, `ax recall`, `ax capture-git`
+
+## Files, diffs, and images in Command Center
+
+Open a memory on the **Memory** page to see its files and commits. A file row is green when the memory added it, orange when it edited it, and red when it deleted it. For git memories the kind comes from the commit; for turns it comes from the `Changes:` section. Hovering a row shows nothing. Click a file or a commit to open its diff with line numbers: added lines are green, removed lines red. **Close**, **Esc**, or a click outside the popup dismisses it; **Esc** closes only the popup, not the memory. The arrow icon at the end of a file row opens the file in your git host.
+
+Images in the memory text render in the preview. An absolute local path such as `![shot](/Users/me/repo/docs/shot.png)` is served through `GET /api/memory/{id}/image`; click an image to zoom in.
+
+## Folder docs
+
+Folders added under **Settings → Vault connection → Folders** with **Index into memory** on are imported as `doc` memories: one per `.md`, `.markdown`, or `.txt` file, tagged `folder:<name>`, with source `folder`. `ax_recall` finds them. Like turns, they are left out of preflight's memory titles and the git-shared memory export. See [Obsidian vault → Folders](/guides/obsidian-vault/#folders).

@@ -1,6 +1,6 @@
 //! Hot-swappable workspace bundle (graph + policy + ship).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -63,9 +63,7 @@ impl WebHub {
             if self.readonly {
                 return Err("Read-only mode".into());
             }
-            let new_root = new_root
-                .canonicalize()
-                .unwrap_or(new_root);
+            let new_root = new_root.canonicalize().unwrap_or(new_root);
             if !new_root.is_dir() {
                 return Err("Not a directory".into());
             }
@@ -95,15 +93,28 @@ impl WebHub {
                 format!("switched to {}", info.label),
                 Some(serde_json::json!({ "path": info.path })),
             );
-            ax_usage::log_workspace(
-                Some(&new_root),
-                format!("switch path={}", info.path),
-            );
+            ax_usage::log_workspace(Some(&new_root), format!("switch path={}", info.path));
             Ok(info)
         }
         .await;
         self.switching.store(false, Ordering::SeqCst);
         result
+    }
+
+    /// Close the open graph database when `root` is the project currently served.
+    /// File deletion can then remove `ax.db` instead of leaving a live inode.
+    pub async fn close_graph_pool_if_current(&self, root: &Path) -> bool {
+        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let guard = self.inner.read().await;
+        let current = guard
+            .project_root
+            .canonicalize()
+            .unwrap_or_else(|_| guard.project_root.clone());
+        if current != root {
+            return false;
+        }
+        guard.graph_pool.close().await;
+        true
     }
 
     pub fn nest_routers(&self, cors: tower_http::cors::CorsLayer) -> Router {
@@ -129,6 +140,7 @@ impl WebHub {
             .nest("/api/ship", ship::router_hub(hub.clone()))
             .nest("/api/usage", crate::savings::router(hub.clone()))
             .nest("/api/memory", crate::memory::router_hub(hub.clone()))
+            .nest("/api/links", crate::links_api::router_hub(hub.clone()))
             .nest(
                 "/api/docs-catalog",
                 crate::docs_catalog::router_hub(hub.clone()),
@@ -141,10 +153,24 @@ impl WebHub {
             .nest("/api/lsp", crate::lsp_api::router_hub(hub.clone()))
             .nest("/api/plugins", crate::plugins_api::router_hub(hub.clone()))
             .nest("/api/ops", crate::mcp_ops::router_hub(hub.clone()))
+            .nest("/api/dav/mount", crate::dav::mount::router(hub.clone()))
+            .nest(
+                "/api/vault/folders",
+                crate::vault_folders::router_hub(hub.clone()),
+            )
+            .nest(
+                "/api/vault/folder-picker",
+                crate::folder_picker::router_hub(hub.clone()),
+            )
             .nest("/api", graph)
             .fallback(crate::handle_spa)
-            .layer(axum::middleware::from_fn(crate::share_auth::share_token_middleware))
+            .layer(axum::middleware::from_fn(
+                crate::share_auth::share_token_middleware,
+            ))
             .layer(cors)
+            .merge(crate::dav::router(hub).layer(axum::middleware::from_fn(
+                crate::share_auth::share_token_middleware,
+            )))
     }
 }
 
@@ -277,7 +303,10 @@ async fn seed_memories_if_empty(pool: SqlitePool, project_root: PathBuf) {
         }
     }
     match ax_memory::seed_from_graph(&pool).await {
-        Ok(n) if n > 0 => tracing::info!(captured = n, "auto-seeded memory vault from knowledge graph"),
+        Ok(n) if n > 0 => tracing::info!(
+            captured = n,
+            "auto-seeded memory vault from knowledge graph"
+        ),
         Ok(_) => {}
         Err(e) => tracing::warn!("graph memory seed failed: {e}"),
     }
@@ -300,7 +329,9 @@ fn spawn_policy_dedup(
         let mut interval = tokio::time::interval(POLICY_DEDUP_EVERY);
         loop {
             interval.tick().await;
-            ax_core::policy_dedup::run(&global_path, Some((&pool, &root)), false).await.log();
+            ax_core::policy_dedup::run(&global_path, Some((&pool, &root)), false)
+                .await
+                .log();
         }
     }))
 }
@@ -336,7 +367,10 @@ fn graph_router(hub: WebHub) -> Router {
         .route("/source", get(crate::handle_source))
         .route("/unresolved", get(crate::handle_unresolved))
         .route("/unresolved/summary", get(crate::handle_unresolved_summary))
-        .route("/unresolved/reconcile", post(crate::handle_unresolved_reconcile))
+        .route(
+            "/unresolved/reconcile",
+            post(crate::handle_unresolved_reconcile),
+        )
         .with_state(hub)
 }
 
@@ -352,7 +386,9 @@ mod policy_dedup_tests {
     async fn fixture(dir: &std::path::Path) -> (SqlitePool, PathBuf, PathBuf) {
         let root = dir.join("proj");
         std::fs::create_dir_all(root.join(".ax")).unwrap();
-        let db = ax_db::Database::open(&root.join(".ax").join("ax.db")).await.unwrap();
+        let db = ax_db::Database::open(&root.join(".ax").join("ax.db"))
+            .await
+            .unwrap();
         let pool = db.pool().clone();
         sqlx::query(
             "INSERT INTO policy_skills (name, description, body, source_path, content_hash, updated_at)
@@ -363,7 +399,9 @@ mod policy_dedup_tests {
         .unwrap();
         let global_path = dir.join("global.db");
         let global = ax_global_db::open_and_init(&global_path).await.unwrap();
-        let machine = gpolicy::ensure_project(&global, &dir.join("machine")).await.unwrap();
+        let machine = gpolicy::ensure_project(&global, &dir.join("machine"))
+            .await
+            .unwrap();
         let payload = serde_json::json!({ "name": "noti", "body": "same body" });
         gpolicy::upsert_policy_item(&global, machine, PolicyKind::Skills, "noti", &payload)
             .await

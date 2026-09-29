@@ -308,6 +308,15 @@ pub fn row_to_policy_json(row: &sqlx::sqlite::SqliteRow, id_col: &str) -> serde_
     if let Some(v) = col(row, "context_task") {
         m.insert("contextTask".into(), v);
     }
+    if let Some(v) = col(row, "properties") {
+        let parsed = v
+            .as_str()
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .unwrap_or_else(|| json!({}));
+        if parsed.as_object().is_some_and(|o| !o.is_empty()) {
+            m.insert("properties".into(), parsed);
+        }
+    }
     Value::Object(m)
 }
 

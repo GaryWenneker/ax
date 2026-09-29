@@ -1,6 +1,11 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+/// Extra frontmatter keys on a rule or skill (any key outside the schema).
+/// Preserved on disk and sent with the item in preflight, `ax_rules`, and `ax_skill`.
+pub type PolicyProperties = BTreeMap<String, serde_json::Value>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -167,6 +172,9 @@ pub struct RuleFrontmatter {
     /// Catalog group id. Display grouping only — not used by matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    /// Keys outside the schema (for example `files`, `kind`, `aliases`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub properties: PolicyProperties,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +209,9 @@ pub struct SkillFrontmatter {
     /// Catalog group id. Display grouping only — not used by matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    /// Keys outside the schema (for example `files`, `kind`, `aliases`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub properties: PolicyProperties,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +272,9 @@ pub struct PolicyRuleRow {
     /// Resolved catalog group id after enrich.
     #[serde(default)]
     pub group: String,
+    /// Extra frontmatter keys. Empty when the rule declares none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub properties: PolicyProperties,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -297,6 +311,9 @@ pub struct PolicySkillRow {
     /// Resolved catalog group id after enrich. Stored value lives in frontmatter.
     #[serde(default)]
     pub group: String,
+    /// Extra frontmatter keys. Empty when the skill declares none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub properties: PolicyProperties,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -316,6 +333,8 @@ pub struct MatchedRule {
     pub reason: String,
     pub always_apply: bool,
     pub body: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub properties: PolicyProperties,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -327,6 +346,8 @@ pub struct MatchedSkill {
     pub body: String,
     #[serde(default)]
     pub always_apply: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub properties: PolicyProperties,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

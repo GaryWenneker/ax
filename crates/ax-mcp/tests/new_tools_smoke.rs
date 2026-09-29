@@ -66,4 +66,16 @@ async fn cycles_api_path_handlers_work() {
     .await
     .expect("ax_path");
     assert!(path.get("text").is_some(), "ax_path missing text");
+
+    let hop = ToolHandler::call_tool(
+        &mut ax,
+        "ax_path",
+        json!({ "from": "call_tool_and_wrap", "to": "estimate_savings" }),
+    )
+    .await
+    .expect("ax_path hop");
+    let hop_text = hop["text"].as_str().unwrap_or("");
+    assert!(hop_text.contains("call_tool_and_wrap"), "{hop_text}");
+    assert!(hop_text.contains("estimate_savings"), "{hop_text}");
+    assert!(hop_text.contains("crates/ax-mcp/src/server.rs"), "{hop_text}");
 }

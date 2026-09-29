@@ -397,13 +397,7 @@ pub async fn handle_sonar_ui_proxy(
     let (parts, body) = req.into_parts();
     let body_bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
         Ok(b) => b,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "Request body too large",
-            )
-                .into_response()
-        }
+        Err(_) => return (StatusCode::BAD_REQUEST, "Request body too large").into_response(),
     };
 
     let client = sonar_http();
@@ -414,7 +408,15 @@ pub async fn handle_sonar_ui_proxy(
         query
     );
 
-    let resp = match send_upstream(&client, &method, &upstream_url, &auth_header, &parts, &body_bytes).await
+    let resp = match send_upstream(
+        &client,
+        &method,
+        &upstream_url,
+        &auth_header,
+        &parts,
+        &body_bytes,
+    )
+    .await
     {
         Ok(r) => r,
         Err(_) => {
@@ -427,8 +429,15 @@ pub async fn handle_sonar_ui_proxy(
                     upstream_path,
                     query
                 );
-                match send_upstream(&client, &method, &upstream_url, &auth_header, &parts, &body_bytes)
-                    .await
+                match send_upstream(
+                    &client,
+                    &method,
+                    &upstream_url,
+                    &auth_header,
+                    &parts,
+                    &body_bytes,
+                )
+                .await
                 {
                     Ok(r) => {
                         hub.sonar_proxy.lock().await.set_host(candidate.clone());
@@ -447,7 +456,9 @@ pub async fn handle_sonar_ui_proxy(
                         StatusCode::BAD_GATEWAY,
                         format!(
                             "SonarQube proxy error: {}",
-                            last_err.map(|e| e.to_string()).unwrap_or_else(|| "upstream unreachable".into())
+                            last_err
+                                .map(|e| e.to_string())
+                                .unwrap_or_else(|| "upstream unreachable".into())
                         ),
                     )
                         .into_response();
@@ -597,9 +608,7 @@ async fn sonar_config(hub: &WebHub) -> ShipConfig {
 }
 
 fn upstream_path_from_uri(path: &str) -> String {
-    let stripped = path
-        .strip_prefix(SONAR_UI_ROUTE_PREFIX)
-        .unwrap_or(path);
+    let stripped = path.strip_prefix(SONAR_UI_ROUTE_PREFIX).unwrap_or(path);
     if stripped.is_empty() || stripped == "/" {
         "/".into()
     } else {
@@ -608,10 +617,7 @@ fn upstream_path_from_uri(path: &str) -> String {
 }
 
 fn basic_auth(user: &str, password: &str) -> String {
-    format!(
-        "Basic {}",
-        STANDARD.encode(format!("{user}:{password}"))
-    )
+    format!("Basic {}", STANDARD.encode(format!("{user}:{password}")))
 }
 
 fn should_skip_request_header(name: &str) -> bool {
@@ -706,16 +712,19 @@ fn dedupe_proxy_prefix(text: &str, prefix: &str) -> String {
 /// SonarQube SPA builds runtime asset URLs via `__assetsPath` — rewrite so chunks load through the proxy.
 fn rewrite_sonar_asset_helpers(text: &str, prefix: &str) -> String {
     let prefix_slash = format!("{prefix}/");
-    text.replace("return '/' + filename", &format!("return '{prefix_slash}' + filename"))
-        .replace("return \"/\" + filename", &format!("return \"{prefix_slash}\" + filename"))
-        .replace(
-            "return '/' + e",
-            &format!("return '{prefix_slash}' + e"),
-        )
-        .replace(
-            "return \"/\" + e",
-            &format!("return \"{prefix_slash}\" + e"),
-        )
+    text.replace(
+        "return '/' + filename",
+        &format!("return '{prefix_slash}' + filename"),
+    )
+    .replace(
+        "return \"/\" + filename",
+        &format!("return \"{prefix_slash}\" + filename"),
+    )
+    .replace("return '/' + e", &format!("return '{prefix_slash}' + e"))
+    .replace(
+        "return \"/\" + e",
+        &format!("return \"{prefix_slash}\" + e"),
+    )
 }
 
 fn slash_starts_route_path(chars: &[char], slash_i: usize) -> bool {
@@ -870,10 +879,8 @@ fn rewrite_set_cookie(value: &str) -> String {
     };
     let after = idx + "path=/".len();
     let rest = &value[after..];
-    let ends_at_root = rest.is_empty()
-        || rest.starts_with(';')
-        || rest.starts_with(',')
-        || rest.starts_with(' ');
+    let ends_at_root =
+        rest.is_empty() || rest.starts_with(';') || rest.starts_with(',') || rest.starts_with(' ');
     if !ends_at_root {
         return value.to_string();
     }
@@ -901,10 +908,22 @@ fn patch_sonar_theme_json(bytes: &[u8], upstream_path: &str) -> Vec<u8> {
     }
     let text = String::from_utf8_lossy(bytes);
     let out = text
-        .replace(r#""key":"appearance.theme","value":"light""#, r#""key":"appearance.theme","value":"dark""#)
-        .replace(r#""key":"appearance.theme","value":"system""#, r#""key":"appearance.theme","value":"dark""#)
-        .replace(r#""key":"theme","value":"light""#, r#""key":"theme","value":"dark""#)
-        .replace(r#""key":"theme","value":"system""#, r#""key":"theme","value":"dark""#)
+        .replace(
+            r#""key":"appearance.theme","value":"light""#,
+            r#""key":"appearance.theme","value":"dark""#,
+        )
+        .replace(
+            r#""key":"appearance.theme","value":"system""#,
+            r#""key":"appearance.theme","value":"dark""#,
+        )
+        .replace(
+            r#""key":"theme","value":"light""#,
+            r#""key":"theme","value":"dark""#,
+        )
+        .replace(
+            r#""key":"theme","value":"system""#,
+            r#""key":"theme","value":"dark""#,
+        )
         .replace(r#""theme":"light""#, r#""theme":"dark""#)
         .replace(r#""theme":"system""#, r#""theme":"dark""#)
         .replace(r#""value":"light""#, r#""value":"dark""#);
@@ -934,14 +953,8 @@ fn rewrite_sonar_base_url(html: &str, prefix: &str) -> String {
     } else {
         format!("{prefix}/")
     };
-    html.replace(
-        "data-base-url=\"\"",
-        &format!("data-base-url=\"{base}\""),
-    )
-    .replace(
-        "data-base-url=''",
-        &format!("data-base-url='{base}'"),
-    )
+    html.replace("data-base-url=\"\"", &format!("data-base-url=\"{base}\""))
+        .replace("data-base-url=''", &format!("data-base-url='{base}'"))
 }
 
 fn rewrite_location(location: &str, sonar_host: &str) -> Option<String> {
@@ -1004,7 +1017,10 @@ mod tests {
         assert!(out.contains("ax-sonar-theme"));
         let patch_pos = out.find("ax-sonar-proxy-path").unwrap();
         let theme_pos = out.find("ax-sonar-theme").unwrap();
-        assert!(patch_pos < theme_pos, "path patch must precede theme script");
+        assert!(
+            patch_pos < theme_pos,
+            "path patch must precede theme script"
+        );
     }
 
     #[test]
@@ -1013,7 +1029,10 @@ mod tests {
         let out = inject_dark_theme_html(html);
         let script_pos = out.find("<script src=\"/js/main.js\">").unwrap();
         let inject_pos = out.find("ax-sonar-theme").unwrap();
-        assert!(inject_pos < script_pos, "theme inject must precede Sonar scripts");
+        assert!(
+            inject_pos < script_pos,
+            "theme inject must precede Sonar scripts"
+        );
     }
 
     #[test]
@@ -1030,7 +1049,10 @@ mod tests {
         let out = inject_dark_theme_html(html);
         let head_end = out.find("<script src=\"/js/main.js\">").unwrap();
         let inject_pos = out.find("ax-sonar-theme").unwrap();
-        assert!(inject_pos < head_end, "theme inject must precede Sonar scripts");
+        assert!(
+            inject_pos < head_end,
+            "theme inject must precede Sonar scripts"
+        );
         assert!(out.contains("MutationObserver"));
         assert!(!out.contains("<base href"));
     }
@@ -1103,7 +1125,10 @@ mod tests {
     fn rewrite_preserves_url_join_slash() {
         let js = r#"function un(e,t){return t?e.replace(/\/?\/$/,"")+"/"+t.replace(/^\/+/,""):e}"#;
         let out = rewrite_quoted_root_paths(js, SONAR_UI_PUBLIC_PREFIX);
-        assert!(out.contains(r#"+"/"+t"#), "must not rewrite join slash: {out}");
+        assert!(
+            out.contains(r#"+"/"+t"#),
+            "must not rewrite join slash: {out}"
+        );
         assert!(!out.contains("sonar/ui/\"+t"));
     }
 

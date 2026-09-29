@@ -13,7 +13,7 @@ Large committed directories (mobile apps, vendored SDKs, e2e test trees) bloat t
 
 ## MCP hits `database is locked` / agents go DEGRADED
 
-Cursor reports **DEGRADED** when the `user-ax` MCP stdio process fails tool discovery or returns `SQLITE_BUSY` (`database is locked`, code 5). In Takumi this is common when **Cursor and Takumi both spawn `ax serve --mcp` against the same project** (same `.ax/ax.db`) without the shared daemon.
+Cursor reports **DEGRADED** when the `user-ax` MCP stdio process fails tool discovery or returns `SQLITE_BUSY` (`database is locked`, code 5). This is common when **two IDEs both spawn `ax serve --mcp` against the same project** (same `.ax/ax.db`) without the shared daemon.
 
 ax hardens this by default:
 
@@ -44,7 +44,7 @@ Your agent starts the server itself (proxy → shared daemon). Verify the projec
 
 ## MCP Logging empty / Quality score stuck
 
-1. Enable **Settings → Interface → Verbose MCP logging** (or `AX_MCP_VERBOSE=1`) and reconnect MCP.
+1. Check `[ui] verbose_mcp = true` in `.ax/ship.toml` (or `AX_MCP_VERBOSE=1`) and reconnect MCP.
 2. Confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows after an agent turn.
 3. Open Command Center **Logging**; use the project switcher if you are on the wrong workspace.
 4. Install `ax savings hook install` so sessions tag `session=` for tighter `ax mcp audit` correlation.

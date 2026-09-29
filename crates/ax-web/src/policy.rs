@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use ax_policy::{
-    build_policy_zip, diff_policy_zip_item, index_policy, preview_policy_zip, restore_policy_zip,
-    slug_package_filename, PackSpec, RestoreAction, ZipPkgError, ZIP_PACKAGE_MAX_BYTES,
-    CaptureProposal, MatchInput, PolicyRuleDoc, PolicySkillDoc, PolicyStore, RuleFrontmatter,
-    SkillFrontmatter, ValidationError, finalize_proposal, propose_rule_from_prompt, get_revision,
-    list_revisions, record_restore_writes, parse_rule_file, parse_skill_file, serialize_rule,
-    serialize_skill,
+    build_policy_zip, diff_policy_zip_item, finalize_proposal, get_revision, index_policy,
+    list_revisions, parse_rule_file, parse_skill_file, preview_policy_zip,
+    propose_rule_from_prompt, record_restore_writes, restore_policy_zip, serialize_rule,
+    serialize_skill, slug_package_filename, CaptureProposal, MatchInput, PackSpec, PolicyRuleDoc,
+    PolicySkillDoc, PolicyStore, RestoreAction, RuleFrontmatter, SkillFrontmatter, ValidationError,
+    ZipPkgError, ZIP_PACKAGE_MAX_BYTES,
 };
 use axum::{
     body::Body,
@@ -69,7 +69,10 @@ pub struct MatchPayload {
 pub fn router_hub(hub: WebHub) -> Router {
     Router::new()
         .route("/rules", get(list_rules).post(create_rule))
-        .route("/rules/{id}", get(get_rule).put(update_rule).delete(delete_rule))
+        .route(
+            "/rules/{id}",
+            get(get_rule).put(update_rule).delete(delete_rule),
+        )
         .route("/rules/{id}/enabled", patch(set_rule_enabled))
         .route("/rules/{id}/storage", patch(set_rule_storage))
         .route("/rules/{id}/revisions", get(list_rule_revisions))
@@ -78,7 +81,10 @@ pub fn router_hub(hub: WebHub) -> Router {
             post(restore_rule_revision),
         )
         .route("/skills", get(list_skills).post(create_skill))
-        .route("/skills/{name}", get(get_skill).put(update_skill).delete(delete_skill))
+        .route(
+            "/skills/{name}",
+            get(get_skill).put(update_skill).delete(delete_skill),
+        )
         .route("/skills/{name}/enabled", patch(set_skill_enabled))
         .route("/skills/{name}/storage", patch(set_skill_storage))
         .route("/skills/{name}/revisions", get(list_skill_revisions))
@@ -123,7 +129,11 @@ async fn set_rule_enabled(
     }
     let ws = hub.read().await;
     match ws.policy.store.set_enabled(&id, payload.enabled).await {
-        Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true, "id": id, "enabled": payload.enabled }))).into_response(),
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "id": id, "enabled": payload.enabled })),
+        )
+            .into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "not found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -139,7 +149,11 @@ async fn set_skill_enabled(
     }
     let ws = hub.read().await;
     match ws.policy.store.set_enabled(&name, payload.enabled).await {
-        Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true, "name": name, "enabled": payload.enabled }))).into_response(),
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "name": name, "enabled": payload.enabled })),
+        )
+            .into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "not found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -214,8 +228,13 @@ async fn pack_export(State(hub): State<WebHub>) -> impl IntoResponse {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    match ax_policy::export_pack(ws.policy.store.pool(), ws.policy.store.project_root(), "shared", None)
-        .await
+    match ax_policy::export_pack(
+        ws.policy.store.pool(),
+        ws.policy.store.project_root(),
+        "shared",
+        None,
+    )
+    .await
     {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -404,6 +423,13 @@ fn json_string_list(v: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn json_properties(v: &serde_json::Value) -> ax_policy::PolicyProperties {
+    v.get("properties")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
+}
+
 fn json_opt_string(v: &serde_json::Value, key: &str) -> Option<String> {
     v.get(key)
         .and_then(|x| x.as_str())
@@ -411,7 +437,7 @@ fn json_opt_string(v: &serde_json::Value, key: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn payload_to_rule(v: &serde_json::Value) -> Result<(RuleFrontmatter, String), String> {
+pub(crate) fn payload_to_rule(v: &serde_json::Value) -> Result<(RuleFrontmatter, String), String> {
     let body = v
         .get("body")
         .and_then(|x| x.as_str())
@@ -438,7 +464,10 @@ fn payload_to_rule(v: &serde_json::Value) -> Result<(RuleFrontmatter, String), S
                 .and_then(|x| x.as_str())
                 .unwrap_or("INFO")
                 .to_string(),
-            always_apply: v.get("alwaysApply").and_then(|x| x.as_bool()).unwrap_or(false),
+            always_apply: v
+                .get("alwaysApply")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false),
             globs: json_string_list(v, "globs"),
             triggers: json_string_list(v, "triggers"),
             tags: json_string_list(v, "tags"),
@@ -459,12 +488,15 @@ fn payload_to_rule(v: &serde_json::Value) -> Result<(RuleFrontmatter, String), S
             source: json_opt_string(v, "source"),
             root_id: json_opt_string(v, "rootId"),
             group: json_opt_string(v, "group"),
+            properties: json_properties(v),
         },
         body,
     ))
 }
 
-fn payload_to_skill(v: &serde_json::Value) -> Result<(SkillFrontmatter, String), String> {
+pub(crate) fn payload_to_skill(
+    v: &serde_json::Value,
+) -> Result<(SkillFrontmatter, String), String> {
     let body = v
         .get("body")
         .and_then(|x| x.as_str())
@@ -491,7 +523,10 @@ fn payload_to_skill(v: &serde_json::Value) -> Result<(SkillFrontmatter, String),
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string(),
-            always_apply: v.get("alwaysApply").and_then(|x| x.as_bool()).unwrap_or(false),
+            always_apply: v
+                .get("alwaysApply")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false),
             triggers: json_string_list(v, "triggers"),
             tags: json_string_list(v, "tags"),
             priority: v.get("priority").and_then(|x| x.as_i64()).unwrap_or(50) as i32,
@@ -512,12 +547,13 @@ fn payload_to_skill(v: &serde_json::Value) -> Result<(SkillFrontmatter, String),
             source: json_opt_string(v, "source"),
             root_id: json_opt_string(v, "rootId"),
             group: json_opt_string(v, "group"),
+            properties: json_properties(v),
         },
         body,
     ))
 }
 
-async fn open_global_pool(
+pub(crate) async fn open_global_pool(
     root: &std::path::Path,
     project_id: Option<i64>,
 ) -> Result<(sqlx::SqlitePool, i64), String> {
@@ -531,7 +567,11 @@ async fn open_global_pool(
     Ok((gpool, pid))
 }
 
-fn skill_doc_from_parts(fm: SkillFrontmatter, body: String, source_path: String) -> PolicySkillDoc {
+pub(crate) fn skill_doc_from_parts(
+    fm: SkillFrontmatter,
+    body: String,
+    source_path: String,
+) -> PolicySkillDoc {
     let raw = serialize_skill(&fm, &body);
     PolicySkillDoc {
         frontmatter: fm,
@@ -542,7 +582,11 @@ fn skill_doc_from_parts(fm: SkillFrontmatter, body: String, source_path: String)
     }
 }
 
-fn rule_doc_from_parts(fm: RuleFrontmatter, body: String, source_path: String) -> PolicyRuleDoc {
+pub(crate) fn rule_doc_from_parts(
+    fm: RuleFrontmatter,
+    body: String,
+    source_path: String,
+) -> PolicyRuleDoc {
     let raw = serialize_rule(&fm, &body);
     PolicyRuleDoc {
         frontmatter: fm,
@@ -576,21 +620,31 @@ async fn relocate_policy(
         Ok(p) => p,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
-    let pid = match ax_global_db::policy::resolve_project_id(&gpool, &root, payload.project_id).await
-    {
-        Ok(id) => id,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
+    let pid =
+        match ax_global_db::policy::resolve_project_id(&gpool, &root, payload.project_id).await {
+            Ok(id) => id,
+            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        };
 
     match payload.to.as_str() {
         "global" => {
             let exists = match kind {
-                ax_global_db::policy::PolicyKind::Rules => {
-                    ws.policy.store.get_rule_doc(&payload.id).await.ok().flatten().is_some()
-                }
-                ax_global_db::policy::PolicyKind::Skills => {
-                    ws.policy.store.get_skill_doc(&payload.id).await.ok().flatten().is_some()
-                }
+                ax_global_db::policy::PolicyKind::Rules => ws
+                    .policy
+                    .store
+                    .get_rule_doc(&payload.id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some(),
+                ax_global_db::policy::PolicyKind::Skills => ws
+                    .policy
+                    .store
+                    .get_skill_doc(&payload.id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some(),
             };
             if !exists {
                 let parked = ax_global_db::policy::load_policy_item(&gpool, pid, kind, &payload.id)
@@ -599,19 +653,35 @@ async fn relocate_policy(
                     .flatten();
                 if let Some(parked) = parked {
                     let flat = ax_global_db::policy::flatten_list_item(parked, kind, &payload.id);
-                    if let Err(e) =
-                        ax_global_db::policy::upsert_policy_item(&gpool, pid, kind, &payload.id, &flat)
-                            .await
+                    if let Err(e) = ax_global_db::policy::upsert_policy_item(
+                        &gpool,
+                        pid,
+                        kind,
+                        &payload.id,
+                        &flat,
+                    )
+                    .await
                     {
                         return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
                     }
-                    return (StatusCode::OK, Json(serde_json::json!({ "ok": true, "already": true }))).into_response();
+                    return (
+                        StatusCode::OK,
+                        Json(serde_json::json!({ "ok": true, "already": true })),
+                    )
+                        .into_response();
                 }
                 return err(StatusCode::NOT_FOUND, "not found in this project");
             }
             let copy = match kind {
                 ax_global_db::policy::PolicyKind::Rules => {
-                    let doc = ws.policy.store.get_rule_doc(&payload.id).await.ok().flatten().unwrap();
+                    let doc = ws
+                        .policy
+                        .store
+                        .get_rule_doc(&payload.id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap();
                     ax_global_db::policy::flatten_list_item(
                         serde_json::to_value(&doc).unwrap_or(serde_json::json!({})),
                         kind,
@@ -619,7 +689,14 @@ async fn relocate_policy(
                     )
                 }
                 ax_global_db::policy::PolicyKind::Skills => {
-                    let doc = ws.policy.store.get_skill_doc(&payload.id).await.ok().flatten().unwrap();
+                    let doc = ws
+                        .policy
+                        .store
+                        .get_skill_doc(&payload.id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap();
                     ax_global_db::policy::flatten_list_item(
                         serde_json::to_value(&doc).unwrap_or(serde_json::json!({})),
                         kind,
@@ -628,39 +705,57 @@ async fn relocate_policy(
                 }
             };
             if let Err(e) =
-                ax_global_db::policy::upsert_policy_item(&gpool, pid, kind, &payload.id, &copy).await
+                ax_global_db::policy::upsert_policy_item(&gpool, pid, kind, &payload.id, &copy)
+                    .await
             {
                 return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
             }
             let deleted = match kind {
-                ax_global_db::policy::PolicyKind::Rules => ws.policy.store.delete_rule(&payload.id).await,
+                ax_global_db::policy::PolicyKind::Rules => {
+                    ws.policy.store.delete_rule(&payload.id).await
+                }
                 ax_global_db::policy::PolicyKind::Skills => {
                     ws.policy.store.delete_skill(&payload.id).await
                 }
             };
             match deleted {
-                Ok(_) => (StatusCode::OK, Json(serde_json::json!({ "ok": true, "to": "global" }))).into_response(),
+                Ok(_) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "ok": true, "to": "global" })),
+                )
+                    .into_response(),
                 Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
             }
         }
         "project" => {
             let already = match kind {
-                ax_global_db::policy::PolicyKind::Rules => {
-                    ws.policy.store.get_rule_doc(&payload.id).await.ok().flatten().is_some()
-                }
-                ax_global_db::policy::PolicyKind::Skills => {
-                    ws.policy.store.get_skill_doc(&payload.id).await.ok().flatten().is_some()
-                }
+                ax_global_db::policy::PolicyKind::Rules => ws
+                    .policy
+                    .store
+                    .get_rule_doc(&payload.id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some(),
+                ax_global_db::policy::PolicyKind::Skills => ws
+                    .policy
+                    .store
+                    .get_skill_doc(&payload.id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some(),
             };
             if already {
                 return err(StatusCode::CONFLICT, "already exists in this project");
             }
-            let Some(copy) = (match ax_global_db::policy::load_policy_item(&gpool, pid, kind, &payload.id)
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-            }) else {
+            let Some(copy) =
+                (match ax_global_db::policy::load_policy_item(&gpool, pid, kind, &payload.id).await
+                {
+                    Ok(v) => v,
+                    Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                })
+            else {
                 return err(StatusCode::NOT_FOUND, "not found in global.db");
             };
             let saved = match kind {
@@ -677,7 +772,11 @@ async fn relocate_policy(
                 return validation_err(v);
             }
             let _ = ax_global_db::policy::delete_policy_item(&gpool, pid, kind, &payload.id).await;
-            (StatusCode::OK, Json(serde_json::json!({ "ok": true, "to": "project" }))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "ok": true, "to": "project" })),
+            )
+                .into_response()
         }
         _ => err(StatusCode::BAD_REQUEST, "to must be global or project"),
     }
@@ -704,11 +803,11 @@ async fn delete_policy_copy(
         Ok(p) => p,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
-    let pid = match ax_global_db::policy::resolve_project_id(&gpool, &root, payload.project_id).await
-    {
-        Ok(id) => id,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
+    let pid =
+        match ax_global_db::policy::resolve_project_id(&gpool, &root, payload.project_id).await {
+            Ok(id) => id,
+            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        };
     match ax_global_db::policy::delete_policy_item(&gpool, pid, kind, &payload.id).await {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "not found"),
@@ -791,7 +890,12 @@ async fn create_rule(
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    match ws.policy.store.save_rule(payload.frontmatter, payload.body).await {
+    match ws
+        .policy
+        .store
+        .save_rule(payload.frontmatter, payload.body)
+        .await
+    {
         Ok(doc) => (StatusCode::CREATED, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }
@@ -870,7 +974,10 @@ async fn delete_rule(State(hub): State<WebHub>, Path(id): Path<String>) -> impl 
     }
 }
 
-async fn list_rule_revisions(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+async fn list_rule_revisions(
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
     let ws = hub.read().await;
     match ws.policy.store.get_rule_doc(&id).await {
         Ok(None) => return err(StatusCode::NOT_FOUND, "not found"),
@@ -878,7 +985,11 @@ async fn list_rule_revisions(State(hub): State<WebHub>, Path(id): Path<String>) 
         Ok(Some(_)) => {}
     }
     match list_revisions(ws.policy.store.pool(), "rule", &id).await {
-        Ok(revisions) => (StatusCode::OK, Json(serde_json::json!({ "revisions": revisions }))).into_response(),
+        Ok(revisions) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "revisions": revisions })),
+        )
+            .into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -911,7 +1022,12 @@ async fn restore_rule_revision(
     if parsed.frontmatter.id != id {
         return err(StatusCode::BAD_REQUEST, "revision id does not match rule");
     }
-    match ws.policy.store.save_rule(parsed.frontmatter, parsed.body).await {
+    match ws
+        .policy
+        .store
+        .save_rule(parsed.frontmatter, parsed.body)
+        .await
+    {
         Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }
@@ -928,7 +1044,11 @@ async fn list_skill_revisions(
         Ok(Some(_)) => {}
     }
     match list_revisions(ws.policy.store.pool(), "skill", &name).await {
-        Ok(revisions) => (StatusCode::OK, Json(serde_json::json!({ "revisions": revisions }))).into_response(),
+        Ok(revisions) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "revisions": revisions })),
+        )
+            .into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -959,7 +1079,10 @@ async fn restore_skill_revision(
         Err(v) => return err(StatusCode::BAD_REQUEST, &v.error),
     };
     if parsed.frontmatter.name != name {
-        return err(StatusCode::BAD_REQUEST, "revision name does not match skill");
+        return err(
+            StatusCode::BAD_REQUEST,
+            "revision name does not match skill",
+        );
     }
     match ws
         .policy
@@ -1047,7 +1170,12 @@ async fn create_skill(
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    match ws.policy.store.save_skill(payload.frontmatter, payload.body).await {
+    match ws
+        .policy
+        .store
+        .save_skill(payload.frontmatter, payload.body)
+        .await
+    {
         Ok(doc) => (StatusCode::CREATED, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }
@@ -1097,16 +1225,18 @@ async fn update_skill(
         };
     }
     let ws = hub.read().await;
-    match ws.policy.store.save_skill(payload.frontmatter, payload.body).await {
+    match ws
+        .policy
+        .store
+        .save_skill(payload.frontmatter, payload.body)
+        .await
+    {
         Ok(doc) => (StatusCode::OK, Json(doc)).into_response(),
         Err(v) => validation_err(v),
     }
 }
 
-async fn delete_skill(
-    State(hub): State<WebHub>,
-    Path(name): Path<String>,
-) -> impl IntoResponse {
+async fn delete_skill(State(hub): State<WebHub>, Path(name): Path<String>) -> impl IntoResponse {
     if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
@@ -1163,7 +1293,12 @@ async fn capture_prompt(
             Some(r) => r,
             None => return err(StatusCode::BAD_REQUEST, "rule required for save action"),
         };
-        match ws.policy.store.save_rule(rule.frontmatter.clone(), rule.body).await {
+        match ws
+            .policy
+            .store
+            .save_rule(rule.frontmatter.clone(), rule.body)
+            .await
+        {
             Ok(doc) => {
                 let id = doc.frontmatter.id.clone();
                 let storage = match ws.policy.store.storage() {
@@ -1276,8 +1411,12 @@ struct ZipPackagePayload {
 
 fn zip_err(e: ZipPkgError) -> axum::response::Response {
     match e {
-        ZipPkgError::Empty | ZipPkgError::Unknown(_) => err(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()),
-        ZipPkgError::BadZip(_) | ZipPkgError::TooLarge => err(StatusCode::BAD_REQUEST, &e.to_string()),
+        ZipPkgError::Empty | ZipPkgError::Unknown(_) => {
+            err(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string())
+        }
+        ZipPkgError::BadZip(_) | ZipPkgError::TooLarge => {
+            err(StatusCode::BAD_REQUEST, &e.to_string())
+        }
         ZipPkgError::Io(_) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -1296,7 +1435,9 @@ async fn read_multipart_fields(
     Ok(fields)
 }
 
-async fn read_multipart_zip(multipart: &mut Multipart) -> Result<(Vec<u8>, Option<String>), String> {
+async fn read_multipart_zip(
+    multipart: &mut Multipart,
+) -> Result<(Vec<u8>, Option<String>), String> {
     let fields = read_multipart_fields(multipart).await?;
     let zip = fields
         .get("package")
@@ -1339,7 +1480,10 @@ async fn create_zip_package(
     }
 }
 
-async fn preview_zip_package(State(hub): State<WebHub>, mut multipart: Multipart) -> impl IntoResponse {
+async fn preview_zip_package(
+    State(hub): State<WebHub>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
     let (bytes, _) = match read_multipart_zip(&mut multipart).await {
         Ok(v) => v,
         Err(e) => return err(StatusCode::BAD_REQUEST, &e),
@@ -1351,7 +1495,10 @@ async fn preview_zip_package(State(hub): State<WebHub>, mut multipart: Multipart
     }
 }
 
-async fn restore_zip_package(State(hub): State<WebHub>, mut multipart: Multipart) -> impl IntoResponse {
+async fn restore_zip_package(
+    State(hub): State<WebHub>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
     if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
@@ -1446,8 +1593,7 @@ async fn annotate_policy_list<T: serde::Serialize>(
             }
         }
     }
-    out
-        .into_iter()
+    out.into_iter()
         .map(|item| {
             let id = match kind {
                 ax_global_db::policy::PolicyKind::Rules => item

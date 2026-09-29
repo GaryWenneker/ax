@@ -1,0 +1,20 @@
+{
+  "name": "getax-obsidian",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs --production",
+    "dev": "node esbuild.config.mjs",
+    "test": "node --experimental-strip-types --test src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/cytoscape": "^3.21.9",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.8.7",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "cytoscape": "^3.32.0"
+  }
+}

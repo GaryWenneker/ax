@@ -157,7 +157,19 @@ impl ToolHandler {
                     .await
                     .map_err(|e| e.to_string())?;
                 let text = match &path {
-                    Some(ids) if !ids.is_empty() => format!("Path: {}", ids.join(" → ")),
+                    Some(ids) if !ids.is_empty() => {
+                        let mut out = format!("Path ({} hops):\n", ids.len().saturating_sub(1));
+                        for id in ids {
+                            match ax.get_node(id).await.map_err(|e| e.to_string())? {
+                                Some(n) => out.push_str(&format!(
+                                    "- {} — {}:{}-{}\n",
+                                    n.qualified_name, n.file_path, n.start_line, n.end_line
+                                )),
+                                None => out.push_str(&format!("- {id}\n")),
+                            }
+                        }
+                        out
+                    }
                     _ => format!(
                         "No Calls/References path from '{}' to '{}'.",
                         f.node.qualified_name, t.node.qualified_name
@@ -507,7 +519,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     // Preflight must always return a payload. Policy match/status failures
     // degrade to an empty inject + error note — never MCP isError.
     let mut policy_error: Option<String> = None;
-    let result = match ax.match_policy(input).await {
+    let mut result = match ax.match_policy(input).await {
         Ok(r) => r,
         Err(e) => {
             let msg = e.to_string();
@@ -538,12 +550,39 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             }
         }
     };
+    // Durable memories ride along with the policy inject. Failures here must
+    // never break preflight — memories are additive context.
+    let mut memories = ax_memory::recall_for_prompt(ax.db_pool(), &prompt, 3)
+        .await
+        .unwrap_or_default();
+    if crate::links::has_links(&result, &memories) {
+        let rows = ax.policy_rows().await;
+        let memory_rows = ax_memory::list(ax.db_pool(), 100_000, 0).await;
+        if let (Ok((rules, skills)), Ok((memory_rows, _))) = (rows, memory_rows) {
+            let added = crate::links::expand_links(
+                &mut result,
+                &mut memories,
+                &rules,
+                &skills,
+                &memory_rows,
+            );
+            crate::verbose::push_line(format!("enrich links added={added}"));
+        }
+    }
     let meta = ax_policy::build_preflight_meta(&status, &result);
+    let session_delivered: Option<std::collections::HashMap<String, u64>> = params
+        .get(crate::server::SESSION_ARG)
+        .and_then(|s| s.get("delivered"))
+        .and_then(|d| serde_json::from_value(d.clone()).ok());
+    let (policy_inject, mut delivered) = match params.get(crate::server::SESSION_ARG) {
+        Some(session) if policy_error.is_none() => session_policy_inject(ax, session, &result),
+        _ => (result.inject.clone(), Vec::new()),
+    };
     crate::verbose::push_line(format!(
         "enrich policy matched_rules={} matched_skills={} inject_chars={} mode={}",
         meta.matched_rules,
         meta.matched_skills,
-        result.inject.len(),
+        policy_inject.len(),
         meta.mode
     ));
 
@@ -552,19 +591,11 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let index_stats = ax.get_stats().await.ok();
     let pending = ax.get_pending_files().await;
 
-    // Durable memories ride along with the policy inject. Failures here must
-    // never break preflight — memories are additive context.
-    let memories = ax_memory::recall_for_prompt(ax.db_pool(), &prompt, 3)
-        .await
-        .unwrap_or_default();
-    let mut inject = result.inject.clone();
+    let mut inject = policy_inject;
     if let Some(ref stats) = index_stats {
         let block = ax_core::stats_format::format_index_inject_block(stats, &pending);
         if !block.is_empty() {
-            if !inject.is_empty() {
-                inject.push('\n');
-            }
-            inject.push_str(&block);
+            push_once(&mut inject, "block:index", &block, session_delivered.as_ref(), &mut delivered);
             crate::verbose::push_line(format!(
                 "enrich index block_chars={} pending_files={}",
                 block.len(),
@@ -577,7 +608,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         crate::verbose::push_line("enrich index skipped (stats unavailable)");
     }
     if !memories.is_empty() {
-        let block = ax_memory::format_memories_inject_block(&memories, 3_000);
+        let block = ax_memory::format_memory_match_titles(&memories);
         if !block.is_empty() {
             if !inject.is_empty() {
                 inject.push('\n');
@@ -593,37 +624,55 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         crate::verbose::push_line("enrich memories none");
     }
 
+    match ax_core::review_language::resolve_for_project(ax.project_root()) {
+        Ok(language) => {
+            if !inject.is_empty() {
+                inject.push('\n');
+            }
+            inject.push_str(&ax_core::review_language::review_language_line(language));
+        }
+        Err(error) => {
+            if !inject.is_empty() {
+                inject.push('\n');
+            }
+            inject.push_str(&error);
+        }
+    }
+
     if ax_usage::cache_enabled() {
         if !inject.is_empty() {
             inject.push('\n');
         }
         inject.push_str("<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result.</ax_context_cache>");
-        if let Ok(Some(ledger)) =
-            ax_usage::session_ledger(ax_usage::read_active_cursor_session().as_deref()).await
-        {
+        let chat = chat_for_client(session_client(&params)).then(ax_usage::read_active_cursor_session).flatten();
+        if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
             inject.push('\n');
             inject.push_str(&ledger);
         }
-        if let Ok(entries) = {
-            let session = ax_usage::read_active_cursor_session();
-            ax_usage::recent_session_catalog(session.as_deref(), 20).await
-        } {
-            if !entries.is_empty() {
-                inject.push('\n');
-                inject.push_str(&ax_usage::format_catalog(&entries, 1_500));
-            } else if let Ok(entries) = ax_usage::recent_catalog(20).await {
-                if !entries.is_empty() {
+        if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
+            let unseen: Vec<_> = entries
+                .into_iter()
+                .filter(|e| {
+                    let key = format!("cache:{}", e.id);
+                    let seen = session_delivered.as_ref().is_some_and(|m| m.contains_key(&key));
+                    if !seen && session_delivered.is_some() {
+                        delivered.push((key, 1));
+                    }
+                    !seen
+                })
+                .collect();
+            if !unseen.is_empty() {
+                if !inject.is_empty() {
                     inject.push('\n');
-                    inject.push_str(&ax_usage::format_catalog(&entries, 1_500));
                 }
+                inject.push_str(&ax_usage::format_catalog(&unseen, 1_500));
             }
         }
         // Recent turn memories are skipped below; fetch enough that they cannot crowd out the rest.
         if let Ok((rows, _)) = ax_memory::list(ax.db_pool(), 200, 0).await {
-            let titles = format_memory_titles(&rows, 800);
+            let titles = format_memory_titles(&rows, memory_title_tokens());
             if !titles.is_empty() {
-                inject.push('\n');
-                inject.push_str(&titles);
+                push_once(&mut inject, "block:memory_titles", &titles, session_delivered.as_ref(), &mut delivered);
             }
         }
     }
@@ -689,7 +738,91 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             obj.insert("policyError".to_string(), Value::String(err));
         }
     }
+    if !delivered.is_empty() {
+        out[crate::server::DELIVERED_KEY] = json!(delivered);
+    }
     Ok(out)
+}
+
+fn memory_title_tokens() -> i64 {
+    std::env::var("AX_PREFLIGHT_MEMORY_TITLE_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200)
+}
+
+/// Append `block` unless this session already received the identical text.
+fn push_once(
+    inject: &mut String,
+    key: &str,
+    block: &str,
+    session: Option<&std::collections::HashMap<String, u64>>,
+    delivered: &mut Vec<(String, u64)>,
+) {
+    let hash = ax_policy::format::content_hash(block);
+    if session.and_then(|m| m.get(key)) == Some(&hash) {
+        return;
+    }
+    if session.is_some() {
+        delivered.push((key.to_string(), hash));
+    }
+    if !inject.is_empty() {
+        inject.push('\n');
+    }
+    inject.push_str(block);
+}
+
+fn skill_inline_chars() -> usize {
+    let tokens = std::env::var("AX_POLICY_SKILL_INLINE_TOKENS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1_500);
+    tokens.saturating_mul(4)
+}
+
+fn session_client(params: &Value) -> Option<&str> {
+    params.get(crate::server::SESSION_ARG)?.get("client")?.as_str()
+}
+
+/// The active Cursor chat belongs to Cursor clients (and to calls with no known client).
+fn chat_for_client(client: Option<&str>) -> bool {
+    client.is_none_or(|name| name.to_ascii_lowercase().contains("cursor"))
+}
+
+fn rule_inline_chars() -> usize {
+    let tokens = std::env::var("AX_POLICY_RULE_INLINE_TOKENS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(250);
+    tokens.saturating_mul(4)
+}
+
+/// Policy inject for one MCP connection: skip bodies the agent already holds.
+fn session_policy_inject(ax: &Ax, session: &Value, result: &MatchResult) -> (String, Vec<(String, u64)>) {
+    let delivered: std::collections::HashMap<String, u64> = session
+        .get("delivered")
+        .and_then(|d| serde_json::from_value(d.clone()).ok())
+        .unwrap_or_default();
+    let client = session.get("client").and_then(|v| v.as_str()).unwrap_or("");
+    let client_loaded = if client.to_ascii_lowercase().contains("cursor") {
+        let mut roots = vec![ax.project_root().to_path_buf()];
+        roots.extend(dirs::home_dir());
+        ax_policy::ide_loaded::ide_loaded_keys(&roots, &result.rules, &result.skills)
+    } else {
+        std::collections::HashSet::new()
+    };
+    let out = ax_policy::format::format_inject_block_with(
+        &result.rules,
+        &result.skills,
+        ax_policy::matcher::max_inject_chars(),
+        ax_policy::format::InjectOptions {
+            delivered: Some(&delivered),
+            client_loaded: Some(&client_loaded),
+            skill_inline_chars: Some(skill_inline_chars()),
+            rule_inline_chars: Some(rule_inline_chars()),
+        },
+    );
+    (out.text, out.delivered)
 }
 
 async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -736,7 +869,11 @@ async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let query = params.get("query").and_then(|v| v.as_str()).ok_or("query required")?;
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5).min(25) as usize;
     let matches = ax_memory::recall(ax.db_pool(), query, limit).await.map_err(|e| e.to_string())?;
-    let text = ax_memory::format_memories_inject_block(&matches, 12_000);
+    let text = if matches.is_empty() {
+        format!("No memories match '{query}'.")
+    } else {
+        ax_memory::format_memories_inject_block(&matches, 12_000)
+    };
     Ok(json!({
         "matches": matches,
         "inject": text,
@@ -786,7 +923,7 @@ fn format_memory_titles(rows: &[ax_memory::MemoryRow], max_tokens: i64) -> Strin
     }
     let mut lines = vec!["<ax_memory_titles>Titles only. Call ax_recall for a body.".to_string()];
     for row in rows {
-        if !row.enabled || row.kind == ax_memory::TURN_KIND {
+        if !row.enabled || ax_memory::is_recall_only(&row.kind) {
             continue;
         }
         lines.push(format!("- {} {}", row.id, row.title.replace('\n', " ")));
@@ -945,7 +1082,25 @@ async fn skill(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("skill not found: {name}"))?;
-    Ok(json!(row))
+    let key = format!("skill_full:{name}");
+    let hash = ax_policy::format::delivered_body_hash(&row.body, &row.properties);
+    let session = params.get(crate::server::SESSION_ARG);
+    let seen = session
+        .and_then(|s| s.get("delivered"))
+        .and_then(|d| d.get(&key))
+        .and_then(Value::as_u64);
+    if seen == Some(hash) {
+        return Ok(json!({
+            "text": format!("Skill '{name}' is unchanged since you loaded it earlier in this session; use the copy in your context."),
+            "name": name,
+            "unchanged": true,
+        }));
+    }
+    let mut value = json!(row);
+    if session.is_some() {
+        value[crate::server::DELIVERED_KEY] = json!([[key, hash]]);
+    }
+    Ok(value)
 }
 
 async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -1428,6 +1583,7 @@ fn extra_tools() -> Vec<Value> {
                     "name": { "type": "string", "description": "Symbol name or qualified name" },
                     "limit": { "type": "number", "description": "Max matches (default 3)" },
                     "maxLinesPerSnippet": { "type": "number", "description": "Source lines per match (default 400)" },
+                    "mode": { "type": "string", "enum": ["signature"], "description": "signature: path, lines, and declaration only" },
                     "maxSourceChars": { "type": "number", "description": "Source chars per match (default 24000)" }
                 },
                 "required": ["name"]
@@ -1644,9 +1800,18 @@ fn node_opts_from_params(params: &Value) -> (String, ExploreOptions) {
 }
 
 async fn node(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let (name, opts) = node_opts_from_params(&params);
-    let result = ax.explore(&name, opts).await.map_err(|e| e.to_string())?;
-    let text = format_explore_text(&result).replacen("# Explore:", "# Node:", 1);
+    let (name, mut opts) = node_opts_from_params(&params);
+    let signature_only = params.get("mode").and_then(|v| v.as_str()) == Some("signature");
+    if signature_only {
+        opts.max_lines_per_snippet = Some(SIGNATURE_LINES);
+    }
+    let mut result = ax.explore(&name, opts).await.map_err(|e| e.to_string())?;
+    keep_exact_entries(&mut result, &name);
+    let text = if signature_only {
+        format_node_signatures(&result)
+    } else {
+        format_explore_text(&result).replacen("# Explore:", "# Node:", 1)
+    };
     let nodes: Vec<&ax_types::Node> = result.entries.iter().map(|e| &e.node).collect();
     Ok(json!({
         "text": text,
@@ -1656,6 +1821,15 @@ async fn node(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "entries": result.entries,
         "nodes": nodes,
     }))
+}
+
+/// A fully qualified name or node id asks for one symbol; drop the fuzzy neighbours.
+fn keep_exact_entries(result: &mut ax_types::ExploreResult, name: &str) {
+    let exact = |n: &Node| n.qualified_name == name || n.id == name;
+    if result.entries.iter().any(|e| exact(&e.node)) {
+        result.entries.retain(|e| exact(&e.node));
+        result.summary = format!("Found {} entry point(s) for '{name}'", result.entries.len());
+    }
 }
 
 fn explore_opts_from_params(params: &Value) -> ExploreOptions {
@@ -1676,6 +1850,33 @@ fn explore_opts_from_params(params: &Value) -> ExploreOptions {
         opts.max_source_chars = Some(n as u32);
     }
     opts
+}
+
+const SIGNATURE_LINES: u32 = 3;
+
+/// Location plus the first declaration lines per match; no body, no neighbours.
+fn format_node_signatures(result: &ax_types::ExploreResult) -> String {
+    let mut out = format!("# Node (signature): {}\n\n", result.query);
+    if result.entries.is_empty() {
+        out.push_str("No matching symbols.\n");
+        return out;
+    }
+    for entry in &result.entries {
+        out.push_str(&node_line(&entry.node));
+        out.push('\n');
+        if let Some(sig) = &entry.node.signature {
+            out.push_str(&format!("  {sig}\n"));
+        } else if let Some(src) = &entry.source {
+            for line in src.lines().take(SIGNATURE_LINES as usize) {
+                if line.starts_with("...(truncated") {
+                    break;
+                }
+                out.push_str(&format!("  {line}\n"));
+            }
+        }
+    }
+    out.push_str("\nCall ax_node without mode for the full source, callers, and callees.\n");
+    out
 }
 
 pub fn server_instructions(has_policy: bool) -> String {
@@ -1715,6 +1916,15 @@ pub fn server_instructions(has_policy: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_cursor_clients_read_the_active_cursor_chat() {
+        assert!(chat_for_client(Some("cursor-vscode")));
+        assert!(chat_for_client(Some("Cursor")));
+        assert!(chat_for_client(None));
+        assert!(!chat_for_client(Some("gauntlet")));
+        assert!(!chat_for_client(Some("claude-code")));
+    }
 
     fn memory_row(id: &str, kind: &str) -> ax_memory::MemoryRow {
         ax_memory::MemoryRow {

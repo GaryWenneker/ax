@@ -55,6 +55,133 @@ fn row_from_db(
 const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled
            FROM memories"#;
 
+/// `turn` memories created before `before`, enabled or not, oldest first; at most 10,000 per call.
+pub(crate) async fn expired_turn_rows(
+    pool: &SqlitePool,
+    before: i64,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE kind = ? AND created_at < ? ORDER BY created_at, id LIMIT 10000"
+    ))
+    .bind(crate::turns::TURN_KIND)
+    .bind(before)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.into_iter().map(row_from_db).collect())
+}
+
+pub(crate) async fn turn_rows_by_id(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<Vec<MemoryRow>, AxError> {
+    let mut out = Vec::new();
+    for id in ids {
+        let row =
+            sqlx::query_as::<_, MemoryDbRow>(&format!("{MEMORY_SELECT} WHERE id = ? AND kind = ?"))
+                .bind(id)
+                .bind(crate::turns::TURN_KIND)
+                .fetch_optional(pool)
+                .await
+                .map_err(db_err)?;
+        out.extend(row.map(row_from_db));
+    }
+    Ok(out)
+}
+
+/// Every `turn` memory, oldest first.
+pub async fn turn_rows(pool: &SqlitePool) -> Result<Vec<MemoryRow>, AxError> {
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE kind = ? ORDER BY created_at, id"
+    ))
+    .bind(crate::turns::TURN_KIND)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.into_iter().map(row_from_db).collect())
+}
+
+/// `LIKE … ESCAPE '\'` pattern for paths ending in `/<suffix>`.
+pub(crate) fn path_suffix_pattern(suffix: &str) -> String {
+    let escaped = suffix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%/{escaped}")
+}
+
+/// Enabled `turn` memories created at or after `since`, newest first, that have one of `ids`, or
+/// changed a file in `files` or ending in `/<suffix>`. At most `limit` rows.
+pub(crate) async fn matching_turn_rows(
+    pool: &SqlitePool,
+    since: Option<i64>,
+    ids: &[String],
+    files: &[String],
+    suffix: Option<&str>,
+    limit: usize,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let as_json = |v: &[String]| serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
+    let suffix_like = suffix.map(path_suffix_pattern);
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND created_at >= ? \
+         AND (id IN (SELECT value FROM json_each(?)) \
+              OR EXISTS (SELECT 1 FROM json_each(memories.files) AS f \
+                         WHERE f.value IN (SELECT value FROM json_each(?)) \
+                            OR f.value LIKE ? ESCAPE '\\')) \
+         ORDER BY created_at DESC, id LIMIT ?"
+    ))
+    .bind(crate::turns::TURN_KIND)
+    .bind(since.unwrap_or(i64::MIN))
+    .bind(as_json(ids))
+    .bind(as_json(files))
+    .bind(suffix_like)
+    .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.into_iter().map(row_from_db).collect())
+}
+
+/// Newest enabled turn memories, with no prompt or file filter.
+pub(crate) async fn recent_turn_rows(
+    pool: &SqlitePool,
+    limit: usize,
+) -> Result<Vec<MemoryRow>, AxError> {
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 ORDER BY created_at DESC, id LIMIT ?"
+    ))
+    .bind(crate::turns::TURN_KIND)
+    .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.into_iter().map(row_from_db).collect())
+}
+
+/// The enabled turn whose body has `Request: <id>`, newest first.
+pub(crate) async fn turn_by_request_id(
+    pool: &SqlitePool,
+    request_id: &str,
+) -> Result<Option<MemoryRow>, AxError> {
+    let id = request_id.trim();
+    if id.is_empty() || id.contains(['%', '_', '\n', '\r']) {
+        return Ok(None);
+    }
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND body LIKE ? \
+         ORDER BY created_at DESC LIMIT 20"
+    ))
+    .bind(crate::turns::TURN_KIND)
+    .bind(format!("%\nRequest: {id}%"))
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(rows
+        .into_iter()
+        .map(row_from_db)
+        .find(|row| crate::turns::request_id_from_body(&row.body) == Some(id)))
+}
+
 /// Time-decayed confidence: recently touched memories rank higher.
 pub fn effective_confidence(confidence: f64, updated_at_ms: i64, now_ms: i64) -> f64 {
     let age_days = ((now_ms - updated_at_ms).max(0) as f64) / 86_400_000.0;
@@ -62,6 +189,14 @@ pub fn effective_confidence(confidence: f64, updated_at_ms: i64, now_ms: i64) ->
 }
 
 pub async fn remember(pool: &SqlitePool, input: RememberInput) -> Result<MemoryRow, AxError> {
+    remember_with_id(pool, uuid::Uuid::new_v4().to_string(), input).await
+}
+
+pub(crate) async fn remember_with_id(
+    pool: &SqlitePool,
+    id: String,
+    input: RememberInput,
+) -> Result<MemoryRow, AxError> {
     let now = now_ms();
     let title = if input.title.trim().is_empty() {
         // First line of the body doubles as the title.
@@ -70,7 +205,7 @@ pub async fn remember(pool: &SqlitePool, input: RememberInput) -> Result<MemoryR
         input.title.trim().to_string()
     };
     let row = MemoryRow {
-        id: uuid::Uuid::new_v4().to_string(),
+        id,
         kind: input.kind.unwrap_or_else(|| "note".into()),
         title,
         body: input.body,
@@ -205,8 +340,59 @@ pub async fn recall(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<
         }
     }
     matches.sort_by(|a, b| b.score.total_cmp(&a.score));
+    drop_weak_term_matches(&mut matches, query);
     matches.truncate(limit);
     Ok(matches)
+}
+
+const MIN_RELATIVE_COVERAGE: f64 = 0.6;
+
+fn query_terms(query: &str) -> Vec<String> {
+    let mut terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.chars().count() >= 3)
+        .map(str::to_lowercase)
+        .collect();
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
+/// "dropdowns" covers a memory that says "dropdown".
+fn singular(term: &str) -> Option<&str> {
+    term.strip_suffix('s').filter(|s| s.chars().count() >= 3)
+}
+
+fn term_coverage(terms: &[String], memory: &MemoryRow) -> f64 {
+    let text = format!("{} {}", memory.title, memory.body).to_lowercase();
+    let hits = terms
+        .iter()
+        .filter(|t| text.contains(t.as_str()) || singular(t).is_some_and(|s| text.contains(s)))
+        .count();
+    hits as f64 / terms.len() as f64
+}
+
+/// Rank fusion scores rank 2 almost like rank 1, so a hit sharing one word with the query
+/// survives next to a hit that matches all of them. Keep hits close to the best coverage.
+/// Coverage is substring-based, so a typo like "reinstal" still covers "reinstall"; a best
+/// coverage of zero means nothing matches and the vector leg only found noise.
+fn drop_weak_term_matches(matches: &mut Vec<MemoryMatch>, query: &str) {
+    let terms = query_terms(query);
+    if terms.is_empty() {
+        return;
+    }
+    let coverage: Vec<f64> = matches.iter().map(|m| term_coverage(&terms, &m.memory)).collect();
+    let best = coverage.iter().copied().fold(0.0, f64::max);
+    if best == 0.0 {
+        matches.clear();
+        return;
+    }
+    let mut index = 0;
+    matches.retain(|_| {
+        let keep = coverage[index] >= best * MIN_RELATIVE_COVERAGE;
+        index += 1;
+        keep
+    });
 }
 
 pub async fn list(pool: &SqlitePool, limit: usize, offset: usize) -> Result<(Vec<MemoryRow>, i64), AxError> {

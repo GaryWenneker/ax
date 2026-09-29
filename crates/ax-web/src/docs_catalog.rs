@@ -21,21 +21,12 @@ pub fn router_hub(hub: WebHub) -> Router {
 }
 
 fn err(status: StatusCode, msg: impl Into<String>) -> axum::response::Response {
-    (
-        status,
-        Json(ApiError {
-            error: msg.into(),
-        }),
-    )
-        .into_response()
+    (status, Json(ApiError { error: msg.into() })).into_response()
 }
 
 fn forbidden_readonly() -> axum::response::Response {
     ax_usage::log_share(None, "readonly write denied");
-    err(
-        StatusCode::FORBIDDEN,
-        "read-only mode (AX_WEB_READONLY=1)",
-    )
+    err(StatusCode::FORBIDDEN, "read-only mode (AX_WEB_READONLY=1)")
 }
 
 #[derive(Deserialize)]
@@ -47,10 +38,7 @@ struct SyncInput {
     dry_run: bool,
 }
 
-async fn handle_sync(
-    State(hub): State<WebHub>,
-    Json(input): Json<SyncInput>,
-) -> impl IntoResponse {
+async fn handle_sync(State(hub): State<WebHub>, Json(input): Json<SyncInput>) -> impl IntoResponse {
     if hub.readonly {
         return forbidden_readonly();
     }

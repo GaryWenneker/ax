@@ -46,8 +46,8 @@ ax callees handleRequest      # what a function calls
 ax impact AuthMiddleware      # what a change would affect
 ```
 
-These four each accept `--json` for machine-readable output. See the full [CLI reference](/ax/reference/cli/).
+These four each accept `--json` for machine-readable output. See the full [CLI reference](/reference/cli/).
 
 ## Hand it to your agent
 
-With a `.ax/` directory present and an agent configured (see [Installation](/ax/getting-started/installation/)), your agent uses the [MCP tools](/ax/reference/mcp-server/) automatically — no extra step.
+With a `.ax/` directory present and an agent configured (see [Installation](/getting-started/installation/)), your agent uses the [MCP tools](/reference/mcp-server/) automatically — no extra step.

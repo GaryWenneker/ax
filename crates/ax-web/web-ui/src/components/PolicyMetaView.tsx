@@ -1,7 +1,9 @@
+import Codicon from './Codicon';
 import { LevelBadge, ScopeBadge } from './ui/PageLayout';
 import { GitShareDot } from './ui/GitShareDot';
-import { isGitShared, POLICY_DB_INK, policyDbAccent } from './ui/policyListUtils';
+import { isGitShared, policyDbAccent } from './ui/policyListUtils';
 import { scopeLabel } from '../policyTypes';
+import { formatPropertyValue } from '../lib/policyProperties';
 import { skillGroupLabel } from '../skillGroups';
 
 function GitShareStatus({ scope, enabled }: { scope?: string; enabled?: boolean }) {
@@ -28,13 +30,12 @@ export function OriginDbBadge({
   const title = global
     ? `Parked in ~/.ax/global.db${projectName ? ` (source: ${projectName})` : ''}. Agents still match only this project's ax.db.`
     : 'Stored in this project ax.db';
-  const accent = policyDbAccent(origin);
   return (
     <span
       className={`page-item-badge page-origin-badge page-origin-badge--${global ? 'global' : 'project'}`}
       title={title}
-      style={{ background: accent, color: POLICY_DB_INK }}
     >
+      <Codicon name={global ? 'globe' : 'repo'} className="badge-icon" />
       {label}
     </span>
   );
@@ -88,17 +89,44 @@ export function TagList({
               }}
               title={isActive ? `Remove filter: ${item}` : `Filter by ${item}`}
             >
+              <Codicon name="tag" className="badge-icon" />
               {item}
             </button>
           );
         }
         return (
           <span key={item} className={`page-item-badge${isActive ? ' page-item-badge--active' : ''}`}>
+            <Codicon name="tag" className="badge-icon" />
             {item}
           </span>
         );
       })}
     </span>
+  );
+}
+
+function PropertyList({ properties }: { properties?: Record<string, unknown> }) {
+  const entries = Object.entries(properties ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) {
+    return (
+      <div className="detail-kv">
+        <span className="detail-key">Properties</span>
+        <span className="detail-val"><span className="policy-view-empty">None</span></span>
+      </div>
+    );
+  }
+  return (
+    <div className="detail-kv detail-kv--stack">
+      <span className="detail-key">Properties</span>
+      <span className="detail-val">
+        {entries.map(([key, value]) => (
+          <span key={key} className="policy-properties-read">
+            <span className="policy-properties-read-key">{key}</span>
+            {formatPropertyValue(value)}
+          </span>
+        ))}
+      </span>
+    </div>
   );
 }
 
@@ -119,6 +147,7 @@ export function RuleMetaView({
   activeLevel,
   activeScope,
   activeTags,
+  properties,
 }: {
   id: string;
   level: string;
@@ -136,6 +165,7 @@ export function RuleMetaView({
   activeLevel?: string;
   activeScope?: string;
   activeTags?: string[];
+  properties?: Record<string, unknown>;
 }) {
   return (
     <div className="policy-view-meta">
@@ -199,6 +229,7 @@ export function RuleMetaView({
           <TagList items={tags} empty="None" onTagClick={onTagClick} activeTags={activeTags} />
         </span>
       </div>
+      <PropertyList properties={properties} />
     </div>
   );
 }
@@ -214,6 +245,7 @@ export function SkillMetaView({
   scope,
   enabled = true,
   group,
+  properties,
 }: {
   name: string;
   description: string;
@@ -225,6 +257,7 @@ export function SkillMetaView({
   scope?: string;
   enabled?: boolean;
   group?: string | null;
+  properties?: Record<string, unknown>;
 }) {
   return (
     <div className="policy-view-meta">
@@ -278,6 +311,7 @@ export function SkillMetaView({
           <span className="detail-val">{contextTask}</span>
         </div>
       )}
+      <PropertyList properties={properties} />
     </div>
   );
 }

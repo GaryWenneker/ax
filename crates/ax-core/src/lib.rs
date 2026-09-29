@@ -1,6 +1,7 @@
 //! Ax facade - wires all layers together.
 
 mod project_config;
+pub mod review_language;
 pub mod okf;
 pub mod policy_dedup;
 pub mod report;
@@ -798,6 +799,26 @@ impl Ax {
     ) -> Result<ax_policy::MatchResult, ax_utils::errors::AxError> {
         let extras = self.global_policy_skills().await;
         ax_policy::match_policy_with_extra_skills(self.db.pool(), &input, extras).await
+    }
+
+    /// Project rules, and skills with the global ones merged in, as preflight matches them.
+    pub async fn policy_rows(
+        &self,
+    ) -> Result<
+        (
+            Vec<ax_policy::types::PolicyRuleRow>,
+            Vec<ax_policy::types::PolicySkillRow>,
+        ),
+        ax_utils::errors::AxError,
+    > {
+        let (rules, skills) = ax_policy::matcher::cached_rules_and_skills(self.db.pool()).await?;
+        let extras = self.global_policy_skills().await;
+        let skills = if extras.is_empty() {
+            (*skills).clone()
+        } else {
+            ax_policy::matcher::merge_skills((*skills).clone(), extras)
+        };
+        Ok(((*rules).clone(), skills))
     }
 
     pub async fn get_policy_skill(

@@ -121,7 +121,10 @@ pub fn validate(graph: &DomainGraph) -> Result<(), String> {
             return Err(format!("domain edge target {} is not a node", edge.target));
         }
         if edge.source == edge.target {
-            return Err(format!("domain edge {} → {} is a self-loop", edge.source, edge.target));
+            return Err(format!(
+                "domain edge {} → {} is a self-loop",
+                edge.source, edge.target
+            ));
         }
     }
     Ok(())
@@ -136,8 +139,8 @@ pub fn load(project_root: &Path) -> Result<DomainGraph, String> {
     if bytes.is_empty() {
         return Ok(DomainGraph::empty());
     }
-    let graph: DomainGraph = serde_json::from_slice(&bytes)
-        .map_err(|e| format!("parse {}: {e}", path.display()))?;
+    let graph: DomainGraph =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse {}: {e}", path.display()))?;
     validate(&graph)?;
     Ok(graph)
 }
@@ -148,9 +151,11 @@ pub fn save(project_root: &Path, graph: &DomainGraph) -> Result<(), String> {
     std::fs::create_dir_all(&ax_dir).map_err(|e| format!("create {}: {e}", ax_dir.display()))?;
     let path = domain_graph_path(project_root);
     let tmp = ax_dir.join(format!("{DOMAIN_GRAPH_FILE}.tmp"));
-    let json = serde_json::to_vec_pretty(graph).map_err(|e| format!("serialize domain graph: {e}"))?;
+    let json =
+        serde_json::to_vec_pretty(graph).map_err(|e| format!("serialize domain graph: {e}"))?;
     std::fs::write(&tmp, json).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename {} → {}: {e}", tmp.display(), path.display()))?;
+    std::fs::rename(&tmp, &path)
+        .map_err(|e| format!("rename {} → {}: {e}", tmp.display(), path.display()))?;
     Ok(())
 }
 
@@ -158,15 +163,14 @@ pub async fn handle_get(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     match load(&ws.project_root) {
         Ok(graph) => (StatusCode::OK, Json(graph)).into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(ApiError { error: e }),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(ApiError { error: e })).into_response(),
     }
 }
 
-pub async fn handle_put(State(hub): State<WebHub>, Json(graph): Json<DomainGraph>) -> impl IntoResponse {
+pub async fn handle_put(
+    State(hub): State<WebHub>,
+    Json(graph): Json<DomainGraph>,
+) -> impl IntoResponse {
     if hub.readonly {
         return (
             StatusCode::FORBIDDEN,
@@ -179,11 +183,7 @@ pub async fn handle_put(State(hub): State<WebHub>, Json(graph): Json<DomainGraph
     let ws = hub.read().await;
     match save(&ws.project_root, &graph) {
         Ok(()) => (StatusCode::OK, Json(graph)).into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(ApiError { error: e }),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(ApiError { error: e })).into_response(),
     }
 }
 

@@ -3,17 +3,14 @@ id: modal-forms
 level: CRITICAL
 alwaysApply: false
 globs: ["crates/ax-web/web-ui/**"]
-triggers: [
-  "form", "modal", "dialog", "overlay", "blur", "blurred backdrop",
-  "edit screen", "new screen", "create screen", "add profile", "add rule",
-  "composer", "settings form", "inline form", "new memory", "ProfileEditor",
-  "PolicyRuleEditor", "PolicySkillEditor", "AgentsSettings", "Settings.tsx",
-  "Memory.tsx", "PageCard", "settings page", "web-ui", "Command Center",
-  "edit form", "create form", "multi-field", "wizard"
-]
-tags: ["ax-web", "ui", "modal", "forms"]
+triggers: ["form","modal","dialog","overlay","blur","blurred backdrop","edit screen","new screen","create screen","add profile","add rule","composer","settings form","inline form","new memory","ProfileEditor","PolicyRuleEditor","PolicySkillEditor","AgentsSettings","Settings.tsx","Memory.tsx","PageCard","settings page","web-ui","Command Center","edit form","create form","multi-field","wizard"]
+tags: ["ax-web","ui","modal","forms"]
 priority: 92
+enabled: true
+status: approved
+scope: project
 ---
+
 # ax web UI — modals for forms and edit screens
 
 > **ABSOLUTE**: Create, edit, and multi-field configuration flows MUST NOT render as inline page sections. They open in a **centered modal** with a **blurred backdrop**.
@@ -65,3 +62,9 @@ Use `ModalShell` from `components/ModalShell.tsx`:
 ## With web-ui changes
 
 Follow `web-ui-rebuild` — rebuild and reinstall `ax` before handoff.
+
+## Related
+
+- [[web-ui-rebuild]] — rebuild before handoff
+- [[outline-badges]] — same Command Center pages
+- [[wcag-contrast]] — same Command Center chrome

@@ -15,13 +15,35 @@ import GraphOnboard, { suggestedQuestionsFromGraph } from '../components/GraphOn
 import { Spinner } from '../components/ui/Spinner';
 import { usePersistedNumber } from '../hooks/usePersistedState';
 import { layoutDomainGraph } from '../lib/domainLayout';
+import {
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  forceX,
+  forceY,
+  type Simulation,
+  type SimulationLinkDatum,
+} from 'd3-force';
+import GraphSettingsPanel from '../components/GraphSettingsPanel';
+import { ResizableBlade } from '../components/BladeResize';
+import { loadGraphSettings, saveGraphSettings, type GraphSettings } from '../lib/graphSettings';
+import { filterGraph, groupColor } from '../lib/graphFilter';
+import { buildNeighbors, highlightFor, selectionPulse, type Highlight, type NeighborIndex } from '../lib/graphHover';
+import { forceParams, seedCluster } from '../lib/graphForces';
+import { labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
 
 interface SimNode extends GraphNode {
   x: number;
   y: number;
   vx: number;
   vy: number;
+  index?: number;
+  fx?: number | null;
+  fy?: number | null;
 }
+
+type SimLink = SimulationLinkDatum<SimNode>;
 
 interface SimEdge {
   source: number;
@@ -56,10 +78,13 @@ function dashFor(confidence?: string): number[] {
 const GRAPH_NODE_STEPS = [50, 100, 150, 200, 300, 400, 600] as const;
 const DEFAULT_STEP_INDEX = 1; // 100 nodes
 
-/** Visual radius from graph degree — kept small to reduce overlap. */
+/** World-space radius from graph degree; zooming in scales it up. */
 function nodeRadius(degree: number): number {
-  return Math.min(1.0 + Math.sqrt(degree) * 0.5, 7);
+  return Math.min(2.5 + Math.sqrt(degree) * 0.6, 12);
 }
+
+/** Obsidian slider units are large; this maps them onto canvas pixels. */
+const WORLD_UNIT = 0.3;
 
 function visualRadius(n: { kind: string; degree: number }): number {
   if (n.kind === 'domain') return 12;
@@ -68,7 +93,14 @@ function visualRadius(n: { kind: string; degree: number }): number {
   return nodeRadius(n.degree);
 }
 
-const LABEL_FONT = '8px var(--font-mono, monospace)';
+function clusterRadius(n: number): number {
+  return 4 * Math.sqrt(Math.max(1, n));
+}
+
+function themeAccent(): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  return v || '#7c4dff';
+}
 
 type GraphDetail = {
   maxIterations: number;
@@ -138,6 +170,25 @@ export default function GraphPage() {
   const matchRef = useRef<Set<string> | null>(null);
   const hideNonMatchesRef = useRef(false);
   const detailRef = useRef<GraphDetail>(detailForNodeLimit(DEFAULT_LIMIT));
+  const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
+  const [settings, setSettings] = useState<GraphSettings>(() => loadGraphSettings());
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest('.graph-settings, .graph-settings-toggle')) return;
+      setSettingsOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [settingsOpen]);
+  const [insightsOpen, setInsightsOpen] = useState(false);
+  const visibleRef = useRef<{ nodes: Set<number>; edges: Set<number> } | null>(null);
+  const neighborsRef = useRef<NeighborIndex>([]);
+  const highlightRef = useRef<Highlight>({ nodes: new Set(), edges: new Set() });
 
   const [stepIndex, setStepIndex] = usePersistedNumber(
     'graph-node-step',
@@ -155,6 +206,8 @@ export default function GraphPage() {
   const [loadDone, setLoadDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState('');
   const [communityFilter, setCommunityFilter] = useState('');
@@ -276,6 +329,11 @@ export default function GraphPage() {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
     runningRef.current = false;
+    simRef.current?.stop();
+    simRef.current = null;
+    visibleRef.current = null;
+    neighborsRef.current = [];
+    highlightRef.current = { nodes: new Set(), edges: new Set() };
     iterationsRef.current = 0;
     settledRef.current = false;
     simNodesRef.current = [];
@@ -293,13 +351,14 @@ export default function GraphPage() {
     const h = wrap?.clientHeight ?? 600;
     const nodes = simNodesRef.current;
     const idIndex = idIndexRef.current;
-    const radius = Math.min(w, h) * 0.35;
-    for (const n of batch) {
-      if (idIndex.has(n.id)) continue;
-      // Seed on a jittered ring around the center; the force layout settles it.
-      const angle = Math.random() * Math.PI * 2;
-      const r = radius * (0.4 + Math.random() * 0.6);
-      nodes.push({ ...n, x: w / 2 + Math.cos(angle) * r, y: h / 2 + Math.sin(angle) * r, vx: 0, vy: 0 });
+    const fresh = batch.filter((n) => !idIndex.has(n.id));
+    // Obsidian-style start: every node begins in one tight cluster at the
+    // center and the simulation spreads it out.
+    const total = nodes.length + fresh.length;
+    const seeds = seedCluster(total, w / 2, h / 2, clusterRadius(total));
+    for (const n of fresh) {
+      const p = seeds[nodes.length];
+      nodes.push({ ...n, x: p.x, y: p.y, vx: 0, vy: 0 });
       idIndex.set(n.id, nodes.length - 1);
     }
   }
@@ -341,6 +400,7 @@ export default function GraphPage() {
         onEdges: (batch) => {
           addEdges(batch);
           setEdgeCount(simEdgesRef.current.length);
+          ensureSimulation();
         },
         onDone: () => {
           setLoading(false);
@@ -567,139 +627,119 @@ export default function GraphPage() {
     requestDraw();
   }
 
-  // Start (or keep) the physics loop. Adding nodes mid-flight resets the
-  // settle state so the layout keeps relaxing as the stream fills in.
-  function ensureSimulation() {
+  function worldRadius(n: SimNode): number {
+    return visualRadius(n) * settingsRef.current.nodeSize;
+  }
+
+  // Visible set (settings filters) plus the neighbor index used for hover.
+  const visibleEdgeListRef = useRef<number[]>([]);
+  function applyFilters() {
+    const nodes = simNodesRef.current;
+    const edges = simEdgesRef.current;
+    const r = filterGraph(nodes, edges, settingsRef.current);
+    visibleRef.current = { nodes: r.nodes, edges: new Set(r.edges) };
+    visibleEdgeListRef.current = r.edges;
+    neighborsRef.current = buildNeighbors(nodes.length, r.edges.map((i) => edges[i]));
+    updateHighlight();
+  }
+
+  function updateHighlight() {
+    const hovered = hoverRef.current;
+    const idx = hovered ? idIndexRef.current.get(hovered.id) ?? null : null;
+    const local = highlightFor(idx, neighborsRef.current);
+    const list = visibleEdgeListRef.current;
+    highlightRef.current = { nodes: local.nodes, edges: new Set([...local.edges].map((i) => list[i])) };
+  }
+
+  function setHover(hit: SimNode | null) {
+    if (hit === hoverRef.current) return;
+    hoverRef.current = hit;
+    if (wrapRef.current) wrapRef.current.dataset.hover = hit?.name ?? '';
+    updateHighlight();
+    requestDraw();
+  }
+
+  // Start (or reheat) the d3-force simulation over the visible nodes.
+  function ensureSimulation(alpha = 1) {
     if (viewModeRef.current === 'domain') {
       requestDraw();
       return;
     }
-    settledRef.current = false;
-    if (runningRef.current) return;
-    runningRef.current = true;
-    startSimulation();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    applyFilters();
+    const vis = visibleRef.current!;
+    const all = simNodesRef.current;
+    const edges = simEdgesRef.current;
+    const simNodes = all.filter((_, i) => vis.nodes.has(i));
+    const degree = new Map<SimNode, number>();
+    const links: SimLink[] = [];
+    for (const i of vis.edges) {
+      const a = all[edges[i].source];
+      const b = all[edges[i].target];
+      degree.set(a, (degree.get(a) ?? 0) + 1);
+      degree.set(b, (degree.get(b) ?? 0) + 1);
+      links.push({ source: a, target: b });
+    }
+    const p = forceParams(settingsRef.current);
+    const dpr = window.devicePixelRatio || 1;
+    const cx = canvas.width / dpr / 2;
+    const cy = canvas.height / dpr / 2;
+    let sim = simRef.current;
+    if (!sim) {
+      sim = forceSimulation<SimNode, SimLink>().alphaDecay(0.0228).velocityDecay(0.4);
+      sim.on('tick', draw);
+      simRef.current = sim;
+    }
+    const endDegree = (end: SimNode | string | number) => degree.get(end as SimNode) ?? 1;
+    sim
+      .nodes(simNodes)
+      .force('charge', forceManyBody<SimNode>().strength(p.charge).distanceMax(900))
+      .force(
+        'link',
+        forceLink<SimNode, SimLink>(links)
+          .distance(p.linkDistance * WORLD_UNIT)
+          .strength((l) => p.linkStrength / Math.min(endDegree(l.source), endDegree(l.target))),
+      )
+      .force('x', forceX<SimNode>(cx).strength(p.center))
+      .force('y', forceY<SimNode>(cy).strength(p.center))
+      .force('collide', forceCollide<SimNode>((n) => worldRadius(n) + 14).strength(0.9));
+    sim.alpha(Math.max(sim.alpha(), alpha)).restart();
   }
 
-  function startSimulation() {
-    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+  // Obsidian "Animate": collapse everything back into the start cluster.
+  function animateFromCluster() {
     const canvas = canvasRef.current;
-    const wrap = wrapRef.current;
-    if (!canvas || !wrap) {
-      runningRef.current = false;
+    const nodes = simNodesRef.current;
+    if (!canvas || !nodes.length) return;
+    const dpr = window.devicePixelRatio || 1;
+    const seeds = seedCluster(nodes.length, canvas.width / dpr / 2, canvas.height / dpr / 2, clusterRadius(nodes.length));
+    nodes.forEach((n, i) => {
+      n.x = seeds[i].x;
+      n.y = seeds[i].y;
+      n.vx = 0;
+      n.vy = 0;
+    });
+    ensureSimulation(1);
+  }
+
+  function dragNodeTo(node: SimNode, x: number, y: number) {
+    node.x = x;
+    node.y = y;
+    if (viewModeRef.current === 'domain') {
+      requestDraw();
       return;
     }
+    node.fx = x;
+    node.fy = y;
+    simRef.current?.alphaTarget(0.3).restart();
+  }
 
-    const step = () => {
-      const nodes = simNodesRef.current;
-      const edges = simEdgesRef.current;
-      const w = canvas.width / (window.devicePixelRatio || 1);
-      const h = canvas.height / (window.devicePixelRatio || 1);
-      const cx = w / 2;
-      const cy = h / 2;
-      const maxIter = detailRef.current.maxIterations;
-      const isDragging = draggingRef.current.node != null;
-
-      const keepAlive = isDragging || iterationsRef.current < maxIter;
-      if (keepAlive && nodes.length > 0) {
-        const k = Math.sqrt((w * h) / Math.max(1, nodes.length)) * 1.8;
-        const cell = Math.max(1, k);
-
-        // Uniform spatial grid: only repel against nodes in the same and
-        // neighboring cells. This turns the O(n^2) repulsion into ~O(n),
-        // which is what keeps large graphs from freezing while they load.
-        const grid = new Map<number, number[]>();
-        const cols = Math.max(1, Math.ceil(w / cell) + 4);
-        const cellKey = (gx: number, gy: number) => (gy + 2) * cols + (gx + 2);
-        for (let i = 0; i < nodes.length; i++) {
-          const gx = Math.floor(nodes[i].x / cell);
-          const gy = Math.floor(nodes[i].y / cell);
-          const key = cellKey(gx, gy);
-          let arr = grid.get(key);
-          if (!arr) {
-            arr = [];
-            grid.set(key, arr);
-          }
-          arr.push(i);
-        }
-
-        for (let i = 0; i < nodes.length; i++) {
-          const a = nodes[i];
-          const gx = Math.floor(a.x / cell);
-          const gy = Math.floor(a.y / cell);
-          for (let ox = -1; ox <= 1; ox++) {
-            for (let oy = -1; oy <= 1; oy++) {
-              const arr = grid.get(cellKey(gx + ox, gy + oy));
-              if (!arr) continue;
-              for (const j of arr) {
-                if (j <= i) continue; // count each unordered pair once
-                const b = nodes[j];
-                let dx = a.x - b.x;
-                let dy = a.y - b.y;
-                let dist2 = dx * dx + dy * dy;
-                if (dist2 < 0.01) {
-                  dx = Math.random() - 0.5;
-                  dy = Math.random() - 0.5;
-                  dist2 = 0.01;
-                }
-                const dist = Math.sqrt(dist2);
-                const force = (k * k) / dist;
-                const fx = (dx / dist) * force;
-                const fy = (dy / dist) * force;
-                a.vx += fx;
-                a.vy += fy;
-                b.vx -= fx;
-                b.vy -= fy;
-              }
-            }
-          }
-        }
-
-        // Attraction along edges (springs) — softer than repulsion for wider spacing.
-        for (const e of edges) {
-          const a = nodes[e.source];
-          const b = nodes[e.target];
-          if (!a || !b) continue;
-          const dx = a.x - b.x;
-          const dy = a.y - b.y;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
-          const force = (dist * dist) / k * 0.6;
-          const fx = (dx / dist) * force;
-          const fy = (dy / dist) * force;
-          a.vx -= fx;
-          a.vy -= fy;
-          b.vx += fx;
-          b.vy += fy;
-        }
-
-        // Gravity toward center + integrate with cooling.
-        const cooling = isDragging ? 0.5 : 1 - iterationsRef.current / maxIter;
-        const maxDisp = isDragging ? 15 : 30 * cooling + 1;
-        for (const n of nodes) {
-          n.vx += (cx - n.x) * 0.001;
-          n.vy += (cy - n.y) * 0.001;
-          if (draggingRef.current.node === n) {
-            n.vx = 0;
-            n.vy = 0;
-            continue;
-          }
-          const disp = Math.sqrt(n.vx * n.vx + n.vy * n.vy) || 0.01;
-          const limited = Math.min(disp, maxDisp);
-          n.x += (n.vx / disp) * limited;
-          n.y += (n.vy / disp) * limited;
-          n.vx *= isDragging ? 0.7 : 0.85;
-          n.vy *= isDragging ? 0.7 : 0.85;
-        }
-        iterationsRef.current++;
-        draw();
-        rafRef.current = requestAnimationFrame(step);
-      } else {
-        settledRef.current = true;
-        runningRef.current = false;
-        rafRef.current = null;
-        draw();
-      }
-    };
-    rafRef.current = requestAnimationFrame(step);
+  function releaseDraggedNode(node: SimNode | null) {
+    if (!node) return;
+    node.fx = null;
+    node.fy = null;
+    simRef.current?.alphaTarget(0);
   }
 
   // Schedule a single redraw (used for hover/drag/pan/zoom once the layout is
@@ -712,11 +752,24 @@ export default function GraphPage() {
     });
   }
 
-  function worldToScreen(wx: number, wy: number): { x: number; y: number } {
-    const { scale, offsetX, offsetY } = transformRef.current;
-    return { x: wx * scale + offsetX, y: wy * scale + offsetY };
+  function drawArrow(ctx: CanvasRenderingContext2D, a: SimNode, b: SimNode, size: number) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    const tipX = b.x - ux * worldRadius(b);
+    const tipY = b.y - uy * worldRadius(b);
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX - ux * size - uy * size * 0.5, tipY - uy * size + ux * size * 0.5);
+    ctx.lineTo(tipX - ux * size + uy * size * 0.5, tipY - uy * size - ux * size * 0.5);
+    ctx.closePath();
+    ctx.fill();
   }
 
+  // Everything is drawn in world space, so zooming in makes nodes, links, and
+  // labels bigger (Obsidian behavior).
   function draw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -726,103 +779,148 @@ export default function GraphPage() {
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
     const { scale, offsetX, offsetY } = transformRef.current;
+    const s = settingsRef.current;
+    const accent = themeAccent();
 
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offsetX, dpr * offsetY);
 
     const nodes = simNodesRef.current;
     const edges = simEdgesRef.current;
+    const vis = viewModeRef.current === 'domain' ? null : visibleRef.current;
     const match = matchRef.current;
     const hideNonMatches = hideNonMatchesRef.current;
     const isMatch = (n: SimNode) => match == null || match.has(n.id);
+    const hovering = hoverRef.current != null;
+    const hi = highlightRef.current;
     const detail = detailRef.current;
     const edgeStride =
-      edges.length > detail.maxEdgesDrawn
-        ? Math.ceil(edges.length / detail.maxEdgesDrawn)
-        : 1;
+      edges.length > detail.maxEdgesDrawn ? Math.ceil(edges.length / detail.maxEdgesDrawn) : 1;
 
-    // Edges scale with zoom (world space).
-    ctx.translate(offsetX, offsetY);
-    ctx.scale(scale, scale);
-    ctx.lineWidth = 0.45 / scale;
     for (let ei = 0; ei < edges.length; ei++) {
+      if (vis && !vis.edges.has(ei)) continue;
       const e = edges[ei];
       const a = nodes[e.source];
       const b = nodes[e.target];
       if (!a || !b) continue;
-      const highlight =
-        hoverRef.current && (nodes[e.source] === hoverRef.current || nodes[e.target] === hoverRef.current);
+      const highlight = hi.edges.has(ei);
       const aMatch = isMatch(a);
       const bMatch = isMatch(b);
       if (hideNonMatches && match != null && (!aMatch || !bMatch)) continue;
-      const dimmed = !hideNonMatches && match != null && !aMatch && !bMatch;
-      if (ei % edgeStride !== 0 && !highlight && !dimmed && match == null) continue;
+      const dimmed = (!hideNonMatches && match != null && !aMatch && !bMatch) || (hovering && !highlight);
+      if (ei % edgeStride !== 0 && !highlight && match == null) continue;
+      const color = highlight ? accent : dimmed ? 'rgba(140,140,160,0.06)' : 'rgba(140,140,160,0.35)';
       ctx.beginPath();
-      ctx.setLineDash(dashFor(e.confidence).map((d) => d / scale));
-      ctx.strokeStyle = dimmed
-        ? 'rgba(140,140,160,0.04)'
-        : highlight
-          ? 'rgba(200,200,255,0.7)'
-          : 'rgba(140,140,160,0.18)';
+      ctx.setLineDash(dashFor(e.confidence));
+      ctx.lineWidth = (s.linkThickness * 0.7) / scale;
+      ctx.strokeStyle = color;
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
+      if (s.arrows) {
+        ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        drawArrow(ctx, a, b, (5 * s.linkThickness) / scale);
+      }
     }
     ctx.setLineDash([]);
 
-    // Nodes and labels stay fixed screen size regardless of zoom.
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    for (const n of nodes) {
-      const { x: sx, y: sy } = worldToScreen(n.x, n.y);
+    const fadeAlpha = labelAlpha(scale, s.textFadeThreshold);
+    const LABEL_PX = labelPx(scale);
+    ctx.font = '10px var(--font-mono, monospace)';
+    const labels: (LabelBox & { n: SimNode; alpha: number })[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      if (vis && !vis.nodes.has(i)) continue;
+      const n = nodes[i];
       const domainKind = n.kind === 'domain' || n.kind === 'flow' || n.kind === 'step';
-      const r = visualRadius(n);
+      const r = worldRadius(n);
       const isDoc = n.kind === 'doc';
       const matched = isMatch(n);
       if (hideNonMatches && match != null && !matched) continue;
-      const dimmed = !hideNonMatches && match != null && !matched;
-      ctx.globalAlpha = dimmed ? 0.12 : 1;
+      const inHover = hi.nodes.has(i);
+      const dimmed = (!hideNonMatches && match != null && !matched) || (hovering && !inHover);
+      ctx.globalAlpha = dimmed ? 0.15 : 1;
       ctx.beginPath();
-      ctx.fillStyle = isDoc ? '#e0b341' : colorFor(n.community_id);
+      const base = groupColor(n, s.groups) ?? (isDoc ? '#e0b341' : colorFor(n.community_id));
+      ctx.fillStyle = n === hoverRef.current ? accent : base;
       if (n.kind === 'domain') {
         const rw = 26;
         const rh = 16;
         if (typeof ctx.roundRect === 'function') {
-          ctx.roundRect(sx - rw / 2, sy - rh / 2, rw, rh, 3);
+          ctx.roundRect(n.x - rw / 2, n.y - rh / 2, rw, rh, 3);
         } else {
-          ctx.rect(sx - rw / 2, sy - rh / 2, rw, rh);
+          ctx.rect(n.x - rw / 2, n.y - rh / 2, rw, rh);
         }
       } else if (n.kind === 'flow' || isDoc) {
-        ctx.rect(sx - r, sy - r, r * 2, r * 2);
+        ctx.rect(n.x - r, n.y - r, r * 2, r * 2);
       } else {
-        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       }
       ctx.fill();
       if (!dimmed && n.shared) {
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 2.5 / scale;
         ctx.strokeStyle = '#e0b341';
         ctx.stroke();
       }
       if (!dimmed && n.selected) {
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2 / scale;
         ctx.strokeStyle = 'rgba(255,255,255,0.95)';
         ctx.stroke();
       }
-      if (!dimmed && (n.id === selected || n === hoverRef.current)) {
-        ctx.lineWidth = 1.5;
+      if (!dimmed && n.id === selectedRef.current) {
+        ctx.lineWidth = 1.5 / scale;
         ctx.strokeStyle = '#fff';
         ctx.stroke();
       }
       const labelFocus =
-        n === hoverRef.current || n.id === selected || (match != null && matched);
-      if (!dimmed && (detail.showLabels || labelFocus || domainKind)) {
-        const fontSize = labelFocus || domainKind ? 9 : 8;
-        ctx.fillStyle = 'rgba(230,230,230,0.85)';
-        ctx.font = `${fontSize}px var(--font-mono, monospace)`;
-        ctx.fillText(n.name, sx + r + 1.5, sy + 2);
+        n === hoverRef.current || (hovering && inHover) || n.id === selectedRef.current || (match != null && matched);
+      let alpha = labelFocus || domainKind || s.labels ? 1 : fadeAlpha;
+      if (dimmed) alpha = labelFocus ? alpha : 0;
+      if (alpha > 0.01) {
+        const sx = n.x * scale + offsetX;
+        const sy = (n.y + r) * scale + offsetY + LABEL_PX * 0.2;
+        if (sx > -200 && sx < w + 200 && sy > -20 && sy < h + 20) {
+          const tw = ctx.measureText(n.name).width * LABEL_PX / 10;
+          labels.push({ n, alpha, x: sx - tw / 2, y: sy, w: tw, h: LABEL_PX * 1.3, priority: (labelFocus ? 1e6 : 0) + n.degree });
+        }
       }
     }
+
+    const sel = selectedRef.current == null ? undefined : idIndexRef.current.get(selectedRef.current);
+    const selNode = sel == null ? null : nodes[sel];
+    if (selNode && (!vis || vis.nodes.has(sel!))) {
+      const { grow, alpha } = selectionPulse(performance.now());
+      const base = worldRadius(selNode);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2 / scale;
+      ctx.beginPath();
+      ctx.arc(selNode.x, selNode.y, base + 3 / scale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = 1.5 / scale;
+      ctx.beginPath();
+      ctx.arc(selNode.x, selNode.y, base + (4 + grow * 18) / scale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // Labels in screen space at a fixed size; overlapping ones are skipped.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = `${LABEL_PX}px var(--font-mono, monospace)`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'rgba(230,230,230,0.9)';
+    for (const i of placeLabels(labels)) {
+      const l = labels[i];
+      ctx.globalAlpha = l.alpha;
+      ctx.fillText(l.n.name, l.x + l.w / 2, l.y);
+    }
+    ctx.textBaseline = 'alphabetic';
     ctx.globalAlpha = 1;
+    ctx.textAlign = 'start';
     ctx.restore();
   }
 
@@ -846,6 +944,36 @@ export default function GraphPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keep redrawing while a node is selected so its ring keeps pulsing.
+  useEffect(() => {
+    if (!selected) {
+      requestDraw();
+      return;
+    }
+    let raf = 0;
+    const tick = () => {
+      requestDraw();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  function showSelection() {
+    const idx = selected == null ? undefined : idIndexRef.current.get(selected);
+    const node = idx == null ? null : simNodesRef.current[idx];
+    if (!node) return;
+    centerOnNode(node);
+    requestDraw();
+  }
+
+  useEffect(() => {
+    saveGraphSettings(settings);
+    ensureSimulation(0.3);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings]);
+
   // Re-run the search when the term, kind filter, or completed dataset changes.
   useEffect(() => {
     applySearch(search, kindFilter, communityFilter);
@@ -855,6 +983,7 @@ export default function GraphPage() {
   useEffect(() => {
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      simRef.current?.stop();
       if (abortRef.current) abortRef.current();
     };
   }, []);
@@ -874,11 +1003,12 @@ export default function GraphPage() {
     const match = matchRef.current;
     const hideNonMatches = hideNonMatchesRef.current;
     const { scale } = transformRef.current;
-    const worldHit = (screenR: number) => (screenR + extraSlop) / scale;
+    const vis = viewModeRef.current === 'domain' ? null : visibleRef.current;
     for (let i = nodes.length - 1; i >= 0; i--) {
       const n = nodes[i];
+      if (vis && !vis.nodes.has(i)) continue;
       if (hideNonMatches && match != null && !match.has(n.id)) continue;
-      const r = worldHit(visualRadius(n) + 2);
+      const r = worldRadius(n) + (2 + extraSlop) / scale;
       if ((n.x - x) ** 2 + (n.y - y) ** 2 <= r * r) return n;
     }
     return null;
@@ -895,16 +1025,13 @@ export default function GraphPage() {
       lastX: ev.clientX,
       lastY: ev.clientY,
     };
-    if (n && viewModeRef.current !== 'domain') ensureSimulation();
   }
 
   function onPointerMove(ev: React.PointerEvent) {
     const drag = draggingRef.current;
     if (drag.node) {
       const { x, y } = toWorld(ev.clientX, ev.clientY);
-      drag.node.x = x;
-      drag.node.y = y;
-      if (!runningRef.current) ensureSimulation();
+      dragNodeTo(drag.node, x, y);
     } else if (drag.panning) {
       transformRef.current.offsetX += ev.clientX - drag.lastX;
       transformRef.current.offsetY += ev.clientY - drag.lastY;
@@ -912,16 +1039,13 @@ export default function GraphPage() {
       drag.lastY = ev.clientY;
       requestDraw();
     } else if (ev.pointerType === 'mouse') {
-      const hit = nodeAt(ev.clientX, ev.clientY);
-      if (hit !== hoverRef.current) {
-        hoverRef.current = hit;
-        requestDraw();
-      }
+      setHover(nodeAt(ev.clientX, ev.clientY));
     }
   }
 
   function endPointerDrag(ev: React.PointerEvent) {
     const drag = draggingRef.current;
+    releaseDraggedNode(drag.node);
     if (drag.node) {
       const moved = Math.abs(ev.clientX - drag.lastX) + Math.abs(ev.clientY - drag.lastY);
       if (moved < (ev.pointerType === 'touch' ? 16 : 8)) {
@@ -969,7 +1093,6 @@ export default function GraphPage() {
       const touch = ev.touches[0];
       const n = nodeAt(touch.clientX, touch.clientY, 16);
       draggingRef.current = { node: n, panning: !n, lastX: touch.clientX, lastY: touch.clientY };
-      if (n) ensureSimulation();
     }
   }
 
@@ -1003,9 +1126,7 @@ export default function GraphPage() {
       const drag = draggingRef.current;
       if (drag.node) {
         const { x, y } = toWorld(touch.clientX, touch.clientY);
-        drag.node.x = x;
-        drag.node.y = y;
-        if (!runningRef.current) ensureSimulation();
+        dragNodeTo(drag.node, x, y);
       } else if (drag.panning) {
         transformRef.current.offsetX += touch.clientX - drag.lastX;
         transformRef.current.offsetY += touch.clientY - drag.lastY;
@@ -1022,6 +1143,7 @@ export default function GraphPage() {
     }
     if (ev.touches.length === 0) {
       const drag = draggingRef.current;
+      releaseDraggedNode(drag.node);
       if (drag.node) {
         const touch = ev.changedTouches[0];
         if (touch) {
@@ -1173,7 +1295,7 @@ export default function GraphPage() {
       )}
 
       <div className="graph-body">
-        {viewMode === 'structure' && !isMobile && (
+        {viewMode === 'structure' && !isMobile && insightsOpen && (
           <GraphOnboard
             communities={onboardCommunities}
             godNodes={onboardGods}
@@ -1222,7 +1344,43 @@ export default function GraphPage() {
             </div>
           )}
 
-          <div className="graph-legend">
+          {viewMode === 'structure' && (
+            <div className="graph-canvas-tools" onPointerDown={(e) => e.stopPropagation()}>
+              {!isMobile && (
+                <button
+                  type="button"
+                  className={`btn-secondary${insightsOpen ? ' active' : ''}`}
+                  aria-pressed={insightsOpen}
+                  onClick={() => setInsightsOpen((v) => !v)}
+                >
+                  Insights
+                </button>
+              )}
+              {selected && (
+                <button type="button" className="btn-secondary" title="Center the graph on the selected node" onClick={showSelection}>
+                  ◎ Show selection
+                </button>
+              )}
+              <button
+                type="button"
+                className={`btn-secondary graph-settings-toggle${settingsOpen ? ' active' : ''}`}
+                aria-label="Graph settings"
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((v) => !v)}
+              >
+                ⚙ Settings
+              </button>
+            </div>
+          )}
+          {viewMode === 'structure' && settingsOpen && (
+            <GraphSettingsPanel
+              settings={settings}
+              onChange={setSettings}
+              onAnimate={animateFromCluster}
+              onClose={() => setSettingsOpen(false)}
+            />
+          )}
+          <div className={`graph-legend${viewMode === 'structure' ? ' graph-legend--bottom' : ''}`}>
             <div className="graph-legend-title">{viewMode === 'domain' ? 'Domain kinds' : meta?.palette === 'project' ? 'Projects' : 'Communities'}</div>
             {viewMode === 'domain' ? (
               <>
@@ -1271,6 +1429,55 @@ export default function GraphPage() {
             onNavigate={(id) => setSelected(id)}
           />
         )}
+        {viewMode === 'structure' && selected?.startsWith('g') && (() => {
+          const idx = idIndexRef.current.get(selected);
+          const node = idx == null ? null : simNodesRef.current[idx];
+          if (!node) return null;
+          const nodes = simNodesRef.current;
+          const links = simEdgesRef.current
+            .filter((e) => e.source === idx || e.target === idx)
+            .map((e) => ({ node: nodes[e.source === idx ? e.target : e.source], kind: e.kind, out: e.source === idx }));
+          const focus = (n: SimNode) => {
+            setSelected(n.id);
+            centerOnNode(n);
+            requestDraw();
+          };
+          return (
+            <ResizableBlade>
+            <aside className="detail-panel detail-panel--blade" aria-label="Node">
+              <div className="detail-header">
+                <span className="detail-title">{node.name}</span>
+                <button type="button" className="detail-close" onClick={() => setSelected(null)} aria-label="Close">
+                  ×
+                </button>
+              </div>
+              <div className="detail-body">
+                <div className="detail-meta">
+                  <div className="detail-kv"><span className="detail-key">Kind</span><span className="detail-val">{node.kind}</span></div>
+                  {node.file_path && (
+                    <div className="detail-kv"><span className="detail-key">File</span><span className="detail-val">{node.file_path}</span></div>
+                  )}
+                  {node.community_label && (
+                    <div className="detail-kv"><span className="detail-key">Project</span><span className="detail-val">{node.community_label}</span></div>
+                  )}
+                  <div className="detail-kv"><span className="detail-key">Links</span><span className="detail-val">{node.degree}</span></div>
+                </div>
+                <div>
+                  <div className="detail-section-title">Connections ({links.length} loaded)</div>
+                  <div className="edge-list">
+                    {links.map((l, i) => (
+                      <button key={`${l.node.id}-${i}`} type="button" className="edge-item" onClick={() => focus(l.node)}>
+                        <span className="edge-name">{l.out ? '→' : '←'} {l.node.name}</span>
+                        <span className="edge-kind">{l.kind}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </aside>
+            </ResizableBlade>
+          );
+        })()}
         {viewMode === 'domain' && selectedDomain && (
           <aside className="detail-panel detail-panel--blade" aria-label="Domain node">
             <div className="detail-header">

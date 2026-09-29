@@ -10,6 +10,7 @@ use ax_extraction::orchestrator::IndexOptions;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use crate::policy_session::PolicySessions;
 use crate::query_pool::{QueryPool, resolve_pool_size};
 
 async fn seed_memories_if_empty(pool: &SqlitePool, project_root: &Path) {
@@ -56,6 +57,7 @@ pub struct McpEngine {
     project_root: Option<PathBuf>,
     query_pool: Option<QueryPool>,
     catch_up_done: Arc<AtomicBool>,
+    policy_sessions: PolicySessions,
 }
 
 impl McpEngine {
@@ -65,6 +67,7 @@ impl McpEngine {
             project_root: None,
             query_pool: None,
             catch_up_done: Arc::new(AtomicBool::new(false)),
+            policy_sessions: PolicySessions::default(),
         }
     }
 
@@ -80,6 +83,7 @@ impl McpEngine {
             project_root: Some(project_root),
             query_pool,
             catch_up_done: Arc::new(AtomicBool::new(false)),
+            policy_sessions: PolicySessions::default(),
         }
     }
 
@@ -87,6 +91,10 @@ impl McpEngine {
     pub fn start_background_services(project_root: &Path) {
         let _ = Ax::spawn_background_watch(project_root.to_path_buf());
         ax_usage::spawn_ensure_daily_pricing_sync();
+    }
+
+    pub fn policy_sessions(&mut self) -> &mut PolicySessions {
+        &mut self.policy_sessions
     }
 
     pub fn query_pool(&self) -> Option<&QueryPool> {

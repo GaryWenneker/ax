@@ -1,0 +1,65 @@
+---
+id: install-version-resolution
+level: CRITICAL
+alwaysApply: false
+globs: ["install.ps1", "install.sh", "site/public/install.ps1", "site/public/install.sh", "crates/ax-cli/src/version_check.rs"]
+triggers: ["install.ps1", "install.sh", "ax upgrade", "latest available", "Test-AxReleaseAsset", "Resolve-AxVersion", "resolve_latest_installable"]
+tags: ["ops", "release", "install"]
+priority: 94
+---
+# Install / upgrade — version resolution (CRITICAL)
+
+> **Never use HTTP HEAD to probe GitHub Release asset URLs.** GitHub redirects to S3 signed URLs that often return 403/405 for HEAD. The installer then skips newer tags and picks the highest *old* release whose HEAD probe still passes (e.g. v2.0.10 while v2.0.14 exists).
+
+## Root cause
+
+`install.ps1` `Test-AxReleaseAsset` and `ax upgrade` (`version_check::release_asset_exists`) walk semver-sorted release tags and return the **first** tag with a downloadable bundle. If HEAD fails for v2.0.11+ but succeeds for v2.0.10, users see:
+
+```text
+Installing ax v2.0.10 (win32-x64) — latest available...
+```
+
+while `ax upgrade --check` correctly shows `2.0.10 → 2.0.14` (tag list does not verify assets).
+
+## Required probe (all platforms)
+
+**Primary:** GitHub Releases API asset list (`releases?per_page=30` or `releases/tags/{tag}`) — pick highest semver release whose `assets[]` contains `ax-{platform}.{zip|tar.gz}`. **No HTTP probe needed** when the API responds.
+
+**Fallback only** (API unreachable): 1-byte Range GET, accept **200** or **206**:
+
+| Location | Pattern |
+|---|---|
+| `install.ps1` | `Invoke-WebRequest -Headers @{ Range = 'bytes=0-0' }` |
+| `install.sh` | `curl -r 0-0` |
+| `version_check.rs` | `client.get(url).header("Range", "bytes=0-0")` |
+
+Do **not** use `Method Head` / `client.head()` for GitHub release download URLs — and do **not** rely on Range probes alone when the API is available (corporate proxies may block Range on S3 redirects).
+
+## Resolution order (keep in sync)
+
+1. GitHub `/releases/latest` tag_name
+2. GitHub `/releases?per_page=30` (non-draft, non-prerelease)
+3. `getax.wenneker.io/releases/latest.txt` (fallback only — may lag GitHub)
+
+Sort semver **descending**, pick first tag that passes the Range probe on GitHub **or** getax redirect URL.
+
+## Windows install side effects
+
+`install.ps1` syncs the downloaded binary to:
+
+- `%LOCALAPPDATA%\ax\current\bin\ax.exe` (canonical; prepended to user PATH)
+- `%LOCALAPPDATA%\ax\current\ax.exe`
+- `%USERPROFILE%\.cargo\bin\ax.exe` (unless `AX_KEEP_CARGO_BIN=1`)
+
+A bad version pick **downgrades** `cargo install` dev builds. Developers who use `cargo install --path crates/ax-cli` should set `AX_KEEP_CARGO_BIN=1` before running `install.ps1`.
+
+## Verify after changes
+
+```powershell
+# Must resolve v2.0.14+ (or current Cargo.toml tag), not an older installable:
+. .\install.ps1 -WhatIf  # or dot-source Resolve-AxVersion in a test harness
+irm https://getax.wenneker.io/install.ps1 | iex   # after deploy
+ax version
+```
+
+Pin when testing: `$env:AX_VERSION = 'v2.0.14'; irm https://getax.wenneker.io/install.ps1 | iex`

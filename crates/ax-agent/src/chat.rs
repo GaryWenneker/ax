@@ -35,11 +35,7 @@ impl ChatRunner {
     }
 
     /// Stream a single-turn reply using ax-reasoning offload config.
-    pub async fn stream_reply(
-        &self,
-        prompt: &str,
-        context: &str,
-    ) -> Result<String, String> {
+    pub async fn stream_reply(&self, prompt: &str, context: &str) -> Result<String, String> {
         let cfg = resolve_offload();
         if !cfg.enabled {
             return Ok(format!(
@@ -59,7 +55,9 @@ impl ChatRunner {
         let answer = ax_reasoning::synthesize_offload(prompt, context, Some(&meta))
             .await
             .ok_or_else(|| {
-                String::from("LLM request failed — check your API key and endpoint in ~/.ax/config.json")
+                String::from(
+                    "LLM request failed — check your API key and endpoint in ~/.ax/config.json",
+                )
             })?;
 
         Ok(answer)

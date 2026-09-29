@@ -469,6 +469,9 @@ async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<b
             if db_hash.as_deref() != Some(hash.as_str()) {
                 return Ok(true);
             }
+            if properties_differ(pool, "policy_rules", "id", &doc.frontmatter.id, &doc.frontmatter.properties).await? {
+                return Ok(true);
+            }
         }
     }
 
@@ -506,10 +509,36 @@ async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<b
             if db_hash.as_deref() != Some(hash.as_str()) {
                 return Ok(true);
             }
+            if properties_differ(pool, "policy_skills", "name", &doc.frontmatter.name, &doc.frontmatter.properties).await? {
+                return Ok(true);
+            }
         }
     }
 
     Ok(false)
+}
+
+async fn properties_differ(
+    pool: &SqlitePool,
+    table: &str,
+    id_col: &str,
+    id: &str,
+    parsed: &crate::types::PolicyProperties,
+) -> Result<bool, AxError> {
+    if parsed.is_empty() {
+        return Ok(false);
+    }
+    let sql = format!("SELECT properties FROM {table} WHERE {id_col} = ?");
+    let stored: Option<String> = sqlx::query_scalar(&sql)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let stored = stored
+        .as_deref()
+        .map(parse_properties)
+        .unwrap_or_default();
+    Ok(stored != *parsed)
 }
 
 /// Policy counts and storage mode for status / diagnostics.
@@ -535,15 +564,16 @@ async fn upsert_rule(
         .unwrap_or(crate::types::PolicyScope::Project)
         .as_str();
     sqlx::query(
-        "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope, storage, source, root_id, stub_path, skill_group)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO policy_rules (id, level, always_apply, globs, triggers, tags, priority, body, source_path, content_hash, updated_at, enabled, status, scope, storage, source, root_id, stub_path, skill_group, properties)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            level=excluded.level, always_apply=excluded.always_apply, globs=excluded.globs,
            triggers=excluded.triggers, tags=excluded.tags, priority=excluded.priority,
            body=excluded.body, source_path=excluded.source_path, content_hash=excluded.content_hash,
            updated_at=excluded.updated_at, enabled=excluded.enabled, status=excluded.status,
            scope=excluded.scope, storage=excluded.storage, source=excluded.source,
-           root_id=excluded.root_id, stub_path=excluded.stub_path, skill_group=excluded.skill_group",
+           root_id=excluded.root_id, stub_path=excluded.stub_path, skill_group=excluded.skill_group,
+           properties=excluded.properties",
     )
     .bind(&fm.id)
     .bind(&fm.level)
@@ -564,10 +594,19 @@ async fn upsert_rule(
     .bind(&fm.root_id)
     .bind(&doc.stub_path)
     .bind(&fm.group)
+    .bind(properties_json(&fm.properties))
     .execute(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
+}
+
+fn properties_json(properties: &crate::types::PolicyProperties) -> String {
+    serde_json::to_string(properties).unwrap_or_else(|_| "{}".into())
+}
+
+fn parse_properties(raw: &str) -> crate::types::PolicyProperties {
+    serde_json::from_str(raw).unwrap_or_default()
 }
 
 async fn upsert_skill(
@@ -581,15 +620,16 @@ async fn upsert_skill(
         .unwrap_or(crate::types::PolicyScope::Project)
         .as_str();
     sqlx::query(
-        "INSERT INTO policy_skills (name, description, always_apply, triggers, tags, priority, context_task, body, source_path, content_hash, updated_at, enabled, status, scope, storage, source, root_id, stub_path, skill_group)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO policy_skills (name, description, always_apply, triggers, tags, priority, context_task, body, source_path, content_hash, updated_at, enabled, status, scope, storage, source, root_id, stub_path, skill_group, properties)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET
            description=excluded.description, always_apply=excluded.always_apply, triggers=excluded.triggers, tags=excluded.tags,
            priority=excluded.priority, context_task=excluded.context_task, body=excluded.body,
            source_path=excluded.source_path, content_hash=excluded.content_hash, updated_at=excluded.updated_at,
            enabled=excluded.enabled, status=excluded.status, scope=excluded.scope,
            storage=excluded.storage, source=excluded.source, root_id=excluded.root_id,
-           stub_path=excluded.stub_path, skill_group=excluded.skill_group",
+           stub_path=excluded.stub_path, skill_group=excluded.skill_group,
+           properties=excluded.properties",
     )
     .bind(&fm.name)
     .bind(&fm.description)
@@ -610,6 +650,7 @@ async fn upsert_skill(
     .bind(&fm.root_id)
     .bind(&doc.stub_path)
     .bind(&fm.group)
+    .bind(properties_json(&fm.properties))
     .execute(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -669,12 +710,14 @@ async fn prune_skills_hybrid(pool: &SqlitePool, keep: &[String]) -> Result<(), A
 
 const RULE_SELECT: &str = "SELECT id, level, always_apply, globs, triggers, tags, priority, body, source_path,
                 COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
-                COALESCE(scope, 'project') as scope, storage, source, root_id, stub_path, skill_group
+                COALESCE(scope, 'project') as scope, storage, source, root_id, stub_path, skill_group,
+                COALESCE(properties, '{}') as properties
          FROM policy_rules";
 
 const SKILL_SELECT: &str = "SELECT name, description, COALESCE(always_apply, 0) as always_apply, triggers, tags, priority, context_task, body, source_path,
                 COALESCE(enabled, 1) as enabled, COALESCE(status, 'approved') as status,
-                COALESCE(scope, 'project') as scope, storage, source, root_id, stub_path, skill_group
+                COALESCE(scope, 'project') as scope, storage, source, root_id, stub_path, skill_group,
+                COALESCE(properties, '{}') as properties
          FROM policy_skills";
 
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError> {
@@ -816,6 +859,7 @@ pub fn rule_row_to_doc(row: &PolicyRuleRow, project_root: &Path) -> PolicyRuleDo
         } else {
             Some(row.group.clone())
         },
+        properties: row.properties.clone(),
     };
     let raw = serialize_rule(&fm, &row.body);
     let source = if row.source_path.is_empty() {
@@ -856,6 +900,7 @@ pub fn skill_row_to_doc(row: &PolicySkillRow, project_root: &Path) -> PolicySkil
         } else {
             Some(row.group.clone())
         },
+        properties: row.properties.clone(),
     };
     let raw = serialize_skill(&fm, &row.body);
     let source = if row.source_path.is_empty() {
@@ -907,6 +952,7 @@ struct RuleDbRow {
     root_id: Option<String>,
     stub_path: Option<String>,
     skill_group: Option<String>,
+    properties: String,
 }
 
 impl RuleDbRow {
@@ -940,6 +986,7 @@ impl RuleDbRow {
             effective_storage: String::new(),
             storage_is_override: false,
             group: self.skill_group.filter(|s| !s.is_empty()).unwrap_or_default(),
+            properties: parse_properties(&self.properties),
         }
     }
 }
@@ -963,6 +1010,7 @@ struct SkillDbRow {
     root_id: Option<String>,
     stub_path: Option<String>,
     skill_group: Option<String>,
+    properties: String,
 }
 
 impl SkillDbRow {
@@ -996,6 +1044,7 @@ impl SkillDbRow {
             effective_storage: String::new(),
             storage_is_override: false,
             group: self.skill_group.filter(|s| !s.is_empty()).unwrap_or_default(),
+            properties: parse_properties(&self.properties),
         }
     }
 }
@@ -1031,7 +1080,8 @@ mod tests {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'approved',
                 scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT
+                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
+                properties TEXT NOT NULL DEFAULT '{}'
             )",
         )
         .execute(&pool)
@@ -1048,7 +1098,8 @@ mod tests {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'approved',
                 scope TEXT NOT NULL DEFAULT 'project',
-                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT
+                storage TEXT, source TEXT, root_id TEXT, stub_path TEXT, skill_group TEXT,
+                properties TEXT NOT NULL DEFAULT '{}'
             )",
         )
         .execute(&pool)
@@ -1083,6 +1134,7 @@ mod tests {
             source: None,
             root_id: None,
             group: None,
+            properties: Default::default(),
         };
         let raw = serialize_rule(&fm, "body text");
         let doc = parse_rule_file(Path::new("test-rule.mdc"), &raw).unwrap();
@@ -1095,6 +1147,29 @@ mod tests {
         // index without force should not wipe DB-only rows
         let result = index_policy(&pool, root, false).await.unwrap();
         assert_eq!(result.rules_indexed, 1);
+    }
+
+    #[tokio::test]
+    async fn properties_survive_database_roundtrip() {
+        let (dir, pool) = test_pool().await;
+        let raw = "---\nid: demo\nlevel: INFO\nalwaysApply: true\nowner: platform\nfiles: [\"src/a.rs\"]\n---\n\nBody.\n";
+        let doc = parse_rule_file(Path::new("demo.mdc"), raw).unwrap();
+        upsert_rule_doc(&pool, &doc).await.unwrap();
+        let rows = list_rules(&pool).await.unwrap();
+        let row = rows.iter().find(|r| r.id == "demo").unwrap();
+        assert_eq!(row.properties["owner"], "platform");
+        assert_eq!(row.properties["files"], serde_json::json!(["src/a.rs"]));
+        let back = rule_row_to_doc(row, dir.path());
+        assert!(back.raw.contains("owner: platform"), "{}", back.raw);
+
+        let skill_raw = "---\nname: demo-skill\ndescription: d\nkind: review\n---\n\nSteps.\n";
+        let sdoc = parse_skill_file(Path::new("SKILL.md"), skill_raw).unwrap();
+        upsert_skill_doc(&pool, &sdoc).await.unwrap();
+        let skills = list_skills(&pool).await.unwrap();
+        let skill = skills.iter().find(|s| s.name == "demo-skill").unwrap();
+        assert_eq!(skill.properties["kind"], "review");
+        let skill_doc = skill_row_to_doc(skill, dir.path());
+        assert!(skill_doc.raw.contains("kind: review"), "{}", skill_doc.raw);
     }
 
     #[tokio::test]

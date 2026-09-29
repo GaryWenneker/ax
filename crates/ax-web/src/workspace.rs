@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use ax_agent::config::{
-    default_browse_roots, load_workspace_config, touch_recent_project,
+    default_browse_roots, forget_recent_project, load_workspace_config, projects_for_switcher,
+    touch_recent_project, RecentProject,
 };
 use axum::extract::{Query, State};
 use axum::response::{
@@ -99,6 +100,7 @@ async fn handle_current(State(hub): State<WebHub>) -> impl IntoResponse {
     let path = canonical_or(&ws.project_root);
     drop(ws);
     let _ = touch_recent_project(&path, is_initialized(&path));
+    let recent = switcher_projects().await;
     Json(serde_json::json!({
         "ok": true,
         "workspace": CurrentWorkspace {
@@ -106,14 +108,22 @@ async fn handle_current(State(hub): State<WebHub>) -> impl IntoResponse {
             label: path_label(&path),
             initialized: is_initialized(&path),
         },
-        "recent": load_workspace_config().recent,
+        "recent": recent,
     }))
+}
+
+async fn switcher_projects() -> Vec<RecentProject> {
+    // The home scan is blocking directory IO. A panicked scan still leaves the saved recent list.
+    match tokio::task::spawn_blocking(projects_for_switcher).await {
+        Ok(list) => list,
+        Err(_) => load_workspace_config().recent,
+    }
 }
 
 async fn handle_recent(State(_hub): State<WebHub>) -> impl IntoResponse {
     Json(serde_json::json!({
         "ok": true,
-        "recent": load_workspace_config().recent,
+        "recent": switcher_projects().await,
         "browse_roots": default_browse_roots().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>(),
     }))
 }
@@ -159,7 +169,10 @@ async fn handle_browse(
         for ent in read.flatten() {
             // Prefer DirEntry::file_type — includes empty dirs and avoids
             // extra metadata probes that can fail on locked Windows folders.
-            let is_dir = ent.file_type().map(|t| t.is_dir()).unwrap_or_else(|_| ent.path().is_dir());
+            let is_dir = ent
+                .file_type()
+                .map(|t| t.is_dir())
+                .unwrap_or_else(|_| ent.path().is_dir());
             if !is_dir {
                 continue;
             }
@@ -213,12 +226,14 @@ async fn handle_switch(
     {
         let ws = hub.read().await;
         if !is_path_allowed(&target, &ws.project_root) {
-            return Json(serde_json::json!({ "ok": false, "error": "Path not allowed" })).into_response();
+            return Json(serde_json::json!({ "ok": false, "error": "Path not allowed" }))
+                .into_response();
         }
     }
     let target = canonical_or(&target);
     if !target.is_dir() {
-        return Json(serde_json::json!({ "ok": false, "error": "Directory does not exist" })).into_response();
+        return Json(serde_json::json!({ "ok": false, "error": "Directory does not exist" }))
+            .into_response();
     }
     if !is_initialized(&target) {
         return Json(serde_json::json!({
@@ -249,10 +264,7 @@ struct MkdirBody {
     name: String,
 }
 
-async fn handle_mkdir(
-    State(hub): State<WebHub>,
-    Json(body): Json<MkdirBody>,
-) -> impl IntoResponse {
+async fn handle_mkdir(State(hub): State<WebHub>, Json(body): Json<MkdirBody>) -> impl IntoResponse {
     if hub.readonly {
         return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
     }
@@ -262,7 +274,8 @@ async fn handle_mkdir(
 
     let parent = PathBuf::from(&body.parent);
     if !is_path_allowed(&parent, &project_root) {
-        return Json(serde_json::json!({ "ok": false, "error": "Parent path not allowed" })).into_response();
+        return Json(serde_json::json!({ "ok": false, "error": "Parent path not allowed" }))
+            .into_response();
     }
     let parent = canonical_or(&parent);
     let new_path = match safe_join(&parent, &body.name) {
@@ -308,11 +321,13 @@ async fn handle_init_stream(
 
     let target = PathBuf::from(&body.path);
     if !is_path_allowed(&target, &project_root) {
-        return Json(serde_json::json!({ "ok": false, "error": "Path not allowed" })).into_response();
+        return Json(serde_json::json!({ "ok": false, "error": "Path not allowed" }))
+            .into_response();
     }
     let target = canonical_or(&target);
     if !target.is_dir() {
-        return Json(serde_json::json!({ "ok": false, "error": "Directory does not exist" })).into_response();
+        return Json(serde_json::json!({ "ok": false, "error": "Directory does not exist" }))
+            .into_response();
     }
     if is_initialized(&target) {
         return Json(serde_json::json!({
@@ -356,7 +371,8 @@ async fn handle_init_stream(
                 let mut lines = BufReader::new(out).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let _ = tx.send(
-                        serde_json::json!({"type":"line","text": format!("{prefix}{line}")}).to_string(),
+                        serde_json::json!({"type":"line","text": format!("{prefix}{line}")})
+                            .to_string(),
                     );
                 }
             }
@@ -372,7 +388,8 @@ async fn handle_init_stream(
                 let mut lines = BufReader::new(out).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let _ = tx.send(
-                        serde_json::json!({"type":"line","text": format!("{prefix}{line}")}).to_string(),
+                        serde_json::json!({"type":"line","text": format!("{prefix}{line}")})
+                            .to_string(),
                     );
                 }
             }
@@ -410,7 +427,9 @@ async fn handle_init_stream(
             }
         }
     };
-    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -427,6 +446,166 @@ async fn handle_add_recent(Json(body): Json<AddRecentBody>) -> impl IntoResponse
     }
 }
 
+#[derive(Deserialize)]
+struct PurgeQuery {
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct PurgeBody {
+    path: String,
+    groups: Vec<String>,
+}
+
+enum PurgeLookup {
+    Present(PathBuf),
+    Missing(PathBuf),
+}
+
+fn resolve_purge_target(hub_root: &Path, raw: &str) -> Result<PurgeLookup, String> {
+    let target = PathBuf::from(raw);
+    if !is_path_allowed(&target, hub_root) {
+        return Err("Path not allowed".into());
+    }
+    let target = canonical_or(&target);
+    if target.is_dir() {
+        Ok(PurgeLookup::Present(target))
+    } else {
+        Ok(PurgeLookup::Missing(target))
+    }
+}
+
+fn missing_folder_plan(target: &Path) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "ok": true,
+        "missing": true,
+        "path": display_path(target),
+        "label": path_label(target),
+        "current": false,
+        "note": crate::project_purge::MISSING_FOLDER_NOTE,
+        "groups": crate::project_purge::leftover_groups(),
+    }))
+}
+
+async fn handle_purge_plan(
+    State(hub): State<WebHub>,
+    Query(q): Query<PurgeQuery>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
+    }
+    let hub_root = hub.read().await.project_root.clone();
+    let target = match resolve_purge_target(&hub_root, &q.path) {
+        Ok(PurgeLookup::Present(path)) => path,
+        Ok(PurgeLookup::Missing(path)) => return missing_folder_plan(&path).into_response(),
+        Err(error) => {
+            return Json(serde_json::json!({ "ok": false, "error": error })).into_response();
+        }
+    };
+    let current = canonical_or(&hub_root) == target;
+    let mut groups = serde_json::to_value(crate::project_purge::file_groups(&target))
+        .unwrap_or_else(|_| serde_json::json!([]));
+    if let Some(list) = groups.as_array_mut() {
+        if let Ok(serde_json::Value::Array(extra)) =
+            serde_json::to_value(crate::project_purge::leftover_groups())
+        {
+            list.extend(extra);
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "path": display_path(&target),
+        "label": path_label(&target),
+        "current": current,
+        "note": "The repository source stays on disk. Checked items are removed. Uncheck anything that should stay.",
+        "groups": groups,
+    }))
+    .into_response()
+}
+
+async fn handle_purge(State(hub): State<WebHub>, Json(body): Json<PurgeBody>) -> impl IntoResponse {
+    if hub.readonly {
+        return Json(serde_json::json!({ "ok": false, "error": "Read-only mode" })).into_response();
+    }
+    if body.groups.is_empty() {
+        return Json(serde_json::json!({ "ok": false, "error": "Select at least one item" }))
+            .into_response();
+    }
+    let hub_root = hub.read().await.project_root.clone();
+    let (target, present) = match resolve_purge_target(&hub_root, &body.path) {
+        Ok(PurgeLookup::Present(path)) => (path, true),
+        Ok(PurgeLookup::Missing(path)) => (path, false),
+        Err(error) => {
+            return Json(serde_json::json!({ "ok": false, "error": error })).into_response();
+        }
+    };
+
+    let wants_database = present && body.groups.iter().any(|id| id == "database");
+    let disconnected = if wants_database {
+        hub.close_graph_pool_if_current(&target).await
+    } else {
+        false
+    };
+
+    let mut report = if present {
+        crate::project_purge::remove_selected(&target, &body.groups)
+    } else {
+        crate::project_purge::PurgeReport {
+            removed: Vec::new(),
+            errors: Vec::new(),
+        }
+    };
+
+    let mut forgot_recent = false;
+    if body.groups.iter().any(|id| id == "recent") {
+        match forget_recent_project(&target) {
+            Ok(removed) => forgot_recent = removed,
+            Err(err) => report.errors.push(err),
+        }
+    }
+    if body.groups.iter().any(|id| id == "globalIndex") {
+        if let Err(err) = forget_global_project_row(&target).await {
+            report.errors.push(err);
+        }
+    }
+
+    Json(serde_json::json!({
+        "ok": report.errors.is_empty(),
+        "path": display_path(&target),
+        "removed": report.removed,
+        "errors": report.errors,
+        "disconnected": disconnected,
+        "forgotRecent": forgot_recent,
+    }))
+    .into_response()
+}
+
+async fn forget_global_project_row(path: &Path) -> Result<(), String> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(());
+    };
+    let db = home.join(".ax").join("global.db");
+    if !db.is_file() {
+        return Ok(());
+    }
+    let url = format!("sqlite://{}", db.display());
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .map_err(|err| format!("global.db: {err}"))?;
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let result = sqlx::query("DELETE FROM projects WHERE path = ?1 OR path = ?2")
+        .bind(canonical.to_string_lossy().to_string())
+        .bind(path.to_string_lossy().to_string())
+        .execute(&pool)
+        .await;
+    pool.close().await;
+    result
+        .map(|_| ())
+        .map_err(|err| format!("global.db: {err}"))
+}
+
 pub fn router_hub(hub: WebHub) -> Router {
     Router::new()
         .route("/current", get(handle_current))
@@ -436,5 +615,7 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/mkdir", post(handle_mkdir))
         .route("/init/stream", post(handle_init_stream))
         .route("/recent/add", post(handle_add_recent))
+        .route("/purge-plan", get(handle_purge_plan))
+        .route("/purge", post(handle_purge))
         .with_state(hub)
 }

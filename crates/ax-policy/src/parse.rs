@@ -91,6 +91,7 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
             .or_else(|| get_str(&map, "root_id"))
             .filter(|s| !s.is_empty()),
         group: get_str(&map, "group").filter(|s| !s.is_empty()),
+        properties: extra_properties(&map, RULE_KNOWN_KEYS),
     })
 }
 
@@ -140,7 +141,107 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
             .or_else(|| get_str(&map, "root_id"))
             .filter(|s| !s.is_empty()),
         group: get_str(&map, "group").filter(|s| !s.is_empty()),
+        properties: extra_properties(&map, SKILL_KNOWN_KEYS),
     })
+}
+
+const RULE_KNOWN_KEYS: &[&str] = &[
+    "id",
+    "level",
+    "alwaysApply",
+    "globs",
+    "triggers",
+    "tags",
+    "priority",
+    "enabled",
+    "status",
+    "share",
+    "scope",
+    "storage",
+    "source",
+    "rootId",
+    "root_id",
+    "group",
+];
+
+const SKILL_KNOWN_KEYS: &[&str] = &[
+    "name",
+    "description",
+    "alwaysApply",
+    "triggers",
+    "tags",
+    "priority",
+    "contextTask",
+    "enabled",
+    "status",
+    "share",
+    "scope",
+    "storage",
+    "source",
+    "rootId",
+    "root_id",
+    "group",
+];
+
+fn extra_properties(map: &HashMap<String, Value>, known: &[&str]) -> crate::types::PolicyProperties {
+    let mut props = crate::types::PolicyProperties::new();
+    for (key, val) in map {
+        if known.iter().any(|k| *k == key) {
+            continue;
+        }
+        let Ok(json) = serde_json::to_value(val) else {
+            continue;
+        };
+        if property_is_blank(&json) {
+            continue;
+        }
+        props.insert(key.clone(), json);
+    }
+    props
+}
+
+fn property_is_blank(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::String(s) => s.trim().is_empty(),
+        serde_json::Value::Array(items) => items.is_empty() || items.iter().all(property_is_blank),
+        serde_json::Value::Object(map) => map.is_empty(),
+        _ => false,
+    }
+}
+
+pub fn render_properties(properties: &crate::types::PolicyProperties) -> String {
+    if properties.is_empty() {
+        return String::new();
+    }
+    let Ok(yaml) = serde_yaml::to_string(properties) else {
+        return String::new();
+    };
+    let body = yaml
+        .lines()
+        .filter(|line| !line.is_empty() && *line != "---")
+        .collect::<Vec<_>>()
+        .join("\n");
+    if body.is_empty() {
+        String::new()
+    } else {
+        format!("Properties:\n{body}\n")
+    }
+}
+
+fn push_properties(lines: &mut Vec<String>, properties: &crate::types::PolicyProperties) {
+    if properties.is_empty() {
+        return;
+    }
+    let Ok(yaml) = serde_yaml::to_string(properties) else {
+        return;
+    };
+    for line in yaml.lines() {
+        if line.is_empty() || line == "---" {
+            continue;
+        }
+        lines.push(line.to_string());
+    }
 }
 
 fn ensure_shared_tag(tags: &mut Vec<String>, share: bool) {
@@ -247,6 +348,7 @@ pub fn serialize_rule(fm: &RuleFrontmatter, body: &str) -> String {
     if let Some(ref g) = fm.group {
         lines.push(format!("group: {g}"));
     }
+    push_properties(&mut lines, &fm.properties);
     lines.push("---".into());
     lines.push(String::new());
     lines.push(body.trim().to_string());
@@ -304,6 +406,7 @@ pub fn serialize_skill(fm: &SkillFrontmatter, body: &str) -> String {
     if let Some(ref g) = fm.group {
         lines.push(format!("group: {g}"));
     }
+    push_properties(&mut lines, &fm.properties);
     lines.push("---".into());
     lines.push(String::new());
     lines.push(body.trim().to_string());
@@ -403,6 +506,7 @@ mod tests {
             source: None,
             root_id: None,
             group: None,
+            properties: crate::types::PolicyProperties::new(),
         };
         let raw = serialize_rule(&fm, "Always say Hello World");
         let doc = parse_rule_file(Path::new("hello-world.mdc"), &raw).unwrap();
@@ -441,5 +545,34 @@ mod tests {
         let again = parse_rule_file(Path::new("explore-before-grep.mdc"), &round).unwrap();
         assert_eq!(again.frontmatter.group.as_deref(), Some("exploration"));
         assert!(round.contains("group: exploration"));
+    }
+
+    #[test]
+    fn extra_properties_roundtrip_for_rules_and_skills() {
+        let raw = "---\nid: demo\nlevel: INFO\nalwaysApply: true\nowner: platform\nfiles:\n  - src/a.rs\nkind: review\naliases: []\nexperimental: false\n---\n\nBody.\n";
+        let doc = parse_rule_file(Path::new("demo.mdc"), raw).unwrap();
+        assert!(doc.frontmatter.properties.get("id").is_none());
+        assert!(doc.frontmatter.properties.get("level").is_none());
+        assert!(doc.frontmatter.properties.get("aliases").is_none());
+        assert_eq!(doc.frontmatter.properties["owner"], "platform");
+        assert_eq!(doc.frontmatter.properties["kind"], "review");
+        assert_eq!(doc.frontmatter.properties["files"], serde_json::json!(["src/a.rs"]));
+        assert_eq!(doc.frontmatter.properties["experimental"], false);
+        let again = serialize_rule(&doc.frontmatter, &doc.body);
+        let doc2 = parse_rule_file(Path::new("demo.mdc"), &again).unwrap();
+        assert_eq!(doc2.frontmatter.properties, doc.frontmatter.properties);
+        assert_eq!(doc2.body, "Body.");
+
+        let skill = "---\nname: astro-review\ndescription: review\nkind: review\nglobs:\n  - \"**/*.astro\"\n---\n\nSteps.\n";
+        let sdoc = parse_skill_file(Path::new("SKILL.md"), skill).unwrap();
+        assert!(sdoc.frontmatter.properties.get("name").is_none());
+        assert_eq!(sdoc.frontmatter.properties["kind"], "review");
+        assert_eq!(
+            sdoc.frontmatter.properties["globs"],
+            serde_json::json!(["**/*.astro"])
+        );
+        let written = serialize_skill(&sdoc.frontmatter, &sdoc.body);
+        let sdoc2 = parse_skill_file(Path::new("SKILL.md"), &written).unwrap();
+        assert_eq!(sdoc2.frontmatter.properties, sdoc.frontmatter.properties);
     }
 }

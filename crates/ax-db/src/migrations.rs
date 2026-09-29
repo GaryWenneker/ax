@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 20;
+pub const CURRENT_SCHEMA_VERSION: i32 = 22;
 
 struct Migration {
     version: i32,
@@ -267,6 +267,27 @@ const MIGRATIONS: &[Migration] = &[
             );
             CREATE INDEX IF NOT EXISTS idx_policy_revisions_item
               ON policy_revisions(kind, item_id, created_at DESC);
+        ",
+    },
+    Migration {
+        version: 21,
+        description: "WebDAV vault files and drafts (Obsidian)",
+        sql: "
+            CREATE TABLE IF NOT EXISTS dav_files (
+                path TEXT PRIMARY KEY,
+                is_dir INTEGER NOT NULL DEFAULT 0,
+                content BLOB NOT NULL DEFAULT x'',
+                draft_error TEXT,
+                updated_at INTEGER NOT NULL
+            );
+        ",
+    },
+    Migration {
+        version: 22,
+        description: "Extra frontmatter properties on rules and skills",
+        sql: "
+            ALTER TABLE policy_rules ADD COLUMN properties TEXT NOT NULL DEFAULT '{}';
+            ALTER TABLE policy_skills ADD COLUMN properties TEXT NOT NULL DEFAULT '{}';
         ",
     },
 ];

@@ -3,10 +3,15 @@ id: policy-capture
 level: WARNING
 alwaysApply: false
 globs: []
-triggers: ["je moet", "you must", "always use", "never use", "@rule", "#rule", "voortaan", "from now on", "capture rule", "save as rule"]
-tags: ["policy", "capture"]
+triggers: ["je moet","you must","always use","never use","@rule","#rule","voortaan","from now on","capture rule","save as rule"]
+tags: ["policy","capture"]
 priority: 70
+enabled: true
+status: approved
+scope: project
+group: session-protocol
 ---
+
 # Policy capture from user directives
 
 When the user gives a **durable** instruction (not a one-off task), propose saving it as a team rule.
@@ -44,3 +49,7 @@ Never auto-save without confirmation.
 - One-off tasks: "fix this bug", "run tests"
 - Questions: "how does X work?"
 - Preferences for the current message only without durable wording
+
+## Related
+
+- [[startup]] — SS-01b runs the same interview

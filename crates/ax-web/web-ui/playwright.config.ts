@@ -29,5 +29,12 @@ export default defineConfig({
         viewport: { width: 1280, height: 800 },
       },
     },
+    {
+      name: 'system-chrome',
+      use: {
+        channel: 'chrome',
+        viewport: { width: 1280, height: 800 },
+      },
+    },
   ],
 });

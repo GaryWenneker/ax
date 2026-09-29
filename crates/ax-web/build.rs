@@ -105,7 +105,11 @@ fn stage_web_dist_for_embed(dist: &Path) {
     let _ = std::fs::remove_dir_all(&out);
     copy_dir(dist, &out);
     let index = std::fs::read_to_string(out.join("index.html")).unwrap_or_default();
-    if let Some(src) = index.split("src=\"").nth(1).and_then(|s| s.split('"').next()) {
+    if let Some(src) = index
+        .split("src=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+    {
         println!("cargo:warning=ax-web embedding {src}");
     }
     let path_lit = out.to_string_lossy().replace('\\', "\\\\");

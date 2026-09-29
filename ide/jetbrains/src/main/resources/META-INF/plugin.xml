@@ -1,0 +1,10 @@
+<idea-plugin>
+  <id>io.wenneker.ax.commandcenter</id>
+  <name>ax Command Center</name>
+  <vendor>wenneker</vendor>
+  <description>Opens the ax Command Center (ax web) in a tool window. Installed by ax from Settings, IDEs and agents.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <toolWindow id="ax" anchor="right" factoryClass="io.wenneker.ax.CommandCenterToolWindow"/>
+  </extensions>
+</idea-plugin>

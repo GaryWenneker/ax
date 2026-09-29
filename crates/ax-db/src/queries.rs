@@ -1214,10 +1214,109 @@ fn score_node_for_query(query: &str, node: &Node) -> f64 {
     if qual.contains(&q) {
         return 1.5;
     }
-    1.0
+    term_coverage_score(
+        query,
+        &TermFields {
+            name: &node.name,
+            qualified_name: &node.qualified_name,
+            docstring: node.docstring.as_deref(),
+            signature: node.signature.as_deref(),
+            is_data: matches!(node.language, Language::Yaml | Language::Xml | Language::Properties),
+        },
+    )
+}
+
+pub(crate) struct TermFields<'a> {
+    pub name: &'a str,
+    pub qualified_name: &'a str,
+    pub docstring: Option<&'a str>,
+    pub signature: Option<&'a str>,
+    /// Config/data line (YAML, XML, properties) rather than code.
+    pub is_data: bool,
+}
+
+const QUESTION_STOPWORDS: &[&str] = &[
+    "a", "an", "and", "are", "be", "by", "did", "do", "does", "for", "from", "get", "gets", "how", "in",
+    "is", "it", "of", "on", "or", "the", "this", "that", "to", "was", "what", "when", "where", "which",
+    "who", "why", "with", "work", "works",
+];
+
+fn raw_terms(query: &str) -> Vec<String> {
+    query
+        .replace("::", " ")
+        .split_whitespace()
+        .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric() && c != '_').to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Crude suffix stem so `logged`/`logs` and `savings`/`saved` meet on one prefix.
+fn stem(word: &str) -> String {
+    if !word.chars().all(|c| c.is_ascii_alphabetic()) {
+        return word.to_string();
+    }
+    let mut w = word.to_string();
+    for suffix in ["ings", "ing", "ed", "es", "s"] {
+        if w.len() >= suffix.len() + 3 && w.ends_with(suffix) {
+            w.truncate(w.len() - suffix.len());
+            break;
+        }
+    }
+    let bytes = w.as_bytes();
+    let n = bytes.len();
+    if n >= 4 && bytes[n - 1] == bytes[n - 2] && !b"aeiou".contains(&bytes[n - 1]) {
+        w.pop();
+    }
+    w
+}
+
+/// Stemmed, deduplicated query terms without question filler words.
+pub(crate) fn content_terms(query: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for term in raw_terms(query) {
+        if term.len() < 2 || QUESTION_STOPWORDS.contains(&term.as_str()) {
+            continue;
+        }
+        let stemmed = stem(&term);
+        if !out.contains(&stemmed) {
+            out.push(stemmed);
+        }
+    }
+    out
+}
+
+/// Score in [1, 4) for a multi-term query by the share of content terms found
+/// in the symbol's name, qualified name, docstring and signature. Stays under
+/// the name-prefix tier (5.0) so exact-name hits keep winning.
+pub(crate) fn term_coverage_score(query: &str, fields: &TermFields<'_>) -> f64 {
+    let terms = content_terms(query);
+    if terms.len() < 2 {
+        return 1.0;
+    }
+    let haystack = format!(
+        "{} {} {} {}",
+        fields.name,
+        fields.qualified_name,
+        fields.docstring.unwrap_or(""),
+        fields.signature.unwrap_or("")
+    )
+    .to_lowercase();
+    let matched = terms.iter().filter(|t| haystack.contains(t.as_str())).count();
+    let coverage = 3.0 * matched as f64 / terms.len() as f64;
+    let weight = if fields.is_data { 0.4 } else { 1.0 };
+    1.0 + coverage * weight
 }
 
 fn build_fts_prefix_query(text: &str) -> Option<String> {
+    let content = content_terms(text);
+    if !content.is_empty() {
+        let joined = content
+            .iter()
+            .map(|term| format!("\"{}\"*", term.replace('"', "")))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        return Some(joined);
+    }
     let fts_query = text
         .replace("::", " ")
         .chars()
@@ -1242,7 +1341,61 @@ fn build_fts_prefix_query(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::build_fts_prefix_query;
+    use super::{build_fts_prefix_query, content_terms, term_coverage_score, TermFields};
+
+    fn fields<'a>(name: &'a str, doc: Option<&'a str>, is_data: bool) -> TermFields<'a> {
+        TermFields { name, qualified_name: name, docstring: doc, signature: None, is_data }
+    }
+
+    #[test]
+    fn content_terms_drop_stopwords_and_stem() {
+        assert_eq!(content_terms("How does token savings get logged?"), vec!["token", "sav", "log"]);
+    }
+
+    #[test]
+    fn fts_query_skips_stopwords_when_content_terms_exist() {
+        let q = build_fts_prefix_query("how does token savings get logged").unwrap();
+        assert!(!q.contains("\"how\"") && !q.contains("\"does\"") && !q.contains("\"get\""), "{q}");
+        assert!(q.contains("\"token\"*") && q.contains("\"sav\"*") && q.contains("\"log\"*"), "{q}");
+    }
+
+    #[test]
+    fn fts_query_keeps_a_stopword_only_query() {
+        assert!(build_fts_prefix_query("get").unwrap().contains("\"get\"*"));
+    }
+
+    #[test]
+    fn docstring_coverage_beats_single_name_term() {
+        let query = "how does token savings get logged";
+        let documented = term_coverage_score(
+            query,
+            &fields("run_and_wrap_tool", Some("Logs the call with its token savings estimate."), false),
+        );
+        let one_term = term_coverage_score(query, &fields("chars_per_token", None, false));
+        assert!(documented > one_term, "documented={documented} one_term={one_term}");
+    }
+
+    #[test]
+    fn data_file_line_ranks_below_code_with_same_coverage() {
+        let query = "how does token savings get logged";
+        let yaml = term_coverage_score(query, &fields("prompt: How does token savings get logged?", None, true));
+        let code = term_coverage_score(
+            query,
+            &fields("record_call", Some("Log token savings for one call."), false),
+        );
+        assert!(code > yaml, "code={code} yaml={yaml}");
+    }
+
+    #[test]
+    fn coverage_score_stays_below_prefix_tier() {
+        let s = term_coverage_score("token savings", &fields("token_savings_total", Some("token savings"), false));
+        assert!(s < 5.0 && s > 1.0, "{s}");
+    }
+
+    #[test]
+    fn no_overlap_scores_baseline() {
+        assert_eq!(term_coverage_score("token savings", &fields("parse_yaml", None, false)), 1.0);
+    }
 
     #[test]
     fn fts_prefix_splits_rust_qualifier() {

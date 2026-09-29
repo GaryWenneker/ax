@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill, type PolicyOriginQuery } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
-import MarkdownPreview from '../components/MarkdownPreview';
+import { LinkedMarkdown, useItemLinks } from '../components/LinkedBody';
 import PolicyMetaResizeHandle from '../components/PolicyEditorResize';
 import PolicyRevisionHistory from '../components/PolicyRevisionHistory';
 import { SkillMetaView } from '../components/PolicyMetaView';
+import PolicyPropertiesEditor from '../components/PolicyPropertiesEditor';
 import {
   PageCard,
   PageCardBody,
@@ -17,6 +18,7 @@ import {
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
+import { SKILL_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
@@ -63,6 +65,7 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
   const [editing, setEditing] = useState(isNew);
   const [fm, setFm] = useState<SkillFrontmatter>(emptyFm());
   const [body, setBody] = useState('');
+  const links = useItemLinks('skill', skillName, origin, body);
   const [triggersText, setTriggersText] = useState('');
   const [tagsText, setTagsText] = useState('');
   const [error, setError] = useState('');
@@ -234,7 +237,7 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
                     <PageRow title="Description" description="Short summary shown in skill lists.">
                       <textarea
                         className="settings-input"
-                        rows={3}
+                        rows={6}
                         value={fm.description}
                         onChange={(e) => setFm({ ...fm, description: e.target.value })}
                         style={{ resize: 'vertical' }}
@@ -287,6 +290,13 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
                         onChange={(e) => setFm({ ...fm, contextTask: e.target.value || undefined })}
                       />
                     </PageRow>
+                    <PolicyPropertiesEditor
+                      key={skillName ?? 'new'}
+                      description="Extra keys sent with this skill in preflight. Built-in fields stay in the rows above."
+                      properties={fm.properties}
+                      reserved={SKILL_PROPERTY_RESERVED}
+                      onChange={(properties) => setFm({ ...fm, properties })}
+                    />
                   </>
                 ) : (
                   <SkillMetaView
@@ -300,6 +310,7 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
                     scope={fm.scope}
                     enabled={fm.enabled}
                     group={fm.group}
+                    properties={fm.properties}
                   />
                 )}
               </PageCardBody>
@@ -314,9 +325,9 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
             className="page-md-panel"
           >
             {editing ? (
-              <MarkdownEditor value={body} onChange={setBody} fill />
+              <MarkdownEditor value={body} onChange={setBody} fill links={links} />
             ) : (
-              <MarkdownPreview value={body} className="page-md-preview" />
+              <LinkedMarkdown links={links} value={body} className="page-md-preview" />
             )}
           </PageCard>
         </div>

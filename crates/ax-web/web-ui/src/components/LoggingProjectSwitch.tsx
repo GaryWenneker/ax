@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
 import {
@@ -8,13 +9,14 @@ import {
   type RecentProject,
 } from '../workspaceApi';
 import { notifyWorkspaceSwitched } from '../workspaceEvents';
+import ProjectPurgeModal from './ProjectPurgeModal';
 
 type Props = {
   /** Highlight the active project path when known. */
   currentPath?: string;
   currentLabel?: string;
-  /** `banner` = dropdown in logging banner; `inline` = always-visible list (status panel). */
-  variant?: 'banner' | 'inline';
+  /** `banner` = dropdown; `header` = titlebar dropdown; `inline` = always-visible list (status panel). */
+  variant?: 'banner' | 'inline' | 'header';
   onSwitched?: () => void;
 };
 
@@ -35,7 +37,12 @@ export default function LoggingProjectSwitch({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const isInline = variant === 'inline';
+  const isHeader = variant === 'header';
+  const [menuBox, setMenuBox] = useState<{ top: number; right: number } | null>(null);
+  const [purge, setPurge] = useState<RecentProject | null>(null);
 
   const refresh = useCallback(async () => {
     const [cur, rec] = await Promise.all([fetchWorkspaceCurrent(), fetchWorkspaceRecent()]);
@@ -60,11 +67,32 @@ export default function LoggingProjectSwitch({
     if (isInline || !open) return;
     void refresh();
     function onDoc(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (wrapRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open, refresh, isInline]);
+
+  useLayoutEffect(() => {
+    if (!isHeader || !open) return;
+    function place() {
+      const rect = btnRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuBox({
+        top: rect.bottom + 6,
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    }
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [isHeader, open]);
 
   async function doSwitch(nextPath: string) {
     if (!nextPath || nextPath === path) {
@@ -79,6 +107,7 @@ export default function LoggingProjectSwitch({
       if (!isInline) setOpen(false);
       notifyWorkspaceSwitched(res.path);
       onSwitched?.();
+      void refresh();
       return;
     }
     setErr(res.error ?? 'Switch failed');
@@ -94,7 +123,7 @@ export default function LoggingProjectSwitch({
           {recent.map((p) => {
             const active = p.path === path;
             return (
-              <li key={p.path}>
+              <li key={p.path} className="logging-proj-switch-row">
                 <button
                   type="button"
                   role="option"
@@ -107,6 +136,21 @@ export default function LoggingProjectSwitch({
                   <span className="logging-proj-switch-item-name">{p.label}</span>
                   <span className="logging-proj-switch-item-path">{p.path}</span>
                 </button>
+                {!isInline && (
+                  <button
+                    type="button"
+                    className="logging-proj-switch-remove"
+                    title={`Remove ax data for ${p.label}`}
+                    aria-label={`Remove ax data for ${p.label}`}
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPurge(p);
+                    }}
+                  >
+                    <Codicon name="trash" />
+                  </button>
+                )}
               </li>
             );
           })}
@@ -123,15 +167,35 @@ export default function LoggingProjectSwitch({
     );
   }
 
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      className="logging-proj-switch-menu"
+      role="listbox"
+      aria-label="Recent projects"
+      style={
+        isHeader && menuBox
+          ? { position: 'fixed', top: menuBox.top, right: menuBox.right, left: 'auto', zIndex: 200 }
+          : undefined
+      }
+    >
+      <div className="logging-proj-switch-menu-title">Switch project</div>
+      {list}
+    </div>
+  ) : null;
+
   return (
     <div
       ref={wrapRef}
-      className={`logging-proj-switch logging-proj-switch--banner${open ? ' logging-proj-switch--open' : ''}`}
+      className={`logging-proj-switch logging-proj-switch--banner${
+        isHeader ? ' logging-proj-switch--header' : ''
+      }${open ? ' logging-proj-switch--open' : ''}`}
     >
       <button
+        ref={btnRef}
         type="button"
         className="btn btn-compact logging-proj-switch-btn"
-        title="Switch project log"
+        title="Switch project"
         aria-expanded={open}
         aria-haspopup="listbox"
         disabled={busy}
@@ -142,11 +206,18 @@ export default function LoggingProjectSwitch({
         <Codicon name={open ? 'chevron-up' : 'chevron-down'} />
       </button>
 
-      {open && (
-        <div className="logging-proj-switch-menu" role="listbox" aria-label="Recent projects">
-          <div className="logging-proj-switch-menu-title">Switch project log</div>
-          {list}
-        </div>
+      {isHeader && menu ? createPortal(menu, document.body) : menu}
+      {purge && (
+        <ProjectPurgeModal
+          project={purge}
+          recent={recent}
+          onClose={() => setPurge(null)}
+          onDone={() => {
+            setPurge(null);
+            setOpen(false);
+            void refresh();
+          }}
+        />
       )}
     </div>
   );

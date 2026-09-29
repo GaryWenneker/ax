@@ -207,7 +207,7 @@ Examples:
 
 pub const DAEMON_LONG: &str = "MCP background daemon control (TCP / named pipe per project).
 
-The daemon shares one index connection for multiple MCP clients (Cursor, Takumi, …).
+The daemon shares one index connection for multiple MCP clients (Cursor, VS Code, …).
 `restart` clears a stuck daemon and stale locks without killing every ax.exe.
 
 Subcommands:

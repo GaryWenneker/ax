@@ -472,6 +472,35 @@ pub fn write_project_stacks(
     Ok(())
 }
 
+/// `agents.ides` from the project `ax.json`; `None` when it was never saved.
+pub fn read_project_ides(project_root: &Path) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(project_root.join(CONFIG_FILENAME)).ok()?;
+    let root: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let list = root.get("agents")?.get("ides")?.as_array()?;
+    Some(list.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+}
+
+/// Save `agents.ides` in the project `ax.json`, keeping every other key.
+pub fn write_project_ides(project_root: &Path, ides: &[String]) -> Result<(), String> {
+    let path = project_root.join(CONFIG_FILENAME);
+    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "config root must be a JSON object".to_string())?;
+    let agents = obj
+        .entry("agents")
+        .or_insert_with(|| serde_json::json!({}));
+    if !agents.is_object() {
+        *agents = serde_json::json!({});
+    }
+    agents["ides"] = serde_json::json!(ides);
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
+    std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())
+}
+
 pub const DEFAULT_AGENTS_DIR: &str = ".agents";
 
 /// `policy.agentsDir` when the project `ax.json` defines it.
@@ -527,6 +556,27 @@ pub fn write_project_agents_dir(project_root: &Path, raw: &str) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_ides_round_trip_and_keep_other_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_project_ides(dir.path()), None);
+        let path = dir.path().join(CONFIG_FILENAME);
+        std::fs::write(&path, r#"{"policy":{"stacks":["rust"]},"agents":{"other":1}}"#).unwrap();
+        assert_eq!(read_project_ides(dir.path()), None);
+
+        write_project_ides(dir.path(), &["cursor".into(), "zed".into()]).unwrap();
+        assert_eq!(read_project_ides(dir.path()), Some(vec!["cursor".to_string(), "zed".to_string()]));
+        let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["policy"]["stacks"][0], "rust");
+        assert_eq!(saved["agents"]["other"], 1);
+
+        write_project_ides(dir.path(), &[]).unwrap();
+        assert_eq!(read_project_ides(dir.path()), Some(Vec::new()));
+
+        std::fs::write(&path, r#"{"agents":{"ides":"cursor"}}"#).unwrap();
+        assert_eq!(read_project_ides(dir.path()), None);
+    }
 
     #[test]
     fn default_storage_is_files() {

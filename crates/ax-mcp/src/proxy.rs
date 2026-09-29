@@ -177,6 +177,6 @@ pub async fn restart_daemon(project_root: &Path) -> Result<DaemonRestartReport, 
         started_pid: info.map(|i| i.pid),
         cleared_ax_lock,
         connected,
-        hint: "Shared MCP daemon restarted. If Cursor or Takumi still show DEGRADED, run MCP: Restart Servers (or reload the window). Prefer the daemon over parallel embedded MCP processes on the same .ax/ax.db.".into(),
+        hint: "Shared MCP daemon restarted. If your IDE still shows DEGRADED, run MCP: Restart Servers (or reload the window). Prefer the daemon over parallel embedded MCP processes on the same .ax/ax.db.".into(),
     })
 }

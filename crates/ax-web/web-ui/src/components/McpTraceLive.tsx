@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
-import LoggingProjectSwitch from './LoggingProjectSwitch';
+import { ItemList, ItemRow } from './ui/PageLayout';
+import { formatTraceTime, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
 import {
   computeMcpTraceStats,
   filterTraceEntries,
@@ -76,41 +77,25 @@ type Props = {
   variant?: 'page' | 'embedded';
 };
 
-function SummaryCell({ text }: { text: string }) {
-  if (!text || text === '—') {
-    return <span className="mcp-trace-msg">—</span>;
-  }
-  // "key=value · key=value" summaries from JSON flatten
-  const chunks = text.split(/( · )/);
-  return (
-    <span className="mcp-trace-msg mcp-trace-msg--rich">
-      {chunks.map((chunk, i) => {
-        if (chunk === ' · ') {
-          return (
-            <span key={i} className="mcp-sum-sep">
-              {chunk}
-            </span>
-          );
-        }
-        const eq = chunk.indexOf('=');
-        if (eq > 0 && eq < chunk.length - 1) {
-          return (
-            <span key={i}>
-              <span className="mcp-sum-key">{chunk.slice(0, eq)}</span>
-              <span className="mcp-sum-eq">=</span>
-              <span className="mcp-sum-val">{chunk.slice(eq + 1)}</span>
-            </span>
-          );
-        }
-        return (
-          <span key={i} className="mcp-sum-val">
-            {chunk}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
+const KIND_ICONS: Record<TraceKind, string> = {
+  inbound: 'arrow-down',
+  outbound: 'arrow-up',
+  preview: 'eye',
+  error: 'error',
+  internal: 'gear',
+  enrich: 'sparkle',
+  plugin: 'extensions',
+  lsp: 'symbol-misc',
+  ship: 'rocket',
+  share: 'live-share',
+  workspace: 'window',
+  embed: 'database',
+  action: 'play',
+  memory: 'note',
+  policy: 'law',
+  cli: 'terminal',
+  other: 'info',
+};
 
 function FieldValue({ value, hero }: { value: string; hero?: boolean }) {
   const kind = useMemo(() => classifyFieldValue(value), [value]);
@@ -1029,7 +1014,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
 
   function openEntry(id: string) {
     setCursorId(id);
-    setSelectedId(id);
+    setSelectedId((open) => (open === id ? null : id));
   }
 
   async function toggleMaximize() {
@@ -1176,13 +1161,6 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
         <div className="mcp-trace-project-banner-main">
           <span className="mcp-trace-project-banner-kicker">Viewing MCP log for</span>
           <span className="mcp-trace-project-banner-name">{projectLabel}</span>
-          {isPage && (
-            <LoggingProjectSwitch
-              currentPath={projectRoot}
-              currentLabel={projectLabel}
-              variant="banner"
-            />
-          )}
         </div>
         <div className="mcp-trace-project-banner-meta">
           <span className="mcp-trace-project-banner-root">{projectRoot || '—'}</span>
@@ -1379,104 +1357,98 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
             </button>
           </div>
         ) : (
-          <table className="mcp-trace-table">
-            <thead>
-              <tr>
-                <th className="mcp-col-time">Date / time</th>
-                <th className="mcp-col-kind">Kind</th>
-                <th className="mcp-col-tool">Tool</th>
-                <th className="mcp-col-summary">Summary</th>
-                <th className="mcp-col-meta">Meta</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayEntries.map((e) => {
-                const headline = entryHeadline(e);
-                const meta = entryMeta(e);
-                const textPrimary = primaryTextPayload(e);
-                const hasText = Boolean(textPrimary);
-                const isCursor = cursorId === e.id;
-                const isOpen = selectedId === e.id;
-                const summaryText =
-                  textPrimary && textPrimary.value.length > 0
-                    ? `${textPrimary.leaf}=${
-                        textPrimary.value.length > 96
-                          ? `${textPrimary.value.slice(0, 96)}…`
-                          : textPrimary.value
-                      }`
-                    : headline || '—';
-                return (
-                  <tr
-                    key={e.id}
-                    id={`mcp-row-${e.id}`}
-                    data-entry-id={e.id}
-                    role="option"
-                    aria-selected={isCursor || isOpen}
-                    className={`mcp-trace-row mcp-trace-row--${e.kind}${
-                      hasText ? ' mcp-trace-row--has-query' : ''
-                    }${isOpen ? ' mcp-trace-row--selected' : ''}${
-                      isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
-                    }`}
-                    title={e.raw}
-                    onClick={() => openEntry(e.id)}
-                  >
-                    <td className="mcp-col-time" title={e.raw.match(/^\S+/)?.[0] ?? e.time}>
-                      {e.time}
-                    </td>
-                    <td className="mcp-col-kind">
+          <>
+          <div className="mcp-dir-legend" aria-label="Row colors">
+            <span className="mcp-dir-legend-item mcp-dir-legend-item--in">Prompt in</span>
+            <span className="mcp-dir-legend-item mcp-dir-legend-item--out">Returned to agent</span>
+            <span className="mcp-dir-legend-item mcp-dir-legend-item--internal">Internal</span>
+          </div>
+          <ItemList className="calm-list mcp-trace-calm">
+            {displayEntries.map((e) => {
+              const headline = entryHeadline(e);
+              const meta = entryMeta(e);
+              const textPrimary = primaryTextPayload(e);
+              const hasText = Boolean(textPrimary);
+              const isCursor = cursorId === e.id;
+              const isOpen = selectedId === e.id;
+              const summaryText =
+                textPrimary && textPrimary.value.length > 0
+                  ? `${textPrimary.leaf}=${
+                      textPrimary.value.length > 96 ? `${textPrimary.value.slice(0, 96)}…` : textPrimary.value
+                    }`
+                  : headline || '—';
+              const dir = traceDirection(e.kind);
+              return (
+                <ItemRow
+                  key={e.id}
+                  variant="graph"
+                  className={`mcp-trace-row mcp-trace-row--${e.kind} mcp-trace-row--dir-${dir}${hasText ? ' mcp-trace-row--has-query' : ''}${
+                    isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
+                  }`}
+                  rowProps={{
+                    id: `mcp-row-${e.id}`,
+                    role: 'option',
+                    tabIndex: -1,
+                    'aria-selected': isCursor || isOpen,
+                    'data-entry-id': e.id,
+                  }}
+                  title={summaryText}
+                  subtitle={traceRowSubtitle(traceDirectionLabel(dir) || undefined, KIND_LABELS[e.kind], meta)}
+                  meta={formatTraceTime(e.time)}
+                  metaTitle={e.raw.match(/^\S+/)?.[0] ?? e.time}
+                  selected={isOpen}
+                  onClick={() => openEntry(e.id)}
+                  badges={
+                    <>
                       <button
                         type="button"
-                        className={`mcp-trace-badge mcp-trace-badge--${e.kind} mcp-trace-badge--btn`}
+                        className={`page-item-badge page-item-badge--btn mcp-kind-badge mcp-kind-badge--${e.kind}${
+                          e.kind === 'error' ? ' page-item-badge--danger' : ''
+                        }`}
                         title={`Filter ${KIND_LABELS[e.kind]}`}
                         onClick={(ev) => {
                           ev.stopPropagation();
                           toggleKind(e.kind);
                         }}
                       >
+                        <Codicon name={KIND_ICONS[e.kind]} className="badge-icon" />
                         {e.badge}
                       </button>
-                    </td>
-                    <td className="mcp-col-tool">
-                      {e.tool ? (
+                      {e.tool && (
                         <button
                           type="button"
-                          className="mcp-trace-tool-btn"
+                          className="page-item-badge page-item-badge--btn mcp-col-tool"
                           title={`Filter tool ${e.tool}`}
                           onClick={(ev) => {
                             ev.stopPropagation();
                             setToolFilter((prev) => (prev === e.tool ? '' : e.tool ?? ''));
                           }}
                         >
+                          <Codicon name="symbol-misc" className="badge-icon" />
                           {e.tool}
                         </button>
-                      ) : (
-                        '—'
                       )}
-                    </td>
-                    <td className="mcp-col-summary">
-                      <span className="mcp-trace-summary-wrap">
-                        {textPrimary && (
-                          <button
-                            type="button"
-                            className={`mcp-trace-badge mcp-trace-badge--text mcp-trace-badge--text-${textPrimary.leaf} mcp-trace-badge--btn`}
-                            title={`${textPrimary.leaf} text — click to filter`}
-                            onClick={(ev) => {
-                              ev.stopPropagation();
-                              setHasTextFilter(true);
-                            }}
-                          >
-                            {textPrimary.leaf}
-                          </button>
-                        )}
-                        <SummaryCell text={summaryText} />
-                      </span>
-                    </td>
-                    <td className="mcp-col-meta">{meta || '—'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      {textPrimary && (
+                        <button
+                          type="button"
+                          className={`page-item-badge page-item-badge--btn mcp-trace-badge--text-${textPrimary.leaf}`}
+                          title={`${textPrimary.leaf} text — click to filter`}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            setHasTextFilter(true);
+                          }}
+                        >
+                          <Codicon name="search" className="badge-icon" />
+                          {textPrimary.leaf}
+                        </button>
+                      )}
+                    </>
+                  }
+                />
+              );
+            })}
+          </ItemList>
+          </>
         )}
         <div ref={historySentinelRef} className="mcp-trace-history-sentinel" aria-hidden="true" />
         {loadingHistory && entries.length > 0 ? (
@@ -1500,105 +1472,100 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   );
   const hasTimeline = Boolean(cluster && cluster.end > cluster.start);
 
+  const bladeHost = typeof document !== 'undefined' ? document.querySelector('.workspace') : null;
+  const selectedDir = selected ? traceDirection(selected.kind) : 'internal';
   const inspector =
-    selected && cluster
+    selected && cluster && bladeHost
       ? createPortal(
-          <div
-            className="mcp-inspect-overlay"
-            role="presentation"
-            onMouseDown={() => setSelectedId(null)}
+          <aside
+            className={`memory-blade mcp-blade mcp-blade--${selected.kind}`}
+            role="complementary"
+            aria-label="Log event details"
           >
-            <div
-              className={`mcp-inspect-sheet mcp-inspect-sheet--compact mcp-inspect-sheet--${selected.kind}`}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Call inspector"
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <header className="mcp-inspect-header">
-                <div className="mcp-inspect-heading">
-                  <span className={`mcp-trace-badge mcp-trace-badge--${selected.kind}`}>
-                    {selected.badge}
+            <div className="detail-header">
+              <span className="detail-title memory-blade-title">
+                <Codicon name={KIND_ICONS[selected.kind]} className="detail-title-icon" />
+                <span>{cluster.tool ?? selected.tool ?? 'Log event'}</span>
+              </span>
+              <span className="mcp-blade-nav">
+                <button
+                  type="button"
+                  className="detail-close"
+                  aria-label="Previous event"
+                  disabled={selectedIndex <= 0}
+                  onClick={() => selectNeighbor(-1)}
+                >
+                  <Codicon name="chevron-left" />
+                </button>
+                <button
+                  type="button"
+                  className="detail-close"
+                  aria-label="Next event"
+                  disabled={selectedIndex >= entries.length - 1}
+                  onClick={() => selectNeighbor(1)}
+                >
+                  <Codicon name="chevron-right" />
+                </button>
+                <button type="button" className="detail-close" aria-label="Close" onClick={() => setSelectedId(null)}>
+                  <Codicon name="close" />
+                </button>
+              </span>
+            </div>
+            <div className="detail-body memory-blade-body mcp-blade-body">
+              <div className="detail-meta">
+                <div className="detail-kv">
+                  <span className="detail-key">Time</span>
+                  <span className="detail-val">{formatTraceTime(selected.time)}</span>
+                </div>
+                <div className="detail-kv">
+                  <span className="detail-key">Kind</span>
+                  <span className="detail-val">{KIND_LABELS[selected.kind]}</span>
+                </div>
+                <div className="detail-kv">
+                  <span className="detail-key">Direction</span>
+                  <span className={`detail-val mcp-blade-dir mcp-dir-legend-item--${selectedDir}`}>
+                    {traceDirectionLabel(selectedDir) || 'Internal'}
                   </span>
-                  {entryTextPayloads(selected).slice(0, 3).map((p) => (
-                    <span
-                      key={p.key}
-                      className={`mcp-trace-badge mcp-trace-badge--text mcp-trace-badge--text-${p.leaf}`}
-                      title={`${p.key} text option`}
-                    >
-                      {p.leaf}
-                    </span>
-                  ))}
-                  <div className="mcp-inspect-title-block">
-                    <h2 className="mcp-inspect-title">
-                      {cluster.tool ?? selected.tool ?? 'Log event'}
-                    </h2>
-                    <p className="mcp-inspect-sub">
-                      {selected.time}
-                      {hasTimeline ? ` · ${cluster.end - cluster.start + 1} steps` : ''}
-                      {entryMeta(selected) ? ` · ${entryMeta(selected)}` : ''}
-                    </p>
+                </div>
+                {(cluster.tool ?? selected.tool) && (
+                  <div className="detail-kv">
+                    <span className="detail-key">Tool</span>
+                    <span className="detail-val">{cluster.tool ?? selected.tool}</span>
                   </div>
-                </div>
-                <div className="mcp-inspect-nav">
-                  <button
-                    type="button"
-                    className="btn btn-compact mcp-trace-icon-btn"
-                    aria-label="Previous event"
-                    disabled={selectedIndex <= 0}
-                    onClick={() => selectNeighbor(-1)}
-                  >
-                    <Codicon name="chevron-left" />
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-compact mcp-trace-icon-btn"
-                    aria-label="Next event"
-                    disabled={selectedIndex >= entries.length - 1}
-                    onClick={() => selectNeighbor(1)}
-                  >
-                    <Codicon name="chevron-right" />
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-compact mcp-trace-icon-btn"
-                    aria-label="Close inspector"
-                    onClick={() => setSelectedId(null)}
-                  >
-                    <Codicon name="close" />
-                  </button>
-                </div>
-              </header>
-
-              <div
-                className={`mcp-inspect-body${hasTimeline ? ' mcp-inspect-body--split' : ''}`}
-              >
-                {hasTimeline && (
-                  <aside className="mcp-inspect-rail" aria-label="Call timeline">
-                    <h3 className="mcp-inspect-section-title">Steps</h3>
-                    <ol className="mcp-inspect-timeline">
-                      {entries.slice(cluster.start, cluster.end + 1).map((step) => (
-                        <li key={step.id}>
-                          <button
-                            type="button"
-                            className={`mcp-inspect-step mcp-inspect-step--${step.kind}${
-                              step.id === selected.id ? ' mcp-inspect-step--active' : ''
-                            }`}
-                            onClick={() => setSelectedId(step.id)}
-                          >
-                            <span className={`mcp-trace-badge mcp-trace-badge--${step.kind}`}>
-                              {step.badge}
-                            </span>
-                            <span className="mcp-inspect-step-body">
-                              <span className="mcp-inspect-step-time">{step.time}</span>
-                              <span className="mcp-inspect-step-msg">{entryHeadline(step) || '—'}</span>
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ol>
-                  </aside>
                 )}
+                {hasTimeline && (
+                  <div className="detail-kv">
+                    <span className="detail-key">Steps</span>
+                    <span className="detail-val">{cluster.end - cluster.start + 1}</span>
+                  </div>
+                )}
+              </div>
+
+              {hasTimeline && (
+                <div>
+                  <div className="detail-section-title">Steps</div>
+                  <ItemList className="calm-list mcp-blade-steps">
+                    {entries.slice(cluster.start, cluster.end + 1).map((step) => (
+                      <ItemRow
+                        key={step.id}
+                        variant="graph"
+                        className={`mcp-blade-step mcp-blade-step--dir-${traceDirection(step.kind)}`}
+                        title={entryHeadline(step) || '—'}
+                        meta={formatTraceTime(step.time).slice(11)}
+                        metaTitle={step.time}
+                        selected={step.id === selected.id}
+                        onClick={() => setSelectedId(step.id)}
+                        badges={
+                          <span className={`page-item-badge mcp-kind-badge mcp-kind-badge--${step.kind}`}>
+                            <Codicon name={KIND_ICONS[step.kind]} className="badge-icon" />
+                            {step.badge}
+                          </span>
+                        }
+                      />
+                    ))}
+                  </ItemList>
+                </div>
+              )}
 
                 <div className="mcp-inspect-main">
                   <TextPayloadSection payloads={entryTextPayloads(selected)} />
@@ -1635,10 +1602,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                     <pre className="mcp-inspect-raw">{selected.raw}</pre>
                   </details>
                 </div>
-              </div>
             </div>
-          </div>,
-          document.body,
+          </aside>,
+          bladeHost,
         )
       : null;
 

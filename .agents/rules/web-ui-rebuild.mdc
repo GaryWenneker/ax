@@ -3,10 +3,15 @@ id: web-ui-rebuild
 level: CRITICAL
 alwaysApply: false
 globs: ["crates/ax-web/web-ui/**"]
-triggers: ["ax web", "web-ui", "web ui", "settings page", "vite", "npm run build", "settings.tsx", "index.css", "web-ui/dist"]
-tags: ["ax-web", "ui", "build"]
+triggers: ["ax web","web-ui","web ui","settings page","vite","npm run build","settings.tsx","index.css","web-ui/dist"]
+tags: ["ax-web","ui","build"]
 priority: 90
+enabled: true
+status: approved
+scope: project
+group: release
 ---
+
 # ax web UI — rebuild required after changes
 
 > **ABSOLUTE**: `npm run build` in `crates/ax-web/web-ui/` alone is **not** enough. The UI is embedded into the `ax` binary at compile time (`include_dir!("web-ui/dist")`). Agents must rebuild and reinstall `ax` before telling the user to preview `ax web`.
@@ -38,3 +43,8 @@ On macOS/Linux use `bash scripts/reinstall-cli.sh` or `scripts/release-local.ps1
 - Vite output filenames changed in `web-ui/dist/index.html` (hashed assets)
 - `ax-web` crate recompiled in the release build log
 - User sees new layout after restart + hard refresh
+
+## Related
+
+- [[frontend-production-build]] — the production build this workflow starts with
+- [[macos-cursor-ax-mcp-binary]] — reinstall-cli.sh on this Mac

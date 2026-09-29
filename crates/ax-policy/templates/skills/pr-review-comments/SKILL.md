@@ -6,7 +6,7 @@ triggers: ["pull request", "pr review", "review pr", "review the pr", "code revi
 tags: ["review", "pull-request"]
 priority: 86
 scope: company
-seedVersion: 1
+seedVersion: 3
 ---
 
 # PR review comments
@@ -18,6 +18,28 @@ Use this skill when the user asks you to review someone else's pull request: a c
 Run steps 1 and 2 of `review-loop`: the skill check and the stack review, with every usable stack skill (for example `dotnet-code-review`, `nextjs-review`). Read the PR description and the linked work item first, so the review checks the intended scope.
 
 Do not fix anything. It is the colleague's code: no commits, no pushes, no suggested-change commits unless the user asks for one later.
+
+## Link the work item
+
+Always try to link the work item to the pull request before drafting comments. This is not a code change. Find the work item id in this order: a work item URL in the description, the PR title (`<id> - …`), then the source branch name. If none of those has an id, say so and continue the review. Do not invent an id.
+
+Azure DevOps (`dev.azure.com` or `visualstudio.com`):
+
+```
+az repos pr work-item add --id <pr-id> --work-items <id> --org "https://dev.azure.com/<org>"
+```
+
+GitHub: the work item still lives in Azure DevOps. Use the organization from the work item URL. When that organization is unknown, ask once, then run:
+
+```
+az boards work-item relation add --id <id> --relation-type "Artifact Link" --target-url "<pull request url>" --org "https://dev.azure.com/<org>"
+```
+
+Run the command. If it fails, report the exact error and continue the review. Do not skip the attempt because the description already mentions the story. Never write `AB#` in a comment or the description to create the link.
+
+## Language
+
+Every comment this agent posts on a pull request is written in the language from the preflight line `PR review comments: … (reviews.commentLanguage=…)`. That covers draft texts offered for posting, the posted line comment, and replies on existing threads. When the line is missing, use English. Chat with the user stays English. This overrides the English-only rule for that pull-request surface only.
 
 ## 2. Draft the comments
 

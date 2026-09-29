@@ -96,7 +96,7 @@ pub fn extract_symbols(
                 end_line,
                 start_column: n.start_position().column as i32,
                 end_column: n.end_position().column as i32,
-                docstring: None,
+                docstring: leading_doc_comment(n, source),
                 signature: None,
                 visibility: None,
                 is_exported: None,
@@ -165,4 +165,92 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+/// Comment block directly above a declaration, with comment markers removed.
+/// Attributes and decorators between the comment and the item are skipped.
+pub(crate) fn leading_doc_comment(node: TsNode, source: &[u8]) -> Option<String> {
+    const MAX_CHARS: usize = 400;
+    let mut lines: Vec<String> = Vec::new();
+    let mut next_row = node.start_position().row;
+    let mut cursor = node.prev_sibling();
+    while let Some(prev) = cursor {
+        if prev.end_position().row + 1 < next_row {
+            break;
+        }
+        let kind = prev.kind();
+        if kind.contains("comment") {
+            let text = prev.utf8_text(source).unwrap_or("");
+            let mut block: Vec<String> = text.lines().map(strip_comment_marker).collect();
+            block.retain(|l| !l.is_empty());
+            block.extend(lines);
+            lines = block;
+        } else if !(kind.contains("attribute") || kind == "decorator") {
+            break;
+        }
+        next_row = prev.start_position().row;
+        cursor = prev.prev_sibling();
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let mut doc = lines.join("\n");
+    if doc.len() > MAX_CHARS {
+        let mut cut = MAX_CHARS;
+        while !doc.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        doc.truncate(cut);
+    }
+    Some(doc)
+}
+
+fn strip_comment_marker(line: &str) -> String {
+    let t = line.trim();
+    let t = t.trim_start_matches("/**").trim_end_matches("*/");
+    let t = t.trim_start_matches("///").trim_start_matches("//!").trim_start_matches("//");
+    let t = t.trim_start_matches('#').trim_start_matches('*');
+    t.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ax_types::NodeKind;
+
+    fn rust_docs(src: &str) -> Vec<(String, Option<String>)> {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        let result = extract_symbols(&tree, src.as_bytes(), "a.rs", Language::Rust, &[(NodeKind::Method, "function_item")]);
+        result
+            .nodes
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Method)
+            .map(|n| (n.name, n.docstring))
+            .collect()
+    }
+
+    #[test]
+    fn rust_doc_comment_becomes_docstring() {
+        let docs = rust_docs("/// Log token savings.\n/// Second line.\nfn record() {}\n");
+        assert_eq!(docs, vec![("record".into(), Some("Log token savings.\nSecond line.".into()))]);
+    }
+
+    #[test]
+    fn doc_comment_above_attribute_is_kept() {
+        let docs = rust_docs("/// Runs async.\n#[inline]\nfn fast() {}\n");
+        assert_eq!(docs[0].1.as_deref(), Some("Runs async."));
+    }
+
+    #[test]
+    fn comment_separated_by_blank_line_is_not_a_docstring() {
+        let docs = rust_docs("// header note\n\nfn lonely() {}\n");
+        assert_eq!(docs[0].1, None);
+    }
+
+    #[test]
+    fn function_without_comment_has_no_docstring() {
+        let docs = rust_docs("fn a() {}\n/// b docs\nfn b() {}\n");
+        assert_eq!(docs, vec![("a".into(), None), ("b".into(), Some("b docs".into()))]);
+    }
 }

@@ -11,7 +11,7 @@ ax serve --mcp
 
 When a `.ax/` index exists, the agent gets the tools below. In a workspace with **no** index, the server announces itself inactive and lists **no** graph tools — the agent works normally with its built-in tools, and indexing stays your decision.
 
-When `.agents/` is indexed (**ax v2.0.0+**), policy tools are listed automatically. See [Policy Engine](/guides/policy-engine/).
+When `.agents/` is indexed, policy tools are listed automatically. See [Policy Engine](/guides/policy-engine/).
 
 ## Default catalog: the graph read surface
 
@@ -70,7 +70,7 @@ ax_ship({ "mode": "ci" })
 ax_policy_index({ "force": true })
 ```
 
-## Policy tools (v2.0.0+)
+## Policy tools
 
 When `.ax/policy/` contains indexed rules or skills, the server also exposes:
 
@@ -112,7 +112,7 @@ The [memory vault](/guides/memory/) adds two tools:
 | `ax_remember` | Store a durable project memory (decision, fix, convention). Returns similar existing memories so contradictions get updated instead of duplicated. |
 | `ax_recall` | Hybrid search (full-text + vector similarity) over stored memories |
 
-`ax_preflight` also recalls memories relevant to the prompt and injects the top matches automatically, so agents rarely need to call `ax_recall` by hand. It also injects an `<ax_index>` block with node/edge counts and **document inventory by extension** (markdown, office, PDF, other opaque types) on every turn — agents do not need a separate `ax_status` call to see what docs are indexed.
+`ax_preflight` also recalls memories relevant to the prompt and injects the top matches automatically, so agents rarely need to call `ax_recall` by hand. It also injects an `<ax_index>` block with node/edge counts and **document inventory by extension** (markdown, office, PDF, other opaque types), sent again only when it changes — agents do not need a separate `ax_status` call to see what docs are indexed.
 
 Git hooks run `ax capture-git --quiet` on every commit — commit messages with real context become `kind: git` memories without agent action. Agents should still call `ax_remember` for durable decisions that commit messages do not capture.
 
@@ -142,11 +142,11 @@ By default ax runs **lean**: it never ships the same data twice. The authoritati
 | Tool | `content.text` | Lean `structuredContent` |
 |---|---|---|
 | `ax_explore` | Numbered source + caller/callee spine | `query`, `summary`, `blastRadius`, compact `entries` (name/file/lines/score) — no source or neighbor duplication |
-| `ax_preflight` | `inject` block (full rule/skill/memory/index bodies) | counts + `directiveDetected`, `captureProposal`, `guardRequired`, `mode`, `instruction`, `indexStats`, `pendingFiles` — no body duplication |
+| `ax_preflight` | `inject` block: rule and skill bodies not yet sent on this connection (unchanged ones listed by id; large always-apply skills summarized), memory titles, index block | counts + `directiveDetected`, `captureProposal`, `guardRequired`, `mode`, `instruction`, `indexStats`, `pendingFiles` — no body duplication |
 | `ax_status` | Markdown status summary + doc breakdown | `stats`, `lastIndexedAt`, `pendingFiles`, `policy` — no `text` duplication |
 | `ax_context` | Markdown task context | `query`, `summary`, `stats`, `relatedFiles` — no `subgraph`/`codeBlocks` duplication |
 | `ax_skill` | Skill body | metadata envelope (no `body`) |
-| `ax_node` | Full numbered source (default up to 400 lines / 24000 chars per match, 3 matches) + direct callers and callees | omitted (text is authoritative) |
+| `ax_node` | Full numbered source (default up to 400 lines / 24000 chars per match, 3 matches) + direct callers and callees. `mode: "signature"` returns path, lines, and the declaration only. An exact qualified name or node id returns only that symbol | omitted (text is authoritative) |
 | `ax_search` / `ax_callers` / `ax_callees` / `ax_impact` / `ax_files` / `ax_affected` | Compact one-line-per-symbol list | omitted (text is authoritative) |
 
 Savings measurement (`ax savings`) always runs against the full pre-projection payload, so the leaner wire format never distorts the numbers.
@@ -157,7 +157,7 @@ Set `AX_MCP_FULL=1` to restore the full `structuredContent` for every tool (for 
 
 To watch what each tool receives, how preflight enrichment builds the inject block, and what ax sends back on the wire — without changing agent-facing payloads — follow the full guide: **[MCP Logging & Quality](/guides/mcp-quality/)**. Short version:
 
-1. Enable **Settings → Interface → Verbose MCP logging** in Command Center (writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
+1. Set `[ui] verbose_mcp = true` in `.ax/ship.toml` (on by default), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
 2. Reconnect / restart the ax MCP server in Cursor.
 3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI).
 
@@ -178,7 +178,7 @@ Lines are prefixed with `[ax-mcp]`. They are written to the log file (and option
 | Variable | Default | Purpose |
 |---|---|---|
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every tool |
-| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` emits inbound/enrichment/outbound traces to stderr (Cursor Output); same as Settings → Interface → Verbose MCP logging |
+| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` emits inbound/enrichment/outbound traces to stderr (Cursor Output); same as `[ui] verbose_mcp = true` |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
 | `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |
@@ -236,9 +236,9 @@ Enforcement lives in `crates/ax-context/tests/no_query_time_disk_reads.rs`, a fa
 
 ## Shared daemon (multi-client)
 
-`ax serve --mcp` prefers a **per-project daemon**: the IDE process is a thin stdio proxy; one daemon owns `.ax/ax.db`. That lets Cursor and Takumi share one writer.
+`ax serve --mcp` prefers a **per-project daemon**: the IDE process is a thin stdio proxy; one daemon owns `.ax/ax.db`. That lets several IDEs share one writer.
 
-If the daemon cannot start in time, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (hamburger / sidebar Ops) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/docs/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
+If the daemon cannot start in time, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (sidebar → System) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
 
 ## How agents should use it
 

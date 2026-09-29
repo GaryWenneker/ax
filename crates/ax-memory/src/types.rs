@@ -7,7 +7,7 @@ fn default_true() -> bool {
 }
 
 /// What kind of knowledge a memory captures.
-pub const MEMORY_KINDS: &[&str] = &["decision", "bug_fix", "architecture", "convention", "note", "git", "turn"];
+pub const MEMORY_KINDS: &[&str] = &["decision", "bug_fix", "architecture", "convention", "note", "git", "turn", "doc"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRow {

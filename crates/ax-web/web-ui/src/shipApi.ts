@@ -160,6 +160,26 @@ export function saveShipConfig(config: ShipConfig): Promise<{ ok: boolean }> {
   return request('/config', { method: 'PUT', body: JSON.stringify(config) });
 }
 
+export interface ReviewLanguageChoice {
+  code: string;
+  name: string;
+}
+
+export interface ReviewLanguageSetting {
+  ok: boolean;
+  code: string;
+  name: string;
+  languages: ReviewLanguageChoice[];
+}
+
+export function fetchReviewLanguage(): Promise<ReviewLanguageSetting> {
+  return request('/review-language');
+}
+
+export function saveReviewLanguage(code: string): Promise<ReviewLanguageSetting> {
+  return request('/review-language', { method: 'PUT', body: JSON.stringify({ code }) });
+}
+
 export const SONAR_UI_PROXY = '/api/ship/sonar/ui/';
 
 export interface SonarUiInfo {

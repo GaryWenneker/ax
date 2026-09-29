@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { fetchPolicyRule, savePolicyRule, type PolicyOriginQuery } from '../policyApi';
 import MarkdownEditor from '../components/MarkdownEditor';
-import MarkdownPreview from '../components/MarkdownPreview';
+import { LinkedMarkdown, useItemLinks } from '../components/LinkedBody';
 import PolicyMetaResizeHandle from '../components/PolicyEditorResize';
 import PolicyRevisionHistory from '../components/PolicyRevisionHistory';
 import { RuleMetaView } from '../components/PolicyMetaView';
+import PolicyPropertiesEditor from '../components/PolicyPropertiesEditor';
 import {
   PageCard,
   PageCardBody,
@@ -17,6 +18,7 @@ import {
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
 import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
+import { RULE_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
 interface Props {
@@ -65,6 +67,7 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
   const [editing, setEditing] = useState(true);
   const [fm, setFm] = useState<RuleFrontmatter>(emptyFm());
   const [body, setBody] = useState('');
+  const links = useItemLinks('rule', ruleId, origin, body);
   const [globsText, setGlobsText] = useState('');
   const [triggersText, setTriggersText] = useState('');
   const [tagsText, setTagsText] = useState('');
@@ -326,6 +329,13 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
                     <PageRow title="Tags" description="Required — used to filter rules in the list (comma-separated).">
                       <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} placeholder="e.g. azdo, cicd, quality" />
                     </PageRow>
+                    <PolicyPropertiesEditor
+                      key={ruleId ?? 'new'}
+                      description="Extra keys sent with this rule in preflight. Built-in fields stay in the rows above."
+                      properties={fm.properties}
+                      reserved={RULE_PROPERTY_RESERVED}
+                      onChange={(properties) => setFm({ ...fm, properties })}
+                    />
                   </>
                 ) : (
                   <RuleMetaView
@@ -339,6 +349,7 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
                     scope={fm.scope}
                     enabled={fm.enabled}
                     group={fm.group}
+                    properties={fm.properties}
                   />
                 )}
               </PageCardBody>
@@ -353,9 +364,9 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
             className="page-md-panel"
           >
             {editing ? (
-              <MarkdownEditor value={body} onChange={setBody} fill />
+              <MarkdownEditor value={body} onChange={setBody} fill links={links} />
             ) : (
-              <MarkdownPreview value={body} className="page-md-preview" />
+              <LinkedMarkdown links={links} value={body} className="page-md-preview" />
             )}
           </PageCard>
         </div>

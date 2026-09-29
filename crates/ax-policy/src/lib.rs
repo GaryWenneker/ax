@@ -7,12 +7,14 @@ pub mod global_level;
 pub mod guard;
 pub mod hierarchy;
 pub mod index;
+pub mod links;
 pub mod matcher;
 pub mod migrate;
 pub mod pack;
 pub mod parse;
 pub mod paths;
 pub mod ide_seed;
+pub mod ide_loaded;
 pub mod review;
 pub mod revisions;
 pub mod seed;
@@ -31,7 +33,7 @@ pub use config::{
     effective_storage, find_policy_root, load_policy_config, load_policy_roots,
     policy_storage_status, policy_sync_enabled, write_global_policy_storage,
     write_project_policy_storage, write_project_policy_sync, write_project_require_review,
-    write_project_agents_dir, write_project_stacks, agents_dir_name, configured_agents_dir,
+    write_project_agents_dir, write_project_stacks, read_project_ides, write_project_ides, agents_dir_name, configured_agents_dir,
     validate_agents_dir_name, DEFAULT_AGENTS_DIR,
     PolicyConfig, PolicyRoot, PolicyStorage, PolicyStorageStatus,
 };
@@ -77,7 +79,7 @@ pub use matcher::{
 };
 pub use parse::{
     parse_rule_file, parse_skill_file, serialize_rule, serialize_rule_stub, serialize_skill,
-    serialize_skill_stub,
+    serialize_skill_stub, split_frontmatter,
 };
 pub use paths::{
     ensure_policy_dirs, ensure_scaffold, is_stub_body, policy_root, resolve_source_path,

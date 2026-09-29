@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill } from '../policyApi';
-import MarkdownEditor from './MarkdownEditor';
+import PolicyBodyCard from './PolicyBodyCard';
+import { useItemLinks } from './LinkedBody';
 import PolicyMetaResizeHandle from './PolicyEditorResize';
 import PolicyRevisionHistory from './PolicyRevisionHistory';
+import PolicyPropertiesEditor from './PolicyPropertiesEditor';
 import { PageCard, PageCardBody, PageRow } from './ui/PageLayout';
 import { Spinner } from './ui/Spinner';
+import { SKILL_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
 
@@ -36,6 +39,7 @@ function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
 export default function PolicySkillInlineWorkspace({ skillName, origin, projectId, onClose, onSaved }: Props) {
   const [fm, setFm] = useState<SkillFrontmatter | null>(null);
   const [body, setBody] = useState('');
+  const links = useItemLinks('skill', skillName, origin, body);
   const [triggersText, setTriggersText] = useState('');
   const [tagsText, setTagsText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -170,7 +174,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
               <PageRow title="Description">
                 <textarea
                   className="settings-input"
-                  rows={3}
+                  rows={6}
                   value={fm.description}
                   onChange={(e) => setFm({ ...fm, description: e.target.value })}
                   style={{ resize: 'vertical' }}
@@ -256,12 +260,17 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                   onChange={(e) => setFm({ ...fm, contextTask: e.target.value || undefined })}
                 />
               </PageRow>
+              <PolicyPropertiesEditor
+                key={skillName}
+                description="Extra keys sent with this skill in preflight. Built-in fields stay in the rows above."
+                properties={fm.properties}
+                reserved={SKILL_PROPERTY_RESERVED}
+                onChange={(properties) => setFm({ ...fm, properties })}
+              />
             </PageCardBody>
           </PageCard>
           <PolicyMetaResizeHandle />
-          <PageCard title="Skill body" description="Markdown source." className="policy-inline-pane policy-inline-pane--editor page-md-panel">
-            <MarkdownEditor value={body} onChange={setBody} fill />
-          </PageCard>
+          <PolicyBodyCard title="Skill body" body={body} onChange={setBody} links={links} selfKey={`skill:${origin ?? 'project'}:${skillName}`} />
         </div>
       ) : null}
     </div>

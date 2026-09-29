@@ -114,6 +114,7 @@ async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Resu
         },
         Err(e) => eprintln!("{}", dim(format!("Stack prompt skipped: {e}"))),
     }
+    let ides = choose_ides_for_init(&root)?;
     if ax_policy::read_configured_stacks(&root)
         .iter()
         .any(|id| id == "dotnet")
@@ -366,14 +367,7 @@ async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Resu
         let _ = t.flush_now(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
     }
 
-    run_installer(
-        &root,
-        InstallOptions {
-            yes: true,
-            install_all: false,
-            targets: Vec::new(),
-        },
-    )?;
+    apply_ide_choice(&root, ides)?;
     if savings {
         run_savings_setup().await;
     }
@@ -443,20 +437,43 @@ struct StackMenuLine {
     text: String,
 }
 
+/// One selectable row in an init checklist menu.
+struct MenuItem {
+    group: String,
+    id: String,
+    note: String,
+}
+
+fn stack_items(grouped: &[(String, &ax_policy::StackInfo)]) -> Vec<MenuItem> {
+    grouped
+        .iter()
+        .map(|(group, stack)| MenuItem {
+            group: group.clone(),
+            id: stack.id.clone(),
+            note: stack.description.clone(),
+        })
+        .collect()
+}
+
+#[cfg(test)]
 fn stack_menu_lines(
     grouped: &[(String, &ax_policy::StackInfo)],
     checked: &[bool],
     cursor: usize,
 ) -> Vec<StackMenuLine> {
+    menu_lines(&stack_items(grouped), checked, cursor)
+}
+
+fn menu_lines(items: &[MenuItem], checked: &[bool], cursor: usize) -> Vec<StackMenuLine> {
     let mut lines = Vec::new();
     let mut last_group = "";
-    for (index, (group, stack)) in grouped.iter().enumerate() {
-        if group != last_group {
+    for (index, item) in items.iter().enumerate() {
+        if item.group != last_group {
             lines.push(StackMenuLine {
                 item: None,
-                text: format!("  {}", group.yellow().bold()),
+                text: format!("  {}", item.group.yellow().bold()),
             });
-            last_group = group;
+            last_group = &item.group;
         }
         let active = index == cursor;
         let pointer = if active {
@@ -470,17 +487,13 @@ fn stack_menu_lines(
             "[ ]".dimmed().to_string()
         };
         let id = if active {
-            stack.id.cyan().bold().to_string()
+            item.id.cyan().bold().to_string()
         } else {
-            stack.id.cyan().to_string()
+            item.id.cyan().to_string()
         };
         lines.push(StackMenuLine {
             item: Some(index),
-            text: format!(
-                "{pointer} {mark} {:<12} {}",
-                id,
-                stack.description.dimmed()
-            ),
+            text: format!("{pointer} {mark} {:<12} {}", id, item.note.dimmed()),
         });
     }
     lines
@@ -488,7 +501,7 @@ fn stack_menu_lines(
 
 /// Arrow keys move the cursor. Space toggles. Enter confirms.
 /// Esc keeps the defaults that were already checked.
-fn prompt_stack_menu(checked: &mut [bool], grouped: &[(String, &ax_policy::StackInfo)]) -> Result<(), String> {
+fn prompt_menu(checked: &mut [bool], items: &[MenuItem]) -> Result<(), String> {
     let term = console::Term::stderr();
     let original = checked.to_vec();
     let mut cursor = 0;
@@ -496,7 +509,7 @@ fn prompt_stack_menu(checked: &mut [bool], grouped: &[(String, &ax_policy::Stack
     let mut drawn = 0usize;
     let _ = term.hide_cursor();
     let result = loop {
-        let lines = stack_menu_lines(grouped, checked, cursor);
+        let lines = menu_lines(items, checked, cursor);
         let page = (term.size().0 as usize).saturating_sub(8).clamp(8, 18);
         let cursor_line = lines
             .iter()
@@ -531,7 +544,7 @@ fn prompt_stack_menu(checked: &mut [bool], grouped: &[(String, &ax_policy::Stack
                 }
             }
             console::Key::ArrowDown | console::Key::Char('j') => {
-                if cursor + 1 < grouped.len() {
+                if cursor + 1 < items.len() {
                     cursor += 1;
                 }
             }
@@ -539,10 +552,10 @@ fn prompt_stack_menu(checked: &mut [bool], grouped: &[(String, &ax_policy::Stack
                 cursor = cursor.saturating_sub(page);
             }
             console::Key::PageDown | console::Key::Char('d') => {
-                cursor = (cursor + page).min(grouped.len().saturating_sub(1));
+                cursor = (cursor + page).min(items.len().saturating_sub(1));
             }
             console::Key::Home => cursor = 0,
-            console::Key::End => cursor = grouped.len().saturating_sub(1),
+            console::Key::End => cursor = items.len().saturating_sub(1),
             console::Key::Char(' ') => checked[cursor] = !checked[cursor],
             console::Key::Enter => break Ok(()),
             console::Key::Escape => {
@@ -581,7 +594,7 @@ fn choose_stacks_for_init(root: &std::path::Path) -> Result<Vec<String>, String>
             current.iter().any(|id| id == &stack.id) || detected.iter().any(|id| id == &stack.id)
         })
         .collect();
-    if let Err(err) = prompt_stack_menu(&mut checked, &grouped) {
+    if let Err(err) = prompt_menu(&mut checked, &stack_items(&grouped)) {
         println!(
             "  {}",
             dim(format!(
@@ -603,6 +616,118 @@ fn choose_stacks_for_init(root: &std::path::Path) -> Result<Vec<String>, String>
         .map(|((_, stack), _)| stack.id.clone())
         .collect();
     ax_policy::resolve_stacks(&ids)
+}
+
+/// The IDE answer, asked right after stacks and applied at the end of init.
+struct IdeChoice {
+    chosen: Vec<String>,
+    /// False without a terminal: nothing is saved or removed then.
+    asked: bool,
+}
+
+fn ide_items(detected: &[String]) -> Vec<MenuItem> {
+    ax_installer::ide_groups()
+        .into_iter()
+        .map(|(group, id)| {
+            let name = ax_installer::display_name(id);
+            let found = detected.iter().any(|d| d == id);
+            MenuItem {
+                group: group.to_string(),
+                id: id.to_string(),
+                note: if found { format!("{name} (found)") } else { name.to_string() },
+            }
+        })
+        .collect()
+}
+
+/// Answers the IDE question without a terminal (scripts, tests); treated like a typed answer.
+const ANSWER_ENV: &str = "AX_INIT_IDES";
+
+/// Ask which IDEs to connect. Without a terminal, keep the saved list (or the found IDEs).
+fn choose_ides_for_init(root: &std::path::Path) -> Result<IdeChoice, String> {
+    let raw = ax_policy::read_project_ides(root);
+    let saved = raw.as_deref().map(|list| {
+        let (known, unknown) = ax_installer::known_ides(list);
+        if !unknown.is_empty() {
+            eprintln!("{}", dim(format!("Ignoring unknown saved IDE(s): {}", unknown.join(", "))));
+        }
+        known
+    });
+    let detected: Vec<String> = ax_installer::TARGETS
+        .iter()
+        .filter(|id| ax_installer::is_detected(id))
+        .map(|id| id.to_string())
+        .collect();
+    let defaults = ax_installer::ide_defaults(saved.as_deref(), &detected);
+    if let Ok(answer) = std::env::var(ANSWER_ENV) {
+        let chosen = ax_installer::parse_ide_choice(&answer, &defaults)?;
+        return Ok(IdeChoice { chosen, asked: true });
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(IdeChoice { chosen: defaults, asked: false });
+    }
+    let items = ide_items(&detected);
+    println!("{}", info_line("Which IDEs and agents should ax connect?"));
+    let mut checked: Vec<bool> = items.iter().map(|i| defaults.contains(&i.id)).collect();
+    let chosen = match prompt_menu(&mut checked, &items) {
+        Ok(()) => items
+            .iter()
+            .zip(checked)
+            .filter(|(_, on)| *on)
+            .map(|(i, _)| i.id.clone())
+            .collect(),
+        Err(err) => {
+            println!(
+                "  {}",
+                dim(format!("Menu unavailable ({err}). Type ids separated by spaces, or 'none'."))
+            );
+            print!("IDEs: ");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+            ax_installer::parse_ide_choice(&line, &defaults)?
+        }
+    };
+    Ok(IdeChoice { chosen, asked: true })
+}
+
+/// Save the answer, remove ax from IDEs that were dropped, and connect the chosen ones.
+fn apply_ide_choice(root: &std::path::Path, choice: IdeChoice) -> Result<(), String> {
+    if choice.asked {
+        ax_policy::write_project_ides(root, &choice.chosen)?;
+        let configured: Vec<String> = ax_installer::agent_status(root)?
+            .into_iter()
+            .filter(|s| s.configured)
+            .map(|s| s.id)
+            .collect();
+        let dropped = ax_installer::ides_to_remove(&configured, &choice.chosen);
+        if !dropped.is_empty() {
+            for report in ax_installer::uninstall_targets(root, &dropped)? {
+                let mut seen = std::collections::HashSet::new();
+                let files: Vec<String> = report
+                    .files
+                    .iter()
+                    .map(|f| tildify(&f.path))
+                    .filter(|p| seen.insert(p.clone()))
+                    .collect();
+                let what = if files.is_empty() { "nothing to remove".to_string() } else { files.join(", ") };
+                println!("{}", ok_line(format!("Removed ax from {}: {what}", report.display_name)));
+            }
+        }
+    }
+    if choice.chosen.is_empty() {
+        ax_installer::ensure_global_config();
+        println!("{}", ok_line("No IDEs chosen; ax is not connected to any IDE"));
+        return Ok(());
+    }
+    run_installer(
+        root,
+        InstallOptions {
+            yes: true,
+            install_all: false,
+            targets: choice.chosen,
+        },
+    )
 }
 
 async fn store_dotnet_code_review_in_global_db(project_root: &std::path::Path) -> Result<(), String> {
@@ -707,6 +832,54 @@ async fn run_savings_setup() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn strip_ansi(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for c in chars.by_ref() {
+                    if c == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn stack_menu_text_is_stable() {
+        let stack = |id: &str, description: &str| ax_policy::StackInfo {
+            id: id.into(),
+            version: "1".into(),
+            description: description.into(),
+            depends_on: Vec::new(),
+            files: 0,
+        };
+        let (rust, go, ts) = (stack("rust", "Rust rules"), stack("go", "Go rules"), stack("typescript", "TS rules"));
+        let grouped = vec![
+            ("Systems".to_string(), &rust),
+            ("Systems".to_string(), &go),
+            ("Web".to_string(), &ts),
+        ];
+        let text: Vec<(Option<usize>, String)> = stack_menu_lines(&grouped, &[true, false, false], 1)
+            .into_iter()
+            .map(|l| (l.item, strip_ansi(&l.text)))
+            .collect();
+        assert_eq!(
+            text,
+            vec![
+                (None, "  Systems".to_string()),
+                (Some(0), "  [x] rust Rust rules".to_string()),
+                (Some(1), "❯ [ ] go Go rules".to_string()),
+                (None, "  Web".to_string()),
+                (Some(2), "  [ ] typescript TS rules".to_string()),
+            ]
+        );
+    }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("ax-init-{name}-{}", std::process::id()));

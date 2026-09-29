@@ -40,7 +40,7 @@ const pipeline = [
 		step: '03',
 		title: 'Ship',
 		cmd: 'ax ship',
-		body: 'Quality gates, SonarQube, test-impact, ax ship --ci, and draft PRs from the Command Center on your machine.',
+		body: 'Quality gates (optional SonarQube step), test-impact, ax ship --ci, and draft PRs from the Command Center on your machine.',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 36V18l16-10 16 10v18"/><path d="M18 36V24h12v12M22 28h4"/></svg>`,
 	},
 ];
@@ -66,7 +66,7 @@ const pillars = [
 	},
 	{
 		title: 'Command Center',
-		body: 'ax web / ax share — graph browser, MCP Logging / Quality, PWA, live action stream, SonarQube proxy, and agent terminal.',
+		body: 'ax web / ax share — graph browser, MCP Logging / Quality, PWA, live action stream, policy editors, and memory vault.',
 		href: '/guides/command-center',
 		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 36V18l16-10 16 10v18"/><path d="M18 36V24h12v12M22 28h4"/></svg>`,
 	},
@@ -150,7 +150,11 @@ const stats = [
 		<main>
 			<!-- ===== HERO ===== -->
 			<section class="hero" id="hero">
-				<div class="hero-content reveal">
+				<div class="hero-grid reveal">
+				<div class="hero-brand">
+					<LogoMark size="hero" alt="" class="hero-logo" />
+				</div>
+				<div class="hero-content">
 					<div class="hero-meta">
 						<span class="release-tag">{AX_VERSION}</span>
 						<span class="hero-meta-sep" aria-hidden="true">&middot;</span>
@@ -183,6 +187,7 @@ const stats = [
 							</svg>
 						</button>
 					</div>
+				</div>
 				</div>
 				<div class="scroll-hint" aria-hidden="true">
 					<div class="scroll-line"></div>
@@ -462,12 +467,101 @@ const stats = [
 			padding: 6rem 2.5rem 3rem;
 			overflow: hidden;
 		}
-		.hero-content {
+		.hero-grid {
 			position: relative;
 			z-index: 1;
-			max-width: min(820px, 100%);
 			width: 100%;
-			text-align: center;
+			max-width: 1240px;
+			display: grid;
+			grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+			align-items: center;
+			gap: clamp(2rem, 5vw, 5rem);
+		}
+		.hero-brand {
+			display: flex;
+			justify-content: center;
+			align-items: center;
+		}
+		.hero-brand :global(.hero-logo) {
+			width: 100%;
+			height: auto;
+			margin: 0;
+		}
+		.hero-content {
+			min-width: 0;
+			text-align: left;
+		}
+		@media (min-width: 900px) {
+			.hero-grid {
+				grid-template-rows: auto auto auto auto auto auto;
+				grid-template-columns: auto auto;
+				justify-content: center;
+				column-gap: clamp(1.5rem, 3vw, 3rem);
+				row-gap: 0;
+			}
+			.hero-content {
+				display: contents;
+			}
+			.hero-content > * {
+				grid-column: 2;
+			}
+			.hero-grid .hero-brand {
+				grid-column: 1;
+				grid-row: 3;
+				align-self: center;
+				width: clamp(280px, 30vw, 360px);
+				max-width: none;
+				margin-bottom: 2rem;
+			}
+		}
+		.hero-content .hero-meta {
+			justify-content: flex-start;
+		}
+		.hero-content .tagline {
+			margin-left: 0;
+		}
+		.hero-content .cta {
+			justify-content: flex-start;
+		}
+		.hero-content .install,
+		.hero-content .lede {
+			margin-left: 0;
+		}
+		.hero-content h1 {
+			font-size: clamp(3.25rem, 7.5vw, 7.5rem);
+		}
+		.hero-content .h1-line {
+			white-space: nowrap;
+		}
+		.hero-brand {
+			width: 100%;
+			max-width: 460px;
+			justify-self: center;
+		}
+		@media (max-width: 899px) {
+			.hero-content .lede {
+				margin-left: auto;
+			}
+			.hero-grid {
+				grid-template-columns: 1fr;
+				gap: 1.5rem;
+			}
+			.hero-brand {
+				width: min(60vw, 260px);
+				margin: 0 auto;
+			}
+			.hero-content,
+			.hero-content .tagline {
+				text-align: center;
+				margin-left: auto;
+			}
+			.hero-content .hero-meta,
+			.hero-content .cta {
+				justify-content: center;
+			}
+			.hero-content .install {
+				margin-left: auto;
+			}
 		}
 
 		.hero-meta {

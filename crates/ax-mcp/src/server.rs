@@ -118,6 +118,17 @@ fn resolve_request_project_root(engine: &McpEngine) -> Option<PathBuf> {
         .or_else(|| resolve_mcp_project_root(None))
 }
 
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+
+fn negotiate_protocol_version(params: &Value) -> &'static str {
+    let requested = params.get("protocolVersion").and_then(|v| v.as_str());
+    SUPPORTED_PROTOCOL_VERSIONS
+        .iter()
+        .find(|v| Some(**v) == requested)
+        .copied()
+        .unwrap_or(SUPPORTED_PROTOCOL_VERSIONS[0])
+}
+
 pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value) -> RequestOutcome {
     let project_root = resolve_request_project_root(engine);
     let has_policy = project_root
@@ -126,12 +137,27 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
         .unwrap_or(false);
 
     match method {
-        "initialize" => RequestOutcome::ok(json!({
-            "protocolVersion": "2024-11-05",
+        "initialize" => {
+            let client = params
+                .pointer("/clientInfo/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            engine.policy_sessions().begin(client);
+            RequestOutcome::ok(json!({
+            "protocolVersion": negotiate_protocol_version(&params),
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "ax", "version": env!("CARGO_PKG_VERSION") },
+            "serverInfo": {
+                "name": "ax",
+                "version": env!("CARGO_PKG_VERSION"),
+                "icons": [{
+                    "src": concat!("data:image/png;base64,", include_str!("../assets/ax-icon.png.b64")),
+                    "mimeType": "image/png",
+                    "sizes": ["128x128"]
+                }]
+            },
             "instructions": server_instructions(has_policy),
-        })),
+            }))
+        }
         "tools/list" => RequestOutcome::ok(ToolHandler::list_tools(has_policy).await),
         "tools/call" => {
             let name = params
@@ -164,6 +190,47 @@ pub async fn handle_request(engine: &mut McpEngine, method: &str, params: Value)
     }
 }
 
+/// Private args key: what this connection's agent already received.
+pub(crate) const SESSION_ARG: &str = "__axSession";
+/// Private result key: bodies preflight sent this time. Stripped before the reply.
+pub(crate) const DELIVERED_KEY: &str = "__axDelivered";
+
+fn policy_session_ttl() -> std::time::Duration {
+    std::env::var("AX_POLICY_SESSION_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(crate::policy_session::DEFAULT_TTL)
+}
+
+fn attach_policy_session(engine: &mut McpEngine, mut args: Value) -> Value {
+    let chat = ax_usage::read_active_cursor_session();
+    let view = engine
+        .policy_sessions()
+        .view(chat.as_deref(), std::time::Instant::now(), policy_session_ttl());
+    if !args.is_object() {
+        args = json!({});
+    }
+    args[SESSION_ARG] = json!({ "client": view.client_name, "delivered": view.delivered });
+    args
+}
+
+fn record_policy_delivery(engine: &mut McpEngine, mut value: Value) -> Value {
+    let Some(delivered) = value.as_object_mut().and_then(|obj| obj.remove(DELIVERED_KEY)) else {
+        return value;
+    };
+    let pairs: Vec<(String, u64)> = delivered
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| Some((pair.get(0)?.as_str()?.to_string(), pair.get(1)?.as_u64()?)))
+        .collect();
+    engine.policy_sessions().record(pairs);
+    value
+}
+
+/// Run one tool, wrap the reply for MCP, and log the call with its token
+/// savings estimate via `spawn_record_mcp_call`.
 async fn call_tool_and_wrap(
     engine: &mut McpEngine,
     name: &str,
@@ -184,6 +251,7 @@ async fn call_tool_and_wrap(
     if verbose {
         push_inbound(name, &args);
     }
+    let args = if matches!(name, "ax_preflight" | "ax_skill") { attach_policy_session(engine, args) } else { args };
     let started = std::time::Instant::now();
     let result = if let Some(pool) = engine.query_pool() {
         if pool.healthy() && crate::query_pool::is_read_tool(name) {
@@ -217,6 +285,7 @@ async fn call_tool_and_wrap(
         t.persist_sync();
     }
     ax_telemetry::trigger_background_flush();
+    let result = result.map(|value| record_policy_delivery(engine, value));
     let duration_ms = started.elapsed().as_millis() as i64;
     let project = project_root.map(|p| p.display().to_string());
     match &result {
@@ -499,7 +568,8 @@ const TOKEN_HINT_THRESHOLD: i64 = 3_000;
 /// One-line budget hint appended to large tool responses so agents self-correct
 /// (narrower depth/limit) instead of pulling ever-bigger contexts.
 fn token_budget_hint(tool: &str, response_tokens: i64) -> Option<String> {
-    if response_tokens < TOKEN_HINT_THRESHOLD {
+    // Preflight size follows team policy, not the query, so the advice would not help.
+    if response_tokens < TOKEN_HINT_THRESHOLD || tool == "ax_preflight" {
         return None;
     }
     let advice = match tool {
@@ -557,6 +627,12 @@ fn is_policy_tool(name: &str) -> bool {
 #[cfg(test)]
 mod wrap_tests {
     use super::*;
+
+    #[test]
+    fn preflight_gets_no_token_budget_banner() {
+        assert!(token_budget_hint("ax_preflight", 9_000).is_none());
+        assert!(token_budget_hint("ax_explore", 9_000).is_some());
+    }
 
     #[test]
     fn wrap_preflight_puts_inject_in_content_text() {
@@ -726,6 +802,144 @@ mod policy_integration {
             "expected indexed rules, got {}",
             rules.len()
         );
+    }
+
+    fn reply_text(result: &Value) -> String {
+        result["content"][0]["text"].as_str().unwrap_or_default().to_string()
+    }
+
+    /// A project whose only policy is three always-apply rules without links, so reply sizes
+    /// depend on session skipping alone and not on this repo's live policy.
+    async fn session_fixture() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("ax-mcp-session-{}", uuid::Uuid::new_v4()));
+        let rules = root.join(".agents").join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        for id in ["alpha", "beta", "gamma"] {
+            let body = format!("## Rules\n\n{}", format!("- Rule {id} applies to every change.\n").repeat(80));
+            std::fs::write(
+                rules.join(format!("{id}.mdc")),
+                format!("---\nid: {id}\nlevel: WARNING\nalwaysApply: true\n---\n\n{body}"),
+            )
+            .unwrap();
+        }
+        let ax = ax_core::Ax::init(&root).await.unwrap();
+        ax_policy::index_policy(ax.db_pool(), &root, true).await.unwrap();
+        root
+    }
+
+    #[tokio::test]
+    async fn second_preflight_on_a_connection_skips_unchanged_bodies() {
+        let root = session_fixture().await;
+        let mut engine = McpEngine::with_project_root(root.clone());
+        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
+        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
+        let first = handle_request(&mut engine, "tools/call", call.clone()).await.result.expect("first");
+        let second = handle_request(&mut engine, "tools/call", call).await.result.expect("second");
+        let (first, second) = (reply_text(&first), reply_text(&second));
+        assert!(first.contains("## Rules (always apply)"), "{first}");
+        assert!(!first.contains(DELIVERED_KEY) && !second.contains(DELIVERED_KEY));
+        assert!(second.contains("Unchanged since earlier in this session"), "{second}");
+        assert!(second.len() * 2 < first.len(), "first={} second={}", first.len(), second.len());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn node_signature_mode_returns_location_and_declaration_only() {
+        let Some(root) = repo_root() else {
+            return;
+        };
+        let mut engine = McpEngine::with_project_root(root);
+        let call = |mode: Option<&str>| {
+            let mut args = json!({ "name": "lean_structured" });
+            if let Some(m) = mode {
+                args["mode"] = json!(m);
+            }
+            json!({ "name": "ax_node", "arguments": args })
+        };
+        let sig = handle_request(&mut engine, "tools/call", call(Some("signature"))).await.result.expect("sig");
+        let full = handle_request(&mut engine, "tools/call", call(None)).await.result.expect("full");
+        let (sig, full) = (reply_text(&sig), reply_text(&full));
+        assert!(sig.contains("crates/ax-mcp/src/server.rs"), "{sig}");
+        assert!(sig.contains("fn lean_structured"), "{sig}");
+        assert!(!sig.contains("explore_entries_compact(value)"), "{sig}");
+        assert!(!sig.contains("### Callers"), "{sig}");
+        assert!(full.contains("explore_entries_compact(value)"), "{full}");
+        assert!(sig.len() * 3 < full.len(), "sig={} full={}", sig.len(), full.len());
+    }
+
+    #[tokio::test]
+    async fn unchanged_catalog_and_memory_titles_are_sent_once_per_session() {
+        let Some(root) = repo_root() else {
+            return;
+        };
+        let mut engine = McpEngine::with_project_root(root);
+        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
+        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
+        let first = reply_text(&handle_request(&mut engine, "tools/call", call.clone()).await.result.expect("first"));
+        let second = reply_text(&handle_request(&mut engine, "tools/call", call).await.result.expect("second"));
+        assert!(!second.contains("<ax_memory_titles>"), "memory titles resent:\n{second}");
+        assert!(first.contains("<ax_index"), "{first}");
+        assert!(!second.contains("<ax_index"), "unchanged index snapshot resent:\n{second}");
+        let catalog_ids = |text: &str| -> Vec<String> {
+            text.split("<ax_context_catalog>")
+                .nth(1)
+                .map(|rest| {
+                    rest.lines()
+                        .filter_map(|l| l.strip_prefix("- ")?.split_whitespace().next().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let first_ids = catalog_ids(&first);
+        for id in catalog_ids(&second) {
+            assert!(!first_ids.contains(&id), "catalog entry {id} resent");
+        }
+        assert!(first.contains("<ax_memory_titles>"), "fixture repo should have memories:\n{first}");
+    }
+
+    #[tokio::test]
+    async fn node_with_exact_qualified_name_returns_only_that_symbol() {
+        let Some(root) = repo_root() else {
+            return;
+        };
+        let mut engine = McpEngine::with_project_root(root);
+        let call = json!({ "name": "ax_node", "arguments": { "name": "crates/ax-mcp/src/tools.rs::skill" } });
+        let text = reply_text(&handle_request(&mut engine, "tools/call", call).await.result.expect("node"));
+        assert_eq!(text.matches("## Entry").count(), 1, "{text}");
+        assert!(text.contains("crates/ax-mcp/src/tools.rs::skill"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn second_skill_load_in_a_session_is_a_short_notice() {
+        let Some(root) = repo_root() else {
+            return;
+        };
+        let mut engine = McpEngine::with_project_root(root);
+        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
+        let preflight = json!({ "name": "ax_preflight", "arguments": { "prompt": "start" } });
+        handle_request(&mut engine, "tools/call", preflight).await.result.expect("preflight");
+        let call = json!({ "name": "ax_skill", "arguments": { "name": "startup" } });
+        let first = reply_text(&handle_request(&mut engine, "tools/call", call.clone()).await.result.expect("first"));
+        let second = reply_text(&handle_request(&mut engine, "tools/call", call).await.result.expect("second"));
+        assert!(first.contains("SS-00"), "first load must carry the body:\n{first}");
+        assert!(!second.contains("SS-00"), "second load resent the body:\n{second}");
+        assert!(second.contains("startup"), "{second}");
+        assert!(second.len() < 400, "{second}");
+    }
+
+    #[tokio::test]
+    async fn new_initialize_resends_bodies() {
+        let Some(root) = repo_root() else {
+            return;
+        };
+        let mut engine = McpEngine::with_project_root(root);
+        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
+        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
+        let first = handle_request(&mut engine, "tools/call", call.clone()).await.result.expect("first");
+        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
+        let again = handle_request(&mut engine, "tools/call", call).await.result.expect("again");
+        assert!(!reply_text(&again).contains("Unchanged since earlier in this session"));
+        assert!(reply_text(&again).len() * 10 > reply_text(&first).len() * 9);
     }
 
     #[tokio::test]

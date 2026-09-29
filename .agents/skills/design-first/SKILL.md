@@ -1,10 +1,15 @@
 ---
 name: design-first
-description: Design before code. Use when building new features or components — clarify requirements before implementation.
-triggers: ["build", "create", "new feature", "design", "architect", "plan", "implement from scratch"]
-tags: ["design", "methodology"]
+description: "Design before code. Use when building new features or components — clarify requirements before implementation."
+alwaysApply: false
+triggers: ["build","create","new feature","design","architect","plan","implement from scratch"]
+tags: ["design","methodology"]
 priority: 65
+enabled: true
+status: approved
+scope: project
 ---
+
 # Design Before Code
 
 Do not jump into implementation. Clarify what you are building first.
@@ -26,3 +31,7 @@ If the request spans multiple independent subsystems, flag it. Help decompose in
 - **YAGNI** — remove unnecessary features from all designs.
 - **Isolation** — each unit has one purpose, clear interfaces, testable independently.
 - **Existing codebases** — explore structure before proposing changes. Follow established patterns. Only improve code you are actively modifying.
+
+## Related
+
+- [[old-coder]] — the design becomes the approved SPEC

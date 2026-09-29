@@ -65,10 +65,7 @@ async fn get_share_config(
     State(hub): State<WebHub>,
 ) -> Result<Json<ShareConfigResponse>, (StatusCode, Json<ApiError>)> {
     let root = project_root(&hub).await?;
-    Ok(Json(config_response(
-        &root,
-        share_config_for_api(&root),
-    )))
+    Ok(Json(config_response(&root, share_config_for_api(&root))))
 }
 
 async fn put_share_config(
@@ -90,10 +87,7 @@ async fn put_share_config(
             Json(ApiError { error: e }),
         )
     })?;
-    Ok(Json(config_response(
-        &root,
-        share_config_for_api(&root),
-    )))
+    Ok(Json(config_response(&root, share_config_for_api(&root))))
 }
 
 async fn get_share_status(
@@ -149,21 +143,17 @@ async fn post_share_sync(
             let mut st = share_status_for_api(&root);
             st.last_error = Some(e.clone());
             let _ = ax_share::save_share_status(&root, &st);
-            Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiError { error: e }),
-            ))
+            Err((StatusCode::BAD_REQUEST, Json(ApiError { error: e })))
         }
     }
 }
 
-async fn ms_device_start() -> Result<Json<ax_share::DeviceFlowStart>, (StatusCode, Json<ApiError>)> {
-    start_device_flow().await.map(Json).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiError { error: e }),
-        )
-    })
+async fn ms_device_start() -> Result<Json<ax_share::DeviceFlowStart>, (StatusCode, Json<ApiError>)>
+{
+    start_device_flow()
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))
 }
 
 async fn ms_device_poll() -> Result<Json<DevicePollResponse>, (StatusCode, Json<ApiError>)> {
@@ -176,10 +166,7 @@ async fn ms_device_poll() -> Result<Json<DevicePollResponse>, (StatusCode, Json<
             complete: false,
             status: microsoft_auth_status(),
         })),
-        Err(e) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError { error: e }),
-        )),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiError { error: e }))),
     }
 }
 
@@ -203,12 +190,8 @@ struct MsClientConfigBody {
 async fn ms_set_config(
     Json(body): Json<MsClientConfigBody>,
 ) -> Result<Json<ax_share::MicrosoftAuthStatus>, (StatusCode, Json<ApiError>)> {
-    write_ms_client_id_to_config(&body.client_id).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiError { error: e }),
-        )
-    })?;
+    write_ms_client_id_to_config(&body.client_id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiError { error: e })))?;
     std::env::set_var("AX_MS_CLIENT_ID", body.client_id.trim());
     Ok(Json(microsoft_auth_status()))
 }

@@ -64,7 +64,7 @@ On **Unresolved**, use **Enrich with LSP** (ModalShell) — calls `POST /api/lsp
 | `shim` | On PATH but not runnable (common: rustup shim without the component) |
 | `missing` | Not found |
 
-With Verbose MCP logging on, Logging shows `lsp` domain lines; Activity chip deep-links filter to `/logging?kind=lsp`.
+Logging shows `lsp` lines; the Activity chip links to `/logging?kind=lsp`.
 
 ## Further reading
 

@@ -1,9 +1,11 @@
 ---
 name: ship
-description: >-
-  Bump, rebuild, deploy, and release ax (GaryWenneker/ax). Use when the user says
-  ship, bump, rebuild, deploy, release, cut a release, or publish ax.
-disable-model-invocation: true
+description: "Bump, rebuild, deploy, and release ax (GaryWenneker/ax). Use when the user says ship, bump, rebuild, deploy, release, cut a release, or publish ax."
+alwaysApply: false
+priority: 50
+enabled: true
+status: approved
+scope: project
 ---
 
 # ship — ax release pipeline
@@ -130,12 +132,6 @@ Prefer `.\scripts\release-local.ps1` — it syncs and verifies automatically.
 
 - **Restart ax MCP** in Cursor (Settings → MCP) so agents use the new binary.
 - If site/docs changed outside CI: `.\scripts\deploy-netlify.ps1`
-- Tell user to **Reload Window** in Takumi if `extensions/ax/media/*` changed (separate repo).
-
-## Takumi extension (C:\gary\takumi)
-
-Native Ax pages live in `extensions/ax/media/`. They hot-reload via the VS Code extension — **no ax binary rebuild** needed for JS/CSS-only edits. Commit/push takumi separately; no GitHub release for the extension in this skill.
-
 ## Version rules
 
 - **patch** — 4.2.0 → 4.2.1
@@ -156,3 +152,10 @@ Native Ax pages live in `extensions/ax/media/`. They hot-reload via the VS Code 
 - **Access is denied** copying `ax.exe` — MCP respawned ax; run `release-local.ps1` (kills all ax.exe, rename-away unlock).
 - **Stale localhost:7070 UI** — run `rebuild-web.ps1`, hard refresh (Ctrl+Shift+R).
 - **release-tag blocks dirty tree** — commit or stash unrelated files; do not use `-AllowDirty` unless intentional.
+
+## Related
+
+- [[finish-full-ship-pipeline]] — finish in-session, including push
+- [[release-all-platforms]] — all six assets before latest.txt
+- [[docs-with-features]] — docs in the same change
+- [[macos-cursor-ax-mcp-binary]] — local rebuild on this Mac

@@ -238,6 +238,7 @@ pub async fn run_match(
     prompt: String,
     files: Vec<String>,
     json: bool,
+    full: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
     ax_usage::log_policy(
@@ -267,7 +268,11 @@ pub async fn run_match(
         ),
     );
     if json {
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        let mut value = serde_json::to_value(&result).map_err(|e| e.to_string())?;
+        if !full {
+            strip_match_bodies(&mut value);
+        }
+        println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
     } else {
         if result.rules.is_empty() && result.skills.is_empty() {
             println!("No rules or skills matched.");
@@ -276,6 +281,19 @@ pub async fn run_match(
         }
     }
     Ok(())
+}
+
+/// Bodies already travel once in `inject`; the lists keep ids, levels and reasons.
+fn strip_match_bodies(value: &mut serde_json::Value) {
+    for list in ["rules", "skills"] {
+        if let Some(items) = value.get_mut(list).and_then(|v| v.as_array_mut()) {
+            for item in items {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.remove("body");
+                }
+            }
+        }
+    }
 }
 
 pub async fn run_dedup(path: Option<String>, dry_run: bool, json: bool) -> Result<(), String> {
@@ -545,6 +563,18 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
             release_match.skills.len()
         ),
     );
+
+    if skills.iter().any(|s| s.name == "savings-gauntlet") {
+        let savings = MatchInput {
+            prompt: "rerun the savings gauntlet".into(),
+            cwd: root.clone(),
+            open_files: vec![],
+            changed_files: vec![],
+        };
+        let savings_match = ax.match_policy(savings).await.map_err(|e| e.to_string())?;
+        let matched = savings_match.skills.iter().any(|s| s.name == "savings-gauntlet");
+        check("match_savings_gauntlet", matched, &format!("savings-gauntlet matched={matched}"));
+    }
 
     let meta = ax_policy::build_preflight_meta(&status, &baseline_match);
     check(
@@ -1042,9 +1072,13 @@ pub async fn run_pack_import(
     let result = ax_policy::import_pack(ax.db_pool(), &root, pack_path.as_deref(), force)
         .await
         .map_err(|e| e.to_string())?;
-    // Best-effort: wire detected agent MCP configs (Continue, Cursor, …) so pack
-    // rules arrive via ax_preflight regardless of which IDE the teammate uses.
-    let _ = ax_installer::targets::install_detected(&root, false);
+    // Best-effort refresh of IDEs that already have ax; never connects one the user left off.
+    if let Ok(statuses) = ax_installer::agent_status(&root) {
+        let configured: Vec<String> = statuses.into_iter().filter(|s| s.configured).map(|s| s.id).collect();
+        let saved = ax_policy::read_project_ides(&root);
+        let targets = ax_installer::pack_refresh_targets(&configured, saved.as_deref());
+        let _ = ax_installer::install_targets(&root, &targets);
+    }
     if !quiet {
         println!(
             "Pack import: +{} rules, +{} skills, ~{} rules, ~{} skills, pending {}/{}, skipped {}, conflicts {}",
@@ -1473,4 +1507,26 @@ pub async fn run_stack_upgrade(path: Option<String>, json: bool) -> Result<(), S
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_match_bodies;
+    use serde_json::json;
+
+    #[test]
+    fn match_json_keeps_bodies_only_in_inject() {
+        let mut value = json!({
+            "rules": [{"id": "english-only", "level": "CRITICAL", "body": "RULE-BODY"}],
+            "skills": [{"name": "tdd", "body": "SKILL-BODY"}],
+            "inject": "RULE-BODY SKILL-BODY",
+        });
+        strip_match_bodies(&mut value);
+        let text = value.to_string();
+        assert_eq!(text.matches("RULE-BODY").count(), 1);
+        assert_eq!(text.matches("SKILL-BODY").count(), 1);
+        assert_eq!(value["rules"][0]["id"], "english-only");
+        assert_eq!(value["rules"][0]["level"], "CRITICAL");
+        assert_eq!(value["skills"][0]["name"], "tdd");
+    }
 }

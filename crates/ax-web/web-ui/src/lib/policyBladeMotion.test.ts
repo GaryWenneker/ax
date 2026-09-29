@@ -7,6 +7,7 @@ import {
   POLICY_BLADE_DISMISS_MS,
   policyDetailOpen,
   policyWorkspaceHostClass,
+  selectionHidden,
 } from './policyBladeMotion.ts';
 
 describe('policy blade dismiss motion', () => {
@@ -15,6 +16,18 @@ describe('policy blade dismiss motion', () => {
     assert.equal(policyDetailOpen(null, true), true);
     assert.equal(policyDetailOpen(null, false), false);
     assert.equal(policyDetailOpen('', false), false);
+  });
+
+  it('U1 a linked item stays selected while the list loads', () => {
+    assert.equal(selectionHidden('link-rule', [], true), false);
+    assert.equal(selectionHidden('link-rule', ['other'], true), false);
+  });
+
+  it('U1 a loaded list hides a selection it does not show', () => {
+    assert.equal(selectionHidden('link-rule', ['other'], false), true);
+    assert.equal(selectionHidden('link-rule', [], false), true);
+    assert.equal(selectionHidden('link-rule', ['other', 'link-rule'], false), false);
+    assert.equal(selectionHidden(null, ['other'], false), false);
   });
 
   it('B2 host class marks closing', () => {

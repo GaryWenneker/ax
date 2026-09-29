@@ -3,25 +3,31 @@
 mod actions;
 mod agent;
 mod agent_pty;
+mod dav;
+mod docs_catalog;
 mod domain_graph;
+mod folder_picker;
+mod global_policy;
 mod graph_export;
+mod links_api;
 mod lsp_api;
 mod mcp_ops;
 mod mcp_quality;
 mod mcp_trace;
 mod memory;
-mod docs_catalog;
 mod okf_api;
-mod policy_share;
 mod plugins_api;
 mod policy;
+mod policy_share;
+mod pricing_api;
+mod project_purge;
 mod queries;
+mod savings;
 mod share_api;
 mod share_auth;
 mod ship;
 mod sonar_proxy;
-mod savings;
-mod pricing_api;
+mod vault_folders;
 mod workspace;
 mod workspace_state;
 
@@ -65,9 +71,7 @@ pub(crate) struct ApiError {
 fn api_err(msg: impl Into<String>) -> (StatusCode, Json<ApiError>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ApiError {
-            error: msg.into(),
-        }),
+        Json(ApiError { error: msg.into() }),
     )
 }
 
@@ -92,19 +96,12 @@ async fn handle_stats(State(hub): State<WebHub>) -> impl IntoResponse {
                 .await
                 .map(|sk| sk.len() as i64)
                 .unwrap_or(0);
-            let project_name = {
-                let raw = ws
-                    .project_root
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("project");
-                // Legacy Code-OSS fork folder name — display as Takumi.
-                if raw.eq_ignore_ascii_case("bonzaicoder") {
-                    "takumi".to_string()
-                } else {
-                    raw.to_string()
-                }
-            };
+            let project_name = ws
+                .project_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project")
+                .to_string();
             let body = WebStats {
                 graph,
                 db_size_bytes,
@@ -143,10 +140,7 @@ fn nodes_max_limit() -> i64 {
     2_000
 }
 
-async fn handle_nodes(
-    State(hub): State<WebHub>,
-    Query(p): Query<NodesQuery>,
-) -> impl IntoResponse {
+async fn handle_nodes(State(hub): State<WebHub>, Query(p): Query<NodesQuery>) -> impl IntoResponse {
     let ws = hub.read().await;
     let filter = queries::NodeFilter {
         kind: p.kind.as_deref(),
@@ -192,10 +186,7 @@ struct FilesQuery {
     offset: i64,
 }
 
-async fn handle_files(
-    State(hub): State<WebHub>,
-    Query(p): Query<FilesQuery>,
-) -> impl IntoResponse {
+async fn handle_files(State(hub): State<WebHub>, Query(p): Query<FilesQuery>) -> impl IntoResponse {
     let ws = hub.read().await;
     let filter = queries::FileFilter {
         lang: p.lang.as_deref(),
@@ -355,7 +346,9 @@ async fn handle_source(
         Err(_) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(ApiError { error: format!("file not found: {}", p.path) }),
+                Json(ApiError {
+                    error: format!("file not found: {}", p.path),
+                }),
             )
                 .into_response()
         }
@@ -363,7 +356,9 @@ async fn handle_source(
     if !resolved.starts_with(&root) {
         return (
             StatusCode::FORBIDDEN,
-            Json(ApiError { error: "path outside project root".into() }),
+            Json(ApiError {
+                error: "path outside project root".into(),
+            }),
         )
             .into_response();
     }
@@ -378,7 +373,9 @@ async fn handle_source(
     let start = p.start.unwrap_or(1).max(1);
     let end = p.end.unwrap_or(start + 200).max(start);
     let from = (start - p.context.max(0)).max(1);
-    let to = (end + p.context.max(0)).min(total).min(from + SOURCE_MAX_LINES - 1);
+    let to = (end + p.context.max(0))
+        .min(total)
+        .min(from + SOURCE_MAX_LINES - 1);
 
     let slice: Vec<serde_json::Value> = lines
         .iter()
@@ -417,10 +414,7 @@ fn graph_max_limit() -> i64 {
     3_000
 }
 
-async fn load_graph_payload(
-    hub: &WebHub,
-    p: GraphQuery,
-) -> Result<queries::GraphPayload, String> {
+async fn load_graph_payload(hub: &WebHub, p: GraphQuery) -> Result<queries::GraphPayload, String> {
     let ws = hub.read().await;
     let limit = p.limit.clamp(1, graph_max_limit());
     if let Ok(gpath) = ax_global_db::global_db_path() {
@@ -473,8 +467,8 @@ async fn load_graph_payload(
     }
 
     let qb = QueryBuilder::new(ws.graph_pool.clone());
-    let needs_compute = p.recompute
-        || matches!(qb.communities_computed_at().await, Ok(None) | Err(_));
+    let needs_compute =
+        p.recompute || matches!(qb.communities_computed_at().await, Ok(None) | Err(_));
     if needs_compute && !hub.readonly {
         let gm = ax_graph::GraphQueryManager::new(QueryBuilder::new(ws.graph_pool.clone()));
         if let Err(e) = gm.compute_insights(1.0, 30, 30).await {
@@ -488,10 +482,7 @@ async fn load_graph_payload(
 
 /// Ensure community assignments exist (compute + persist on first use or when
 /// `recompute` is requested), then return the force-directed graph payload.
-async fn handle_graph(
-    State(hub): State<WebHub>,
-    Query(p): Query<GraphQuery>,
-) -> impl IntoResponse {
+async fn handle_graph(State(hub): State<WebHub>, Query(p): Query<GraphQuery>) -> impl IntoResponse {
     match load_graph_payload(&hub, p).await {
         Ok(payload) => (StatusCode::OK, Json(payload)).into_response(),
         Err(e) => api_err(e).into_response(),
@@ -543,7 +534,9 @@ async fn handle_graph_stream(
         yield Ok(Event::default().data("{\"type\":\"done\"}".to_string()));
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -565,13 +558,19 @@ async fn handle_insights(
     if hub.readonly {
         return (
             StatusCode::FORBIDDEN,
-            Json(ApiError { error: "read-only mode (AX_WEB_READONLY=1)".into() }),
+            Json(ApiError {
+                error: "read-only mode (AX_WEB_READONLY=1)".into(),
+            }),
         )
             .into_response();
     }
     let ws = hub.read().await;
     let gm = ax_graph::GraphQueryManager::new(QueryBuilder::new(ws.graph_pool.clone()));
-    let resolution = if p.resolution > 0.0 { p.resolution } else { 1.0 };
+    let resolution = if p.resolution > 0.0 {
+        p.resolution
+    } else {
+        1.0
+    };
     match gm.compute_insights(resolution, 25, 25).await {
         Ok(insights) => {
             let suggested_questions = ax_core::report::suggested_questions(&insights);
@@ -664,7 +663,11 @@ fn dist_roots() -> Vec<PathBuf> {
     roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web-ui/dist"));
     if let Ok(exe) = std::env::current_exe() {
         // target-dev/release/ax → <repo>/crates/ax-web/web-ui/dist
-        if let Some(repo) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        if let Some(repo) = exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
             roots.push(repo.join("crates/ax-web/web-ui/dist"));
         }
     }
@@ -678,7 +681,8 @@ async fn handle_spa(uri: Uri) -> impl IntoResponse {
 
     // Axum nests like `/api/memory` do not match `/api/memory/`. Redirect so clients
     // (and `fetch`) land on the real JSON route instead of a blank SPA/HTML body.
-    if (path == "api" || path.starts_with("api/")) && raw_path.ends_with('/') && raw_path.len() > 1 {
+    if (path == "api" || path.starts_with("api/")) && raw_path.ends_with('/') && raw_path.len() > 1
+    {
         let trimmed = raw_path.trim_end_matches('/');
         let loc = match uri.query() {
             Some(q) => format!("{trimmed}?{q}"),
@@ -775,8 +779,8 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     if let Some(token) = &opts.share_token {
         std::env::set_var("AX_SHARE_TOKEN", token);
     }
-    let readonly = std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1")
-        || opts.share_token.is_some();
+    let readonly =
+        std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1") || opts.share_token.is_some();
     let hub = WebHub::open(opts.root.clone(), readonly, opts.port).await?;
     let _ = ax_agent::config::touch_recent_project(&opts.root, true);
 
@@ -785,6 +789,10 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    if !readonly {
+        let sync_hub = hub.clone();
+        tokio::spawn(async move { vault_folders::sync_indexed(&sync_hub).await });
+    }
     let app = hub.nest_routers(cors);
 
     let addr = format!("{}:{}", opts.bind, opts.port);

@@ -1,7 +1,7 @@
 //! Hidden `ax turn-hook start|end` — one local `turn` memory per agent turn that changed files
 //! or made a commit (docs/specs/per-turn-memory.md).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use ax_memory::TurnRecord;
@@ -178,6 +178,7 @@ pub(crate) fn turn_record(root: &Path, conversation: &str) -> Option<TurnRecord>
     }
     files.truncate(MAX_FILES);
 
+    let changes = file_change_lines(root, snapshot.head.as_deref(), &files);
     let id_source = format!("{conversation}\n{}", snapshot.turn);
     let id = format!(
         "turn-{}",
@@ -186,7 +187,7 @@ pub(crate) fn turn_record(root: &Path, conversation: &str) -> Option<TurnRecord>
     Some(TurnRecord {
         id,
         title: turn_title(&snapshot.prompt, files.len()),
-        body: ax_memory::redact_secrets(&turn_body(&snapshot.prompt, &files, &commits)),
+        body: ax_memory::redact_secrets(&turn_body(&snapshot.prompt, &files, &commits, &changes)),
         files,
     })
 }
@@ -205,7 +206,14 @@ pub(crate) async fn end_turn(root: &Path, conversation: &str, now_ms: i64) -> Op
         .await
         .ok()?;
     // A failed prune only delays retention by one turn; the memory itself is saved.
-    let _ = ax_memory::prune_turns(ax.db_pool(), now_ms, ax_memory::TURN_RETENTION_DAYS).await;
+    let backups = ax_context::directory::get_ax_dir(root).join("backups");
+    let _ = ax_memory::prune_turns(
+        ax.db_pool(),
+        now_ms,
+        ax_memory::TURN_RETENTION_DAYS,
+        &backups,
+    )
+    .await;
     Some(record.id)
 }
 
@@ -217,7 +225,53 @@ fn turn_title(prompt: &str, file_count: usize) -> String {
     }
 }
 
-fn turn_body(prompt: &str, files: &[String], commits: &[Commit]) -> String {
+/// `Changes:` lines (`M path`) for the turn's files: tracked changes since the turn's start
+/// commit, plus untracked new files.
+fn file_change_lines(root: &Path, since: Option<&str>, files: &[String]) -> Vec<String> {
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let wanted: BTreeSet<&str> = files.iter().map(String::as_str).collect();
+    let mut found: BTreeMap<String, ax_memory::FileChangeKind> = BTreeMap::new();
+    let mut args = vec!["diff", "-z", "--name-status"];
+    if let Some(since) = since {
+        args.push(since);
+    }
+    if let Some(out) = git_output(root, &args) {
+        for (path, kind) in ax_memory::parse_git_name_status(&out) {
+            if wanted.contains(path.as_str()) {
+                found.insert(path, kind);
+            }
+        }
+    }
+    if let Some(out) = git_output(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    ) {
+        let text = String::from_utf8_lossy(&out);
+        let mut entries = text.split('\0');
+        while let Some(entry) = entries.next() {
+            if entry.len() < 4 {
+                continue;
+            }
+            let (status, path) = entry.split_at(3);
+            if status.starts_with('R') || status.starts_with('C') {
+                entries.next();
+            }
+            if status.starts_with('?') && wanted.contains(path) {
+                found
+                    .entry(path.to_string())
+                    .or_insert(ax_memory::FileChangeKind::Added);
+            }
+        }
+    }
+    found
+        .into_iter()
+        .map(|(path, kind)| format!("{} {path}", kind.letter()))
+        .collect()
+}
+
+fn turn_body(prompt: &str, files: &[String], commits: &[Commit], changes: &[String]) -> String {
     let mut body = prompt.to_string();
     if !files.is_empty() {
         let shown: Vec<&str> = files
@@ -235,6 +289,10 @@ fn turn_body(prompt: &str, files: &[String], commits: &[Commit]) -> String {
         for commit in commits {
             body.push_str(&format!("\n- {} {}", commit.hash, commit.subject));
         }
+    }
+    if !changes.is_empty() {
+        body.push_str("\n\nChanges:\n");
+        body.push_str(&changes.join("\n"));
     }
     body
 }
@@ -468,6 +526,33 @@ mod tests {
     }
 
     #[test]
+    fn t1_changes_record_added_modified_and_deleted() {
+        let dir = repo();
+        let root = dir.path();
+        write(root, "src/gone.rs", "fn g() {}\n");
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "gone"]);
+        start_turn(root, &input("Rework files", Some("g1"))).unwrap();
+        write(root, "src/a.rs", "fn a() { fixed() }\n");
+        write(root, "src/new.rs", "fn n() {}\n");
+        std::fs::remove_file(root.join("src/gone.rs")).unwrap();
+
+        let record = turn_record(root, "conv-1").expect("turn changed files");
+        let mut changes = ax_memory::file_changes_from_body(&record.body);
+        changes.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            changes,
+            vec![
+                ("src/a.rs".to_string(), ax_memory::FileChangeKind::Modified),
+                ("src/gone.rs".to_string(), ax_memory::FileChangeKind::Deleted),
+                ("src/new.rs".to_string(), ax_memory::FileChangeKind::Added),
+            ],
+            "{}",
+            record.body
+        );
+    }
+
+    #[test]
     fn t2_turn_without_changes_is_not_recorded() {
         let dir = repo();
         let root = dir.path();
@@ -486,6 +571,12 @@ mod tests {
         write(root, "src/b.rs", "fn b() {}\n");
         let record = turn_record(root, "conv-1").expect("b.rs is new");
         assert_eq!(record.files, vec!["src/b.rs".to_string()]);
+        assert_eq!(
+            ax_memory::file_changes_from_body(&record.body),
+            vec![("src/b.rs".to_string(), ax_memory::FileChangeKind::Added)],
+            "{}",
+            record.body
+        );
     }
 
     #[test]
@@ -719,7 +810,7 @@ mod tests {
             body: "old".into(),
             files: vec![],
         };
-        ax_memory::save_turn(ax.db_pool(), &old, NOW - 31 * DAY_MS)
+        ax_memory::save_turn(ax.db_pool(), &old, NOW - 91 * DAY_MS)
             .await
             .unwrap();
         drop(ax);

@@ -1,0 +1,22 @@
+---
+id: ide-parity
+level: WARNING
+alwaysApply: false
+globs: []
+triggers: ["ide","extension","plugin","vscode","jetbrains","zed","install"]
+tags: []
+priority: 50
+enabled: true
+status: approved
+scope: project
+---
+
+# IDE parity
+
+The ax Command Center (`ax web`) must be available inside every IDE ax supports, installable from Settings -> IDEs & agents.
+
+- VS Code family (Cursor, VS Code, Windsurf, Antigravity, Kiro): the bundled ax extension embeds `ax web?embed=1` in a panel.
+- JetBrains: the bundled ax plugin embeds the same page in a tool window.
+- IDEs without webview support (Zed): provide an `Open ax web` command that opens it in the browser.
+
+When adding a new IDE target to `ax-installer`, add its Command Center integration in the same change.

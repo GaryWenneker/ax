@@ -3,7 +3,7 @@ title: Architecture Insights
 description: Communities, god nodes, surprising connections, the architecture report, and the interactive graph — from one analysis engine.
 ---
 
-**ax v2.1.8+** turns the knowledge graph into a map of your architecture. One analysis engine powers three surfaces: the `ax insights` / `ax report` CLI commands, the `ax_insights` / `ax_report` MCP tools, and the Command Center **Graph** page. It works entirely on your local index — no LLM calls required.
+ax turns the knowledge graph into a map of your architecture. One analysis engine powers three surfaces: the `ax insights` / `ax report` CLI commands, the `ax_insights` / `ax_report` MCP tools, and the Command Center **Graph** page. It works entirely on your local index — no LLM calls required.
 
 ![Interactive Graph — Leiden communities, god nodes, confidence-tagged edges, and doc nodes](/screenshots/cc-graph.png)
 
@@ -64,7 +64,17 @@ The Command Center **Graph** page renders the graph as an interactive force-dire
 
 Open it with `ax web --open` and pick **Graph** in the sidebar.
 
-**Start here (onboarding, no LLM).** The left panel lists Leiden **subsystems**, a **god-node tour** (Prev/Next), and **Ask the graph** prompts (the same templates as `ax report`). Click a subsystem to hide the rest of the canvas. These clusters are code coupling, not business processes.
+**Obsidian-style layout.** The Structure view uses a d3-force simulation, like the Obsidian graph. All nodes start in one tight cluster at the center and spread out. Nodes, links, and shapes are drawn in world space, so zooming in makes them bigger; labels fade in once you zoom past the **Text fade threshold**. Hovering a node colors it and its direct links in the theme accent color and dims everything else. Drag a node to pull its neighbors along. The node that is open in the blade gets a pulsing ring in the accent color, and **Show selection** on the canvas centers the view on it again.
+
+**Graph settings panel.** It is closed by default. Click **Settings** on the canvas to open it; click anywhere outside it to close it. It has the same sections as Obsidian, and settings are saved in the browser:
+
+- **Filters** — search files, Labels (always show labels), Attachments (doc nodes), Existing files only, Orphans (nodes without links)
+- **Groups** — **New group** adds a query and a color; matching nodes use that color
+- **Display** — Arrows, Text fade threshold, Node size, Link thickness, **Animate** (restart from the single cluster)
+- **Forces** — Center force, Repel force, Link force, Link distance (changes reheat the layout live)
+- The reset button restores the defaults.
+
+**Insights (onboarding, no LLM).** The **Insights** button on the canvas opens the left panel. It lists Leiden **subsystems**, a **god-node tour** (Prev/Next), and **Ask the graph** prompts (the same templates as `ax report`). Click a subsystem to hide the rest of the canvas. These clusters are code coupling, not business processes.
 
 **Domain view (opt-in overlay).** Toggle **Structure / Domain** in the Graph toolbar. Domain is a horizontal graph of `domain` → `flow` → `step` read from `.ax/domain-graph.json`. It does **not** change `ax.db`. Ask an agent to run the `domain` skill (or write the JSON yourself). `GET`/`PUT /api/domain-graph` load and save the file. Empty overlay → empty canvas plus a hint. The skill is seeded on `ax init` as `.ax/policy/skills/domain/SKILL.md`.
 
@@ -72,12 +82,18 @@ Controls:
 
 - **Structure / Domain** toggle
 - **Search / Kind / Community** filters — focus a subsystem or symbol kind
-- **Density** slider — tighten or loosen the force layout (structure view)
+- **Density** slider — how many top-degree nodes to load (structure view)
 - **Node-count selector** — cap large graphs (e.g. 100 of N nodes)
 - **Recompute communities** — re-run Leiden detection after index changes
 - **Reload overlay** — re-read `.ax/domain-graph.json` in Domain view
 
 ![Interactive Graph — Leiden communities, god nodes, confidence-tagged edges, and doc nodes](/screenshots/cc-graph.png)
+
+### Policy graph (rules, skills, and memories)
+
+The **Graph** button in the header of the Rules and Skills pages opens a full-screen graph of every rule, skill, and memory, connected by their `[[wikilinks]]`, like the Obsidian graph. It behaves like the Structure view: one start cluster, accent-colored hover links, and the same **Settings** panel (closed until you open it; a click outside closes it), stored separately from the code graph. The legend shows the colors for rules, skills, and memories; global items have an accent ring. Turn memories (raw chat prompts) are left out.
+
+The item open on the page is preselected with the pulsing ring. Clicking a rule or skill node opens its edit blade, the same editor as on the Rules and Skills pages, so you can change and save it without leaving the graph; saving redraws the graph. Clicking a memory node opens a blade with its links, backlinks, and **Open**, which goes to the memory. **Esc** closes the blade first, then the graph. The data comes from `GET /api/links/graph`.
 
 ### Portable export
 

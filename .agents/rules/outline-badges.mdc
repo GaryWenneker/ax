@@ -1,0 +1,80 @@
+---
+id: outline-badges
+level: CRITICAL
+alwaysApply: true
+globs: ["crates/ax-web/web-ui/**/*.{css,tsx}"]
+triggers: ["badge","pill","list","scroll","node","command center","web-ui"]
+tags: ["ui","badges","lists"]
+priority: 80
+enabled: true
+status: approved
+scope: project
+---
+
+# Command Center lists, nodes, and badges
+
+This is mandatory on every Command Center page. It keeps getting reverted. Do not ship a page that breaks it, and do not restore the old pill look.
+
+## Lists scroll
+
+Every list (memory, nodes, files, search, unresolved, rules, skills, logging, prices, savings, settings tables) scrolls inside its own panel.
+
+- The list is `overflow-y: auto` with `min-height: 0`.
+- A parent with `overflow: hidden` must not clip the list. The list itself is the scroll container.
+- Headers and filters stay put. The rows move.
+
+## Active row
+
+The selected list row has both a highlight and a border. A background fill alone is not enough.
+
+- Highlight: `color-mix` of the theme accent over the panel.
+- Border: 1px `var(--accent-text)`, including an inset outline so the row reads as selected on every list.
+- Hover only changes the background. The border belongs to the selected row.
+
+## Active nodes
+
+The selected graph node (memory timeline, and the same marker anywhere else) is not a flat filled circle.
+
+- A ring of tiny dots (about 1px) orbits the node counter-clockwise.
+- The center is a filled dot that breathes (soft scale and opacity pulse).
+- Idle nodes stay hollow rings.
+- Honor `prefers-reduced-motion`: show the filled center, no orbit and no pulse.
+
+## Badges
+
+Every badge is a square outline chip: height 16px, padding 0 6px, **`border-radius: 0`**. Straight corners.
+
+Inside the calm lists (`.calm-list`, `.memory-vault-list`: Memory, Rules, Skills, Logging) badges are smaller and quieter: height 14px, padding 0 4px, 10px text, a hairline border (1px, 0.5px on 2x screens) in the theme color mixed to about 40%. Timeline dots there are 12px and sit at least 12px from the row's left edge; no inset color stripe on the row.
+
+The old requirement that pills use rounded corners (`border-radius: 999px` or `8px`) is revoked. Do not put `border-radius: 999px` back on `.page-item-badge`, `.policy-pack-badge`, `.ax-project-badge`, `.mcp-q-strip-badge`, `.status-quality-badge`, `.settings-embed-badge`, `.lsp-server-badge`, `.settings-share-badge`, or any other badge class. The macOS theme must not round them either.
+
+Fill is transparent. Text is `#cccccc` at 11px. The border and the icon use the active theme: `var(--accent-text)` by default, `var(--warn)` for a warning, `var(--danger)` for an error, `var(--ok)` for ok. Do not hardcode `#3794ff`, `#e07070`, `#e0b341`, or `#3ee4b2` on a badge.
+
+Every badge, including a `+N` count and a badge that would otherwise be text-only, starts with a 12px codicon (`class="badge-icon"`, `aria-hidden`). If a callsite forgets the element, the badge CSS `::before` fallback still paints a glyph. The icon uses the border hue. The text stays `#cccccc`.
+
+| Badge | Icon |
+|---|---|
+| Git branch, git memory, extra `+N` | `git-branch` |
+| Tag | `tag` |
+| Language or symbol kind | `symbol-misc` |
+| Exported / pub | `eye` |
+| Critical / error / quality count | `error` |
+| Warning | `warning` |
+| Info / confidence | `info` |
+| Project or project database | `repo` |
+| Global database | `globe` |
+| Company | `organization` |
+| Workspace | `window` |
+| Private user | `person` |
+| Private project | `lock` |
+| Memory kind | kind icon (`note`, `law`, `bug`, `symbol-structure`, `checklist`, `git-commit`) |
+| Live / running | `play` |
+| Inbound trace | `arrow-down` |
+| Outbound trace | `arrow-up` |
+| Search / query | `search` |
+
+Do not use a filled chip, a rounded pill, colored badge text, or a badge with no icon. Do not give one page its own badge shape.
+
+## Related
+
+- [[wcag-contrast]] — badge colors use the theme tokens it governs

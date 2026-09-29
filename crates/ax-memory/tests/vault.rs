@@ -50,6 +50,51 @@ async fn recall_with_no_usable_tokens_returns_empty() {
     assert!(hits.is_empty());
 }
 
+async fn remember_fillers(db: &ax_db::Database) {
+    remember(
+        db.pool(),
+        RememberInput {
+            title: "Gauntlet vault hint".into(),
+            body: "Gauntlet fixture: the vault passphrase hint is cobalt-ledger.".into(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    for index in 0..24 {
+        remember(
+            db.pool(),
+            RememberInput {
+                title: format!("Filler {index}"),
+                body: format!("Unrelated fixture note {index}: the build cache key is filler-{index:02}-not-the-hint."),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn recall_without_a_real_match_returns_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    remember_fillers(&db).await;
+    let hits = recall(db.pool(), "zebra-quartz migration", 5).await.unwrap();
+    let titles: Vec<_> = hits.iter().map(|h| h.memory.title.as_str()).collect();
+    assert!(hits.is_empty(), "{titles:?}");
+}
+
+#[tokio::test]
+async fn recall_by_title_returns_only_that_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    remember_fillers(&db).await;
+    let hits = recall(db.pool(), "Gauntlet vault hint", 5).await.unwrap();
+    let titles: Vec<_> = hits.iter().map(|h| h.memory.title.as_str()).collect();
+    assert_eq!(titles, vec!["Gauntlet vault hint"]);
+}
+
 #[tokio::test]
 async fn hybrid_recall_survives_typos_via_vector_leg() {
     let dir = tempfile::tempdir().unwrap();
