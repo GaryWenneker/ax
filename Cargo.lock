@@ -571,6 +571,7 @@ dependencies = [
  "ax-mcp",
  "ax-policy",
  "ax-reasoning",
+ "ax-utils",
  "dirs",
  "reqwest",
  "rusqlite",
@@ -821,6 +822,7 @@ dependencies = [
 name = "ax-installer"
 version = "6.0.1"
 dependencies = [
+ "ax-utils",
  "dirs",
  "serde",
  "serde_json",
@@ -945,6 +947,7 @@ dependencies = [
 name = "ax-reasoning"
 version = "6.0.1"
 dependencies = [
+ "ax-utils",
  "dirs",
  "reqwest",
  "serde",
@@ -1066,6 +1069,7 @@ dependencies = [
 name = "ax-telemetry"
 version = "6.0.1"
 dependencies = [
+ "ax-utils",
  "dirs",
  "reqwest",
  "serde",
@@ -1125,6 +1129,7 @@ version = "6.0.1"
 dependencies = [
  "anyhow",
  "ax-types",
+ "dirs",
  "fs2",
  "thiserror 1.0.69",
  "tokio",
