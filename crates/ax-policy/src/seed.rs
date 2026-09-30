@@ -45,6 +45,10 @@ const TEMPLATES: &[Template] = &[
         body: include_str!("../templates/rules/policy-capture.mdc"),
     },
     Template {
+        rel: "rules/author-skill-rule.mdc",
+        body: include_str!("../templates/rules/author-skill-rule.mdc"),
+    },
+    Template {
         rel: "rules/web-ui-rebuild.mdc",
         body: include_str!("../templates/rules/web-ui-rebuild.mdc"),
     },
@@ -649,6 +653,7 @@ const KNOWN_POLICY_IDS: &[&str] = &[
     "install-version-resolution",
     "codegraph-parity",
     "policy-capture",
+    "author-skill-rule",
 ];
 
 /// Cursor rule filenames that alias ax policy ids.
@@ -719,6 +724,18 @@ mod tests {
         let second = seed_default_policy(&ax).unwrap();
         assert!(second.created.is_empty());
         assert_eq!(second.skipped.len(), TEMPLATES.len());
+    }
+
+    #[test]
+    fn seed_writes_author_skill_rule_matching_repo_copy() {
+        let dir = tempdir().unwrap();
+        let ax = dir.path().join(".ax");
+        seed_default_policy(&ax).unwrap();
+        let seeded =
+            std::fs::read_to_string(dir.path().join(".agents/rules/author-skill-rule.mdc"))
+                .expect("author-skill-rule is seeded");
+        let repo_copy = include_str!("../../../.agents/rules/author-skill-rule.mdc");
+        assert_eq!(seeded, repo_copy);
     }
 
     #[test]
