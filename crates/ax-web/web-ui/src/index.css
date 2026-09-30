@@ -5487,19 +5487,6 @@ body.md-split-resizing .md-preview-resize-handle {
   overflow: hidden;
 }
 
-.mcp-trace-shell--offline .mcp-trace-scroller {
-  filter: blur(3.5px);
-  opacity: 0.78;
-  transition: filter 0.25s ease, opacity 0.25s ease;
-  user-select: none;
-}
-
-.mcp-trace-shell:not(.mcp-trace-shell--offline) .mcp-trace-scroller {
-  filter: none;
-  opacity: 1;
-  transition: filter 0.2s ease, opacity 0.2s ease;
-}
-
 .mcp-trace-shell--page {
   min-height: min(62vh, 560px);
 }
@@ -15375,9 +15362,6 @@ html[data-ax-theme="macos"] :is(
   color: var(--text-dim);
   border: 1px solid var(--border);
 }
-
-/* An open Logging blade lifts the offline blur so the list next to it stays readable. */
-.workspace:has(.mcp-blade) .mcp-trace-shell--offline .mcp-trace-scroller { filter: none; opacity: 1; }
 
 /* Opening a blade must not reflow the page head: the list stays at the same height. */
 @media (min-width: 900px) {
