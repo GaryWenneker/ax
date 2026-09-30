@@ -14,10 +14,9 @@ pub fn print_update_notice(current: &str, latest: &str) {
     eprintln!();
     bar(g);
     eprintln!(
-        "{} {} {}",
+        "{} {} ",
         g.warn.yellow(),
-        "Update available".yellow().bold(),
-        ""
+        "Update available".yellow().bold()
     );
     bar(g);
     eprintln!(

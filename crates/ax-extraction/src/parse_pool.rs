@@ -27,6 +27,12 @@ pub struct ParsePool {
     extractors: Arc<HashMap<Language, Box<dyn LanguageExtractor>>>,
 }
 
+impl Default for ParsePool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParsePool {
     pub fn new() -> Self {
         let env = std::env::var("AX_PARSE_WORKERS")

@@ -152,7 +152,7 @@ fn parse_hunk_header(line: &str, path: &str) -> Option<ChangedHunk> {
 fn parse_range(s: &str) -> Option<(u32, u32)> {
     let mut it = s.split(',');
     let start: u32 = it.next()?.parse().ok()?;
-    let lines: u32 = it.next().map(|n| n.parse().ok()).flatten().unwrap_or(1);
+    let lines: u32 = it.next().and_then(|n| n.parse().ok()).unwrap_or(1);
     Some((start, lines))
 }
 

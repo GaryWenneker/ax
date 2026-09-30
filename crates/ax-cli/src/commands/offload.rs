@@ -10,8 +10,10 @@ pub fn run(action: Option<String>, url: Option<String>, key_env: Option<String>)
         }
         "set-endpoint" => {
             let endpoint = url.ok_or("usage: ax offload set-endpoint <url> [--key-env VAR]")?;
-            let mut cfg = OffloadConfig::default();
-            cfg.url = Some(endpoint);
+            let mut cfg = OffloadConfig {
+                url: Some(endpoint),
+                ..OffloadConfig::default()
+            };
             if let Some(env) = key_env {
                 cfg.key_env = Some(env);
             }

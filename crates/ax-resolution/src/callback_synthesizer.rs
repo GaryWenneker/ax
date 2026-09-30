@@ -15,6 +15,12 @@ const EVENT_FANOUT_CAP: usize = 6;
 
 pub struct CallbackSynthesizer;
 
+impl Default for CallbackSynthesizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CallbackSynthesizer {
     pub fn new() -> Self {
         Self

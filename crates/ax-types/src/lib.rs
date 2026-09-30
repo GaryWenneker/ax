@@ -98,7 +98,7 @@ impl NodeKind {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "file" => Some(NodeKind::File),
             "module" => Some(NodeKind::Module),
@@ -188,7 +188,7 @@ impl EdgeKind {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "contains" => Some(EdgeKind::Contains),
             "calls" => Some(EdgeKind::Calls),
@@ -320,7 +320,7 @@ impl Language {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "typescript" => Some(Language::Typescript),
             "javascript" => Some(Language::Javascript),
@@ -417,7 +417,7 @@ impl EdgeConfidence {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "extracted" => Some(EdgeConfidence::Extracted),
             "inferred" => Some(EdgeConfidence::Inferred),
@@ -481,7 +481,7 @@ impl ReferenceKind {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "contains" => Some(ReferenceKind::Contains),
             "calls" => Some(ReferenceKind::Calls),

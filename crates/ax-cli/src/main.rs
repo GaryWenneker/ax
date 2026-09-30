@@ -1367,7 +1367,7 @@ async fn async_main() {
             revert_on_fail,
             quiet,
         }) => {
-            commands::ship::run(
+            commands::ship::run(commands::ship::ShipArgs {
                 path,
                 watch,
                 evaluate,
@@ -1379,7 +1379,7 @@ async fn async_main() {
                 auto_commit,
                 revert_on_fail,
                 quiet,
-            )
+            })
             .await
         }
         Some(Commands::Unlock { path }) => commands::unlock::run(path).await,
@@ -1684,8 +1684,8 @@ async fn async_main() {
             if let Ok(mut t) = ax_telemetry::telemetry().lock() {
                 t.record_usage("cli_command", &name, result.is_ok(), None);
                 t.persist_sync();
-                t.flush_now(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
             }
+            ax_telemetry::flush_global(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
         }
     }
 
@@ -1696,24 +1696,24 @@ async fn async_main() {
 }
 
 fn should_notify_update(cmd: &Option<Commands>) -> bool {
-    match cmd {
+    !matches!(
+        cmd,
         Some(Commands::Serve { .. })
-        | Some(Commands::Web { .. })
-        | Some(Commands::Desktop { .. })
-        |         Some(Commands::PromptHook)
-        | Some(Commands::SessionHook)
-        | Some(Commands::StopHook)
-        | Some(Commands::TurnHook { .. })
-        | Some(Commands::ReadGuard { .. })
-        | Some(Commands::WatchdogChild { .. })
-        | Some(Commands::UpgradeApply { .. })
-        | Some(Commands::Upgrade { .. })
-        | Some(Commands::Version) => false,
-        Some(Commands::Index { quiet: true, .. })
-        | Some(Commands::Sync { quiet: true, .. })
-        | Some(Commands::Watch { quiet: true, .. }) => false,
-        _ => true,
-    }
+            | Some(Commands::Web { .. })
+            | Some(Commands::Desktop { .. })
+            | Some(Commands::PromptHook)
+            | Some(Commands::SessionHook)
+            | Some(Commands::StopHook)
+            | Some(Commands::TurnHook { .. })
+            | Some(Commands::ReadGuard { .. })
+            | Some(Commands::WatchdogChild { .. })
+            | Some(Commands::UpgradeApply { .. })
+            | Some(Commands::Upgrade { .. })
+            | Some(Commands::Version)
+            | Some(Commands::Index { quiet: true, .. })
+            | Some(Commands::Sync { quiet: true, .. })
+            | Some(Commands::Watch { quiet: true, .. })
+    )
 }
 
 fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {

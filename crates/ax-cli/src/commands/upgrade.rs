@@ -1,6 +1,5 @@
 //! `ax upgrade` — non-interactive self-update from GitHub Releases (getax redirect fallback).
 
-use std::io::Write;
 #[cfg(not(windows))]
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -118,10 +117,10 @@ pub async fn run(
 
     let bytes = if local_install {
         let path = resolve_local_archive_path(local.as_deref(), &bundle, ext)?;
-        let _spin = SpinnerGuard::new(&format!("Loading {}…", path.display()), false);
+        let _spin = SpinnerGuard::new(format!("Loading {}…", path.display()), false);
         std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?
     } else {
-        let _spin = SpinnerGuard::new(&format!("Downloading {archive_name}…"), false);
+        let _spin = SpinnerGuard::new(format!("Downloading {archive_name}…"), false);
         let bytes = download_archive(&target_version, &bundle, ext)?;
         drop(_spin);
         bytes

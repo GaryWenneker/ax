@@ -409,7 +409,7 @@ pub async fn handle_sonar_ui_proxy(
     );
 
     let resp = match send_upstream(
-        &client,
+        client,
         &method,
         &upstream_url,
         &auth_header,
@@ -430,7 +430,7 @@ pub async fn handle_sonar_ui_proxy(
                     query
                 );
                 match send_upstream(
-                    &client,
+                    client,
                     &method,
                     &upstream_url,
                     &auth_header,

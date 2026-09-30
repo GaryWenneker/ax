@@ -6,13 +6,15 @@ use crate::api::client::spawn_fetch;
 use crate::api::MemoryRow;
 use crate::pages::{err_label, heading, PageCtx};
 
+type MemoryLoad = Result<(Vec<MemoryRow>, i64), String>;
+
 #[derive(Default)]
 pub struct MemoryPage {
     memories: Vec<MemoryRow>,
     total: i64,
     selected: Option<usize>,
     err: Option<String>,
-    pending: Option<Receiver<Result<(Vec<MemoryRow>, i64), String>>>,
+    pending: Option<Receiver<MemoryLoad>>,
     loaded: bool,
 }
 

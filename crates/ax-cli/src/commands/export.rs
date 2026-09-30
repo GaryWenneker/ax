@@ -189,8 +189,7 @@ async fn load_export_data(
     });
     ranked.truncate(limit);
 
-    let god_cutoff = ranked
-        .get(0)
+    let god_cutoff = ranked.first()
         .and_then(|n| degree.get(n.id.as_str()).copied())
         .unwrap_or(0);
     // Top 5% by degree (min 1) count as god-nodes in the export payload.

@@ -484,7 +484,7 @@ async fn handle_graph_stream(
             tokio::task::yield_now().await;
         }
 
-        yield Ok(Event::default().data("{\"type\":\"done\"}".to_string()));
+        yield Ok(Event::default().data("{\"type\":\"done\"}"));
     };
 
     Sse::new(stream)

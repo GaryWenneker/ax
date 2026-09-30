@@ -220,6 +220,7 @@ impl LspClient {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn is_quiescent(&self) -> bool {
         self.quiescent
     }
@@ -389,7 +390,7 @@ fn read_message_from(reader: &mut impl BufRead) -> Result<Value, String> {
             content_length = rest.trim().parse().ok();
         }
     }
-    let len = content_length.ok_or("missing Content-Length")?;
+    let _len = content_length.ok_or("missing Content-Length")?;
     let len = content_length.ok_or("missing Content-Length")?;
     let mut buf = vec![0u8; len];
     std::io::Read::read_exact(reader, &mut buf).map_err(|e| e.to_string())?;

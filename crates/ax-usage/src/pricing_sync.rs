@@ -343,18 +343,21 @@ pub fn spawn_ensure_daily_pricing_sync() {
     });
 }
 
+/// `(source, last_attempt_at, last_success_at, last_success_date, status, error, models_count)`
+type SyncMetaRow = (
+    String,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+);
+
 pub async fn pricing_status() -> Result<PricingStatus, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     let today = today_local();
-    let sources: Vec<(
-        String,
-        Option<i64>,
-        Option<i64>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<i64>,
-    )> = sqlx::query_as(
+    let sources: Vec<SyncMetaRow> = sqlx::query_as(
         "SELECT source, last_attempt_at, last_success_at, last_success_date, status, error, models_count
          FROM pricing_sync_meta ORDER BY source",
     )
@@ -635,9 +638,8 @@ mod tests {
         parse_aa_models, parse_openrouter_models, SOURCE_ARTIFICIAL_ANALYSIS,
     };
     use serde_json::json;
-    use std::sync::Mutex;
 
-    static DB_TEST_LOCK: Mutex<()> = Mutex::new(());
+    static DB_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn temp_db(name: &str) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
@@ -647,7 +649,7 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_and_history() {
-        let _guard = DB_TEST_LOCK.lock().unwrap();
+        let _guard = DB_TEST_LOCK.lock().await;
         let db = temp_db("hist");
         let _ = std::fs::remove_file(&db);
         std::env::set_var("AX_USAGE_DB", &db);

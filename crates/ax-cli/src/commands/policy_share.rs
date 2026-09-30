@@ -3,7 +3,7 @@
 use ax_share::{
     load_share_config, microsoft_auth_status, microsoft_clear_tokens, poll_device_flow_once,
     project_config_path, run_sync as engine_run_sync, share_status_for_api, start_device_flow,
-    write_project_share_config, ShareConfig, SyncDirection,
+    SyncDirection,
 };
 
 use crate::commands::resolve_path;
@@ -87,14 +87,6 @@ pub async fn run_sync(
             s.memory_updated
         );
     }
-    Ok(())
-}
-
-pub async fn run_config_save(path: Option<String>, config_json: &str) -> Result<(), String> {
-    let root = resolve_path(path);
-    let cfg: ShareConfig = serde_json::from_str(config_json).map_err(|e| e.to_string())?;
-    let saved = write_project_share_config(&root, &cfg)?;
-    println!("Saved share config to {}", saved.display());
     Ok(())
 }
 

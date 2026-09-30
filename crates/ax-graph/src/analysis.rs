@@ -226,10 +226,12 @@ pub fn detect_communities(nodes: &[Node], edges: &[Edge], resolution: f64) -> Co
         }
     };
 
-    let mut config = LeidenConfig::default();
-    config.resolution = resolution;
-    // Seeded for deterministic, reproducible partitions across runs.
-    config.seed = Some(42);
+    let config = LeidenConfig {
+        resolution,
+        // Seeded for deterministic, reproducible partitions across runs.
+        seed: Some(42),
+        ..LeidenConfig::default()
+    };
     let leiden = Leiden::new(config);
     let outcome = match leiden.run(&graph) {
         Ok(o) => o,
@@ -277,7 +279,7 @@ pub fn detect_communities(nodes: &[Node], edges: &[Edge], resolution: f64) -> Co
             key_nodes,
         });
     }
-    summaries.sort_by(|a, b| b.size.cmp(&a.size));
+    summaries.sort_by_key(|s| std::cmp::Reverse(s.size));
 
     let assignments = nodes
         .iter()

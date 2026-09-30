@@ -67,8 +67,8 @@ pub async fn guard_operation_with_extra_skills(
             }
         }
 
-        if id_lc.contains("secret") || tags.iter().any(|t| t == "secrets") {
-            if is_sensitive_path(&rel_lc)
+        if (id_lc.contains("secret") || tags.iter().any(|t| t == "secrets"))
+            && is_sensitive_path(&rel_lc)
                 && matches!(op, GuardOp::Write | GuardOp::Delete)
             {
                 let verb = match op {
@@ -80,7 +80,6 @@ pub async fn guard_operation_with_extra_skills(
                     message: format!("{verb} sensitive path blocked by rule {}", rule.id),
                 });
             }
-        }
 
         // Generic static gate: ANY CRITICAL rule can opt in by writing one of
         // these directives as a plain line in its body — no code change needed
@@ -144,8 +143,8 @@ pub async fn guard_operation_with_extra_skills(
                     }
                 }
                 GuardDirective::RequireSkill(name) => {
-                    if matches!(op, GuardOp::Write | GuardOp::Delete) && !require_skill_exempt {
-                        if !skill_satisfies_require(&skills, &name) {
+                    if matches!(op, GuardOp::Write | GuardOp::Delete) && !require_skill_exempt
+                        && !skill_satisfies_require(&skills, &name) {
                             violations.push(GuardViolation {
                                 rule_id: rule.id.clone(),
                                 message: format!(
@@ -154,7 +153,6 @@ pub async fn guard_operation_with_extra_skills(
                                 ),
                             });
                         }
-                    }
                 }
             }
         }

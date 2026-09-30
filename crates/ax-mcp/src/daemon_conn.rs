@@ -71,7 +71,7 @@ pub async fn connect_path(path: &str) -> Option<DaemonSession> {
     #[cfg(unix)]
     {
         let stream = tokio::net::UnixStream::connect(path).await.ok()?;
-        return Some(DaemonSession::from_unix(stream));
+        Some(DaemonSession::from_unix(stream))
     }
 
     #[cfg(not(unix))]

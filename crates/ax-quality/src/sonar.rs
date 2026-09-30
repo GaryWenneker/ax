@@ -68,6 +68,14 @@ fn default_container_runtime() -> String {
     "auto".into()
 }
 
+/// Which repos and files one platform scan covers.
+struct ScanScope<'a> {
+    repo_names: &'a [String],
+    dirty_files: &'a [String],
+    full_repo: bool,
+    workspace_repo_count: usize,
+}
+
 impl Default for SonarConfig {
     fn default() -> Self {
         Self {
@@ -248,7 +256,8 @@ impl SonarClient {
         log: &crate::container::InstallLog,
         workspace_repo_count: usize,
     ) -> Result<(), String> {
-        self.run_platform_scan_inner_counted(project_root, repo_names, &[], true, Some(log), &mut None, workspace_repo_count)
+        let scope = ScanScope { repo_names, dirty_files: &[], full_repo: true, workspace_repo_count };
+        self.run_platform_scan_inner_counted(project_root, scope, Some(log), &mut None)
     }
 
     fn run_platform_scan_inner(
@@ -260,19 +269,18 @@ impl SonarClient {
         log: Option<&crate::container::InstallLog>,
         progress: &mut Option<&mut dyn FnMut(SonarScanProgressEvent)>,
     ) -> Result<(), String> {
-        self.run_platform_scan_inner_counted(project_root, repo_names, dirty_files, full_repo, log, progress, repo_names.len())
+        let scope = ScanScope { repo_names, dirty_files, full_repo, workspace_repo_count: repo_names.len() };
+        self.run_platform_scan_inner_counted(project_root, scope, log, progress)
     }
 
     fn run_platform_scan_inner_counted(
         &self,
         project_root: &Path,
-        repo_names: &[String],
-        dirty_files: &[String],
-        full_repo: bool,
+        scope: ScanScope,
         log: Option<&crate::container::InstallLog>,
         progress: &mut Option<&mut dyn FnMut(SonarScanProgressEvent)>,
-        workspace_repo_count: usize,
     ) -> Result<(), String> {
+        let ScanScope { repo_names, dirty_files, full_repo, workspace_repo_count } = scope;
         if !self.config.enabled {
             return Ok(());
         }

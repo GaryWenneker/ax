@@ -82,7 +82,7 @@ pub fn merge_skills(local: Vec<PolicySkillRow>, extras: Vec<PolicySkillRow>) -> 
         by_name.insert(skill.name.clone(), skill);
     }
     let mut out: Vec<PolicySkillRow> = by_name.into_values().collect();
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 

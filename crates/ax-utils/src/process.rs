@@ -8,7 +8,7 @@ pub fn pids_listening_on_port(port: u16) -> Result<Vec<u32>, String> {
     }
     #[cfg(unix)]
     {
-        return pids_listening_on_port_unix(port);
+        pids_listening_on_port_unix(port)
     }
 }
 
@@ -26,6 +26,7 @@ pub fn kill_listening_on_port(port: u16, self_pid: u32) -> Result<usize, String>
     Ok(killed)
 }
 
+#[cfg(any(windows, test))]
 fn local_endpoint_has_port(endpoint: &str, port: u16) -> bool {
     endpoint
         .rsplit_once(':')
@@ -74,6 +75,7 @@ fn pids_listening_on_port_unix(port: u16) -> Result<Vec<u32>, String> {
     Ok(Vec::new())
 }
 
+#[cfg(any(windows, test))]
 fn parse_netstat_pids(text: &str, port: u16) -> Result<Vec<u32>, String> {
     let mut pids = Vec::new();
     for line in text.lines() {
@@ -156,11 +158,11 @@ fn kill_pid_force(pid: u32) -> Result<bool, String> {
     }
     #[cfg(unix)]
     {
-        return Ok(std::process::Command::new("kill")
+        Ok(std::process::Command::new("kill")
             .args(["-9", &pid.to_string()])
             .status()
             .map(|s| s.success())
-            .unwrap_or(false));
+            .unwrap_or(false))
     }
 }
 

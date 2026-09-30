@@ -105,7 +105,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             .map(|m| m.as_str())
             .unwrap_or("")
             .split('.')
-            .last()
+            .next_back()
             .unwrap_or("");
         if !viewset.ends_with("View") && !viewset.ends_with("ViewSet") {
             continue;
@@ -206,7 +206,7 @@ fn resolve_handler_name(expr: &str) -> Option<HandlerTarget> {
     let method_call_re = regex::Regex::new(r"\.\w+\s*\([^)]*\)\s*$").expect("method call");
     head = method_call_re.replace(&head, "").to_string();
 
-    let last = head.split('.').filter(|s| !s.is_empty()).last()?;
+    let last = head.split('.').rfind(|s| !s.is_empty())?;
     if !regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$")
         .expect("ident")
         .is_match(last)

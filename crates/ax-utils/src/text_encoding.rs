@@ -54,7 +54,7 @@ fn utf8_slice(bytes: &[u8]) -> Result<String, String> {
 fn decode_utf16_le(bytes: &[u8]) -> Result<String, String> {
     let even = bytes.len() & !1;
     let units: Vec<u16> = bytes[..even]
-        .chunks_exact(2)
+        .as_chunks::<2>().0.iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16(&units).map_err(|e| e.to_string())
@@ -63,14 +63,14 @@ fn decode_utf16_le(bytes: &[u8]) -> Result<String, String> {
 fn decode_utf16_be(bytes: &[u8]) -> Result<String, String> {
     let even = bytes.len() & !1;
     let units: Vec<u16> = bytes[..even]
-        .chunks_exact(2)
+        .as_chunks::<2>().0.iter()
         .map(|c| u16::from_be_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16(&units).map_err(|e| e.to_string())
 }
 
 fn looks_like_utf16_le(bytes: &[u8]) -> bool {
-    if bytes.len() < 4 || bytes.len() % 2 != 0 {
+    if bytes.len() < 4 || !bytes.len().is_multiple_of(2) {
         return false;
     }
     let sample = bytes.len().min(256);

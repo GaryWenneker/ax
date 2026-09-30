@@ -96,7 +96,7 @@ pub async fn capture_git_history(
     limit: usize,
 ) -> Result<GitCaptureResult, AxError> {
     let commits = run_git_log(repo_root, limit.clamp(1, 500))
-        .map_err(|e| AxError::Other(e))?;
+        .map_err(AxError::Other)?;
 
     let mut result = GitCaptureResult {
         scanned: commits.len(),

@@ -366,7 +366,7 @@ async fn lsp_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
             let report = match ax_lsp::enrich_project(&root, ax.queries(), limit).await {
                 Ok(r) => r,
                 Err(e) => {
-                    ax_usage::log_lsp(Some(&root), format!("enrich fail via=mcp"));
+                    ax_usage::log_lsp(Some(&root), "enrich fail via=mcp");
                     return Err(e.to_string());
                 }
             };
@@ -1196,7 +1196,7 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
         let path = ax.project_root().join(path_str);
         let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
         let result = ax
-            .guard_operation(&path, op, content.as_ref().map(|v| v.as_slice()))
+            .guard_operation(&path, op, content.as_deref())
             .await
             .map_err(|e| e.to_string())?;
         return Ok(json!(result));
@@ -1208,7 +1208,7 @@ async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {
         let path = ax.project_root().join(path_str);
         let content = guard_content_from_params(&params).or_else(|| std::fs::read(&path).ok());
         let result = ax
-            .guard_operation(&path, op, content.as_ref().map(|v| v.as_slice()))
+            .guard_operation(&path, op, content.as_deref())
             .await
             .map_err(|e| e.to_string())?;
         if !result.allowed {
@@ -1449,7 +1449,7 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
         t
     };
     let bytes = input.trim().as_bytes();
-    if bytes.is_empty() || bytes.len() % 4 != 0 {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
         return None;
     }
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
@@ -2273,7 +2273,7 @@ mod tests {
         assert_eq!(opts.include_code, Some(true));
         assert_eq!(opts.max_lines_per_snippet, Some(NODE_MAX_LINES));
         assert_eq!(opts.max_source_chars, Some(NODE_MAX_SOURCE_CHARS));
-        assert!(NODE_MAX_LINES >= 400 && NODE_MAX_SOURCE_CHARS >= 20_000);
+        const { assert!(NODE_MAX_LINES >= 400 && NODE_MAX_SOURCE_CHARS >= 20_000) };
     }
 
     #[test]

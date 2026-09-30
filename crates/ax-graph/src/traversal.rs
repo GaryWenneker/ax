@@ -48,11 +48,10 @@ impl GraphTraverser {
             }
             visited.insert(node.id.clone());
             nodes.insert(node.id.clone(), node.clone());
-            if edge.source != edge.target && edge.source.is_empty() == false || edge.target.is_empty() == false {
-                if !edge.source.is_empty() {
+            if (edge.source != edge.target && !edge.source.is_empty() || !edge.target.is_empty())
+                && !edge.source.is_empty() {
                     edges.push(edge.clone());
                 }
-            }
 
             if depth >= opts.max_depth.unwrap_or(u32::MAX) {
                 continue;
@@ -83,7 +82,7 @@ impl GraphTraverser {
             if follow_incoming {
                 let incoming = self.queries.get_incoming_edges(&node.id).await?;
                 for e in incoming {
-                    if edge_kinds.map_or(true, |kinds| kinds.contains(&e.kind)) {
+                    if edge_kinds.is_none_or(|kinds| kinds.contains(&e.kind)) {
                         neighbor_edges.push((e.source.clone(), e));
                     }
                 }

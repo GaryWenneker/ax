@@ -60,6 +60,12 @@ pub struct McpEngine {
     policy_sessions: PolicySessions,
 }
 
+impl Default for McpEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpEngine {
     pub fn new() -> Self {
         Self {
@@ -89,7 +95,7 @@ impl McpEngine {
 
     /// Start the debounced file watcher and connect-time catch-up background services.
     pub fn start_background_services(project_root: &Path) {
-        let _ = Ax::spawn_background_watch(project_root.to_path_buf());
+        drop(Ax::spawn_background_watch(project_root.to_path_buf()));
         ax_usage::spawn_ensure_daily_pricing_sync();
     }
 

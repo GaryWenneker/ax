@@ -2,7 +2,7 @@ use ax_types::{ExtractionResult, Language, NodeKind};
 use tree_sitter::Tree;
 
 use crate::languages::common::{extract_symbols, file_node_id, symbol_spans_from_result};
-use crate::languages::refs::{append_ts_js_refs, emit_same_file_call_edges};
+use crate::languages::refs::{append_ts_js_refs, emit_same_file_call_edges, RefCtx};
 use crate::LanguageExtractor;
 
 pub struct JavascriptExtractor;
@@ -35,7 +35,11 @@ impl LanguageExtractor for JavascriptExtractor {
         );
         let spans = symbol_spans_from_result(&result);
         let file_id = file_node_id(path);
-        append_ts_js_refs(&mut result, tree, source, path, lang, &file_id, &spans);
+        append_ts_js_refs(
+            &mut result,
+            tree,
+            &RefCtx { source, file_path: path, language: lang, file_id: &file_id, spans: &spans },
+        );
         emit_same_file_call_edges(&mut result, path);
         result
     }

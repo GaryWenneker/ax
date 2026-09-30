@@ -112,7 +112,7 @@ impl ShipDaemon {
         let pipeline = ShipPipeline::new(self.project_root.clone(), cfg, self.bus.clone());
         let report = pipeline.run_evaluate().await?;
         *self.state.lock().await = ShipState::from_report(&report);
-        self.bus.publish(ShipEvent::ReportUpdated { report: report.clone() });
+        self.bus.publish(ShipEvent::ReportUpdated { report: Box::new(report.clone()) });
         Ok(report)
     }
 

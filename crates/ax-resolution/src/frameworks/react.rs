@@ -14,10 +14,10 @@ pub fn detect(project_root: &std::path::Path) -> bool {
     if let Ok(content) = std::fs::read_to_string(&pkg_path) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
             let deps = merge_deps(&json);
-            if deps.get("react").is_some()
-                || deps.get("next").is_some()
-                || deps.get("react-router").is_some()
-                || deps.get("react-router-dom").is_some()
+            if deps.contains_key("react")
+                || deps.contains_key("next")
+                || deps.contains_key("react-router")
+                || deps.contains_key("react-router-dom")
             {
                 return true;
             }
@@ -92,11 +92,11 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         });
 
         let comp_name = comp_re
-            .captures(&window)
+            .captures(window)
             .and_then(|cm| cm.get(1).or_else(|| cm.get(2)).map(|c| c.as_str()))
             .or_else(|| {
                 element_jsx_re
-                    .captures(&window)
+                    .captures(window)
                     .and_then(|cm| cm.get(1).map(|c| c.as_str()))
             })
             .unwrap_or("");

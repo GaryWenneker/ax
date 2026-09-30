@@ -13,7 +13,7 @@ pub async fn run_sync(skip_wiki_pull: bool, dry_run: bool, json: bool) -> Result
             skip_wiki_pull,
             dry_run,
         },
-        Some(Box::new(|ev| print_event(ev))),
+        Some(Box::new(print_event)),
     )
     .await
     .map_err(|e| e.to_string())?;

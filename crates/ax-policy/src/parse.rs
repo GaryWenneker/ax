@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn parse_rule_group_roundtrip() {
         let raw = "---\nid: explore-before-grep\nlevel: CRITICAL\nalwaysApply: true\ngroup: exploration\n---\n\nExplore first.\n";
-        let doc = parse_rule_file(Path::new("explore-before-grep.mdc"), &raw).unwrap();
+        let doc = parse_rule_file(Path::new("explore-before-grep.mdc"), raw).unwrap();
         assert_eq!(doc.frontmatter.group.as_deref(), Some("exploration"));
         let round = serialize_rule(&doc.frontmatter, &doc.body);
         let again = parse_rule_file(Path::new("explore-before-grep.mdc"), &round).unwrap();
@@ -551,9 +551,9 @@ mod tests {
     fn extra_properties_roundtrip_for_rules_and_skills() {
         let raw = "---\nid: demo\nlevel: INFO\nalwaysApply: true\nowner: platform\nfiles:\n  - src/a.rs\nkind: review\naliases: []\nexperimental: false\n---\n\nBody.\n";
         let doc = parse_rule_file(Path::new("demo.mdc"), raw).unwrap();
-        assert!(doc.frontmatter.properties.get("id").is_none());
-        assert!(doc.frontmatter.properties.get("level").is_none());
-        assert!(doc.frontmatter.properties.get("aliases").is_none());
+        assert!(!doc.frontmatter.properties.contains_key("id"));
+        assert!(!doc.frontmatter.properties.contains_key("level"));
+        assert!(!doc.frontmatter.properties.contains_key("aliases"));
         assert_eq!(doc.frontmatter.properties["owner"], "platform");
         assert_eq!(doc.frontmatter.properties["kind"], "review");
         assert_eq!(doc.frontmatter.properties["files"], serde_json::json!(["src/a.rs"]));
@@ -565,7 +565,7 @@ mod tests {
 
         let skill = "---\nname: astro-review\ndescription: review\nkind: review\nglobs:\n  - \"**/*.astro\"\n---\n\nSteps.\n";
         let sdoc = parse_skill_file(Path::new("SKILL.md"), skill).unwrap();
-        assert!(sdoc.frontmatter.properties.get("name").is_none());
+        assert!(!sdoc.frontmatter.properties.contains_key("name"));
         assert_eq!(sdoc.frontmatter.properties["kind"], "review");
         assert_eq!(
             sdoc.frontmatter.properties["globs"],

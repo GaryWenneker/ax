@@ -114,10 +114,36 @@ pub struct Telemetry {
 
 pub fn trigger_background_flush() {
     std::thread::spawn(|| {
-        if let Ok(mut t) = telemetry().lock() {
-            t.flush_now_sync(DEFAULT_FLUSH_TIMEOUT_MS);
+        if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            rt.block_on(flush_global(DEFAULT_FLUSH_TIMEOUT_MS));
         }
     });
+}
+
+/// Claimed queue lines waiting to be sent.
+struct FlushBatch {
+    claim_path: PathBuf,
+    sendable: Vec<BufferLine>,
+    keep: Vec<BufferLine>,
+    config: Option<ConfigFile>,
+}
+
+/// Flush the global buffer. The telemetry lock is not held while the batch is sent.
+pub async fn flush_global(timeout_ms: u64) {
+    let batch = match telemetry().lock() {
+        Ok(mut t) => t.begin_flush(),
+        Err(_) => None,
+    };
+    let Some(batch) = batch else {
+        return;
+    };
+    let failed = Telemetry::send_batch(batch.config.as_ref(), &batch.sendable, timeout_ms).await;
+    if let Ok(mut t) = telemetry().lock() {
+        t.finish_flush(batch, failed);
+    }
 }
 
 impl Telemetry {
@@ -151,7 +177,7 @@ impl Telemetry {
                 config_path,
             };
         }
-        if let Some(forced) = std::env::var("AX_TELEMETRY").ok() {
+        if let Ok(forced) = std::env::var("AX_TELEMETRY") {
             let on = !matches!(forced.as_str(), "0" | "false" | "FALSE");
             return TelemetryStatus {
                 enabled: on,
@@ -280,30 +306,20 @@ impl Telemetry {
         self.append_lines(&lines);
     }
 
-    pub fn maybe_flush(&mut self) {
-        let _ = self.flush_now(DEFAULT_FLUSH_TIMEOUT_MS);
-    }
-
-    pub fn flush_now_sync(&mut self, timeout_ms: u64) {
-        if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            let _ = rt.block_on(self.flush_now(timeout_ms));
+    pub async fn flush_now(&mut self, timeout_ms: u64) {
+        if let Some(batch) = self.begin_flush() {
+            let failed = Self::send_batch(batch.config.as_ref(), &batch.sendable, timeout_ms).await;
+            self.finish_flush(batch, failed);
         }
     }
 
-    pub async fn flush_now(&mut self, timeout_ms: u64) {
+    fn begin_flush(&mut self) -> Option<FlushBatch> {
         if !self.is_enabled() {
-            return;
+            return None;
         }
         self.persist_sync();
         self.recover_stale_claims();
-        let claim = self.claim_queue();
-        if claim.is_none() {
-            return;
-        }
-        let (claim_path, lines) = claim.unwrap();
+        let (claim_path, lines) = self.claim_queue()?;
         let today = utc_day();
         let mut sendable = Vec::new();
         let mut keep = Vec::new();
@@ -315,16 +331,20 @@ impl Telemetry {
                 _ => keep.push(line),
             }
         }
-        let failed = if sendable.is_empty() {
-            Vec::new()
-        } else {
-            self.send_batch(&sendable, timeout_ms).await
-        };
-        let back: Vec<BufferLine> = failed.into_iter().chain(keep).collect();
+        Some(FlushBatch {
+            claim_path,
+            sendable,
+            keep,
+            config: self.read_config_sync(),
+        })
+    }
+
+    fn finish_flush(&mut self, batch: FlushBatch, failed: Vec<BufferLine>) {
+        let back: Vec<BufferLine> = failed.into_iter().chain(batch.keep).collect();
         if !back.is_empty() {
             self.append_lines(&back);
         }
-        let _ = fs::remove_file(claim_path);
+        let _ = fs::remove_file(batch.claim_path);
     }
 
     fn read_config(&mut self) -> Option<ConfigFile> {
@@ -426,12 +446,17 @@ impl Telemetry {
         }
     }
 
-    async fn send_batch(&self, lines: &[BufferLine], timeout_ms: u64) -> Vec<BufferLine> {
-        let config = self.read_config_sync();
-        if config.is_none() {
+    async fn send_batch(
+        config: Option<&ConfigFile>,
+        lines: &[BufferLine],
+        timeout_ms: u64,
+    ) -> Vec<BufferLine> {
+        let Some(config) = config else {
+            return Vec::new();
+        };
+        if lines.is_empty() {
             return Vec::new();
         }
-        let config = config.unwrap();
         let events: Vec<serde_json::Value> = lines
             .iter()
             .map(|line| match line {

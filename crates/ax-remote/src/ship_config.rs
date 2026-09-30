@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::RemoteConfig;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ShipConfig {
     #[serde(default)]
     pub ship: ShipSection,
@@ -26,19 +26,6 @@ pub struct ShipConfig {
     pub reviewers: HashMap<String, String>,
 }
 
-impl Default for ShipConfig {
-    fn default() -> Self {
-        Self {
-            ship: ShipSection::default(),
-            quality_gate: QualityGateSection::default(),
-            remote: RemoteConfig::default(),
-            sonar: SonarConfig::default(),
-            ui: UiSection::default(),
-            auto_commit: AutoCommitSection::default(),
-            reviewers: HashMap::new(),
-        }
-    }
-}
 
 /// Opt-in Aider-style checkpointing around `ax ship --evaluate`. Disabled by
 /// default — this is a deliberate automation feature, not a silent behavior

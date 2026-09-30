@@ -194,8 +194,7 @@ pub fn migrate_legacy_log(project_root: Option<&Path>) -> std::io::Result<()> {
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| DateTime::<Utc>::from_timestamp(d.as_secs() as i64, 0))
-        .flatten();
+        .and_then(|d| DateTime::<Utc>::from_timestamp(d.as_secs() as i64, 0));
     let text = fs::read_to_string(&legacy)?;
     let day = infer_legacy_log_day(project_root, &text, mtime);
     let target = path_for_date(&ax_dir, day);

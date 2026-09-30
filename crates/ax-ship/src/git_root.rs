@@ -195,11 +195,10 @@ pub fn resolve_repo_base_branch(
     }
 
     let head = ax_git::current_branch(repo_path).ok().flatten();
-    if head.as_deref().is_some_and(|h| h != "main" && h != "master") {
-        if git_ref_exists(repo_path, "develop") {
+    if head.as_deref().is_some_and(|h| h != "main" && h != "master")
+        && git_ref_exists(repo_path, "develop") {
             return "develop".into();
         }
-    }
 
     if git_ref_exists(repo_path, default_base) {
         return default_base.to_string();
@@ -323,7 +322,7 @@ mod tests {
             ..Default::default()
         };
 
-        let names = resolve_sonar_repo_names(&ws, &config);
+        let names = resolve_sonar_repo_names(ws, &config);
         assert_eq!(names, vec!["alpha"]);
 
     }
@@ -338,7 +337,7 @@ mod tests {
         fs::create_dir_all(ws.join("beta/.git")).unwrap();
         fs::create_dir_all(ws.join("no-git")).unwrap();
 
-        let repos = discover_git_repos(&ws);
+        let repos = discover_git_repos(ws);
         assert_eq!(repos, vec!["alpha", "beta"]);
 
     }

@@ -161,9 +161,7 @@ pub fn count_file_line_range_tokens(path: &Path, start_line: u32, end_line: u32)
 /// Exact token count of a file's current contents, cached by (mtime, size).
 /// Returns `None` when the file cannot be read or the tokenizer is unavailable.
 pub fn count_file_tokens(path: &Path) -> Option<i64> {
-    if bpe().is_none() {
-        return None;
-    }
+    bpe()?;
     let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() {
         return None;

@@ -602,15 +602,11 @@ fn find_on_path(name: &str) -> Option<String> {
 fn resolve_from_candidates(candidates: &[PathBuf], npm: Option<NpmEntry>) -> Option<CliSpawn> {
     if cfg!(target_os = "windows") {
         resolve_windows_candidates(candidates, npm)
-    } else if let Some(first) = candidates.first() {
-        Some(CliSpawn {
+    } else { candidates.first().map(|first| CliSpawn {
             program: first.clone(),
             args_prefix: Vec::new(),
             extra_env: HashMap::new(),
-        })
-    } else {
-        None
-    }
+        }) }
 }
 
 fn resolve_windows_candidates(candidates: &[PathBuf], npm: Option<NpmEntry>) -> Option<CliSpawn> {

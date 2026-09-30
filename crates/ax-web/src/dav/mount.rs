@@ -244,11 +244,22 @@ fn status(port: u16, commands: Option<Vec<Vec<String>>>) -> Status {
     }
 }
 
-fn error(code: StatusCode, body: serde_json::Value) -> Response {
-    (code, Json(body)).into_response()
+struct MountError {
+    code: StatusCode,
+    body: serde_json::Value,
 }
 
-fn run(cmd: &[String]) -> Result<(), Response> {
+impl IntoResponse for MountError {
+    fn into_response(self) -> Response {
+        (self.code, Json(self.body)).into_response()
+    }
+}
+
+fn error(code: StatusCode, body: serde_json::Value) -> MountError {
+    MountError { code, body }
+}
+
+fn run(cmd: &[String]) -> Result<(), MountError> {
     if dry_run() {
         return Ok(());
     }
@@ -286,7 +297,7 @@ fn webclient_running() -> bool {
             .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("RUNNING"))
 }
 
-fn mount_point_for(os: Os, port: u16, name: &str) -> Result<String, Response> {
+fn mount_point_for(os: Os, port: u16, name: &str) -> Result<String, MountError> {
     match os {
         Os::Mac => {
             let dir = home().join(name);
@@ -357,7 +368,7 @@ fn autostart_body(os: Os, cmd: &[String]) -> String {
     }
 }
 
-fn write_file(path: &Path, body: &str) -> Result<(), Response> {
+fn write_file(path: &Path, body: &str) -> Result<(), MountError> {
     let res = path
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
@@ -370,7 +381,7 @@ fn write_file(path: &Path, body: &str) -> Result<(), Response> {
     })
 }
 
-fn linux_bookmark(port: u16, name: &str, add: bool) -> Result<(), Response> {
+fn linux_bookmark(port: u16, name: &str, add: bool) -> Result<(), MountError> {
     let path = home().join(".config/gtk-3.0/bookmarks");
     let url = gio_url(port);
     let current = std::fs::read_to_string(&path).unwrap_or_default();
@@ -385,7 +396,7 @@ fn linux_bookmark(port: u16, name: &str, add: bool) -> Result<(), Response> {
     write_file(&path, &(lines.join("\n") + "\n"))
 }
 
-fn do_mount(port: u16, req: MountRequest) -> Result<Status, Response> {
+fn do_mount(port: u16, req: MountRequest) -> Result<Status, MountError> {
     let name = req.name.unwrap_or_else(|| DEFAULT_NAME.to_string());
     if !valid_name(&name) {
         return Err(error(
@@ -421,7 +432,7 @@ fn do_mount(port: u16, req: MountRequest) -> Result<Status, Response> {
     Ok(status(port, Some(commands)))
 }
 
-fn do_unmount(port: u16) -> Result<Status, Response> {
+fn do_unmount(port: u16) -> Result<Status, MountError> {
     let os = Os::current();
     let Some(saved) = load() else {
         return Ok(status(port, Some(Vec::new())));
@@ -442,7 +453,7 @@ fn do_unmount(port: u16) -> Result<Status, Response> {
     Ok(status(port, Some(commands)))
 }
 
-fn do_open(port: u16) -> Result<Status, Response> {
+fn do_open(port: u16) -> Result<Status, MountError> {
     let Some(saved) = load() else {
         return Err(error(
             StatusCode::CONFLICT,
@@ -457,7 +468,7 @@ fn do_open(port: u16) -> Result<Status, Response> {
 async fn blocking(
     hub: &WebHub,
     headers: &HeaderMap,
-    f: impl FnOnce(u16) -> Result<Status, Response> + Send + 'static,
+    f: impl FnOnce(u16) -> Result<Status, MountError> + Send + 'static,
 ) -> Response {
     if !allowed(headers, hub.readonly) {
         return StatusCode::FORBIDDEN.into_response();
@@ -465,11 +476,12 @@ async fn blocking(
     let port = hub.port;
     match tokio::task::spawn_blocking(move || f(port)).await {
         Ok(Ok(s)) => Json(s).into_response(),
-        Ok(Err(resp)) => resp,
+        Ok(Err(e)) => e.into_response(),
         Err(e) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({ "error": e.to_string() }),
-        ),
+        )
+        .into_response(),
     }
 }
 

@@ -109,7 +109,7 @@ fn load_merged(project_root: &Path) -> ProjectConfig {
     let mut extensions = HashMap::new();
     for (ext, lang_str) in raw_extensions {
         let ext = if ext.starts_with('.') { ext } else { format!(".{}", ext) };
-        if let Some(lang) = Language::from_str(&lang_str.to_lowercase()) {
+        if let Some(lang) = Language::parse(&lang_str.to_lowercase()) {
             if is_language_supported(lang) {
                 extensions.insert(ext, lang);
             }

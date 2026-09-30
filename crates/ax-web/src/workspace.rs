@@ -203,7 +203,7 @@ async fn handle_browse(
     Json(serde_json::json!({
         "ok": true,
         "path": display_path(&base),
-        "parent": base.parent().map(|p| display_path(p)),
+        "parent": base.parent().map(display_path),
         "initialized": is_initialized(&base),
         "entries": entries,
     }))

@@ -123,7 +123,7 @@ async fn index_one(root: &std::path::Path, force: bool, quiet: bool) -> Result<(
             }),
         );
         t.persist_sync();
-        let _ = t.flush_now(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
     }
+    ax_telemetry::flush_global(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
     Ok(())
 }

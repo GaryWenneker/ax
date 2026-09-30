@@ -179,10 +179,9 @@ fn collect_file_refs(value: &Value, files: &mut HashMap<String, FileSpan>) {
                                 span.content_fallback_tokens =
                                     span.content_fallback_tokens.max(tokens);
                             })
-                            .or_insert_with(|| {
-                                let mut span = FileSpan::default();
-                                span.content_fallback_tokens = tokens;
-                                span
+                            .or_insert_with(|| FileSpan {
+                                content_fallback_tokens: tokens,
+                                ..FileSpan::default()
                             });
                     }
                 }
@@ -724,6 +723,21 @@ fn session_model_label(model: &Option<String>) -> String {
         .to_string()
 }
 
+type SessionTuple = (
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    i64,
+    i64,
+);
+
 fn session_tuple_to_row(
     (
         agent,
@@ -738,20 +752,7 @@ fn session_tuple_to_row(
         ended_at,
         mcp_calls_in_window,
         tokens_saved_in_window,
-    ): (
-        String,
-        String,
-        i64,
-        i64,
-        i64,
-        Option<i64>,
-        Option<i64>,
-        Option<String>,
-        Option<i64>,
-        Option<i64>,
-        i64,
-        i64,
-    ),
+    ): SessionTuple,
 ) -> AgentSessionRow {
     let session_cost_usd_est = session_input_tokens.map(|tokens| {
         let pricing = model
@@ -1732,9 +1733,8 @@ mod tests {
     use super::*;
     use crate::tokenizer::count_file_tokens;
     use serde_json::json;
-    use std::sync::Mutex;
 
-    static DB_TEST_LOCK: Mutex<()> = Mutex::new(());
+    static DB_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn long_response(chars: usize) -> String {
         "response text ".repeat(chars / 14 + 1)
@@ -1963,7 +1963,7 @@ mod tests {
 
     #[tokio::test]
     async fn tag_session_model_merge() {
-        let _guard = DB_TEST_LOCK.lock().unwrap();
+        let _guard = DB_TEST_LOCK.lock().await;
         let db = temp_usage_db_path("merge");
         let _ = std::fs::remove_file(&db);
         std::env::set_var("AX_USAGE_DB", &db);
@@ -2006,7 +2006,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcript_import_does_not_wipe_state_tokens() {
-        let _guard = DB_TEST_LOCK.lock().unwrap();
+        let _guard = DB_TEST_LOCK.lock().await;
         let db = temp_usage_db_path("vscdb-merge");
         let _ = std::fs::remove_file(&db);
         std::env::set_var("AX_USAGE_DB", &db);

@@ -9,17 +9,14 @@ use crate::config::{load_agents_config, save_agents_config, AgentsConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AuthStatus {
     Authenticated,
+    #[default]
     NeedsAuth,
     Unknown,
 }
 
-impl Default for AuthStatus {
-    fn default() -> Self {
-        Self::NeedsAuth
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileEntry {

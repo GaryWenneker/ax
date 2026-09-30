@@ -20,7 +20,7 @@ pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Opt
     let mut any = false;
 
     if let Some(msg) = warning {
-        log_warn(&g, msg);
+        log_warn(g, msg);
         any = true;
     }
 
@@ -32,17 +32,17 @@ pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Opt
             if file.action == FileAction::Skipped {
                 continue;
             }
-            log_file(&g, &report.display_name, file.action.verb(), &tildify(&file.path));
+            log_file(g, report.display_name, file.action.verb(), &tildify(&file.path));
             any = true;
         }
         for note in &report.notes {
-            log_note(&g, &report.display_name, note);
+            log_note(g, report.display_name, note);
             any = true;
         }
     }
 
     if !any {
-        log_info(&g, "No agent configs were changed.");
+        log_info(g, "No agent configs were changed.");
     }
 
     let next_lines = vec![
@@ -54,7 +54,7 @@ pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Opt
             "# build a project's graph (one time; auto-syncs after)".dimmed()
         ),
     ];
-    clack_note(&g, "Next: index a project", &next_lines);
+    clack_note(g, "Next: index a project", &next_lines);
 
     let n = summary.configured_targets().len();
     let outro = if n > 0 {
@@ -65,7 +65,7 @@ pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Opt
     } else {
         "Done!".into()
     };
-    clack_outro(&g, &outro);
+    clack_outro(g, &outro);
 }
 
 pub fn render_uninstall(reports: &[TargetReport], version: &str) {
@@ -86,25 +86,25 @@ pub fn render_uninstall(reports: &[TargetReport], version: &str) {
             .filter(|f| matches!(f.action, FileAction::Updated | FileAction::Created))
             .collect();
         if removed.is_empty() {
-            log_note(&g, &report.display_name, "not configured — nothing to remove");
+            log_note(g, report.display_name, "not configured — nothing to remove");
             any = true;
         } else {
             for file in removed {
-                log_file(&g, &report.display_name, "Removed", &tildify(&file.path));
+                log_file(g, report.display_name, "Removed", &tildify(&file.path));
                 any = true;
             }
         }
         for note in &report.notes {
-            log_note(&g, &report.display_name, note);
+            log_note(g, report.display_name, note);
             any = true;
         }
     }
 
     if !any {
-        log_info(&g, "No agent configs were removed.");
+        log_info(g, "No agent configs were removed.");
     }
 
-    clack_outro(&g, "Done.");
+    clack_outro(g, "Done.");
 }
 
 fn log_bar(g: &ClackGlyphs) {

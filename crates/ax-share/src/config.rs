@@ -180,12 +180,6 @@ impl Default for ShareConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-struct ShareSectionFile {
-    #[serde(flatten)]
-    inner: Option<ShareConfigPatch>,
-}
-
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ShareConfigPatch {

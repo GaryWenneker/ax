@@ -44,8 +44,8 @@ fn print_colored_status(text: &str) {
             println!("{}", info_line(rest));
         } else if let Some(rest) = line.strip_prefix("### ") {
             println!("{}", warn_line(rest));
-        } else if line.starts_with("- ") {
-            println!("  {}", dim(&line[2..]));
+        } else if let Some(rest) = line.strip_prefix("- ") {
+            println!("  {}", dim(rest));
         } else if line.contains("up to date") {
             println!("{}", ok_line(line));
         } else if let Some((label, value)) = line.split_once(':') {

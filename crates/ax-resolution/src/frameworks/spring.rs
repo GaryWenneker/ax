@@ -495,7 +495,7 @@ fn method_name_after(safe: &str, start: usize) -> Option<String> {
 }
 
 fn canonical_config_key(key: &str) -> String {
-    key.to_lowercase().replace('-', "").replace('_', "")
+    key.to_lowercase().replace(['-', '_'], "")
 }
 
 fn config_file_score(file_path: &str) -> usize {

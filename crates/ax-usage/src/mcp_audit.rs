@@ -585,7 +585,7 @@ fn collect_transcripts(dir: &Path) -> Vec<PathBuf> {
             (mtime, e.path().to_path_buf())
         })
         .collect();
-    paths.sort_by(|a, b| b.0.cmp(&a.0));
+    paths.sort_by_key(|p| std::cmp::Reverse(p.0));
     paths.into_iter().map(|(_, p)| p).collect()
 }
 
@@ -826,17 +826,23 @@ fn correlate(
     (matched, unmatched_idxs.len(), pct, unmatched_idxs)
 }
 
+/// How the audit sourced its data, which changes which findings apply.
+struct ScoreMode<'a> {
+    mode: &'a str,
+    verbose_present: bool,
+    verbose_enabled: bool,
+}
+
 fn score_and_findings(
     clusters: &[VerboseCluster],
     events: &[TranscriptEvent],
     mix: &ToolMix,
     enrichment: &EnrichmentMetrics,
     correlation_pct: f64,
-    mode: &str,
-    verbose_present: bool,
-    verbose_enabled: bool,
+    score_mode: ScoreMode,
     domain_blob: &str,
 ) -> (u8, Vec<Finding>, i64) {
+    let ScoreMode { mode, verbose_present, verbose_enabled } = score_mode;
     let mut findings = Vec::new();
     let mut score: i32 = 100;
     let mut tokens_at_risk: i64 = 0;
@@ -1471,9 +1477,7 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
         &mix,
         &enrichment,
         correlation_pct,
-        mode,
-        verbose_present,
-        verbose_enabled,
+        ScoreMode { mode, verbose_present, verbose_enabled },
         &domain_blob,
     );
     let critical_count = findings
@@ -1613,7 +1617,7 @@ mod tests {
         let mix = tool_mix_from(&clusters, &[]);
         let enrichment = enrichment_from(&clusters);
         let (score, findings, _) =
-            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, "verbose_only", true, true, "");
+            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, ScoreMode { mode: "verbose_only", verbose_present: true, verbose_enabled: true },  "");
         assert!(score < 100);
         assert!(findings.iter().any(|f| f.check == "PreflightOnce"));
     }
@@ -1684,7 +1688,7 @@ mod tests {
         let mix = tool_mix_from(&clusters, &[]);
         let enrichment = enrichment_from(&clusters);
         let (_score, findings, _) =
-            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, "verbose_only", true, true, "");
+            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, ScoreMode { mode: "verbose_only", verbose_present: true, verbose_enabled: true },  "");
         assert!(
             !findings.iter().any(|f| f.id == "mcp-errors"),
             "recovered ax_guard error should not create VerboseGap finding"
@@ -1742,9 +1746,8 @@ mod tests {
             &mix,
             &enrichment,
             0.0,
-            "transcript_linked",
-            true,
-            false,
+            ScoreMode { mode: "transcript_linked", verbose_present: true, verbose_enabled: false },
+            
             "",
         );
         let f = findings
@@ -1771,9 +1774,8 @@ mod tests {
             &mix,
             &enrichment,
             0.0,
-            "transcript_linked",
-            true,
-            true,
+            ScoreMode { mode: "transcript_linked", verbose_present: true, verbose_enabled: true },
+            
             "",
         );
         assert_eq!(score, 100, "verbose-enabled idle MCP must not penalize score");
@@ -1831,9 +1833,8 @@ mod tests {
             &mix,
             &enrichment,
             0.0,
-            "transcript_linked",
-            true,
-            true,
+            ScoreMode { mode: "transcript_linked", verbose_present: true, verbose_enabled: true },
+            
             "[ax] workspace switch path=x",
         );
         assert!(

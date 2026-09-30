@@ -13,6 +13,12 @@ pub struct NameMatcher {
     cache: LruCache<String, Vec<Node>>,
 }
 
+impl Default for NameMatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NameMatcher {
     pub fn new() -> Self {
         Self {

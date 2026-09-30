@@ -365,8 +365,8 @@ async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Resu
             }),
         );
         t.persist_sync();
-        let _ = t.flush_now(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
     }
+    ax_telemetry::flush_global(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
 
     apply_ide_choice(&root, ides)?;
     if savings {
@@ -540,9 +540,7 @@ fn prompt_menu(checked: &mut [bool], items: &[MenuItem]) -> Result<(), String> {
         };
         match key {
             console::Key::ArrowUp | console::Key::Char('k') => {
-                if cursor > 0 {
-                    cursor -= 1;
-                }
+                cursor = cursor.saturating_sub(1);
             }
             console::Key::ArrowDown | console::Key::Char('j') => {
                 if cursor + 1 < items.len() {

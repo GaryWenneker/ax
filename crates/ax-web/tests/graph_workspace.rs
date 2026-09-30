@@ -93,7 +93,7 @@ async fn graph_shows_only_the_selected_workspace_index() {
         "selected workspace node missing: {names:?}"
     );
     assert!(
-        !names.iter().any(|n| *n == "OtherProject"),
+        !names.contains(&"OtherProject"),
         "graph included another workspace: {names:?}"
     );
     assert_eq!(json["total_nodes"], 1, "{json}");

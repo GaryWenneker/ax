@@ -127,9 +127,7 @@ pub fn resolve_tool_allowlist() -> Option<HashSet<String>> {
 }
 
 pub fn resolve_tool_allowlist_from(raw: Option<&str>) -> Option<HashSet<String>> {
-    let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
-        return None;
-    };
+    let raw = raw.filter(|s| !s.trim().is_empty())?;
     let lower = raw.to_ascii_lowercase();
     if lower.trim() == "all" || lower.trim() == "*" {
         return Some(HashSet::from(["*".to_string()]));

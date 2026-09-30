@@ -22,18 +22,16 @@ impl SearchPage {
     pub fn ui(&mut self, ui: &mut Ui, ctx: &mut PageCtx<'_>) {
         heading(ui, "Search", "Full-text search across indexed symbols.");
 
-        if ui
+        if (ui
             .add(egui::TextEdit::singleline(&mut self.q).hint_text("Search symbols…"))
             .changed()
-            || (ui.button("Search").clicked())
-        {
-            if self.q.trim() != self.last_q && !self.q.trim().is_empty() {
+            || (ui.button("Search").clicked()))
+            && self.q.trim() != self.last_q && !self.q.trim().is_empty() {
                 self.last_q = self.q.trim().to_string();
                 let c = ctx.client.clone();
                 let q = self.last_q.clone();
                 self.pending = Some(spawn_fetch(move || Ok(c.search(&q, 40)?.results)));
             }
-        }
 
         if let Some(rx) = &self.pending {
             match rx.try_recv() {

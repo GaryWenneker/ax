@@ -393,7 +393,7 @@ pub async fn run_guard(
         .guard_operation(
             &target,
             op,
-            content.as_deref().map(|v| &v[..]),
+            content.as_deref(),
         )
         .await
     {

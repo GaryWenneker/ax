@@ -7,100 +7,76 @@ use tree_sitter::{Node as TsNode, Tree};
 
 use super::common::SymbolSpan;
 
+/// Per-file inputs shared by the call and function-reference walkers.
+pub struct RefCtx<'a> {
+    pub source: &'a [u8],
+    pub file_path: &'a str,
+    pub language: Language,
+    pub file_id: &'a str,
+    pub spans: &'a [SymbolSpan],
+}
+
 /// Append unresolved call/import references for JS/TS family grammars.
-pub fn append_ts_js_refs(
-    result: &mut ax_types::ExtractionResult,
-    tree: &Tree,
-    source: &[u8],
-    file_path: &str,
-    language: Language,
-    file_id: &str,
-    spans: &[SymbolSpan],
-) {
+pub fn append_ts_js_refs(result: &mut ax_types::ExtractionResult, tree: &Tree, ctx: &RefCtx) {
     let root = tree.root_node();
-    walk_for_calls(root, source, file_path, language, file_id, spans, result);
-    walk_for_imports(root, source, file_path, file_id, language, result);
-    let gate = build_fn_ref_gate(result, spans);
-    walk_fn_ref_nodes(root, source, file_path, language, file_id, spans, &gate, result);
+    walk_for_calls(root, ctx, result);
+    walk_for_imports(root, ctx.source, ctx.file_path, ctx.file_id, ctx.language, result);
+    let gate = build_fn_ref_gate(result, ctx.spans);
+    walk_fn_ref_nodes(root, ctx, &gate, result);
 }
 
 /// Append call references for Rust / Python / Go / Java tree-sitter grammars.
 pub fn append_lang_call_refs(
     result: &mut ax_types::ExtractionResult,
     tree: &Tree,
-    source: &[u8],
-    file_path: &str,
-    language: Language,
-    spans: &[SymbolSpan],
-    file_id: &str,
+    ctx: &RefCtx,
     call_kinds: &[&str],
 ) {
     let root = tree.root_node();
     for kind in call_kinds {
-        walk_call_nodes(root, source, file_path, language, kind, file_id, spans, result);
+        walk_call_nodes(root, ctx, kind, result);
     }
 }
 
-fn walk_for_calls(
-    node: TsNode,
-    source: &[u8],
-    file_path: &str,
-    language: Language,
-    file_id: &str,
-    spans: &[SymbolSpan],
-    result: &mut ax_types::ExtractionResult,
-) {
+fn walk_for_calls(node: TsNode, ctx: &RefCtx, result: &mut ax_types::ExtractionResult) {
     if node.kind() == "call_expression" {
-        if let Some(callee) = extract_ts_js_callee(node, source) {
-            push_call_ref(node, source, file_path, language, file_id, spans, &callee, result);
+        if let Some(callee) = extract_ts_js_callee(node, ctx.source) {
+            push_call_ref(node, ctx, &callee, result);
         }
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_for_calls(child, source, file_path, language, file_id, spans, result);
+            walk_for_calls(child, ctx, result);
         }
     }
 }
 
 fn walk_call_nodes(
     node: TsNode,
-    source: &[u8],
-    file_path: &str,
-    language: Language,
+    ctx: &RefCtx,
     call_kind: &str,
-    file_id: &str,
-    spans: &[SymbolSpan],
     result: &mut ax_types::ExtractionResult,
 ) {
     if node.kind() == call_kind {
         let callee = if call_kind == "method_invocation" {
-            field_text(node, source, "name")
+            field_text(node, ctx.source, "name")
         } else {
-            extract_generic_callee(node, source)
+            extract_generic_callee(node, ctx.source)
         };
         if let Some(callee) = callee {
             if !callee.is_empty() {
-                push_call_ref(node, source, file_path, language, file_id, spans, &callee, result);
+                push_call_ref(node, ctx, &callee, result);
             }
         }
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_call_nodes(child, source, file_path, language, call_kind, file_id, spans, result);
+            walk_call_nodes(child, ctx, call_kind, result);
         }
     }
 }
 
-fn push_call_ref(
-    node: TsNode,
-    _source: &[u8],
-    file_path: &str,
-    language: Language,
-    file_id: &str,
-    spans: &[SymbolSpan],
-    callee: &str,
-    result: &mut ax_types::ExtractionResult,
-) {
+fn push_call_ref(node: TsNode, ctx: &RefCtx, callee: &str, result: &mut ax_types::ExtractionResult) {
     if is_noise_callee(callee) || is_external_callee(callee) {
         return;
     }
@@ -110,15 +86,15 @@ fn push_call_ref(
     }
     let line = node.start_position().row as i32 + 1;
     let column = node.start_position().column as i32;
-    let from_id = enclosing_symbol_id(line, spans).unwrap_or_else(|| file_id.to_string());
+    let from_id = enclosing_symbol_id(line, ctx.spans).unwrap_or_else(|| ctx.file_id.to_string());
     result.unresolved_references.push(UnresolvedReference {
         from_node_id: from_id,
         reference_name: callee.to_string(),
         reference_kind: ReferenceKind::Calls,
         line,
         column,
-        file_path: Some(file_path.to_string()),
-        language: Some(language),
+        file_path: Some(ctx.file_path.to_string()),
+        language: Some(ctx.language),
         candidates: None,
     });
 }
@@ -197,7 +173,7 @@ fn emit_ts_js_import_refs(
                                 });
                             if let Some(name) = name {
                                 if !name.is_empty() {
-                                    push_import_name(file_id, file_path, &module_path, spec, source, language, &name, result);
+                                    push_import_name(file_id, file_path, &module_path, spec, language, &name, result);
                                 }
                             }
                         }
@@ -240,7 +216,7 @@ fn emit_ts_js_reexport_refs(
                 if name.is_empty() || name == "default" {
                     continue;
                 }
-                push_import_name(file_id, file_path, "", spec, source, Language::Typescript, &name, result);
+                push_import_name(file_id, file_path, "", spec, Language::Typescript, &name, result);
             }
         }
     }
@@ -259,7 +235,7 @@ fn push_import_binding(
     if name.is_empty() {
         return;
     }
-    push_import_name(file_id, file_path, module_path, node, source, language, &name, result);
+    push_import_name(file_id, file_path, module_path, node, language, &name, result);
 }
 
 fn push_import_name(
@@ -267,7 +243,6 @@ fn push_import_name(
     file_path: &str,
     module_path: &str,
     node: TsNode,
-    _source: &[u8],
     language: Language,
     name: &str,
     result: &mut ax_types::ExtractionResult,
@@ -380,11 +355,7 @@ fn callee_from_expression(node: TsNode, source: &[u8]) -> Option<String> {
                 .map(|n| node_text(n, source))
         }
         _ => {
-            if let Some(scope) = node.child_by_field_name("path") {
-                Some(node_text(scope, source))
-            } else {
-                None
-            }
+            node.child_by_field_name("path").map(|scope| node_text(scope, source))
         }
     }
 }
@@ -493,62 +464,50 @@ fn build_fn_ref_gate(result: &ax_types::ExtractionResult, spans: &[SymbolSpan]) 
 
 fn walk_fn_ref_nodes(
     node: TsNode,
-    source: &[u8],
-    file_path: &str,
-    language: Language,
-    file_id: &str,
-    spans: &[SymbolSpan],
+    ctx: &RefCtx,
     gate: &HashSet<String>,
     result: &mut ax_types::ExtractionResult,
 ) {
     match node.kind() {
         "call_expression" => {
             if let Some(args) = node.child_by_field_name("arguments") {
-                collect_fn_ref_from_args(args, source, file_path, language, file_id, spans, gate, result);
+                collect_fn_ref_from_args(args, ctx, gate, result);
             }
         }
         "assignment_expression" => {
             if let Some(rhs) = node.child_by_field_name("right") {
-                maybe_emit_fn_ref(rhs, node, source, file_path, language, file_id, spans, gate, result);
+                maybe_emit_fn_ref(rhs, node, ctx, gate, result);
             }
         }
         _ => {}
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_fn_ref_nodes(child, source, file_path, language, file_id, spans, gate, result);
+            walk_fn_ref_nodes(child, ctx, gate, result);
         }
     }
 }
 
 fn collect_fn_ref_from_args(
     node: TsNode,
-    source: &[u8],
-    file_path: &str,
-    language: Language,
-    file_id: &str,
-    spans: &[SymbolSpan],
+    ctx: &RefCtx,
     gate: &HashSet<String>,
     result: &mut ax_types::ExtractionResult,
 ) {
     for i in 0..node.named_child_count() {
         let child = node.named_child(i).unwrap();
-        maybe_emit_fn_ref(child, node, source, file_path, language, file_id, spans, gate, result);
+        maybe_emit_fn_ref(child, node, ctx, gate, result);
     }
 }
 
 fn maybe_emit_fn_ref(
     value_node: TsNode,
     context_node: TsNode,
-    source: &[u8],
-    file_path: &str,
-    language: Language,
-    file_id: &str,
-    spans: &[SymbolSpan],
+    ctx: &RefCtx,
     gate: &HashSet<String>,
     result: &mut ax_types::ExtractionResult,
 ) {
-    let name = extract_fn_ref_name(value_node, source);
+    let name = extract_fn_ref_name(value_node, ctx.source);
     if name.is_none() {
         return;
     }
@@ -558,15 +517,15 @@ fn maybe_emit_fn_ref(
     }
     let line = context_node.start_position().row as i32 + 1;
     let column = context_node.start_position().column as i32;
-    let from_id = enclosing_symbol_id(line, spans).unwrap_or_else(|| file_id.to_string());
+    let from_id = enclosing_symbol_id(line, ctx.spans).unwrap_or_else(|| ctx.file_id.to_string());
     result.unresolved_references.push(UnresolvedReference {
         from_node_id: from_id,
         reference_name: name,
         reference_kind: ReferenceKind::FunctionRef,
         line,
         column,
-        file_path: Some(file_path.to_string()),
-        language: Some(language),
+        file_path: Some(ctx.file_path.to_string()),
+        language: Some(ctx.language),
         candidates: None,
     });
 }
@@ -657,11 +616,13 @@ export function greet(name: string) {
         append_ts_js_refs(
             &mut result,
             &tree,
-            source.as_bytes(),
-            "greet.ts",
-            Language::Typescript,
-            &file_id,
-            &spans,
+            &RefCtx {
+                source: source.as_bytes(),
+                file_path: "greet.ts",
+                language: Language::Typescript,
+                file_id: &file_id,
+                spans: &spans,
+            },
         );
         let calls = result
             .unresolved_references

@@ -300,7 +300,7 @@ fn merge_scanned_projects(recent: Vec<RecentProject>, scanned: &[PathBuf]) -> Ve
             initialized: true,
         });
     }
-    extra.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    extra.sort_by_key(|a| a.label.to_lowercase());
     out.extend(extra);
     out
 }

@@ -1,5 +1,6 @@
 //! Rust web route extraction (Actix/Rocket attrs, Axum, Actix builder) — CG: frameworks/rust.ts
 
+use std::sync::OnceLock;
 use regex::Regex;
 
 use ax_db::queries::QueryBuilder;
@@ -53,7 +54,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         );
 
         let tail = safe.get(match_start + cap.get(0).map(|m| m.len()).unwrap_or(0)..).unwrap_or("");
-        let fn_re = Regex::new(r"\n\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").expect("fn after attr");
+        let fn_re = fn_after_attr_re();
         if let Some(fn_cap) = fn_re.captures(tail) {
             if let Some(handler) = fn_cap.get(1) {
                 if let Some(route_id) = out.nodes.last().map(|n| n.id.clone()) {
@@ -72,16 +73,14 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         }
         let close = close_idx as usize;
         let args = &safe[open_idx + 1..close];
-        let path_re = Regex::new(r#"^\s*"([^"]+)"\s*,"#).expect("route path");
+        let path_re = route_path_re();
         let path_match = path_re.captures(args);
         if let Some(pm) = path_match {
             let route_path = pm.get(1).map(|p| p.as_str()).unwrap_or("");
             let line = safe[..m.start()].matches('\n').count() as i32 + 1;
             let prefix_len = pm.get(0).map(|p| p.as_str()).unwrap_or("").len();
             let method_body = &args[prefix_len..];
-            let mh_re =
-                Regex::new(r"\b(get|post|put|patch|delete|head|options|trace)\s*\(\s*([A-Za-z_][\w:]*)")
-                    .expect("axum method handler");
+            let mh_re = axum_method_re();
             for mh in mh_re.captures_iter(method_body) {
                 let upper = mh.get(1).map(|x| x.as_str().to_uppercase()).unwrap_or_default();
                 let handler = mh
@@ -114,9 +113,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             safe.len().min(after + 500)
         };
         let chain = &safe[after..end];
-        let method_to =
-            Regex::new(r#"web::(get|post|put|patch|delete|head)\s*\(\s*\)\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#)
-                .expect("actix method to");
+        let method_to = actix_method_to_re();
         let mut found = false;
         for m2 in method_to.captures_iter(chain) {
             let method = m2.get(1).map(|x| x.as_str()).unwrap_or("ANY");
@@ -134,7 +131,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
             found = true;
         }
         if !found {
-            let direct_re = Regex::new(r#"^\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#).expect("direct to");
+            let direct_re = direct_to_re();
             if let Some(d) = direct_re.captures(chain) {
                 let handler_expr = d.get(1).map(|x| x.as_str()).unwrap_or("");
                 let handler = handler_expr.split("::").last().unwrap_or(handler_expr);
@@ -401,4 +398,29 @@ fn is_pascal_case(name: &str) -> bool {
     let first = chars.next();
     first.map(|c| c.is_uppercase() && c.is_alphabetic()).unwrap_or(false)
         && chars.all(|c| c.is_alphanumeric())
+}
+
+fn fn_after_attr_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\n\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").expect("fn after attr"))
+}
+
+fn route_path_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"^\s*"([^"]+)"\s*,"#).expect("route path"))
+}
+
+fn axum_method_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\b(get|post|put|patch|delete|head|options|trace)\s*\(\s*([A-Za-z_][\w:]*)").expect("axum method handler"))
+}
+
+fn actix_method_to_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"web::(get|post|put|patch|delete|head)\s*\(\s*\)\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#).expect("actix method to"))
+}
+
+fn direct_to_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"^\s*\.to\s*\(\s*([A-Za-z_][\w:]*)"#).expect("direct to"))
 }

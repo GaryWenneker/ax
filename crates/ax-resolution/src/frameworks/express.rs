@@ -1,5 +1,6 @@
 //! Express / Node.js route extraction.
 
+use std::sync::OnceLock;
 use regex::Regex;
 
 use ax_types::{
@@ -26,10 +27,10 @@ pub fn detect(project_root: &std::path::Path) -> bool {
     if let Ok(content) = std::fs::read_to_string(&pkg_path) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
             let deps = merge_deps(&json);
-            if deps.get("express").is_some()
-                || deps.get("fastify").is_some()
-                || deps.get("koa").is_some()
-                || deps.get("hapi").is_some()
+            if deps.contains_key("express")
+                || deps.contains_key("fastify")
+                || deps.contains_key("koa")
+                || deps.contains_key("hapi")
             {
                 return true;
             }
@@ -104,7 +105,7 @@ pub fn extract_file(file_path: &str, content: &str) -> FrameworkExtractResult {
         if let Some(arrow_at) = args.find("=>") {
             let after_arrow = &args[arrow_at + 2..];
             let body = extract_arrow_body(after_arrow);
-            let call_re = Regex::new(r"\b([A-Za-z_$][\w$]*)\s*\(").expect("call regex");
+            let call_re = call_re();
             let mut seen = std::collections::HashSet::new();
             for cm in call_re.captures_iter(body) {
                 let name = cm.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -237,4 +238,9 @@ fn match_delim(s: &str, open: usize, open_ch: char, close_ch: char) -> usize {
         i += 1;
     }
     usize::MAX
+}
+
+fn call_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\b([A-Za-z_$][\w$]*)\s*\(").expect("call regex"))
 }

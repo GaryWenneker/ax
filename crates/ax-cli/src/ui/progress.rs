@@ -93,7 +93,7 @@ pub fn format_duration_ms(ms: u64) -> String {
     if secs < 60.0 {
         return format!("{secs:.1}s");
     }
-    let mins = (ms / 1000 / 60) as u64;
+    let mins = ms / 1000 / 60;
     let sec = (ms / 1000) % 60;
     if mins < 60 {
         return format!("{mins}m {sec}s");

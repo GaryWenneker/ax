@@ -478,11 +478,13 @@ pub fn validate_okf_bundle(out_dir: &Path) -> Result<OkfValidateReport, String> 
             out_dir.display()
         ));
     }
-    let mut report = OkfValidateReport::default();
-    report.missing_index = !out_dir.join("index.md").is_file();
+    let mut report = OkfValidateReport {
+        missing_index: !out_dir.join("index.md").is_file(),
+        ..OkfValidateReport::default()
+    };
 
     let mut pages = Vec::new();
-    collect_md_files(out_dir, out_dir, &mut pages)?;
+    collect_md_files(out_dir, &mut pages)?;
     report.pages = pages
         .iter()
         .filter(|p| {
@@ -526,12 +528,12 @@ pub fn validate_okf_bundle(out_dir: &Path) -> Result<OkfValidateReport, String> 
     Ok(report)
 }
 
-fn collect_md_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if path.is_dir() {
-            collect_md_files(root, &path, out)?;
+            collect_md_files(&path, out)?;
         } else if path
             .extension()
             .and_then(|e| e.to_str())

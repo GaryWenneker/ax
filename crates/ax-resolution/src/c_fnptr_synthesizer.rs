@@ -14,6 +14,12 @@ const C_CPP_EXT: &[&str] = &[
 
 pub struct CFnptrSynthesizer;
 
+impl Default for CFnptrSynthesizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CFnptrSynthesizer {
     pub fn new() -> Self {
         Self

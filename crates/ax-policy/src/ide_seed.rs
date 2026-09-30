@@ -422,12 +422,11 @@ fn cline_bootstrap_stale(content: &str) -> bool {
     !crate::seed::verify_content(
         content
             .find(AX_SECTION_START)
-            .map(|start| {
+            .and_then(|start| {
                 content
                     .find(AX_SECTION_END)
                     .map(|end| &content[start..end + AX_SECTION_END.len()])
             })
-            .flatten()
             .unwrap_or(content),
     )
     .is_empty()

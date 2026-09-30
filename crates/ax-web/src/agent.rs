@@ -1,7 +1,7 @@
 //! Agent terminal API — install, profiles, chat streaming.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use ax_agent::chat::chunk_text;
@@ -571,7 +571,7 @@ fn stream_text_chunks(tx: &mpsc::UnboundedSender<String>, text: &str) {
     }
 }
 
-async fn run_builtin_turn(tx: &mpsc::UnboundedSender<String>, prompt: &str, root: &PathBuf) {
+async fn run_builtin_turn(tx: &mpsc::UnboundedSender<String>, prompt: &str, root: &Path) {
     match run_agent_turn(root, prompt).await {
         Ok(turn) => {
             for tool in &turn.tools {

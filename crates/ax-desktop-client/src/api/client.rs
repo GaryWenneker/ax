@@ -86,20 +86,6 @@ impl ApiClient {
         serde_json::from_str(&text).with_context(|| format!("decode PUT {path}"))
     }
 
-    pub fn delete(&self, path: &str) -> Result<()> {
-        let res = self
-            .http
-            .delete(self.url(path))
-            .send()
-            .with_context(|| format!("DELETE {path}"))?;
-        if !res.status().is_success() {
-            let status = res.status().as_u16();
-            let text = res.text().unwrap_or_default();
-            return Err(api_error(&text, status));
-        }
-        Ok(())
-    }
-
     // --- Graph / browse ---
 
     pub fn stats(&self) -> Result<Stats> {
@@ -456,13 +442,6 @@ impl ApiClient {
 
     pub fn mcp_trace_path(&self) -> Result<McpTracePath> {
         self.get_json("/api/usage/mcp-trace/path")
-    }
-
-    pub fn mcp_trace_chunk(&self, day: &str) -> Result<McpTraceChunk> {
-        self.get_json(&format!(
-            "/api/usage/mcp-trace/chunk?day={}",
-            urlencoding::encode(day)
-        ))
     }
 
     pub fn stream_mcp_trace(&self) -> Receiver<Result<(String, String), String>> {

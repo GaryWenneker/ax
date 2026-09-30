@@ -168,7 +168,7 @@ async fn handle_ship_events(
         if !evaluating {
             if let Some(report) = report_store.lock().await.clone() {
                 yield Ok(Event::default().data(
-                    serde_json::to_string(&ShipEvent::ReportUpdated { report }).unwrap_or_default(),
+                    serde_json::to_string(&ShipEvent::ReportUpdated { report: Box::new(report) }).unwrap_or_default(),
                 ));
             }
         }
@@ -176,7 +176,7 @@ async fn handle_ship_events(
             match rx.recv().await {
                 Ok(ev) => {
                     if let ShipEvent::ReportUpdated { ref report } = ev {
-                        *report_store.lock().await = Some(report.clone());
+                        *report_store.lock().await = Some((**report).clone());
                     }
                     yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
                 }

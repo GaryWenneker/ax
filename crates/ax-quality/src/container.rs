@@ -566,7 +566,7 @@ fn wait_for_postgres_sync(
         if ready {
             return Ok(());
         }
-        if waited > 0 && waited % 9 == 0 {
+        if waited > 0 && waited.is_multiple_of(9) {
             log.push(format!("Waiting for PostgreSQL ({db_name})… ({waited}s)"));
         }
         waited += 3;
@@ -971,7 +971,7 @@ async fn wait_for_sonar_logged(host: &str, timeout_secs: u64, log: &InstallLog) 
                 return Ok(());
             }
         }
-        if waited > 0 && waited % 15 == 0 {
+        if waited > 0 && waited.is_multiple_of(15) {
             log.push(format!("Still waiting… ({waited}s)"));
         }
         waited += 3;

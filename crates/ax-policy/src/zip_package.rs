@@ -598,7 +598,7 @@ fn first_prose(body: &str) -> Option<String> {
 }
 
 fn humanize_policy_id(id: &str) -> String {
-    let t = id.replace('-', " ").replace('_', " ");
+    let t = id.replace(['-', '_'], " ");
     let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
     if t.is_empty() {
         id.to_string()
@@ -1105,6 +1105,7 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     (y as i32, m, d)
 }
 
+#[cfg(test)]
 fn write_rule_file(root: &Path, id: &str, enabled: bool, scope: &str) {
     let path = agents_dir(root).join(RULES_DIR).join(format!("{id}.mdc"));
     if let Some(p) = path.parent() {
@@ -1120,6 +1121,7 @@ fn write_rule_file(root: &Path, id: &str, enabled: bool, scope: &str) {
     .unwrap();
 }
 
+#[cfg(test)]
 fn write_skill_file(root: &Path, name: &str, enabled: bool, scope: &str, extra: Option<(&str, &str)>) {
     let dir = agents_dir(root).join(SKILLS_DIR).join(name);
     std::fs::create_dir_all(&dir).unwrap();

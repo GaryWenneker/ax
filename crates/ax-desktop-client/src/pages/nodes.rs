@@ -6,6 +6,8 @@ use crate::api::client::spawn_fetch;
 use crate::api::{NodeDetail, NodeRow};
 use crate::pages::{err_label, heading, PageCtx};
 
+type NodeLoad = Result<(Vec<NodeRow>, i64), String>;
+
 #[derive(Default)]
 pub struct NodesPage {
     q: String,
@@ -17,7 +19,7 @@ pub struct NodesPage {
     selected: Option<String>,
     detail: Option<NodeDetail>,
     err: Option<String>,
-    pending: Option<Receiver<Result<(Vec<NodeRow>, i64), String>>>,
+    pending: Option<Receiver<NodeLoad>>,
     detail_pending: Option<Receiver<Result<NodeDetail, String>>>,
     dirty: bool,
 }

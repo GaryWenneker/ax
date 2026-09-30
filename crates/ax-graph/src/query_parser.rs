@@ -21,10 +21,10 @@ pub fn parse_query(raw: &str) -> ParsedQuery {
             let value = unquote(value);
             match key.as_str() {
                 "kind" => {
-                    if let Some(k) = NodeKind::from_str(&value) { out.kinds.push(k); } else { text_parts.push(tok); }
+                    if let Some(k) = NodeKind::parse(&value) { out.kinds.push(k); } else { text_parts.push(tok); }
                 }
                 "lang" | "language" => {
-                    if let Some(l) = Language::from_str(&value.to_lowercase()) { out.languages.push(l); } else { text_parts.push(tok); }
+                    if let Some(l) = Language::parse(&value.to_lowercase()) { out.languages.push(l); } else { text_parts.push(tok); }
                 }
                 "path" => out.path_filters.push(value),
                 "name" => out.name_filters.push(value),

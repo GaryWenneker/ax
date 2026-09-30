@@ -111,11 +111,10 @@ pub async fn try_resolve_target(
     if VUE_COMPILER_MACROS.contains(&name.as_str()) || NUXT_AUTO_IMPORTS.contains(&name.as_str()) {
         return resolve_self_node(queries, ref_, 1.0).await;
     }
-    if ref_.reference_kind == ReferenceKind::Imports && name.starts_with('#') {
-        if NUXT_VIRTUAL_PREFIXES.iter().any(|p| name.starts_with(p)) {
+    if ref_.reference_kind == ReferenceKind::Imports && name.starts_with('#')
+        && NUXT_VIRTUAL_PREFIXES.iter().any(|p| name.starts_with(p)) {
             return resolve_self_node(queries, ref_, 1.0).await;
         }
-    }
     if ref_.reference_kind == ReferenceKind::Imports {
         if let Some(node) = resolve_alias_import(project_root, queries, name, "@/").await {
             return Some((node, 0.9));

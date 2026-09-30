@@ -333,7 +333,7 @@ mod tests {
             "from-ax\n",
         )
         .unwrap();
-        let (got, fallback) = pick_trace_project_root(&hub, &[other.clone()]);
+        let (got, fallback) = pick_trace_project_root(&hub, std::slice::from_ref(&other));
         assert_eq!(got, other);
         assert_eq!(fallback.as_deref(), Some("ax"));
     }

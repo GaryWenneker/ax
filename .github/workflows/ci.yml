@@ -57,5 +57,5 @@ jobs:
       - name: Home dir goes through ax_utils
         run: ./scripts/check-home-dir.sh
 
-      - name: Clippy (deny warnings in libs)
-        run: cargo clippy --workspace --locked -- -D clippy::correctness -W clippy::suspicious
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings

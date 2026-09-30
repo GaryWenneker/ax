@@ -65,32 +65,32 @@ pub fn cursor_state_vscdb_path() -> Option<PathBuf> {
 
     #[cfg(windows)]
     {
-        return dirs::data_dir().map(|d| {
+        dirs::data_dir().map(|d| {
             d.join("Cursor")
                 .join("User")
                 .join("globalStorage")
                 .join("state.vscdb")
-        });
+        })
     }
 
     #[cfg(target_os = "macos")]
     {
-        return dirs::data_dir().map(|d| {
+        dirs::data_dir().map(|d| {
             d.join("Cursor")
                 .join("User")
                 .join("globalStorage")
                 .join("state.vscdb")
-        });
+        })
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        return dirs::config_dir().map(|d| {
+        dirs::config_dir().map(|d| {
             d.join("Cursor")
                 .join("User")
                 .join("globalStorage")
                 .join("state.vscdb")
-        });
+        })
     }
 
     #[cfg(not(any(windows, unix)))]
@@ -145,7 +145,7 @@ fn parse_iso_ms(s: &str) -> Option<i64> {
 fn timestamp_ms(v: &Value) -> Option<i64> {
     json_i64(v).filter(|n| *n > 0).or_else(|| {
         v.as_str()
-            .and_then(|s| parse_iso_ms(s))
+            .and_then(parse_iso_ms)
     })
 }
 

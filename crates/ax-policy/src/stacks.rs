@@ -357,11 +357,10 @@ pub fn status(root: &Path) -> Vec<StackStatus> {
                 if locked.map(|h| h != &template_hash).unwrap_or(true) {
                     upgrade = true;
                 }
-                if disk_hash.as_ref() != locked || disk_hash.as_deref() != Some(template_hash.as_str()) {
-                    if disk_hash.as_deref() != Some(template_hash.as_str()) {
+                if (disk_hash.as_ref() != locked || disk_hash.as_deref() != Some(template_hash.as_str()))
+                    && disk_hash.as_deref() != Some(template_hash.as_str()) {
                         drifted.push(file.rel.to_string());
                     }
-                }
             }
             StackStatus {
                 id: def.id.into(),

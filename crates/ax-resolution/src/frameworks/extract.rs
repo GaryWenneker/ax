@@ -2,21 +2,13 @@
 
 use ax_types::{Edge, Node, UnresolvedReference};
 
+#[derive(Default)]
 pub struct FrameworkExtractResult {
     pub nodes: Vec<Node>,
     pub references: Vec<UnresolvedReference>,
     pub edges: Vec<Edge>,
 }
 
-impl Default for FrameworkExtractResult {
-    fn default() -> Self {
-        Self {
-            nodes: Vec::new(),
-            references: Vec::new(),
-            edges: Vec::new(),
-        }
-    }
-}
 
 pub fn stable_node_id(file_path: &str, qualified_name: &str) -> String {
     use std::collections::hash_map::DefaultHasher;

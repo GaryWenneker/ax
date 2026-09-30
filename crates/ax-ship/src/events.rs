@@ -29,7 +29,7 @@ pub enum ShipEvent {
         reason: String,
     },
     RunLogUpdated { last_run: LastRunLog },
-    ReportUpdated { report: ShipReport },
+    ReportUpdated { report: Box<ShipReport> },
     Error { message: String },
 }
 

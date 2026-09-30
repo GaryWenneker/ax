@@ -1324,7 +1324,7 @@ fn build_fts_prefix_query(text: &str) -> Option<String> {
         .collect::<String>()
         .split_whitespace()
         .filter(|term| {
-            term.len() > 0 && !matches!(
+            !term.is_empty() && !matches!(
                 term.to_uppercase().as_str(),
                 "AND" | "OR" | "NOT" | "NEAR"
             )
@@ -1441,11 +1441,11 @@ impl NodeRow {
     fn into_node(self) -> Node {
         Node {
             id: self.id,
-            kind: NodeKind::from_str(&self.kind).unwrap_or(NodeKind::Variable),
+            kind: NodeKind::parse(&self.kind).unwrap_or(NodeKind::Variable),
             name: self.name,
             qualified_name: self.qualified_name,
             file_path: self.file_path,
-            language: Language::from_str(&self.language).unwrap_or(Language::Unknown),
+            language: Language::parse(&self.language).unwrap_or(Language::Unknown),
             start_line: self.start_line,
             end_line: self.end_line,
             start_column: self.start_column,
@@ -1497,12 +1497,12 @@ impl EdgeRow {
         let confidence = self
             .confidence
             .as_ref()
-            .and_then(|c| EdgeConfidence::from_str(c))
+            .and_then(|c| EdgeConfidence::parse(c))
             .or_else(|| EdgeConfidence::from_provenance(provenance));
         Edge {
             source: self.source,
             target: self.target,
-            kind: EdgeKind::from_str(&self.kind).unwrap_or(EdgeKind::References),
+            kind: EdgeKind::parse(&self.kind).unwrap_or(EdgeKind::References),
             metadata: self.metadata.and_then(|m| serde_json::from_str(&m).ok()),
             line: self.line,
             column: self.col,
@@ -1537,11 +1537,11 @@ impl UnresolvedRefRow {
         UnresolvedReference {
             from_node_id: self.from_node_id,
             reference_name: self.reference_name,
-            reference_kind: ReferenceKind::from_str(&self.reference_kind).unwrap_or(ReferenceKind::References),
+            reference_kind: ReferenceKind::parse(&self.reference_kind).unwrap_or(ReferenceKind::References),
             line: self.line,
             column: self.col,
             file_path: Some(self.file_path),
-            language: Language::from_str(&self.language),
+            language: Language::parse(&self.language),
             candidates: self.candidates.and_then(|c| serde_json::from_str(&c).ok()),
         }
     }
@@ -1598,7 +1598,7 @@ impl FileRow {
         FileRecord {
             path: self.path,
             content_hash: self.content_hash,
-            language: Language::from_str(&self.language).unwrap_or(Language::Unknown),
+            language: Language::parse(&self.language).unwrap_or(Language::Unknown),
             size: self.size,
             modified_at: self.modified_at,
             indexed_at: self.indexed_at,

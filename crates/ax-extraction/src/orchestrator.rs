@@ -34,7 +34,9 @@ pub(crate) fn keep_scan_entry_name(name: &str) -> bool {
     true
 }
 
-#[derive(Clone)]
+type ParseOutcome = (String, Result<ExtractionResult, String>);
+
+#[derive(Clone, Default)]
 pub struct IndexOptions {
     pub force: bool,
     pub quiet: bool,
@@ -42,16 +44,6 @@ pub struct IndexOptions {
     pub exclude: Vec<String>,
 }
 
-impl Default for IndexOptions {
-    fn default() -> Self {
-        Self {
-            force: false,
-            quiet: false,
-            custom_extensions: HashMap::new(),
-            exclude: Vec::new(),
-        }
-    }
-}
 
 pub struct ExtractionOrchestrator {
     project_root: PathBuf,
@@ -68,9 +60,9 @@ impl ExtractionOrchestrator {
         &self,
         tasks: Vec<ParseTask>,
         on_progress: &mut Option<&mut Box<dyn FnMut(IndexProgress) + Send>>,
-    ) -> (Vec<(String, Result<ExtractionResult, String>)>, u32) {
+    ) -> (Vec<ParseOutcome>, u32) {
         let plugins = ax_plugins::load_plugins(&self.project_root);
-        let mut results: Vec<(String, Result<ExtractionResult, String>)> =
+        let mut results: Vec<ParseOutcome> =
             Vec::with_capacity(tasks.len());
         let mut remaining = Vec::new();
         for task in tasks {

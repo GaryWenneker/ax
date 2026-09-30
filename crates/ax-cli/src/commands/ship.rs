@@ -1,18 +1,33 @@
 use crate::commands::{quiet_and_uninitialized, resolve_path};
 
-pub async fn run(
-    path: Option<String>,
-    watch: bool,
-    evaluate: bool,
-    ci: bool,
-    draft: bool,
-    title: Option<String>,
-    port: u16,
-    open: bool,
-    auto_commit: bool,
-    revert_on_fail: bool,
-    quiet: bool,
-) -> Result<(), String> {
+pub struct ShipArgs {
+    pub path: Option<String>,
+    pub watch: bool,
+    pub evaluate: bool,
+    pub ci: bool,
+    pub draft: bool,
+    pub title: Option<String>,
+    pub port: u16,
+    pub open: bool,
+    pub auto_commit: bool,
+    pub revert_on_fail: bool,
+    pub quiet: bool,
+}
+
+pub async fn run(args: ShipArgs) -> Result<(), String> {
+    let ShipArgs {
+        path,
+        watch,
+        evaluate,
+        ci,
+        draft,
+        title,
+        port,
+        open,
+        auto_commit,
+        revert_on_fail,
+        quiet,
+    } = args;
     let root = resolve_path(path);
     if evaluate && quiet_and_uninitialized(&root, quiet) {
         return Ok(());

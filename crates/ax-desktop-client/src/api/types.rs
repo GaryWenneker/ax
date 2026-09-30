@@ -1,5 +1,8 @@
 //! Shared DTOs mirroring `web-ui/src/api.ts` / `types.ts` / `shipApi.ts`.
 
+// Fields mirror the full ax-web JSON contract; pages read only a subset.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -654,17 +657,6 @@ pub struct McpTracePath {
     pub log_day: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct McpTraceChunk {
-    #[serde(default)]
-    pub ok: bool,
-    pub day: Option<String>,
-    #[serde(default)]
-    pub lines: Vec<String>,
-    #[serde(default, rename = "hasOlder")]
-    pub has_older: bool,
-}
-
 #[derive(Debug, Clone)]
 pub struct TraceEntry {
     pub id: String,
@@ -737,8 +729,3 @@ pub struct SavingsImportResult {
     pub skipped: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct AgentSessionInfo {
-    #[serde(default)]
-    pub sessions: Vec<serde_json::Value>,
-}

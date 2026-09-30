@@ -1,5 +1,7 @@
 //! Flask + FastAPI route extraction — CG: frameworks/python.ts flaskResolver / fastapiResolver.
 
+use std::sync::OnceLock;
+use regex::Regex;
 use std::path::Path;
 
 use ax_db::queries::QueryBuilder;
@@ -17,7 +19,7 @@ pub fn flask_detect(project_root: &Path, file_paths: &[String]) -> bool {
     for file in ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] {
         let path = project_root.join(file);
         if let Ok(c) = std::fs::read_to_string(&path) {
-            if regex::Regex::new(r"\bflask\b").unwrap().is_match(&c.to_lowercase()) {
+            if flask_dep_re().is_match(&c.to_lowercase()) {
                 return true;
             }
         }
@@ -43,7 +45,7 @@ pub fn fastapi_detect(project_root: &Path) -> bool {
     for file in ["requirements.txt", "pyproject.toml"] {
         let path = project_root.join(file);
         if let Ok(c) = std::fs::read_to_string(&path) {
-            if regex::Regex::new(r"\bfastapi\b").unwrap().is_match(&c.to_lowercase()) {
+            if fastapi_dep_re().is_match(&c.to_lowercase()) {
                 return true;
             }
         }
@@ -138,7 +140,7 @@ fn extract_decorator_routes(
                 let path = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                 let mut method = default_method.to_string();
                 if let Some(mg) = cap.get(3) {
-                    let method_re = regex::Regex::new(r#"['"]([A-Z]+)['"]"#).expect("method");
+                    let method_re = method_re();
                     if let Some(m) = method_re.captures(mg.as_str()) {
                         method = m.get(1).map(|x| x.as_str().to_uppercase()).unwrap_or(method);
                     }
@@ -289,6 +291,21 @@ fn make_ref(from_node_id: &str, reference_name: &str, line: i32, file_path: &str
         language: Some(Language::Python),
         candidates: None,
     }
+}
+
+fn flask_dep_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\bflask\b").expect("flask dependency"))
+}
+
+fn fastapi_dep_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\bfastapi\b").expect("fastapi dependency"))
+}
+
+fn method_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"['"]([A-Z]+)['"]"#).expect("method"))
 }
 
 #[cfg(test)]

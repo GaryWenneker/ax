@@ -59,7 +59,7 @@ pub async fn start_git_watcher(
             info!(?branch, repos = git_roots.len(), "git state changed");
             bus.publish(ShipEvent::GitChanged { branch });
             if let Ok(report) = crate::evaluate_project(workspace_root.clone()).await {
-                bus.publish(ShipEvent::ReportUpdated { report });
+                bus.publish(ShipEvent::ReportUpdated { report: Box::new(report) });
             }
         }
     });

@@ -39,7 +39,7 @@ pub(crate) async fn pull_onedrive_with_token(
         .get(format!(
             "{graph_base}/shares/{share_id}/driveItem"
         ))
-        .bearer_auth(&token)
+        .bearer_auth(token)
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -159,8 +159,6 @@ fn sanitize_name(name: &str) -> String {
 #[derive(Debug, Deserialize)]
 struct DriveItem {
     id: String,
-    #[serde(default)]
-    name: Option<String>,
     folder: Option<FolderFacet>,
     #[serde(rename = "parentReference")]
     parent_reference: Option<ParentReference>,
@@ -173,10 +171,7 @@ struct ParentReference {
 }
 
 #[derive(Debug, Deserialize)]
-struct FolderFacet {
-    #[serde(rename = "childCount")]
-    child_count: Option<u32>,
-}
+struct FolderFacet {}
 
 #[derive(Debug, Deserialize)]
 struct ChildrenList {

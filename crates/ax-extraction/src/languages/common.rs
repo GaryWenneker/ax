@@ -77,7 +77,7 @@ pub fn extract_symbols(
     result.nodes.push(file_node);
 
     for (kind, node_type) in kinds {
-        walk_nodes(root, source, node_type, &mut |n| {
+        walk_nodes(root, node_type, &mut |n| {
             let name = declaration_name(n, source, node_type);
             if name.is_empty() {
                 return;
@@ -146,7 +146,7 @@ fn declaration_name(node: TsNode, source: &[u8], node_type: &str) -> String {
     }
     node.utf8_text(source).unwrap_or("").trim().to_string()
 }
-fn walk_nodes<F>(node: TsNode, source: &[u8], node_type: &str, f: &mut F)
+fn walk_nodes<F>(node: TsNode, node_type: &str, f: &mut F)
 where
     F: FnMut(TsNode),
 {
@@ -155,7 +155,7 @@ where
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_nodes(child, source, node_type, f);
+            walk_nodes(child, node_type, f);
         }
     }
 }

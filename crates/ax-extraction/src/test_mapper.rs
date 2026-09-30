@@ -93,7 +93,7 @@ fn collect_calls_in_range(tree: &Tree, source: &[u8], start_line: u32, end_line:
         if node.kind() == "call_expression" {
             if let Some(func) = node.child_by_field_name("function") {
                 if let Ok(text) = func.utf8_text(source) {
-                    let name = text.split('.').last().unwrap_or(text).trim();
+                    let name = text.split('.').next_back().unwrap_or(text).trim();
                     if !name.is_empty() {
                         calls.push(name.to_string());
                     }

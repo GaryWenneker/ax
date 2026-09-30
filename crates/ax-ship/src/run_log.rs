@@ -56,9 +56,11 @@ pub struct RunLogger {
 
 impl RunLogger {
     pub fn start(project_root: &Path, bus: Option<ShipEventBus>) -> Self {
-        let mut log = LastRunLog::default();
-        log.started_at = Some(now_label());
-        log.ok = true;
+        let log = LastRunLog {
+            started_at: Some(now_label()),
+            ok: true,
+            ..LastRunLog::default()
+        };
         let logger = Self {
             project_root: project_root.to_path_buf(),
             log,

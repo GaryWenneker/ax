@@ -324,7 +324,7 @@ async fn run_socket_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(
     }
     #[cfg(unix)]
     {
-        return run_unix_socket_daemon(project_root, pid_path).await;
+        run_unix_socket_daemon(project_root, pid_path).await
     }
     #[cfg(not(any(windows, unix)))]
     {
@@ -540,7 +540,7 @@ async fn serve_session(
         let mut eng = engine.lock().await;
         eng.policy_sessions().set_active(connection);
         let outcome = handle_request(
-            &mut *eng,
+            &mut eng,
             &req.method,
             req.params.unwrap_or(serde_json::Value::Null),
         )

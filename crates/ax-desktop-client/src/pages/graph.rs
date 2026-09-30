@@ -548,6 +548,6 @@ fn detail_iters(limit: i64) -> i32 {
 
 fn fastrand_angle(i: usize) -> f32 {
     // Deterministic-ish spread without extra deps.
-    let x = (i as f32 * 2.399963) % std::f32::consts::TAU;
-    x
+    
+    (i as f32 * 2.399963) % std::f32::consts::TAU
 }

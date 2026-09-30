@@ -64,19 +64,12 @@ pub enum SyncEvent {
     Kv { key: String, value: String },
 }
 
+#[derive(Default)]
 pub struct SyncOptions {
     pub skip_wiki_pull: bool,
     pub dry_run: bool,
 }
 
-impl Default for SyncOptions {
-    fn default() -> Self {
-        Self {
-            skip_wiki_pull: false,
-            dry_run: false,
-        }
-    }
-}
 
 /// Sync documentation catalog into ax.db. Emits progress events when `on_event` is set.
 pub async fn sync_catalog(

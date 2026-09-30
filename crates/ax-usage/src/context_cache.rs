@@ -482,7 +482,7 @@ pub async fn recent_session_catalog(
 ) -> Result<Vec<CatalogEntry>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     let limit = limit.clamp(1, 50) as i64;
-    let rows: Vec<(Option<String>, String, String, i64, Option<String>)> = sqlx::query_as(
+    let rows: Vec<CatalogRow> = sqlx::query_as(
         "SELECT cache_id, tool, summary, original_tokens, session_id
          FROM mcp_session_index
          ORDER BY CASE WHEN session_id IS NOT NULL AND session_id = ?1 THEN 0 ELSE 1 END,
@@ -497,9 +497,11 @@ pub async fn recent_session_catalog(
     Ok(scope_catalog(rows, session_id))
 }
 
+type CatalogRow = (Option<String>, String, String, i64, Option<String>);
+
 /// Entries from other chats and entries without a cache id cannot be expanded here; drop them.
 fn scope_catalog(
-    rows: Vec<(Option<String>, String, String, i64, Option<String>)>,
+    rows: Vec<CatalogRow>,
     session_id: Option<&str>,
 ) -> Vec<CatalogEntry> {
     let Some(session_id) = session_id else { return Vec::new() };

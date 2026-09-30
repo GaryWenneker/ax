@@ -27,6 +27,12 @@ pub struct FrameworkRegistry {
     frameworks: Vec<&'static str>,
 }
 
+impl Default for FrameworkRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FrameworkRegistry {
     pub fn new() -> Self {
         Self {
@@ -105,13 +111,12 @@ impl FrameworkRegistry {
                 merge_extract(&mut extracted, vue::extract_file(&file.path, &content));
             }
             
-            if spring_active {
-                if file.path.ends_with(".java") || file.path.ends_with(".kt")
-                    || spring::is_spring_config_path(&file.path)
+            if spring_active
+                && (file.path.ends_with(".java") || file.path.ends_with(".kt")
+                    || spring::is_spring_config_path(&file.path))
                 {
                     merge_extract(&mut extracted, spring::extract_file(&file.path, &content));
                 }
-            }
             if angular_active && file.path.ends_with(".ts") {
                 merge_extract(&mut extracted, angular::extract_file(&file.path, &content));
             }
