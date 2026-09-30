@@ -14610,6 +14610,10 @@ a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):hover {
 
 /* ---- BonzaiCoder / IDE embed (`?embed=1` or `?bonzai=1`) ---- */
 .app.app--embed {
+  height: 100dvh;
+  max-height: 100dvh;
+  min-height: 0;
+  grid-template-columns: var(--sidebar-w) 4px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) var(--statusbar-h);
   grid-template-areas:
     "sidebar sizer workspace"
@@ -14638,6 +14642,56 @@ a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):hover {
 body.ax-embed {
   /* Host IDE already provides chrome; keep Mint tokens only. */
   background: var(--bg, #1e1e1e);
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+html:has(body.ax-embed) {
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+/* The shell fills the panel. The page scrolls inside the workspace,
+   and the nav scrolls when it is taller than the panel. */
+.app.app--embed > .sidebar {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.app.app--embed .workspace > .container {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The IDE panel is often narrower than 900px. The phone layout would
+   cover the page with .sidebar-overlay and park the nav off-screen. */
+body.ax-embed .sidebar-overlay {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  body.ax-embed .app.app--embed {
+    grid-template-columns: var(--sidebar-w) 4px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) var(--statusbar-h);
+    grid-template-areas:
+      "sidebar sizer workspace"
+      "statusbar statusbar statusbar";
+  }
+
+  body.ax-embed .app.app--embed > .sidebar {
+    position: relative;
+    left: auto;
+    top: auto;
+    bottom: auto;
+    width: auto;
+    height: auto;
+  }
+
+  body.ax-embed .app.app--embed > .sidebar-resize-handle {
+    display: block;
+  }
 }
 
 /* Policy list: one physical line per row. width:100% on .page-table

@@ -6,18 +6,21 @@ import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/bebas-neue';
 import '../styles/theme.css';
 import LogoMark from '../components/LogoMark.astro';
-import { agents, agentIcons } from '../components/AgentIcons.astro';
+import { agents, agentIcons, platforms, platformIcons } from '../lib/agent-icons';
 import HeaderWaves from '../components/HeaderWaves.astro';
 import BokehField from '../components/BokehField.astro';
 import MotionControl from '../components/MotionControl.astro';
 import { getStarsLabel } from '../lib/github';
 import { AX_VERSION } from '../lib/version';
 import { AX_FULL_NAME } from '../lib/brand';
+import { INSTALL_UNIX, installBootScript } from '../lib/install-command';
+import { pageLockScript } from '../lib/page-lock';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const repo = 'https://github.com/GaryWenneker/ax';
 const stars = await getStarsLabel();
-const install = 'irm https://getax.wenneker.io/install.ps1 | iex';
+const installBoot = installBootScript();
+const pageLock = pageLockScript();
 
 const TAGLINE = 'Structured context for AI agents — entirely on your machine.';
 
@@ -102,6 +105,7 @@ const stats = [
 <html lang="en" data-theme="dark">
 	<head>
 		<meta charset="utf-8" />
+		<script is:inline set:html={pageLock} />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" href={`${base}/logo.png`} type="image/png" />
 		<title>ax — Graph it. Remember it. Ship it.</title>
@@ -166,6 +170,14 @@ const stats = [
 						<span class="h1-line">Remember it.</span>
 						<span class="h1-line h1-accent">Ship it.</span>
 					</h1>
+					<ul class="platforms" aria-label="Runs on macOS, Linux, and Windows">
+						{platforms.map((name) => (
+							<li class="platform">
+								<span class="agent-logo" set:html={platformIcons[name]} />
+								{name}
+							</li>
+						))}
+					</ul>
 					<p class="lede">
 						One local binary turns your repo into agent-ready intelligence — parse
 						the codebase, capture team knowledge, enforce policy, and gate delivery
@@ -177,9 +189,9 @@ const stats = [
 						</a>
 						<a class="btn btn-ghost" href={`${base}/getting-started/introduction`}>Read the docs</a>
 					</div>
-					<div class="install" data-install={install}>
+					<div class="install" data-install={INSTALL_UNIX}>
 						<span class="install-label">Install</span>
-						<code>{install}</code>
+						<code>{INSTALL_UNIX}</code>
 						<button class="copy" type="button" aria-label="Copy install command">
 							<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
 								<rect x="9" y="9" width="11" height="11" />
@@ -189,10 +201,28 @@ const stats = [
 					</div>
 				</div>
 				</div>
-				<div class="scroll-hint" aria-hidden="true">
-					<div class="scroll-line"></div>
+				<div class="agents-section hero-agents">
+					<div class="agents-inner reveal">
+						<p class="agents-kicker">Works with</p>
+						<div class="agents-marquee">
+							<div class="agents-track">
+								{Array.from({ length: 8 }, () => (
+									<div class="agents-seq">
+										{agents.map((name) => (
+											<span class="agent-chip">
+												<span class="agent-logo" set:html={agentIcons[name]} />
+												{name}
+											</span>
+										))}
+									</div>
+								))}
+							</div>
+						</div>
+					</div>
 				</div>
 			</section>
+			<!-- is:inline so the OS check runs during parse, before first paint. A bundled script is deferred and would flash the wrong command. -->
+			<script is:inline set:html={installBoot} />
 
 			<!-- ===== STATS ===== -->
 			<section class="stats" aria-label="Highlights">
@@ -255,23 +285,6 @@ const stats = [
 				</div>
 			</section>
 
-			<!-- ===== AGENTS ===== -->
-			<section class="agents-section">
-				<div class="agents-inner reveal">
-					<p class="agents-kicker">Works with</p>
-					<div class="agents-marquee">
-						<div class="agents-track">
-							{[...agents, ...agents].map((name) => (
-								<span class="agent-chip">
-									<span class="agent-logo" set:html={agentIcons[name]} />
-									{name}
-								</span>
-							))}
-						</div>
-					</div>
-				</div>
-			</section>
-
 			<!-- ===== BOTTOM CTA ===== -->
 			<section class="final-cta" id="cta">
 				<div class="final-cta-content reveal">
@@ -295,6 +308,30 @@ const stats = [
 		</footer>
 
 		<script>
+			import { tickerCopiesNeeded, tickerDurationSeconds } from '../lib/ticker';
+
+			// Keep cloning the logo row until it is wider than the screen, then
+			// slide by exactly one sequence so the loop has no end and no gap.
+			const track = document.querySelector('.agents-track');
+			const marquee = document.querySelector('.agents-marquee');
+			const sequence = track?.querySelector('.agents-seq');
+			if (track && marquee && sequence) {
+				const fillTicker = () => {
+					const seqWidth = sequence.getBoundingClientRect().width;
+					const viewWidth = marquee.getBoundingClientRect().width;
+					const copies = tickerCopiesNeeded(seqWidth, viewWidth, track.children.length);
+					while (track.children.length < copies) {
+						track.appendChild(sequence.cloneNode(true));
+					}
+					if (seqWidth > 0) {
+						track.style.setProperty('--ticker-shift', `${seqWidth}px`);
+						track.style.setProperty('--ticker-duration', `${tickerDurationSeconds(seqWidth)}s`);
+					}
+				};
+				fillTicker();
+				window.addEventListener('resize', fillTicker);
+			}
+
 			// Copy install command
 			const wrap = document.querySelector('.install');
 			const btn = wrap?.querySelector('.copy');
@@ -351,9 +388,6 @@ const stats = [
 			z-index: 1;
 		}
 
-		/* ================================================================
-		   SCROLL-REVEAL SYSTEM
-		   ================================================================ */
 		.reveal {
 			opacity: 0;
 			transform: translateY(40px);
@@ -458,13 +492,16 @@ const stats = [
 		   HERO
 		   ================================================================ */
 		.hero {
+			--hero-pad-x: 2.5rem;
 			position: relative;
-			min-height: 100vh;
+			min-height: 100svh;
 			display: flex;
 			flex-direction: column;
 			align-items: center;
 			justify-content: center;
-			padding: 6rem 2.5rem 3rem;
+			justify-content: safe center;
+			gap: 1.35rem;
+			padding: 5rem var(--hero-pad-x) 1.35rem;
 			overflow: hidden;
 		}
 		.hero-grid {
@@ -570,7 +607,7 @@ const stats = [
 			gap: 0.55rem;
 			justify-content: center;
 			flex-wrap: wrap;
-			margin-bottom: 1.75rem;
+			margin-bottom: 0.85rem;
 		}
 		.release-tag {
 			font-family: var(--sl-font-mono);
@@ -597,11 +634,11 @@ const stats = [
 			line-height: 1.5;
 			color: rgba(255, 255, 255, 0.65);
 			max-width: min(42ch, 100%);
-			margin: 0 auto 2rem;
+			margin: 0 auto 1.1rem;
 			font-weight: 500;
 		}
 		h1 {
-			margin: 0 0 2rem;
+			margin: 0 0 0.35rem;
 			font-family: 'Bebas Neue', var(--sl-font);
 			font-size: clamp(4.5rem, 12vw, 9rem);
 			line-height: 0.9;
@@ -619,19 +656,46 @@ const stats = [
 			text-shadow: 0 0 80px rgba(201, 165, 92, 0.35),
 						 0 0 160px rgba(201, 165, 92, 0.15);
 		}
+		.platforms {
+			display: flex;
+			justify-content: flex-start;
+			gap: 0.85rem;
+			list-style: none;
+			margin: 0.15rem 0 1rem;
+			padding: 0;
+		}
+		@media (max-width: 899px) {
+			.platforms {
+				justify-content: center;
+			}
+		}
+		.platform {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.4rem;
+			font-size: 0.82rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: rgba(255, 255, 255, 0.78);
+		}
+		.platform .agent-logo {
+			width: 1.2rem;
+			height: 1.2rem;
+			opacity: 1;
+		}
 		.lede {
-			font-size: 1.12rem;
-			line-height: 1.6;
+			font-size: 0.875rem;
+			line-height: 1.45;
 			color: rgba(255, 255, 255, 0.55);
-			max-width: min(48ch, 100%);
-			margin: 0 auto 2.5rem;
+			max-width: min(62ch, 100%);
+			margin: 0 auto 1.15rem;
 		}
 
 		/* CTAs */
 		.cta {
 			display: flex;
 			gap: 0.75rem;
-			margin-bottom: 2rem;
+			margin-bottom: 1.1rem;
 			flex-wrap: wrap;
 			justify-content: center;
 		}
@@ -730,24 +794,6 @@ const stats = [
 		.copy :global(.copied) {
 			font-family: var(--sl-font);
 			font-size: 0.75rem;
-		}
-
-		/* Scroll hint */
-		.scroll-hint {
-			position: absolute;
-			bottom: 2rem;
-			left: 50%;
-			transform: translateX(-50%);
-		}
-		.scroll-line {
-			width: 1px;
-			height: 48px;
-			background: linear-gradient(to bottom, rgba(255, 255, 255, 0.4), transparent);
-			animation: scrollPulse 2s ease-in-out infinite;
-		}
-		@keyframes scrollPulse {
-			0%, 100% { opacity: 0.3; transform: scaleY(0.6); }
-			50% { opacity: 1; transform: scaleY(1); }
 		}
 
 		/* ================================================================
@@ -997,6 +1043,14 @@ const stats = [
 			border-top: 1px solid rgba(255, 255, 255, 0.04);
 			border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 		}
+		.hero-agents {
+			width: calc(100% + 2 * var(--hero-pad-x));
+			margin-left: calc(-1 * var(--hero-pad-x));
+			margin-right: calc(-1 * var(--hero-pad-x));
+			padding: 0;
+			border: none;
+			flex-shrink: 0;
+		}
 		.agents-inner {
 			margin: 0 auto;
 		}
@@ -1007,7 +1061,7 @@ const stats = [
 			text-transform: uppercase;
 			letter-spacing: 0.08em;
 			color: rgba(255, 255, 255, 0.3);
-			margin: 0 0 1.5rem;
+			margin: 0 0 0.65rem;
 			text-align: center;
 		}
 		.agents-marquee {
@@ -1017,13 +1071,18 @@ const stats = [
 		}
 		.agents-track {
 			display: flex;
-			gap: 1rem;
-			animation: marquee 20s linear infinite;
 			width: max-content;
+			animation: marquee var(--ticker-duration, 20s) linear infinite;
+		}
+		.agents-seq {
+			display: flex;
+			gap: 1rem;
+			flex-shrink: 0;
+			padding-right: 1rem;
 		}
 		@keyframes marquee {
-			0% { transform: translateX(0); }
-			100% { transform: translateX(-50%); }
+			from { transform: translateX(0); }
+			to { transform: translateX(calc(-1 * var(--ticker-shift, 12.5%))); }
 		}
 		.agent-chip {
 			display: inline-flex;
@@ -1036,14 +1095,15 @@ const stats = [
 			border: 1px solid rgba(255, 255, 255, 0.06);
 			color: rgba(255, 255, 255, 0.5);
 			white-space: nowrap;
+			flex-shrink: 0;
 			transition: all 0.3s;
 		}
 		.agent-logo {
 			display: inline-flex;
 			align-items: center;
 			justify-content: center;
-			width: 1.05rem;
-			height: 1.05rem;
+			width: 1.15rem;
+			height: 1.15rem;
 			flex-shrink: 0;
 			opacity: 0.72;
 			transition: opacity 0.3s;
@@ -1153,7 +1213,9 @@ const stats = [
 		/* -- tablet -- */
 		@media (max-width: 960px) {
 			.hero {
-				padding: 5rem 2rem 3rem;
+				--hero-pad-x: 2rem;
+				padding-top: 4.75rem;
+				padding-bottom: 1.15rem;
 			}
 			.hero-content {
 				max-width: 100%;
@@ -1200,13 +1262,37 @@ const stats = [
 
 			/* hero */
 			.hero {
-				padding: 5rem 1.25rem 2.5rem;
+				--hero-pad-x: 1.25rem;
+				padding-top: 4.15rem;
+				padding-bottom: 0.75rem;
 				min-height: auto;
 				min-height: 100svh;
+				gap: 0.65rem;
+			}
+			.hero-brand {
+				width: min(38vw, 148px);
+			}
+			.hero-meta {
+				margin-bottom: 0.35rem;
+			}
+			.tagline {
+				margin-bottom: 0.45rem;
+			}
+			h1 {
+				margin-bottom: 0.4rem;
+			}
+			.lede {
+				margin-bottom: 0.5rem;
+			}
+			.cta {
+				margin-bottom: 0.5rem;
 			}
 			.hero-content {
 				max-width: 100%;
 				text-align: left;
+			}
+			.platforms {
+				justify-content: flex-start;
 			}
 			.hero-meta {
 				justify-content: flex-start;
@@ -1226,7 +1312,7 @@ const stats = [
 				letter-spacing: 0.04em;
 			}
 			.lede {
-				font-size: 1rem;
+				font-size: 0.82rem;
 			}
 
 			/* install bar — must not overflow */
@@ -1314,17 +1400,14 @@ const stats = [
 				gap: 0.75rem;
 				padding: 1.25rem 1.25rem;
 			}
-
-			/* scroll hint — hide on tiny screens */
-			.scroll-hint {
-				display: none;
-			}
 		}
 
 		/* -- very small phones (iPhone SE, Galaxy Fold) -- */
 		@media (max-width: 380px) {
 			.hero {
-				padding: 4.5rem 0.85rem 2rem;
+				--hero-pad-x: 0.85rem;
+				padding-top: 4.25rem;
+				padding-bottom: 0.85rem;
 			}
 			h1 {
 				font-size: clamp(2.4rem, 12vw, 3.8rem);
@@ -1333,7 +1416,7 @@ const stats = [
 				font-size: 0.95rem;
 			}
 			.lede {
-				font-size: 0.92rem;
+				font-size: 0.78rem;
 			}
 			.btn {
 				padding: 0.7rem 1.25rem;
@@ -1378,12 +1461,46 @@ const stats = [
 			}
 		}
 
+		/* Short laptops: headline, install line, and Works with stay in view. */
+		@media (max-height: 940px) and (min-width: 900px) {
+			.hero {
+				padding-top: 4.35rem;
+				padding-bottom: 0.7rem;
+				gap: 0.7rem;
+			}
+			.hero-grid .hero-brand {
+				width: clamp(160px, 24vh, 240px);
+				margin-bottom: 0;
+			}
+			.hero-meta {
+				margin-bottom: 0.4rem;
+			}
+			.tagline {
+				margin-bottom: 0.55rem;
+			}
+			.hero-content h1 {
+				margin-bottom: 0.35rem;
+				font-size: clamp(2.85rem, 6vw, 4.8rem);
+			}
+			.platforms {
+				margin-bottom: 0.55rem;
+			}
+			.lede {
+				margin-bottom: 0.65rem;
+			}
+			.cta {
+				margin-bottom: 0.65rem;
+			}
+			.agents-kicker {
+				margin-bottom: 0.4rem;
+			}
+		}
+
 		/* ================================================================
 		   REDUCED MOTION
 		   ================================================================ */
 		@media (prefers-reduced-motion: reduce) {
-			.agents-track,
-			.scroll-line {
+			.agents-track {
 				animation: none !important;
 			}
 			.reveal {

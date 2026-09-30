@@ -46,9 +46,13 @@ export function activate(context: vscode.ExtensionContext): void {
       retainContextWhenHidden: true,
       portMapping: [{ webviewPort: port, extensionHostPort: port }],
     });
-    panel.webview.html = webviewHtml(port, randomBytes(16).toString('hex'));
+    const paint = (): void => {
+      const { port: current } = settings();
+      panel.webview.html = webviewHtml(current, randomBytes(16).toString('hex'));
+    };
+    paint();
     context.subscriptions.push(panel);
-    return { reveal: () => panel.reveal(), onDispose: (fn) => panel.onDidDispose(fn) };
+    return { reveal: () => panel.reveal(), reload: paint, onDispose: (fn) => panel.onDidDispose(fn) };
   });
 
   const open = async (): Promise<void> => {

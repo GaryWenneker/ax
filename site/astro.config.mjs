@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { pageLockScript } from './src/lib/page-lock.ts';
 
 // https://getax.wenneker.io
 export default defineConfig({
@@ -23,6 +24,10 @@ export default defineConfig({
 				{
 					tag: 'meta',
 					attrs: { name: 'twitter:image', content: 'https://getax.wenneker.io/social/v5.0.0/ax-5.0.0-og-1200x630.png' },
+				},
+				{
+					tag: 'script',
+					content: pageLockScript(),
 				},
 				{
 					tag: 'script',

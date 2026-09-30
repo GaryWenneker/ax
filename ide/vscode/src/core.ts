@@ -18,7 +18,7 @@ export function webviewHtml(port: number, nonce: string): string {
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<style nonce="${nonce}">html,body,iframe{margin:0;padding:0;border:0;width:100%;height:100%;overflow:hidden}</style>
+<style nonce="${nonce}">html,body{margin:0;height:100%;background:#1e1e1e}iframe{position:absolute;inset:0;border:0;width:100%;height:100%}</style>
 </head>
 <body><iframe src="${commandCenterUrl(port)}" title="ax Command Center"></iframe></body>
 </html>`;
@@ -26,6 +26,7 @@ export function webviewHtml(port: number, nonce: string): string {
 
 export interface PanelLike {
   reveal(): void;
+  reload?(): void;
   onDispose(fn: () => void): void;
 }
 
@@ -40,6 +41,7 @@ export class PanelHost {
 
   open(): void {
     if (this.panel) {
+      this.panel.reload?.();
       this.panel.reveal();
       return;
     }

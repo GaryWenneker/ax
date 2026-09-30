@@ -296,7 +296,7 @@ function AppShell() {
 
   return (
     <>
-      {sidebarOpen && (
+      {sidebarOpen && !embedMode && (
         <div
           className="sidebar-overlay open"
           onClick={() => setSidebarOpen(false)}

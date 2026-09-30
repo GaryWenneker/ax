@@ -8,6 +8,21 @@
    Cards use subtle fill + hover, not outlines.
    ===================================================================== */
 
+/* Page copy is not selectable. Form fields stay editable. */
+html {
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+input,
+textarea,
+select,
+[contenteditable='true'] {
+	-webkit-user-select: text;
+	user-select: text;
+	-webkit-touch-callout: default;
+}
+
 /* ---- Fonts ---- */
 :root {
 	--sl-font: 'Archivo Variable', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
