@@ -319,7 +319,7 @@ function AppShell() {
                 <i className="codicon codicon-menu" aria-hidden="true" />
               </button>
               <span className="titlebar-brand" title={AX_FULL_NAME}>
-                <img className="titlebar-logo" src="/ax-logo.png" alt="" width={26} height={26} draggable={false} />
+                <img className="titlebar-logo" src="/ax-mark.png" alt="" width={30} height={30} draggable={false} />
                 <abbr className="titlebar-brand-ax" title={AX_FULL_NAME}>
                   ax
                 </abbr>{' '}
