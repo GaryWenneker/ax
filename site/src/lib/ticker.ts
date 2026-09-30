@@ -14,6 +14,12 @@ export function tickerCopiesNeeded(
 	return Math.min(MAX_COPIES, Math.max(existing, copies));
 }
 
+/** Sequences in one half of the track. The page clones that half so the loop can move -50%. */
+export function tickerHalfCopies(sequenceWidth: number, viewportWidth: number): number {
+	if (!(sequenceWidth > 0) || !(viewportWidth > 0)) return 1;
+	return Math.min(MAX_COPIES, Math.max(1, Math.ceil(viewportWidth / sequenceWidth)));
+}
+
 export function tickerDurationSeconds(sequenceWidth: number): number {
 	if (!(sequenceWidth > 0)) return 20;
 	return Math.max(MIN_DURATION_SECONDS, sequenceWidth / PIXELS_PER_SECOND);

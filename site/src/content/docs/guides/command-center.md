@@ -269,7 +269,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 | IDE | What you get |
 |---|---|
-| Cursor, VS Code, Windsurf, Antigravity, Kiro | Extension **ax Command Center**: run **ax: Open Command Center** or click **ax** in the status bar. Reload the window after Connect. Opening the panel starts `ax web` when it is not already running, then loads the page. |
+| Cursor, VS Code, Windsurf, Antigravity, Kiro | Extension **ax Command Center** is a local UI extension, so the command is available in every window of that editor, including SSH remotes. Run **ax: Open Command Center** or click **ax** in the status bar. Quit and reopen the editor after Connect. Opening the panel starts `ax web` when it is not already running, then loads the page. |
 | JetBrains IDEs (IntelliJ IDEA, Rider, WebStorm, PyCharm, GoLand, …) | Plugin with an **ax** tool window on the right, installed in every JetBrains IDE found. Restart the IDE after Connect. |
 | Zed | Zed has no web panels: the task **ax: Open Command Center** (`task: spawn`) opens it in the browser. |
 

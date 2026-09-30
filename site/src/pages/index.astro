@@ -308,10 +308,10 @@ const stats = [
 		</footer>
 
 		<script>
-			import { tickerCopiesNeeded, tickerDurationSeconds } from '../lib/ticker';
+			import { tickerDurationSeconds, tickerHalfCopies } from '../lib/ticker';
 
-			// Keep cloning the logo row until it is wider than the screen, then
-			// slide by exactly one sequence so the loop has no end and no gap.
+			// Two identical halves. The track moves -50%, which Safari animates.
+			// A CSS variable inside @keyframes does not run on iPhone.
 			const track = document.querySelector('.agents-track');
 			const marquee = document.querySelector('.agents-marquee');
 			const sequence = track?.querySelector('.agents-seq');
@@ -319,13 +319,12 @@ const stats = [
 				const fillTicker = () => {
 					const seqWidth = sequence.getBoundingClientRect().width;
 					const viewWidth = marquee.getBoundingClientRect().width;
-					const copies = tickerCopiesNeeded(seqWidth, viewWidth, track.children.length);
-					while (track.children.length < copies) {
-						track.appendChild(sequence.cloneNode(true));
-					}
+					const half = tickerHalfCopies(seqWidth, viewWidth);
+					const total = half * 2;
+					while (track.children.length > 1) track.lastElementChild?.remove();
+					while (track.children.length < total) track.appendChild(sequence.cloneNode(true));
 					if (seqWidth > 0) {
-						track.style.setProperty('--ticker-shift', `${seqWidth}px`);
-						track.style.setProperty('--ticker-duration', `${tickerDurationSeconds(seqWidth)}s`);
+						track.style.setProperty('--ticker-duration', `${tickerDurationSeconds(seqWidth * half)}s`);
 					}
 				};
 				fillTicker();
@@ -1073,6 +1072,7 @@ const stats = [
 			display: flex;
 			width: max-content;
 			animation: marquee var(--ticker-duration, 20s) linear infinite;
+			will-change: transform;
 		}
 		.agents-seq {
 			display: flex;
@@ -1081,8 +1081,8 @@ const stats = [
 			padding-right: 1rem;
 		}
 		@keyframes marquee {
-			from { transform: translateX(0); }
-			to { transform: translateX(calc(-1 * var(--ticker-shift, 12.5%))); }
+			from { transform: translate3d(0, 0, 0); }
+			to { transform: translate3d(-50%, 0, 0); }
 		}
 		.agent-chip {
 			display: inline-flex;
@@ -1500,9 +1500,6 @@ const stats = [
 		   REDUCED MOTION
 		   ================================================================ */
 		@media (prefers-reduced-motion: reduce) {
-			.agents-track {
-				animation: none !important;
-			}
 			.reveal {
 				opacity: 1;
 				transform: none;

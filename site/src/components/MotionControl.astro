@@ -17,8 +17,7 @@
 
 <script>
 	(() => {
-		const KEY = 'ax-motion';
-		const reduce = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		const KEY = 'ax-motion-choice';
 
 		const apply = (paused) => {
 			document.documentElement.dataset.axMotion = paused ? 'paused' : 'running';
@@ -44,7 +43,9 @@
 			} catch {
 				/* ignore */
 			}
-			return reduce();
+			// iOS often reports Reduce Motion. That must not freeze the IDE ticker.
+			// The pause button still stops it. Decorative waves keep their own media query.
+			return false;
 		};
 
 		const bind = () => {

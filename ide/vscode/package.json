@@ -8,6 +8,7 @@
   "private": true,
   "repository": { "type": "git", "url": "https://github.com/garywenneker/ax" },
   "engines": { "vscode": "^1.90.0" },
+  "extensionKind": ["ui"],
   "categories": ["Other"],
   "main": "./out/extension.js",
   "activationEvents": ["onStartupFinished"],
