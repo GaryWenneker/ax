@@ -1,6 +1,6 @@
 /** Live updates: React hooks over `/api/changes` (docs/specs/live-updates.md). */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { WORKSPACE_SWITCHED } from '../workspaceEvents';
 import { createDebouncer, parseChange, trackNewKeys, type KeyBaseline, type LiveTopic } from './live';
 import { subscribeSharedEventSource } from './sharedEventSource';
@@ -56,8 +56,7 @@ export function useLive(topics: LiveTopic | readonly LiveTopic[], reload: () => 
  */
 export function useNewKeys(keys: readonly string[] | null, scope = ''): ReadonlySet<string> {
   const prev = useRef<KeyBaseline | null>(null);
-  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
-  const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set());
+  const [fresh, mark] = useFreshMarks();
   const signature = keys === null ? null : keys.join('\u0000');
 
   useEffect(() => {
@@ -65,33 +64,51 @@ export function useNewKeys(keys: readonly string[] | null, scope = ''): Readonly
       prev.current = null;
     };
     window.addEventListener(WORKSPACE_SWITCHED, reset);
-    const pending = timers.current;
-    return () => {
-      window.removeEventListener(WORKSPACE_SWITCHED, reset);
-      for (const t of pending) clearTimeout(t);
-      pending.clear();
-    };
+    return () => window.removeEventListener(WORKSPACE_SWITCHED, reset);
   }, []);
 
   useEffect(() => {
     if (keys === null) return;
     const { state, added } = trackNewKeys(prev.current, scope, keys);
     prev.current = state;
-    if (added.length === 0) return;
-    setFresh((cur) => new Set([...cur, ...added]));
-    const t = setTimeout(() => {
-      timers.current.delete(t);
-      setFresh((cur) => {
-        const next = new Set(cur);
-        for (const k of added) next.delete(k);
-        return next;
-      });
-    }, GLOW_MS);
-    timers.current.add(t);
+    mark(added);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `signature` captures `keys`
   }, [signature, scope]);
 
   return fresh;
+}
+
+/**
+ * Keys marked fresh for `GLOW_MS`. For streams that know which items arrived
+ * live (as opposed to a replayed backlog), call `mark` with those keys.
+ */
+export function useFreshMarks(): [ReadonlySet<string>, (keys: readonly string[]) => void] {
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set());
+
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const t of pending) clearTimeout(t);
+      pending.clear();
+    };
+  }, []);
+
+  const mark = useCallback((keys: readonly string[]) => {
+    if (keys.length === 0) return;
+    setFresh((cur) => new Set([...cur, ...keys]));
+    const t = setTimeout(() => {
+      timers.current.delete(t);
+      setFresh((cur) => {
+        const next = new Set(cur);
+        for (const k of keys) next.delete(k);
+        return next;
+      });
+    }, GLOW_MS);
+    timers.current.add(t);
+  }, []);
+
+  return [fresh, mark];
 }
 
 /** `' live-new'` for a fresh key, else `''`; append to a row's className. */

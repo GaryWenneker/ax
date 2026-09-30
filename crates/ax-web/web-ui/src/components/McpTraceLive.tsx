@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
 import { ItemList, ItemRow } from './ui/PageLayout';
+import { liveClass, useFreshMarks } from '../lib/useLive';
 import { formatTraceTime, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
 import {
   computeMcpTraceStats,
@@ -320,6 +321,7 @@ async function exitBrowserFullscreen() {
  */
 export default function McpTraceLive({ variant = 'embedded' }: Props) {
   const [entries, setEntries] = useState<TraceEntry[]>([]);
+  const [freshIds, markFresh] = useFreshMarks();
   const [live, setLive] = useState(false);
   /** When true, keep the viewport pinned to the newest rows (top). */
   const [follow, setFollow] = useState(true);
@@ -651,10 +653,11 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   useEffect(() => {
     let disposed = false;
 
-    function ingestLines(lines: string[]) {
+    function ingestLines(lines: string[], live = false) {
       const batch = traceEntriesFromLines(lines);
       if (batch.length === 0) return;
       setEntries((prev) => [...prev, ...batch]);
+      if (live) markFresh(batch.map((e) => e.id));
       const last = lines[lines.length - 1];
       if (last) {
         publishMcpTraceActivity({ summary: summarizeTraceLine(last) });
@@ -668,7 +671,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       events: {
         line: (ev) => {
           const data = ((ev as MessageEvent).data as string) ?? '';
-          ingestLines([data]);
+          ingestLines([data], true);
         },
         batch: (ev) => {
           const raw = ((ev as MessageEvent).data as string) ?? '[]';
@@ -725,7 +728,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       unsub();
       setLive(false);
     };
-  }, []);
+  }, [markFresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1384,7 +1387,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                   variant="graph"
                   className={`mcp-trace-row mcp-trace-row--${e.kind} mcp-trace-row--dir-${dir}${hasText ? ' mcp-trace-row--has-query' : ''}${
                     isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
-                  }`}
+                  }${liveClass(freshIds, e.id)}`}
                   rowProps={{
                     id: `mcp-row-${e.id}`,
                     role: 'option',
