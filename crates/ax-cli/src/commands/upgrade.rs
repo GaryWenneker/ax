@@ -2,6 +2,7 @@
 
 #[cfg(not(windows))]
 use std::io::Read;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::ui::{info_line, ok_line, SpinnerGuard};
