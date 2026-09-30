@@ -355,6 +355,7 @@ fn graph_router(hub: WebHub) -> Router {
         .route("/nodes", get(crate::handle_nodes))
         .route("/node/{id}", get(crate::handle_node))
         .route("/graph", get(crate::handle_graph))
+        .route("/graph/recent", get(crate::handle_graph_recent))
         .route("/graph/stream", get(crate::handle_graph_stream))
         .route("/graph/export", get(crate::graph_export::handle_export))
         .route("/insights", get(crate::handle_insights))

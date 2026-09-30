@@ -2,6 +2,7 @@
 
 mod actions;
 mod changes;
+mod node_tracker;
 mod agent;
 mod agent_pty;
 mod dav;
@@ -429,6 +430,9 @@ async fn load_graph_payload(hub: &WebHub, p: GraphQuery) -> Result<queries::Grap
             return Err(format!("community detection failed: {e}"));
         }
     }
+    if let Err(e) = node_tracker::observe(&ws.graph_pool, &ws.db_path).await {
+        tracing::debug!("node tracker snapshot failed: {e}");
+    }
     queries::get_graph(&ws.graph_pool, limit)
         .await
         .map_err(|e| e.to_string())
@@ -440,6 +444,33 @@ async fn handle_graph(State(hub): State<WebHub>, Query(p): Query<GraphQuery>) ->
     match load_graph_payload(&hub, p).await {
         Ok(payload) => (StatusCode::OK, Json(payload)).into_response(),
         Err(e) => api_err(e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct RecentGraphQuery {
+    since: Option<String>,
+    limit: Option<i64>,
+}
+
+const RECENT_GRAPH_MAX: i64 = 200;
+
+async fn handle_graph_recent(
+    State(hub): State<WebHub>,
+    Query(p): Query<RecentGraphQuery>,
+) -> impl IntoResponse {
+    let Some(since) = p.since.as_deref().and_then(|s| s.parse::<i64>().ok()) else {
+        return (StatusCode::BAD_REQUEST, api_err("`since` must be a unix time in milliseconds").1).into_response();
+    };
+    let limit = p.limit.unwrap_or(RECENT_GRAPH_MAX).clamp(1, RECENT_GRAPH_MAX);
+    let ws = hub.read().await;
+    if let Err(e) = node_tracker::observe(&ws.graph_pool, &ws.db_path).await {
+        return api_err(e.to_string()).into_response();
+    }
+    let ids = node_tracker::created_since(&ws.db_path, since, limit as usize);
+    match queries::get_graph_for_ids(&ws.graph_pool, &ids).await {
+        Ok(payload) => (StatusCode::OK, Json(payload)).into_response(),
+        Err(e) => api_err(e.to_string()).into_response(),
     }
 }
 

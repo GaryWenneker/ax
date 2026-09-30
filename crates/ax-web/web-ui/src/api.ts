@@ -407,6 +407,11 @@ export function fetchGraph(params: { limit?: number; recompute?: boolean } = {})
   return get<GraphPayload>(`/graph${qs ? `?${qs}` : ''}`);
 }
 
+/** Nodes indexed after `sinceMs`, plus the edges that touch them. */
+export function fetchRecentGraph(sinceMs: number, limit = 200): Promise<GraphPayload> {
+  return get<GraphPayload>(`/graph/recent?since=${Math.floor(sinceMs)}&limit=${limit}`);
+}
+
 export interface GraphStreamMeta {
   total_nodes: number;
   truncated: boolean;

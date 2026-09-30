@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   streamGraph,
   fetchGraph,
+  fetchRecentGraph,
   fetchInsights,
   fetchDomainGraph,
   type GraphNode,
@@ -146,6 +147,8 @@ function useNarrowViewport(maxWidth = 768) {
 }
 
 const MARKER_MS = 3000;
+/** Overlap between live queries so a node written during a request is not missed. */
+const LIVE_SINCE_SLACK_MS = 2000;
 
 export default function GraphPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -154,6 +157,7 @@ export default function GraphPage() {
   const simEdgesRef = useRef<SimEdge[]>([]);
   const idIndexRef = useRef<Map<string, number>>(new Map());
   const sparksRef = useRef<Map<string, number>>(new Map());
+  const liveSinceRef = useRef(Date.now());
   const sparkRafRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const runningRef = useRef(false);
@@ -384,6 +388,7 @@ export default function GraphPage() {
   }
 
   function load(recompute = false) {
+    liveSinceRef.current = Date.now() - LIVE_SINCE_SLACK_MS;
     if (abortRef.current) abortRef.current();
     resetGraphState();
     setMeta(null);
@@ -424,12 +429,19 @@ export default function GraphPage() {
   /** Add nodes and edges that appeared on the server without resetting layout or camera. */
   async function mergeLive() {
     if (viewModeRef.current === 'domain' || loading) return;
+    const requestedAt = Date.now();
     let payload;
     try {
-      payload = await fetchGraph({ limit });
+      const [top, recent] = await Promise.all([fetchGraph({ limit }), fetchRecentGraph(liveSinceRef.current)]);
+      const topIds = new Set(top.nodes.map((n) => n.id));
+      payload = {
+        nodes: top.nodes.concat(recent.nodes.filter((n) => !topIds.has(n.id))),
+        edges: top.edges.concat(recent.edges),
+      };
     } catch {
       return;
     }
+    liveSinceRef.current = requestedAt - LIVE_SINCE_SLACK_MS;
     const idIndex = idIndexRef.current;
     const added = payload.nodes.filter((n) => !idIndex.has(n.id));
     const nodes = simNodesRef.current;
@@ -455,7 +467,10 @@ export default function GraphPage() {
     const newEdges = payload.edges.filter((e) => {
       const s = idIndex.get(e.source);
       const t = idIndex.get(e.target);
-      return s != null && t != null && !known.has(`${s}>${t}>${e.kind}`);
+      const key = `${s}>${t}>${e.kind}`;
+      if (s == null || t == null || known.has(key)) return false;
+      known.add(key);
+      return true;
     });
     if (!added.length && !newEdges.length) return;
     addEdges(newEdges);

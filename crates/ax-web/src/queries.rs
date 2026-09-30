@@ -43,6 +43,57 @@ pub struct GraphPayload {
 /// Build a force-directed graph payload: the top-`limit` nodes by degree
 /// (excluding structural `contains` edges) plus the edges between them.
 /// Community ids come from the persisted `node_communities` table.
+/// The nodes in `ids` (in that order) and every semantic edge that touches one of them.
+pub async fn get_graph_for_ids(pool: &SqlitePool, ids: &[String]) -> anyhow::Result<GraphPayload> {
+    if ids.is_empty() {
+        return Ok(GraphPayload { nodes: Vec::new(), edges: Vec::new(), total_nodes: 0, truncated: false, palette: None });
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT n.id, n.name, n.kind, n.file_path, nc.community_id, nc.community_label \
+         FROM nodes n LEFT JOIN node_communities nc ON nc.node_id = n.id WHERE n.id IN ({placeholders})"
+    );
+    let mut query = sqlx::query_as::<_, (String, String, String, String, Option<i64>, Option<String>)>(&sql);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let mut node_rows = query.fetch_all(pool).await?;
+    let order: std::collections::HashMap<&str, usize> = ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+    node_rows.sort_by_key(|r| order.get(r.0.as_str()).copied().unwrap_or(usize::MAX));
+
+    let nodes: Vec<GraphNode> = node_rows
+        .into_iter()
+        .map(|(id, name, kind, file_path, community_id, community_label)| GraphNode {
+            id,
+            name,
+            kind,
+            file_path,
+            community_id: community_id.unwrap_or(-1),
+            community_label,
+            degree: 0,
+            shared: false,
+            selected: false,
+        })
+        .collect();
+    if nodes.is_empty() {
+        return Ok(GraphPayload { nodes, edges: Vec::new(), total_nodes: 0, truncated: false, palette: None });
+    }
+
+    let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+    let edge_rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        "SELECT source, target, kind, confidence FROM edges WHERE kind != 'contains'",
+    )
+    .fetch_all(pool)
+    .await?;
+    let edges: Vec<GraphEdge> = edge_rows
+        .into_iter()
+        .filter(|(s, t, _, _)| id_set.contains(s.as_str()) || id_set.contains(t.as_str()))
+        .map(|(source, target, kind, confidence)| GraphEdge { source, target, kind, confidence })
+        .collect();
+    let total_nodes = nodes.len() as i64;
+    Ok(GraphPayload { nodes, edges, total_nodes, truncated: false, palette: None })
+}
+
 pub async fn get_graph(pool: &SqlitePool, limit: i64) -> anyhow::Result<GraphPayload> {
     let total_nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes")
         .fetch_one(pool)

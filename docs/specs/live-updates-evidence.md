@@ -1,6 +1,6 @@
 # Evidence: Command Center live updates
 
-Source: commit `9d12335` on branch `live-updates`. Spec: `docs/specs/live-updates.md` (approved, plus revision 1). Tier 2.
+Source: branch `live-updates` (see `git log`). Spec: `docs/specs/live-updates.md` (approved; revision 1 disclosed, revisions 2 and 3 approved). Tier 2.
 
 ## Spec to test
 
@@ -15,6 +15,8 @@ Source: commit `9d12335` on branch `live-updates`. Spec: `docs/specs/live-update
 | Spark has two growing rings and ends after 1.2 s | `live.test.ts`: `sparkPhase` |
 | Off-screen node gets an edge marker pointing at it | `live.test.ts`: `edgeMarker` (2 tests) |
 | Page refreshes and the new row glows without F5 | Real run on :7070: a memory written from the CLI glowed on the Memory page 2.6 s after the write |
+| New nodes beyond the Density limit are added and sparked (rev 2) | Real run: probe file with two functions; graph went from 100 to 109 nodes, two-ring sparks visible, camera unchanged |
+| Only truly new nodes, not rewritten ones (rev 3) | `tests/graph_recent.rs` (5 tests) and `node_tracker::tests` (4 tests) |
 | Camera and layout do not move on a graph update | Code: `mergeLive` adds nodes and calls `ensureSimulation(0.25)`; the transform is untouched. Not covered by an automated test |
 | No per-page polling | Memory's 5 s timer and the status bar's 30 s timer were removed |
 | No new dependencies | `package.json` and `Cargo.toml` unchanged |
@@ -23,16 +25,17 @@ Source: commit `9d12335` on branch `live-updates`. Spec: `docs/specs/live-update
 
 | Layer | Command | Result |
 |---|---|---|
-| Rust tests | `cargo test -p ax-web` | 154 passed, 0 failed |
+| Rust tests | `cargo test -p ax-web` | 163 passed, 0 failed |
 | Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
 | Web UI tests | `node --test src/lib/*.test.ts` | 142 passed, 0 failed |
 | Types and build | `npm run build` (tsc + vite) | exit 0 |
-| Mutants (throwaway) | first-load returns all keys; drop the scope check; first-seen topic counts as change; no mtime gate and every tick emits | 4 of 4 killed, source restored |
-| Real run | `ax web --port 7070`; served bundle matches `dist/index.html`; `/api/changes` returns `text/event-stream` | pass |
+| Mutants (throwaway) | first-load returns all keys; drop the scope check; first-seen topic counts as change; no mtime gate and every tick emits; tracker records the first snapshot; tracker records every id | 6 of 6 killed, source restored |
+| Real run | `ax web --port 7070`; served bundle matches `dist/index.html`; `/api/changes` returns `text/event-stream`; Memory glow and graph spark seen | pass |
 
 ## Known limits
 
-- The graph shows the top N nodes by degree (50 to 600). A new node outside that set is not drawn, so it gets no spark. In the real run, a sync added nodes, but none reached the top 100, so no spark was shown.
-- The spark and glow visuals were not captured in a screenshot; the Memory glow was confirmed by a DOM watcher.
 - Deleted graph nodes stay drawn until the next full load.
-- Spec approval was obtained ("Approved — build it"). Revision 1 was not separately approved.
+- Live-added graph nodes stay until the page reloads or Density changes.
+- The node tracker lives in memory; restarting `ax web` sets a new baseline.
+- In the real run, the first revision 2 attempt flooded the view with about 195 rewritten nodes; revision 3 fixed that.
+- The Cursor sandbox sets `CARGO_TARGET_DIR`, so `scripts/reinstall-cli.sh` shipped a stale binary until run with `env -u CARGO_TARGET_DIR`.

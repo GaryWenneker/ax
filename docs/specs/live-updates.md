@@ -84,5 +84,29 @@ counters.
   timers; both now listen to the feed.
 - **Graph merge, not reload.** A `graph` change fetches the graph and adds only
   unknown nodes and edges next to a linked node; the camera and layout stay.
-- **Known gap:** the graph shows the top *N* nodes by degree (50 to 600). A
-  new node outside that set is not drawn, so it gets no spark.
+- **Known gap (fixed in revision 2):** the graph shows the top *N* nodes by
+  degree (50 to 600). A new node outside that set was not drawn.
+
+## Revision 2 (approved: "Approved — build it")
+
+- `GET /api/graph/recent?since=<unix ms>&limit=200` returns nodes whose
+  `updated_at` is after `since` (at most `limit`, capped at 200) and the edges
+  touching them. A missing or invalid `since` is HTTP 400.
+- On a `graph` change, the Graph page asks for nodes since its last load and
+  adds unknown ones to the view even beyond the Density limit, next to a
+  linked node, with a spark (or the summary notice above 20). Edges are drawn
+  only when both ends are in view. Changed existing nodes do not spark.
+- Density still decides what a fresh load shows; live-added nodes stay until
+  the page reloads or Density changes.
+- Tests: a node written after `since` is returned and an older one is not;
+  `limit` is respected; a bad `since` is 400. Real run: add a function, sync,
+  see the spark.
+
+## Revision 3 (approved: "Approved — build it")
+
+A re-index deletes and re-inserts a file's nodes, so `updated_at` flooded the
+view with rewritten nodes (about 195 in the first real run). Now
+`node_tracker.rs` keeps the node id set per database: loading the graph
+takes a snapshot, and each `/api/graph/recent` call records ids absent from
+the previous snapshot as created (newest 1000 kept). `recent` returns only
+those. The first snapshot marks nothing; a rewritten node is never returned.

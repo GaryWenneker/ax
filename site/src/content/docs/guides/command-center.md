@@ -184,7 +184,7 @@ Pages refresh on their own when the data behind them changes; there is no need t
 
 New rows get a short accent glow. New graph nodes get a two-ring spark; a node outside the current view gets an arrow at the canvas edge for three seconds, and more than 20 new nodes show one "N new nodes" notice instead. The graph never moves the camera or resets the layout on a live update. With reduced motion enabled, the glow is a static outline and the spark does not grow. Logging and Ship already stream on their own.
 
-The graph shows the top nodes by degree (the **Density** slider). A new node outside that set is not drawn, so it gets no spark.
+The graph shows the top nodes by degree (the **Density** slider), but newly indexed nodes are always added to the view on a live update, with their links, so you see each one arrive. They stay until you reload the page or change Density.
 
 ### Project browser
 
