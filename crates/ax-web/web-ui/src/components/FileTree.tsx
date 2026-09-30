@@ -116,6 +116,7 @@ function TreeRow({
   expanded,
   selectedPath,
   loadingPrefixes,
+  fresh,
   onToggle,
   onSelect,
 }: {
@@ -124,6 +125,7 @@ function TreeRow({
   expanded: Set<string>;
   selectedPath: string | null;
   loadingPrefixes?: Set<string>;
+  fresh?: ReadonlySet<string>;
   onToggle: (path: string) => void;
   onSelect: (file: FileRow) => void;
 }) {
@@ -140,7 +142,7 @@ function TreeRow({
     return (
       <button
         type="button"
-        className={`file-tree-row file-tree-row--file${selected ? ' selected' : ''}`}
+        className={`file-tree-row file-tree-row--file${selected ? ' selected' : ''}${fresh?.has(f.path) ? ' live-new' : ''}`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
         onClick={() => onSelect(f)}
         title={f.path}
@@ -194,6 +196,7 @@ function TreeRow({
             expanded={expanded}
             selectedPath={selectedPath}
             loadingPrefixes={loadingPrefixes}
+            fresh={fresh}
             onToggle={onToggle}
             onSelect={onSelect}
           />
@@ -209,6 +212,7 @@ export default function FileTree({
   filterActive,
   selectedPath,
   loadingPrefixes,
+  fresh,
   onSelect,
   onLoadPrefix,
   onRefresh,
@@ -219,6 +223,7 @@ export default function FileTree({
   filterActive?: boolean;
   selectedPath?: string | null;
   loadingPrefixes?: Set<string>;
+  fresh?: ReadonlySet<string>;
   onSelect?: (file: FileRow) => void;
   onLoadPrefix?: (prefix: string) => void;
   onRefresh?: () => void;
@@ -341,6 +346,7 @@ export default function FileTree({
           expanded={expanded}
           selectedPath={selectedPath ?? null}
           loadingPrefixes={loadingPrefixes}
+          fresh={fresh}
           onToggle={toggle}
           onSelect={select}
         />

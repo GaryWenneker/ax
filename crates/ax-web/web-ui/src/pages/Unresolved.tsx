@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLive, useNewKeys } from '../lib/useLive';
 import { fetchUnresolved, fetchUnresolvedSummary, reconcileUnresolved } from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
 import Codicon from '../components/Codicon';
@@ -94,10 +95,12 @@ export default function UnresolvedPage({
     fetchUnresolvedSummary().then(setSummary).catch(() => {});
   }, []);
 
-  const loadFirst = useCallback(async (newQ: string, newKind: string) => {
+  const [listScope, setListScope] = useState(0);
+
+  const loadFirst = useCallback(async (newQ: string, newKind: string, quiet = false) => {
     const gen = ++fetchGen.current;
     loadingMoreRef.current = false;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const page = await fetchUnresolved({
@@ -107,6 +110,7 @@ export default function UnresolvedPage({
         offset: 0,
       });
       if (gen !== fetchGen.current) return;
+      if (!quiet) setListScope((n) => n + 1);
       setRefs(page.refs);
       setTotal(page.total);
     } catch (e) {
@@ -131,6 +135,7 @@ export default function UnresolvedPage({
         offset,
       });
       if (gen !== fetchGen.current) return;
+      setListScope((n) => n + 1);
       setRefs((prev) => [...prev, ...page.refs]);
       setTotal(page.total);
     } catch (e) {
@@ -151,6 +156,12 @@ export default function UnresolvedPage({
   }, [q, kind, loadFirst]);
 
   const hasMore = refs.length < total;
+
+  const fresh = useNewKeys(loading ? null : refs.map((r) => String(r.id)), String(listScope));
+  useLive('graph', () => {
+    fetchUnresolvedSummary().then(setSummary).catch(() => {});
+    if (refs.length <= LIMIT) void loadFirst(q, kind, true);
+  });
 
   useEffect(() => {
     if (!hasMore || loading || loadingMoreRef.current) return;
@@ -721,6 +732,7 @@ export default function UnresolvedPage({
                     {refs.map((r) => (
                       <ItemRow
                         key={r.id}
+                        className={fresh.has(String(r.id)) ? 'live-new' : undefined}
                         title={r.reference_name}
                         subtitle={`${r.file_path}:${r.line} · ${r.reference_kind}`}
                         badges={<span className="page-item-badge"><Codicon name="symbol-misc" className="badge-icon" />{r.language}</span>}

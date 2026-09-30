@@ -319,6 +319,7 @@ function AppShell() {
                 <i className="codicon codicon-menu" aria-hidden="true" />
               </button>
               <span className="titlebar-brand" title={AX_FULL_NAME}>
+                <img className="titlebar-logo" src="/ax-logo.png" alt="" width={16} height={16} draggable={false} />
                 <abbr className="titlebar-brand-ax" title={AX_FULL_NAME}>
                   ax
                 </abbr>{' '}
@@ -355,7 +356,7 @@ function AppShell() {
 
         <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
           {navSections.map((section) => (
-            <div key={section.id} className="nav-section">
+            <div key={section.id} className="nav-section" data-nav={section.id}>
               <div className="nav-section-label">{section.label}</div>
               {section.items.map((n) => (
                 <button

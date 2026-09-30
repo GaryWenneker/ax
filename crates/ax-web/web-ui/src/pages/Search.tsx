@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLive, useNewKeys } from '../lib/useLive';
 import { fetchSearch } from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
 import Codicon from '../components/Codicon';
@@ -51,12 +52,28 @@ export default function SearchPage() {
       setLoading(true);
       setError(null);
       fetchSearch(q, 40)
-        .then((page) => { setResults(page.results); setSearched(true); setLoading(false); })
+        .then((page) => { setResultsQuery(q); setResults(page.results); setSearched(true); setLoading(false); })
         .catch((e: Error) => { setError(e.message); setLoading(false); });
     }, 280);
 
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [q]);
+
+  const [resultsQuery, setResultsQuery] = useState('');
+  const fresh = useNewKeys(loading ? null : results.map((r) => r.id), resultsQuery);
+  const qNow = useRef(q);
+  qNow.current = q;
+  useLive('graph', () => {
+    const query = q;
+    if (!query.trim()) return;
+    fetchSearch(query, 40)
+      .then((page) => {
+        if (qNow.current !== query) return;
+        setResultsQuery(query);
+        setResults(page.results);
+      })
+      .catch(() => {});
+  });
 
   const searchDetail = q.trim()
     ? searched
@@ -107,6 +124,7 @@ export default function SearchPage() {
                     {results.map((r) => (
                       <ItemRow
                         key={r.id}
+                        className={fresh.has(r.id) ? 'live-new' : undefined}
                         icon={<Codicon name={KIND_ICONS[r.kind] ?? 'symbol-misc'} className="page-item-codicon" />}
                         title={r.name}
                         subtitle={r.snippet ? r.snippet : `${r.file_path}:${r.start_line}`}

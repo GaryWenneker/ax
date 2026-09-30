@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useLive } from '../lib/useLive';
 import {
   exportPolicyPack,
   fetchPolicyPackStatus,
@@ -61,8 +62,8 @@ export default function PolicySyncPage({ onOpenReview }: Props) {
 
   usePageContext('Policy sync', status ? `${status.localSharedRules} exportable rules` : undefined);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  const reload = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const [s, st, review] = await Promise.all([
@@ -79,6 +80,8 @@ export default function PolicySyncPage({ onOpenReview }: Props) {
       setLoading(false);
     }
   }, []);
+
+  useLive(['rules', 'skills'], () => void reload(true));
 
   useEffect(() => {
     void reload();

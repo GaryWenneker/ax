@@ -51,6 +51,8 @@ interface Props {
   onToggleStorage: (id: string, current: 'files' | 'database') => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Row keys that just appeared (live updates); they glow briefly. */
+  fresh?: ReadonlySet<string>;
 }
 
 function isControl(e: MouseEvent) {
@@ -86,7 +88,7 @@ function PolicyCalmRow({ item, ...p }: Props & { item: PolicyCalmItem }) {
   return (
     <ItemRow
       variant="graph"
-      className={`policy-calm-row${item.global ? ' policy-calm-row--global' : ''}`}
+      className={`policy-calm-row${item.global ? ' policy-calm-row--global' : ''}${p.fresh?.has(item.key) ? ' live-new' : ''}`}
       title={item.id}
       subtitle={item.subtitle}
       meta={item.meta}

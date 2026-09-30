@@ -1,6 +1,7 @@
 //! ax-web: local HTTP server exposing the ax code graph + policy editor.
 
 mod actions;
+mod changes;
 mod agent;
 mod agent_pty;
 mod dav;

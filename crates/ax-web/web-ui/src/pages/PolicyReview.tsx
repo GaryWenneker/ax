@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLive, useNewKeys } from '../lib/useLive';
 import {
   approvePolicyReview,
   fetchPolicyReview,
@@ -26,8 +27,8 @@ export default function PolicyReviewPage() {
 
   usePageContext('Review', !loading ? `${items.length} pending` : undefined);
 
-  async function reload() {
-    setLoading(true);
+  async function reload(quiet = false) {
+    if (!quiet) setLoading(true);
     try {
       const res = await fetchPolicyReview();
       setItems(res.items);
@@ -42,6 +43,9 @@ export default function PolicyReviewPage() {
   useEffect(() => {
     void reload();
   }, []);
+
+  useLive(['rules', 'skills'], () => void reload(true));
+  const fresh = useNewKeys(loading ? null : items.map((item) => `${item.kind}:${item.id}`));
 
   async function approve(id: string) {
     setBusyId(id);
@@ -105,7 +109,7 @@ export default function PolicyReviewPage() {
                 </thead>
                 <tbody>
                   {items.map((item) => (
-                    <tr key={`${item.kind}:${item.id}`}>
+                    <tr key={`${item.kind}:${item.id}`} className={fresh.has(`${item.kind}:${item.id}`) ? 'live-new' : undefined}>
                       <td>{item.kind}</td>
                       <td className="mono">{item.id}</td>
                       <td>{item.levelOrDescription}</td>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { conversationLinks } from '../memoryConversation';
-import { MEMORY_REFRESH_MS, memoryListChanged } from '../memoryRefresh';
+import { memoryListChanged } from '../memoryRefresh';
+import { useLive, useNewKeys } from '../lib/useLive';
 import { createPortal } from 'react-dom';
 import {
   captureGitMemories,
@@ -110,6 +111,9 @@ export default function MemoryPage() {
 
   const qRef = useRef(q);
   qRef.current = q;
+  const refreshRef = useRef<() => void>(() => {});
+  useLive('memory', () => refreshRef.current());
+  const fresh = useNewKeys(loading ? null : memories.map((m) => m.id));
 
   useEffect(() => {
     function refreshQuietly() {
@@ -129,12 +133,11 @@ export default function MemoryPage() {
         })
         .catch(() => {});
     }
-    const timer = setInterval(refreshQuietly, MEMORY_REFRESH_MS);
+    refreshRef.current = refreshQuietly;
     const onVisible = () => { if (!document.hidden) refreshQuietly(); };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
     return () => {
-      clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
@@ -498,7 +501,7 @@ export default function MemoryPage() {
                       <ItemRow
                         key={m.id}
                         variant="graph"
-                        className={`memory-cat--${memoryCategory(m.kind)}${
+                        className={`memory-cat--${memoryCategory(m.kind)}${fresh.has(m.id) ? ' live-new' : ''}${
                           conv
                             ? ` memory-conv${conv.joinPrev ? ' memory-conv--prev' : ''}${conv.joinNext ? ' memory-conv--next' : ''}`
                             : ''

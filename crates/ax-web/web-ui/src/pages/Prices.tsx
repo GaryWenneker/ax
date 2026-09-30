@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useLive, useNewKeys } from '../lib/useLive';
 import {
   fetchPricingCatalog,
   fetchPricingHistory,
@@ -170,6 +171,9 @@ export default function PricesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLive('usage', () => void load());
+  const fresh = useNewKeys(busy ? null : models.map((m) => m.model_id));
 
   useEffect(() => {
     if (!selected) {
@@ -367,7 +371,11 @@ export default function PricesPage() {
                           {g.rows.map((m) => (
                             <tr
                               key={m.model_id}
-                              className={selected === m.model_id ? 'is-selected' : undefined}
+                              className={
+                                [selected === m.model_id ? 'is-selected' : '', fresh.has(m.model_id) ? 'live-new' : '']
+                                  .filter(Boolean)
+                                  .join(' ') || undefined
+                              }
                               onClick={() => setSelected(m.model_id)}
                               style={{ cursor: 'pointer' }}
                             >

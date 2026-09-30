@@ -1,4 +1,5 @@
 import { resolveOpenTarget } from '../lib/policySelection';
+import { useLive, useNewKeys } from '../lib/useLive';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   deletePolicyCopy,
@@ -194,6 +195,8 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
       .catch((e: Error) => setError(e.message));
   }
 
+  useLive('skills', reloadSkills);
+
   const listed = useMemo(
     () =>
       skills.map(
@@ -202,6 +205,8 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
       ),
     [skills],
   );
+
+  const fresh = useNewKeys(loading ? null : listed.map((s) => s.rowKey ?? s.name));
 
   const tagOptions = useMemo(() => collectTags(listed), [listed]);
 
@@ -543,6 +548,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
                         storage: (s.effectiveStorage ?? projectStorage) === 'database' ? 'database' : 'files',
                       })),
                     }))}
+                    fresh={fresh}
                     collapsed={collapsed}
                     onToggleGroup={toggleGroup}
                     selectedIds={selectedIds}

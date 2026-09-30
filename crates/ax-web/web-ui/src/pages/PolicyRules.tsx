@@ -1,4 +1,5 @@
 import { resolveOpenTarget } from '../lib/policySelection';
+import { useLive, useNewKeys } from '../lib/useLive';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   deletePolicyCopy,
@@ -206,6 +207,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
       .catch((e: Error) => setError(e.message));
   }
 
+  useLive('rules', reloadRules);
+
   const listed = useMemo(
     () =>
       rules.map(
@@ -214,6 +217,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
       ),
     [rules],
   );
+
+  const fresh = useNewKeys(loading ? null : listed.map((r) => r.rowKey ?? r.id));
 
   const tagOptions = useMemo(() => collectTags(listed), [listed]);
 
@@ -689,6 +694,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                         storage: (r.effectiveStorage ?? projectStorage) === 'database' ? 'database' : 'files',
                       })),
                     }))}
+                    fresh={fresh}
                     collapsed={collapsed}
                     onToggleGroup={toggleGroup}
                     selectedIds={selectedIds}

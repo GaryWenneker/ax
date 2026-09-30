@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLive } from '../lib/useLive';
 import { fetchStats } from '../api';
 import { navigateRoute } from '../lib/routes';
 import {
@@ -52,6 +53,10 @@ export default function StatsPage() {
       .then(setStats)
       .catch((e: Error) => setError(e.message));
   }, []);
+
+  useLive('graph', () => {
+    fetchStats().then(setStats).catch(() => {});
+  });
 
   usePageContext('Stats', stats ? `${stats.languages.length} languages` : undefined);
 

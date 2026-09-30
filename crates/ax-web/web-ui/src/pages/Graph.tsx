@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   streamGraph,
+  fetchGraph,
   fetchInsights,
   fetchDomainGraph,
   type GraphNode,
@@ -26,6 +27,8 @@ import {
   type SimulationLinkDatum,
 } from 'd3-force';
 import GraphSettingsPanel from '../components/GraphSettingsPanel';
+import { useLive } from '../lib/useLive';
+import { edgeMarker, planSparks, sparkPhase } from '../lib/live';
 import { ResizableBlade } from '../components/BladeResize';
 import { loadGraphSettings, saveGraphSettings, type GraphSettings } from '../lib/graphSettings';
 import { filterGraph, groupColor } from '../lib/graphFilter';
@@ -142,12 +145,16 @@ function useNarrowViewport(maxWidth = 768) {
   return narrow;
 }
 
+const MARKER_MS = 3000;
+
 export default function GraphPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const simNodesRef = useRef<SimNode[]>([]);
   const simEdgesRef = useRef<SimEdge[]>([]);
   const idIndexRef = useRef<Map<string, number>>(new Map());
+  const sparksRef = useRef<Map<string, number>>(new Map());
+  const sparkRafRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const runningRef = useRef(false);
   const iterationsRef = useRef(0);
@@ -225,6 +232,7 @@ export default function GraphPage() {
   const [selectedDomain, setSelectedDomain] = useState<DomainOverlayNode | null>(null);
   const viewModeRef = useRef(viewMode);
   viewModeRef.current = viewMode;
+  const [liveNotice, setLiveNotice] = useState<string | null>(null);
 
   const EXPORT_FORMATS = [
     { id: 'json', label: 'JSON' },
@@ -412,6 +420,78 @@ export default function GraphPage() {
       },
     );
   }
+
+  /** Add nodes and edges that appeared on the server without resetting layout or camera. */
+  async function mergeLive() {
+    if (viewModeRef.current === 'domain' || loading) return;
+    let payload;
+    try {
+      payload = await fetchGraph({ limit });
+    } catch {
+      return;
+    }
+    const idIndex = idIndexRef.current;
+    const added = payload.nodes.filter((n) => !idIndex.has(n.id));
+    const nodes = simNodesRef.current;
+    const edges = simEdgesRef.current;
+    const pos = (id: string) => {
+      const i = idIndex.get(id);
+      return i == null ? null : nodes[i];
+    };
+    const { scale, offsetX, offsetY } = transformRef.current;
+    const wrap = wrapRef.current;
+    const viewCenter = {
+      x: ((wrap?.clientWidth ?? 800) / 2 - offsetX) / scale,
+      y: ((wrap?.clientHeight ?? 600) / 2 - offsetY) / scale,
+    };
+    for (const n of added) {
+      const link = payload.edges.find((e) => (e.source === n.id && pos(e.target)) || (e.target === n.id && pos(e.source)));
+      const anchor = link ? pos(link.source === n.id ? link.target : link.source)! : viewCenter;
+      const jitter = () => (Math.random() - 0.5) * 60;
+      nodes.push({ ...n, x: anchor.x + jitter(), y: anchor.y + jitter(), vx: 0, vy: 0 });
+      idIndex.set(n.id, nodes.length - 1);
+    }
+    const known = new Set(edges.map((e) => `${e.source}>${e.target}>${e.kind}`));
+    const newEdges = payload.edges.filter((e) => {
+      const s = idIndex.get(e.source);
+      const t = idIndex.get(e.target);
+      return s != null && t != null && !known.has(`${s}>${t}>${e.kind}`);
+    });
+    if (!added.length && !newEdges.length) return;
+    addEdges(newEdges);
+    setLoadedNodes(nodes.length);
+    setEdgeCount(edges.length);
+    if (added.length) setLegendNodes((prev) => prev.concat(added));
+    const { spark, summary } = planSparks(added.map((n) => n.id));
+    const now = performance.now();
+    for (const id of spark) sparksRef.current.set(id, now);
+    if (summary != null) {
+      setLiveNotice(`${summary} new nodes`);
+      window.setTimeout(() => setLiveNotice(null), MARKER_MS);
+    }
+    ensureSimulation(0.25);
+    runSparks();
+  }
+
+  function runSparks() {
+    if (sparkRafRef.current != null || sparksRef.current.size === 0) return;
+    const tick = () => {
+      const now = performance.now();
+      for (const [id, t0] of sparksRef.current) if (now - t0 > MARKER_MS) sparksRef.current.delete(id);
+      requestDraw();
+      sparkRafRef.current = sparksRef.current.size ? requestAnimationFrame(tick) : null;
+    };
+    sparkRafRef.current = requestAnimationFrame(tick);
+  }
+
+  useLive('graph', () => void mergeLive());
+
+  useEffect(
+    () => () => {
+      if (sparkRafRef.current != null) cancelAnimationFrame(sparkRafRef.current);
+    },
+    [],
+  );
 
   function frameLaidOutGraph() {
     const nodes = simNodesRef.current;
@@ -907,6 +987,32 @@ export default function GraphPage() {
       ctx.globalAlpha = 1;
     }
 
+    const now = performance.now();
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    for (const [id, t0] of sparksRef.current) {
+      const i = idIndexRef.current.get(id);
+      const phase = sparkPhase(now - t0);
+      if (i == null || !phase || (vis && !vis.nodes.has(i))) continue;
+      const n = nodes[i];
+      const base = worldRadius(n);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2 / scale;
+      for (const ring of reduceMotion ? phase.rings.slice(0, 1) : phase.rings) {
+        ctx.globalAlpha = ring.alpha;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, base + (6 + (reduceMotion ? 0.3 : ring.grow) * 36) / scale, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (phase.core > 0) {
+        ctx.globalAlpha = phase.core * 0.85;
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, base + 2 / scale, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // Labels in screen space at a fixed size; overlapping ones are skipped.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = `${LABEL_PX}px var(--font-mono, monospace)`;
@@ -921,6 +1027,27 @@ export default function GraphPage() {
     ctx.textBaseline = 'alphabetic';
     ctx.globalAlpha = 1;
     ctx.textAlign = 'start';
+
+    for (const [id, t0] of sparksRef.current) {
+      const i = idIndexRef.current.get(id);
+      if (i == null || (vis && !vis.nodes.has(i))) continue;
+      const m = edgeMarker(nodes[i].x * scale + offsetX, nodes[i].y * scale + offsetY, w, h, 14);
+      if (!m) continue;
+      const left = MARKER_MS - (now - t0);
+      ctx.globalAlpha = Math.max(0, Math.min(1, left / 500));
+      ctx.fillStyle = accent;
+      ctx.save();
+      ctx.translate(m.x, m.y);
+      ctx.rotate(m.angle);
+      ctx.beginPath();
+      ctx.moveTo(8, 0);
+      ctx.lineTo(-6, -6);
+      ctx.lineTo(-6, 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
     ctx.restore();
   }
 
@@ -1328,6 +1455,11 @@ export default function GraphPage() {
           onTouchEnd={onTouchEnd}
         >
           <canvas ref={canvasRef} className="graph-canvas" />
+          {liveNotice && (
+            <div className="graph-live-notice live-new" role="status">
+              {liveNotice}
+            </div>
+          )}
           {loading && (
             <div className="graph-overlay">
               <Spinner /> {viewMode === 'domain' ? 'Loading domain overlay…' : `Streaming graph… ${meta ? `${loadingPct}%` : ''}`}

@@ -24,6 +24,7 @@ import type { TraceKind } from '../lib/mcpTrace';
 import { navigateRoute, pageFromNavId } from '../lib/routes';
 import { currentThemeAccent, THEME_CHANGED } from '../lib/themes';
 import { WORKSPACE_SWITCHED } from '../workspaceEvents';
+import { useLive } from '../lib/useLive';
 import type { Stats } from '../types';
 
 function IconNodes() {
@@ -252,15 +253,15 @@ export default function StatusBar() {
     fetchMcpQuality().then(setQuality).catch(() => {});
   }
 
+  useLive(['graph', 'memory', 'rules', 'skills', 'usage'], refresh);
+
   useEffect(() => {
     refresh();
-    const id = window.setInterval(refresh, 30_000);
     const onFocus = () => refresh();
     const onWorkspaceSwitched = () => refresh();
     window.addEventListener('focus', onFocus);
     window.addEventListener(WORKSPACE_SWITCHED, onWorkspaceSwitched);
     return () => {
-      clearInterval(id);
       window.removeEventListener('focus', onFocus);
       window.removeEventListener(WORKSPACE_SWITCHED, onWorkspaceSwitched);
     };

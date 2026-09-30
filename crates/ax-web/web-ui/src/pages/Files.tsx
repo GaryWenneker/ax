@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useLive, useNewKeys } from '../lib/useLive';
 import { fetchFileRoots, fetchFiles, fetchStats } from '../api';
 
 import FileTree from '../components/FileTree';
@@ -90,11 +91,14 @@ export default function FilesPage() {
 
 
 
+  const [treeScope, setTreeScope] = useState(0);
+
   const loadRoots = useCallback(async () => {
     const page = await fetchFileRoots();
     setRoots(page.roots);
     const rootFiles = Array.isArray(page.files) ? page.files : [];
     if (!filterActive) {
+      setTreeScope((n) => n + 1);
       setFiles(rootFiles);
       setLoadedPrefixes(new Set(['']));
       setTotal(page.roots.reduce((sum, r) => sum + r.count, 0) + rootFiles.length);
@@ -135,7 +139,7 @@ export default function FilesPage() {
     try {
 
       const page = await fetchFiles({ prefix, limit: TREE_LIMIT, offset: 0 });
-
+      setTreeScope((n) => n + 1);
       setFiles((prev) => {
 
         const byPath = new Map(prev.map((f) => [f.path, f]));
@@ -181,11 +185,9 @@ export default function FilesPage() {
     fetchFiles({ q: newQ, lang: newLang || undefined, limit: TREE_LIMIT, offset: 0 })
 
       .then((page) => {
-
+        setTreeScope((n) => n + 1);
         setFiles(page.files);
-
         setTotal(page.total);
-
         setLoading(false);
 
       })
@@ -251,6 +253,30 @@ export default function FilesPage() {
       setError(e instanceof Error ? e.message : 'Refresh failed');
     }
   }, [filterActive, q, lang, loadRoots, loadPrefix]);
+
+  const liveRefreshTree = useCallback(async () => {
+    try {
+      if (filterActive) {
+        const page = await fetchFiles({ q, lang: lang || undefined, limit: TREE_LIMIT, offset: 0 });
+        setFiles(page.files);
+        setTotal(page.total);
+        return;
+      }
+      const rootPage = await fetchFileRoots();
+      const prefixes = [...loadedPrefixesRef.current].filter((p) => p !== '');
+      const pages = await Promise.all(prefixes.map((prefix) => fetchFiles({ prefix, limit: TREE_LIMIT, offset: 0 })));
+      const rootFiles = Array.isArray(rootPage.files) ? rootPage.files : [];
+      const byPath = new Map([...rootFiles, ...pages.flatMap((p) => p.files)].map((f) => [f.path, f]));
+      setRoots(rootPage.roots);
+      setFiles([...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)));
+      setTotal(rootPage.roots.reduce((sum, r) => sum + r.count, 0) + rootFiles.length);
+    } catch {
+      /* the next change event retries */
+    }
+  }, [filterActive, q, lang]);
+
+  useLive('graph', () => void liveRefreshTree());
+  const fresh = useNewKeys(loading ? null : files.map((f) => f.path), String(treeScope));
 
 
 
@@ -443,6 +469,8 @@ export default function FilesPage() {
                       selectedPath={selectedPath || null}
 
                       loadingPrefixes={loadingPrefixes}
+
+                      fresh={fresh}
 
                       onSelect={selectFile}
 

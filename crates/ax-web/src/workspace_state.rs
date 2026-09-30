@@ -149,6 +149,7 @@ impl WebHub {
             .nest("/api/workspace", workspace::router_hub(hub.clone()))
             .nest("/api/agent", agent::router_hub(hub.clone()))
             .nest("/api/actions", crate::actions::router_hub(hub.clone()))
+            .nest("/api/changes", crate::changes::router_hub(hub.clone()))
             .nest("/api/share", crate::share_api::router_hub(hub.clone()))
             .nest("/api/lsp", crate::lsp_api::router_hub(hub.clone()))
             .nest("/api/plugins", crate::plugins_api::router_hub(hub.clone()))

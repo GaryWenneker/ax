@@ -266,11 +266,21 @@ html, body {
 }
 
 .titlebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: calc(var(--fs-sm) * var(--ui-scale));
   font-weight: 650;
   color: var(--text-hi);
   letter-spacing: 0;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.72);
+}
+
+.titlebar-logo {
+  width: 16px;
+  height: 16px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .titlebar-brand-ax {
@@ -2042,6 +2052,60 @@ html, body {
   opacity: 0.9;
 }
 
+/* Live updates: a row or card that just appeared (lib/useLive.ts, GLOW_MS). */
+.graph-live-notice {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border: 1px solid var(--accent-text);
+  background: var(--bg-panel);
+  color: var(--text-hi);
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+@keyframes live-new-glow {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-text) 85%, transparent),
+      0 0 14px 2px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  35% {
+    background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-text) 60%, transparent),
+      0 0 10px 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 1px transparent, 0 0 0 0 transparent;
+  }
+}
+
+.live-new {
+  animation: live-new-glow 2.6s ease-out 1 both;
+}
+
+tr.live-new > td {
+  animation: live-new-glow 2.6s ease-out 1 both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-new,
+  tr.live-new > td {
+    animation: none;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-text) 70%, transparent);
+  }
+}
+
+/* Same solids as the MCP kind badges and the workbench accent. */
+.nav-section[data-nav="policy"] .nav-section-label { color: #e0b341; }
+.nav-section[data-nav="code"] .nav-section-label { color: #3ee4b2; }
+.nav-section[data-nav="activity"] .nav-section-label { color: #4fa8ff; }
+.nav-section[data-nav="system"] .nav-section-label { color: #8fa6c4; }
+
 .nav-divider {
   height: 1px;
   margin: 8px 12px;
@@ -2083,7 +2147,6 @@ html[data-ax-theme="macos"] .nav-item.active .codicon {
 }
 
 html[data-ax-theme="macos"] .nav-section-label {
-  color: var(--text-dim);
   text-transform: none;
   letter-spacing: 0;
   font-weight: 600;

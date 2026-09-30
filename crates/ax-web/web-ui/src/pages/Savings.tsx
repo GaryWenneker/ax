@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
+import { useLive, useNewKeys } from '../lib/useLive';
 import {
   fetchCallTokenDetail,
   fetchSavings,
@@ -805,12 +806,14 @@ export default function SavingsPage() {
     setCallError(null);
   }, []);
 
-  const load = useCallback(async () => {
+  const [dataScope, setDataScope] = useState('');
+
+  const load = useCallback(async (quiet = false) => {
     if (period === 'custom' && !from) {
       setError('Pick a start date for custom range.');
       return;
     }
-    setLoading(true);
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const summary = await fetchSavings({
@@ -818,6 +821,7 @@ export default function SavingsPage() {
         from: period === 'custom' ? from : undefined,
         to: period === 'custom' && to ? to : undefined,
       });
+      setDataScope(`${period}|${from}|${to}`);
       setData(summary);
     } catch (e) {
       setError(String(e));
@@ -830,6 +834,12 @@ export default function SavingsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLive('usage', () => void load(true));
+  const fresh = useNewKeys(
+    loading || !data ? null : data.agent_sessions.map((s) => `${s.agent}-${s.session_id}`),
+    dataScope,
+  );
 
   useEffect(() => {
     fetchMcpQuality()
@@ -1440,7 +1450,10 @@ export default function SavingsPage() {
                   </thead>
                   <tbody>
                     {data.agent_sessions.map((s) => (
-                      <tr key={`${s.agent}-${s.session_id}`}>
+                      <tr
+                        key={`${s.agent}-${s.session_id}`}
+                        className={fresh.has(`${s.agent}-${s.session_id}`) ? 'live-new' : undefined}
+                      >
                         <td>{s.agent}</td>
                         <td className="mono">{s.session_id.slice(0, 8)}…</td>
                         <td className="mono">

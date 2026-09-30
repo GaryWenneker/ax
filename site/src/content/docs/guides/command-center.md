@@ -171,6 +171,21 @@ ax mcp audit                  # same quality engine as the Q chip
 ax savings hook install       # Cursor sessionStart → model + session tags
 ```
 
+### Live updates
+
+Pages refresh on their own when the data behind them changes; there is no need to press F5. The server checks the index, memory vault, policy, and usage databases once per second and sends a short change event over `GET /api/changes` (Server-Sent Events). A page reloads only the area that changed:
+
+| Change | Pages that refresh |
+|---|---|
+| Index (`graph`) | Graph, Search, Nodes, Files, Stats, Unresolved, status bar |
+| Memory (`memory`) | Memory |
+| Rules / skills | Rules, Skills, Sync, Review |
+| Usage and prices (`usage`) | Savings, Prices, status bar |
+
+New rows get a short accent glow. New graph nodes get a two-ring spark; a node outside the current view gets an arrow at the canvas edge for three seconds, and more than 20 new nodes show one "N new nodes" notice instead. The graph never moves the camera or resets the layout on a live update. With reduced motion enabled, the glow is a static outline and the spark does not grow. Logging and Ship already stream on their own.
+
+The graph shows the top nodes by degree (the **Density** slider). A new node outside that set is not drawn, so it gets no spark.
+
 ### Project browser
 
 ![Project browser — browse your disk for indexed ax projects, filter, initialize, and switch workspace](/screenshots/cc-project-browser.png)

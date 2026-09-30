@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLive, useNewKeys } from '../lib/useLive';
 import { fetchNodes, fetchStats } from '../api';
 import NodeDetailPanel from '../components/NodeDetail';
 import Codicon from '../components/Codicon';
@@ -67,11 +68,16 @@ export default function NodesPage() {
       .catch(() => {});
   }, []);
 
-  function load(newOffset: number, newQ: string, newKind: string, newLang: string) {
-    setLoading(true);
+  const [dataScope, setDataScope] = useState('');
+  const fresh = useNewKeys(loading ? null : nodes.map((n) => n.id), dataScope);
+  useLive('graph', () => load(offset, q, kind, lang, true));
+
+  function load(newOffset: number, newQ: string, newKind: string, newLang: string, quiet = false) {
+    if (!quiet) setLoading(true);
     setError(null);
     fetchNodes({ q: newQ, kind: newKind || undefined, lang: newLang || undefined, limit: LIMIT, offset: newOffset })
       .then((page) => {
+        setDataScope(`${newOffset}|${newQ}|${newKind}|${newLang}`);
         setNodes(page.nodes);
         setTotal(page.total);
         setLoading(false);
@@ -179,6 +185,7 @@ export default function NodesPage() {
                     {nodes.map((n) => (
                       <ItemRow
                         key={n.id}
+                        className={fresh.has(n.id) ? 'live-new' : undefined}
                         icon={<Codicon name={kindIcon(n.kind)} className="page-item-codicon" />}
                         title={n.name}
                         subtitle={`${n.file_path}:${n.start_line}`}
