@@ -110,9 +110,10 @@ PY
 }
 
 run_mutants() {
-  layer "cargo-mutants on reuse_cache.rs"
+  layer "cargo-mutants on reuse_cache.rs (ax-usage + ax-mcp tests)"
+  # Wrappers in reuse_cache.rs are exercised by the ax-mcp L4 tests, so run both packages.
   cargo mutants --package ax-usage --file crates/ax-usage/src/reuse_cache.rs \
-    --output "$OUT" --no-shuffle -- --lib
+    --test-package ax-usage --test-package ax-mcp --output "$OUT" --no-shuffle -- --lib
 }
 
 run_manual_mutants() {

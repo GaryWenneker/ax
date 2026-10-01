@@ -611,3 +611,57 @@ async fn reply_too_small_to_save_tokens_is_not_cached() {
     assert!(count_tokens(body) as i64 <= MIN_REUSE_TOKENS);
     assert_eq!(f.store("c1", "ax_callers", &args(), body).await, None);
 }
+
+#[test]
+fn canonical_args_is_compact_sorted_json() {
+    let a = json!({"b": [1, {"d": 2, "c": "x"}], "a": 1, "fresh": true});
+    assert_eq!(canonical_args(&a), r#"{"a":1,"b":[1,{"c":"x","d":2}]}"#);
+}
+
+#[tokio::test]
+async fn cited_files_rejects_escapes_non_line_suffixes_and_dotless_names() {
+    let f = Fixture::new().await;
+    let root = f.root();
+    let outside = format!("{}-outside.rs", root.file_name().unwrap().to_string_lossy());
+    std::fs::write(root.parent().unwrap().join(&outside), "x").unwrap();
+    std::fs::write(root.join("Makefile"), "x").unwrap();
+    let body = format!("../{outside}:1 src/lib.rs:abc Makefile:3");
+    let cited = cited_files(&body, root);
+    std::fs::remove_file(root.parent().unwrap().join(&outside)).unwrap();
+    assert!(cited.is_empty(), "{cited:?}");
+    assert_eq!(cited_files("src/lib.rs:2", root), vec!["src/lib.rs".to_string()]);
+}
+
+#[tokio::test]
+async fn lookup_misses_when_the_stored_body_is_gone() {
+    let f = Fixture::new().await;
+    f.store("c1", "ax_node", &args(), &node_body()).await.expect("stored");
+    sqlx::query("DELETE FROM mcp_context_cache").execute(&f.pool).await.unwrap();
+    assert!(f.lookup("c1", "ax_node", &args()).await.is_none());
+}
+
+#[tokio::test]
+async fn limits_are_inclusive_at_the_boundary() {
+    let f = Fixture::new().await;
+    let body = node_body();
+    let at_cap = store_reply(&f.pool, f.root(), "c1", Reply { tool: "ax_node", args: &args(), body: &body }, &f.index(), body.len() as i64)
+        .await
+        .unwrap();
+    assert!(at_cap.is_some(), "a body exactly at the cap is stored");
+    let mut many = String::new();
+    for i in 1..MAX_CITED_FILES {
+        let path = format!("src/g{i}.rs");
+        std::fs::write(f.root().join(&path), "fn x() {}\n").unwrap();
+        many.push_str(&format!("- {path}:1 x\n"));
+    }
+    many.push_str(&node_body());
+    assert!(f.store("c2", "ax_explore", &args(), &many).await.is_some(), "63 files plus src/lib.rs: exactly the limit");
+}
+
+#[test]
+fn session_context_includes_an_entry_that_fits_exactly() {
+    let entry = ContextEntry { tool: "ax_node".into(), args_summary: "alpha".into(), files: vec!["src/lib.rs".into()], id: "cc_1".into() };
+    let full = format_session_context(std::slice::from_ref(&entry), 10_000);
+    let exact = count_tokens(&full) as i64;
+    assert_eq!(format_session_context(&[entry], exact), full);
+}
