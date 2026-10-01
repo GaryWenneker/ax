@@ -465,3 +465,12 @@ pub async fn reuse_session_context(root: &Path, conversation: &str, index: &Inde
 
 #[cfg(test)]
 mod tests;
+
+/// `AX_CONTEXT_CACHE=off` (or `0`) turns conversation reuse off along with oversized-reply stubs.
+pub fn reuse_enabled() -> bool {
+    reuse_enabled_from(std::env::var("AX_CONTEXT_CACHE").ok().as_deref())
+}
+
+pub(crate) fn reuse_enabled_from(raw: Option<&str>) -> bool {
+    !raw.is_some_and(|v| v.eq_ignore_ascii_case("off") || v == "0")
+}

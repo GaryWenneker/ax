@@ -571,3 +571,12 @@ fn index_unchanged_fails_closed() {
     assert!(index_unchanged(&[("b.rs".into(), None)], &current), "still not indexed");
     assert!(!index_unchanged(&[], &current), "nothing recorded is not fresh");
 }
+
+#[test]
+fn ax_context_cache_off_disables_reuse() {
+    assert!(reuse_enabled_from(None));
+    assert!(reuse_enabled_from(Some("on")));
+    assert!(!reuse_enabled_from(Some("off")));
+    assert!(!reuse_enabled_from(Some("OFF")));
+    assert!(!reuse_enabled_from(Some("0")));
+}

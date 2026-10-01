@@ -72,6 +72,10 @@ Oversized ax MCP replies, Claude prompts, and Cursor `beforeSubmitPrompt` prompt
 
 Replies at or above 3,000 tokens (override with `AX_CONTEXT_CACHE_TOKENS`; `0` or `AX_CONTEXT_CACHE=off` disables the cache, the index, and the ledger) are replaced with a stub. Graph reads such as `ax_explore` and `ax_node` stay inline up to `AX_GRAPH_INLINE_TOKENS` (default 12,000), and past that they keep their head inline with an `ax_expand` footer. The savings log records the stub size as the response and adds the removed tokens to `tokens_saved_est` for graph tools. Policy tools `ax_preflight`, `ax_guard`, `ax_rules`, and `ax_skill` are never stubbed. Install the Cursor prompt hook with `ax savings hook install`.
 
+### Conversation cache
+
+Within one agent conversation, a repeated read-only graph call (`ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_affected`, `ax_context`, with the same arguments) returns a short `[ax cache hit]` reference instead of the full answer again. `ax_expand` with its id returns the original byte-for-byte. Each lookup rechecks the content hash of every cited file on disk and in the index, so an edit or re-index turns it into a miss. The savings log records the reference as the response and the avoided tokens in `tokens_saved_est`. Pass `fresh: true` to rerun, and set `AX_CONTEXT_CACHE=off` to disable it. See the [MCP server reference](/reference/mcp-server/#conversation-cache).
+
 ### What is measured vs estimated
 
 | Metric | Source |

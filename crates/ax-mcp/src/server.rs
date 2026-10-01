@@ -254,7 +254,7 @@ async fn call_tool_and_wrap(
     let args = if matches!(name, "ax_preflight" | "ax_skill") { attach_policy_session(engine, args) } else { args };
     let started = std::time::Instant::now();
     let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
-    let reuse_root = project_root.filter(|_| ax_usage::reuse_cacheable(name));
+    let reuse_root = project_root.filter(|_| ax_usage::reuse_enabled() && ax_usage::reuse_cacheable(name));
     if let Some(root) = reuse_root {
         if let Some(hit) = confirmed_reuse_hit(engine, root, &conversation, name, &args).await {
             let (wrapped, text, sent, avoided) = reuse_hit_reply(&hit);
