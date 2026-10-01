@@ -358,7 +358,7 @@ pub fn page_body(body: &str, offset: usize, limit: Option<usize>) -> ExpandPage 
     }
 }
 
-async fn store_body(
+pub(crate) async fn store_body(
     pool: &SqlitePool,
     id: &str,
     tool: &str,
@@ -628,7 +628,7 @@ async fn cache_id_recorded(pool: &SqlitePool, id: &str) -> Result<bool, String> 
     Ok(hit.is_some())
 }
 
-async fn load_body(pool: &SqlitePool, id: &str) -> Result<String, String> {
+pub(crate) async fn load_body(pool: &SqlitePool, id: &str) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT body FROM mcp_context_cache WHERE id = ? AND expires_at >= ?",

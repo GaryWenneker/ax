@@ -10,6 +10,7 @@ mod period;
 mod pricing;
 mod pricing_fetch;
 mod pricing_sync;
+mod reuse_cache;
 mod savings;
 mod store;
 mod tokenizer;
@@ -61,6 +62,10 @@ pub use context_cache::{
     ingest_jsonl_oversized, note_session_event, recent_catalog, recent_session_catalog,
     session_ledger, spawn_note_session_event, stash_text, tool_chunks_from_jsonl,
     CacheOutcome, CatalogEntry, ExpandPage, StashReceipt,
+};
+pub use reuse_cache::{
+    conversation_key, render_hit, reuse_cacheable, reuse_lookup, reuse_record_hit,
+    reuse_session_context, reuse_store, wants_fresh, ReuseHit, SESSION_CONTEXT_TOKENS,
 };
 pub use tokenizer::{
     count_file_tokens, count_tokens, tokenize_text, tokenizer_available, truncate_utf8,

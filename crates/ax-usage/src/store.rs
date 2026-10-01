@@ -48,6 +48,22 @@ CREATE TABLE IF NOT EXISTS mcp_context_cache (
   expires_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mcp_reuse_cache (
+  reuse_key TEXT PRIMARY KEY,
+  conversation TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  args_summary TEXT NOT NULL,
+  cache_id TEXT NOT NULL,
+  body_bytes INTEGER NOT NULL,
+  original_tokens INTEGER NOT NULL,
+  files_json TEXT NOT NULL,
+  turn INTEGER NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 0,
+  tokens_avoided INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_reuse_cache_conv ON mcp_reuse_cache(conversation, created_at);
+
 CREATE TABLE IF NOT EXISTS agent_session_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   agent TEXT NOT NULL,
@@ -142,7 +158,10 @@ pub fn usage_db_path() -> PathBuf {
 }
 
 pub async fn open_pool() -> Result<SqlitePool, AxError> {
-    let path = usage_db_path();
+    open_pool_at(&usage_db_path()).await
+}
+
+pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, AxError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     }
