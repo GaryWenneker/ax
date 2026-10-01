@@ -33,6 +33,7 @@ impl ToolHandler {
             tools.push(guard_tool());
         }
         tools.extend(extra_tools());
+        advertise_fresh(&mut tools);
         // Lean default: core tools only. Extras via AX_MCP_TOOLS=all|name,name.
         // Unlisted tools remain callable (call_tool is not filtered).
         crate::tool_filter::filter_tools_list(&mut tools);
@@ -671,6 +672,11 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
             inject.push('\n');
             inject.push_str(&ledger);
+        }
+        let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
+        if let Some(known) = ax_usage::reuse_session_context(ax.project_root(), &conversation).await {
+            inject.push('\n');
+            inject.push_str(&known);
         }
         if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
             let unseen: Vec<_> = entries
@@ -1657,6 +1663,18 @@ fn guard_tool() -> Value {
     })
 }
 
+fn advertise_fresh(tools: &mut [Value]) {
+    for tool in tools.iter_mut() {
+        let cacheable = tool["name"].as_str().is_some_and(ax_usage::reuse_cacheable);
+        if let (true, Some(props)) = (cacheable, tool["inputSchema"]["properties"].as_object_mut()) {
+            props.insert(
+                "fresh".to_string(),
+                json!({ "type": "boolean", "description": "Skip the per-conversation cache and rerun the query" }),
+            );
+        }
+    }
+}
+
 fn extra_tools() -> Vec<Value> {
     vec![
         json!({
@@ -2457,5 +2475,22 @@ mod tests {
     async fn ax_history_is_in_the_default_catalog() {
         let names = tool_names(&ToolHandler::list_tools(false).await);
         assert!(names.contains(&"ax_history".to_string()), "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn cacheable_tools_advertise_fresh_and_others_do_not() {
+        let listed = ToolHandler::list_tools(true).await;
+        let tools = listed["tools"].as_array().unwrap();
+        let schema_has_fresh = |name: &str| {
+            tools
+                .iter()
+                .find(|t| t["name"] == name)
+                .map(|t| t["inputSchema"]["properties"].get("fresh").is_some())
+        };
+        assert_eq!(schema_has_fresh("ax_node"), Some(true));
+        assert_eq!(schema_has_fresh("ax_explore"), Some(true));
+        assert_eq!(schema_has_fresh("ax_search"), Some(true));
+        assert_eq!(schema_has_fresh("ax_preflight"), Some(false));
+        assert_eq!(schema_has_fresh("ax_guard"), Some(false));
     }
 }
