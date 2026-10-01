@@ -675,7 +675,16 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         }
         let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
         if let Ok(index) = indexed_hashes(ax.db_pool(), None).await {
-            if let Some(known) = ax_usage::reuse_session_context(ax.project_root(), &conversation, &index).await {
+            let unseen: Vec<_> = ax_usage::reuse_session_entries(ax.project_root(), &conversation, &index)
+                .await
+                .into_iter()
+                .filter(|e| !session_delivered.as_ref().is_some_and(|m| m.contains_key(&format!("reuse:{}", e.id))))
+                .collect();
+            let known = ax_usage::format_session_context(&unseen, ax_usage::SESSION_CONTEXT_TOKENS);
+            if !known.is_empty() {
+                if session_delivered.is_some() {
+                    delivered.extend(unseen.iter().filter(|e| known.contains(&e.id)).map(|e| (format!("reuse:{}", e.id), 1)));
+                }
                 inject.push('\n');
                 inject.push_str(&known);
             }

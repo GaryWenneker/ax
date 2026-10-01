@@ -66,7 +66,7 @@ def fixture(root: Path) -> None:
     (src / "lib.rs").write_text("pub mod orders;\npub mod pricing;\npub mod report;\n", encoding="utf-8")
 
 
-def env_for(home: Path, cache_on: bool, conversation: str) -> dict:
+def env_for(home: Path, cache_on: bool, conversation: str) -> dict[str, str]:
     (home / ".ax").mkdir(parents=True, exist_ok=True)
     (home / ".ax" / "active-cursor-session").write_text(conversation + "\n", encoding="utf-8")
     env = os.environ.copy()
@@ -77,7 +77,7 @@ def env_for(home: Path, cache_on: bool, conversation: str) -> dict:
     return env
 
 
-def run(cmd: list[str], cwd: Path, env: dict) -> None:
+def run(cmd: list[str], cwd: Path, env: dict[str, str]) -> None:
     done = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     if done.returncode != 0:
         raise SystemExit(f"command failed ({done.returncode}): {' '.join(cmd)}\n{done.stdout}\n{done.stderr}")
@@ -86,7 +86,7 @@ def run(cmd: list[str], cwd: Path, env: dict) -> None:
 PROJECTS: list[Path] = []
 
 
-def make_project(binary: str, root: Path, env: dict) -> Path:
+def make_project(binary: str, root: Path, env: dict[str, str]) -> Path:
     """Each arm gets its own project: `ax serve --mcp` proxies to one daemon per project root,
     and that daemon keeps the environment of whichever arm started it."""
     fixture(root)
@@ -104,17 +104,16 @@ def stop_daemons(binary: str, failures: list[str]) -> None:
 
 SCRIPT = [
     [("ax_explore", {"query": "how does compute_total work"}), ("ax_node", {"name": "compute_total"})],
-    [("ax_callers", {"name": "compute_total"}), ("ax_node", {"name": "apply_discount"})],
+    [("ax_callers", {"symbol": "compute_total"}), ("ax_node", {"name": "apply_discount"})],
     [("ax_node", {"name": "compute_total"}), ("ax_explore", {"query": "how does compute_total work"})],
-    [("ax_node", {"name": "apply_discount"}), ("ax_callees", {"name": "compute_total"})],
+    [("ax_node", {"name": "apply_discount"}), ("ax_callees", {"symbol": "compute_total"})],
     [("ax_explore", {"query": "how does compute_total work"}), ("ax_node", {"name": "compute_total"})],
 ]
 
 
 class Arm:
-    def __init__(self, binary: str, project: Path, env: dict) -> None:
-        os.environ.update(env)
-        self.session = McpSession(project, binary)
+    def __init__(self, binary: str, project: Path, env: dict[str, str]) -> None:
+        self.session = McpSession(project, binary, env=env)
         self.calls: list[dict] = []
 
     def call(self, tool: str, args: dict) -> dict:
@@ -150,6 +149,19 @@ def play(arm: Arm) -> list[dict]:
         for tool, args in turn:
             replies.append(arm.call(tool, args))
     return replies
+
+
+def session_blocks(text: str) -> list[str]:
+    """`<ax_session_context>` blocks; the cache instruction line also names the tag, so match the newline."""
+    out, rest = [], text
+    while (start := rest.find("<ax_session_context>\n")) >= 0:
+        end = rest.find("</ax_session_context>", start)
+        if end < 0:
+            raise SystemExit("unterminated <ax_session_context> block")
+        end += len("</ax_session_context>")
+        out.append(rest[start:end])
+        rest = rest[end:]
+    return out
 
 
 def same_lines(a: str, b: str) -> bool:
@@ -207,6 +219,8 @@ def level5(binary: str, base: Path, failures: list[str]) -> dict:
     check(graph_on < graph_off, f"L5 cache-on tokens {graph_on} not below cache-off {graph_off}", failures)
     pre_off = sum(c["tokens"] for c in off.calls if c["tool"] == "ax_preflight")
     pre_on = sum(c["tokens"] for c in on.calls if c["tool"] == "ax_preflight")
+    blocks = sum(tokens(b) for c in on.calls if c["tool"] == "ax_preflight" for b in session_blocks(c["text"]))
+    check(blocks > 0, "L5 preflight never listed known context", failures)
     return {
         "graph_calls": len(on_replies),
         "repeats": expected_hits,
@@ -220,6 +234,9 @@ def level5(binary: str, base: Path, failures: list[str]) -> dict:
         "session_tokens_off": graph_off + pre_off,
         "session_tokens_on": graph_on + pre_on,
         "session_saved_pct": round(100 * ((graph_off + pre_off) - (graph_on + pre_on)) / (graph_off + pre_off), 1),
+        "session_context_block_tokens": blocks,
+        "reuse_net_saved": graph_off - graph_on - blocks,
+        "reuse_net_saved_pct": round(100 * (graph_off - graph_on - blocks) / (graph_off + pre_off), 1),
         "other_conversation_first_turn_hits": len(cross),
     }
 

@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS mcp_reuse_cache (
   body_bytes INTEGER NOT NULL,
   original_tokens INTEGER NOT NULL,
   files_json TEXT NOT NULL,
+  index_fingerprint TEXT NOT NULL DEFAULT '',
   turn INTEGER NOT NULL,
   hits INTEGER NOT NULL DEFAULT 0,
   tokens_avoided INTEGER NOT NULL DEFAULT 0,
@@ -91,6 +92,7 @@ const MIGRATION_ADD_COLUMNS: &[&str] = &[
     "ALTER TABLE agent_session_log ADD COLUMN model TEXT",
     "ALTER TABLE mcp_call_log ADD COLUMN response_preview TEXT",
     "ALTER TABLE mcp_call_log ADD COLUMN counterfactual_preview TEXT",
+    "ALTER TABLE mcp_reuse_cache ADD COLUMN index_fingerprint TEXT NOT NULL DEFAULT ''",
 ];
 
 const PRICING_SCHEMA: &str = "
@@ -167,7 +169,7 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
     }
 
     let options = SqliteConnectOptions::new()
-        .filename(&path)
+        .filename(path)
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)

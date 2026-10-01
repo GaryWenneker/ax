@@ -38,6 +38,35 @@ Scenario: reply produced from a lagging index is not served after sync
   Then it is a miss and the reply shows the new code
 ```
 
+7. **Any index change invalidates every entry of that project** (found in review round 1).
+   A graph answer depends on files it does not cite: `ax_callers x` citing only `a.rs` is wrong
+   once a new caller in `b.rs` is synced. Each entry now records a fingerprint of the whole
+   index (every path and `content_hash`); a hit requires it unchanged. This replaces the earlier
+   test `reindex_of_an_uncited_file_keeps_the_hit` with `reindex_of_an_uncited_file_is_a_miss`.
+   Cost: during active editing with a watcher sync, entries live until the next sync.
+8. **A reply citing more than 64 files is not cached** (review round 1): only 64 are tracked,
+   so an edit to the 65th would go unnoticed.
+9. **A reply of 200 tokens or less is not cached** (review round 1): the hit reference (about
+   65 tokens) plus its preflight line cost about as much as resending it.
+10. **Preflight lists each entry once per MCP session** (review round 1). L5 measured the full
+    `<ax_session_context>` block on every preflight at about 1,180 extra tokens over five turns,
+    which cancelled most of the saving. Entries already listed in this session are left out,
+    the same way the context-cache catalog works.
+
+```gherkin
+Scenario: known entries are listed once
+  Given "c1" stored entry E and preflight listed it
+  When "c1" calls ax_preflight again with no new entries
+  Then inject has no <ax_session_context> block
+  And a later preflight lists only entries stored since
+
+Scenario: new caller in an uncited file
+  Given "c1" called ax_callers {"symbol":"h"} and the reply cites only a.rs
+  When a new file b.rs calling h is added and ax_sync runs
+  And "c1" repeats the call
+  Then it is a miss and the reply lists the new caller
+```
+
 ## Behavior (scenarios)
 
 ```gherkin

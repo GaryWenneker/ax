@@ -146,9 +146,10 @@ Same call already answered in this conversation; cited files unchanged. Use the 
 ```
 
 - **Same call** means the same conversation, project, tool, and arguments. Argument order and whitespace do not matter.
-- **Freshness** is checked on every lookup. Each entry records the files its answer cites, with the content hash on disk and the indexed `content_hash`. If any cited file was edited, deleted, or re-indexed, the call runs again. Answers that cite no file are never cached.
+- **Freshness** is checked on every lookup. Each entry records the files its answer cites, with the content hash on disk and the indexed `content_hash`, plus a fingerprint of the whole index. If a cited file was edited or deleted, or any file was re-indexed (a new caller can live in a file the answer never cited), the call runs again. Answers that cite no file are never cached.
 - **`fresh: true`** on any of these tools skips the cache for that call.
-- **Preflight** adds an `<ax_session_context>` block (about 1,500 tokens at most) listing what this conversation already asked, with cited files and ids, so the agent can reuse it before searching again.
+- **Preflight** adds an `<ax_session_context>` block (about 1,500 tokens at most) listing what this conversation already asked, with cited files and ids, so the agent can reuse it before searching again. Each entry is listed once per MCP session.
+- **Not cached**: replies of 200 tokens or less (a reference would not save anything), and replies citing more than 64 files.
 - **Conversation id** comes from the Cursor hook (`~/.ax/active-cursor-session`). Without one, the MCP process is the conversation. Two Cursor chats running at the same moment share whichever id the hook wrote last; a hit is still verified fresh, and the agent can call `ax_expand` if it does not have the earlier answer.
 - **Size**: at most `AX_REUSE_CACHE_BYTES` (default 2 MB) of answers per conversation; the oldest go first. `AX_CONTEXT_CACHE=off` disables this too.
 - **Savings** are logged per hit (`tokensAvoided` = original answer tokens minus the reference) and appear in the savings report.

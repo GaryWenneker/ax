@@ -258,6 +258,7 @@ async fn call_tool_and_wrap(
     if let Some(root) = reuse_root {
         if let Some(hit) = confirmed_reuse_hit(engine, root, &conversation, name, &args).await {
             let (wrapped, text, sent, avoided) = reuse_hit_reply(&hit);
+            // A failed hit counter only under-reports savings; the reply is already decided.
             let _ = ax_usage::reuse_record_hit(&hit.key, avoided).await;
             if verbose {
                 push_outbound(name, &wrapped, false, started.elapsed().as_millis() as i64);
@@ -339,8 +340,8 @@ async fn call_tool_and_wrap(
             let is_error = value.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
             if let (Some(root), Some(reuse_args)) = (reuse_root, reuse_args.as_ref()) {
                 if !is_error {
-                    let cited = ax_usage::cited_files(&annotated, root);
-                    if let Ok(index) = project_index_hashes(engine, &cited).await {
+                    if let Ok(index) = project_index_hashes(engine).await {
+                        // A failed store only costs a future hit; this reply is unaffected.
                         let _ = ax_usage::reuse_store(root, &conversation, name, reuse_args, &annotated, &index).await;
                     }
                 }
@@ -484,13 +485,13 @@ fn wrap_call_tool_result(value: Value, is_error: bool) -> Value {
 /// Cursor) feed the model; `structuredContent` is machine-readable metadata for
 /// clients that consume it. Passing `structured = None` omits it entirely so a
 /// text-authoritative response is not duplicated on the wire.
-async fn project_index_hashes(engine: &McpEngine, paths: &[String]) -> Result<ax_usage::IndexHashes, String> {
+async fn project_index_hashes(engine: &McpEngine) -> Result<ax_usage::IndexHashes, String> {
     let guard = engine.lock_ax().await;
     let ax = guard.as_ref().ok_or("ax not initialized")?;
-    crate::tools::indexed_hashes(ax.db_pool(), Some(paths)).await
+    crate::tools::indexed_hashes(ax.db_pool(), None).await
 }
 
-/// A stored reply whose cited files are unchanged on disk and in the index.
+/// A stored reply whose cited files are unchanged on disk, and whose index is unchanged.
 async fn confirmed_reuse_hit(
     engine: &McpEngine,
     root: &std::path::Path,
@@ -499,9 +500,8 @@ async fn confirmed_reuse_hit(
     args: &Value,
 ) -> Option<ax_usage::ReuseHit> {
     let candidate = ax_usage::reuse_lookup(root, conversation, name, args).await?;
-    let paths: Vec<String> = candidate.indexed.iter().map(|(p, _)| p.clone()).collect();
-    let current = project_index_hashes(engine, &paths).await.ok()?;
-    ax_usage::index_unchanged(&candidate.indexed, &current).then_some(candidate.hit)
+    let current = project_index_hashes(engine).await.ok()?;
+    ax_usage::index_matches(&candidate, &current).then_some(candidate.hit)
 }
 
 /// Wire reply for a reuse hit: (wrapped value, text, sent tokens, tokens avoided).
@@ -1089,12 +1089,7 @@ mod reuse_integration {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(
-            root.join("src/lib.rs"),
-            "pub fn reuse_alpha_target() -> u64 { reuse_beta_helper() + 1 }\n\
-             pub fn reuse_beta_helper() -> u64 { 41 }\n",
-        )
-        .unwrap();
+        std::fs::write(root.join("src/lib.rs"), fixture_source("reuse_beta_helper() + 1")).unwrap();
         {
             let mut ax = ax_core::Ax::init(&root).await.unwrap();
             ax.index_all(
@@ -1109,11 +1104,30 @@ mod reuse_integration {
         (dir, engine)
     }
 
+    /// Large enough that `ax_node` and `ax_callers` replies clear the 200-token reuse minimum.
+    fn fixture_source(alpha_tail: &str) -> String {
+        let steps: String = (0..30).map(|i| format!("    let s{i} = {i}u64.rotate_left({i});\n")).collect();
+        let callers: String = (0..15)
+            .map(|i| format!("pub fn reuse_caller_{i}() -> u64 {{ reuse_beta_helper() + {i} }}\n"))
+            .collect();
+        format!(
+            "pub fn reuse_alpha_target() -> u64 {{\n{steps}    {alpha_tail}\n}}\n\
+             pub fn reuse_beta_helper() -> u64 {{ 41 }}\n{callers}"
+        )
+    }
+
     async fn call(engine: &mut McpEngine, name: &str, args: Value) -> Value {
         handle_request(engine, "tools/call", json!({ "name": name, "arguments": args }))
             .await
             .result
             .unwrap_or_else(|e| panic!("{name}: {e}"))
+    }
+
+    /// The `<ax_session_context>` block itself; the cache instruction line also names the tag.
+    fn session_block(text: &str) -> Option<&str> {
+        let start = text.find("<ax_session_context>\n")?;
+        let end = text[start..].find("</ax_session_context>")?;
+        Some(&text[start..start + end])
     }
 
     fn text(v: &Value) -> String {
@@ -1162,13 +1176,8 @@ mod reuse_integration {
         let (dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         call(&mut engine, "ax_node", args.clone()).await;
-        std::fs::write(
-            dir.path().join("src/lib.rs"),
-            "pub fn reuse_alpha_target() -> u64 { reuse_beta_helper() + 2 + edited_marker() }\n\
-             pub fn reuse_beta_helper() -> u64 { 41 }\n\
-             pub fn edited_marker() -> u64 { 0 }\n",
-        )
-        .unwrap();
+        let edited = fixture_source("reuse_beta_helper() + 2 + edited_marker()") + "pub fn edited_marker() -> u64 { 0 }\n";
+        std::fs::write(dir.path().join("src/lib.rs"), edited).unwrap();
         let miss_before_sync = call(&mut engine, "ax_node", args.clone()).await;
         assert!(!text(&miss_before_sync).starts_with("[ax cache hit]"), "stale hit before sync");
         call(&mut engine, "ax_sync", json!({})).await;
@@ -1179,14 +1188,49 @@ mod reuse_integration {
     }
 
     #[tokio::test]
+    async fn new_caller_in_an_uncited_file_is_a_miss_after_sync() {
+        let (dir, mut engine) = fixture().await;
+        let args = json!({ "symbol": "reuse_beta_helper" });
+        let before = text(&call(&mut engine, "ax_callers", args.clone()).await);
+        assert!(before.contains("src/lib.rs:"), "{before}");
+        assert!(!before.contains("reuse_new_caller"), "{before}");
+        let repeat = text(&call(&mut engine, "ax_callers", args.clone()).await);
+        assert!(repeat.starts_with("[ax cache hit]"), "the callers reply must be cached: {repeat}");
+        std::fs::write(
+            dir.path().join("src/extra.rs"),
+            "pub fn reuse_new_caller() -> u64 { reuse_beta_helper() }\n",
+        )
+        .unwrap();
+        call(&mut engine, "ax_sync", json!({})).await;
+        let after = text(&call(&mut engine, "ax_callers", args).await);
+        assert!(!after.starts_with("[ax cache hit]"), "{after}");
+        assert!(after.contains("reuse_new_caller"), "{after}");
+    }
+
+    #[tokio::test]
     async fn preflight_lists_what_the_conversation_already_knows() {
         let (_dir, mut engine) = fixture().await;
         call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target" })).await;
         let pre = call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await;
         let pre_text = text(&pre);
-        assert!(pre_text.contains("<ax_session_context>"), "{pre_text}");
-        assert!(pre_text.contains("reuse_alpha_target"), "{pre_text}");
-        assert!(pre_text.contains("src/lib.rs"), "{pre_text}");
+        let block = session_block(&pre_text).unwrap_or_else(|| panic!("no block: {pre_text}"));
+        assert!(block.contains("reuse_alpha_target"), "{block}");
+        assert!(block.contains("src/lib.rs"), "{block}");
+    }
+
+    #[tokio::test]
+    async fn preflight_lists_each_known_entry_once_per_session() {
+        let (_dir, mut engine) = fixture().await;
+        call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target" })).await;
+        let first = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await);
+        assert!(session_block(&first).is_some_and(|b| b.contains("reuse_alpha_target")), "{first}");
+        let second = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await);
+        assert_eq!(session_block(&second), None, "listed again: {second}");
+        call(&mut engine, "ax_node", json!({ "name": "reuse_beta_helper" })).await;
+        let third = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await);
+        let block = session_block(&third).unwrap_or_else(|| panic!("no block: {third}"));
+        assert!(block.contains("reuse_beta_helper"), "{block}");
+        assert!(!block.contains("reuse_alpha_target"), "old entry listed again: {block}");
     }
 
     #[test]

@@ -12,7 +12,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
-use crate::context_cache::{cache_enabled, cache_id, load_body, store_body};
+use crate::context_cache::{cache_id, load_body, store_body};
 use crate::store::open_pool;
 use crate::tokenizer::count_tokens;
 
@@ -29,6 +29,8 @@ const REUSE_TOOLS: &[&str] = &[
 ];
 const DEFAULT_CAP_BYTES: i64 = 2 * 1024 * 1024;
 const MAX_CITED_FILES: usize = 64;
+/// Replies this small cost more as a hit reference plus a preflight line than they save.
+const MIN_REUSE_TOKENS: i64 = 200;
 const ARGS_SUMMARY_CHARS: usize = 120;
 const CONTEXT_ROWS: i64 = 60;
 pub const SESSION_CONTEXT_TOKENS: i64 = 1_500;
@@ -50,6 +52,7 @@ pub type IndexHashes = BTreeMap<String, String>;
 pub struct ReuseCandidate {
     pub hit: ReuseHit,
     pub indexed: Vec<(String, Option<String>)>,
+    pub index_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +128,7 @@ fn safe_relative(path: &str) -> bool {
 }
 
 /// Project-relative paths cited as `path:line` or `path::symbol` that exist under `root`.
+/// Stops one past `MAX_CITED_FILES`, so a caller can tell the list is incomplete.
 pub fn cited_files(body: &str, root: &Path) -> Vec<String> {
     let mut found = BTreeSet::new();
     for token in body.split_whitespace() {
@@ -140,7 +144,7 @@ pub fn cited_files(body: &str, root: &Path) -> Vec<String> {
         }
         if root.join(path).is_file() {
             found.insert(path.to_string());
-            if found.len() >= MAX_CITED_FILES {
+            if found.len() > MAX_CITED_FILES {
                 break;
             }
         }
@@ -174,7 +178,8 @@ fn parse_snapshot(files_json: &str) -> Option<Snapshot> {
 }
 
 /// Fails closed: unparsable, empty, missing, unreadable, or changed means not fresh.
-pub fn files_fresh(root: &Path, files_json: &str) -> bool {
+#[cfg(test)]
+fn files_fresh(root: &Path, files_json: &str) -> bool {
     parse_snapshot(files_json).is_some_and(|files| disk_unchanged(root, &files))
 }
 
@@ -191,6 +196,21 @@ pub fn index_unchanged(recorded: &[(String, Option<String>)], current: &IndexHas
         && recorded
             .iter()
             .all(|(path, hash)| current.get(path) == hash.as_ref())
+}
+
+/// The cited files and the whole index are as they were when the reply was stored.
+pub fn index_matches(candidate: &ReuseCandidate, current: &IndexHashes) -> bool {
+    index_unchanged(&candidate.indexed, current) && index_fingerprint(current) == candidate.index_fingerprint
+}
+
+/// Hash of every indexed path and content hash. A graph answer can depend on files it does
+/// not cite (a new caller, a removed callee), so any change to the index invalidates it.
+pub fn index_fingerprint(index: &IndexHashes) -> String {
+    let mut hasher = Sha256::new();
+    for (path, hash) in index {
+        hasher.update(format!("{}:{path}|{}:{hash}|", path.len(), hash.len()).as_bytes());
+    }
+    hex(&hasher.finalize()[..16])
 }
 
 fn indexed_of(files: &Snapshot) -> Vec<(String, Option<String>)> {
@@ -279,25 +299,38 @@ async fn conversation_turn(pool: &SqlitePool, conversation: &str) -> Result<i64,
     Ok(turn)
 }
 
+/// One successful tool reply as the cache sees it.
+pub(crate) struct Reply<'a> {
+    pub tool: &'a str,
+    pub args: &'a Value,
+    pub body: &'a str,
+}
+
 /// Store a successful reply. Returns its cache id, or `None` when it is not cacheable.
-pub async fn store_reply(
+pub(crate) async fn store_reply(
     pool: &SqlitePool,
     root: &Path,
     conversation: &str,
-    tool: &str,
-    args: &Value,
-    body: &str,
+    reply: Reply<'_>,
     index: &IndexHashes,
     cap_bytes: i64,
 ) -> Result<Option<String>, String> {
-    if !cache_enabled() || !reuse_cacheable(tool) || body.len() as i64 > cap_bytes {
+    let Reply { tool, args, body } = reply;
+    if !reuse_enabled() || !reuse_cacheable(tool) || body.len() as i64 > cap_bytes {
         return Ok(None);
     }
-    let Some(snapshot) = snapshot_files(root, &cited_files(body, root)) else {
+    let cited = cited_files(body, root);
+    if cited.len() > MAX_CITED_FILES {
+        return Ok(None);
+    }
+    let Some(snapshot) = snapshot_files(root, &cited) else {
         return Ok(None);
     };
-    let id = cache_id(body);
     let tokens = count_tokens(body) as i64;
+    if tokens <= MIN_REUSE_TOKENS {
+        return Ok(None);
+    }
+    let id = cache_id(body);
     store_body(pool, &id, tool, body, tokens).await?;
     let turn = conversation_turn(pool, conversation).await?;
     let snapshot: Snapshot = snapshot
@@ -313,8 +346,8 @@ pub async fn store_reply(
     sqlx::query(
         "INSERT OR REPLACE INTO mcp_reuse_cache
          (reuse_key, conversation, tool, args_summary, cache_id, body_bytes, original_tokens,
-          files_json, turn, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          files_json, index_fingerprint, turn, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(reuse_key(conversation, tool, args))
     .bind(conversation)
@@ -324,6 +357,7 @@ pub async fn store_reply(
     .bind(body.len() as i64)
     .bind(tokens)
     .bind(files_json)
+    .bind(index_fingerprint(index))
     .bind(turn)
     .bind(chrono::Utc::now().timestamp())
     .execute(pool)
@@ -353,14 +387,14 @@ pub async fn lookup(
     tool: &str,
     args: &Value,
 ) -> Option<ReuseCandidate> {
-    if !cache_enabled() || !reuse_cacheable(tool) || wants_fresh(args) {
+    if !reuse_enabled() || !reuse_cacheable(tool) || wants_fresh(args) {
         return None;
     }
     let conversation = scope(conversation, root);
     let conversation = conversation.as_str();
     let key = reuse_key(conversation, tool, args);
-    let (id, files_json, turn, original_tokens): (String, String, i64, i64) = sqlx::query_as(
-        "SELECT cache_id, files_json, turn, original_tokens FROM mcp_reuse_cache
+    let (id, files_json, fingerprint, turn, original_tokens): (String, String, String, i64, i64) = sqlx::query_as(
+        "SELECT cache_id, files_json, index_fingerprint, turn, original_tokens FROM mcp_reuse_cache
          WHERE reuse_key = ? AND conversation = ? AND tool = ?",
     )
     .bind(&key)
@@ -382,6 +416,7 @@ pub async fn lookup(
             original_tokens,
         },
         indexed: indexed_of(&files),
+        index_fingerprint: fingerprint,
     })
 }
 
@@ -398,15 +433,29 @@ pub async fn record_hit(pool: &SqlitePool, key: &str, tokens_avoided: i64) -> Re
     Ok(())
 }
 
-pub async fn session_context(
+#[cfg(test)]
+pub(crate) async fn session_context(
     pool: &SqlitePool,
     root: &Path,
     conversation: &str,
     max_tokens: i64,
     index: &IndexHashes,
 ) -> Option<String> {
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT tool, args_summary, files_json, cache_id FROM mcp_reuse_cache
+    let entries = session_entries(pool, root, conversation, index).await?;
+    let text = format_session_context(&entries, max_tokens);
+    (!text.is_empty()).then_some(text)
+}
+
+/// Fresh entries of this conversation, newest first.
+pub async fn session_entries(
+    pool: &SqlitePool,
+    root: &Path,
+    conversation: &str,
+    index: &IndexHashes,
+) -> Option<Vec<ContextEntry>> {
+    let current = index_fingerprint(index);
+    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT tool, args_summary, files_json, index_fingerprint, cache_id FROM mcp_reuse_cache
          WHERE conversation = ? ORDER BY rowid DESC LIMIT ?",
     )
     .bind(scope(conversation, root))
@@ -416,9 +465,11 @@ pub async fn session_context(
     .ok()?;
     let entries: Vec<ContextEntry> = rows
         .into_iter()
-        .filter_map(|(tool, args_summary, files_json, id)| {
+        .filter_map(|(tool, args_summary, files_json, fingerprint, id)| {
             let files = parse_snapshot(&files_json)?;
-            let fresh = disk_unchanged(root, &files) && index_unchanged(&indexed_of(&files), index);
+            let fresh = fingerprint == current
+                && disk_unchanged(root, &files)
+                && index_unchanged(&indexed_of(&files), index);
             fresh.then(|| ContextEntry {
                 tool,
                 args_summary,
@@ -427,8 +478,7 @@ pub async fn session_context(
             })
         })
         .collect();
-    let text = format_session_context(&entries, max_tokens);
-    (!text.is_empty()).then_some(text)
+    Some(entries)
 }
 
 pub async fn reuse_lookup(
@@ -450,7 +500,7 @@ pub async fn reuse_store(
     index: &IndexHashes,
 ) -> Result<Option<String>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    store_reply(&pool, root, conversation, tool, args, body, index, reuse_cap_bytes()).await
+    store_reply(&pool, root, conversation, Reply { tool, args, body }, index, reuse_cap_bytes()).await
 }
 
 pub async fn reuse_record_hit(key: &str, tokens_avoided: i64) -> Result<(), String> {
@@ -458,9 +508,11 @@ pub async fn reuse_record_hit(key: &str, tokens_avoided: i64) -> Result<(), Stri
     record_hit(&pool, key, tokens_avoided).await
 }
 
-pub async fn reuse_session_context(root: &Path, conversation: &str, index: &IndexHashes) -> Option<String> {
-    let pool = open_pool().await.ok()?;
-    session_context(&pool, root, conversation, SESSION_CONTEXT_TOKENS, index).await
+pub async fn reuse_session_entries(root: &Path, conversation: &str, index: &IndexHashes) -> Vec<ContextEntry> {
+    let Ok(pool) = open_pool().await else {
+        return Vec::new();
+    };
+    session_entries(&pool, root, conversation, index).await.unwrap_or_default()
 }
 
 #[cfg(test)]

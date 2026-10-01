@@ -39,14 +39,14 @@ impl Fixture {
     }
 
     async fn store(&self, conv: &str, tool: &str, args: &Value, body: &str) -> Option<String> {
-        store_reply(&self.pool, self.root(), conv, tool, args, body, &self.index(), 2_000_000)
+        store_reply(&self.pool, self.root(), conv, Reply { tool, args, body }, &self.index(), 2_000_000)
             .await
             .unwrap()
     }
 
     async fn lookup(&self, conv: &str, tool: &str, args: &Value) -> Option<ReuseHit> {
         let candidate = lookup(&self.pool, self.root(), conv, tool, args).await?;
-        index_unchanged(&candidate.indexed, &self.index()).then_some(candidate.hit)
+        index_matches(&candidate, &self.index()).then_some(candidate.hit)
     }
 
     async fn context(&self, conv: &str) -> Option<String> {
@@ -128,7 +128,7 @@ impl Lcg {
         match self.next() % if depth > 2 { 4 } else { 6 } {
             0 => json!(self.next() % 5),
             1 => json!(format!("s{}", self.next() % 5)),
-            2 => json!(self.next() % 2 == 0),
+            2 => json!(self.next().is_multiple_of(2)),
             3 => Value::Null,
             4 => Value::Array((0..self.next() % 3).map(|_| self.value(depth + 1)).collect()),
             _ => {
@@ -468,7 +468,7 @@ async fn size_cap_evicts_oldest_first_and_never_exceeds_cap() {
     for i in 0..30 {
         let body = format!("{}entry {i}\n", node_body());
         let a = json!({"symbol": format!("s{i}")});
-        let id = store_reply(&f.pool, f.root(), "c1", "ax_node", &a, &body, &f.index(), cap)
+        let id = store_reply(&f.pool, f.root(), "c1", Reply { tool: "ax_node", args: &a, body: &body }, &f.index(), cap)
             .await
             .unwrap()
             .unwrap();
@@ -485,7 +485,7 @@ async fn size_cap_evicts_oldest_first_and_never_exceeds_cap() {
     }
     assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s29"})).await.is_some(), "newest kept");
     assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s0"})).await.is_none(), "oldest evicted");
-    store_reply(&f.pool, f.root(), "c2", "ax_node", &args(), &node_body(), &f.index(), cap)
+    store_reply(&f.pool, f.root(), "c2", Reply { tool: "ax_node", args: &args(), body: &node_body() }, &f.index(), cap)
         .await
         .unwrap();
     assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s29"})).await.is_some(), "cap is per conversation");
@@ -494,7 +494,7 @@ async fn size_cap_evicts_oldest_first_and_never_exceeds_cap() {
 #[tokio::test]
 async fn body_larger_than_cap_is_not_stored() {
     let f = Fixture::new().await;
-    let stored = store_reply(&f.pool, f.root(), "c1", "ax_node", &args(), &node_body(), &f.index(), 10)
+    let stored = store_reply(&f.pool, f.root(), "c1", Reply { tool: "ax_node", args: &args(), body: &node_body() }, &f.index(), 10)
         .await
         .unwrap();
     assert!(stored.is_none());
@@ -511,7 +511,7 @@ async fn concurrent_identical_stores_leave_one_intact_row() {
         let root = root.clone();
         let index = f.index();
         tasks.push(tokio::spawn(async move {
-            store_reply(&pool, &root, "c1", "ax_node", &args(), &node_body(), &index, 2_000_000).await
+            store_reply(&pool, &root, "c1", Reply { tool: "ax_node", args: &args(), body: &node_body() }, &index, 2_000_000).await
         }));
     }
     for t in tasks {
@@ -531,7 +531,7 @@ async fn concurrent_identical_stores_leave_one_intact_row() {
 async fn session_context_lists_only_fresh_entries_of_this_conversation() {
     let f = Fixture::new().await;
     f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
-    let other_body = "## Entry: src/other.rs::beta — src/other.rs:1-1\n".repeat(5);
+    let other_body = "## Entry: src/other.rs::beta — src/other.rs:1-1\n".repeat(40);
     f.store("c1", "ax_node", &json!({"symbol":"beta"}), &other_body).await.unwrap();
     f.store("c2", "ax_node", &json!({"symbol":"zeta"}), &node_body()).await.unwrap();
     std::fs::write(f.root().join("src/other.rs"), "fn beta() { changed() }\n").unwrap();
@@ -554,11 +554,11 @@ async fn reindexed_cited_file_invalidates_even_when_disk_is_unchanged() {
 }
 
 #[tokio::test]
-async fn reindex_of_an_uncited_file_keeps_the_hit() {
+async fn reindex_of_an_uncited_file_is_a_miss() {
     let f = Fixture::new().await;
     f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
     f.set_index("src/other.rs", "idx2");
-    assert!(f.lookup("c1", "ax_node", &args()).await.is_some());
+    assert!(f.lookup("c1", "ax_node", &args()).await.is_none(), "spec revision 7");
 }
 
 #[test]
@@ -579,4 +579,35 @@ fn ax_context_cache_off_disables_reuse() {
     assert!(!reuse_enabled_from(Some("off")));
     assert!(!reuse_enabled_from(Some("OFF")));
     assert!(!reuse_enabled_from(Some("0")));
+}
+
+#[tokio::test]
+async fn any_index_change_outside_the_cited_files_is_a_miss() {
+    let f = Fixture::new().await;
+    f.store("c1", "ax_callers", &args(), &node_body()).await.expect("stored");
+    assert!(f.lookup("c1", "ax_callers", &args()).await.is_some());
+    f.set_index("src/new_caller.rs", "idx1");
+    assert!(f.lookup("c1", "ax_callers", &args()).await.is_none(), "a new indexed file can change the answer");
+    assert!(f.context("c1").await.is_none(), "stale entries are not listed");
+}
+
+#[tokio::test]
+async fn reply_citing_more_files_than_tracked_is_not_cached() {
+    let f = Fixture::new().await;
+    let mut body = String::new();
+    for i in 0..=MAX_CITED_FILES {
+        let path = format!("src/f{i}.rs");
+        std::fs::write(f.root().join(&path), "fn x() {}\n").unwrap();
+        body.push_str(&format!("- {path}:1 x\n"));
+    }
+    body.push_str(&node_body());
+    assert_eq!(f.store("c1", "ax_explore", &args(), &body).await, None);
+}
+
+#[tokio::test]
+async fn reply_too_small_to_save_tokens_is_not_cached() {
+    let f = Fixture::new().await;
+    let body = "Callers of 'alpha'\n- src/lib.rs::alpha @ src/lib.rs:1-1\n";
+    assert!(count_tokens(body) as i64 <= MIN_REUSE_TOKENS);
+    assert_eq!(f.store("c1", "ax_callers", &args(), body).await, None);
 }

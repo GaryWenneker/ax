@@ -74,7 +74,7 @@ Replies at or above 3,000 tokens (override with `AX_CONTEXT_CACHE_TOKENS`; `0` o
 
 ### Conversation cache
 
-Within one agent conversation, a repeated read-only graph call (`ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_affected`, `ax_context`, with the same arguments) returns a short `[ax cache hit]` reference instead of the full answer again. `ax_expand` with its id returns the original byte-for-byte. Each lookup rechecks the content hash of every cited file on disk and in the index, so an edit or re-index turns it into a miss. The savings log records the reference as the response and the avoided tokens in `tokens_saved_est`. Pass `fresh: true` to rerun, and set `AX_CONTEXT_CACHE=off` to disable it. See the [MCP server reference](/reference/mcp-server/#conversation-cache).
+Within one agent conversation, a repeated read-only graph call (`ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_affected`, `ax_context`, with the same arguments) returns a short `[ax cache hit]` reference instead of the full answer again. `ax_expand` with its id returns the original byte-for-byte. Each lookup rechecks the content hash of every cited file on disk and a fingerprint of the whole index, so an edit or any re-index turns it into a miss. Replies of 200 tokens or less are not cached. The savings log records the reference as the response and the avoided tokens in `tokens_saved_est`. Pass `fresh: true` to rerun, and set `AX_CONTEXT_CACHE=off` to disable it. See the [MCP server reference](/reference/mcp-server/#conversation-cache).
 
 ### What is measured vs estimated
 
