@@ -67,7 +67,7 @@ pub fn reuse_cacheable(tool: &str) -> bool {
     REUSE_TOOLS.contains(&tool)
 }
 
-pub fn wants_fresh(args: &Value) -> bool {
+pub(crate) fn wants_fresh(args: &Value) -> bool {
     args.get("fresh").and_then(Value::as_bool).unwrap_or(false)
 }
 
@@ -129,7 +129,7 @@ fn safe_relative(path: &str) -> bool {
 
 /// Project-relative paths cited as `path:line` or `path::symbol` that exist under `root`.
 /// Stops one past `MAX_CITED_FILES`, so a caller can tell the list is incomplete.
-pub fn cited_files(body: &str, root: &Path) -> Vec<String> {
+pub(crate) fn cited_files(body: &str, root: &Path) -> Vec<String> {
     let mut found = BTreeSet::new();
     for token in body.split_whitespace() {
         let token = token.trim_start_matches(['`', '(', '[', '<', '"', '\'']);
@@ -191,7 +191,7 @@ fn disk_unchanged(root: &Path, files: &Snapshot) -> bool {
 }
 
 /// Each cited file has the indexed hash it had when the reply was stored.
-pub fn index_unchanged(recorded: &[(String, Option<String>)], current: &IndexHashes) -> bool {
+pub(crate) fn index_unchanged(recorded: &[(String, Option<String>)], current: &IndexHashes) -> bool {
     !recorded.is_empty()
         && recorded
             .iter()
@@ -205,7 +205,7 @@ pub fn index_matches(candidate: &ReuseCandidate, current: &IndexHashes) -> bool 
 
 /// Hash of every indexed path and content hash. A graph answer can depend on files it does
 /// not cite (a new caller, a removed callee), so any change to the index invalidates it.
-pub fn index_fingerprint(index: &IndexHashes) -> String {
+pub(crate) fn index_fingerprint(index: &IndexHashes) -> String {
     let mut hasher = Sha256::new();
     for (path, hash) in index {
         hasher.update(format!("{}:{path}|{}:{hash}|", path.len(), hash.len()).as_bytes());
@@ -447,7 +447,7 @@ pub(crate) async fn session_context(
 }
 
 /// Fresh entries of this conversation, newest first.
-pub async fn session_entries(
+pub(crate) async fn session_entries(
     pool: &SqlitePool,
     root: &Path,
     conversation: &str,
