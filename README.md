@@ -308,7 +308,7 @@ Advertised by default — the turn contract plus the whole graph read surface:
 | `ax_report` | Full Markdown architecture report |
 | `ax_remember` | Store a durable project memory (flags near-duplicates) |
 | `ax_recall` | Hybrid memory search (FTS5 + local vector embeddings) |
-| `ax_expand` | Read a cached oversized MCP reply by id (`offset` / `limit` in characters) |
+| `ax_expand` | Read a cached MCP reply by id (`offset` / `limit` in characters); also returns the answer behind an `[ax cache hit]` |
 | `ax_stash` | Store a chat slice or other tool result; returns an id, does not echo the body |
 | `ax_preflight` | Turn-start policy: matched rules + skills (when `.agents/` or `.ax/policy/` exists) |
 | `ax_rules` | List or match policy rules |
@@ -335,6 +335,8 @@ Opt-in via `AX_MCP_TOOLS` (comma-separated names, or `all`) — these mutate the
 **Turn-end post-flight (Claude Code):** `ax install` also wires `Stop`/`SubagentStop` hooks (`ax stop-hook`) so ax gets a say at the *end* of a turn too, not just the start — it re-checks every uncommitted file against `ax_guard` and blocks (`{"decision": "block", ...}`) only on a CRITICAL violation. Disable with `AX_NO_STOP_HOOK=1`.
 
 **Lean by default:** responses never ship the answer twice — `content.text` is authoritative and `structuredContent` is projected down to metadata (no duplicated source/rule bodies). `ax_context` and the data tools return compact markdown / one-line-per-symbol text instead of pretty-JSON. Tune with `AX_MCP_FULL` (restore full structured payload), `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). See the [token savings guide](https://getax.wenneker.io/guides/token-savings/).
+
+**Conversation cache:** within one agent conversation, a repeated read-only graph call (same tool and arguments) returns a short `[ax cache hit]` reference (under 100 tokens) instead of the full answer again; `ax_expand` with its id returns the original byte-for-byte. Every lookup rechecks the content hash of each cited file on disk and in the index, so an edit or re-index makes it a miss. Pass `fresh: true` to rerun. `ax_preflight` lists what the conversation already knows in `<ax_session_context>`. Cap: `AX_REUSE_CACHE_BYTES` (2 MB per conversation). See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/#conversation-cache).
 
 **Verbose MCP logging:** enable **Settings → Interface → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; full current day on load; scroll up for prior days; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
 

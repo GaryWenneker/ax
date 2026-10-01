@@ -5,6 +5,7 @@ alwaysApply: true
 tags: ["subagents", "preflight", "mcp"]
 priority: 105
 triggers: ["Task tool", "subagent", "background agent", "run_in_background"]
+seedVersion: 1
 ---
 # ax — Task subagents (background agents)
 
@@ -30,7 +31,13 @@ Before **every** `Task` invocation:
 
 2. Include the user's original message verbatim under `## User prompt (verbatim)`.
 
+3. Paste the cache ids from your `<ax_session_context>` that the subagent needs. It runs in its own conversation and cannot see yours; it reads them with `ax_expand`.
+
 Never write `ax_* … if available` in Task prompts.
+
+## Conversation cache
+
+A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` before searching again; pass `fresh: true` to force a new query.
 
 ## Subagent — first actions
 

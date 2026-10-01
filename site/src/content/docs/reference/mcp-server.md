@@ -136,6 +136,23 @@ ax_stash({ "text": "the bulky tool result", "label": "other-mcp" })
 ax_expand({ "id": "cc_0123456789abcdef", "offset": 0, "limit": 8000 })
 ```
 
+### Conversation cache
+
+Within one agent conversation, ax answers a repeated read-only graph call (`ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_affected`, `ax_context`) with a short reference instead of the full answer again:
+
+```text
+[ax cache hit] tool=ax_node id=cc_f0ae299dd7eef47c turn=2 original_tokens=1840
+Same call already answered in this conversation; cited files unchanged. Use the earlier answer, ax_expand id "cc_f0ae299dd7eef47c" to see it again, or fresh: true to rerun.
+```
+
+- **Same call** means the same conversation, project, tool, and arguments. Argument order and whitespace do not matter.
+- **Freshness** is checked on every lookup. Each entry records the files its answer cites, with the content hash on disk and the indexed `content_hash`. If any cited file was edited, deleted, or re-indexed, the call runs again. Answers that cite no file are never cached.
+- **`fresh: true`** on any of these tools skips the cache for that call.
+- **Preflight** adds an `<ax_session_context>` block (about 1,500 tokens at most) listing what this conversation already asked, with cited files and ids, so the agent can reuse it before searching again.
+- **Conversation id** comes from the Cursor hook (`~/.ax/active-cursor-session`). Without one, the MCP process is the conversation. Two Cursor chats running at the same moment share whichever id the hook wrote last; a hit is still verified fresh, and the agent can call `ax_expand` if it does not have the earlier answer.
+- **Size**: at most `AX_REUSE_CACHE_BYTES` (default 2 MB) of answers per conversation; the oldest go first. `AX_CONTEXT_CACHE=off` disables this too.
+- **Savings** are logged per hit (`tokensAvoided` = original answer tokens minus the reference) and appear in the savings report.
+
 ## Lean responses (token savings)
 
 Every `tools/call` reply is `{ content: [{ type: "text", text }], structuredContent?, isError }`. The `content.text` block is what strict clients and Cursor feed the model; `structuredContent` is machine-readable metadata for clients that consume it.

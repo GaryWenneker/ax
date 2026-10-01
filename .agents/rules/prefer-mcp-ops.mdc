@@ -5,6 +5,7 @@ alwaysApply: true
 triggers: ["sync", "index", "reindex", "lsp", "enrich", "ship", "quality gate", "ci", "policy index", "ax sync", "ax lsp", "ax ship", "remember", "recall"]
 tags: ["mcp", "ops", "workflow"]
 priority: 85
+seedVersion: 1
 ---
 # Prefer MCP ops tools (not shell CLI)
 
@@ -28,6 +29,7 @@ priority: 85
 2. Shell CLI is allowed only when MCP is unreachable (**Mode: DEGRADED**) or for ops with no MCP tool (install, upgrade, hooks, daemon, `ax web`, `ax share`, `ax ship --watch`/`--draft`).
 3. After large local edits that should refresh the graph, call `ax_sync` (or `ax_index` with `force`) before depending on explore/search results.
 4. Do not tell the user to “run ax sync in a terminal” when you can call `ax_sync` yourself.
+5. A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` before searching again; pass `fresh: true` to force a new query. An edited file invalidates its entries automatically, so no `ax_sync` is needed for that.
 
 ## Why
 
