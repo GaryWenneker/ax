@@ -538,11 +538,11 @@ pub fn verify_content(content: &str) -> Vec<String> {
 /// when the file is required (not optional).
 fn managed_file_issues(rel: &str, content: &str, optional: bool) -> Vec<String> {
     let mut issues = verify_content(content);
-    if !optional {
-        if let Some(t) = template_by_rel(rel) {
-            if content.trim() != t.body.trim() {
-                issues.push("drifted from embedded init template".into());
-            }
+    if let Some(t) = template_by_rel(rel) {
+        if !optional && content.trim() != t.body.trim() {
+            issues.push("drifted from embedded init template".into());
+        } else if optional && seed_version(t.body) > seed_version(content) {
+            issues.push("older seedVersion than the embedded template".into());
         }
     }
     issues
@@ -1112,6 +1112,61 @@ mod tests {
         let restored = std::fs::read_to_string(&startup).unwrap();
         assert!(restored.contains("paths"));
         assert!(!restored.contains("<!-- drifted -->"));
+    }
+
+    #[test]
+    fn sync_fix_brings_pre_cache_projects_the_conversation_cache_text() {
+        let dir = tempdir().unwrap();
+        let ax = dir.path().join(".ax");
+        seed_default_policy(&ax).unwrap();
+        let rels = [
+            ".agents/rules/explore-before-grep.mdc",
+            ".agents/rules/prefer-mcp-ops.mdc",
+            ".agents/rules/subagents.mdc",
+            ".agents/skills/startup/SKILL.md",
+            ".agents/skills/subagents/SKILL.md",
+        ];
+        for rel in rels {
+            let path = dir.path().join(rel);
+            let old = std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.contains(crate::CONVERSATION_CACHE_SENTENCE) && !l.starts_with("seedVersion:"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(!old.contains(crate::CONVERSATION_CACHE_SENTENCE));
+            std::fs::write(&path, old).unwrap();
+        }
+        sync_instructions(&ax, true).unwrap();
+        for rel in rels {
+            let body = std::fs::read_to_string(dir.path().join(rel)).unwrap();
+            assert!(body.contains(crate::CONVERSATION_CACHE_SENTENCE), "{rel} not upgraded");
+        }
+    }
+
+    #[test]
+    fn sync_fix_keeps_hand_edits_of_optional_files_at_the_current_seed_version() {
+        let dir = tempdir().unwrap();
+        let ax = dir.path().join(".ax");
+        seed_default_policy(&ax).unwrap();
+        let path = dir.path().join(".agents/rules/subagents.mdc");
+        let edited = format!("{}\n- team note\n", std::fs::read_to_string(&path).unwrap());
+        std::fs::write(&path, &edited).unwrap();
+        sync_instructions(&ax, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    }
+
+    #[test]
+    fn conversation_cache_templates_bump_seed_version() {
+        for body in [
+            include_str!("../templates/rules/explore-before-grep.mdc"),
+            include_str!("../templates/rules/prefer-mcp-ops.mdc"),
+            include_str!("../templates/rules/subagents.mdc"),
+            include_str!("../templates/skills/startup/SKILL.md"),
+            include_str!("../templates/skills/subagents/SKILL.md"),
+        ] {
+            assert!(seed_version(body) >= 1, "the conversation-cache change must bump seedVersion");
+        }
     }
 
     #[test]

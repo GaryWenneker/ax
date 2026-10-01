@@ -256,7 +256,7 @@ async fn call_tool_and_wrap(
     let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
     let reuse_root = project_root.filter(|_| ax_usage::reuse_cacheable(name));
     if let Some(root) = reuse_root {
-        if let Some(hit) = ax_usage::reuse_lookup(root, &conversation, name, &args).await {
+        if let Some(hit) = confirmed_reuse_hit(engine, root, &conversation, name, &args).await {
             let (wrapped, text, sent, avoided) = reuse_hit_reply(&hit);
             let _ = ax_usage::reuse_record_hit(&hit.key, avoided).await;
             if verbose {
@@ -339,7 +339,10 @@ async fn call_tool_and_wrap(
             let is_error = value.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
             if let (Some(root), Some(reuse_args)) = (reuse_root, reuse_args.as_ref()) {
                 if !is_error {
-                    let _ = ax_usage::reuse_store(root, &conversation, name, reuse_args, &annotated).await;
+                    let cited = ax_usage::cited_files(&annotated, root);
+                    if let Ok(index) = project_index_hashes(engine, &cited).await {
+                        let _ = ax_usage::reuse_store(root, &conversation, name, reuse_args, &annotated, &index).await;
+                    }
                 }
             }
             let cached = ax_usage::cache_oversized_reply(name, &annotated).await;
@@ -481,6 +484,26 @@ fn wrap_call_tool_result(value: Value, is_error: bool) -> Value {
 /// Cursor) feed the model; `structuredContent` is machine-readable metadata for
 /// clients that consume it. Passing `structured = None` omits it entirely so a
 /// text-authoritative response is not duplicated on the wire.
+async fn project_index_hashes(engine: &McpEngine, paths: &[String]) -> Result<ax_usage::IndexHashes, String> {
+    let guard = engine.lock_ax().await;
+    let ax = guard.as_ref().ok_or("ax not initialized")?;
+    crate::tools::indexed_hashes(ax.db_pool(), Some(paths)).await
+}
+
+/// A stored reply whose cited files are unchanged on disk and in the index.
+async fn confirmed_reuse_hit(
+    engine: &McpEngine,
+    root: &std::path::Path,
+    conversation: &str,
+    name: &str,
+    args: &Value,
+) -> Option<ax_usage::ReuseHit> {
+    let candidate = ax_usage::reuse_lookup(root, conversation, name, args).await?;
+    let paths: Vec<String> = candidate.indexed.iter().map(|(p, _)| p.clone()).collect();
+    let current = project_index_hashes(engine, &paths).await.ok()?;
+    ax_usage::index_unchanged(&candidate.indexed, &current).then_some(candidate.hit)
+}
+
 /// Wire reply for a reuse hit: (wrapped value, text, sent tokens, tokens avoided).
 fn reuse_hit_reply(hit: &ax_usage::ReuseHit) -> (Value, String, i64, i64) {
     let text = ax_usage::render_hit(hit);

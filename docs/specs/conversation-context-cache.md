@@ -21,6 +21,23 @@ stays retrievable byte-for-byte. Preflight lists what the conversation already k
    existing ledger and catalog keep working unchanged.
 4. **Turn number** = count of `ax_preflight` events recorded for the conversation.
 
+### Revisions found during implementation (appended, approved spec unchanged above)
+
+5. **Entries are scoped to conversation + project root.** Found by the L4 suite: the same call
+   in two projects with identical files shared one entry. Regression test
+   `same_call_in_another_project_misses_even_with_identical_files`.
+6. **Freshness also checks the indexed `content_hash`** (project `files` table), not only the
+   disk hash. Found by L4 `edit_then_sync_is_a_miss_with_the_new_code`: a call made after an edit
+   but before `ax_sync` returns old indexed source, which was stored against the new disk hash
+   and then served after the sync. A hit now requires disk hash and indexed hash both unchanged.
+
+```gherkin
+Scenario: reply produced from a lagging index is not served after sync
+  Given F was edited on disk but not yet synced, and ax_node returned old indexed source
+  When ax_sync runs and the same call is repeated
+  Then it is a miss and the reply shows the new code
+```
+
 ## Behavior (scenarios)
 
 ```gherkin

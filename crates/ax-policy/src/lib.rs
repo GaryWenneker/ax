@@ -85,7 +85,10 @@ pub use paths::{
     ensure_policy_dirs, ensure_scaffold, is_stub_body, policy_root, resolve_source_path,
     rules_dir, skills_dir, STUB_BODY_MARKER,
 };
-pub use ide_seed::{seed_ide_agent_workflow, sync_ide_bootstrap, verify_ide_bootstrap, IdeSeedResult};
+pub use ide_seed::{
+    seed_ide_agent_workflow, sync_ide_bootstrap, verify_ide_bootstrap, IdeSeedResult,
+    CONVERSATION_CACHE_SENTENCE,
+};
 pub use revisions::{
     get_revision, list_revisions, record_if_changed, record_restore_writes, PolicyRevision,
     SOURCE_RESTORE, SOURCE_SAVE,

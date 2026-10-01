@@ -64,8 +64,9 @@ pub use context_cache::{
     CacheOutcome, CatalogEntry, ExpandPage, StashReceipt,
 };
 pub use reuse_cache::{
-    conversation_key, render_hit, reuse_cacheable, reuse_lookup, reuse_record_hit,
-    reuse_session_context, reuse_store, wants_fresh, ReuseHit, SESSION_CONTEXT_TOKENS,
+    cited_files, conversation_key, index_unchanged, render_hit, reuse_cacheable, reuse_lookup,
+    reuse_record_hit, reuse_session_context, reuse_store, wants_fresh, IndexHashes, ReuseCandidate,
+    ReuseHit, SESSION_CONTEXT_TOKENS,
 };
 pub use tokenizer::{
     count_file_tokens, count_tokens, tokenize_text, tokenizer_available, truncate_utf8,

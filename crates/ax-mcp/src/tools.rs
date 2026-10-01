@@ -667,16 +667,18 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         if !inject.is_empty() {
             inject.push('\n');
         }
-        inject.push_str("<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result.</ax_context_cache>");
+        inject.push_str(CONTEXT_CACHE_LINE);
         let chat = chat_for_client(session_client(&params)).then(ax_usage::read_active_cursor_session).flatten();
         if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
             inject.push('\n');
             inject.push_str(&ledger);
         }
         let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
-        if let Some(known) = ax_usage::reuse_session_context(ax.project_root(), &conversation).await {
-            inject.push('\n');
-            inject.push_str(&known);
+        if let Ok(index) = indexed_hashes(ax.db_pool(), None).await {
+            if let Some(known) = ax_usage::reuse_session_context(ax.project_root(), &conversation, &index).await {
+                inject.push('\n');
+                inject.push_str(&known);
+            }
         }
         if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
             let unseen: Vec<_> = entries
@@ -1663,6 +1665,30 @@ fn guard_tool() -> Value {
     })
 }
 
+/// Indexed `content_hash` per path from the project `files` table; all files when `paths` is `None`.
+pub(crate) async fn indexed_hashes(
+    pool: &sqlx::SqlitePool,
+    paths: Option<&[String]>,
+) -> Result<ax_usage::IndexHashes, String> {
+    let rows: Vec<(String, String)> = match paths {
+        None => sqlx::query_as("SELECT path, content_hash FROM files")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?,
+        Some([]) => Vec::new(),
+        Some(paths) => {
+            let marks = vec!["?"; paths.len()].join(",");
+            let sql = format!("SELECT path, content_hash FROM files WHERE path IN ({marks})");
+            let mut query = sqlx::query_as(&sql);
+            for path in paths {
+                query = query.bind(path);
+            }
+            query.fetch_all(pool).await.map_err(|e| e.to_string())?
+        }
+    };
+    Ok(rows.into_iter().collect())
+}
+
 fn advertise_fresh(tools: &mut [Value]) {
     for tool in tools.iter_mut() {
         let cacheable = tool["name"].as_str().is_some_and(ax_usage::reuse_cacheable);
@@ -1995,6 +2021,8 @@ fn format_node_signatures(result: &ax_types::ExploreResult) -> String {
     out
 }
 
+const CONTEXT_CACHE_LINE: &str = "<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result. A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> before searching again; pass fresh: true to force a new query.</ax_context_cache>";
+
 pub fn server_instructions(has_policy: bool) -> String {
     let mut s = String::from(
         "You have access to ax code intelligence tools (MCP).\n\n",
@@ -2017,6 +2045,7 @@ pub fn server_instructions(has_policy: bool) -> String {
          Whole-graph understanding: call ax_insights for Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Call ax_report for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous) and Markdown docs are indexed as Doc nodes linked to the code they reference.\n\n\
          Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
          Context cache: an oversized graph reply keeps its head inline and ends with a footer id; other oversized replies become a short stub with an id. Call ax_expand with that id to read the rest. ax_stash stores a chat slice or another tool result the same way. Preflight lists recent ids and memory titles, not bodies. This is not a dump of the memory vault.\n\n\
+         Conversation cache: A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> in preflight before searching again; pass fresh: true to force a new query. Editing a cited file invalidates the entry.\n\n\
          Ops (prefer MCP — do NOT shell ax CLI when MCP is connected):\n\
          - ax_sync after local edits that should refresh the graph\n\
          - ax_index with force=true for a full rebuild\n\
@@ -2475,6 +2504,17 @@ mod tests {
     async fn ax_history_is_in_the_default_catalog() {
         let names = tool_names(&ToolHandler::list_tools(false).await);
         assert!(names.contains(&"ax_history".to_string()), "{names:?}");
+    }
+
+    #[test]
+    fn server_text_and_seeds_share_the_conversation_cache_sentence() {
+        for has_policy in [true, false] {
+            let text = server_instructions(has_policy);
+            assert!(text.contains(ax_policy::CONVERSATION_CACHE_SENTENCE), "instructions({has_policy})");
+            assert!(text.contains("<ax_session_context>") && text.contains("fresh: true"));
+        }
+        assert!(CONTEXT_CACHE_LINE.contains(ax_policy::CONVERSATION_CACHE_SENTENCE));
+        assert!(CONTEXT_CACHE_LINE.contains("fresh: true"));
     }
 
     #[tokio::test]

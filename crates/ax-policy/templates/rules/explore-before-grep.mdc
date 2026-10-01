@@ -5,6 +5,7 @@ alwaysApply: true
 triggers: ["grep", "read file", "how does", "architecture", "call path", "who calls", "impact", "find code", "search codebase", "where is", "blast radius", "fix", "how works"]
 tags: ["mcp", "tokens", "explore", "quality"]
 priority: 95
+seedVersion: 1
 ---
 # Explore before Grep/Read
 
@@ -34,6 +35,9 @@ Treat numbered source returned by `ax_explore` as already read — do not re-Gre
 | ends with an `[ax context cache]` footer | `ax_expand` with the footer id and offset | Read the files it named |
 | missed the symbol you need | `ax_search` / `ax_node` with the exact name; `ax_sync` if the file changed | repo-wide Grep |
 | needs who-calls / what-breaks | `ax_callers` / `ax_callees` / `ax_impact` | Grep for the name |
+| starts with `[ax cache hit]` | use the earlier answer, or `ax_expand` with its id | rerun the search, or Read the files |
+
+A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` in preflight before searching again; pass `fresh: true` to force a new query.
 
 Where the graph covers the code, do not Read or Grep the file to fill the gap. `ax_node` is the full source of a symbol, served from the index.
 

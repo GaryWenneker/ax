@@ -10,6 +10,7 @@ static SEQ: AtomicUsize = AtomicUsize::new(0);
 struct Fixture {
     dir: PathBuf,
     pool: SqlitePool,
+    index: std::sync::Mutex<IndexHashes>,
 }
 
 impl Fixture {
@@ -21,21 +22,35 @@ impl Fixture {
         std::fs::write(dir.join("src/lib.rs"), "fn alpha() {}\n").unwrap();
         std::fs::write(dir.join("src/other.rs"), "fn beta() {}\n").unwrap();
         let pool = open_pool_at(&dir.join("usage.db")).await.unwrap();
-        Fixture { dir, pool }
+        let index = std::sync::Mutex::new(index_of(&["src/lib.rs", "src/other.rs"], "idx1"));
+        Fixture { dir, pool, index }
     }
 
     fn root(&self) -> &Path {
         &self.dir
     }
 
+    fn index(&self) -> IndexHashes {
+        self.index.lock().unwrap().clone()
+    }
+
+    fn set_index(&self, path: &str, hash: &str) {
+        self.index.lock().unwrap().insert(path.to_string(), hash.to_string());
+    }
+
     async fn store(&self, conv: &str, tool: &str, args: &Value, body: &str) -> Option<String> {
-        store_reply(&self.pool, self.root(), conv, tool, args, body, 2_000_000)
+        store_reply(&self.pool, self.root(), conv, tool, args, body, &self.index(), 2_000_000)
             .await
             .unwrap()
     }
 
     async fn lookup(&self, conv: &str, tool: &str, args: &Value) -> Option<ReuseHit> {
-        lookup(&self.pool, self.root(), conv, tool, args).await
+        let candidate = lookup(&self.pool, self.root(), conv, tool, args).await?;
+        index_unchanged(&candidate.indexed, &self.index()).then_some(candidate.hit)
+    }
+
+    async fn context(&self, conv: &str) -> Option<String> {
+        session_context(&self.pool, self.root(), conv, 1_500, &self.index()).await
     }
 }
 
@@ -43,6 +58,10 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+fn index_of(paths: &[&str], hash: &str) -> IndexHashes {
+    paths.iter().map(|p| (p.to_string(), hash.to_string())).collect()
 }
 
 fn node_body() -> String {
@@ -270,6 +289,17 @@ async fn other_conversation_misses() {
 }
 
 #[tokio::test]
+async fn same_call_in_another_project_misses_even_with_identical_files() {
+    let a = Fixture::new().await;
+    let b = Fixture::new().await;
+    a.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    assert!(lookup(&a.pool, b.root(), "c1", "ax_node", &args()).await.is_none());
+    assert!(session_context(&a.pool, b.root(), "c1", 1_500, &b.index()).await.is_none());
+    b.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    assert!(a.lookup("c1", "ax_node", &args()).await.is_some(), "b must not evict a");
+}
+
+#[tokio::test]
 async fn different_args_or_tool_miss() {
     let f = Fixture::new().await;
     f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
@@ -388,12 +418,14 @@ fn files_fresh_fails_closed() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.rs"), "a").unwrap();
     let snap = snapshot_files(&dir, &["a.rs".to_string()]).unwrap();
-    let json = serde_json::to_string(&snap).unwrap();
+    let triples: Vec<(String, String, Option<String>)> =
+        snap.into_iter().map(|(p, h)| (p, h, None)).collect();
+    let json = serde_json::to_string(&triples).unwrap();
     assert!(files_fresh(&dir, &json));
     assert!(!files_fresh(&dir, "not json"));
     assert!(!files_fresh(&dir, "[]"), "nothing to verify against is not fresh");
-    assert!(!files_fresh(&dir, r#"[["a.rs","0000"]]"#));
-    assert!(!files_fresh(&dir, r#"[["../a.rs","x"]]"#));
+    assert!(!files_fresh(&dir, r#"[["a.rs","0000",null]]"#));
+    assert!(!files_fresh(&dir, r#"[["../a.rs","x",null]]"#));
     assert!(snapshot_files(&dir, &["missing.rs".to_string()]).is_none());
     assert!(snapshot_files(&dir, &[]).is_none());
     let _ = std::fs::remove_dir_all(&dir);
@@ -436,22 +468,24 @@ async fn size_cap_evicts_oldest_first_and_never_exceeds_cap() {
     for i in 0..30 {
         let body = format!("{}entry {i}\n", node_body());
         let a = json!({"symbol": format!("s{i}")});
-        let id = store_reply(&f.pool, f.root(), "c1", "ax_node", &a, &body, cap)
+        let id = store_reply(&f.pool, f.root(), "c1", "ax_node", &a, &body, &f.index(), cap)
             .await
             .unwrap()
             .unwrap();
         ids.push(id);
-        let (total,): (i64,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(body_bytes), 0) FROM mcp_reuse_cache WHERE conversation = 'c1'",
+        let (total, rows): (i64, i64) = sqlx::query_as(
+            "SELECT COALESCE(SUM(body_bytes), 0), COUNT(*) FROM mcp_reuse_cache
+             WHERE conversation LIKE 'c1' || char(31) || '%'",
         )
         .fetch_one(&f.pool)
         .await
         .unwrap();
+        assert!(rows > 0, "query must see the conversation's rows");
         assert!(total <= cap, "total {total} exceeds cap after insert {i}");
     }
     assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s29"})).await.is_some(), "newest kept");
     assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s0"})).await.is_none(), "oldest evicted");
-    store_reply(&f.pool, f.root(), "c2", "ax_node", &args(), &node_body(), cap)
+    store_reply(&f.pool, f.root(), "c2", "ax_node", &args(), &node_body(), &f.index(), cap)
         .await
         .unwrap();
     assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s29"})).await.is_some(), "cap is per conversation");
@@ -460,7 +494,7 @@ async fn size_cap_evicts_oldest_first_and_never_exceeds_cap() {
 #[tokio::test]
 async fn body_larger_than_cap_is_not_stored() {
     let f = Fixture::new().await;
-    let stored = store_reply(&f.pool, f.root(), "c1", "ax_node", &args(), &node_body(), 10)
+    let stored = store_reply(&f.pool, f.root(), "c1", "ax_node", &args(), &node_body(), &f.index(), 10)
         .await
         .unwrap();
     assert!(stored.is_none());
@@ -475,8 +509,9 @@ async fn concurrent_identical_stores_leave_one_intact_row() {
     for _ in 0..16 {
         let pool = pool.clone();
         let root = root.clone();
+        let index = f.index();
         tasks.push(tokio::spawn(async move {
-            store_reply(&pool, &root, "c1", "ax_node", &args(), &node_body(), 2_000_000).await
+            store_reply(&pool, &root, "c1", "ax_node", &args(), &node_body(), &index, 2_000_000).await
         }));
     }
     for t in tasks {
@@ -500,10 +535,39 @@ async fn session_context_lists_only_fresh_entries_of_this_conversation() {
     f.store("c1", "ax_node", &json!({"symbol":"beta"}), &other_body).await.unwrap();
     f.store("c2", "ax_node", &json!({"symbol":"zeta"}), &node_body()).await.unwrap();
     std::fs::write(f.root().join("src/other.rs"), "fn beta() { changed() }\n").unwrap();
-    let text = session_context(&f.pool, f.root(), "c1", 1_500).await.expect("block");
+    let text = f.context("c1").await.expect("block");
     assert!(text.contains("alpha"), "{text}");
     assert!(text.contains("src/lib.rs"));
     assert!(!text.contains("beta"), "stale entry listed: {text}");
     assert!(!text.contains("zeta"), "other conversation listed: {text}");
-    assert!(session_context(&f.pool, f.root(), "c9", 1_500).await.is_none());
+    assert!(f.context("c9").await.is_none());
+}
+
+#[tokio::test]
+async fn reindexed_cited_file_invalidates_even_when_disk_is_unchanged() {
+    let f = Fixture::new().await;
+    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    assert!(f.lookup("c1", "ax_node", &args()).await.is_some());
+    f.set_index("src/lib.rs", "idx2");
+    assert!(f.lookup("c1", "ax_node", &args()).await.is_none(), "index moved on: must miss");
+    assert!(f.context("c1").await.is_none(), "index-stale entry listed");
+}
+
+#[tokio::test]
+async fn reindex_of_an_uncited_file_keeps_the_hit() {
+    let f = Fixture::new().await;
+    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.set_index("src/other.rs", "idx2");
+    assert!(f.lookup("c1", "ax_node", &args()).await.is_some());
+}
+
+#[test]
+fn index_unchanged_fails_closed() {
+    let current = index_of(&["a.rs"], "h1");
+    assert!(index_unchanged(&[("a.rs".into(), Some("h1".into()))], &current));
+    assert!(!index_unchanged(&[("a.rs".into(), Some("h0".into()))], &current));
+    assert!(!index_unchanged(&[("a.rs".into(), None)], &current), "now indexed, was not");
+    assert!(!index_unchanged(&[("b.rs".into(), Some("h1".into()))], &current), "dropped from index");
+    assert!(index_unchanged(&[("b.rs".into(), None)], &current), "still not indexed");
+    assert!(!index_unchanged(&[], &current), "nothing recorded is not fresh");
 }
