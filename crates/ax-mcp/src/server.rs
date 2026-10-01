@@ -1136,7 +1136,7 @@ mod reuse_integration {
 
     #[tokio::test]
     async fn second_identical_node_call_is_a_short_hit_and_expand_is_byte_identical() {
-        let (_dir, mut engine) = fixture().await;
+        let (dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         let first = call(&mut engine, "ax_node", args.clone()).await;
         let first_text = text(&first);
@@ -1158,8 +1158,9 @@ mod reuse_integration {
         let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
         let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}")).await.unwrap();
         let (hits, avoided): (i64, i64) =
-            sqlx::query_as("SELECT hits, tokens_avoided FROM mcp_reuse_cache WHERE cache_id = ?")
+            sqlx::query_as("SELECT hits, tokens_avoided FROM mcp_reuse_cache WHERE cache_id = ? AND conversation LIKE ?")
                 .bind(meta["contextCacheHit"].as_str().unwrap())
+                .bind(format!("%\u{1f}{}", dir.path().canonicalize().unwrap().display()))
                 .fetch_one(&pool)
                 .await
                 .unwrap();
