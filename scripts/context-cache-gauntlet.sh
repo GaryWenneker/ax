@@ -112,8 +112,13 @@ PY
 run_mutants() {
   layer "cargo-mutants on reuse_cache.rs (ax-usage + ax-mcp tests)"
   # Wrappers in reuse_cache.rs are exercised by the ax-mcp L4 tests, so run both packages.
+  # Excluded, with the reason recorded in EVIDENCE:
+  #   indexed_of (2 mutants)   equivalent: index_fingerprint already covers every indexed path
+  #   lookup `||` -> `&&` gate equivalent: store never writes rows for non-cacheable tools
+  #   reuse_enabled -> true    reads the environment; killed by the session layer below instead
   cargo mutants --package ax-usage --file crates/ax-usage/src/reuse_cache.rs \
-    --test-package ax-usage --test-package ax-mcp --output "$OUT" --no-shuffle -- --lib
+    --test-package ax-usage --test-package ax-mcp --output "$OUT" --no-shuffle \
+    --exclude-re 'reuse_cache\.rs:(217:5|390:25|523:5):' -- --lib
 }
 
 run_manual_mutants() {
@@ -183,6 +188,22 @@ run_session() {
   fi
   echo "negative control failed as required:"
   python3 -c 'import json,sys; [print("  ", f) for f in json.load(open(sys.argv[1]))["failures"]]' "$OUT/session-control.json"
+
+  local src=crates/ax-usage/src/reuse_cache.rs
+  local enabled='reuse_enabled_from(std::env::var("AX_CONTEXT_CACHE").ok().as_deref())'
+  [ "$(grep -cF "$enabled" "$src")" = 1 ] || { echo "reuse_enabled mutant: anchor not found"; exit 1; }
+  cp "$src" "$OUT/reuse_cache.rs.orig"
+  trap 'cp "$OUT/reuse_cache.rs.orig" crates/ax-usage/src/reuse_cache.rs' EXIT
+  python3 -c 'import sys; p,a=sys.argv[1],sys.argv[2]; s=open(p).read(); open(p,"w").write(s.replace(a,"true"))' "$src" "$enabled"
+  cargo build -p ax-cli
+  if AX_BIN="$bin" python3 scripts/bench-agent-efficiency/reuse_session.py --out "$OUT/session-mutant.json" >/dev/null; then
+    echo "mutant reuse_enabled -> true survived the session layer"; exit 1
+  fi
+  cp "$OUT/reuse_cache.rs.orig" "$src"; trap - EXIT
+  git diff --quiet -- "$src" || { echo "restore failed for $src"; exit 1; }
+  grep -q "AX_CONTEXT_CACHE=off still served a hit" "$OUT/session-mutant.json" || { echo "mutant failed for another reason"; exit 1; }
+  echo "mutant reuse_enabled -> true killed by L5 off arm"
+  cargo build -p ax-cli
 }
 
 run_audit() {

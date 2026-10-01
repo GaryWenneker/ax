@@ -1155,6 +1155,15 @@ mod reuse_integration {
         let original = meta["originalTokens"].as_i64().unwrap();
         assert_eq!(meta["tokensAvoided"].as_i64(), Some(original - sent));
 
+        let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}")).await.unwrap();
+        let (hits, avoided): (i64, i64) =
+            sqlx::query_as("SELECT hits, tokens_avoided FROM mcp_reuse_cache WHERE cache_id = ?")
+                .bind(meta["contextCacheHit"].as_str().unwrap())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((hits, avoided), (1, original - sent), "hit counter and avoided tokens are recorded");
         let id = meta["contextCacheHit"].as_str().unwrap().to_string();
         let expanded = call(&mut engine, "ax_expand", json!({ "id": id, "limit": 12_000 })).await;
         assert_eq!(text(&expanded), first_text, "expanded body must equal the first reply");
