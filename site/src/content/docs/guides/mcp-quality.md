@@ -157,7 +157,7 @@ Score starts at **100** and drops when findings fire. Main checks:
 | **EnrichPresent** | high | Preflight/enrich clusters with empty or missing inject |
 | **RulesInjected** | medium | Low `matched_rules` rate on preflight enrichments |
 | **ExploreBeforeGrep** | high / medium | Read/Grep without graph tools while MCP inbound is active (skipped in DEGRADED / quiet MCP) |
-| **GuardBeforeWrite** | low | Busy ax traffic with no `ax_guard` |
+| **GuardBeforeWrite** | low | Write/StrReplace/Delete/EditNotebook ran with no `ax_guard` (read-only windows are never flagged) |
 | **UncorrelatedTool** | high / medium / info | Transcript ax tools that do not line up with verbose clusters; **info** (no score hit) when verbose logging is enabled but MCP wrote nothing in-window |
 | **VerboseGap** | high / medium | Weak correlation when MCP clusters exist but don't match transcript calls |
 

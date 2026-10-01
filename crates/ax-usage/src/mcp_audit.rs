@@ -69,6 +69,8 @@ pub struct ToolMix {
     pub other_ax: usize,
     pub read: usize,
     pub grep: usize,
+    #[serde(default)]
+    pub write: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +136,7 @@ enum TranscriptKind {
     AxTool,
     Read,
     Grep,
+    Write,
     Other,
 }
 
@@ -417,6 +420,8 @@ fn classify_cursor_tool_event(name: &str, input: &Value) -> TranscriptEvent {
         ev.kind = TranscriptKind::Read;
     } else if name == "Grep" {
         ev.kind = TranscriptKind::Grep;
+    } else if matches!(name, "Write" | "StrReplace" | "Delete" | "EditNotebook") {
+        ev.kind = TranscriptKind::Write;
     } else if name == "CallMcpTool" || name == "CallDynamicTool" {
         let nested = input.get("arguments").cloned().unwrap_or(Value::Null);
         let server = input
@@ -731,6 +736,7 @@ fn tool_mix_from(clusters: &[VerboseCluster], events: &[TranscriptEvent]) -> Too
                     }
                 }
             }
+            TranscriptKind::Write => mix.write += 1,
             TranscriptKind::Other => {}
         }
     }
@@ -988,16 +994,15 @@ fn score_and_findings(
         });
     }
 
-    // GuardBeforeWrite — soft: if Write-like tools aren't in transcript we skip;
-    // detect ax_guard absence when there were many other ax calls.
-    if mix.graph + mix.other_ax > 5 && mix.guard == 0 {
+    // GuardBeforeWrite — read-only windows never need a guard.
+    if mix.write > 0 && mix.guard == 0 {
         score -= 5;
         findings.push(Finding {
             id: "guard-before-write".into(),
             check: "GuardBeforeWrite".into(),
             severity: "low".into(),
             title: "No ax_guard in window".into(),
-            detail: "Active MCP traffic without ax_guard — ensure guards run before Write/Delete."
+            detail: "Write/Delete tools ran without ax_guard — call ax_guard before editing."
                 .into(),
             waste_hint: "Policy misses cause rework edits that cost tokens.".into(),
             tokens_est: 500,
@@ -1662,6 +1667,47 @@ mod tests {
         });
         let ev = classify_cursor_tool_event("CallDynamicTool", &input);
         assert_eq!(ev.kind, TranscriptKind::Other);
+    }
+
+    fn guard_findings(mix: &ToolMix) -> bool {
+        let (_s, findings, _) = score_and_findings(
+            &[],
+            &[],
+            mix,
+            &EnrichmentMetrics::default(),
+            100.0,
+            ScoreMode { mode: "verbose_only", verbose_present: true, verbose_enabled: true },
+            "",
+        );
+        findings.iter().any(|f| f.check == "GuardBeforeWrite")
+    }
+
+    #[test]
+    fn read_only_traffic_skips_guard_before_write() {
+        let mix = ToolMix { explore: 5, graph: 12, ..ToolMix::default() };
+        assert!(!guard_findings(&mix));
+    }
+
+    #[test]
+    fn writes_without_guard_flag_guard_before_write() {
+        let mix = ToolMix { graph: 1, write: 2, ..ToolMix::default() };
+        assert!(guard_findings(&mix));
+    }
+
+    #[test]
+    fn writes_with_guard_skip_guard_before_write() {
+        let mix = ToolMix { graph: 12, write: 2, guard: 1, ..ToolMix::default() };
+        assert!(!guard_findings(&mix));
+    }
+
+    #[test]
+    fn classifies_edit_tools_as_write() {
+        for name in ["Write", "StrReplace", "Delete", "EditNotebook"] {
+            let ev = classify_cursor_tool_event(name, &serde_json::json!({}));
+            assert_eq!(ev.kind, TranscriptKind::Write, "{name}");
+        }
+        let events = vec![classify_cursor_tool_event("Write", &serde_json::json!({}))];
+        assert_eq!(tool_mix_from(&[], &events).write, 1);
     }
 
     #[test]
