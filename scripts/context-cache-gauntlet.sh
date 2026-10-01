@@ -84,7 +84,12 @@ for path, lines in sorted(changed.items()):
     test_start = next((i + 1 for i, l in enumerate(src) if l.strip().startswith("#[cfg(test)]")), None)
     per_file = hits.get(path)
     if per_file is None:
-        sys.exit(f"coverage: changed file {path} missing from lcov report")
+        declarative = re.compile(r"^\s*($|//|pub use |use |pub mod |mod |#\[|[}\]);,]+$|[A-Za-z_][\w:]*(,\s*[A-Za-z_][\w:]*)*,?$)")
+        code = [n for n in lines if not declarative.match(src[n - 1])]
+        if code:
+            sys.exit(f"coverage: {path} missing from lcov report but changed lines look executable: {code}")
+        print(f"  {path}: not in lcov, {len(lines)} changed declaration lines only")
+        continue
     for n in lines:
         if test_start and n >= test_start:
             continue

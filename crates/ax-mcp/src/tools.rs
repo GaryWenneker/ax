@@ -674,7 +674,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             inject.push_str(&ledger);
         }
         let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
-        if let Ok(index) = indexed_hashes(ax.db_pool(), None).await {
+        if let Ok(index) = indexed_hashes(ax.db_pool()).await {
             let unseen: Vec<_> = ax_usage::reuse_session_entries(ax.project_root(), &conversation, &index)
                 .await
                 .into_iter()
@@ -1675,26 +1675,11 @@ fn guard_tool() -> Value {
 }
 
 /// Indexed `content_hash` per path from the project `files` table; all files when `paths` is `None`.
-pub(crate) async fn indexed_hashes(
-    pool: &sqlx::SqlitePool,
-    paths: Option<&[String]>,
-) -> Result<ax_usage::IndexHashes, String> {
-    let rows: Vec<(String, String)> = match paths {
-        None => sqlx::query_as("SELECT path, content_hash FROM files")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?,
-        Some([]) => Vec::new(),
-        Some(paths) => {
-            let marks = vec!["?"; paths.len()].join(",");
-            let sql = format!("SELECT path, content_hash FROM files WHERE path IN ({marks})");
-            let mut query = sqlx::query_as(&sql);
-            for path in paths {
-                query = query.bind(path);
-            }
-            query.fetch_all(pool).await.map_err(|e| e.to_string())?
-        }
-    };
+pub(crate) async fn indexed_hashes(pool: &sqlx::SqlitePool) -> Result<ax_usage::IndexHashes, String> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT path, content_hash FROM files")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(rows.into_iter().collect())
 }
 

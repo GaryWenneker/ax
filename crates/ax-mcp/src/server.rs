@@ -488,7 +488,7 @@ fn wrap_call_tool_result(value: Value, is_error: bool) -> Value {
 async fn project_index_hashes(engine: &McpEngine) -> Result<ax_usage::IndexHashes, String> {
     let guard = engine.lock_ax().await;
     let ax = guard.as_ref().ok_or("ax not initialized")?;
-    crate::tools::indexed_hashes(ax.db_pool(), None).await
+    crate::tools::indexed_hashes(ax.db_pool()).await
 }
 
 /// A stored reply whose cited files are unchanged on disk, and whose index is unchanged.
