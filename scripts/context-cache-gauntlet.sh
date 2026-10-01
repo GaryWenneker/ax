@@ -207,8 +207,26 @@ run_session() {
 }
 
 run_audit() {
-  layer "cargo audit"
-  cargo audit
+  layer "cargo audit (no new advisories against $BASE)"
+  git show "$BASE:Cargo.lock" >"$OUT/base-Cargo.lock"
+  # cargo audit exits 1 when it finds advisories; the comparison below is the gate.
+  cargo audit --json >"$OUT/audit-head.json" || [ -s "$OUT/audit-head.json" ]
+  cargo audit --json -f "$OUT/base-Cargo.lock" >"$OUT/audit-base.json" || [ -s "$OUT/audit-base.json" ]
+  python3 - "$OUT/audit-base.json" "$OUT/audit-head.json" <<'PY'
+import json, sys
+def ids(path):
+    d = json.load(open(path, encoding="utf-8"))
+    found = {(v["advisory"]["id"], v["package"]["name"], v["package"]["version"]) for v in d["vulnerabilities"]["list"]}
+    for kind, items in d.get("warnings", {}).items():
+        found |= {(w["advisory"]["id"], w["package"]["name"], w["package"]["version"]) for w in items if w.get("advisory")}
+    return found
+base, head = ids(sys.argv[1]), ids(sys.argv[2])
+new = sorted(head - base)
+print(f"advisories: base {len(base)}, head {len(head)}, new {len(new)}")
+for n in new:
+    print("  NEW", *n)
+sys.exit(1 if new else 0)
+PY
 }
 
 for l in $LAYERS; do
