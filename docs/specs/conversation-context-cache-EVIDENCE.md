@@ -65,7 +65,7 @@ savings, varying only by a few tokens of telemetry text.
 | Must not change non-cacheable or first-call replies | L5 miss replies equal the cache-off replies (same lines; see Known limits) |
 | Must not break existing tests | Full suite: 477/477, 3 runs |
 | No new runtime dependencies | `Cargo.lock` and manifests unchanged since `daf5772`; audit layer |
-| L7 live-agent benchmark | **Not performed.** It spends paid model usage, and the `claude -p` call was blocked without explicit authorization |
+| L7 live-agent benchmark | **Blocked.** Authorized, and the harness `scripts/bench-agent-efficiency/reuse_live.py` is committed, but every `claude -p` call returns `Not logged in · Please run /login` (`terminal_reason: api_error`, zero tokens), with or without `--setting-sources project` |
 
 ## Gauntlet (fresh run on `a292ad1`, except cargo-mutants on identical crates `c449888`)
 
@@ -134,8 +134,14 @@ throwaway mutant: index fingerprint, once-per-session filter, hit counter.
 - **Two index builds can list equal-score callees in a different order.** This is a pre-existing
   nondeterminism, not caused by the cache. L5 therefore compares the off arm by its set of lines,
   and the on arm's hits byte-for-byte against its own first reply.
-- **L7 (live agents, median input tokens −15%) not performed.** Whether real agents re-ask
-  often enough to benefit is not yet measured.
+- **L7 (live agents, median input tokens −15%) blocked: the Claude CLI is not logged in.**
+  Whether real agents re-ask often enough to benefit is not yet measured. After `claude /login`,
+  run `AX_BIN=<ax> python3 scripts/bench-agent-efficiency/reuse_live.py --runs 5`. Design:
+  - **Conversations:** 3 turns joined with `--resume`; turn 3 re-asks turn 1.
+  - **Arms:** `AX_CONTEXT_CACHE` off vs on, alternating. Each arm has its own copy of `crates/ax-usage` and `crates/ax-mcp`, and its own daemon.
+  - **Isolation:** the ax server gets an isolated `AX_HOME_DIR` holding the conversation id, plus its own `AX_USAGE_DB`. User-level Claude settings are skipped, so global ax hooks don't touch the real usage database or active session.
+  - **Exit code:** nonzero unless the median drop is at least 15% and correctness doesn't fall.
+  - **Known confound:** `off` also disables oversized-reply stubbing, not only reuse.
 - **Pre-existing, out of scope:** `verify_content` flags `prefer-mcp-ops` without "ax_preflight",
   so `--fix` overwrites hand edits there. The `ax_index` watcher also queues thousands of
   `target-dev` object files as pending sync.
