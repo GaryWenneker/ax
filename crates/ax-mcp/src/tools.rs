@@ -67,7 +67,22 @@ impl ToolHandler {
                     Ok(index) => ax_usage::index_fingerprint(&index),
                     Err(_) => String::new(),
                 };
+                let action = params.get("action").and_then(Value::as_str).unwrap_or("get");
+                if matches!(action, "fork" | "handoff") {
+                    let child = crate::chat_session::mint_session();
+                    let text = if action == "fork" {
+                        ax_usage::fork_working_context(ax.project_root(), &conversation, &child, &fingerprint).await?
+                    } else {
+                        ax_usage::handoff_working_context(ax.project_root(), &conversation, &child, &params, &fingerprint).await?
+                    };
+                    return Ok(json!({ "text": text, "session": child }));
+                }
                 let text = ax_usage::working_context_apply(ax.project_root(), &conversation, &params, &fingerprint).await?;
+                Ok(json!({ "text": text }))
+            }
+            "ax_durable" => {
+                let conversation = chat_of(&params);
+                let text = ax_usage::durable_apply(&conversation, &params).await?;
                 Ok(json!({ "text": text }))
             }
             "ax_context" => {
@@ -706,13 +721,13 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             let working = ax_usage::working_context_block(ax.project_root(), &conversation, &fingerprint, known).await;
             if !working.is_empty() {
                 inject.push('\n');
-                inject.push_str(&working);
+                inject.push_str(&ax_section("session", &working));
             }
             let turns = params.get(TURNS_ARG).and_then(Value::as_u64).unwrap_or(0) as u32;
             let stale = working.lines().next().is_some_and(|header| header.contains("stale=true"));
             if let Some(nudge) = ax_usage::session_nudge(turns, stale) {
                 inject.push('\n');
-                inject.push_str(&nudge);
+                inject.push_str(&ax_section("nudge", &nudge));
             }
         }
         if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
@@ -856,6 +871,10 @@ fn chat_of(params: &Value) -> String {
         Some(chat) => chat.to_string(),
         None => ax_usage::conversation_key(ax_usage::read_active_cursor_session()),
     }
+}
+
+fn ax_section(name: &str, body: &str) -> String {
+    format!("<ax_section name=\"{name}\">\n{body}\n</ax_section>")
 }
 
 fn chat_line(chat: &str, fingerprint: Option<&str>) -> String {
@@ -1742,7 +1761,7 @@ fn advertise_fresh(tools: &mut [Value]) {
             );
         }
         let name = tool["name"].as_str().unwrap_or_default();
-        let chat_state = cacheable || matches!(name, "ax_preflight" | "ax_session");
+        let chat_state = cacheable || matches!(name, "ax_preflight" | "ax_session" | "ax_durable");
         if let (true, Some(props)) = (chat_state, tool["inputSchema"]["properties"].as_object_mut()) {
             props.insert(
                 "session".to_string(),
@@ -1820,12 +1839,36 @@ fn extra_tools() -> Vec<Value> {
         json!({ "name": "ax_files", "description": "Project file listing", "inputSchema": { "type": "object", "properties": {} } }),
         json!({ "name": "ax_context", "description": "Build task context", "inputSchema": { "type": "object", "properties": { "task": { "type": "string" } }, "required": ["task"] } }),
         json!({
-            "name": "ax_session",
-            "description": "Read or update this conversation's working context: the small snapshot of objective, facts, files, symbols, decisions, and open questions. Preflight shows it every turn, or one unchanged line when you pass its hash as known_context. Raw tool results stay in the conversation cache. Actions: get (default), add, update, compact, clear.",
+            "name": "ax_durable",
+            "description": "Durable transcript, documents, and tasks for this chat. append/read/search store the conversation. compact writes a summary and hides older entries from read; search still finds them. fork reads the parent up to an entry and copies documents. handoff starts a new transcript from a note. doc_put/doc_get store JSON state. task_start, task_checkpoint, task_resume, and task_finish keep a step that survives a restart. hook records a name that is written into the transcript when that event runs.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["get", "add", "update", "compact", "clear"], "description": "Default get. compact replaces the whole snapshot and requires every section. add appends. update replaces the sections you send." },
+                    "action": { "type": "string", "enum": ["append", "read", "search", "compact", "fork", "handoff", "doc_put", "doc_get", "task_start", "task_checkpoint", "task_resume", "task_finish", "hook"] },
+                    "kind": { "type": "string" },
+                    "body": {},
+                    "query": { "type": "string" },
+                    "summary": { "type": "string" },
+                    "first_kept": { "type": "number" },
+                    "at": { "type": "number" },
+                    "note": { "type": "string" },
+                    "task": { "type": "string" },
+                    "phase": { "type": "string" },
+                    "checkpoint": { "type": "object" },
+                    "input": { "type": "object" },
+                    "result": {},
+                    "event": { "type": "string" },
+                    "name": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "ax_session",
+            "description": "Read or update this conversation's working context: the small snapshot of objective, facts, files, symbols, decisions, and open questions. Preflight shows it every turn, or one unchanged line when you pass its hash as known_context. Raw tool results stay in the conversation cache. Actions: get (default), add, update, compact, clear, fork, handoff. fork copies the notes to a new session. handoff stores the note you send as a new session. The old session stays readable and the graph cache is not copied.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["get", "add", "update", "compact", "clear", "fork", "handoff"], "description": "Default get. compact replaces the whole snapshot and requires every section. add appends. update replaces the sections you send. fork copies the notes. handoff starts a new session from the note you send." },
                     "objective": { "type": "string" },
                     "facts": { "type": "array", "items": { "type": "string" } },
                     "files": { "type": "array", "items": { "type": "string" } },
@@ -2614,7 +2657,7 @@ mod tests {
                 .find(|t| t["name"] == name)
                 .map(|t| t["inputSchema"]["properties"]["session"]["type"].as_str() == Some("string"))
         };
-        for name in ["ax_preflight", "ax_session", "ax_node", "ax_explore", "ax_search", "ax_callers"] {
+        for name in ["ax_preflight", "ax_session", "ax_durable", "ax_node", "ax_explore", "ax_search", "ax_callers"] {
             assert_eq!(session_type(name), Some(true), "{name}");
         }
         assert_eq!(session_type("ax_guard"), Some(false));

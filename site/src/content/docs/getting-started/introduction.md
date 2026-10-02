@@ -18,6 +18,14 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v6.2.0
+
+v6.2.0 is a minor release. The conversation cache, working notes, and a durable transcript are new, and existing tools keep their old actions.
+
+- **Per-chat cache.** A repeated graph call in one chat returns a short cache hit. Preflight prints a `session` id; pass it on later ax calls so chats do not share one cache.
+- **Working notes.** `ax_session` stores the objective, facts, files, symbols, decisions, and open questions. `fork` copies them to a new chat. `handoff` starts a new chat from a note and leaves the old notes readable.
+- **Durable transcript.** `ax_durable` stores the conversation, JSON documents, and checkpointed tasks. `compact` hides older entries from `read` while `search` still finds them. `task_resume` returns the last checkpoint after a restart.
+
 ## What's new in v6.0.0
 
 v6.0.0 is a major release because `ax install` now also installs a Command Center panel in your IDE, and JetBrains IDEs become a new install target.

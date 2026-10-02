@@ -4,7 +4,7 @@ description: Mandatory ax MCP workflow for Cursor Task and background subagents.
 triggers: ["Task tool", "subagent", "background agent", "run_in_background", "explore agent"]
 tags: ["subagents", "preflight"]
 priority: 95
-seedVersion: 3
+seedVersion: 5
 ---
 # ax Subagent Protocol
 
@@ -23,7 +23,7 @@ seedVersion: 3
 
 A subagent has its own conversation, so it does not see the parent's `<ax_session_context>`. The parent pastes the relevant cache ids into the Task prompt; the subagent calls `ax_expand` with them instead of re-running those queries. Inside the subagent's own conversation the usual rule holds: A repeated graph call in this conversation returns a short `[ax cache hit]` reference; read `<ax_session_context>` before searching again, and pass `fresh: true` to force a new query.
 
-Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index.
+Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`, `fork`, `handoff`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index. fork copies these notes to a new session. handoff starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. `ax_durable` stores this chat's transcript, documents, and checkpointed tasks.
 
 ## First action (subagent)
 

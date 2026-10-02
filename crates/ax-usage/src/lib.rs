@@ -1,6 +1,7 @@
 //! Context-token savings metrics stored in `~/.ax/usage.db`.
 
 mod context_cache;
+mod durable;
 mod cursor_state;
 mod domain_log;
 mod log_brand;
@@ -70,8 +71,10 @@ pub use reuse_cache::{
     ReuseHit, SESSION_CONTEXT_TOKENS, index_fingerprint, session_from_args,
     HOOK_SESSION_MAX_AGE,
 };
+pub use durable::{durable_apply, note_tool_if_open};
 pub use working_context::{
-    session_nudge, working_context_apply, working_context_block, NUDGE_AFTER_TURNS, WORKING_CONTEXT_TOKENS,
+    fork_working_context, handoff_working_context, session_nudge, working_context_apply, working_context_block,
+    NUDGE_AFTER_TURNS, WORKING_CONTEXT_TOKENS,
 };
 pub use tokenizer::{
     count_file_tokens, count_tokens, tokenize_text, tokenizer_available, truncate_utf8,

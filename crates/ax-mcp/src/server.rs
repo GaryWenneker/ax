@@ -296,7 +296,7 @@ async fn call_tool_and_wrap(
             args[crate::tools::TURNS_ARG] = json!(turns);
             args
         }
-        "ax_session" => with_chat(args, &conversation),
+        "ax_session" | "ax_durable" => with_chat(args, &conversation),
         _ => args,
     };
     let reuse_root = project_root.filter(|_| ax_usage::reuse_enabled() && ax_usage::reuse_cacheable(name));
@@ -360,6 +360,12 @@ async fn call_tool_and_wrap(
     };
     if session_write && result.is_ok() {
         engine.turns().on_write(&conversation);
+    }
+    if let Ok(value) = result.as_ref() {
+        if name != "ax_durable" && !conversation.is_empty() {
+            let summary: String = tool_result_text(value).chars().take(160).collect();
+            let _ = ax_usage::note_tool_if_open(&conversation, name, &summary).await;
+        }
     }
     if let Ok(mut t) = telemetry().lock() {
         t.record_usage("mcp_tool", name, result.is_ok(), None);
@@ -1363,6 +1369,35 @@ mod reuse_integration {
         assert!(stale.contains(NUDGE) && stale.contains("stale"), "stale notes get the nudge: {stale}");
     }
 
+    #[tokio::test]
+    async fn fork_and_handoff_do_not_restart_the_quiet_turn_count() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (_dir, mut engine) = fixture().await;
+        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "turn 1" })).await));
+        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["noted"], "session": chat })).await;
+        let turn = json!({ "prompt": "next", "session": chat });
+        for _ in 2..=6 {
+            call(&mut engine, "ax_preflight", turn.clone()).await;
+        }
+        let before = text(&call(&mut engine, "ax_preflight", turn.clone()).await);
+        assert!(before.contains(NUDGE), "the parent is past the quiet window: {before}");
+        call(&mut engine, "ax_session", json!({ "action": "fork", "session": chat })).await;
+        let note = json!({
+            "action": "handoff",
+            "objective": "Continue",
+            "facts": ["still going"],
+            "files": [],
+            "symbols": [],
+            "decisions": [],
+            "open_questions": [],
+            "session": chat
+        });
+        call(&mut engine, "ax_session", note).await;
+        let after = text(&call(&mut engine, "ax_preflight", turn).await);
+        assert!(after.contains(NUDGE), "fork and handoff leave the parent's count: {after}");
+    }
+
     async fn stored_row(root: &std::path::Path, tool: &str) -> (i64, String) {
         let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
         let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}")).await.unwrap();
@@ -1445,6 +1480,83 @@ mod reuse_integration {
         assert!(hit(&text(&call(&mut engine, "ax_node", with_session(alpha, "axs_explicit")).await)));
         let pre = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "which chat" })).await);
         assert_eq!(session_of(&pre), "hook-chat", "a recent hook id names the chat");
+    }
+
+    fn child_of(kind: &str, body: &str) -> String {
+        let tag = format!("<ax_session_{kind} ");
+        let rest = body.split(&tag).nth(1).unwrap_or_else(|| panic!("no {kind}:\n{body}"));
+        let child = rest.split(" child=").nth(1).unwrap_or_else(|| panic!("no child:\n{rest}"));
+        child.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.' || *c == ':').collect()
+    }
+
+    #[tokio::test]
+    async fn fork_copies_notes_not_the_graph_cache_and_handoff_keeps_the_parent() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (_dir, mut engine) = fixture().await;
+        let started = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "auth" })).await);
+        let chat = session_of(&started);
+        let empty = call(&mut engine, "ax_session", with_session(json!({ "action": "fork" }), &chat)).await;
+        assert!(text(&empty).contains("nothing to fork"), "{}", text(&empty));
+
+        call(&mut engine, "ax_session", with_session(json!({ "action": "add", "facts": ["kept on the parent"] }), &chat)).await;
+        let node = json!({ "name": "reuse_alpha_target" });
+        call(&mut engine, "ax_node", with_session(node.clone(), &chat)).await;
+        assert!(hit(&text(&call(&mut engine, "ax_node", with_session(node.clone(), &chat)).await)));
+
+        let forked = text(&call(&mut engine, "ax_session", with_session(json!({ "action": "fork" }), &chat)).await);
+        let child = child_of("fork", &forked);
+        assert!(forked.contains("kept on the parent"), "{forked}");
+        let parent_notes = text(&call(&mut engine, "ax_preflight", with_session(json!({ "prompt": "still here" }), &chat)).await);
+        assert!(parent_notes.contains("<ax_section name=\"session\">"), "{parent_notes}");
+        assert!(parent_notes.contains("kept on the parent"), "{parent_notes}");
+        let child_notes = text(&call(&mut engine, "ax_preflight", with_session(json!({ "prompt": "branch" }), &child)).await);
+        assert!(child_notes.contains("kept on the parent"), "{child_notes}");
+        assert!(!hit(&text(&call(&mut engine, "ax_node", with_session(node, &child)).await)), "the child cache starts empty");
+
+        let note = json!({
+            "action": "handoff",
+            "objective": "Continue auth",
+            "facts": ["JWT is in TokenValidator"],
+            "files": [],
+            "symbols": [],
+            "decisions": [],
+            "open_questions": []
+        });
+        let handed = text(&call(&mut engine, "ax_session", with_session(note, &chat)).await);
+        let next = child_of("handoff", &handed);
+        assert!(handed.contains("TokenValidator") && !handed.contains("kept on the parent"), "{handed}");
+        let parent_after = text(&call(&mut engine, "ax_preflight", with_session(json!({ "prompt": "parent remains" }), &chat)).await);
+        assert!(parent_after.contains("kept on the parent"), "{parent_after}");
+        let next_notes = text(&call(&mut engine, "ax_preflight", with_session(json!({ "prompt": "next" }), &next)).await);
+        assert!(next_notes.contains("TokenValidator") && next_notes.contains("<ax_section name=\"session\">"), "{next_notes}");
+    }
+
+    #[tokio::test]
+    async fn durable_transcript_records_a_tool_and_compact_keeps_the_original_searchable() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (_dir, mut engine) = fixture().await;
+        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "durable" })).await));
+        call(
+            &mut engine,
+            "ax_durable",
+            with_session(json!({ "action": "append", "kind": "user", "body": "the secret token is pine" }), &chat),
+        )
+        .await;
+        call(&mut engine, "ax_node", with_session(json!({ "name": "reuse_alpha_target" }), &chat)).await;
+        let view = text(&call(&mut engine, "ax_durable", with_session(json!({ "action": "read" }), &chat)).await);
+        assert!(view.contains("pine") && view.contains("ax_node"), "{view}");
+        call(
+            &mut engine,
+            "ax_durable",
+            with_session(json!({ "action": "compact", "summary": "User mentioned a token." }), &chat),
+        )
+        .await;
+        let after = text(&call(&mut engine, "ax_durable", with_session(json!({ "action": "read" }), &chat)).await);
+        assert!(after.contains("User mentioned a token.") && !after.contains("pine"), "{after}");
+        let found = text(&call(&mut engine, "ax_durable", with_session(json!({ "action": "search", "query": "pine" }), &chat)).await);
+        assert!(found.contains("pine"), "{found}");
     }
 
     #[tokio::test]

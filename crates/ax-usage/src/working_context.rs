@@ -454,6 +454,100 @@ pub(crate) async fn apply_with(
     }
 }
 
+fn branch_header(kind: &str, parent: &str, child: &str, block: &str) -> String {
+    format!("<ax_session_{kind} parent={parent} child={child}>\n{block}")
+}
+
+fn usable_child(parent: &str, child: &str) -> Result<(), String> {
+    if parent == child || crate::reuse_cache::usable_session(child).as_deref() != Some(child) {
+        return Err("fork needs a new session id".into());
+    }
+    Ok(())
+}
+
+/// Copy `parent`'s notes onto `child`. The parent row stays. An empty parent writes nothing.
+pub(crate) async fn fork_with(
+    pool: &SqlitePool,
+    root: &Path,
+    parent: &str,
+    child: &str,
+    fingerprint: &str,
+    enabled: bool,
+) -> Result<String, String> {
+    if !enabled {
+        return Err("working context is off (AX_CONTEXT_CACHE=off)".into());
+    }
+    usable_child(parent, child)?;
+    let current = load(pool, &scope(parent, root)).await?;
+    if current.is_empty() {
+        return Err("nothing to fork".into());
+    }
+    let child_key = scope(child, root);
+    save(pool, &child_key, &current).await?;
+    evict(pool, root, &child_key).await?;
+    let parent_key = scope(parent, root);
+    if load(pool, &parent_key).await?.is_empty() {
+        save(pool, &parent_key, &current).await?;
+        evict(pool, root, &parent_key).await?;
+    }
+    Ok(branch_header("fork", parent, child, &render(&current, fingerprint)))
+}
+
+/// Store `request` (a compact note) as a new session. The parent notes stay readable.
+pub(crate) async fn handoff_with(
+    pool: &SqlitePool,
+    root: &Path,
+    parent: &str,
+    child: &str,
+    request: &Value,
+    fingerprint: &str,
+    enabled: bool,
+) -> Result<String, String> {
+    if !enabled {
+        return Err("working context is off (AX_CONTEXT_CACHE=off)".into());
+    }
+    usable_child(parent, child)?;
+    if fingerprint.is_empty() {
+        return Err("index unavailable; retry after ax_sync".into());
+    }
+    let mut note = request.clone();
+    if let Some(map) = note.as_object_mut() {
+        map.insert("action".into(), Value::String("compact".into()));
+    }
+    let Some(next) = transition(&WorkingContext::default(), &note, fingerprint)? else {
+        return Err("handoff needs a note".into());
+    };
+    if next.is_empty() {
+        return Err("handoff needs a note".into());
+    }
+    let parent_ctx = load(pool, &scope(parent, root)).await?;
+    let child_key = scope(child, root);
+    save(pool, &child_key, &next).await?;
+    evict(pool, root, &child_key).await?;
+    let parent_key = scope(parent, root);
+    if !parent_ctx.is_empty() && load(pool, &parent_key).await?.is_empty() {
+        save(pool, &parent_key, &parent_ctx).await?;
+        evict(pool, root, &parent_key).await?;
+    }
+    Ok(branch_header("handoff", parent, child, &render(&next, fingerprint)))
+}
+
+pub async fn fork_working_context(root: &Path, parent: &str, child: &str, fingerprint: &str) -> Result<String, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    fork_with(&pool, root, parent, child, fingerprint, reuse_enabled()).await
+}
+
+pub async fn handoff_working_context(
+    root: &Path,
+    parent: &str,
+    child: &str,
+    request: &Value,
+    fingerprint: &str,
+) -> Result<String, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    handoff_with(&pool, root, parent, child, request, fingerprint, reuse_enabled()).await
+}
+
 pub async fn working_context_apply(
     root: &Path,
     conversation: &str,
@@ -674,6 +768,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fork_copies_the_notes_and_handoff_starts_a_new_session_from_the_note() {
+        let (dir, pool) = pool().await;
+        let err = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true).await.unwrap_err();
+        assert!(err.contains("nothing to fork"), "{err}");
+        note(&pool, &dir, "parent", "kept on the parent").await;
+        let forked = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true).await.unwrap();
+        assert!(forked.starts_with("<ax_session_fork parent=parent child=axs_child>"), "{forked}");
+        assert!(forked.contains("kept on the parent"), "{forked}");
+        let parent = apply_with(&pool, &dir, "parent", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        assert!(parent.contains("kept on the parent"), "the parent stays: {parent}");
+        let child = apply_with(&pool, &dir, "axs_child", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        assert_eq!(hash_of(&child), hash_of(&parent));
+
+        let note = json!({
+            "action": "handoff",
+            "objective": "Continue auth",
+            "facts": ["JWT is in TokenValidator"],
+            "files": [],
+            "symbols": [],
+            "decisions": [],
+            "open_questions": []
+        });
+        let handed = handoff_with(&pool, &dir, "parent", "axs_next", &note, "fp-1", true).await.unwrap();
+        assert!(handed.starts_with("<ax_session_handoff parent=parent child=axs_next>"), "{handed}");
+        assert!(handed.contains("TokenValidator") && !handed.contains("kept on the parent"), "{handed}");
+        let parent_after = apply_with(&pool, &dir, "parent", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        assert!(parent_after.contains("kept on the parent"), "{parent_after}");
+        let empty = json!({"action": "handoff", "objective": "", "facts": [], "files": [], "symbols": [], "decisions": [], "open_questions": []});
+        let err = handoff_with(&pool, &dir, "parent", "axs_empty", &empty, "fp-1", true).await.unwrap_err();
+        assert!(err.contains("handoff needs a note"), "{err}");
+        let err = handoff_with(&pool, &dir, "parent", "axs_empty", &note, "", true).await.unwrap_err();
+        assert!(err.contains("index unavailable"), "{err}");
+        let err = fork_with(&pool, &dir, "parent", "bad id", "fp-1", true).await.unwrap_err();
+        assert!(err.contains("fork needs a new session id"), "{err}");
+        let from_empty = handoff_with(&pool, &dir, "nobody", "axs_from_empty", &note, "fp-1", true).await.unwrap();
+        assert!(from_empty.contains("TokenValidator"), "{from_empty}");
+        let nobody = apply_with(&pool, &dir, "nobody", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        assert!(!nobody.contains("TokenValidator"), "an empty parent is not filled: {nobody}");
+    }
+
+    #[tokio::test]
     async fn writes_need_a_readable_index_and_leave_the_snapshot_unchanged() {
         let (dir, pool) = pool().await;
         note(&pool, &dir, "chat-1", "kept").await;
@@ -714,6 +849,26 @@ mod tests {
         assert!(kept.contains(&"chat-001".to_string()));
         assert!(kept.contains(&"chat-new".to_string()), "the snapshot just written stays");
         assert_eq!(chats_in(&pool, &other).await, vec!["elsewhere".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn fork_at_the_cap_keeps_the_parent_and_the_child_inside_the_cap() {
+        let (dir, pool) = pool().await;
+        let now = chrono::Utc::now().timestamp();
+        note(&pool, &dir, "parent", "kept on the parent").await;
+        age(&pool, &dir, "parent", now - 5_000).await;
+        for i in 1..MAX_SNAPSHOTS {
+            let chat = format!("chat-{i:03}");
+            note(&pool, &dir, &chat, "x").await;
+            age(&pool, &dir, &chat, now - 5_000 + i as i64).await;
+        }
+        assert_eq!(chats_in(&pool, &dir).await.len(), MAX_SNAPSHOTS);
+        let forked = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true).await.unwrap();
+        assert!(forked.contains("kept on the parent"), "{forked}");
+        let kept = chats_in(&pool, &dir).await;
+        assert_eq!(kept.len(), MAX_SNAPSHOTS, "{kept:?}");
+        assert!(kept.contains(&"parent".to_string()), "the parent stays: {kept:?}");
+        assert!(kept.contains(&"axs_child".to_string()), "the child stays: {kept:?}");
     }
 
     #[tokio::test]

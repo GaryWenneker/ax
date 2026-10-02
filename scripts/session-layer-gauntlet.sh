@@ -52,15 +52,21 @@ PY
 }
 
 run_mutants() {
-  layer "cargo-mutants on the new session code"
+  layer "cargo-mutants on the session-layer diff (jobs ${JOBS:-4})"
+  # working_context.rs is mostly older parsing code: the whole file is 114 mutants and about
+  # 40 minutes. Only the lines changed since $BASE belong to this spec, about 30 mutants.
+  # --iterate reuses catches from an earlier run in the same output directory.
+  local jobs="${JOBS:-4}"
+  git diff -U0 "$BASE" -- crates/ax-usage/src/working_context.rs >"$OUT/working_context.diff"
+  [ -s "$OUT/working_context.diff" ] || { echo "working_context diff against $BASE is empty"; exit 1; }
   cargo mutants --package ax-mcp --file crates/ax-mcp/src/chat_session.rs \
-    --output "$OUT/chat_session" --no-shuffle -- --lib
+    --output "$OUT/chat_session" --iterate -j "$jobs" -- --lib
   cargo mutants --package ax-usage --file crates/ax-usage/src/working_context.rs \
-    --output "$OUT/working_context" --no-shuffle -- --lib
+    --in-diff "$OUT/working_context.diff" --output "$OUT/working_context" --iterate -j "$jobs" -- --lib
   cargo mutants --package ax-usage --file crates/ax-usage/src/cursor_state.rs \
-    -F 'session_if_recent|read_recent_cursor_session' --output "$OUT/cursor_state" --no-shuffle -- --lib
+    -F 'session_if_recent|read_recent_cursor_session' --output "$OUT/cursor_state" --iterate -j "$jobs" -- --lib
   cargo mutants --package ax-usage --file crates/ax-usage/src/reuse_cache.rs \
-    -F 'session_from_args|canonical_args' --output "$OUT/reuse_cache" --no-shuffle -- --lib
+    -F 'usable_session|session_from_args|canonical_args' --output "$OUT/reuse_cache" --iterate -j "$jobs" -- --lib
 }
 
 run_manual_mutants() {

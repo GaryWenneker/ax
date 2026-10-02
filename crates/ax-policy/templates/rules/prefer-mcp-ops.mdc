@@ -5,7 +5,7 @@ alwaysApply: true
 triggers: ["sync", "index", "reindex", "lsp", "enrich", "ship", "quality gate", "ci", "policy index", "ax sync", "ax lsp", "ax ship", "remember", "recall"]
 tags: ["mcp", "ops", "workflow"]
 priority: 85
-seedVersion: 3
+seedVersion: 5
 ---
 # Prefer MCP ops tools (not shell CLI)
 
@@ -31,7 +31,7 @@ seedVersion: 3
 4. Do not tell the user to “run ax sync in a terminal” when you can call `ax_sync` yourself.
 5. A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` before searching again; pass `fresh: true` to force a new query. An edited file invalidates its entries automatically, so no `ax_sync` is needed for that.
 
-Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index.
+Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`, `fork`, `handoff`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index. fork copies these notes to a new session. handoff starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. `ax_durable` stores this chat's transcript, documents, and checkpointed tasks.
 
 ## Why
 

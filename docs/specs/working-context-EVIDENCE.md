@@ -42,3 +42,5 @@ Source: uncommitted changes on `feat/conversation-context-cache` in `/Users/gary
 - No cap or eviction across conversations. `mcp_working_context` keeps one row per conversation and project until `clear`, so the table grows with every chat that writes notes.
 - If the index cannot be read when `ax_session` runs, the fingerprint is stored empty, and an empty fingerprint is never shown as stale. Preflight skips the block in that case, but a later `get` on a readable index still reports `stale=false`.
 - No review loop has run on this delta yet.
+
+Update 2026-10-02: the first two gaps are closed by part 4 of `session-context-layer.md` (200 snapshots per project, a 30-day age-out, and add/update/compact rejected without a readable index). The review loop for this code ran as part of that spec. See `session-context-layer-EVIDENCE.md`.

@@ -78,6 +78,49 @@ CREATE TABLE IF NOT EXISTS mcp_working_context (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ax_durable_conversation (
+  id TEXT PRIMARY KEY,
+  parent_id TEXT,
+  fork_entry INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ax_durable_entry (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  body TEXT NOT NULL,
+  head INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ax_durable_entry_conv ON ax_durable_entry(conversation_id, id);
+
+CREATE TABLE IF NOT EXISTS ax_durable_document (
+  conversation_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  body TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS ax_durable_task (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  checkpoint TEXT NOT NULL,
+  result TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ax_durable_hook (
+  conversation_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, event, name)
+);
+
 CREATE TABLE IF NOT EXISTS agent_session_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   agent TEXT NOT NULL,

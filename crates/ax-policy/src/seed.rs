@@ -1167,9 +1167,11 @@ mod tests {
             include_str!("../templates/skills/startup/SKILL.md"),
             include_str!("../templates/skills/subagents/SKILL.md"),
         ] {
-            assert!(seed_version(body) >= 3, "the session-id change must bump seedVersion");
+            assert!(seed_version(body) >= 5, "the durable transcript must bump seedVersion");
             assert!(body.contains(crate::WORKING_CONTEXT_SENTENCE), "missing working context");
             assert!(body.contains(crate::SESSION_ID_SENTENCE), "missing session id");
+            assert!(body.contains("`fork`, `handoff`"), "missing fork and handoff");
+            assert!(body.contains("`ax_durable`"), "missing durable transcript");
         }
     }
 
