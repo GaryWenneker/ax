@@ -71,11 +71,12 @@ pub(crate) fn wants_fresh(args: &Value) -> bool {
     args.get("fresh").and_then(Value::as_bool).unwrap_or(false)
 }
 
-/// Compact JSON with object keys sorted at every level; top-level `fresh` dropped.
+/// Compact JSON with object keys sorted at every level; top-level `fresh`, `session`
+/// and private `__ax*` keys dropped.
 pub fn canonical_args(args: &Value) -> String {
     let mut args = args.clone();
     if let Some(map) = args.as_object_mut() {
-        map.remove("fresh");
+        map.retain(|k, _| k != "fresh" && k != "session" && !k.starts_with("__ax"));
     }
     let mut out = String::new();
     write_canonical(&args, &mut out);
@@ -256,6 +257,19 @@ pub fn format_session_context(entries: &[ContextEntry], max_tokens: i64) -> Stri
 }
 
 /// Active chat id, or one id per MCP process when the IDE gives none.
+/// How long a hook-written session file counts as the current chat.
+pub const HOOK_SESSION_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(600);
+const MAX_SESSION_CHARS: usize = 128;
+
+/// The `session` argument, when it is a usable id.
+pub fn session_from_args(args: &Value) -> Option<String> {
+    let id = args.get("session")?.as_str()?.trim();
+    let usable = !id.is_empty()
+        && id.chars().count() <= MAX_SESSION_CHARS
+        && !id.chars().any(|c| c.is_whitespace() || c.is_control());
+    usable.then(|| id.to_string())
+}
+
 pub fn conversation_key(active: Option<String>) -> String {
     if let Some(id) = active.filter(|s| !s.is_empty()) {
         return id;

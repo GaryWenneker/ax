@@ -613,6 +613,25 @@ async fn reply_too_small_to_save_tokens_is_not_cached() {
 }
 
 #[test]
+fn key_ignores_the_session_argument_and_private_keys() {
+    let plain = json!({"name": "alpha"});
+    let tagged = json!({"name": "alpha", "session": "axs_0123456789abcdef", "__axChat": "c9"});
+    assert_eq!(reuse_key("c1", "ax_node", &plain), reuse_key("c1", "ax_node", &tagged));
+    let nested = json!({"name": "alpha", "opts": {"session": "kept"}});
+    assert_ne!(reuse_key("c1", "ax_node", &plain), reuse_key("c1", "ax_node", &nested));
+}
+
+#[test]
+fn session_argument_is_trimmed_and_rejects_unusable_values() {
+    assert_eq!(session_from_args(&json!({"session": "  axs_ab12  "})).as_deref(), Some("axs_ab12"));
+    assert_eq!(session_from_args(&json!({"session": "c".repeat(128)})).map(|s| s.len()), Some(128));
+    for bad in [json!({}), json!({"session": ""}), json!({"session": "   "}), json!({"session": 7}),
+        json!({"session": "a b"}), json!({"session": "a\nb"}), json!({"session": "c".repeat(129)}), json!("x")] {
+        assert_eq!(session_from_args(&bad), None, "{bad}");
+    }
+}
+
+#[test]
 fn canonical_args_is_compact_sorted_json() {
     let a = json!({"b": [1, {"d": 2, "c": "x"}], "a": 1, "fresh": true});
     assert_eq!(canonical_args(&a), r#"{"a":1,"b":[1,{"c":"x","d":2}]}"#);

@@ -31,8 +31,8 @@ pub use pricing_sync::{
 pub use cursor_state::{
     active_cursor_session_path, cursor_state_vscdb_path, import_cursor_composer_state,
     normalize_cursor_model, parse_composer_data, parse_composer_input_tokens,
-    parse_composer_model_config, read_active_cursor_session, write_active_cursor_session,
-    ComposerStateRow,
+    parse_composer_model_config, read_active_cursor_session, read_recent_cursor_session,
+    write_active_cursor_session, ComposerStateRow,
 };
 pub use mcp_audit::{
     audit_project, cursor_project_slug, find_cursor_transcripts, format_markdown_report,
@@ -67,7 +67,8 @@ pub use context_cache::{
 pub use reuse_cache::{
     conversation_key, index_matches, render_hit, reuse_cacheable, reuse_enabled, reuse_lookup,
     reuse_record_hit, reuse_session_entries, format_session_context, ContextEntry, reuse_store, IndexHashes, ReuseCandidate,
-    ReuseHit, SESSION_CONTEXT_TOKENS, index_fingerprint,
+    ReuseHit, SESSION_CONTEXT_TOKENS, index_fingerprint, session_from_args,
+    HOOK_SESSION_MAX_AGE,
 };
 pub use working_context::{working_context_apply, working_context_block, WORKING_CONTEXT_TOKENS};
 pub use tokenizer::{

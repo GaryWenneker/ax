@@ -15,6 +15,7 @@ struct Entry {
     chat_id: Option<String>,
     delivered: HashMap<String, u64>,
     last_seen: Option<Instant>,
+    chat_session: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -57,6 +58,15 @@ impl PolicySessions {
 
     pub fn record(&mut self, delivered: impl IntoIterator<Item = (String, u64)>) {
         self.entries.entry(self.active).or_default().delivered.extend(delivered);
+    }
+
+    /// The chat session this connection used last.
+    pub fn connection_session(&self) -> Option<String> {
+        self.entries.get(&self.active)?.chat_session.clone()
+    }
+
+    pub fn remember_session(&mut self, id: &str) {
+        self.entries.entry(self.active).or_default().chat_session = Some(id.to_string());
     }
 
     pub fn end(&mut self, connection: u64) {
@@ -132,6 +142,27 @@ mod tests {
         assert!(s.view(None, t, TTL).delivered.is_empty());
         s.set_active(1);
         assert_eq!(s.view(None, t, TTL).delivered, delivered(&[("rule:a", 7)]));
+    }
+
+    #[test]
+    fn chat_session_is_per_connection_and_reset_by_initialize() {
+        let mut s = PolicySessions::default();
+        s.set_active(1);
+        s.begin("cursor");
+        assert_eq!(s.connection_session(), None);
+        s.remember_session("axs_one");
+        s.set_active(2);
+        assert_eq!(s.connection_session(), None);
+        s.remember_session("axs_two");
+        s.set_active(1);
+        assert_eq!(s.connection_session().as_deref(), Some("axs_one"));
+        s.remember_session("axs_three");
+        assert_eq!(s.connection_session().as_deref(), Some("axs_three"));
+        s.begin("cursor");
+        assert_eq!(s.connection_session(), None);
+        s.set_active(2);
+        s.end(2);
+        assert_eq!(s.connection_session(), None);
     }
 
     #[test]

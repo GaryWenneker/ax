@@ -5,6 +5,7 @@ pub mod daemon_paths;
 pub mod daemon_lock;
 pub mod query_pool;
 pub mod policy_session;
+pub mod chat_session;
 pub mod daemon_conn;
 pub mod engine;
 pub mod exe_identity;

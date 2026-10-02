@@ -62,7 +62,7 @@ impl ToolHandler {
             "ax_ship" => ship_tool(ax, params).await,
             "ax_policy_index" => policy_index_tool(ax, params).await,
             "ax_session" => {
-                let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
+                let conversation = chat_of(&params);
                 let fingerprint = match indexed_hashes(ax.db_pool()).await {
                     Ok(index) => ax_usage::index_fingerprint(&index),
                     Err(_) => String::new(),
@@ -677,12 +677,14 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             inject.push('\n');
         }
         inject.push_str(CONTEXT_CACHE_LINE);
+        let conversation = chat_of(&params);
+        inject.push('\n');
+        inject.push_str(&chat_line(&conversation));
         let chat = chat_for_client(session_client(&params)).then(ax_usage::read_active_cursor_session).flatten();
         if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
             inject.push('\n');
             inject.push_str(&ledger);
         }
-        let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
         if let Ok(index) = indexed_hashes(ax.db_pool()).await {
             let unseen: Vec<_> = ax_usage::reuse_session_entries(ax.project_root(), &conversation, &index)
                 .await
@@ -833,6 +835,22 @@ fn skill_inline_chars() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(1_500);
     tokens.saturating_mul(4)
+}
+
+/// Private args key: the chat the server resolved for this call.
+pub(crate) const CHAT_ARG: &str = "__axChat";
+
+fn chat_of(params: &Value) -> String {
+    match params.get(CHAT_ARG).and_then(Value::as_str) {
+        Some(chat) => chat.to_string(),
+        None => ax_usage::conversation_key(ax_usage::read_active_cursor_session()),
+    }
+}
+
+fn chat_line(chat: &str) -> String {
+    format!(
+        "<ax_chat session={chat}>Pass \"session\": \"{chat}\" to ax_preflight and to every ax tool call in this chat. A preflight without it starts a new chat.</ax_chat>"
+    )
 }
 
 fn session_client(params: &Value) -> Option<&str> {
@@ -1707,6 +1725,14 @@ fn advertise_fresh(tools: &mut [Value]) {
                 json!({ "type": "boolean", "description": "Skip the per-conversation cache and rerun the query" }),
             );
         }
+        let name = tool["name"].as_str().unwrap_or_default();
+        let chat_state = cacheable || matches!(name, "ax_preflight" | "ax_session");
+        if let (true, Some(props)) = (chat_state, tool["inputSchema"]["properties"].as_object_mut()) {
+            props.insert(
+                "session".to_string(),
+                json!({ "type": "string", "description": "The session id preflight printed in <ax_chat>; keeps this chat's cache and notes" }),
+            );
+        }
     }
 }
 
@@ -2558,5 +2584,22 @@ mod tests {
         assert_eq!(schema_has_fresh("ax_search"), Some(true));
         assert_eq!(schema_has_fresh("ax_preflight"), Some(false));
         assert_eq!(schema_has_fresh("ax_guard"), Some(false));
+    }
+
+    #[tokio::test]
+    async fn session_is_advertised_where_chat_state_is_read() {
+        let listed = ToolHandler::list_tools(true).await;
+        let tools = listed["tools"].as_array().unwrap();
+        let session_type = |name: &str| {
+            tools
+                .iter()
+                .find(|t| t["name"] == name)
+                .map(|t| t["inputSchema"]["properties"]["session"]["type"].as_str() == Some("string"))
+        };
+        for name in ["ax_preflight", "ax_session", "ax_node", "ax_explore", "ax_search", "ax_callers"] {
+            assert_eq!(session_type(name), Some(true), "{name}");
+        }
+        assert_eq!(session_type("ax_guard"), Some(false));
+        assert_eq!(session_type("ax_sync"), Some(false));
     }
 }

@@ -229,6 +229,29 @@ fn record_policy_delivery(engine: &mut McpEngine, mut value: Value) -> Value {
     value
 }
 
+/// The chat this call belongs to, remembered as the connection's current chat.
+fn resolve_chat(engine: &mut McpEngine, name: &str, args: &Value) -> String {
+    use crate::chat_session::{mint_session, resolve_session, CallKind};
+    let kind = if name == "ax_preflight" { CallKind::Preflight } else { CallKind::Tool };
+    let chat = resolve_session(
+        kind,
+        ax_usage::session_from_args(args),
+        ax_usage::read_recent_cursor_session(ax_usage::HOOK_SESSION_MAX_AGE),
+        engine.policy_sessions().connection_session().as_deref(),
+        mint_session,
+    );
+    engine.policy_sessions().remember_session(&chat);
+    chat
+}
+
+fn with_chat(mut args: Value, chat: &str) -> Value {
+    if !args.is_object() {
+        args = json!({});
+    }
+    args[crate::tools::CHAT_ARG] = json!(chat);
+    args
+}
+
 /// Run one tool, wrap the reply for MCP, and log the call with its token
 /// savings estimate via `spawn_record_mcp_call`.
 async fn call_tool_and_wrap(
@@ -253,7 +276,8 @@ async fn call_tool_and_wrap(
     }
     let args = if matches!(name, "ax_preflight" | "ax_skill") { attach_policy_session(engine, args) } else { args };
     let started = std::time::Instant::now();
-    let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
+    let conversation = resolve_chat(engine, name, &args);
+    let args = if matches!(name, "ax_preflight" | "ax_session") { with_chat(args, &conversation) } else { args };
     let reuse_root = project_root.filter(|_| ax_usage::reuse_enabled() && ax_usage::reuse_cacheable(name));
     if let Some(root) = reuse_root {
         if let Some(hit) = confirmed_reuse_hit(engine, root, &conversation, name, &args).await {
@@ -1186,9 +1210,99 @@ mod reuse_integration {
         std::fs::write(dir.join("active-cursor-session"), format!("{id}\n")).unwrap();
     }
 
+    /// A temp home, so the real `~/.ax/active-cursor-session` never leaks into a test.
+    fn isolated_home() -> (tempfile::TempDir, HomeGuard) {
+        let home = tempfile::tempdir().unwrap();
+        let guard = HomeGuard::set(home.path());
+        (home, guard)
+    }
+
+    fn session_of(preflight: &str) -> String {
+        let rest = preflight
+            .split("<ax_chat session=")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no session id:\n{preflight}"));
+        rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect()
+    }
+
+    fn with_session(mut args: Value, session: &str) -> Value {
+        args["session"] = json!(session);
+        args
+    }
+
+    #[tokio::test]
+    async fn preflight_without_a_session_mints_and_prints_a_new_one() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (_dir, mut engine) = fixture().await;
+        let a = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "one" })).await));
+        let b = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "two" })).await));
+        assert!(a.starts_with("axs_") && a.len() == 20, "{a}");
+        assert_ne!(a, b, "a preflight without a session is a new chat");
+        let kept = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "three", "session": a })).await);
+        assert_eq!(session_of(&kept), a, "a passed session is echoed back");
+    }
+
+    /// No hook file: each chat's id comes from its own preflight, not from the daemon process.
+    #[tokio::test]
+    async fn chats_on_one_daemon_without_a_hook_file_stay_apart() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (_dir, mut engine) = fixture().await;
+        let alpha = json!({ "name": "reuse_alpha_target" });
+        let chat_a = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "chat a" })).await));
+        assert!(!hit(&text(&call(&mut engine, "ax_node", alpha.clone()).await)));
+        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["chat a note"] })).await;
+        assert!(hit(&text(&call(&mut engine, "ax_node", alpha.clone()).await)), "a tool without session uses its connection's chat");
+
+        let pre_b = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "chat b" })).await);
+        let chat_b = session_of(&pre_b);
+        assert_ne!(chat_a, chat_b);
+        assert!(!pre_b.contains("chat a note"), "chat B must not see chat A's notes:\n{pre_b}");
+        assert_eq!(session_block(&pre_b), None, "chat B must not list chat A's entries:\n{pre_b}");
+        assert!(!hit(&text(&call(&mut engine, "ax_node", with_session(alpha.clone(), &chat_b)).await)));
+
+        assert!(hit(&text(&call(&mut engine, "ax_node", with_session(alpha, &chat_a)).await)));
+        let back = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "chat a again", "session": chat_a })).await);
+        assert!(working_block(&back).contains("chat a note"), "{back}");
+    }
+
+    #[tokio::test]
+    async fn the_same_session_survives_a_daemon_restart() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (dir, mut engine) = fixture().await;
+        let alpha = json!({ "name": "reuse_alpha_target" });
+        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "before" })).await));
+        call(&mut engine, "ax_node", alpha.clone()).await;
+        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["kept across restarts"] })).await;
+        drop(engine);
+
+        let mut restarted = McpEngine::with_project_root(dir.path().canonicalize().unwrap());
+        handle_request(&mut restarted, "initialize", json!({ "clientInfo": { "name": "reuse-test" } })).await;
+        let pre = text(&call(&mut restarted, "ax_preflight", json!({ "prompt": "after", "session": chat })).await);
+        assert!(working_block(&pre).contains("kept across restarts"), "{pre}");
+        assert!(hit(&text(&call(&mut restarted, "ax_node", alpha).await)), "the restarted daemon reuses the chat's answer");
+    }
+
+    #[tokio::test]
+    async fn the_session_argument_beats_the_hook_file() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        set_chat("hook-chat");
+        let (_dir, mut engine) = fixture().await;
+        let alpha = json!({ "name": "reuse_alpha_target" });
+        call(&mut engine, "ax_node", with_session(alpha.clone(), "axs_explicit")).await;
+        assert!(!hit(&text(&call(&mut engine, "ax_node", alpha.clone()).await)), "no argument: the hook chat");
+        assert!(hit(&text(&call(&mut engine, "ax_node", with_session(alpha, "axs_explicit")).await)));
+        let pre = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "which chat" })).await);
+        assert_eq!(session_of(&pre), "hook-chat", "a recent hook id names the chat");
+    }
+
     #[tokio::test]
     async fn second_identical_node_call_is_a_short_hit_and_expand_is_byte_identical() {
         let _guard = env_lock().await;
+        let _home = isolated_home();
         let (dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         let first = call(&mut engine, "ax_node", args.clone()).await;
@@ -1227,6 +1341,7 @@ mod reuse_integration {
     #[tokio::test]
     async fn fresh_true_reruns_the_tool() {
         let _guard = env_lock().await;
+        let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         call(&mut engine, "ax_node", args).await;
@@ -1238,6 +1353,7 @@ mod reuse_integration {
     #[tokio::test]
     async fn edit_then_sync_is_a_miss_with_the_new_code() {
         let _guard = env_lock().await;
+        let _home = isolated_home();
         let (dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         call(&mut engine, "ax_node", args.clone()).await;
@@ -1255,6 +1371,7 @@ mod reuse_integration {
     #[tokio::test]
     async fn new_caller_in_an_uncited_file_is_a_miss_after_sync() {
         let _guard = env_lock().await;
+        let _home = isolated_home();
         let (dir, mut engine) = fixture().await;
         let args = json!({ "symbol": "reuse_beta_helper" });
         let before = text(&call(&mut engine, "ax_callers", args.clone()).await);
@@ -1276,9 +1393,11 @@ mod reuse_integration {
     #[tokio::test]
     async fn preflight_lists_what_the_conversation_already_knows() {
         let _guard = env_lock().await;
+        let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
+        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await));
         call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target" })).await;
-        let pre = call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await;
+        let pre = call(&mut engine, "ax_preflight", json!({ "prompt": "continue", "session": chat })).await;
         let pre_text = text(&pre);
         let block = session_block(&pre_text).unwrap_or_else(|| panic!("no block: {pre_text}"));
         assert!(block.contains("reuse_alpha_target"), "{block}");
@@ -1288,14 +1407,17 @@ mod reuse_integration {
     #[tokio::test]
     async fn preflight_lists_each_known_entry_once_per_session() {
         let _guard = env_lock().await;
+        let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
+        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await));
+        let again = json!({ "prompt": "continue", "session": chat });
         call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target" })).await;
-        let first = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await);
+        let first = text(&call(&mut engine, "ax_preflight", again.clone()).await);
         assert!(session_block(&first).is_some_and(|b| b.contains("reuse_alpha_target")), "{first}");
-        let second = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await);
+        let second = text(&call(&mut engine, "ax_preflight", again.clone()).await);
         assert_eq!(session_block(&second), None, "listed again: {second}");
         call(&mut engine, "ax_node", json!({ "name": "reuse_beta_helper" })).await;
-        let third = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await);
+        let third = text(&call(&mut engine, "ax_preflight", again).await);
         let block = session_block(&third).unwrap_or_else(|| panic!("no block: {third}"));
         assert!(block.contains("reuse_beta_helper"), "{block}");
         assert!(!block.contains("reuse_alpha_target"), "old entry listed again: {block}");
