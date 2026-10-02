@@ -358,6 +358,36 @@ async fn save(pool: &SqlitePool, key: &str, ctx: &WorkingContext) -> Result<(), 
     Ok(())
 }
 
+/// Snapshots kept per project.
+const MAX_SNAPSHOTS: usize = 200;
+/// A snapshot not written for this long is deleted on the next write.
+const MAX_AGE_SECS: i64 = 30 * 86_400;
+
+/// Age out old snapshots everywhere, then cap this project. `kept` is never evicted.
+async fn evict(pool: &SqlitePool, root: &Path, kept: &str) -> Result<(), String> {
+    let cutoff = chrono::Utc::now().timestamp() - MAX_AGE_SECS;
+    sqlx::query("DELETE FROM mcp_working_context WHERE updated_at < ? AND scope != ?")
+        .bind(cutoff)
+        .bind(kept)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let project = format!("\u{1f}{}", root.display());
+    sqlx::query(
+        "DELETE FROM mcp_working_context WHERE scope IN (
+           SELECT scope FROM mcp_working_context
+           WHERE substr(scope, -length(?1)) = ?1 AND scope != ?2
+           ORDER BY updated_at DESC, scope DESC LIMIT -1 OFFSET ?3)",
+    )
+    .bind(&project)
+    .bind(kept)
+    .bind(MAX_SNAPSHOTS as i64 - 1)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 async fn delete(pool: &SqlitePool, key: &str) -> Result<(), String> {
     sqlx::query("DELETE FROM mcp_working_context WHERE scope = ?")
         .bind(key)
@@ -384,10 +414,14 @@ pub(crate) async fn apply_with(
         .get("action")
         .and_then(Value::as_str)
         .unwrap_or("get");
+    if fingerprint.is_empty() && matches!(action, "add" | "update" | "compact") {
+        return Err("index unavailable; retry after ax_sync".into());
+    }
     match transition(&current, request, fingerprint)? {
         Some(_) if action == "get" => Ok(render(&current, fingerprint)),
         Some(next) => {
             save(pool, &key, &next).await?;
+            evict(pool, root, &key).await?;
             Ok(render(&next, fingerprint))
         }
         None => {
@@ -485,6 +519,91 @@ mod tests {
         assert!(text.contains("hash="), "{text}");
         let fresh = render(&ctx, "fp-old");
         assert!(fresh.contains("stale=false"), "{fresh}");
+    }
+
+    async fn note(pool: &SqlitePool, root: &Path, chat: &str, fact: &str) {
+        apply_with(pool, root, chat, &json!({"action": "add", "facts": [fact]}), "fp-1", true)
+            .await
+            .unwrap();
+    }
+
+    async fn chats_in(pool: &SqlitePool, root: &Path) -> Vec<String> {
+        let suffix = format!("\u{1f}{}", root.display());
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT scope FROM mcp_working_context ORDER BY scope")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.into_iter()
+            .filter_map(|(s,)| s.strip_suffix(&suffix).map(str::to_string))
+            .collect()
+    }
+
+    async fn age(pool: &SqlitePool, root: &Path, chat: &str, updated_at: i64) {
+        sqlx::query("UPDATE mcp_working_context SET updated_at = ? WHERE scope = ?")
+            .bind(updated_at)
+            .bind(scope(chat, root))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn writes_need_a_readable_index_and_leave_the_snapshot_unchanged() {
+        let (dir, pool) = pool().await;
+        note(&pool, &dir, "chat-1", "kept").await;
+        let before = apply_with(&pool, &dir, "chat-1", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        let writes = [
+            json!({"action": "add", "facts": ["new"]}),
+            json!({"action": "update", "facts": ["new"]}),
+            json!({"action": "compact", "objective": "", "facts": ["new"], "files": [], "symbols": [], "decisions": [], "open_questions": []}),
+        ];
+        for request in writes {
+            let err = apply_with(&pool, &dir, "chat-1", &request, "", true).await.unwrap_err();
+            assert!(err.contains("index unavailable"), "{err}");
+        }
+        let after = apply_with(&pool, &dir, "chat-1", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        assert_eq!(after, before);
+        assert!(apply_with(&pool, &dir, "chat-1", &json!({"action": "get"}), "", true).await.unwrap().contains("kept"));
+        apply_with(&pool, &dir, "chat-1", &json!({"action": "clear"}), "", true).await.unwrap();
+        assert!(chats_in(&pool, &dir).await.is_empty(), "clear works without an index");
+    }
+
+    #[tokio::test]
+    async fn the_snapshot_past_the_cap_evicts_the_oldest_of_that_project_only() {
+        let (dir, pool) = pool().await;
+        let other = dir.join("other-project");
+        let now = chrono::Utc::now().timestamp();
+        note(&pool, &other, "elsewhere", "other project").await;
+        age(&pool, &other, "elsewhere", now - 10_000).await;
+        for i in 0..MAX_SNAPSHOTS {
+            let chat = format!("chat-{i:03}");
+            note(&pool, &dir, &chat, "x").await;
+            age(&pool, &dir, &chat, now - 5_000 + i as i64).await;
+        }
+        assert_eq!(chats_in(&pool, &dir).await.len(), MAX_SNAPSHOTS);
+        note(&pool, &dir, "chat-new", "x").await;
+        let kept = chats_in(&pool, &dir).await;
+        assert_eq!(kept.len(), MAX_SNAPSHOTS);
+        assert!(!kept.contains(&"chat-000".to_string()), "the oldest goes");
+        assert!(kept.contains(&"chat-001".to_string()));
+        assert!(kept.contains(&"chat-new".to_string()), "the snapshot just written stays");
+        assert_eq!(chats_in(&pool, &other).await, vec!["elsewhere".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn snapshots_unused_for_30_days_go_on_the_next_write() {
+        let (dir, pool) = pool().await;
+        let other = dir.join("other-project");
+        let now = chrono::Utc::now().timestamp();
+        note(&pool, &dir, "old", "x").await;
+        note(&pool, &other, "old-elsewhere", "x").await;
+        note(&pool, &dir, "recent", "x").await;
+        age(&pool, &dir, "old", now - MAX_AGE_SECS - 60).await;
+        age(&pool, &other, "old-elsewhere", now - MAX_AGE_SECS - 60).await;
+        age(&pool, &dir, "recent", now - MAX_AGE_SECS + 3_600).await;
+        note(&pool, &dir, "writer", "x").await;
+        assert_eq!(chats_in(&pool, &dir).await, vec!["recent".to_string(), "writer".to_string()]);
+        assert!(chats_in(&pool, &other).await.is_empty(), "age-out is not limited to one project");
     }
 
     #[tokio::test]
