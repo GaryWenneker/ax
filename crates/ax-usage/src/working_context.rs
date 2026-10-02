@@ -545,6 +545,60 @@ mod tests {
     }
 
     #[test]
+    fn the_hash_tracks_the_text_not_only_how_many_items_there_are() {
+        let mut ctx = WorkingContext {
+            objective: "one".into(),
+            facts: vec!["alpha".into()],
+            ..WorkingContext::default()
+        };
+        let first = content_hash(&ctx);
+        ctx.facts[0] = "beta".into();
+        let second = content_hash(&ctx);
+        assert_ne!(second, first, "a different fact with the same count");
+        ctx.objective = "two".into();
+        assert_ne!(content_hash(&ctx), second, "a different objective with the same lists");
+    }
+
+    #[test]
+    fn limits_accept_the_last_allowed_character_and_reject_the_next() {
+        let max = "a".repeat(MAX_OBJECTIVE_CHARS);
+        assert_eq!(parse_objective(&json!({"objective": &max})).unwrap().as_deref(), Some(max.as_str()));
+        let err = parse_objective(&json!({"objective": "a".repeat(MAX_OBJECTIVE_CHARS + 1)})).unwrap_err();
+        assert!(err.contains("exceeds"), "{err}");
+
+        let item = "b".repeat(MAX_ITEM_CHARS);
+        assert_eq!(parse_section(&json!({"facts": [&item]}), "facts").unwrap().unwrap(), vec![item]);
+        let err = parse_section(&json!({"facts": ["b".repeat(MAX_ITEM_CHARS + 1)]}), "facts").unwrap_err();
+        assert!(err.contains("exceeds"), "{err}");
+    }
+
+    fn tokens_of(fact: &str) -> i64 {
+        let ctx = WorkingContext { facts: vec![fact.to_string()], ..WorkingContext::default() };
+        count_tokens(&render(&ctx, "fp-1")) as i64
+    }
+
+    #[test]
+    fn the_token_cap_accepts_a_snapshot_of_exactly_the_limit() {
+        let mut fact = String::new();
+        while tokens_of(&fact) < WORKING_CONTEXT_TOKENS {
+            fact.push('a');
+            assert!(fact.len() < 20_000, "the cap was never reached");
+        }
+        if tokens_of(&fact) != WORKING_CONTEXT_TOKENS {
+            fact.pop();
+            let base = fact.clone();
+            fact = "abcdefghijklmnopqrstuvwxyz .,;:!?".chars().find_map(|c| {
+                let mut trial = base.clone();
+                trial.push(c);
+                (tokens_of(&trial) == WORKING_CONTEXT_TOKENS).then_some(trial)
+            }).unwrap_or_else(|| panic!("no one-character step lands on {WORKING_CONTEXT_TOKENS} tokens"));
+        }
+        let ctx = WorkingContext { facts: vec![fact.clone()], ..WorkingContext::default() };
+        assert_eq!(tokens_of(&fact), WORKING_CONTEXT_TOKENS);
+        ensure_fits(&ctx, "fp-1").expect("exactly the cap is allowed");
+    }
+
+    #[test]
     fn a_changed_index_marks_notes_stale_without_dropping_them() {
         let ctx = WorkingContext {
             facts: vec!["JWT validation is in JwtValidator".into()],
