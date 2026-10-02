@@ -15,11 +15,74 @@ use crate::ui::{
     ok_line,
 };
 
-pub async fn run(path: Option<String>, workspace: bool) -> Result<(), String> {
-    run_inner(path, workspace, true).await
+pub async fn run(path: Option<String>, workspace: bool, all: bool) -> Result<(), String> {
+    if all {
+        if path.is_some() {
+            return Err("`ax init --all` does not take a path".into());
+        }
+        if workspace {
+            return Err("`ax init --all` does not combine with --workspace".into());
+        }
+        return refresh_discovered_projects().await;
+    }
+    run_inner(path, workspace, true, true).await
 }
 
-async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Result<(), String> {
+/// Scan the home directory and initialize every discovered project.
+/// `AX_SKIP_PROJECT_INIT=1` leaves projects untouched.
+pub async fn refresh_discovered_projects() -> Result<(), String> {
+    if std::env::var("AX_SKIP_PROJECT_INIT").ok().as_deref() == Some("1") {
+        println!(
+            "{}",
+            info_line("Skipping project discovery (AX_SKIP_PROJECT_INIT=1).")
+        );
+        return Ok(());
+    }
+    let Some(home) = ax_utils::paths::home_dir() else {
+        return Err("no home directory".into());
+    };
+    let projects =
+        ax_context::discover_projects_for_init(&home, ax_context::INSTALL_DISCOVERY_DEPTH);
+    if projects.is_empty() {
+        println!(
+            "{}",
+            info_line("No projects found under the home directory.")
+        );
+        return Ok(());
+    }
+    println!(
+        "{}",
+        info_line(format!(
+            "Initializing {} discovered project(s)…",
+            projects.len()
+        ))
+    );
+    let mut failed = 0usize;
+    for project in &projects {
+        let label = project.to_string_lossy().to_string();
+        if let Err(err) = run_inner(Some(label.clone()), false, false, false).await {
+            failed += 1;
+            eprintln!("{}", dim(format!("init failed for {label}: {err}")));
+        }
+    }
+    run_savings_setup().await;
+    if failed > 0 {
+        eprintln!(
+            "{}",
+            dim(format!(
+                "{failed} project(s) failed. Re-run `ax init --all`."
+            ))
+        );
+    }
+    Ok(())
+}
+
+async fn run_inner(
+    path: Option<String>,
+    workspace: bool,
+    savings: bool,
+    interactive: bool,
+) -> Result<(), String> {
     let root = resolve_path(path);
     check_unsafe_root(&root)?;
 
@@ -62,6 +125,7 @@ async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Resu
                 Some(member_root.to_string_lossy().to_string()),
                 false,
                 false,
+                interactive,
             ))
             .await?;
             println!();
@@ -94,12 +158,12 @@ async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Resu
     let ax_dir = root.join(".ax");
     ax_policy::ensure_ax_share_gitignore(&root).map_err(|e| format!(".ax/.gitignore: {e}"))?;
     let seed = ax_policy::seed_default_policy(&ax_dir).ok();
-    if let Err(e) = choose_agents_dir_for_init(&root) {
+    if let Err(e) = choose_agents_dir_for_init(&root, interactive) {
         eprintln!("{}", dim(format!("Policy directory prompt skipped: {e}")));
     }
     let cursor = ax_policy::seed_project_cursor_skills(&root).ok();
     let global_policy = ax_policy::seed_global_policy().ok();
-    match choose_stacks_for_init(&root) {
+    match choose_stacks_for_init(&root, interactive) {
         Ok(selected) => match ax_policy::replace_selection(&root, &selected, false) {
             Ok(report) => {
                 if selected.is_empty() {
@@ -115,7 +179,7 @@ async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Resu
         },
         Err(e) => eprintln!("{}", dim(format!("Stack prompt skipped: {e}"))),
     }
-    let ides = choose_ides_for_init(&root)?;
+    let ides = choose_ides_for_init(&root, interactive)?;
     if ax_policy::read_configured_stacks(&root)
         .iter()
         .any(|id| id == "dotnet")
@@ -377,11 +441,11 @@ async fn run_inner(path: Option<String>, workspace: bool, savings: bool) -> Resu
 
 /// Ask for the on-disk rules/skills folder when `policy.agentsDir` is unset.
 /// A non-interactive run saves the default `.agents`.
-fn choose_agents_dir_for_init(root: &std::path::Path) -> Result<(), String> {
+fn choose_agents_dir_for_init(root: &std::path::Path, interactive: bool) -> Result<(), String> {
     if ax_policy::configured_agents_dir(root).is_some() {
         return Ok(());
     }
-    let name = if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+    let name = if interactive && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         println!(
             "{}",
             info_line("Where should ax store rule and skill files?")
@@ -570,10 +634,10 @@ fn prompt_menu(checked: &mut [bool], items: &[MenuItem]) -> Result<(), String> {
 
 /// Ask which stacks to install. Runs on every `ax init`, including a second run.
 /// A non-interactive stdin keeps the saved selection so CI does not block.
-fn choose_stacks_for_init(root: &std::path::Path) -> Result<Vec<String>, String> {
+fn choose_stacks_for_init(root: &std::path::Path, interactive: bool) -> Result<Vec<String>, String> {
     let current = ax_policy::read_configured_stacks(root);
     let detected: Vec<String> = ax_policy::detect_stacks(root).into_iter().map(|d| d.id).collect();
-    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+    if !interactive || !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         return Ok(current);
     }
     let catalog = ax_policy::stack_catalog_list();
@@ -643,7 +707,7 @@ fn ide_items(detected: &[String]) -> Vec<MenuItem> {
 const ANSWER_ENV: &str = "AX_INIT_IDES";
 
 /// Ask which IDEs to connect. Without a terminal, keep the saved list (or the found IDEs).
-fn choose_ides_for_init(root: &std::path::Path) -> Result<IdeChoice, String> {
+fn choose_ides_for_init(root: &std::path::Path, interactive: bool) -> Result<IdeChoice, String> {
     let raw = ax_policy::read_project_ides(root);
     let saved = raw.as_deref().map(|list| {
         let (known, unknown) = ax_installer::known_ides(list);
@@ -662,8 +726,11 @@ fn choose_ides_for_init(root: &std::path::Path) -> Result<IdeChoice, String> {
         let chosen = ax_installer::parse_ide_choice(&answer, &defaults)?;
         return Ok(IdeChoice { chosen, asked: true });
     }
-    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        return Ok(IdeChoice { chosen: defaults, asked: false });
+    if !interactive || !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(IdeChoice {
+            chosen: defaults,
+            asked: false,
+        });
     }
     let items = ide_items(&detected);
     println!("{}", info_line("Which IDEs and agents should ax connect?"));

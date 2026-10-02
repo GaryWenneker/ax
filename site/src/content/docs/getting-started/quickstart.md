@@ -30,14 +30,16 @@ ax install --yes          # non-interactive
 
 Configures Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro with the ax MCP server. This step does **not** index code.
 
-## 3. Initialize each project
+## 3. Projects initialize themselves
+
+Installing or upgrading ax runs `ax init --all`. That finds projects under your home directory (four levels; git repos, project manifests, and existing ax projects) and initializes each one without questions. Run the same command again to pick up a new checkout.
 
 ```bash
-cd your-project
-ax init
+ax init --all
+cd your-project && ax init   # one directory, with the stack and IDE questions
 ```
 
-Creates `.ax/`, builds the knowledge graph, installs git hooks (sync, ship evaluate, memory capture), and offers the agent installer. Your agent uses ax tools automatically when `.ax/` exists.
+Creates `.ax/`, builds the knowledge graph, and installs git hooks (sync, ship evaluate, memory capture). Your agent uses ax tools automatically when `.ax/` exists.
 
 ## 4. Optional — open Command Center
 

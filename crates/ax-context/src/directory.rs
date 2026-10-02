@@ -118,6 +118,78 @@ pub fn looks_like_project_root(dir: &Path) -> bool {
         .any(|m| dir.join(m).exists())
 }
 
+/// How many levels below the home directory install-time discovery still enters.
+pub const INSTALL_DISCOVERY_DEPTH: usize = 4;
+
+const INSTALL_DISCOVERY_SKIP: &[&str] = &[
+    "node_modules",
+    "target",
+    "target-dev",
+    "dist",
+    "build",
+    "vendor",
+    "Library",
+    "Applications",
+    "Movies",
+    "Music",
+    "Pictures",
+    "Downloads",
+    "AppData",
+    "Caches",
+    "Pods",
+    "coverage",
+];
+
+/// Project roots under `root` for an unattended `ax init`.
+///
+/// A directory counts when it already has `.ax/ax.db`, a `.git` directory or file,
+/// or a workspace manifest. The walk stops at that directory, skips hidden and
+/// dependency folders, does not follow symlinks, and never returns the home
+/// directory or a filesystem root.
+pub fn discover_projects_for_init(root: &Path, max_depth: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if root.is_dir() {
+        visit_install_projects(root, 0, max_depth, &mut out);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn install_project(dir: &Path) -> bool {
+    if unsafe_index_root_reason(dir).is_some() {
+        return false;
+    }
+    is_initialized(dir) || dir.join(".git").exists() || looks_like_project_root(dir)
+}
+
+fn visit_install_projects(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+    if install_project(dir) {
+        out.push(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
+        return;
+    }
+    if depth >= max_depth {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if !kind.is_dir() || kind.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || INSTALL_DISCOVERY_SKIP.iter().any(|skip| *skip == name) {
+            continue;
+        }
+        visit_install_projects(&entry.path(), depth + 1, max_depth, out);
+    }
+}
+
 pub fn find_indexed_subproject_roots(root: &Path, max_depth: u32, max: usize) -> Vec<PathBuf> {
     let mut out = Vec::new();
     fn walk(dir: &Path, depth: u32, max_depth: u32, max: usize, out: &mut Vec<PathBuf>) {
@@ -253,5 +325,127 @@ mod escape_tests {
         let re = regex::Regex::new(&format!("^{}$", escape_regexp("x[1](y)"))).unwrap();
         assert!(re.is_match("x[1](y)"));
         assert!(!re.is_match("x1y"));
+    }
+}
+
+#[cfg(test)]
+mod discover_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ax-discover-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn names(paths: &[PathBuf]) -> Vec<String> {
+        let mut out: Vec<String> = paths
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn finds_a_git_repo_and_skips_a_plain_folder() {
+        let root = scratch("git");
+        let repo = root.join("alpha");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        fs::create_dir_all(root.join("plain")).unwrap();
+        let found = discover_projects_for_init(&root, 2);
+        assert_eq!(names(&found), vec!["alpha".to_string()]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn finds_a_manifest_without_git() {
+        let root = scratch("manifest");
+        let app = root.join("app");
+        fs::create_dir_all(&app).unwrap();
+        fs::write(app.join("Cargo.toml"), b"[package]\nname = \"app\"\n").unwrap();
+        let found = discover_projects_for_init(&root, 2);
+        assert_eq!(names(&found), vec!["app".to_string()]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn does_not_descend_into_a_project() {
+        let root = scratch("nested");
+        let repo = root.join("mono");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let nested = repo.join("crates").join("leaf");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("Cargo.toml"), b"[package]\nname = \"leaf\"\n").unwrap();
+        let found = discover_projects_for_init(&root, 4);
+        assert_eq!(names(&found), vec!["mono".to_string()]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn skips_node_modules_and_stops_at_max_depth() {
+        let root = scratch("limits");
+        let hidden = root.join("node_modules").join("pkg");
+        fs::create_dir_all(hidden.join(".git")).unwrap();
+        let deep = root.join("a").join("b").join("c");
+        fs::create_dir_all(deep.join(".git")).unwrap();
+        let found = discover_projects_for_init(&root, 2);
+        assert!(found.is_empty(), "{found:?}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn finds_an_initialized_directory_and_ignores_a_symlinked_directory() {
+        let root = scratch("init");
+        let ready = root.join("ready");
+        fs::create_dir_all(ready.join(".ax")).unwrap();
+        fs::write(ready.join(".ax").join("ax.db"), b"x").unwrap();
+        let real = scratch("link-target");
+        fs::create_dir_all(real.join(".git")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, root.join("linked")).unwrap();
+        let found = discover_projects_for_init(&root, 2);
+        assert_eq!(names(&found), vec!["ready".to_string()]);
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(real);
+    }
+
+    #[test]
+    fn skips_the_home_directory_itself() {
+        let root = scratch("home");
+        fs::write(root.join("package.json"), b"{}\n").unwrap();
+        let child = root.join("app");
+        fs::create_dir_all(&child).unwrap();
+        fs::write(child.join("go.mod"), b"module app\n").unwrap();
+        let canon = root.canonicalize().unwrap();
+        let prev_home = std::env::var("HOME").ok();
+        let prev_profile = std::env::var("USERPROFILE").ok();
+        std::env::set_var("HOME", &canon);
+        std::env::set_var("USERPROFILE", &canon);
+        let found = discover_projects_for_init(&root, 2);
+        if let Some(v) = prev_home {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(v) = prev_profile {
+            std::env::set_var("USERPROFILE", v);
+        } else {
+            std::env::remove_var("USERPROFILE");
+        }
+        assert_eq!(names(&found), vec!["app".to_string()]);
+        let _ = fs::remove_dir_all(root);
     }
 }

@@ -3,7 +3,9 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v5.1.0](https://github.com/GaryWenneker/ax/releases/tag/v5.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v6.3.0](https://github.com/GaryWenneker/ax/releases/tag/v6.3.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+
+**v6.3.0** (minor) initializes every project it can find when you install or upgrade ax. The scan walks four levels under your home directory, skips hidden and dependency folders, and runs `ax init` on each git repo, project manifest, or existing ax project without asking questions. Run it again with `ax init --all`. Set `AX_SKIP_PROJECT_INIT=1` to skip.
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP. The `pr` skill reviews the draft it opened and keeps fixing until a review round has zero findings. `ax init` seeds that skill together with `old-coder`, `old-coder-api`, `review-loop`, `dotnet-code-review`, `typescript-review`, and `react-review`.
 
@@ -199,7 +201,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 |---------|-------------|
 | `ax` / `ax install` | Interactive MCP installer for detected agents |
 | `ax uninstall` | Remove ax from agent configs |
-| `ax init [path] [--workspace]` | Create `.ax/`, full index, git hooks; `--workspace` discovers monorepo members |
+| `ax init [path] [--workspace] [--all]` | Create `.ax/`, full index, git hooks; `--workspace` discovers monorepo members; `--all` initializes every project found under the home directory |
 | `ax uninit [path]` | Delete `.ax/` directory |
 | `ax index [--force] [--quiet] [--all]` | Full re-index; `--all` indexes every `ax.json` workspace member |
 | `ax sync [--watch] [--quiet] [--all]` | Incremental sync; `--all` syncs every workspace member |

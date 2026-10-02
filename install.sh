@@ -260,6 +260,13 @@ sync_local_ax_instances "$dest/ax"
 update_session_path
 confirm_ax_install "$version" || exit 1
 
+if [ "${AX_SKIP_PROJECT_INIT:-}" = "1" ]; then
+  echo "Skipping project discovery (AX_SKIP_PROJECT_INIT=1)."
+else
+  echo "Discovering projects and running ax init..."
+  "$BIN_DIR/ax" init --all || echo "ax: project discovery reported errors. Re-run: ax init --all" >&2
+fi
+
 installed_ver="$("$BIN_DIR/ax" version 2>/dev/null || true)"
 echo "Installed to $dest (replaced previous install)"
 if [ -n "$installed_ver" ]; then

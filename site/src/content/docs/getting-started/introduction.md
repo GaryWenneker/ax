@@ -18,6 +18,14 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v6.3.0
+
+v6.3.0 is a minor release. Installing or upgrading ax now finds your projects and initializes them. `ax init` on one directory works as before.
+
+- **Project discovery on install.** The installer and `ax upgrade` walk four levels under your home directory. Hidden folders and dependency folders (`node_modules`, `target`, `dist`, and the same kind of directory) are skipped. A directory is a project when it has a git repository, a project manifest (`Cargo.toml`, `package.json`, `go.mod`, and the other workspace manifests), or an existing `.ax/ax.db`. The walk stops at that directory, so a nested package inside a repo is not initialized on its own.
+- **No prompts.** Each discovered project gets the same non-interactive `ax init`: saved stacks and IDEs stay, a new project uses the detected defaults, and an existing index is synced instead of rebuilt.
+- **Run it again.** `ax init --all` repeats the scan. Set `AX_SKIP_PROJECT_INIT=1` when a script should install the binary only.
+
 ## What's new in v6.2.0
 
 v6.2.0 is a minor release. The conversation cache, working notes, and a durable transcript are new, and existing tools keep their old actions.

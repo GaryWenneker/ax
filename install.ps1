@@ -344,6 +344,16 @@ Sync-LocalAxInstances -SourceExe $exe -Targets $installTargets
 Update-SessionPath -BinDir $binDir
 Confirm-AxInstall -ExpectedTag $version -Targets $installTargets
 
+if ($env:AX_SKIP_PROJECT_INIT -eq '1') {
+  Write-Host "Skipping project discovery (AX_SKIP_PROJECT_INIT=1)."
+} else {
+  Write-Host "Discovering projects and running ax init..."
+  & (Join-Path $binDir 'ax.exe') init --all
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "ax: project discovery reported errors. Re-run: ax init --all" -ForegroundColor Yellow
+  }
+}
+
 $installedVer = (& (Join-Path $binDir 'ax.exe') version 2>&1 | Out-String).Trim()
 Write-Host "Installed to $dest (replaced previous install)" -ForegroundColor Green
 Write-Host "Active: $installedVer ($binDir\ax.exe)" -ForegroundColor Green
