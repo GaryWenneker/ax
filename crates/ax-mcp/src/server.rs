@@ -1286,6 +1286,29 @@ mod reuse_integration {
     }
 
     #[tokio::test]
+    async fn preflight_sends_the_notes_once_per_change() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (_dir, mut engine) = fixture().await;
+        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await));
+        let first = text(&call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["note one"], "session": chat })).await);
+        let hash = hash_of(&first);
+
+        let full = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "p", "session": chat })).await);
+        assert!(working_block(&full).contains("note one"), "{full}");
+        let short = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "p", "session": chat, "known_context": hash })).await);
+        assert!(short.contains(&format!("<ax_working_context hash={hash} unchanged/>")), "{short}");
+        assert!(!short.contains("note one"), "{short}");
+        assert!(ax_usage::count_tokens(&short) < ax_usage::count_tokens(&full));
+
+        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["note two"], "session": chat })).await;
+        let changed = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "p", "session": chat, "known_context": hash })).await);
+        let block = working_block(&changed);
+        assert!(block.contains("note two") && block.contains("note one"), "{changed}");
+        assert_ne!(hash_of(&block), hash);
+    }
+
+    #[tokio::test]
     async fn the_session_argument_beats_the_hook_file() {
         let _guard = env_lock().await;
         let _home = isolated_home();

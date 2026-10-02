@@ -84,6 +84,10 @@ fn frame(hasher: &mut Sha256, label: &str, text: &str) {
     hasher.update(format!("{label}:{}:{text}\n", text.len()).as_bytes());
 }
 
+fn is_stale(ctx: &WorkingContext, current_fingerprint: &str) -> bool {
+    !ctx.index_fingerprint.is_empty() && ctx.index_fingerprint != current_fingerprint
+}
+
 pub fn render(ctx: &WorkingContext, current_fingerprint: &str) -> String {
     if ctx.is_empty() {
         return "<ax_working_context>\nNo working context for this conversation. Call ax_session with action add \
@@ -92,7 +96,7 @@ pub fn render(ctx: &WorkingContext, current_fingerprint: &str) -> String {
                 </ax_working_context>"
             .to_string();
     }
-    let stale = !ctx.index_fingerprint.is_empty() && ctx.index_fingerprint != current_fingerprint;
+    let stale = is_stale(ctx, current_fingerprint);
     let mut lines = vec![format!(
         "<ax_working_context hash={} stale={}>",
         content_hash(ctx),
@@ -450,18 +454,33 @@ pub async fn working_context_apply(
 }
 
 /// Preflight block. Empty when there is nothing to repeat, the switch is off, or the db is unreachable.
-pub async fn working_context_block(root: &Path, conversation: &str, fingerprint: &str) -> String {
+/// One `unchanged` line when `known` is the current hash and the notes are not stale.
+pub async fn working_context_block(root: &Path, conversation: &str, fingerprint: &str, known: Option<&str>) -> String {
     if !reuse_enabled() {
         return String::new();
     }
     let Ok(pool) = open_pool().await else {
         return String::new();
     };
-    let Ok(ctx) = load(&pool, &scope(conversation, root)).await else {
+    block_with(&pool, root, conversation, fingerprint, known).await
+}
+
+pub(crate) async fn block_with(
+    pool: &SqlitePool,
+    root: &Path,
+    conversation: &str,
+    fingerprint: &str,
+    known: Option<&str>,
+) -> String {
+    let Ok(ctx) = load(pool, &scope(conversation, root)).await else {
         return String::new();
     };
     if ctx.is_empty() {
         return String::new();
+    }
+    let hash = content_hash(&ctx);
+    if known == Some(hash.as_str()) && !is_stale(&ctx, fingerprint) {
+        return format!("<ax_working_context hash={hash} unchanged/>");
     }
     render(&ctx, fingerprint)
 }
@@ -545,6 +564,26 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_known_fresh_hash_gets_one_line_and_anything_else_the_full_block() {
+        let (dir, pool) = pool().await;
+        assert_eq!(block_with(&pool, &dir, "chat-1", "fp-1", Some("abc")).await, "", "no notes, no block");
+        note(&pool, &dir, "chat-1", "alpha returns u64").await;
+        let full = block_with(&pool, &dir, "chat-1", "fp-1", None).await;
+        let hash = hash_of(&full);
+        assert!(full.contains("alpha returns u64"), "{full}");
+
+        let short = block_with(&pool, &dir, "chat-1", "fp-1", Some(&hash)).await;
+        assert_eq!(short, format!("<ax_working_context hash={hash} unchanged/>"));
+
+        let other = block_with(&pool, &dir, "chat-1", "fp-1", Some("0000000000000000")).await;
+        assert_eq!(other, full, "a different hash gets the full block");
+        let stale = block_with(&pool, &dir, "chat-1", "fp-2", Some(&hash)).await;
+        assert!(stale.contains("stale=true") && stale.contains("alpha returns u64"), "stale notes are resent: {stale}");
+        let cross = block_with(&pool, &dir, "chat-2", "fp-1", Some(&hash)).await;
+        assert_eq!(cross, "", "a hash from another chat does not reveal or confirm anything");
     }
 
     #[tokio::test]

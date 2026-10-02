@@ -700,7 +700,8 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 inject.push_str(&known);
             }
             let fingerprint = ax_usage::index_fingerprint(&index);
-            let working = ax_usage::working_context_block(ax.project_root(), &conversation, &fingerprint).await;
+            let known = params.get("known_context").and_then(Value::as_str);
+            let working = ax_usage::working_context_block(ax.project_root(), &conversation, &fingerprint, known).await;
             if !working.is_empty() {
                 inject.push('\n');
                 inject.push_str(&working);
@@ -1625,6 +1626,10 @@ fn preflight_tool() -> Value {
                 "projectPath": {
                     "type": "string",
                     "description": "Optional project root when cwd differs from the MCP --path index (monorepos). Resolves to the nearest ax root."
+                },
+                "known_context": {
+                    "type": "string",
+                    "description": "The <ax_working_context> hash you already have; when it is still current, preflight sends one unchanged line instead of the notes"
                 }
             }
         }
@@ -2601,5 +2606,7 @@ mod tests {
         }
         assert_eq!(session_type("ax_guard"), Some(false));
         assert_eq!(session_type("ax_sync"), Some(false));
+        let preflight = tools.iter().find(|t| t["name"] == "ax_preflight").unwrap();
+        assert_eq!(preflight["inputSchema"]["properties"]["known_context"]["type"], "string");
     }
 }
