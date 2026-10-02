@@ -104,6 +104,12 @@ Must not change:
 - Commit the spec at approval, then at each green checkpoint. No PR, no merge.
 - Gauntlet: `scripts/context-cache-gauntlet.sh` (tests 3×, clippy, changed-line coverage, cargo-mutants on the changed modules, L5/L6, audit), then the review loop until a round has zero findings.
 
+## Revisions during implementation
+
+- **R1 (part 3):** turns are counted from preflight calls only, not from the start hook as well. The hook runs in a separate process, and counting both would count every turn twice. The count lives in daemon memory, so a daemon restart resets it; it only drives a nudge. The nudge shows on the 6th preflight after the last write, that is, after 5 turns without one.
+- **R2 (part 1):** `session` minting lives in `ax-mcp` (`chat_session.rs`), because `ax-usage` has no `uuid` dependency and the spec allows no new dependencies.
+- **R3 (part 1):** policy-body dedupe in preflight (which rules were already delivered) still keys on the connection and the hook file, not on the new session id. Changing it would resend every rule body whenever an agent forgets to pass `session`. That is out of scope here; it is listed as a known limit.
+
 ## 6. Order and expected effect
 
 1. Part 1 makes the existing cache correct in real chats. Without it, the measured savings exist only in tests that write the session file.

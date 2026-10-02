@@ -277,7 +277,18 @@ async fn call_tool_and_wrap(
     let args = if matches!(name, "ax_preflight" | "ax_skill") { attach_policy_session(engine, args) } else { args };
     let started = std::time::Instant::now();
     let conversation = resolve_chat(engine, name, &args);
-    let args = if matches!(name, "ax_preflight" | "ax_session") { with_chat(args, &conversation) } else { args };
+    let session_write = name == "ax_session"
+        && matches!(args.get("action").and_then(Value::as_str), Some("add" | "update" | "compact" | "clear"));
+    let args = match name {
+        "ax_preflight" => {
+            let turns = engine.turns().on_preflight(&conversation);
+            let mut args = with_chat(args, &conversation);
+            args[crate::tools::TURNS_ARG] = json!(turns);
+            args
+        }
+        "ax_session" => with_chat(args, &conversation),
+        _ => args,
+    };
     let reuse_root = project_root.filter(|_| ax_usage::reuse_enabled() && ax_usage::reuse_cacheable(name));
     if let Some(root) = reuse_root {
         if let Some(hit) = confirmed_reuse_hit(engine, root, &conversation, name, &args).await {
@@ -333,6 +344,9 @@ async fn call_tool_and_wrap(
             Err("ax not initialized".to_string())
         }
     };
+    if session_write && result.is_ok() {
+        engine.turns().on_write(&conversation);
+    }
     if let Ok(mut t) = telemetry().lock() {
         t.record_usage("mcp_tool", name, result.is_ok(), None);
         t.persist_sync();
@@ -1306,6 +1320,33 @@ mod reuse_integration {
         let block = working_block(&changed);
         assert!(block.contains("note two") && block.contains("note one"), "{changed}");
         assert_ne!(hash_of(&block), hash);
+    }
+
+    const NUDGE: &str = "<ax_session_nudge>";
+
+    #[tokio::test]
+    async fn preflight_nudges_after_five_quiet_turns_and_for_stale_notes() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (dir, mut engine) = fixture().await;
+        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "turn 1" })).await));
+        let turn = json!({ "prompt": "next", "session": chat });
+        for n in 2..=5 {
+            let pre = text(&call(&mut engine, "ax_preflight", turn.clone()).await);
+            assert!(!pre.contains(NUDGE), "turn {n}: {pre}");
+        }
+        let sixth = text(&call(&mut engine, "ax_preflight", turn.clone()).await);
+        assert!(sixth.contains(NUDGE) && sixth.contains("5 turns"), "{sixth}");
+
+        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["noted"], "session": chat })).await;
+        let after_write = text(&call(&mut engine, "ax_preflight", turn.clone()).await);
+        assert!(!after_write.contains(NUDGE), "a write starts the count over: {after_write}");
+
+        std::fs::write(dir.path().join("src/lib.rs"), fixture_source("reuse_beta_helper() + 4")).unwrap();
+        call(&mut engine, "ax_sync", json!({})).await;
+        let stale = text(&call(&mut engine, "ax_preflight", turn).await);
+        assert!(stale.contains("stale=true"), "{stale}");
+        assert!(stale.contains(NUDGE) && stale.contains("stale"), "stale notes get the nudge: {stale}");
     }
 
     #[tokio::test]

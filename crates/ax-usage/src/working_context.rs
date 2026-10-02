@@ -362,6 +362,22 @@ async fn save(pool: &SqlitePool, key: &str, ctx: &WorkingContext) -> Result<(), 
     Ok(())
 }
 
+/// Turns without an `ax_session` write before preflight asks for a compact.
+pub const NUDGE_AFTER_TURNS: u32 = 5;
+
+/// One preflight line asking the agent to write or confirm its notes, or `None`.
+/// `turns` counts this preflight; `stale` is whether the notes block says `stale=true`.
+pub fn session_nudge(turns: u32, stale: bool) -> Option<String> {
+    let ask = if stale {
+        "The notes are stale: the index changed since they were written. Check them, then call ax_session with action compact."
+    } else if turns > NUDGE_AFTER_TURNS {
+        "5 turns since the notes were last written. Call ax_session with action compact: the objective, facts, files, symbols, decisions and open questions so far."
+    } else {
+        return None;
+    };
+    Some(format!("<ax_session_nudge>{ask}</ax_session_nudge>"))
+}
+
 /// Snapshots kept per project.
 const MAX_SNAPSHOTS: usize = 200;
 /// A snapshot not written for this long is deleted on the next write.
@@ -564,6 +580,20 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn the_nudge_asks_for_compact_after_five_quiet_turns_or_stale_notes() {
+        for turns in 0..=NUDGE_AFTER_TURNS {
+            assert_eq!(session_nudge(turns, false), None, "turn {turns}");
+        }
+        let quiet = session_nudge(NUDGE_AFTER_TURNS + 1, false).expect("nudge after 5 quiet turns");
+        assert!(quiet.starts_with("<ax_session_nudge>") && quiet.ends_with("</ax_session_nudge>"), "{quiet}");
+        assert!(quiet.contains("ax_session") && quiet.contains("compact") && quiet.contains("5 turns"), "{quiet}");
+        let stale = session_nudge(1, true).expect("nudge for stale notes");
+        assert!(stale.contains("stale") && stale.contains("compact"), "{stale}");
+        assert_ne!(stale, quiet);
+        assert_eq!(session_nudge(NUDGE_AFTER_TURNS + 1, true), Some(stale), "stale wins over quiet");
     }
 
     #[tokio::test]

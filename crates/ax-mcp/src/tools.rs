@@ -706,6 +706,12 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 inject.push('\n');
                 inject.push_str(&working);
             }
+            let turns = params.get(TURNS_ARG).and_then(Value::as_u64).unwrap_or(0) as u32;
+            let stale = working.lines().next().is_some_and(|header| header.contains("stale=true"));
+            if let Some(nudge) = ax_usage::session_nudge(turns, stale) {
+                inject.push('\n');
+                inject.push_str(&nudge);
+            }
         }
         if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
             let unseen: Vec<_> = entries
@@ -840,6 +846,8 @@ fn skill_inline_chars() -> usize {
 
 /// Private args key: the chat the server resolved for this call.
 pub(crate) const CHAT_ARG: &str = "__axChat";
+/// Private args key: preflight calls in this chat since its last `ax_session` write.
+pub(crate) const TURNS_ARG: &str = "__axTurns";
 
 fn chat_of(params: &Value) -> String {
     match params.get(CHAT_ARG).and_then(Value::as_str) {

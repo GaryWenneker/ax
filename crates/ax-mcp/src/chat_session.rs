@@ -31,9 +31,57 @@ pub fn resolve_session(
     }
 }
 
+/// Chats tracked before the counter starts over.
+const MAX_TRACKED_CHATS: usize = 1000;
+
+/// Preflight calls per chat since its last `ax_session` write. Memory only: it drives a nudge.
+#[derive(Debug, Default)]
+pub struct TurnCounter {
+    counts: std::collections::HashMap<String, u32>,
+}
+
+impl TurnCounter {
+    /// Count this preflight; returns the turns since the last write, this one included.
+    pub fn on_preflight(&mut self, chat: &str) -> u32 {
+        if self.counts.len() >= MAX_TRACKED_CHATS && !self.counts.contains_key(chat) {
+            self.counts.clear();
+        }
+        let count = self.counts.entry(chat.to_string()).or_default();
+        *count += 1;
+        *count
+    }
+
+    pub fn on_write(&mut self, chat: &str) {
+        self.counts.remove(chat);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turns_count_per_chat_and_a_write_starts_over() {
+        let mut t = TurnCounter::default();
+        assert_eq!(t.on_preflight("a"), 1);
+        assert_eq!(t.on_preflight("a"), 2);
+        assert_eq!(t.on_preflight("b"), 1);
+        t.on_write("a");
+        assert_eq!(t.on_preflight("a"), 1);
+        assert_eq!(t.on_preflight("b"), 2);
+    }
+
+    #[test]
+    fn the_counter_starts_over_past_its_chat_limit() {
+        let mut t = TurnCounter::default();
+        t.on_preflight("first");
+        t.on_preflight("first");
+        for i in 0..MAX_TRACKED_CHATS {
+            t.on_preflight(&format!("chat-{i}"));
+        }
+        assert!(t.counts.len() <= MAX_TRACKED_CHATS, "{}", t.counts.len());
+        assert_eq!(t.on_preflight("first"), 1);
+    }
 
     fn minted() -> String {
         "axs_minted".to_string()

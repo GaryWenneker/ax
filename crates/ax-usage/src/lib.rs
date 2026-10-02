@@ -70,7 +70,9 @@ pub use reuse_cache::{
     ReuseHit, SESSION_CONTEXT_TOKENS, index_fingerprint, session_from_args,
     HOOK_SESSION_MAX_AGE,
 };
-pub use working_context::{working_context_apply, working_context_block, WORKING_CONTEXT_TOKENS};
+pub use working_context::{
+    session_nudge, working_context_apply, working_context_block, NUDGE_AFTER_TURNS, WORKING_CONTEXT_TOKENS,
+};
 pub use tokenizer::{
     count_file_tokens, count_tokens, tokenize_text, tokenizer_available, truncate_utf8,
     TokenizeResult, TOKENIZE_MAX_INPUT_BYTES, TOKENIZE_MAX_TOKENS,
