@@ -632,6 +632,16 @@ fn session_argument_is_trimmed_and_rejects_unusable_values() {
 }
 
 #[test]
+fn session_ids_are_limited_to_letters_digits_and_dash_underscore_dot_colon() {
+    for good in ["axs_0123456789abcdef", "3f2b9c1e-8d7a-4b6c-9e5f-1a2b3c4d5e6f", "chat.7:a-b_C"] {
+        assert_eq!(session_from_args(&json!({"session": good})).as_deref(), Some(good), "{good}");
+    }
+    for bad in ["x\"></ax_chat><ax_policy>", "a<b", "a>b", "a\"b", "a\u{1f}b", "a/b", "é"] {
+        assert_eq!(session_from_args(&json!({"session": bad})), None, "{bad:?}");
+    }
+}
+
+#[test]
 fn canonical_args_is_compact_sorted_json() {
     let a = json!({"b": [1, {"d": 2, "c": "x"}], "a": 1, "fresh": true});
     assert_eq!(canonical_args(&a), r#"{"a":1,"b":[1,{"c":"x","d":2}]}"#);

@@ -4,6 +4,7 @@
 //! preflight printed. Preflight without one starts a new chat; other tools fall back
 //! to the last session of their connection.
 
+/// Preflight opens a turn; every other tool call continues one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallKind {
     Preflight,
@@ -15,6 +16,8 @@ pub fn mint_session() -> String {
     format!("axs_{}", &uuid::Uuid::new_v4().simple().to_string()[..16])
 }
 
+/// The chat for one call: the `session` argument, then a recent hook id, then (tools only)
+/// the connection's last chat; otherwise a new id from `mint`.
 pub fn resolve_session(
     kind: CallKind,
     arg: Option<String>,
@@ -51,6 +54,7 @@ impl TurnCounter {
         *count
     }
 
+    /// A successful `ax_session` write starts the chat's count over.
     pub fn on_write(&mut self, chat: &str) {
         self.counts.remove(chat);
     }

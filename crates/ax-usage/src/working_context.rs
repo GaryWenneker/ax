@@ -369,9 +369,12 @@ pub const NUDGE_AFTER_TURNS: u32 = 5;
 /// `turns` counts this preflight; `stale` is whether the notes block says `stale=true`.
 pub fn session_nudge(turns: u32, stale: bool) -> Option<String> {
     let ask = if stale {
-        "The notes are stale: the index changed since they were written. Check them, then call ax_session with action compact."
+        "The notes are stale: the index changed since they were written. Check them, then call ax_session with action compact.".to_string()
     } else if turns > NUDGE_AFTER_TURNS {
-        "5 turns since the notes were last written. Call ax_session with action compact: the objective, facts, files, symbols, decisions and open questions so far."
+        format!(
+            "{NUDGE_AFTER_TURNS} turns since the notes were last written. Call ax_session with action compact: \
+             the objective, facts, files, symbols, decisions and open questions so far."
+        )
     } else {
         return None;
     };

@@ -114,6 +114,8 @@ Must not change:
 
 - **R5 (part 6):** `graph=<16 hex>` is printed in the `<ax_chat>` line, not next to the snapshot hash. A chat without notes has no snapshot block, and the version should show on every preflight. It is the first 16 hex characters of the index fingerprint, the same value that marks notes stale.
 
+- **R6 (part 1, review finding R1-2):** a session id, from the argument or the hook file, is 1 to 128 ASCII letters, digits, or `-_.:` after trimming; anything else is ignored. The part 1 rule (no whitespace or control characters) let `"`, `<` and `>` through, and the id is printed into `<ax_chat …>`, so a crafted id could inject markup into preflight. The hook file had no check at all, so an id could also carry the `\u{1f}` scope separator. Minted ids, Cursor and Claude UUIDs, and conversation ids all fit the tighter rule.
+
 ## 6. Order and expected effect
 
 1. Part 1 makes the existing cache correct in real chats. Without it, the measured savings exist only in tests that write the session file.

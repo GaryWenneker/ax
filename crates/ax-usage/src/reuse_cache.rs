@@ -256,20 +256,26 @@ pub fn format_session_context(entries: &[ContextEntry], max_tokens: i64) -> Stri
     lines.join("\n")
 }
 
-/// Active chat id, or one id per MCP process when the IDE gives none.
 /// How long a hook-written session file counts as the current chat.
 pub const HOOK_SESSION_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(600);
 const MAX_SESSION_CHARS: usize = 128;
 
-/// The `session` argument, when it is a usable id.
-pub fn session_from_args(args: &Value) -> Option<String> {
-    let id = args.get("session")?.as_str()?.trim();
+/// A trimmed session id, when it is 1..=128 ASCII letters, digits, or `-_.:`.
+/// Ids are printed into preflight markup and joined into `\u{1f}`-separated scopes.
+pub(crate) fn usable_session(raw: &str) -> Option<String> {
+    let id = raw.trim();
     let usable = !id.is_empty()
-        && id.chars().count() <= MAX_SESSION_CHARS
-        && !id.chars().any(|c| c.is_whitespace() || c.is_control());
+        && id.len() <= MAX_SESSION_CHARS
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'));
     usable.then(|| id.to_string())
 }
 
+/// The `session` argument, when it is a usable id.
+pub fn session_from_args(args: &Value) -> Option<String> {
+    usable_session(args.get("session")?.as_str()?)
+}
+
+/// Active chat id, or one id per MCP process when the IDE gives none.
 pub fn conversation_key(active: Option<String>) -> String {
     if let Some(id) = active.filter(|s| !s.is_empty()) {
         return id;

@@ -107,6 +107,7 @@ impl McpEngine {
         &mut self.policy_sessions
     }
 
+    /// Preflight turns per chat since its last `ax_session` write.
     pub fn turns(&mut self) -> &mut TurnCounter {
         &mut self.turns
     }

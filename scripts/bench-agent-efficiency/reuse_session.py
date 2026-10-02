@@ -8,6 +8,11 @@ L5  same 5-turn script twice (AX_CONTEXT_CACHE=off, then on). Asserts:
     - a second conversation id gets zero hits for the same calls
 L6  explore, edit the cited file, sync, ask again. Asserts the last call is a miss with the
     new code; any hit fails. Reports net savings for the session including the miss.
+L5S 8 turns with no hook file: the chat id comes from preflight and the agent passes it back,
+    with the last notes hash as known_context. A repeat hits iff its first reply wrote a row
+    (replies of 200 tokens or fewer are not stored), at least 4 repeats hit, known turns get one unchanged line,
+    a summarized turn (no hash) gets the full block, and a second chat starts cold.
+L6S edit+sync mid-session: notes come back stale with a nudge; compact confirms them.
 
 Exits nonzero on any failed assertion or on any harness error. Prints a JSON report.
 Usage: AX_BIN=/path/to/ax python3 reuse_session.py [--out report.json] [--control-no-edit]
@@ -18,10 +23,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 import tiktoken
@@ -66,9 +74,14 @@ def fixture(root: Path) -> None:
     (src / "lib.rs").write_text("pub mod orders;\npub mod pricing;\npub mod report;\n", encoding="utf-8")
 
 
-def env_for(home: Path, cache_on: bool, conversation: str) -> dict[str, str]:
+def env_for(home: Path, cache_on: bool, conversation: str | None) -> dict[str, str]:
+    """`conversation=None` writes no hook file: the chat id then comes from preflight alone."""
     (home / ".ax").mkdir(parents=True, exist_ok=True)
-    (home / ".ax" / "active-cursor-session").write_text(conversation + "\n", encoding="utf-8")
+    marker = home / ".ax" / "active-cursor-session"
+    if conversation is None:
+        marker.unlink(missing_ok=True)
+    else:
+        marker.write_text(conversation + "\n", encoding="utf-8")
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["AX_USAGE_DB"] = str(home / "usage.db")
@@ -114,7 +127,17 @@ SCRIPT = [
 class Arm:
     def __init__(self, binary: str, project: Path, env: dict[str, str]) -> None:
         self.session = McpSession(project, binary, env=env)
+        self.db = Path(env["AX_USAGE_DB"])
         self.calls: list[dict] = []
+
+    def stored_rows(self, conversation: str) -> int:
+        """Reuse rows for one chat; small replies are deliberately not stored, so a repeat of one misses."""
+        if not self.db.exists():
+            return 0
+        with closing(sqlite3.connect(f"file:{self.db}?mode=ro", uri=True)) as db:
+            scope = conversation + "\x1f"
+            sql = "SELECT COUNT(*) FROM mcp_reuse_cache WHERE substr(conversation, 1, length(?1)) = ?1"
+            return int(db.execute(sql, (scope,)).fetchone()[0])
 
     def call(self, tool: str, args: dict) -> dict:
         result = self.session.request("tools/call", {"name": tool, "arguments": args})
@@ -270,6 +293,159 @@ def level6(binary: str, base: Path, failures: list[str], control_no_edit: bool) 
     }
 
 
+CHAT = re.compile(r"<ax_chat session=([A-Za-z0-9_-]+) graph=([0-9a-f]{16})>")
+WORKING = re.compile(r"<ax_working_context hash=([0-9a-f]{16})( unchanged/>| stale=(true|false)>)")
+NUDGE = "<ax_session_nudge>"
+NOTES = {
+    "action": "add",
+    "objective": "Understand compute_total",
+    "facts": ["compute_total sums lines, applies the discount, then adds tax"],
+    "files": ["src/orders.rs", "src/pricing.rs"],
+    "symbols": ["compute_total", "apply_discount", "tax_for"],
+}
+MORE_NOTES = {"action": "add", "decisions": ["Keep apply_discount's signature"]}
+
+# (graph calls, notes to write, pass known_context?) per turn. Turn 6 plays a summarized chat: no hash.
+SESSION_SCRIPT = [
+    ([("ax_explore", {"query": "how does compute_total work"}), ("ax_node", {"name": "compute_total"})], NOTES, True),
+    ([("ax_callers", {"symbol": "compute_total"}), ("ax_node", {"name": "apply_discount"})], None, True),
+    ([("ax_node", {"name": "compute_total"}), ("ax_explore", {"query": "how does compute_total work"})], None, True),
+    ([("ax_node", {"name": "apply_discount"})], MORE_NOTES, True),
+    ([("ax_callees", {"symbol": "compute_total"})], None, True),
+    ([], None, False),
+    ([("ax_explore", {"query": "how does compute_total work"}), ("ax_node", {"name": "compute_total"})], None, True),
+    ([("ax_callees", {"symbol": "compute_total"})], None, True),
+]
+
+
+def chat_of(text: str) -> str:
+    found = CHAT.search(text)
+    if not found:
+        raise SystemExit(f"preflight printed no <ax_chat session=… graph=…>:\n{text[:2000]}")
+    return found.group(1)
+
+
+def working_of(text: str) -> tuple[str, str] | None:
+    """(hash, "unchanged" | "stale" | "fresh") of the working-context block, or None."""
+    found = WORKING.search(text)
+    if not found:
+        return None
+    kind = "unchanged" if found.group(2).startswith(" unchanged") else ("stale" if found.group(3) == "true" else "fresh")
+    return found.group(1), kind
+
+
+def play_session(arm: Arm, send_known: bool) -> dict:
+    """One chat that carries its session id; returns per-turn preflight tokens and observations."""
+    session, known, turns = None, None, []
+    for graph, notes, pass_known in SESSION_SCRIPT:
+        args = {"prompt": "continue the task"}
+        if session:
+            args["session"] = session
+        if send_known and pass_known and known:
+            args["known_context"] = known
+        pre = arm.call("ax_preflight", args)
+        printed = chat_of(pre["text"])
+        session = session or printed
+        block = working_of(pre["text"])
+        if block:
+            known = block[0]
+        replies = []
+        for tool, a in graph:
+            before = arm.stored_rows(session)
+            reply = arm.call(tool, {**a, "session": session})
+            reply["stored"] = arm.stored_rows(session) > before
+            replies.append(reply)
+        if notes:
+            wrote = arm.call("ax_session", {**notes, "session": session})
+            known = (working_of(wrote["text"]) or (None,))[0]
+        turns.append({"printed": printed, "block": block, "nudge": NUDGE in pre["text"], "preflight_tokens": pre["tokens"], "replies": replies})
+    return {"session": session, "turns": turns}
+
+
+def level5_session(binary: str, base: Path, failures: list[str]) -> dict:
+    env = env_for(base / "home-l5s", True, None)
+    project = make_project(binary, base / "l5s", env)
+    arm = Arm(binary, project, env)
+    sent_once = play_session(arm, send_known=True)
+    arm.close()
+    other = Arm(binary, project, env)
+    resent = play_session(other, send_known=False)
+    other.close()
+
+    a, b = sent_once["turns"], resent["turns"]
+    check(sent_once["session"] != resent["session"], "L5S two chats on one daemon got the same session id", failures)
+    check(all(t["printed"] == sent_once["session"] for t in a), "L5S preflight did not echo the chat's session id", failures)
+    seen: set[str] = set()
+    for n, turn in enumerate(a, 1):
+        for r in turn["replies"]:
+            key = json.dumps([r["tool"], {k: v for k, v in r["args"].items() if k != "session"}], sort_keys=True)
+            check(r["hit"] == (key in seen), f"L5S turn {n} {key}: hit={r['hit']}", failures)
+            check(not (r["hit"] and r["stored"]), f"L5S turn {n} {key}: a hit wrote a new row", failures)
+            if r["stored"]:
+                seen.add(key)
+        if n == 1:
+            check(turn["block"] is None, "L5S turn 1 showed notes before any were written", failures)
+        elif SESSION_SCRIPT[n - 1][2]:
+            check(turn["block"] is not None and turn["block"][1] == "unchanged", f"L5S turn {n}: expected one unchanged line, got {turn['block']}", failures)
+        else:
+            check(turn["block"] is not None and turn["block"][1] == "fresh", f"L5S turn {n} (no hash): expected the full block, got {turn['block']}", failures)
+        check(not turn["nudge"], f"L5S turn {n} nudged although notes were written within 5 turns", failures)
+    hits = sum(r["hit"] for t in a for r in t["replies"])
+    check(hits >= 4, f"L5S only {hits} repeats hit (expected at least 4)", failures)
+    first_other = b[0]["replies"]
+    check(not any(r["hit"] for r in first_other), "L5S the second chat hit the first chat's answers", failures)
+    check(b[0]["block"] is None, "L5S the second chat saw the first chat's notes", failures)
+    check(all(t["block"] is None or t["block"][1] != "unchanged" for t in b), "L5S an unchanged line without known_context", failures)
+
+    per_turn_known = [t["preflight_tokens"] for t in a]
+    per_turn_full = [t["preflight_tokens"] for t in b]
+    saved = sum(per_turn_full) - sum(per_turn_known)
+    check(saved > 0, f"L5S known_context saved no preflight tokens ({saved})", failures)
+    graph_tokens = sum(r["tokens"] for t in a for r in t["replies"])
+    return {
+        "turns": len(a),
+        "graph_calls": sum(len(t["replies"]) for t in a),
+        "hits": sum(r["hit"] for t in a for r in t["replies"]),
+        "graph_tokens": graph_tokens,
+        "not_stored": sorted({r["tool"] for t in a for r in t["replies"] if not r["hit"] and not r["stored"]}),
+        "preflight_tokens_per_turn_with_known_context": per_turn_known,
+        "preflight_tokens_per_turn_without": per_turn_full,
+        "known_context_saved_tokens": saved,
+        "second_chat_first_turn_hits": sum(r["hit"] for r in first_other),
+    }
+
+
+def level6_session(binary: str, base: Path, failures: list[str]) -> dict:
+    env = env_for(base / "home-l6s", True, None)
+    project = make_project(binary, base / "l6s", env)
+    arm = Arm(binary, project, env)
+    pre = arm.call("ax_preflight", {"prompt": "start"})
+    session = chat_of(pre["text"])
+    graph_before = CHAT.search(pre["text"]).group(2)
+    arm.call("ax_node", {"name": "apply_discount", "session": session})
+    wrote = arm.call("ax_session", {**NOTES, "session": session})
+    known = working_of(wrote["text"])[0]
+    pricing = project / "src" / "pricing.rs"
+    original = pricing.read_text(encoding="utf-8")
+    pricing.write_text(original.replace("value - value * pct / 100", "value - value * pct / 100 + l6s_marker()"), encoding="utf-8")
+    arm.call("ax_sync", {})
+    stale = arm.call("ax_preflight", {"prompt": "after edit", "session": session, "known_context": known})
+    block = working_of(stale["text"])
+    check(block == (known, "stale"), f"L6S expected stale notes with the same hash, got {block}", failures)
+    check(NUDGE in stale["text"], "L6S stale notes got no nudge", failures)
+    check(CHAT.search(stale["text"]).group(2) != graph_before, "L6S graph version did not move after sync", failures)
+    after = arm.call("ax_node", {"name": "apply_discount", "session": session})
+    check(not after["hit"] and "l6s_marker" in after["text"], "L6S graph call after edit+sync was not a fresh miss", failures)
+    compact = {**NOTES, "action": "compact", "decisions": [], "open_questions": [], "session": session}
+    confirmed = arm.call("ax_session", compact)
+    check(working_of(confirmed["text"]) == (known, "fresh"), "L6S compact did not confirm the same notes", failures)
+    quiet = arm.call("ax_preflight", {"prompt": "confirmed", "session": session, "known_context": known})
+    check(working_of(quiet["text"]) == (known, "unchanged"), "L6S confirmed notes were sent again", failures)
+    check(NUDGE not in quiet["text"], "L6S nudge stayed after compact", failures)
+    arm.close()
+    return {"stale_block_tokens": stale["tokens"], "confirmed_preflight_tokens": quiet["tokens"]}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out")
@@ -286,6 +462,8 @@ def main() -> int:
             "binary": binary,
             "L5": level5(binary, base, failures),
             "L6": level6(binary, base, failures, opts.control_no_edit),
+            "L5S": level5_session(binary, base, failures),
+            "L6S": level6_session(binary, base, failures),
         }
     finally:
         stop_daemons(binary, failures)

@@ -145,8 +145,7 @@ pub fn session_if_recent(text: &str, age: Option<std::time::Duration>, max_age: 
     if age? > max_age {
         return None;
     }
-    let id = text.lines().next()?.trim();
-    (!id.is_empty()).then(|| id.to_string())
+    crate::reuse_cache::usable_session(text.lines().next()?)
 }
 
 fn json_i64(v: &Value) -> Option<i64> {
@@ -424,6 +423,20 @@ mod tests {
         assert_eq!(session_if_recent("chat-7\n", Some(max + Duration::from_secs(1)), max), None);
         assert_eq!(session_if_recent("chat-7\n", None, max), None);
         assert_eq!(session_if_recent("  \n", Some(Duration::ZERO), max), None);
+    }
+
+    #[test]
+    fn a_hook_file_id_follows_the_session_argument_rules() {
+        use std::time::Duration;
+        let now = Some(Duration::ZERO);
+        let max = Duration::from_secs(600);
+        assert_eq!(
+            session_if_recent("3f2b9c1e-8d7a-4b6c-9e5f-1a2b3c4d5e6f\n", now, max).as_deref(),
+            Some("3f2b9c1e-8d7a-4b6c-9e5f-1a2b3c4d5e6f")
+        );
+        for bad in ["x\"></ax_chat>", "a\u{1f}b", "a b", &"c".repeat(129)] {
+            assert_eq!(session_if_recent(bad, now, max), None, "{bad:?}");
+        }
     }
 
     #[test]

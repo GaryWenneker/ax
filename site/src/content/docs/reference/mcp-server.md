@@ -155,7 +155,7 @@ Same call already answered in this conversation; cited files unchanged. Use the 
   2. the Cursor hook file `~/.ax/active-cursor-session`, if `ax turn-hook start` or `ax session-hook` wrote it in the last 10 minutes;
   3. the session last used on the same MCP connection (one Cursor window).
   
-  A preflight with none of these starts a new chat with a new id. A forgotten id therefore costs a cold start, never another chat's answers. `graph=` is the first 16 hex characters of the index fingerprint; it changes with every re-index.
+  A preflight with none of these starts a new chat with a new id. A forgotten id therefore costs a cold start, never another chat's answers. A usable id is 1 to 128 ASCII letters, digits, or `-_.:`; any other value is ignored, as if no id was given. `graph=` is the first 16 hex characters of the index fingerprint; it changes with every re-index.
 - **Size**: at most `AX_REUSE_CACHE_BYTES` (default 2 MB) of answers per conversation; the oldest go first. `AX_CONTEXT_CACHE=off` disables this too.
 - **Savings** are logged per hit (`tokensAvoided` = original answer tokens minus the reference) and appear in the savings report.
 
