@@ -150,7 +150,12 @@ Same call already answered in this conversation; cited files unchanged. Use the 
 - **`fresh: true`** on any of these tools skips the cache for that call.
 - **Preflight** adds an `<ax_session_context>` block (about 1,500 tokens at most) listing what this conversation already asked, with cited files and ids, so the agent can reuse it before searching again. Each entry is listed once per MCP session.
 - **Not cached**: replies of 200 tokens or less (a reference would not save anything), and replies citing more than 64 files.
-- **Conversation id** comes from the Cursor hook (`~/.ax/active-cursor-session`). Without one, the MCP process is the conversation. Two Cursor chats running at the same moment share whichever id the hook wrote last; a hit is still verified fresh, and the agent can call `ax_expand` if it does not have the earlier answer.
+- **Conversation id:** every `ax_preflight` reply names the chat in `<ax_chat session=axs_… graph=…>`. The agent passes that `session` back to `ax_preflight` and to the graph tools for the rest of the chat. The id is resolved in this order:
+  1. the `session` argument;
+  2. the Cursor hook file `~/.ax/active-cursor-session`, if `ax turn-hook start` or `ax session-hook` wrote it in the last 10 minutes;
+  3. the session last used on the same MCP connection (one Cursor window).
+  
+  A preflight with none of these starts a new chat with a new id. A forgotten id therefore costs a cold start, never another chat's answers. `graph=` is the first 16 hex characters of the index fingerprint; it changes with every re-index.
 - **Size**: at most `AX_REUSE_CACHE_BYTES` (default 2 MB) of answers per conversation; the oldest go first. `AX_CONTEXT_CACHE=off` disables this too.
 - **Savings** are logged per hit (`tokensAvoided` = original answer tokens minus the reference) and appear in the savings report.
 
@@ -167,7 +172,9 @@ ax_session({ "action": "compact", "objective": "Understand authentication", "fac
 - **Caps:** 12 entries per section, 200 characters per entry, 300 for the objective, and 800 tokens for the rendered block. A write that would pass a cap is rejected and the stored snapshot stays as it was.
 - **Identity:** the block names a 16-hex content hash. The same text always has the same hash.
 - **Stale, not deleted:** each write records the index fingerprint. If the index changes, preflight still shows the notes and sets `stale=true`. `add` and `update` refresh that fingerprint only when the text changes. `compact` refreshes it even when the text is unchanged, which is how the agent confirms the notes against the current index.
-- **Preflight** appends `<ax_working_context>` on every turn when the snapshot is non-empty. An empty conversation does not get the hint.
+- **Preflight** appends `<ax_working_context>` when the snapshot is non-empty. An empty conversation does not get the hint. Pass the hash you already have as `known_context`; if the notes are unchanged and not stale, preflight sends one line, `<ax_working_context hash=… unchanged/>`, instead of the whole block. After the IDE summarizes the chat the agent no longer has the hash, so the full block comes back.
+- **Nudge:** after 5 turns without an `ax_session` write, or when the notes are stale, preflight adds `<ax_session_nudge>` asking for `compact`. The turn count lives in daemon memory.
+- **Bounds:** at most 200 snapshots per project; the least recently written goes first. A snapshot not written for 30 days is deleted on the next write. If the index cannot be read, `add`, `update`, and `compact` are rejected ("index unavailable") instead of storing notes that could never be marked stale.
 - **Not stored here:** full tool bodies. Those stay in the conversation cache and the oversized-reply cache. `ax_context` is unchanged: it still builds a one-shot task context from the graph.
 - **Off:** `AX_CONTEXT_CACHE=off` (or `0`) makes `ax_session` fail and preflight omit the block.
 

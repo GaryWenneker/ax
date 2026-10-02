@@ -1142,6 +1142,7 @@ mod tests {
             let body = std::fs::read_to_string(dir.path().join(rel)).unwrap();
             assert!(body.contains(crate::CONVERSATION_CACHE_SENTENCE), "{rel} not upgraded");
             assert!(body.contains(crate::WORKING_CONTEXT_SENTENCE), "{rel} missing working context");
+            assert!(body.contains(crate::SESSION_ID_SENTENCE), "{rel} missing session id");
         }
     }
 
@@ -1166,8 +1167,9 @@ mod tests {
             include_str!("../templates/skills/startup/SKILL.md"),
             include_str!("../templates/skills/subagents/SKILL.md"),
         ] {
-            assert!(seed_version(body) >= 2, "the working-context change must bump seedVersion");
+            assert!(seed_version(body) >= 3, "the session-id change must bump seedVersion");
             assert!(body.contains(crate::WORKING_CONTEXT_SENTENCE), "missing working context");
+            assert!(body.contains(crate::SESSION_ID_SENTENCE), "missing session id");
         }
     }
 

@@ -13,6 +13,8 @@ pub const CONVERSATION_CACHE_SENTENCE: &str =
 pub const WORKING_CONTEXT_SENTENCE: &str =
     "Record a durable fact, file, symbol, decision, or open question with `ax_session`";
 
+pub const SESSION_ID_SENTENCE: &str = "Pass the `session` id from `<ax_chat>` to every ax call in this chat";
+
 const AX_SECTION_START: &str = "<!-- AX_START -->";
 const AX_SECTION_END: &str = "<!-- AX_END -->";
 
@@ -58,7 +60,7 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Conversation cache:** A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` in preflight before searching again; pass `fresh: true` to force a new query.
 
-**Working context:** Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`). Preflight repeats `<ax_working_context>` every turn. A changed index marks it stale; `compact` confirms the notes against the current index.
+**Working context:** Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index.
 
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
@@ -837,6 +839,8 @@ mod tests {
                 "fresh: true",
                 WORKING_CONTEXT_SENTENCE,
                 "<ax_working_context>",
+                SESSION_ID_SENTENCE,
+                "known_context",
             ] {
                 assert!(body.contains(needle), "{name}: missing {needle:?}");
             }
