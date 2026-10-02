@@ -229,6 +229,16 @@ fn record_policy_delivery(engine: &mut McpEngine, mut value: Value) -> Value {
     value
 }
 
+#[cfg(test)]
+static TOOL_RUNS: std::sync::Mutex<Vec<(PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// How often `tool` really ran (not served from the reuse cache) for `root`.
+#[cfg(test)]
+pub(crate) fn tool_runs(root: &std::path::Path, tool: &str) -> usize {
+    let runs = TOOL_RUNS.lock().unwrap_or_else(|e| e.into_inner());
+    runs.iter().filter(|(r, t)| r == root && t == tool).count()
+}
+
 /// The chat this call belongs to, remembered as the connection's current chat.
 fn resolve_chat(engine: &mut McpEngine, name: &str, args: &Value) -> String {
     use crate::chat_session::{mint_session, resolve_session, CallKind};
@@ -317,6 +327,10 @@ async fn call_tool_and_wrap(
         }
     }
     let reuse_args = reuse_root.map(|_| args.clone());
+    #[cfg(test)]
+    if let Some(root) = project_root {
+        TOOL_RUNS.lock().unwrap_or_else(|e| e.into_inner()).push((root.to_path_buf(), name.to_string()));
+    }
     let result = if let Some(pool) = engine.query_pool() {
         if pool.healthy() && crate::query_pool::is_read_tool(name) {
             pool.run(|| async {
@@ -1347,6 +1361,76 @@ mod reuse_integration {
         let stale = text(&call(&mut engine, "ax_preflight", turn).await);
         assert!(stale.contains("stale=true"), "{stale}");
         assert!(stale.contains(NUDGE) && stale.contains("stale"), "stale notes get the nudge: {stale}");
+    }
+
+    async fn stored_row(root: &std::path::Path, tool: &str) -> (i64, String) {
+        let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}")).await.unwrap();
+        sqlx::query_as("SELECT hits, cache_id FROM mcp_reuse_cache WHERE tool = ? AND conversation LIKE ?")
+            .bind(tool)
+            .bind(format!("%\u{1f}{}", root.display()))
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_hit_skips_the_tool_and_a_miss_reruns_it_and_replaces_the_row() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (dir, mut engine) = fixture().await;
+        let root = dir.path().canonicalize().unwrap();
+        let args = json!({ "symbol": "reuse_beta_helper" });
+        call(&mut engine, "ax_callers", args.clone()).await;
+        assert_eq!(tool_runs(&root, "ax_callers"), 1);
+        let (hits, first_id) = stored_row(&root, "ax_callers").await;
+        assert_eq!(hits, 0);
+
+        assert!(hit(&text(&call(&mut engine, "ax_callers", args.clone()).await)));
+        assert_eq!(tool_runs(&root, "ax_callers"), 1, "a hit must not run the tool");
+        assert_eq!(stored_row(&root, "ax_callers").await, (1, first_id.clone()));
+
+        std::fs::write(root.join("src/extra.rs"), "pub fn reuse_late_caller() -> u64 { reuse_beta_helper() }\n").unwrap();
+        call(&mut engine, "ax_sync", json!({})).await;
+        assert!(!hit(&text(&call(&mut engine, "ax_callers", args).await)));
+        assert_eq!(tool_runs(&root, "ax_callers"), 2, "a miss runs the tool again");
+        let (hits, new_id) = stored_row(&root, "ax_callers").await;
+        assert_eq!(hits, 0, "the miss replaced the row");
+        assert_ne!(new_id, first_id, "the new answer has its own cache id");
+    }
+
+    fn graph_of(preflight: &str) -> String {
+        let chat = preflight.split("<ax_chat ").nth(1).unwrap_or_else(|| panic!("no ax_chat:\n{preflight}"));
+        let header = chat.split('>').next().unwrap();
+        header
+            .split("graph=")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no graph version: {header}"))
+            .chars()
+            .take_while(char::is_ascii_hexdigit)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn preflight_shows_the_graph_version_and_it_moves_with_the_index() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (dir, mut engine) = fixture().await;
+        let root = dir.path().canonicalize().unwrap();
+        let pre = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "v1" })).await);
+        let chat = session_of(&pre);
+        let v1 = graph_of(&pre);
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", root.join(".ax/ax.db").display())).await.unwrap();
+        let expected = ax_usage::index_fingerprint(&crate::tools::indexed_hashes(&pool).await.unwrap());
+        assert_eq!(v1, expected[..16], "{pre}");
+
+        let same = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "v1 again", "session": chat })).await);
+        assert_eq!(graph_of(&same), v1);
+        std::fs::write(root.join("src/lib.rs"), fixture_source("reuse_beta_helper() + 6")).unwrap();
+        call(&mut engine, "ax_sync", json!({})).await;
+        let moved = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "v2", "session": chat })).await);
+        assert_ne!(graph_of(&moved), v1, "a new index is a new graph version");
+        assert_eq!(graph_of(&moved).len(), 16);
     }
 
     #[tokio::test]

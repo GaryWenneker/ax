@@ -110,6 +110,10 @@ Must not change:
 - **R2 (part 1):** `session` minting lives in `ax-mcp` (`chat_session.rs`), because `ax-usage` has no `uuid` dependency and the spec allows no new dependencies.
 - **R3 (part 1):** policy-body dedupe in preflight (which rules were already delivered) still keys on the connection and the hook file, not on the new session id. Changing it would resend every rule body whenever an agent forgets to pass `session`. That is out of scope here; it is listed as a known limit.
 
+- **R4 (part 5):** the design has no miss counter; `mcp_reuse_cache` counts hits only. The L4 test instead asserts what a miss does: the tool runs again (a test-only run counter per project and tool goes up), and the stored row is replaced (`hits` back to 0, a new `cache_id`). "A hit does not run the tool" is asserted with the same counter.
+
+- **R5 (part 6):** `graph=<16 hex>` is printed in the `<ax_chat>` line, not next to the snapshot hash. A chat without notes has no snapshot block, and the version should show on every preflight. It is the first 16 hex characters of the index fingerprint, the same value that marks notes stale.
+
 ## 6. Order and expected effect
 
 1. Part 1 makes the existing cache correct in real chats. Without it, the measured savings exist only in tests that write the session file.

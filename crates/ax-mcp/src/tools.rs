@@ -678,15 +678,17 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         }
         inject.push_str(CONTEXT_CACHE_LINE);
         let conversation = chat_of(&params);
+        let index = indexed_hashes(ax.db_pool()).await;
+        let graph = index.as_ref().ok().map(ax_usage::index_fingerprint);
         inject.push('\n');
-        inject.push_str(&chat_line(&conversation));
+        inject.push_str(&chat_line(&conversation, graph.as_deref()));
         let chat = chat_for_client(session_client(&params)).then(ax_usage::read_active_cursor_session).flatten();
         if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
             inject.push('\n');
             inject.push_str(&ledger);
         }
-        if let Ok(index) = indexed_hashes(ax.db_pool()).await {
-            let unseen: Vec<_> = ax_usage::reuse_session_entries(ax.project_root(), &conversation, &index)
+        if let Ok(index) = index.as_ref() {
+            let unseen: Vec<_> = ax_usage::reuse_session_entries(ax.project_root(), &conversation, index)
                 .await
                 .into_iter()
                 .filter(|e| !session_delivered.as_ref().is_some_and(|m| m.contains_key(&format!("reuse:{}", e.id))))
@@ -699,7 +701,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 inject.push('\n');
                 inject.push_str(&known);
             }
-            let fingerprint = ax_usage::index_fingerprint(&index);
+            let fingerprint = ax_usage::index_fingerprint(index);
             let known = params.get("known_context").and_then(Value::as_str);
             let working = ax_usage::working_context_block(ax.project_root(), &conversation, &fingerprint, known).await;
             if !working.is_empty() {
@@ -856,9 +858,10 @@ fn chat_of(params: &Value) -> String {
     }
 }
 
-fn chat_line(chat: &str) -> String {
+fn chat_line(chat: &str, fingerprint: Option<&str>) -> String {
+    let graph = fingerprint.map(|f| format!(" graph={}", &f[..f.len().min(16)])).unwrap_or_default();
     format!(
-        "<ax_chat session={chat}>Pass \"session\": \"{chat}\" to ax_preflight and to every ax tool call in this chat. A preflight without it starts a new chat.</ax_chat>"
+        "<ax_chat session={chat}{graph}>Pass \"session\": \"{chat}\" to ax_preflight and to every ax tool call in this chat. A preflight without it starts a new chat.</ax_chat>"
     )
 }
 
