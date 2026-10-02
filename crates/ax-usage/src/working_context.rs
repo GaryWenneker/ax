@@ -1,0 +1,848 @@
+//! Small per-conversation working snapshot: facts, files, decisions, open questions.
+//!
+//! Raw tool bodies stay in the reply caches. This object is what a later turn is shown
+//! so it does not rebuild that knowledge from the graph. The agent writes it; ax only
+//! stores it, caps it, and marks it stale when the index fingerprint changes.
+
+use std::path::Path;
+
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use sqlx::SqlitePool;
+
+use crate::reuse_cache::reuse_enabled;
+use crate::store::open_pool;
+use crate::tokenizer::count_tokens;
+
+pub const WORKING_CONTEXT_TOKENS: i64 = 800;
+const MAX_ITEMS: usize = 12;
+const MAX_ITEM_CHARS: usize = 200;
+const MAX_OBJECTIVE_CHARS: usize = 300;
+
+const SECTIONS: [&str; 5] = ["facts", "files", "symbols", "decisions", "open_questions"];
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkingContext {
+    pub objective: String,
+    pub facts: Vec<String>,
+    pub files: Vec<String>,
+    pub symbols: Vec<String>,
+    pub decisions: Vec<String>,
+    pub open_questions: Vec<String>,
+    pub index_fingerprint: String,
+}
+
+impl WorkingContext {
+    fn is_empty(&self) -> bool {
+        self.objective.is_empty()
+            && self.facts.is_empty()
+            && self.files.is_empty()
+            && self.symbols.is_empty()
+            && self.decisions.is_empty()
+            && self.open_questions.is_empty()
+    }
+
+    fn section_mut(&mut self, name: &str) -> &mut Vec<String> {
+        match name {
+            "facts" => &mut self.facts,
+            "files" => &mut self.files,
+            "symbols" => &mut self.symbols,
+            "decisions" => &mut self.decisions,
+            "open_questions" => &mut self.open_questions,
+            _ => unreachable!("section name is checked by the parser"),
+        }
+    }
+
+    fn section(&self, name: &str) -> &[String] {
+        match name {
+            "facts" => &self.facts,
+            "files" => &self.files,
+            "symbols" => &self.symbols,
+            "decisions" => &self.decisions,
+            "open_questions" => &self.open_questions,
+            _ => unreachable!("section name is checked by the parser"),
+        }
+    }
+}
+
+/// SHA-256 of the objective and the five lists. Identical text, identical hash.
+pub fn content_hash(ctx: &WorkingContext) -> String {
+    let mut hasher = Sha256::new();
+    frame(&mut hasher, "objective", &ctx.objective);
+    for name in SECTIONS {
+        let items = ctx.section(name);
+        hasher.update(format!("{name}:{}\n", items.len()).as_bytes());
+        for item in items {
+            frame(&mut hasher, "item", item);
+        }
+    }
+    let dig = hasher.finalize();
+    dig.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+fn frame(hasher: &mut Sha256, label: &str, text: &str) {
+    hasher.update(format!("{label}:{}:{text}\n", text.len()).as_bytes());
+}
+
+pub fn render(ctx: &WorkingContext, current_fingerprint: &str) -> String {
+    if ctx.is_empty() {
+        return "<ax_working_context>\nNo working context for this conversation. Call ax_session with action add \
+                once a fact, file, symbol, decision, or open question is established. action compact replaces \
+                this with a shorter snapshot you write. Raw tool results stay in the conversation cache and ax_expand.\n\
+                </ax_working_context>"
+            .to_string();
+    }
+    let stale = !ctx.index_fingerprint.is_empty() && ctx.index_fingerprint != current_fingerprint;
+    let mut lines = vec![format!(
+        "<ax_working_context hash={} stale={}>",
+        content_hash(ctx),
+        if stale { "true" } else { "false" }
+    )];
+    if stale {
+        lines.push(
+            "Index changed since these notes. Recheck code-dependent facts. ax_session compact confirms them against the current index."
+                .to_string(),
+        );
+    }
+    if !ctx.objective.is_empty() {
+        lines.push(format!("Objective: {}", ctx.objective));
+    }
+    for name in SECTIONS {
+        let items = ctx.section(name);
+        if items.is_empty() {
+            continue;
+        }
+        let title = match name {
+            "facts" => "Facts",
+            "files" => "Files",
+            "symbols" => "Symbols",
+            "decisions" => "Decisions",
+            "open_questions" => "Open questions",
+            _ => unreachable!(),
+        };
+        lines.push(format!("{title}:"));
+        for item in items {
+            lines.push(format!("- {item}"));
+        }
+    }
+    lines.push("</ax_working_context>".to_string());
+    lines.join("\n")
+}
+
+fn parse_objective(request: &Value) -> Result<Option<String>, String> {
+    match request.get("objective") {
+        None => Ok(None),
+        Some(Value::String(raw)) => {
+            let text = raw.trim();
+            if text.chars().count() > MAX_OBJECTIVE_CHARS {
+                return Err(format!(
+                    "objective exceeds {MAX_OBJECTIVE_CHARS} characters"
+                ));
+            }
+            if text.contains('\n') {
+                return Err("objective must be a single line".into());
+            }
+            Ok(Some(text.to_string()))
+        }
+        Some(_) => Err("objective must be a string".into()),
+    }
+}
+
+fn parse_section(request: &Value, name: &str) -> Result<Option<Vec<String>>, String> {
+    match request.get(name) {
+        None => Ok(None),
+        Some(Value::Array(items)) => {
+            let mut out = Vec::new();
+            for item in items {
+                let Some(raw) = item.as_str() else {
+                    return Err(format!("{name} entries must be strings"));
+                };
+                let text = raw.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                if text.chars().count() > MAX_ITEM_CHARS {
+                    return Err(format!("{name} entry exceeds {MAX_ITEM_CHARS} characters"));
+                }
+                if text.contains('\n') {
+                    return Err(format!("{name} entries must be a single line"));
+                }
+                if !out.iter().any(|e| e == text) {
+                    out.push(text.to_string());
+                }
+            }
+            if out.len() > MAX_ITEMS {
+                return Err(format!(
+                    "{name} cannot exceed {MAX_ITEMS} entries; compact first"
+                ));
+            }
+            Ok(Some(out))
+        }
+        Some(_) => Err(format!("{name} must be an array of strings")),
+    }
+}
+
+fn ensure_fits(ctx: &WorkingContext, fingerprint: &str) -> Result<(), String> {
+    let tokens = count_tokens(&render(ctx, fingerprint)) as i64;
+    if tokens > WORKING_CONTEXT_TOKENS {
+        return Err(format!(
+            "working context would exceed {WORKING_CONTEXT_TOKENS} tokens; call ax_session with action compact and a shorter snapshot"
+        ));
+    }
+    Ok(())
+}
+
+/// Returns the stored snapshot after the action. `None` means it was cleared.
+fn transition(
+    current: &WorkingContext,
+    request: &Value,
+    fingerprint: &str,
+) -> Result<Option<WorkingContext>, String> {
+    let action = request
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("get");
+    match action {
+        "get" => Ok(Some(current.clone())),
+        "clear" => Ok(None),
+        "add" => {
+            let mut next = current.clone();
+            let mut touched = false;
+            if let Some(objective) = parse_objective(request)? {
+                next.objective = objective;
+                touched = true;
+            }
+            for name in SECTIONS {
+                if let Some(extra) = parse_section(request, name)? {
+                    touched = true;
+                    let dest = next.section_mut(name);
+                    for item in extra {
+                        if !dest.iter().any(|e| e == &item) {
+                            dest.push(item);
+                        }
+                    }
+                    if dest.len() > MAX_ITEMS {
+                        return Err(format!(
+                            "{name} cannot exceed {MAX_ITEMS} entries; compact first"
+                        ));
+                    }
+                }
+            }
+            if !touched {
+                return Err("add needs an objective or a section".into());
+            }
+            if content_hash(&next) != content_hash(current) {
+                next.index_fingerprint = fingerprint.to_string();
+            }
+            ensure_fits(&next, fingerprint)?;
+            Ok(Some(next))
+        }
+        "update" => {
+            let mut next = current.clone();
+            let mut touched = false;
+            if let Some(objective) = parse_objective(request)? {
+                next.objective = objective;
+                touched = true;
+            }
+            for name in SECTIONS {
+                if let Some(items) = parse_section(request, name)? {
+                    *next.section_mut(name) = items;
+                    touched = true;
+                }
+            }
+            if !touched {
+                return Err("update needs an objective or a section".into());
+            }
+            if content_hash(&next) != content_hash(current) {
+                next.index_fingerprint = fingerprint.to_string();
+            }
+            ensure_fits(&next, fingerprint)?;
+            Ok(Some(next))
+        }
+        "compact" => {
+            let objective = parse_objective(request)?.ok_or("compact requires objective")?;
+            let mut next = WorkingContext {
+                objective,
+                index_fingerprint: fingerprint.to_string(),
+                ..WorkingContext::default()
+            };
+            for name in SECTIONS {
+                let items = parse_section(request, name)?
+                    .ok_or_else(|| format!("compact requires {name}"))?;
+                *next.section_mut(name) = items;
+            }
+            ensure_fits(&next, fingerprint)?;
+            Ok(Some(next))
+        }
+        other => Err(format!("unknown ax_session action {other:?}")),
+    }
+}
+
+fn scope(conversation: &str, root: &Path) -> String {
+    format!("{conversation}\u{1f}{}", root.display())
+}
+
+async fn load(pool: &SqlitePool, key: &str) -> Result<WorkingContext, String> {
+    let row: Option<(String, String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT objective, facts, files, symbols, decisions, open_questions, index_fingerprint
+         FROM mcp_working_context WHERE scope = ?",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some((objective, facts, files, symbols, decisions, open_questions, index_fingerprint)) =
+        row
+    else {
+        return Ok(WorkingContext::default());
+    };
+    Ok(WorkingContext {
+        objective,
+        facts: decode_list(&facts)?,
+        files: decode_list(&files)?,
+        symbols: decode_list(&symbols)?,
+        decisions: decode_list(&decisions)?,
+        open_questions: decode_list(&open_questions)?,
+        index_fingerprint,
+    })
+}
+
+fn decode_list(raw: &str) -> Result<Vec<String>, String> {
+    let value: Value = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+    value
+        .as_array()
+        .ok_or_else(|| "stored section is not an array".to_string())?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "stored entry is not a string".to_string())
+        })
+        .collect()
+}
+
+fn encode_list(items: &[String]) -> String {
+    serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string())
+}
+
+async fn save(pool: &SqlitePool, key: &str, ctx: &WorkingContext) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query(
+        "INSERT INTO mcp_working_context
+         (scope, objective, facts, files, symbols, decisions, open_questions, content_hash, index_fingerprint, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope) DO UPDATE SET
+           objective = excluded.objective,
+           facts = excluded.facts,
+           files = excluded.files,
+           symbols = excluded.symbols,
+           decisions = excluded.decisions,
+           open_questions = excluded.open_questions,
+           content_hash = excluded.content_hash,
+           index_fingerprint = excluded.index_fingerprint,
+           updated_at = excluded.updated_at",
+    )
+    .bind(key)
+    .bind(&ctx.objective)
+    .bind(encode_list(&ctx.facts))
+    .bind(encode_list(&ctx.files))
+    .bind(encode_list(&ctx.symbols))
+    .bind(encode_list(&ctx.decisions))
+    .bind(encode_list(&ctx.open_questions))
+    .bind(content_hash(ctx))
+    .bind(&ctx.index_fingerprint)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+async fn delete(pool: &SqlitePool, key: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM mcp_working_context WHERE scope = ?")
+        .bind(key)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(crate) async fn apply_with(
+    pool: &SqlitePool,
+    root: &Path,
+    conversation: &str,
+    request: &Value,
+    fingerprint: &str,
+    enabled: bool,
+) -> Result<String, String> {
+    if !enabled {
+        return Err("working context is off (AX_CONTEXT_CACHE=off)".into());
+    }
+    let key = scope(conversation, root);
+    let current = load(pool, &key).await?;
+    let action = request
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("get");
+    match transition(&current, request, fingerprint)? {
+        Some(_) if action == "get" => Ok(render(&current, fingerprint)),
+        Some(next) => {
+            save(pool, &key, &next).await?;
+            Ok(render(&next, fingerprint))
+        }
+        None => {
+            delete(pool, &key).await?;
+            Ok(render(&WorkingContext::default(), fingerprint))
+        }
+    }
+}
+
+pub async fn working_context_apply(
+    root: &Path,
+    conversation: &str,
+    request: &Value,
+    fingerprint: &str,
+) -> Result<String, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    apply_with(
+        &pool,
+        root,
+        conversation,
+        request,
+        fingerprint,
+        reuse_enabled(),
+    )
+    .await
+}
+
+/// Preflight block. Empty when there is nothing to repeat, the switch is off, or the db is unreachable.
+pub async fn working_context_block(root: &Path, conversation: &str, fingerprint: &str) -> String {
+    if !reuse_enabled() {
+        return String::new();
+    }
+    let Ok(pool) = open_pool().await else {
+        return String::new();
+    };
+    let Ok(ctx) = load(&pool, &scope(conversation, root)).await else {
+        return String::new();
+    };
+    if ctx.is_empty() {
+        return String::new();
+    }
+    render(&ctx, fingerprint)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::open_pool_at;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
+
+    fn hash_of(block: &str) -> String {
+        let rest = block.split("hash=").nth(1).unwrap_or_else(|| panic!("no hash: {block}"));
+        rest.split(|c: char| c.is_whitespace() || c == '>')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    async fn pool() -> (std::path::PathBuf, SqlitePool) {
+        let n = SEQ.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("ax-working-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pool = open_pool_at(&dir.join("usage.db")).await.unwrap();
+        (dir, pool)
+    }
+
+    #[test]
+    fn same_text_has_the_same_hash_and_a_different_fact_does_not() {
+        let mut ctx = WorkingContext {
+            objective: "Refactor authentication".into(),
+            facts: vec!["JWT validation is in JwtValidator".into()],
+            ..WorkingContext::default()
+        };
+        let again = ctx.clone();
+        assert_eq!(content_hash(&ctx), content_hash(&again));
+        assert_eq!(content_hash(&ctx).len(), 16);
+        ctx.facts.push("Claims mapped in ClaimsMapper".into());
+        assert_ne!(content_hash(&ctx), content_hash(&again));
+    }
+
+    #[test]
+    fn a_changed_index_marks_notes_stale_without_dropping_them() {
+        let ctx = WorkingContext {
+            facts: vec!["JWT validation is in JwtValidator".into()],
+            index_fingerprint: "fp-old".into(),
+            ..WorkingContext::default()
+        };
+        let text = render(&ctx, "fp-new");
+        assert!(text.contains("stale=true"), "{text}");
+        assert!(text.contains("JwtValidator"), "{text}");
+        assert!(text.contains("hash="), "{text}");
+        let fresh = render(&ctx, "fp-old");
+        assert!(fresh.contains("stale=false"), "{fresh}");
+    }
+
+    #[tokio::test]
+    async fn add_then_get_round_trips_and_dedupes() {
+        let (dir, pool) = pool().await;
+        let added = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "objective": "Refactor authentication", "facts": ["JWT validation is in JwtValidator"], "files": ["src/Auth/JwtValidator.cs"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(added.contains("stale=false"), "{added}");
+        assert!(
+            added.contains("Objective: Refactor authentication"),
+            "{added}"
+        );
+        let again = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["JWT validation is in JwtValidator", "Middleware injects claims"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            again.matches("JWT validation is in JwtValidator").count(),
+            1,
+            "{again}"
+        );
+        assert!(again.contains("Middleware injects claims"), "{again}");
+        let got = apply_with(&pool, &dir, "chat-1", &json!({}), "fp-1", true)
+            .await
+            .unwrap();
+        assert!(got.contains("Middleware injects claims"), "{got}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn another_conversation_does_not_see_the_snapshot() {
+        let (dir, pool) = pool().await;
+        apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["only chat-1"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        let other = apply_with(
+            &pool,
+            &dir,
+            "chat-2",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(other.contains("No working context"), "{other}");
+        assert!(!other.contains("only chat-1"), "{other}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn over_limit_add_leaves_the_stored_snapshot_unchanged() {
+        let (dir, pool) = pool().await;
+        apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["kept"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        let long = |prefix: &str| -> Vec<String> {
+            (0..12)
+                .map(|i| format!("{prefix} {i} {}", "y".repeat(80)))
+                .collect()
+        };
+        let err = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({
+                "action": "update",
+                "facts": long("fact"),
+                "files": long("file"),
+                "symbols": long("sym"),
+                "decisions": long("decision"),
+                "open_questions": long("question")
+            }),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("800"), "{err}");
+        let got = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(got.contains("- kept"), "{got}");
+        assert!(!got.contains("fact 0"), "{got}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn thirteenth_short_fact_is_rejected() {
+        let (dir, pool) = pool().await;
+        let facts: Vec<_> = (0..12).map(|i| format!("fact {i}")).collect();
+        apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": facts}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        let err = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["fact 12"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("12"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn duplicate_add_does_not_clear_a_stale_fingerprint() {
+        let (dir, pool) = pool().await;
+        apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["kept"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        let stale = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["kept"]}),
+            "fp-2",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(stale.contains("stale=true"), "{stale}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn compact_replaces_everything_and_confirms_the_index() {
+        let (dir, pool) = pool().await;
+        apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["verbose finding that should not survive compact"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        let text = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({
+                "action": "compact",
+                "objective": "Understand authentication",
+                "facts": ["JWT validation is in JwtValidator"],
+                "files": ["src/Auth/JwtValidator.cs"],
+                "symbols": ["JwtValidator"],
+                "decisions": ["Do not change ClaimsMapper"],
+                "open_questions": ["Where are refresh tokens generated?"]
+            }),
+            "fp-2",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(text.contains("stale=false"), "{text}");
+        assert!(text.contains("Do not change ClaimsMapper"), "{text}");
+        assert!(!text.contains("verbose finding"), "{text}");
+        let missing = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "compact", "objective": "x", "facts": []}),
+            "fp-2",
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(missing.contains("requires"), "{missing}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn update_replaces_one_section_and_clear_removes_the_row() {
+        let (dir, pool) = pool().await;
+        apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["old"], "decisions": ["keep"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        let updated = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "update", "facts": ["new"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(updated.contains("- new"), "{updated}");
+        assert!(!updated.contains("- old"), "{updated}");
+        assert!(updated.contains("- keep"), "{updated}");
+        let cleared = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "clear"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(cleared.contains("No working context"), "{cleared}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn off_switch_rejects_and_writes_nothing() {
+        let (dir, pool) = pool().await;
+        let err = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "add", "facts": ["nope"]}),
+            "fp-1",
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("AX_CONTEXT_CACHE=off"), "{err}");
+        let stored = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(stored.contains("No working context"), "{stored}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn later_prompts_reuse_the_same_content_hash() {
+        let (dir, pool) = pool().await;
+        let first = apply_with(
+            &pool,
+            &dir,
+            "chat",
+            &json!({
+                "action": "add",
+                "objective": "Understand authentication",
+                "facts": ["JWT validation is in JwtValidator"],
+                "files": ["src/Auth/JwtValidator.cs"]
+            }),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        let hash = hash_of(&first);
+        let second = apply_with(&pool, &dir, "chat", &json!({"action": "get"}), "fp-1", true)
+            .await
+            .unwrap();
+        assert_eq!(hash_of(&second), hash, "prompt 2 must return the same snapshot: {second}");
+        assert!(second.contains("JWT validation is in JwtValidator"), "{second}");
+        let third = apply_with(
+            &pool,
+            &dir,
+            "chat",
+            &json!({"action": "add", "facts": ["JWT validation is in JwtValidator"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(hash_of(&third), hash, "a repeated fact must not fork the snapshot: {third}");
+        let fourth = apply_with(
+            &pool,
+            &dir,
+            "chat",
+            &json!({"action": "add", "decisions": ["Do not change ClaimsMapper"]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert_ne!(hash_of(&fourth), hash);
+        assert!(fourth.contains("JWT validation is in JwtValidator"), "{fourth}");
+        assert!(fourth.contains("Do not change ClaimsMapper"), "{fourth}");
+        let fifth = apply_with(&pool, &dir, "chat", &json!({"action": "get"}), "fp-2", true)
+            .await
+            .unwrap();
+        assert_eq!(hash_of(&fifth), hash_of(&fourth), "{fifth}");
+        assert!(fifth.contains("stale=true"), "a new index marks the same notes stale: {fifth}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn newline_and_overlong_entries_are_rejected() {
+        let current = WorkingContext::default();
+        let newline =
+            transition(&current, &json!({"action": "add", "facts": ["a\nb"]}), "fp").unwrap_err();
+        assert!(newline.contains("single line"), "{newline}");
+        let long = "x".repeat(201);
+        let over =
+            transition(&current, &json!({"action": "add", "facts": [long]}), "fp").unwrap_err();
+        assert!(over.contains("200"), "{over}");
+    }
+}

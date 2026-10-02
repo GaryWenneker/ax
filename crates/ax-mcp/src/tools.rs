@@ -61,6 +61,15 @@ impl ToolHandler {
             "ax_lsp" => lsp_tool(ax, params).await,
             "ax_ship" => ship_tool(ax, params).await,
             "ax_policy_index" => policy_index_tool(ax, params).await,
+            "ax_session" => {
+                let conversation = ax_usage::conversation_key(ax_usage::read_active_cursor_session());
+                let fingerprint = match indexed_hashes(ax.db_pool()).await {
+                    Ok(index) => ax_usage::index_fingerprint(&index),
+                    Err(_) => String::new(),
+                };
+                let text = ax_usage::working_context_apply(ax.project_root(), &conversation, &params, &fingerprint).await?;
+                Ok(json!({ "text": text }))
+            }
             "ax_context" => {
                 let task = params.get("task").and_then(|v| v.as_str()).unwrap_or("");
                 let ctx = ax.build_context(TaskInput::Text(task.to_string()), BuildContextOptions::default()).await.map_err(|e| e.to_string())?;
@@ -687,6 +696,12 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 }
                 inject.push('\n');
                 inject.push_str(&known);
+            }
+            let fingerprint = ax_usage::index_fingerprint(&index);
+            let working = ax_usage::working_context_block(ax.project_root(), &conversation, &fingerprint).await;
+            if !working.is_empty() {
+                inject.push('\n');
+                inject.push_str(&working);
             }
         }
         if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
@@ -1762,6 +1777,22 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({ "name": "ax_files", "description": "Project file listing", "inputSchema": { "type": "object", "properties": {} } }),
         json!({ "name": "ax_context", "description": "Build task context", "inputSchema": { "type": "object", "properties": { "task": { "type": "string" } }, "required": ["task"] } }),
+        json!({
+            "name": "ax_session",
+            "description": "Read or update this conversation's working context: the small snapshot of objective, facts, files, symbols, decisions, and open questions. Preflight repeats it every turn. Raw tool results stay in the conversation cache. Actions: get (default), add, update, compact, clear.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["get", "add", "update", "compact", "clear"], "description": "Default get. compact replaces the whole snapshot and requires every section. add appends. update replaces the sections you send." },
+                    "objective": { "type": "string" },
+                    "facts": { "type": "array", "items": { "type": "string" } },
+                    "files": { "type": "array", "items": { "type": "string" } },
+                    "symbols": { "type": "array", "items": { "type": "string" } },
+                    "decisions": { "type": "array", "items": { "type": "string" } },
+                    "open_questions": { "type": "array", "items": { "type": "string" } }
+                }
+            }
+        }),
         json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
@@ -2015,7 +2046,7 @@ fn format_node_signatures(result: &ax_types::ExploreResult) -> String {
     out
 }
 
-const CONTEXT_CACHE_LINE: &str = "<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result. A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> before searching again; pass fresh: true to force a new query.</ax_context_cache>";
+const CONTEXT_CACHE_LINE: &str = "<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result. A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> before searching again; pass fresh: true to force a new query. Record a durable fact, file, symbol, decision, or open question with ax_session (actions add, update, compact, clear). Preflight repeats <ax_working_context> every turn. A changed index marks it stale; compact confirms the notes against the current index.</ax_context_cache>";
 
 pub fn server_instructions(has_policy: bool) -> String {
     let mut s = String::from(
@@ -2040,6 +2071,7 @@ pub fn server_instructions(has_policy: bool) -> String {
          Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
          Context cache: an oversized graph reply keeps its head inline and ends with a footer id; other oversized replies become a short stub with an id. Call ax_expand with that id to read the rest. ax_stash stores a chat slice or another tool result the same way. Preflight lists recent ids and memory titles, not bodies. This is not a dump of the memory vault.\n\n\
          Conversation cache: A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> in preflight before searching again; pass fresh: true to force a new query. Editing a cited file invalidates the entry.\n\n\
+         Working context: Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions add, update, compact, clear). Preflight repeats `<ax_working_context>` every turn. A changed index marks it stale; compact confirms the notes against the current index.\n\n\
          Ops (prefer MCP — do NOT shell ax CLI when MCP is connected):\n\
          - ax_sync after local edits that should refresh the graph\n\
          - ax_index with force=true for a full rebuild\n\

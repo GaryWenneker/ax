@@ -205,7 +205,7 @@ pub fn index_matches(candidate: &ReuseCandidate, current: &IndexHashes) -> bool 
 
 /// Hash of every indexed path and content hash. A graph answer can depend on files it does
 /// not cite (a new caller, a removed callee), so any change to the index invalidates it.
-pub(crate) fn index_fingerprint(index: &IndexHashes) -> String {
+pub fn index_fingerprint(index: &IndexHashes) -> String {
     let mut hasher = Sha256::new();
     for (path, hash) in index {
         hasher.update(format!("{}:{path}|{}:{hash}|", path.len(), hash.len()).as_bytes());

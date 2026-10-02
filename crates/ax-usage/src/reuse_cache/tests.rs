@@ -84,7 +84,7 @@ fn cacheable_tools_are_the_read_only_graph_tools() {
     }
     for tool in [
         "ax_preflight", "ax_guard", "ax_sync", "ax_remember", "ax_policy_capture", "ax_expand",
-        "ax_stash", "ax_rules", "ax_skill", "ax_index", "unknown",
+        "ax_stash", "ax_rules", "ax_skill", "ax_index", "ax_session", "unknown",
     ] {
         assert!(!reuse_cacheable(tool), "{tool} must never be cached");
     }

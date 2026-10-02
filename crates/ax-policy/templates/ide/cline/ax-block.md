@@ -19,6 +19,8 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Conversation cache:** A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` in preflight before searching again; pass `fresh: true` to force a new query.
 
+**Working context:** Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`). Preflight repeats `<ax_working_context>` every turn. A changed index marks it stale; `compact` confirms the notes against the current index.
+
 **Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.

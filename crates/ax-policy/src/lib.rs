@@ -87,7 +87,7 @@ pub use paths::{
 };
 pub use ide_seed::{
     seed_ide_agent_workflow, sync_ide_bootstrap, verify_ide_bootstrap, IdeSeedResult,
-    CONVERSATION_CACHE_SENTENCE,
+    CONVERSATION_CACHE_SENTENCE, WORKING_CONTEXT_SENTENCE,
 };
 pub use revisions::{
     get_revision, list_revisions, record_if_changed, record_restore_writes, PolicyRevision,

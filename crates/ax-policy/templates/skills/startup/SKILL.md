@@ -4,7 +4,7 @@ description: Runs the mandatory ax session-start sequence (ax_preflight with mat
 triggers: ["session start", "new message", "preflight", "startup", "turn start"]
 tags: ["workflow", "preflight"]
 priority: 100
-seedVersion: 1
+seedVersion: 2
 ---
 # ax Startup Protocol
 
@@ -46,6 +46,8 @@ Save writes to **ax.db** in database mode — not a disk-only file. Never auto-s
 ## SS-01a — Reuse what this conversation already knows
 
 From the second turn on, read `<ax_session_context>` in the preflight inject before exploring: it lists graph calls already answered in this conversation whose cited files are unchanged. A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Pass `fresh: true` only when you need a new query.
+
+Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`). Preflight repeats `<ax_working_context>` every turn. A changed index marks it stale; `compact` confirms the notes against the current index.
 
 ## SS-01 — Code context (after preflight)
 

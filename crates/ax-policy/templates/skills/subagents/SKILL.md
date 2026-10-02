@@ -4,7 +4,7 @@ description: Mandatory ax MCP workflow for Cursor Task and background subagents.
 triggers: ["Task tool", "subagent", "background agent", "run_in_background", "explore agent"]
 tags: ["subagents", "preflight"]
 priority: 95
-seedVersion: 1
+seedVersion: 2
 ---
 # ax Subagent Protocol
 
@@ -22,6 +22,8 @@ seedVersion: 1
 ## Conversation cache
 
 A subagent has its own conversation, so it does not see the parent's `<ax_session_context>`. The parent pastes the relevant cache ids into the Task prompt; the subagent calls `ax_expand` with them instead of re-running those queries. Inside the subagent's own conversation the usual rule holds: A repeated graph call in this conversation returns a short `[ax cache hit]` reference; read `<ax_session_context>` before searching again, and pass `fresh: true` to force a new query.
+
+Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`). Preflight repeats `<ax_working_context>` every turn. A changed index marks it stale; `compact` confirms the notes against the current index.
 
 ## First action (subagent)
 

@@ -76,6 +76,8 @@ Replies at or above 3,000 tokens (override with `AX_CONTEXT_CACHE_TOKENS`; `0` o
 
 Within one agent conversation, a repeated read-only graph call (`ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_affected`, `ax_context`, with the same arguments) returns a short `[ax cache hit]` reference instead of the full answer again. `ax_expand` with its id returns the original byte-for-byte. Each lookup rechecks the content hash of every cited file on disk and a fingerprint of the whole index, so an edit or any re-index turns it into a miss. Replies of 200 tokens or less are not cached. The savings log records the reference as the response and the avoided tokens in `tokens_saved_est`. Pass `fresh: true` to rerun, and set `AX_CONTEXT_CACHE=off` to disable it. See the [MCP server reference](/reference/mcp-server/#conversation-cache).
 
+The same conversation can also keep a working snapshot. `ax_session` stores the objective, facts, files, symbols, decisions, and open questions the agent has established, and preflight repeats that block (at most 800 tokens) on every later turn. That is the part a reply cache cannot do: a later question is answered from the notes instead of running the graph again. The agent writes the notes, including the shorter `compact` form. A changed index marks them stale. `AX_CONTEXT_CACHE=off` disables this too. See [Working context](/reference/mcp-server/#working-context).
+
 ### What is measured vs estimated
 
 | Metric | Source |

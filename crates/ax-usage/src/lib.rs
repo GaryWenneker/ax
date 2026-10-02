@@ -11,6 +11,7 @@ mod pricing;
 mod pricing_fetch;
 mod pricing_sync;
 mod reuse_cache;
+mod working_context;
 mod savings;
 mod store;
 mod tokenizer;
@@ -66,8 +67,9 @@ pub use context_cache::{
 pub use reuse_cache::{
     conversation_key, index_matches, render_hit, reuse_cacheable, reuse_enabled, reuse_lookup,
     reuse_record_hit, reuse_session_entries, format_session_context, ContextEntry, reuse_store, IndexHashes, ReuseCandidate,
-    ReuseHit, SESSION_CONTEXT_TOKENS,
+    ReuseHit, SESSION_CONTEXT_TOKENS, index_fingerprint,
 };
+pub use working_context::{working_context_apply, working_context_block, WORKING_CONTEXT_TOKENS};
 pub use tokenizer::{
     count_file_tokens, count_tokens, tokenize_text, tokenizer_available, truncate_utf8,
     TokenizeResult, TOKENIZE_MAX_INPUT_BYTES, TOKENIZE_MAX_TOKENS,

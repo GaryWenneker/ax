@@ -1076,6 +1076,11 @@ mod hook_repair {
 mod reuse_integration {
     use super::*;
 
+    async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        LOCK.lock().await
+    }
+
     fn isolate_usage_db() {
         static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         ONCE.get_or_init(|| {
@@ -1134,8 +1139,56 @@ mod reuse_integration {
         v["content"][0]["text"].as_str().unwrap_or_default().to_string()
     }
 
+    fn working_block(body: &str) -> String {
+        let start = body
+            .find("<ax_working_context ")
+            .unwrap_or_else(|| panic!("no working context:\n{body}"));
+        let end = body[start..]
+            .find("</ax_working_context>")
+            .unwrap_or_else(|| panic!("unclosed working context:\n{body}"));
+        body[start..start + end].to_string()
+    }
+
+    fn hash_of(block: &str) -> String {
+        block
+            .split("hash=")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no hash: {block}"))
+            .split(|c: char| c.is_whitespace() || c == '>')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    struct HomeGuard(Option<std::ffi::OsString>);
+
+    impl HomeGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let prev = std::env::var_os("AX_HOME_DIR");
+            std::env::set_var("AX_HOME_DIR", path);
+            Self(prev)
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("AX_HOME_DIR", value),
+                None => std::env::remove_var("AX_HOME_DIR"),
+            }
+        }
+    }
+
+    fn set_chat(id: &str) {
+        let home = ax_utils::paths::home_dir().expect("AX_HOME_DIR");
+        let dir = home.join(".ax");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("active-cursor-session"), format!("{id}\n")).unwrap();
+    }
+
     #[tokio::test]
     async fn second_identical_node_call_is_a_short_hit_and_expand_is_byte_identical() {
+        let _guard = env_lock().await;
         let (dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         let first = call(&mut engine, "ax_node", args.clone()).await;
@@ -1173,6 +1226,7 @@ mod reuse_integration {
 
     #[tokio::test]
     async fn fresh_true_reruns_the_tool() {
+        let _guard = env_lock().await;
         let (_dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         call(&mut engine, "ax_node", args).await;
@@ -1183,6 +1237,7 @@ mod reuse_integration {
 
     #[tokio::test]
     async fn edit_then_sync_is_a_miss_with_the_new_code() {
+        let _guard = env_lock().await;
         let (dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         call(&mut engine, "ax_node", args.clone()).await;
@@ -1199,6 +1254,7 @@ mod reuse_integration {
 
     #[tokio::test]
     async fn new_caller_in_an_uncited_file_is_a_miss_after_sync() {
+        let _guard = env_lock().await;
         let (dir, mut engine) = fixture().await;
         let args = json!({ "symbol": "reuse_beta_helper" });
         let before = text(&call(&mut engine, "ax_callers", args.clone()).await);
@@ -1219,6 +1275,7 @@ mod reuse_integration {
 
     #[tokio::test]
     async fn preflight_lists_what_the_conversation_already_knows() {
+        let _guard = env_lock().await;
         let (_dir, mut engine) = fixture().await;
         call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target" })).await;
         let pre = call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await;
@@ -1230,6 +1287,7 @@ mod reuse_integration {
 
     #[tokio::test]
     async fn preflight_lists_each_known_entry_once_per_session() {
+        let _guard = env_lock().await;
         let (_dir, mut engine) = fixture().await;
         call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target" })).await;
         let first = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "continue" })).await);
@@ -1241,6 +1299,110 @@ mod reuse_integration {
         let block = session_block(&third).unwrap_or_else(|| panic!("no block: {third}"));
         assert!(block.contains("reuse_beta_helper"), "{block}");
         assert!(!block.contains("reuse_alpha_target"), "old entry listed again: {block}");
+    }
+
+    fn hit(body: &str) -> bool {
+        body.starts_with("[ax cache hit]")
+    }
+
+    async fn prompts_record_and_repeat(engine: &mut McpEngine) -> String {
+        let alpha = json!({ "name": "reuse_alpha_target" });
+        assert!(!hit(&text(&call(engine, "ax_node", alpha.clone()).await)));
+        let noted = text(&call(engine, "ax_session", json!({
+            "action": "add",
+            "objective": "Understand reuse_alpha_target",
+            "facts": ["alpha returns u64"],
+            "files": ["src/lib.rs"],
+            "symbols": ["reuse_alpha_target"]
+        })).await);
+        assert!(!hit(&noted), "ax_session must not be reused as a graph hit");
+        let hash = hash_of(&noted);
+        assert!(noted.contains("stale=false"));
+        let second = text(&call(engine, "ax_preflight", json!({ "prompt": "what did we find?" })).await);
+        let block = working_block(&second);
+        assert_eq!(hash_of(&block), hash);
+        assert!(block.contains("alpha returns u64"));
+        assert!(session_block(&second).is_some_and(|b| b.contains("reuse_alpha_target")));
+        hash
+    }
+
+    async fn prompts_reuse_only_the_same_call(engine: &mut McpEngine, hash: &str) {
+        let alpha = json!({ "name": "reuse_alpha_target" });
+        let beta = json!({ "name": "reuse_beta_helper" });
+        assert!(hit(&text(&call(engine, "ax_node", alpha.clone()).await)), "the second alpha prompt must hit");
+        assert!(!hit(&text(&call(engine, "ax_node", beta.clone()).await)), "a different symbol is a different entry");
+        assert!(hit(&text(&call(engine, "ax_node", beta).await)));
+        assert!(hit(&text(&call(engine, "ax_node", alpha).await)), "a later prompt still hits the first answer");
+        let third = text(&call(engine, "ax_preflight", json!({ "prompt": "remind me" })).await);
+        assert_eq!(hash_of(&working_block(&third)), hash, "working context is repeated, not delivered once");
+        let dup = text(&call(engine, "ax_session", json!({
+            "action": "add",
+            "facts": ["alpha returns u64"]
+        })).await);
+        assert_eq!(hash_of(&dup), hash, "the same fact must not change the content hash");
+    }
+
+    async fn prompts_keep_the_hash_when_the_index_changes(engine: &mut McpEngine, root: &std::path::Path, hash: &str) {
+        let alpha = json!({ "name": "reuse_alpha_target" });
+        let edited = fixture_source("reuse_beta_helper() + 9");
+        std::fs::write(root.join("src/lib.rs"), edited).unwrap();
+        call(engine, "ax_sync", json!({})).await;
+        let missed = text(&call(engine, "ax_node", alpha).await);
+        assert!(!hit(&missed), "a changed file must miss");
+        assert!(missed.contains("reuse_beta_helper() + 9"), "the miss must be the new source");
+        let stale = working_block(&text(&call(engine, "ax_preflight", json!({ "prompt": "after the edit" })).await));
+        assert!(stale.contains("stale=true"));
+        assert_eq!(hash_of(&stale), hash, "the notes keep their hash when the index moves");
+        assert!(stale.contains("alpha returns u64"));
+        let still = text(&call(engine, "ax_session", json!({
+            "action": "add",
+            "facts": ["alpha returns u64"]
+        })).await);
+        assert!(still.contains("stale=true"), "repeating a fact does not confirm a stale snapshot");
+        let compact = text(&call(engine, "ax_session", json!({
+            "action": "compact",
+            "objective": "Understand reuse_alpha_target",
+            "facts": ["alpha returns u64"],
+            "files": ["src/lib.rs"],
+            "symbols": ["reuse_alpha_target"],
+            "decisions": [],
+            "open_questions": []
+        })).await);
+        assert!(compact.contains("stale=false"));
+        assert_eq!(hash_of(&compact), hash, "confirming the same notes keeps the hash");
+        let confirmed = working_block(&text(&call(engine, "ax_preflight", json!({ "prompt": "confirmed" })).await));
+        assert!(confirmed.contains("stale=false"));
+        assert_eq!(hash_of(&confirmed), hash);
+    }
+
+    async fn prompts_in_a_second_chat_start_cold(engine: &mut McpEngine, hash: &str) {
+        let alpha = json!({ "name": "reuse_alpha_target" });
+        set_chat("prompt-chat-b");
+        let other = text(&call(engine, "ax_preflight", json!({ "prompt": "a different chat" })).await);
+        assert!(!other.contains("alpha returns u64"), "chat B must not see chat A's notes");
+        assert!(!hit(&text(&call(engine, "ax_node", alpha.clone()).await)), "chat B does not inherit chat A's graph hit");
+        assert!(hit(&text(&call(engine, "ax_node", alpha).await)), "chat B's own second call hits");
+        set_chat("prompt-chat-a");
+        let back = working_block(&text(&call(engine, "ax_preflight", json!({ "prompt": "back to the first chat" })).await));
+        assert_eq!(hash_of(&back), hash);
+        assert!(back.contains("alpha returns u64"));
+        assert!(back.contains("stale=false"));
+    }
+
+    /// Several prompts in one conversation, then a second conversation.
+    /// The graph answer is reused only for the same call. The working snapshot
+    /// is repeated on every later prompt, and its hash stays put until the notes change.
+    #[tokio::test]
+    async fn later_prompts_pick_up_the_snapshot_and_the_graph_cache() {
+        let _guard = env_lock().await;
+        let home = tempfile::tempdir().unwrap();
+        let _home = HomeGuard::set(home.path());
+        set_chat("prompt-chat-a");
+        let (dir, mut engine) = fixture().await;
+        let hash = prompts_record_and_repeat(&mut engine).await;
+        prompts_reuse_only_the_same_call(&mut engine, &hash).await;
+        prompts_keep_the_hash_when_the_index_changes(&mut engine, dir.path(), &hash).await;
+        prompts_in_a_second_chat_start_cold(&mut engine, &hash).await;
     }
 
     #[test]

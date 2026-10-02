@@ -65,6 +65,19 @@ CREATE TABLE IF NOT EXISTS mcp_reuse_cache (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_reuse_cache_conv ON mcp_reuse_cache(conversation, created_at);
 
+CREATE TABLE IF NOT EXISTS mcp_working_context (
+  scope TEXT PRIMARY KEY,
+  objective TEXT NOT NULL DEFAULT '',
+  facts TEXT NOT NULL DEFAULT '[]',
+  files TEXT NOT NULL DEFAULT '[]',
+  symbols TEXT NOT NULL DEFAULT '[]',
+  decisions TEXT NOT NULL DEFAULT '[]',
+  open_questions TEXT NOT NULL DEFAULT '[]',
+  content_hash TEXT NOT NULL,
+  index_fingerprint TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_session_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   agent TEXT NOT NULL,

@@ -5,7 +5,7 @@ alwaysApply: true
 tags: ["subagents", "preflight", "mcp"]
 priority: 105
 triggers: ["Task tool", "subagent", "background agent", "run_in_background"]
-seedVersion: 1
+seedVersion: 2
 ---
 # ax — Task subagents (background agents)
 
@@ -38,6 +38,8 @@ Never write `ax_* … if available` in Task prompts.
 ## Conversation cache
 
 A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` before searching again; pass `fresh: true` to force a new query.
+
+Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`). Preflight repeats `<ax_working_context>` every turn. A changed index marks it stale; `compact` confirms the notes against the current index.
 
 ## Subagent — first actions
 

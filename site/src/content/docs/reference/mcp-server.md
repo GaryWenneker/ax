@@ -20,7 +20,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 | Group | Tools |
 |---|---|
 | Turn contract | `ax_preflight`, `ax_policy_capture`, and (when policy exists) `ax_rules` / `ax_skill` / `ax_guard` |
-| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash` |
+| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_session`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash` |
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 
@@ -153,6 +153,23 @@ Same call already answered in this conversation; cited files unchanged. Use the 
 - **Conversation id** comes from the Cursor hook (`~/.ax/active-cursor-session`). Without one, the MCP process is the conversation. Two Cursor chats running at the same moment share whichever id the hook wrote last; a hit is still verified fresh, and the agent can call `ax_expand` if it does not have the earlier answer.
 - **Size**: at most `AX_REUSE_CACHE_BYTES` (default 2 MB) of answers per conversation; the oldest go first. `AX_CONTEXT_CACHE=off` disables this too.
 - **Savings** are logged per hit (`tokensAvoided` = original answer tokens minus the reference) and appear in the savings report.
+
+### Working context
+
+The conversation cache reuses raw graph replies. It does not remember what the agent concluded. `ax_session` stores that smaller snapshot for the same conversation and project:
+
+```text
+ax_session({ "action": "add", "objective": "Refactor authentication", "facts": ["JWT validation is in JwtValidator"], "files": ["src/Auth/JwtValidator.cs"] })
+ax_session({ "action": "compact", "objective": "Understand authentication", "facts": ["JWT validation is in JwtValidator"], "files": ["src/Auth/JwtValidator.cs"], "symbols": ["JwtValidator"], "decisions": ["Do not change ClaimsMapper"], "open_questions": ["Where are refresh tokens generated?"] })
+```
+
+- **`get`** (the default) returns the snapshot. **`add`** appends unique entries. **`update`** replaces only the sections you send. **`compact`** replaces the whole snapshot and requires every section; you write the shorter text, ax does not call a model. **`clear`** deletes it.
+- **Caps:** 12 entries per section, 200 characters per entry, 300 for the objective, and 800 tokens for the rendered block. A write that would pass a cap is rejected and the stored snapshot stays as it was.
+- **Identity:** the block names a 16-hex content hash. The same text always has the same hash.
+- **Stale, not deleted:** each write records the index fingerprint. If the index changes, preflight still shows the notes and sets `stale=true`. `add` and `update` refresh that fingerprint only when the text changes. `compact` refreshes it even when the text is unchanged, which is how the agent confirms the notes against the current index.
+- **Preflight** appends `<ax_working_context>` on every turn when the snapshot is non-empty. An empty conversation does not get the hint.
+- **Not stored here:** full tool bodies. Those stay in the conversation cache and the oversized-reply cache. `ax_context` is unchanged: it still builds a one-shot task context from the graph.
+- **Off:** `AX_CONTEXT_CACHE=off` (or `0`) makes `ax_session` fail and preflight omit the block.
 
 ## Lean responses (token savings)
 
