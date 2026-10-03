@@ -29,6 +29,8 @@ MUTANTS = [
      "state.save(state_path).ok()?;", "let _ = state.save(state_path);", GUARD_TESTS),
     ("minimum symbol length dropped", GUARD,
      "(last.len() >= MIN_SYMBOL_LEN)", "(!last.is_empty())", GUARD_TESTS),
+    ("alternation is not split", GUARD,
+     "for alt in split_unescaped_bar(pattern) {", "for alt in [pattern] {", GUARD_TESTS),
     ("doc nodes counted as symbols", GUARD,
      "\"('file','doc','table')\"", "\"('file','table')\"", GUARD_TESTS),
     ("table nodes counted as symbols", GUARD,

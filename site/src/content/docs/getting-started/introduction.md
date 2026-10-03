@@ -18,9 +18,17 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v6.4.0
+
+v6.4.0 is a minor release. New Command Center rows show a running light in the letters, and the IDE status bar follows the window's project.
+
+- **Running light on new rows.** Logging, Memory, and the other live lists keep the title color. A narrow light moves once through the title and subtitle. The row background does not glow. Reduced motion leaves the text still.
+- **Status bar switches the project.** Click **ax** in Cursor or VS Code and Command Center selects that window's project, then offers a pop-out. **Open Command Center** loads the panel. Esc keeps the switch and leaves the panel closed.
+- **Connect installs the bundled extension.** Connect installs the IDE extension when that IDE's extension list does not already contain this version, including after Disconnect.
+
 ## What's new in v6.3.1
 
-- **Text chase for new rows.** Logging, Memory, and the other live lists run a light through the title when a row arrives. The row background stays still. Reduced motion keeps the title brighter, without animation.
+- **Text chase for new rows.** Logging, Memory, and the other live lists run a light through the title when a row arrives. The row background stays still. Reduced motion leaves the text still.
 - **Cache status on demand.** `ax_cache_status` returns context-cache counts and file-token-cache counts at any time. It does not return stored bodies or file paths. Logging joins those lines with one node color and a rail when they sit together. See [MCP server](/reference/mcp-server/#context-cache) and [Command Center](/guides/command-center/).
 - **Grep of several symbol names is steered back to the graph.** A search that joins symbol names with `|` is denied once, the same way a search for one symbol name is. The message lists the graph hits and the ax call to use.
 

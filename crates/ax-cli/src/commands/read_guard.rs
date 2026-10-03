@@ -1,7 +1,8 @@
 //! Hidden `ax read-guard --ide <dialect>` — pre-tool hook for agent IDEs.
 //!
 //! Denies the first whole-file read of an indexed source file, or the first
-//! search for a symbol the graph knows, per conversation, and tells the agent
+//! search that names a symbol the graph knows (one name or several joined by `|`),
+//! per conversation, and tells the agent
 //! which graph call answers it. An identical retry is allowed so edits never
 //! deadlock. Every error path allows: a hook must never break the agent.
 //!
@@ -309,6 +310,45 @@ pub fn symbol_name(pattern: &str) -> Option<String> {
     (last.len() >= MIN_SYMBOL_LEN).then(|| last.to_string())
 }
 
+/// Names a Grep pattern asks about. Alternation (`a|b`) is split so each
+/// identifier is checked. A piece that is not an identifier is skipped.
+pub fn symbol_candidates(pattern: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for alt in split_unescaped_bar(pattern) {
+        let Some(name) = symbol_name(alt.trim()) else {
+            continue;
+        };
+        if out.iter().any(|existing| existing == &name) {
+            continue;
+        }
+        out.push(name);
+        if out.len() == MAX_LISTED {
+            break;
+        }
+    }
+    out
+}
+
+fn split_unescaped_bar(pattern: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'|' {
+            parts.push(&pattern[start..i]);
+            start = i + 1;
+        }
+        i += 1;
+    }
+    parts.push(&pattern[start..]);
+    parts
+}
+
 // ---- conversation / switches ----------------------------------------------
 
 pub fn conversation_key(input: &Value) -> String {
@@ -557,22 +597,35 @@ async fn read_denial(path: &Path) -> Option<(String, Denial)> {
 }
 
 async fn search_denial(pattern: &str, scope: &Path) -> Option<(String, Denial)> {
-    let name = symbol_name(pattern)?;
+    let names = symbol_candidates(pattern);
+    if names.is_empty() {
+        return None;
+    }
     let root = project_root(scope)?;
     let prefix = relative_key(&root, scope)?;
     let mut conn = open_db(&root).await?;
-    let symbols = named_symbols(&mut conn, &name, &prefix).await?;
+    let mut found = Vec::new();
+    for name in &names {
+        let symbols = named_symbols(&mut conn, name, &prefix).await?;
+        if !symbols.is_empty() {
+            found.push((name.clone(), symbols));
+        }
+    }
     let _ = conn.close().await;
-    if symbols.is_empty() {
+    if found.is_empty() {
         return None;
     }
-    let list = listing(&symbols, |s| format!("{} — {} at {}:{}-{}", s.label, s.kind, s.file, s.start, s.end));
-    let full = format!(
-        "ax read-guard: `{name}` is a symbol in the ax graph:\n\
-         {list}\n\
-         Use ax_node(\"{name}\") for its source, ax_callers / ax_callees for usages, or ax_impact for blast radius — \
+    let mut full = String::from("ax read-guard: this search names symbols in the ax graph:\n");
+    for (name, symbols) in &found {
+        let list = listing(symbols, |s| {
+            format!("{} — {} at {}:{}-{}", s.label, s.kind, s.file, s.start, s.end)
+        });
+        full.push_str(&format!("`{name}`:\n{list}\n"));
+    }
+    full.push_str(
+        "Use ax_search for the names, ax_node for one symbol's source, ax_callers / ax_callees for usages, or ax_impact for blast radius — \
          instead of a text search. Searching for text that is not a symbol name is not guarded. \
-         If you really need the raw text matches, repeat this same search and it will be allowed."
+         If you really need the raw text matches, repeat this same search and it will be allowed.",
     );
     Some((format!("search:{}:{}", scope.display(), pattern), Denial { full }))
 }
@@ -774,6 +827,20 @@ mod tests {
         assert_eq!(symbol_name(r"\<FooBar\>").as_deref(), Some("FooBar"));
         assert_eq!(symbol_name("ax_policy::resolve_stacks").as_deref(), Some("resolve_stacks"));
         assert_eq!(symbol_name("Engine.lockAx").as_deref(), Some("lockAx"));
+    }
+
+    #[test]
+    fn symbol_candidates_split_alternation_and_skip_non_identifiers() {
+        assert_eq!(
+            symbol_candidates("cache_status|token_cache|live-new"),
+            vec!["cache_status".to_string(), "token_cache".to_string()]
+        );
+        assert_eq!(
+            symbol_candidates(r"\balpha_one\b|BetaTwo|alpha_one"),
+            vec!["alpha_one".to_string(), "BetaTwo".to_string()]
+        );
+        assert!(symbol_candidates("fn alpha_one|foo.*bar|ab").is_empty());
+        assert!(symbol_candidates(r"foo\|bar").is_empty());
     }
 
     #[test]
@@ -1035,6 +1102,26 @@ mod tests {
         assert!(denial.full.contains("ax_callers"));
         assert!(denial.full.contains("repeat this same search"));
         assert_eq!(evaluate(&input, &state, 2).await, None, "identical retry allowed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn alternation_of_known_symbols_is_denied_once() {
+        let root = fixture("search-or").await;
+        let state = root.join("state.json");
+        let pattern = "alpha_one|BetaTwo|live-new";
+        let input = search_input(&root, pattern, None, "c");
+        let denial = evaluate(&input, &state, 1).await.expect("alternation denied");
+        assert!(denial.full.contains("src/lib.rs::alpha_one"), "{}", denial.full);
+        assert!(denial.full.contains("src/lib.rs::BetaTwo"), "{}", denial.full);
+        assert!(denial.full.contains("ax_search"), "{}", denial.full);
+        assert!(!denial.full.contains("live-new"), "{}", denial.full);
+        assert_eq!(evaluate(&input, &state, 2).await, None, "identical retry allowed");
+        assert_eq!(
+            evaluate(&search_input(&root, "no_such_symbol|also_missing", None, "c"), &state, 3).await,
+            None,
+            "unknown names stay unguarded"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -8,7 +8,7 @@ use crate::report::FileAction;
 
 pub const EXTENSION_ID: &str = "wenneker.ax-command-center";
 /// Must match `ide/vscode/package.json`; checked by a test.
-pub const EXTENSION_VERSION: &str = "0.1.0";
+pub const EXTENSION_VERSION: &str = "0.1.1";
 pub const JETBRAINS_JAR: &str = "ax-command-center.jar";
 pub const ZED_TASK_LABEL: &str = "ax: Open Command Center";
 
@@ -109,6 +109,33 @@ pub fn vscode_panel_current(target: &str, home: &Path, probe: &dyn Probe) -> boo
     };
     let current = format!("{EXTENSION_ID}-{EXTENSION_VERSION}");
     probe.dir_names(&home.join(ide.ext_dir).join("extensions")).contains(&current)
+}
+
+/// True when an IDE `extensions.json` lists this extension at the bundled version.
+/// A version folder on disk is not enough: Disconnect can leave the folder while
+/// the IDE's own list no longer contains the extension.
+pub fn manifest_lists_current(manifest: &str) -> bool {
+    manifest_lists(manifest, Some(EXTENSION_VERSION))
+}
+
+/// True when the manifest lists this extension at any version.
+pub fn manifest_lists_extension(manifest: &str) -> bool {
+    manifest_lists(manifest, None)
+}
+
+fn manifest_lists(manifest: &str, version: Option<&str>) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(manifest) else {
+        return false;
+    };
+    let Some(list) = value.as_array() else {
+        return false;
+    };
+    list.iter().any(|entry| {
+        let id_ok = entry.pointer("/identifier/id").and_then(|v| v.as_str()) == Some(EXTENSION_ID);
+        let version_ok =
+            version.is_none_or(|want| entry.get("version").and_then(|v| v.as_str()) == Some(want));
+        id_ok && version_ok
+    })
 }
 
 fn zed_block(open_command: &str) -> String {
@@ -280,17 +307,39 @@ pub fn vscode_panel_installed_here(target: &str) -> bool {
     places_here().is_some_and(|p| vscode_panel_installed(target, &p.home, &crate::detect::System))
 }
 
+fn extension_manifest(target: &str, home: &Path) -> Option<String> {
+    let ide = vscode_ide(target)?;
+    std::fs::read_to_string(
+        home.join(ide.ext_dir)
+            .join("extensions")
+            .join("extensions.json"),
+    )
+    .ok()
+}
+
+/// The IDE's extension list contains this extension at the bundled version.
+pub fn vscode_panel_registered(target: &str, home: &Path) -> bool {
+    extension_manifest(target, home).is_some_and(|text| manifest_lists_current(&text))
+}
+
+/// The IDE's extension list contains this extension at any version.
+pub fn vscode_panel_listed_here(target: &str) -> bool {
+    places_here().is_some_and(|p| {
+        extension_manifest(target, &p.home).is_some_and(|text| manifest_lists_extension(&text))
+    })
+}
+
 /// `AX_NO_IDE_PANEL=1` skips extension and plugin installs (tests, CI).
 pub fn panels_disabled() -> bool {
     std::env::var("AX_NO_IDE_PANEL").is_ok_and(|v| v == "1")
 }
 
-/// Installs the VS Code-family extension unless the current version is already there.
+/// Installs the VS Code-family extension unless the IDE lists the bundled version.
 pub fn install_vscode_panel_here(target: &str, display_name: &str) -> Option<String> {
     if panels_disabled() || !is_vscode_family(target) {
         return None;
     }
-    if places_here().is_some_and(|p| vscode_panel_current(target, &p.home, &crate::detect::System)) {
+    if places_here().is_some_and(|p| vscode_panel_registered(target, &p.home)) {
         return Some("Command Center panel up to date.".into());
     }
     let Some(cli) = vscode_cli_here(target) else {
@@ -475,6 +524,31 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&pkg).unwrap();
         assert_eq!(v["version"], EXTENSION_VERSION);
         assert_eq!(format!("{}.{}", v["publisher"].as_str().unwrap(), v["name"].as_str().unwrap()), EXTENSION_ID);
+    }
+
+    #[test]
+    fn orphan_folder_is_not_a_registered_extension() {
+        let only_other = r#"[{"identifier":{"id":"eamodio.gitlens"},"version":"19.2.0"}]"#;
+        assert!(!manifest_lists_current(only_other));
+        let older = format!(r#"[{{"identifier":{{"id":"{EXTENSION_ID}"}},"version":"0.0.1"}}]"#);
+        assert!(!manifest_lists_current(&older));
+        assert!(!manifest_lists_current("not json"));
+        let current = format!(r#"[{{"identifier":{{"id":"{EXTENSION_ID}"}},"version":"{EXTENSION_VERSION}"}}]"#);
+        assert!(manifest_lists_current(&current));
+        assert!(manifest_lists_extension(&older));
+        assert!(!manifest_lists_extension(only_other));
+    }
+
+    #[test]
+    fn registered_panel_requires_the_ide_manifest() {
+        let home = tempfile::tempdir().unwrap();
+        let ext = home.path().join(".cursor").join("extensions");
+        std::fs::create_dir_all(ext.join(format!("{EXTENSION_ID}-{EXTENSION_VERSION}"))).unwrap();
+        assert!(!vscode_panel_registered("cursor", home.path()));
+        let current = format!(r#"[{{"identifier":{{"id":"{EXTENSION_ID}"}},"version":"{EXTENSION_VERSION}"}}]"#);
+        std::fs::write(ext.join("extensions.json"), &current).unwrap();
+        assert!(vscode_panel_registered("cursor", home.path()));
+        assert!(!vscode_panel_registered("zed", home.path()));
     }
 
     #[test]

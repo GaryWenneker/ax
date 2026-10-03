@@ -3,7 +3,9 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v6.3.0](https://github.com/GaryWenneker/ax/releases/tag/v6.3.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v6.4.0](https://github.com/GaryWenneker/ax/releases/tag/v6.4.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+
+**v6.4.0** (minor) runs a narrow light through the title of a new Command Center row, without a background glow. Clicking **ax** in the Cursor or VS Code status bar switches Command Center to that window's project and opens a pop-out. A search that alternates several symbol names is steered back to the graph, the same way a search for one symbol name is.
 
 **v6.3.0** (minor) initializes every project it can find when you install or upgrade ax. The scan walks four levels under your home directory, skips hidden and dependency folders, and runs `ax init` on each git repo, project manifest, or existing ax project without asking questions. Run it again with `ax init --all`. Set `AX_SKIP_PROJECT_INIT=1` to skip.
 

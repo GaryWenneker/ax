@@ -51,6 +51,12 @@ Your agent starts the server itself (proxy → shared daemon). Verify the projec
 
 Full playbook: [MCP Logging & Quality](/guides/mcp-quality/#troubleshooting).
 
+## Grep or Read was denied
+
+The read-guard hook blocks the first whole-file Read of an indexed source file, and the first Grep whose pattern names a symbol the graph already has. A pattern that joins several names with `|` is the same kind of search: each name is checked, and a hit is denied once. The message lists the graph hits and the ax call to use (`ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`).
+
+A phrase, a CSS class, a regex, or a name that is not in the graph is not blocked. Repeating the same search is allowed, so an edit that needs the raw text can proceed. Set `AX_READ_GUARD=off` to disable the hook.
+
 ## Missing symbols
 
 The MCP server auto-syncs on save (wait a couple of seconds). Run `ax sync` manually if needed. Check that the file's language is [supported](/reference/languages/) and isn't excluded via `.gitignore`, built-in skip dirs (`node_modules`, `target`, …), or `ax.json` `exclude`.

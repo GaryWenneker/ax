@@ -26,10 +26,11 @@ Hidden subcommand `ax read-guard --ide <cursor|claude|gemini|windsurf|codex>`. I
 6. **Partial reads pass.** A Read with offset or limit, `sed -n a,bp`, or `head/tail -n N` is allowed: the agent already targets lines.
 7. **Non-source files pass.** Files not in the index, or with no symbols (README, Cargo.toml, lockfiles, logs, generated output), are allowed.
 8. **Symbol search, first time → deny.**
-   - A Grep or shell `rg`/`grep` whose pattern is a bare identifier (after stripping `\b`, `-w`) and matches at least one graph node name is denied the first time per `(conversation, pattern)`.
-   - The deny message lists up to 8 graph hits (`qualified name — file:line`) and suggests `ax_callers` / `ax_node`.
+   - A Grep or shell `rg`/`grep` whose pattern is a bare identifier (after stripping `\b`, `-w`), or an alternation of such identifiers joined by `|`, is denied the first time per `(conversation, pattern)` when at least one of those names matches a graph node.
+   - The deny message lists up to 8 graph hits per matched name (`qualified name — file:line`) and names `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, and `ax_impact`.
+   - A piece that is not an identifier (a phrase, a CSS class, a regex) is not listed and does not by itself cause a deny.
    - A retry of the same pattern is allowed.
-9. **Other searches pass.** Regex, string-literal, or no-graph-hit searches are allowed.
+9. **Other searches pass.** Regex, string-literal, escaped `\|`, or no-graph-hit searches are allowed. An alternation where none of the names are in the graph is allowed.
 10. **Shell parsing is minimal.** Only the first simple command of a shell line is inspected:
     - `rg`/`grep`/`ag`/`ack` count as a search.
     - `cat`/`bat`/`less`/`more` on a file count as a whole-file read.

@@ -1,7 +1,18 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
-import { PanelHost, webviewHtml } from './core.ts';
+import {
+  PanelHost,
+  STATUS_BAR_TEXT,
+  STATUS_BAR_TOOLTIP,
+  launchArgs,
+  preparePopout,
+  rowAction,
+  switchProject,
+  webviewHtml,
+} from './core.ts';
 
 const START_TIMEOUT_MS = 15_000;
 
@@ -19,13 +30,12 @@ async function isUp(port: number): Promise<boolean> {
   }
 }
 
-/** Starts `ax web` for the first workspace folder and waits until it answers. */
-async function ensureServer(port: number, binary: string): Promise<void> {
+/** Starts `ax web` for the workspace project and waits until it answers. */
+async function ensureServer(port: number, binary: string, projectPath: string): Promise<void> {
   if (await isUp(port)) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const args = ['web', '--port', String(port), ...(folder ? [folder] : [])];
+  const args = launchArgs(port, projectPath);
   let spawnError: string | undefined;
-  const child = spawn(binary, args, { cwd: folder, detached: true, stdio: 'ignore', shell: process.platform === 'win32' });
+  const child = spawn(binary, args, { cwd: projectPath, detached: true, stdio: 'ignore', shell: process.platform === 'win32' });
   child.on('error', (e) => (spawnError = e.message));
   child.unref();
   const deadline = Date.now() + START_TIMEOUT_MS;
@@ -57,8 +67,37 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const open = async (): Promise<void> => {
     const { port, binary } = settings();
+    const folders = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
+    const editor = vscode.window.activeTextEditor;
+    const activeFile = editor?.document.uri.scheme === 'file' ? editor.document.uri.fsPath : undefined;
     try {
-      await ensureServer(port, binary);
+      const prepared = await preparePopout({
+        port,
+        folders,
+        activeFile,
+        hasAxDb: (root) => existsSync(join(root, '.ax', 'ax.db')),
+        ensureServer: (currentPort, projectPath) => ensureServer(currentPort, binary, projectPath),
+        fetchImpl: fetch,
+      });
+      if (!prepared.ok) {
+        const text = prepared.kind === 'start' ? `ax web did not start: ${prepared.message}` : prepared.message;
+        const choice = await vscode.window.showErrorMessage(text, 'Retry');
+        if (choice === 'Retry') await open();
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        prepared.rows.map((row) => ({ label: row.label, detail: row.detail, row })),
+        { title: 'ax Command Center', placeHolder: 'Open Command Center or switch project' },
+      );
+      if (!picked) return;
+      const action = rowAction(picked.row);
+      if (action.switchPath) {
+        const switched = await switchProject(port, action.switchPath, fetch);
+        if (!switched.ok) {
+          await vscode.window.showErrorMessage(switched.message);
+          return;
+        }
+      }
       host.open();
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
@@ -68,8 +107,8 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  status.text = '$(graph) ax';
-  status.tooltip = 'Open the ax Command Center';
+  status.text = STATUS_BAR_TEXT;
+  status.tooltip = STATUS_BAR_TOOLTIP;
   status.command = 'ax.openCommandCenter';
   status.show();
 

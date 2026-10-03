@@ -1471,7 +1471,7 @@ export default function GraphPage() {
         >
           <canvas ref={canvasRef} className="graph-canvas" />
           {liveNotice && (
-            <div className="graph-live-notice live-new" role="status">
+            <div className="graph-live-notice live-new" role="status" data-chase={liveNotice}>
               {liveNotice}
             </div>
           )}

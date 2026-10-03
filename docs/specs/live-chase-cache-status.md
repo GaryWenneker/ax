@@ -6,7 +6,7 @@ Spec approval: the user asked to implement this behavior and, when it is done, b
 
 ## Behaviors
 
-1. A row marked new (logging, memory, and the other lists that use `live-new`) does not paint a background or box-shadow. The title and subtitle run a single light across the glyphs (`background-clip: text`, keyframes `live-new-chase`). `prefers-reduced-motion` keeps the text readable and does not animate or glow.
+1. A row marked new (logging, memory, and the other lists that use `live-new`) does not paint a background or box-shadow, and does not replace the title color. A copy of the title and subtitle (`::after` with `content: attr(data-chase)`) shows a narrow light moving across those glyphs (`mask-image`, keyframes `live-new-chase`). Table cells are not clipped. `prefers-reduced-motion` shows the original text and does not animate.
 2. `ax_cache_status` can be called at any time. It returns two single-line records and no stored body, file path, or file contents:
    - `cache group=<key> lane=context ...` with enabled, threshold, live rows, stored tokens, expired rows, and, when a session id is known, that session's row and token counts.
    - `cache group=<key> lane=token ...` with file-token cache entries, capacity, hits, misses, evictions, and whether the tokenizer is available.

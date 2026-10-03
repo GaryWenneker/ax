@@ -182,7 +182,7 @@ Pages refresh on their own when the data behind them changes; there is no need t
 | Rules / skills | Rules, Skills, Sync, Review |
 | Usage and prices (`usage`) | Savings, Prices, status bar |
 
-New rows run a light through the title text (the same kind of chase Cursor uses on streaming text). The row background stays still. New graph nodes get a two-ring spark; a node outside the current view gets an arrow at the canvas edge for three seconds, and more than 20 new nodes show one "N new nodes" notice instead. The graph never moves the camera or resets the layout on a live update. With reduced motion enabled, the new title is simply brighter and the spark does not grow. Logging and Ship already stream on their own; new Logging entries and new items in the activity feed chase too, while the history loaded on open or by scrolling does not. The chase takes the color of the record type.
+New rows keep their title color. A narrow light moves once through the title and subtitle, the same kind of chase Cursor uses on streaming text. The row background stays still. New graph nodes get a two-ring spark; a node outside the current view gets an arrow at the canvas edge for three seconds, and more than 20 new nodes show one "N new nodes" notice instead. The graph never moves the camera or resets the layout on a live update. With reduced motion enabled, the title stays still and the spark does not grow. Logging and Ship already stream on their own; new Logging entries and new items in the activity feed chase too, while the history loaded on open or by scrolling does not. The light takes the color of the record type.
 
 Cache status lines (`ax_cache_status`, and a line when a context-cache body is stored) share a colored node and, when they sit next to each other, a rail. The same color means the same session group. A line on its own is not joined.
 
@@ -267,15 +267,15 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 ## Command Center inside your IDE
 
-**Settings → IDEs & agents → Connect** installs the Command Center into the IDE, next to the MCP server. The ax binary carries the extension and plugin, so nothing is downloaded.
+**Settings → IDEs & agents → Connect** installs the Command Center into the IDE, next to the MCP server. The ax binary carries the extension and plugin, so nothing is downloaded. Connect installs that IDE's extension when its own extension list does not already contain the bundled version, including after **Disconnect**. A leftover folder under the extensions directory does not count as installed.
 
 | IDE | What you get |
 |---|---|
-| Cursor, VS Code, Windsurf, Antigravity, Kiro | Extension **ax Command Center** is a local UI extension, so the command is available in every window of that editor, including SSH remotes. Run **ax: Open Command Center** or click **ax** in the status bar. Quit and reopen the editor after Connect. Opening the panel starts `ax web` when it is not already running, then loads the page. |
+| Cursor, VS Code, Windsurf, Antigravity, Kiro | Extension **ax Command Center** is a local UI extension, so the command is available in every window of that editor, including SSH remotes. Click **ax** in the status bar, or run **ax: Open Command Center**. That switches Command Center to this window's project, even when localhost already has another project selected, then opens a pop-out. **Open Command Center** loads the panel. Another row switches to that project and then loads the panel. Esc keeps the workspace switch and leaves the panel closed. Quit and reopen the editor after Connect. If `ax web` is not running, the click starts it for this project. |
 | JetBrains IDEs (IntelliJ IDEA, Rider, WebStorm, PyCharm, GoLand, …) | Plugin with an **ax** tool window on the right, installed in every JetBrains IDE found. Restart the IDE after Connect. |
 | Zed | Zed has no web panels: the task **ax: Open Command Center** (`task: spawn`) opens it in the browser. |
 
-The panel shows `http://127.0.0.1:7070/?embed=1`. If `ax web` is not running, the extension or plugin starts it for the open project. Change the port with the `ax.webPort` setting (VS Code family). Each IDE row shows a **Panel** / **No panel** badge; **Disconnect** removes only the ax extension, plugin, or task.
+The panel shows `http://127.0.0.1:7070/?embed=1`. The status-bar click selects the project with `POST /api/workspace/switch` before the panel opens. If `ax web` is not running, the extension or plugin starts it for the open project. Change the port with the `ax.webPort` setting (VS Code family). Each IDE row shows a **Panel** / **No panel** badge; **Disconnect** removes only the ax extension, plugin, or task.
 
 Set `AX_NO_IDE_PANEL=1` to connect MCP only, without the extension, plugin, or task.
 

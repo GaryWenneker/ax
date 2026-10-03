@@ -2,7 +2,7 @@
   "name": "ax-command-center",
   "displayName": "ax Command Center",
   "description": "Open the ax Command Center (ax web) inside the editor.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "wenneker",
   "license": "UNLICENSED",
   "private": true,

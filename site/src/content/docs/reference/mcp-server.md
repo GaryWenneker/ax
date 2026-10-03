@@ -93,7 +93,7 @@ Call `ax_guard` with the target file path before editing project files. See [Pol
 
 ### Turn-end post-flight (Claude Code)
 
-`ax install` wires two more Claude Code hooks alongside the existing `UserPromptSubmit` prompt-hook: `Stop` and `SubagentStop`, both running `ax stop-hook`. On turn end it scans the working-tree files changed since the last commit (`git status --porcelain`) through the same `ax_guard` checks described above, and — only on a CRITICAL violation — returns `{"decision": "block", "reason": "…"}` so Claude fixes the issue before actually finishing. It always honors `stop_hook_active` to avoid looping, and no-ops entirely when there's no `.ax/policy/` or the project isn't indexed. Disable with `AX_NO_STOP_HOOK=1`.
+`ax install` wires two more Claude Code hooks alongside the existing `UserPromptSubmit` prompt-hook: `Stop` and `SubagentStop`, both running `ax stop-hook`. The ax path in every hook command uses forward slashes, including on Windows, so Git Bash does not treat `\` as an escape and fail with "command not found". On turn end it scans the working-tree files changed since the last commit (`git status --porcelain`) through the same `ax_guard` checks described above, and — only on a CRITICAL violation — returns `{"decision": "block", "reason": "…"}` so Claude fixes the issue before actually finishing. It always honors `stop_hook_active` to avoid looping, and no-ops entirely when there's no `.ax/policy/` or the project isn't indexed. Disable with `AX_NO_STOP_HOOK=1`.
 
 ### Diagnostics bridge: `ax_diagnostics`
 

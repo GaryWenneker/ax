@@ -5,7 +5,7 @@ alwaysApply: true
 tags: ["subagents", "preflight", "mcp"]
 priority: 105
 triggers: ["Task tool", "subagent", "background agent", "run_in_background"]
-seedVersion: 3
+seedVersion: 5
 ---
 # ax — Task subagents (background agents)
 

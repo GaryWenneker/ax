@@ -28,11 +28,7 @@ test('removing the text clip makes a chase block fail', () => {
     css
       .slice(start, end)
       .split('\n')
-      .map((line) =>
-        line.includes('-webkit-background-clip')
-          ? line
-          : line.replace('background-clip: text', 'background-clip: padding-box'),
-      )
+      .map((line) => line.replace('-webkit-mask-image:', '/* mask removed */'))
       .join('\n') +
     css.slice(end);
   assert.equal(liveNewRuleIsTextChase(broken).ok, false);

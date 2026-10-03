@@ -329,15 +329,15 @@ export function ItemRow({
         {graph ? (
           <>
             <div className="page-item-title-line">
-              <div className="page-item-title" title={title}>{title}</div>
+              <div className="page-item-title" title={title} data-chase={title}>{title}</div>
               {badges && <div className="page-item-badges">{badges}</div>}
             </div>
-            {subtitle && <div className="page-item-sub">{subtitle}</div>}
+            {subtitle && <div className="page-item-sub" data-chase={subtitle}>{subtitle}</div>}
           </>
         ) : (
           <>
-            <div className="page-item-title" title={title}>{title}</div>
-            {subtitle && <div className="page-item-sub">{subtitle}</div>}
+            <div className="page-item-title" title={title} data-chase={title}>{title}</div>
+            {subtitle && <div className="page-item-sub" data-chase={subtitle}>{subtitle}</div>}
           </>
         )}
       </div>

@@ -37,12 +37,34 @@ impl GuardIde {
     }
 }
 
-fn quote_bin(bin: &str) -> String {
-    if bin.contains(char::is_whitespace) {
-        format!("\"{bin}\"")
+/// Binary path safe as the first token of a hook command on every platform.
+///
+/// Claude Code runs hooks through bash, including Git Bash on Windows. Bash
+/// treats `\` as an escape, so `C:\Users\...\ax.exe` becomes `C:Users...ax.exe`
+/// and the hook exits "command not found". Forward slashes are a valid program
+/// path for bash, cmd, and PowerShell. Paths with spaces stay quoted.
+pub fn shell_bin(bin: &str) -> String {
+    let normalized = normalize_shell_path(bin);
+    if normalized.contains(char::is_whitespace) {
+        format!("\"{normalized}\"")
+    } else {
+        normalized
+    }
+}
+
+fn normalize_shell_path(bin: &str) -> String {
+    let stripped = if let Some(unc) = bin.strip_prefix(r"\\?\UNC\") {
+        format!("//{unc}")
+    } else if let Some(rest) = bin.strip_prefix(r"\\?\") {
+        rest.to_string()
     } else {
         bin.to_string()
-    }
+    };
+    stripped.replace('\\', "/")
+}
+
+fn quote_bin(bin: &str) -> String {
+    shell_bin(bin)
 }
 
 pub fn guard_command(bin: &str, ide: GuardIde) -> String {
@@ -285,6 +307,19 @@ mod tests {
             guard_command("/Users/me/Application Support/ax", GuardIde::Gemini),
             "\"/Users/me/Application Support/ax\" read-guard --ide gemini"
         );
+    }
+
+    #[test]
+    fn windows_backslash_path_survives_bash() {
+        assert_eq!(
+            quote_bin(r"C:\Users\gary.dyksman\AppData\Local\ax\current\bin\ax.exe"),
+            "C:/Users/gary.dyksman/AppData/Local/ax/current/bin/ax.exe"
+        );
+        assert_eq!(quote_bin(r"C:\Program Files\ax\ax.exe"), "\"C:/Program Files/ax/ax.exe\"");
+        assert_eq!(quote_bin(r"\\?\C:\ax\ax.exe"), "C:/ax/ax.exe");
+        assert_eq!(quote_bin(r"\\?\UNC\server\share\ax.exe"), "//server/share/ax.exe");
+        assert_eq!(quote_bin("/opt/ax/bin/ax"), "/opt/ax/bin/ax");
+        assert!(!quote_bin(r"C:\Users\a\ax.exe").contains('\\'));
     }
 
     #[test]

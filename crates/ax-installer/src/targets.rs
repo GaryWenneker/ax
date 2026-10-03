@@ -58,7 +58,7 @@ fn panel_status(target: &str) -> Option<bool> {
                 .any(|d| d.join("plugins").join(command_center::JETBRAINS_JAR).is_file()),
         ),
         "zed" => Some(zed_tasks_path().ok().and_then(|p| fs::read_to_string(p).ok()).is_some_and(|c| command_center::zed_has_ax_task(&c))),
-        t if command_center::is_vscode_family(t) => Some(command_center::vscode_panel_installed_here(t)),
+        t if command_center::is_vscode_family(t) => Some(command_center::vscode_panel_listed_here(t)),
         _ => None,
     }
 }
@@ -629,7 +629,7 @@ fn install_claude_hook(
     event: &str,
     hook_subcommand: &str,
 ) -> Result<Option<(PathBuf, FileAction)>, String> {
-    let bin = ax_bin();
+    let bin = crate::hooks::shell_bin(&ax_bin());
     let hook_cmd = format!("{bin} {hook_subcommand}");
     let mut settings = read_json(settings_path);
     if settings.get("hooks").is_none() {
@@ -1400,7 +1400,7 @@ mod mcp_path_tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(
             groups[0]["hooks"][0]["command"],
-            format!("{} stop-hook", ax_bin())
+            format!("{} stop-hook", crate::hooks::shell_bin(&ax_bin()))
         );
         assert_eq!(groups[1], before["hooks"]["Stop"][1]);
 
