@@ -217,7 +217,7 @@ function Assert-WorkingTreeReady {
     foreach ($p in $ReleaseSitePaths) { [void]$allowed.Add(($p -replace '/', '\')) }
     if ($Bump) {
         Get-ChildItem -Path (Join-Path $root 'crates') -Recurse -Filter Cargo.toml | ForEach-Object {
-            $rel = $_.FullName.Substring($root.Length + 1)
+            $rel = ($_.FullName.Substring($root.Length + 1)) -replace '[\\/]', '\'
             [void]$allowed.Add($rel)
         }
         [void]$allowed.Add('Cargo.lock')
