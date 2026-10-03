@@ -1,6 +1,6 @@
 [package]
 name = "ax-usage"
-version = "6.3.1"
+version = "6.4.0"
 edition = "2021"
 description = "Context-token savings metrics for ax MCP graph queries"
 

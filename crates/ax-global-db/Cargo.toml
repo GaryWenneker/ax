@@ -1,6 +1,6 @@
 [package]
 name = "ax-global-db"
-version = "6.3.1"
+version = "6.4.0"
 edition = "2021"
 description = "Aggregate per-project ax.db into ~/.ax/global.db"
 
