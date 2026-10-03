@@ -2052,7 +2052,7 @@ html, body {
   opacity: 0.9;
 }
 
-/* Live updates: a row or card that just appeared (lib/useLive.ts, GLOW_MS). */
+/* Live updates: a row that just appeared (lib/useLive.ts, GLOW_MS). */
 .graph-live-notice {
   position: absolute;
   top: 12px;
@@ -2067,36 +2067,58 @@ html, body {
   z-index: 3;
 }
 
-@keyframes live-new-glow {
-  0% {
-    background-color: color-mix(in srgb, var(--live-glow, var(--accent)) 22%, transparent);
-    box-shadow: 0 0 14px 2px color-mix(in srgb, var(--live-glow, var(--accent)) 45%, transparent);
-  }
-  35% {
-    background-color: color-mix(in srgb, var(--live-glow, var(--accent)) 14%, transparent);
-    box-shadow: 0 0 10px 1px color-mix(in srgb, var(--live-glow, var(--accent)) 30%, transparent);
-  }
-  100% {
-    background-color: transparent;
-    box-shadow: 0 0 0 0 transparent;
-  }
+/* live-new-chase */
+@keyframes live-new-chase {
+  0% { background-position: 130% 0; }
+  100% { background-position: -30% 0; }
 }
 
-.live-new {
-  animation: live-new-glow 2.6s ease-out 1 both;
+.live-new .page-item-title,
+.live-new .page-item-sub,
+tr.live-new > td,
+.graph-live-notice.live-new {
+  --chase-ink: var(--text);
+  --chase-light: color-mix(in srgb, var(--live-glow, var(--text-hi)) 40%, white);
+  background-image: linear-gradient(
+    100deg,
+    var(--chase-ink) 0%,
+    var(--chase-ink) 40%,
+    var(--chase-light) 50%,
+    var(--chase-ink) 60%,
+    var(--chase-ink) 100%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: live-new-chase 1.8s linear 1 both;
 }
 
-tr.live-new > td {
-  animation: live-new-glow 2.6s ease-out 1 both;
+tr.live-new > td :is(a, button, .page-item-badge) {
+  background-image: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  -webkit-text-fill-color: currentColor;
+  color: var(--text);
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .live-new,
-  tr.live-new > td {
+  .live-new .page-item-title,
+  .live-new .page-item-sub,
+  tr.live-new > td,
+  .graph-live-notice.live-new {
     animation: none;
-    background-color: color-mix(in srgb, var(--live-glow, var(--accent)) 14%, transparent);
+    background-image: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    -webkit-text-fill-color: currentColor;
+    color: var(--text-hi);
   }
 }
+/* live-new-chase-end */
 
 /* Same solids as the MCP kind badges and the workbench accent. */
 .nav-section[data-nav="policy"] .nav-section-label { color: #e0b341; }
@@ -15317,7 +15339,7 @@ html[data-ax-theme="macos"] :is(
 .mcp-kind-badge--workspace, .mcp-trace-badge--workspace { --kind-color: #8fa6c4; }
 .mcp-kind-badge--error, .mcp-trace-badge--error { --kind-color: #e07070; }
 
-/* New-entry glow takes the color of the record type. */
+/* New-entry chase light takes the color of the record type. */
 .mcp-trace-row--inbound { --live-glow: #4fa8ff; }
 .mcp-trace-row--outbound { --live-glow: #3ee4b2; }
 .mcp-trace-row--preview { --live-glow: #8ae8c8; }
@@ -15341,6 +15363,27 @@ html[data-ax-theme="macos"] :is(
 .mcp-trace-calm .mcp-trace-row--dir-out { --dir-color: #3ee4b2; }
 .mcp-trace-calm .mcp-trace-row--dir-internal { --dir-color: #6b6b6b; }
 .mcp-trace-calm .mcp-trace-row .page-item-node { border-color: var(--dir-color); }
+.mcp-trace-calm .mcp-trace-group {
+  --conv-color: hsl(var(--conv-hue) 70% 62%);
+}
+.mcp-trace-calm .mcp-trace-group .page-item-node {
+  border-color: var(--conv-color);
+  background: color-mix(in srgb, var(--conv-color) 35%, var(--bg-panel));
+}
+.mcp-trace-calm .mcp-trace-group:is(.mcp-trace-group--prev, .mcp-trace-group--next)::after {
+  content: "";
+  position: absolute;
+  left: 18.5px;
+  width: 3px;
+  top: 50%;
+  bottom: 50%;
+  background: var(--conv-color);
+  pointer-events: none;
+  z-index: 0;
+}
+.mcp-trace-calm .mcp-trace-group--prev::after { top: 0; }
+.mcp-trace-calm .mcp-trace-group--next::after { bottom: 0; }
+.mcp-trace-calm .mcp-trace-group .mcp-trace-group-badge .badge-icon { color: var(--conv-color); }
 .mcp-trace-calm :is(.mcp-trace-row--dir-in, .mcp-trace-row--dir-out) { box-shadow: inset 2px 0 0 var(--dir-color); }
 .mcp-trace-calm .mcp-trace-row--dir-internal .page-item-title { color: #b8b8b8; }
 .mcp-dir-legend { display: flex; gap: 14px; padding: 6px 12px; font-size: 11px; color: var(--text-dim); }

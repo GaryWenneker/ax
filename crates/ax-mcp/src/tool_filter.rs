@@ -54,6 +54,7 @@ pub const CORE_TOOLS: &[&str] = &[
     "ax_history",
     "ax_expand",
     "ax_stash",
+    "ax_cache_status",
 ];
 
 /// Every `ax_*` tool named by the shipped policy rules and IDE bootstrap text

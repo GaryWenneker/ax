@@ -182,7 +182,9 @@ Pages refresh on their own when the data behind them changes; there is no need t
 | Rules / skills | Rules, Skills, Sync, Review |
 | Usage and prices (`usage`) | Savings, Prices, status bar |
 
-New rows get a short accent glow. New graph nodes get a two-ring spark; a node outside the current view gets an arrow at the canvas edge for three seconds, and more than 20 new nodes show one "N new nodes" notice instead. The graph never moves the camera or resets the layout on a live update. With reduced motion enabled, the glow is a static tint and the spark does not grow. Logging and Ship already stream on their own; new Logging entries and new items in the activity feed glow too, while the history loaded on open or by scrolling does not. A new Logging entry glows in the color of its record type.
+New rows run a light through the title text (the same kind of chase Cursor uses on streaming text). The row background stays still. New graph nodes get a two-ring spark; a node outside the current view gets an arrow at the canvas edge for three seconds, and more than 20 new nodes show one "N new nodes" notice instead. The graph never moves the camera or resets the layout on a live update. With reduced motion enabled, the new title is simply brighter and the spark does not grow. Logging and Ship already stream on their own; new Logging entries and new items in the activity feed chase too, while the history loaded on open or by scrolling does not. The chase takes the color of the record type.
+
+Cache status lines (`ax_cache_status`, and a line when a context-cache body is stored) share a colored node and, when they sit next to each other, a rail. The same color means the same session group. A line on its own is not joined.
 
 The graph shows the top nodes by degree (the **Density** slider), but newly indexed nodes are always added to the view on a live update, with their links, so you see each one arrive. They stay until you reload the page or change Density.
 

@@ -19,6 +19,7 @@ const NEVER_STUB: &[&str] = &[
     "ax_skill",
     "ax_expand",
     "ax_stash",
+    "ax_cache_status",
 ];
 
 /// Graph answers replace file reads, so they stay inline up to a larger budget
@@ -326,6 +327,62 @@ pub async fn session_ledger(session_id: Option<&str>) -> Result<Option<String>, 
         return Ok(None);
     }
     Ok(Some(format_session_ledger(rows, stored, inline)))
+}
+
+/// Counts only. The SELECT lists no `body` column.
+pub async fn context_cache_counts(
+    pool: &SqlitePool,
+    now: i64,
+    session_id: Option<&str>,
+) -> Result<ContextCacheCounts, String> {
+    let row: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            COALESCE(SUM(CASE WHEN expires_at >= ? THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN expires_at >= ? THEN original_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN expires_at < ? THEN 1 ELSE 0 END), 0)
+         FROM mcp_context_cache",
+    )
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let mut counts = ContextCacheCounts {
+        live_rows: row.0,
+        stored_tokens: row.1,
+        expired_rows: row.2,
+        session_rows: 0,
+        session_stored_tokens: 0,
+        session_inline_tokens: 0,
+    };
+    if let Some(session_id) = session_id.filter(|s| !s.is_empty()) {
+        let session: (i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN cache_id IS NOT NULL THEN original_tokens ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN cache_id IS NULL THEN original_tokens ELSE 0 END), 0)
+             FROM mcp_session_index
+             WHERE session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        counts.session_rows = session.0;
+        counts.session_stored_tokens = session.1;
+        counts.session_inline_tokens = session.2;
+    }
+    Ok(counts)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextCacheCounts {
+    pub live_rows: i64,
+    pub stored_tokens: i64,
+    pub expired_rows: i64,
+    pub session_rows: i64,
+    pub session_stored_tokens: i64,
+    pub session_inline_tokens: i64,
 }
 
 pub async fn expand_cached(id: &str, offset: usize, limit: Option<usize>) -> Result<ExpandPage, String> {
@@ -693,6 +750,7 @@ mod tests {
         assert!(exempt_from_cache("ax_guard"));
         assert!(exempt_from_cache("ax_policy_capture"));
         assert!(exempt_from_cache("ax_expand"));
+        assert!(exempt_from_cache("ax_cache_status"), "status must stay inline");
         assert!(exempt_from_cache("ax_rules"), "policy delivery must never be stubbed");
         assert!(exempt_from_cache("ax_skill"), "policy delivery must never be stubbed");
         assert!(!exempt_from_cache("ax_explore"));
@@ -854,5 +912,72 @@ mod tests {
         assert!(line.contains("stored_tokens=9000"));
         assert!(line.contains("inline_tokens=40"));
         assert!(line.starts_with("<ax_session_ledger>"));
+    }
+
+    #[tokio::test]
+    async fn counts_live_and_expired_without_selecting_bodies() {
+        let path: PathBuf = std::env::temp_dir().join(format!(
+            "ax-context-cache-counts-{}.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.display()))
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE mcp_context_cache (
+              id TEXT PRIMARY KEY,
+              tool TEXT NOT NULL,
+              body TEXT NOT NULL,
+              original_tokens INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              expires_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE mcp_session_index (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT,
+              tool TEXT NOT NULL,
+              summary TEXT NOT NULL,
+              original_tokens INTEGER NOT NULL,
+              cache_id TEXT,
+              created_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let secret = "SECRET_BODY_SHOULD_NOT_LEAK";
+        sqlx::query(
+            "INSERT INTO mcp_context_cache (id, tool, body, original_tokens, created_at, expires_at)
+             VALUES ('cc_live', 'ax_explore', ?1, 10, 1, 100),
+                    ('cc_dead', 'ax_explore', ?1, 7, 1, 5)",
+        )
+        .bind(secret)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO mcp_session_index (session_id, tool, summary, original_tokens, cache_id, created_at)
+             VALUES ('sess-1', 'ax_explore', 'one line', 10, 'cc_live', 1),
+                    ('sess-1', 'ax_search', 'inline', 4, NULL, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let counts = context_cache_counts(&pool, 50, Some("sess-1")).await.unwrap();
+        assert_eq!(counts.live_rows, 1);
+        assert_eq!(counts.stored_tokens, 10);
+        assert_eq!(counts.expired_rows, 1);
+        assert_eq!(counts.session_rows, 2);
+        assert_eq!(counts.session_stored_tokens, 10);
+        assert_eq!(counts.session_inline_tokens, 4);
+        let rendered = format!("{counts:?}");
+        assert!(!rendered.contains(secret));
+        let _ = std::fs::remove_file(&path);
     }
 }

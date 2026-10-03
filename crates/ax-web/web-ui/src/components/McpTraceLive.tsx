@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
 import { ItemList, ItemRow } from './ui/PageLayout';
 import { liveClass, useFreshMarks } from '../lib/useLive';
+import { traceGroupLinks } from '../traceGroups';
 import { formatTraceTime, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
 import {
   computeMcpTraceStats,
@@ -413,6 +414,10 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   const displayEntries = useMemo(
     () => [...visibleEntries].reverse(),
     [visibleEntries],
+  );
+  const cacheGroups = useMemo(
+    () => traceGroupLinks(displayEntries.map((e) => e.message)),
+    [displayEntries],
   );
   const filtersActive =
     kindFilter.size > 0 ||
@@ -1367,8 +1372,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
             <span className="mcp-dir-legend-item mcp-dir-legend-item--internal">Internal</span>
           </div>
           <ItemList className="calm-list mcp-trace-calm">
-            {displayEntries.map((e) => {
+            {displayEntries.map((e, i) => {
               const headline = entryHeadline(e);
+              const group = cacheGroups[i];
               const meta = entryMeta(e);
               const textPrimary = primaryTextPayload(e);
               const hasText = Boolean(textPrimary);
@@ -1387,7 +1393,8 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                   variant="graph"
                   className={`mcp-trace-row mcp-trace-row--${e.kind} mcp-trace-row--dir-${dir}${hasText ? ' mcp-trace-row--has-query' : ''}${
                     isCursor && !isOpen ? ' mcp-trace-row--cursor' : ''
-                  }${liveClass(freshIds, e.id)}`}
+                  }${group ? ` mcp-trace-group${group.joinPrev ? ' mcp-trace-group--prev' : ''}${group.joinNext ? ' mcp-trace-group--next' : ''}` : ''}${liveClass(freshIds, e.id)}`}
+                  style={group ? ({ '--conv-hue': group.hue } as CSSProperties) : undefined}
                   rowProps={{
                     id: `mcp-row-${e.id}`,
                     role: 'option',
@@ -1417,6 +1424,15 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                         <Codicon name={KIND_ICONS[e.kind]} className="badge-icon" />
                         {e.badge}
                       </button>
+                      {group && (
+                        <span
+                          className="page-item-badge mcp-trace-group-badge"
+                          title={`Cache ${group.lane} ${group.position} of ${group.count} in group ${group.key}. The same node color belongs together.`}
+                        >
+                          <Codicon name="link" className="badge-icon" />
+                          {group.lane} {group.position}/{group.count}
+                        </span>
+                      )}
                       {e.tool && (
                         <button
                           type="button"

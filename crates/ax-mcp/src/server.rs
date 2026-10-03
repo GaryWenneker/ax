@@ -14,7 +14,7 @@ use crate::tools::{server_instructions, ToolHandler};
 use crate::transport::{is_notification, StdioTransport, PARSE_ERROR, METHOD_NOT_FOUND};
 use crate::verbose::{
     deliver_local, format_mcp_log_notification, push_error, push_inbound, push_internal,
-    push_outbound, verbose_enabled, with_trace_buffer,
+    push_line, push_outbound, verbose_enabled, with_trace_buffer,
 };
 use ax_telemetry::telemetry;
 use ax_usage::{estimate_savings, spawn_record_mcp_call, McpCallRecord};
@@ -318,6 +318,15 @@ async fn call_tool_and_wrap(
                         sent_tokens,
                         removed_tokens,
                     } => {
+                        if let Some(line) = ax_usage::format_context_store_line(
+                            crate::verbose::active_session_id().as_deref(),
+                            id,
+                            *original_tokens,
+                            *sent_tokens,
+                            *removed_tokens,
+                        ) {
+                            push_line(line);
+                        }
                         let saved = if est.savings_eligible {
                             est.tokens_saved_est.saturating_add(*removed_tokens)
                         } else {

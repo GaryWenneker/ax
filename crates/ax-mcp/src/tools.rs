@@ -219,6 +219,7 @@ impl ToolHandler {
             "ax_history" => history_tool(ax, params).await,
             "ax_expand" => expand_tool(params).await,
             "ax_stash" => stash_tool(params).await,
+            "ax_cache_status" => cache_status_tool(params).await,
             "ax_insights" => insights(ax, params).await,
             "ax_report" => report(ax, params).await,
             _ => Err(format!("unknown tool: {}", name)),
@@ -666,7 +667,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         if !inject.is_empty() {
             inject.push('\n');
         }
-        inject.push_str("<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result.</ax_context_cache>");
+        inject.push_str("<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result. Call ax_cache_status at any time for context-cache and file-token-cache counts (no bodies).</ax_context_cache>");
         let chat = chat_for_client(session_client(&params)).then(ax_usage::read_active_cursor_session).flatten();
         if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
             inject.push('\n');
@@ -981,6 +982,45 @@ async fn expand_tool(params: Value) -> Result<Value, String> {
         })),
         Err(msg) => Ok(json!({ "text": msg, "isError": true })),
     }
+}
+
+async fn cache_status_tool(params: Value) -> Result<Value, String> {
+    let requested = params
+        .get("session")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let fallback = crate::verbose::active_session_id();
+    let session = requested.as_deref().or(fallback.as_deref());
+    let status = ax_usage::load_cache_status(session).await;
+    let lines = ax_usage::format_cache_status_lines(session, &status);
+    for line in &lines {
+        crate::verbose::push_line(line);
+    }
+    Ok(json!({
+        "text": lines.join("\n"),
+        "group": ax_usage::cache_group_key(session),
+        "context": {
+            "enabled": status.enabled,
+            "threshold": status.threshold,
+            "rows": status.live_rows,
+            "storedTokens": status.stored_tokens,
+            "expired": status.expired_rows,
+            "sessionRows": status.session_rows,
+            "sessionStoredTokens": status.session_stored_tokens,
+            "sessionInlineTokens": status.session_inline_tokens,
+            "error": status.context_error,
+        },
+        "tokenCache": {
+            "entries": status.tokens.entries,
+            "capacity": status.tokens.capacity,
+            "hits": status.tokens.hits,
+            "misses": status.tokens.misses,
+            "evictions": status.tokens.evictions,
+            "tokenizer": status.tokens.tokenizer,
+            "lockOk": status.tokens.lock_ok,
+        },
+    }))
 }
 
 async fn stash_tool(params: Value) -> Result<Value, String> {
@@ -1838,6 +1878,16 @@ fn extra_tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "ax_cache_status",
+            "description": "Context-cache and file-token-cache status. Safe to call at any time. Returns counts only — no stored bodies, paths, or file contents. Also writes the two lines to the MCP verbose log so Logging can group them.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session": { "type": "string", "description": "Session id. Omit to use the active Cursor session." }
+                }
+            }
+        }),
+        json!({
             "name": "ax_stash",
             "description": "Store arbitrary text (a chat slice or another tool result) in the context cache. Returns an id. The body is not echoed. Read it later with ax_expand.",
             "inputSchema": {
@@ -1998,7 +2048,7 @@ pub fn server_instructions(has_policy: bool) -> String {
          Gaps: when a snippet says truncated, call ax_node on that symbol; when a reply ends with an [ax context cache] footer, continue with ax_expand. The index already stores the source: do not Read or Grep a file the graph returned. Read only files the graph does not cover (config, docs, generated output) or a file right before you edit it.\n\n\
          Whole-graph understanding: call ax_insights for Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Call ax_report for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous) and Markdown docs are indexed as Doc nodes linked to the code they reference.\n\n\
          Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
-         Context cache: an oversized graph reply keeps its head inline and ends with a footer id; other oversized replies become a short stub with an id. Call ax_expand with that id to read the rest. ax_stash stores a chat slice or another tool result the same way. Preflight lists recent ids and memory titles, not bodies. This is not a dump of the memory vault.\n\n\
+         Context cache: an oversized graph reply keeps its head inline and ends with a footer id; other oversized replies become a short stub with an id. Call ax_expand with that id to read the rest. ax_stash stores a chat slice or another tool result the same way. Call ax_cache_status at any time for context-cache and file-token-cache counts (no bodies). Preflight lists recent ids and memory titles, not bodies. This is not a dump of the memory vault.\n\n\
          Ops (prefer MCP — do NOT shell ax CLI when MCP is connected):\n\
          - ax_sync after local edits that should refresh the graph\n\
          - ax_index with force=true for a full rebuild\n\

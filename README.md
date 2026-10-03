@@ -310,6 +310,7 @@ Advertised by default — the turn contract plus the whole graph read surface:
 | `ax_recall` | Hybrid memory search (FTS5 + local vector embeddings) |
 | `ax_expand` | Read a cached oversized MCP reply by id (`offset` / `limit` in characters) |
 | `ax_stash` | Store a chat slice or other tool result; returns an id, does not echo the body |
+| `ax_cache_status` | Context-cache and file-token-cache counts. No bodies. Writes two grouped lines to the MCP log |
 | `ax_preflight` | Turn-start policy: matched rules + skills (when `.agents/` or `.ax/policy/` exists) |
 | `ax_rules` | List or match policy rules |
 | `ax_skill` | Load a skill by name (`~/.ax/global.db` wins over project `ax.db`) |

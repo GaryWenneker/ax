@@ -20,7 +20,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 | Group | Tools |
 |---|---|
 | Turn contract | `ax_preflight`, `ax_policy_capture`, and (when policy exists) `ax_rules` / `ax_skill` / `ax_guard` |
-| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash` |
+| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash`, `ax_cache_status` |
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 
@@ -127,7 +127,9 @@ When a tool reply is at least `AX_CONTEXT_CACHE_TOKENS` (default 3000) the full 
 
 Graph reads (`ax_explore`, `ax_node`, `ax_search`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`) are different, because a graph answer replaces file reads. They stay inline up to `AX_GRAPH_INLINE_TOKENS` (default 12000). Above that, the reply keeps whole lines up to the budget and ends with an `[ax context cache]` footer that gives the id and the exact `ax_expand` offset where it stopped. The agent never gets a bare stub for graph output.
 
-`ax_preflight`, `ax_guard`, `ax_policy_capture`, `ax_rules`, and `ax_skill` are never stubbed. Set `AX_CONTEXT_CACHE_TOKENS=0` or `AX_CONTEXT_CACHE=off` to disable. Rows expire after 7 days. This store is not the memory vault.
+`ax_preflight`, `ax_guard`, `ax_policy_capture`, `ax_rules`, `ax_skill`, and `ax_cache_status` are never stubbed. Set `AX_CONTEXT_CACHE_TOKENS=0` or `AX_CONTEXT_CACHE=off` to disable. Rows expire after 7 days. This store is not the memory vault.
+
+`ax_cache_status` returns the context-cache counts (enabled, threshold, live rows, stored tokens, expired rows, and the current session's ledger when a session id is known) and the in-process file-token cache (entries, capacity, hits, misses, evictions). It never returns a stored body, a path, or file bytes. Call it at any time. With verbose MCP logging on, the two lines are written to the project log and the Logging page joins lines that share `group=` with one node color and a rail. A stored oversized reply writes a third line, `event=store`, with the cache id and token counts only.
 
 `ax_stash` stores any text you pass (a chat slice or a result from another tool) and returns only the id. While the cache is on, every successful ax MCP call, each Claude prompt-hook prompt, and each Cursor `beforeSubmitPrompt` is added to a session index. `ax_preflight` lists the current session first (about 1,500 tokens, no bodies) and one ledger line: row count, tokens stored, and tokens that stayed inline. Rows marked `inline` were small enough to stay in the original reply. On stop, ax stashes oversized tool results from the active Cursor or Claude transcript when that text is not already cached. Matching memories still arrive through the existing recall inject. Read a stored body with `ax_expand`. Install the Cursor hook with `ax savings hook install`.
 

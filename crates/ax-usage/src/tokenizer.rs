@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
@@ -14,7 +15,12 @@ use tiktoken_rs::CoreBPE;
 static BPE: OnceLock<Option<CoreBPE>> = OnceLock::new();
 
 /// Cap the file-token cache so a long-running daemon cannot grow unbounded.
-const FILE_CACHE_MAX_ENTRIES: usize = 8192;
+pub const FILE_TOKEN_CACHE_CAPACITY: usize = 8192;
+const FILE_CACHE_MAX_ENTRIES: usize = FILE_TOKEN_CACHE_CAPACITY;
+
+static TOKEN_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static TOKEN_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+static TOKEN_CACHE_EVICTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Max input bytes accepted by [`tokenize_text`] (UI / API protection).
 pub const TOKENIZE_MAX_INPUT_BYTES: usize = 32 * 1024;
@@ -172,6 +178,7 @@ pub fn count_file_tokens(path: &Path) -> Option<i64> {
     if let Ok(cache) = file_cache().lock() {
         if let Some(hit) = cache.get(path) {
             if hit.mtime_ms == key_mtime && hit.size == key_size {
+                TOKEN_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
                 return Some(hit.tokens);
             }
         }
@@ -182,19 +189,65 @@ pub fn count_file_tokens(path: &Path) -> Option<i64> {
     let tokens = count_tokens(&text) as i64;
 
     if let Ok(mut cache) = file_cache().lock() {
-        if cache.len() >= FILE_CACHE_MAX_ENTRIES {
-            cache.clear();
-        }
-        cache.insert(
+        let evicted = admit_file_cache(
+            &mut cache,
             path.to_path_buf(),
             CachedFileTokens {
                 mtime_ms: key_mtime,
                 size: key_size,
                 tokens,
             },
+            FILE_CACHE_MAX_ENTRIES,
         );
+        if evicted > 0 {
+            TOKEN_CACHE_EVICTIONS.fetch_add(evicted, Ordering::Relaxed);
+        }
+        TOKEN_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
     }
     Some(tokens)
+}
+
+fn admit_file_cache(
+    cache: &mut HashMap<PathBuf, CachedFileTokens>,
+    path: PathBuf,
+    entry: CachedFileTokens,
+    max_entries: usize,
+) -> u64 {
+    let mut evicted = 0u64;
+    if cache.len() >= max_entries && !cache.contains_key(&path) {
+        evicted = cache.len() as u64;
+        cache.clear();
+    }
+    cache.insert(path, entry);
+    evicted
+}
+
+/// In-process file-token cache counters. No paths and no file bytes.
+pub fn token_cache_status() -> TokenCacheStatus {
+    let (entries, lock_ok) = match file_cache().lock() {
+        Ok(cache) => (cache.len(), true),
+        Err(_) => (0, false),
+    };
+    TokenCacheStatus {
+        entries,
+        capacity: FILE_TOKEN_CACHE_CAPACITY,
+        hits: TOKEN_CACHE_HITS.load(Ordering::Relaxed),
+        misses: TOKEN_CACHE_MISSES.load(Ordering::Relaxed),
+        evictions: TOKEN_CACHE_EVICTIONS.load(Ordering::Relaxed),
+        tokenizer: tokenizer_available(),
+        lock_ok,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenCacheStatus {
+    pub entries: usize,
+    pub capacity: usize,
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub tokenizer: bool,
+    pub lock_ok: bool,
 }
 
 #[cfg(test)]
@@ -233,11 +286,7 @@ mod tests {
         let dir = std::env::temp_dir().join("ax-usage-tokenizer-range-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("range.rs");
-        std::fs::write(
-            &path,
-            "line1\nline2\nline3\nline4\nline5\nline6\nline7\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "line1\nline2\nline3\nline4\nline5\nline6\nline7\n").unwrap();
 
         let full = count_file_tokens(&path).unwrap();
         let slice = count_file_line_range_tokens(&path, 2, 4).unwrap();
@@ -249,7 +298,61 @@ mod tests {
 
     #[test]
     fn missing_file_returns_none() {
+        let before = token_cache_status();
         assert!(count_file_tokens(Path::new("Z:/definitely/not/here.rs")).is_none());
+        let after = token_cache_status();
+        assert_eq!(after.hits, before.hits);
+        assert_eq!(after.misses, before.misses);
+    }
+
+    #[test]
+    fn file_token_cache_counts_one_miss_then_one_hit() {
+        let dir =
+            std::env::temp_dir().join(format!("ax-usage-tokenizer-status-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("status.rs");
+        std::fs::write(&path, "fn cached() {}\n").unwrap();
+        let before = token_cache_status();
+        let first = count_file_tokens(&path).unwrap();
+        let second = count_file_tokens(&path).unwrap();
+        let after = token_cache_status();
+        assert_eq!(first, second);
+        assert_eq!(after.misses - before.misses, 1);
+        assert_eq!(after.hits - before.hits, 1);
+        assert_eq!(after.capacity, FILE_TOKEN_CACHE_CAPACITY);
+        assert!(after.tokenizer);
+        assert!(after.lock_ok);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn admit_clears_the_map_only_when_a_new_key_exceeds_capacity() {
+        let mut cache = HashMap::new();
+        let entry = CachedFileTokens {
+            mtime_ms: 1,
+            size: 1,
+            tokens: 2,
+        };
+        assert_eq!(
+            admit_file_cache(&mut cache, PathBuf::from("a"), entry, 2),
+            0
+        );
+        assert_eq!(
+            admit_file_cache(&mut cache, PathBuf::from("b"), entry, 2),
+            0
+        );
+        assert_eq!(
+            admit_file_cache(&mut cache, PathBuf::from("a"), entry, 2),
+            0,
+            "replacing a cached path does not evict"
+        );
+        assert_eq!(cache.len(), 2);
+        assert_eq!(
+            admit_file_cache(&mut cache, PathBuf::from("c"), entry, 2),
+            2
+        );
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains_key(Path::new("c")));
     }
 
     #[test]

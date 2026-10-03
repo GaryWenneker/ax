@@ -111,7 +111,7 @@ export function useFreshMarks(): [ReadonlySet<string>, (keys: readonly string[])
   return [fresh, mark];
 }
 
-/** `' live-new'` for a fresh key, else `''`; append to a row's className. */
+/** `' live-new'` for a fresh key, else `''`; append to a row's className. The class runs a text chase, not a background glow. */
 export function liveClass(fresh: ReadonlySet<string>, key: string): string {
   return fresh.has(key) ? ' live-new' : '';
 }

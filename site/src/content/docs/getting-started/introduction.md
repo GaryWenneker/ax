@@ -18,6 +18,11 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v6.1.2
+
+- **Text chase for new rows.** Logging, Memory, and the other live lists run a light through the title when a row arrives. The row background stays still. Reduced motion keeps the title brighter, without animation.
+- **Cache status on demand.** `ax_cache_status` returns context-cache counts and file-token-cache counts at any time. It does not return stored bodies or file paths. Logging joins those lines with one node color and a rail when they sit together. See [MCP server](/reference/mcp-server/#context-cache) and [Command Center](/guides/command-center/).
+
 ## What's new in v6.0.0
 
 v6.0.0 is a major release because `ax install` now also installs a Command Center panel in your IDE, and JetBrains IDEs become a new install target.
