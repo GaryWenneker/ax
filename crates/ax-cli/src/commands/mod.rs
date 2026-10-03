@@ -4,6 +4,8 @@ pub mod offload;
 pub mod telemetry;
 pub mod savings;
 pub mod pricing;
+pub mod costs;
+pub mod budget_cmd;
 pub mod docs_catalog;
 pub mod global;
 pub mod upgrade;

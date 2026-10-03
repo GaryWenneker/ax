@@ -354,6 +354,24 @@ enum Commands {
         #[command(subcommand)]
         action: PricingAction,
     },
+    /// Estimated agent spend from imported turns
+    Costs {
+        #[command(subcommand)]
+        action: Option<CostsAction>,
+        #[arg(long, value_name = "PERIOD", help = "week | month_to_date | month | year | custom")]
+        period: Option<String>,
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        from: Option<String>,
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        to: Option<String>,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+    /// Local monthly budget plan, simulation, and thresholds
+    Budget {
+        #[command(subcommand)]
+        action: Option<BudgetAction>,
+    },
     /// MCP quality audit (verbose log ↔ Cursor transcript)
     #[command(long_about = help_text::MCP_LONG)]
     Mcp {
@@ -531,6 +549,63 @@ enum PricingAction {
         days: i64,
         #[arg(long, help = "JSON output")]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CostsAction {
+    /// Spend since local midnight
+    Today,
+    /// Month to date
+    Month,
+    /// Group known spend by session
+    Session,
+    /// Group known spend by model
+    Model,
+    /// Group known spend by project
+    Project,
+}
+
+#[derive(Subcommand)]
+enum BudgetAction {
+    /// Monthly, daily, and hourly plan
+    Plan {
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+    /// Project spend from recorded cycle costs
+    Simulate {
+        #[arg(long)]
+        cycles: u32,
+        #[arg(long)]
+        days: Option<u32>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long, help = "cheap | balanced | quality")]
+        strategy: Option<String>,
+        #[arg(long)]
+        cost_per_cycle: Option<f64>,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+    /// Store budget fields in ~/.ax/config.json
+    Set {
+        #[arg(long)]
+        monthly: Option<f64>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long)]
+        usd_per_eur: Option<f64>,
+        #[arg(long)]
+        working_days: Option<u32>,
+        #[arg(long)]
+        hours: Option<f64>,
+        #[arg(long)]
+        warning: Option<f64>,
+        #[arg(long)]
+        critical: Option<f64>,
+        #[arg(long)]
+        hard: Option<f64>,
     },
 }
 
@@ -1645,6 +1720,65 @@ async fn async_main() {
                 json,
             } => commands::pricing::run_history(model, source, days, json).await,
         },
+        Some(Commands::Costs {
+            action,
+            period,
+            from,
+            to,
+            json,
+        }) => {
+            let name = match action {
+                Some(CostsAction::Today) => "today",
+                Some(CostsAction::Month) => "month",
+                Some(CostsAction::Session) => "session",
+                Some(CostsAction::Model) => "model",
+                Some(CostsAction::Project) => "project",
+                None => "summary",
+            };
+            commands::costs::run(name, period, from, to, json, None).await
+        }
+        Some(Commands::Budget { action }) => match action {
+            Some(BudgetAction::Plan { json }) => commands::budget_cmd::run_plan(json, None).await,
+            None => commands::budget_cmd::run_plan(false, None).await,
+            Some(BudgetAction::Simulate {
+                cycles,
+                days,
+                model,
+                strategy,
+                cost_per_cycle,
+                json,
+            }) => {
+                commands::budget_cmd::run_simulate(
+                    cycles,
+                    days,
+                    model,
+                    strategy,
+                    cost_per_cycle,
+                    json,
+                    None,
+                )
+                .await
+            }
+            Some(BudgetAction::Set {
+                monthly,
+                currency,
+                usd_per_eur,
+                working_days,
+                hours,
+                warning,
+                critical,
+                hard,
+            }) => commands::budget_cmd::run_set(ax_usage::BudgetSectionPatch {
+                monthly,
+                currency,
+                usd_per_eur,
+                working_days,
+                hours_per_day: hours,
+                warning_percent: warning,
+                critical_percent: critical,
+                hard_limit_percent: hard,
+            }),
+        },
         Some(Commands::DocsCatalog { action }) => match action {
             DocsCatalogAction::Sync {
                 skip_wiki_pull,
@@ -1767,6 +1901,8 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Telemetry { .. }) => Some("telemetry".into()),
         Some(Commands::Savings { .. }) => Some("savings".into()),
         Some(Commands::Pricing { .. }) => Some("pricing".into()),
+        Some(Commands::Costs { .. }) => Some("costs".into()),
+        Some(Commands::Budget { .. }) => Some("budget".into()),
         Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
         Some(Commands::Global { .. }) => Some("global".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),

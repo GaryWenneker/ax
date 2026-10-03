@@ -56,6 +56,7 @@ impl ToolHandler {
                 Ok(json!({ "text": text, "results": results }))
             }
             "ax_status" => status(ax).await,
+            "ax_budget" => budget_tool(ax).await,
             "ax_index" => index_tool(ax, params).await,
             "ax_sync" => sync_tool(ax).await,
             "ax_lsp" => lsp_tool(ax, params).await,
@@ -273,6 +274,16 @@ async fn explore(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "summary": result.summary,
         "blastRadius": result.blast_radius,
         "entries": result.entries,
+    }))
+}
+
+async fn budget_tool(ax: &Ax) -> Result<Value, String> {
+    let (decision, text) = ax_usage::budget_check(Some(ax.project_root())).await?;
+    Ok(json!({
+        "text": text,
+        "decision": decision,
+        "enforced": false,
+        "note": "Ax did not block a provider API call. deny is advice for an integration that asked."
     }))
 }
 
@@ -756,6 +767,15 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             if !titles.is_empty() {
                 push_once(&mut inject, "block:memory_titles", &titles, session_delivered.as_ref(), &mut delivered);
             }
+        }
+    }
+
+    if let Ok((decision, text)) = ax_usage::budget_check(Some(ax.project_root())).await {
+        if decision != "allow" && !text.is_empty() {
+            if !inject.is_empty() {
+                inject.push('\n');
+            }
+            inject.push_str(&text);
         }
     }
 
@@ -1830,6 +1850,11 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({ "name": "ax_search", "description": "FTS symbol search", "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } }),
         json!({ "name": "ax_status", "description": "Index stats and staleness", "inputSchema": { "type": "object", "properties": {} } }),
+        json!({
+            "name": "ax_budget",
+            "description": "Local budget decision (allow, warn, or deny). Does not block a provider API call. deny is advice for an integration that asked.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
         json!({
             "name": "ax_index",
             "description": "Re-index the project. Default is incremental sync (same as ax_sync). Pass force=true to clear and full-index.",

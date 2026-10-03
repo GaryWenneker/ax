@@ -1,7 +1,10 @@
 //! Context-token savings metrics stored in `~/.ax/usage.db`.
 
+mod budget;
 mod cache_status;
+mod context_plan;
 mod cost;
+mod cost_report;
 mod context_cache;
 mod durable;
 mod cursor_state;
@@ -20,7 +23,22 @@ mod store;
 mod tokenizer;
 
 pub use period::{resolve_period, UsagePeriod};
+pub use budget::{
+    banner, cycle_stats, daily_plan, display_amount, format_money, global_config_path, level_for,
+    load_settings, monthly_budget_usd, parse_mode, parse_settings, price_band, project_budget,
+    save_global_budget, simulate, working_schedule, BudgetDecision, BudgetLevel, BudgetMode,
+    BudgetSectionPatch, BudgetSettings, BudgetSnapshot, Currency, CycleStats, DailyPlan, DaySpend,
+    PriceBand, Simulation,
+};
+pub use context_plan::{
+    compare_snapshots, efficiency, select_context, snapshot_from_parts, ContextBlock,
+    ContextChange, ContextClass, ContextEfficiency, ContextSnapshot,
+};
 pub use cost::{calculate, Cost, CostComponent, CostConfidence, CostUsage};
+pub use cost_report::{
+    budget_check, build_report, collect_report, format_summary, load_events, quote_recorded,
+    today_iso, CostReport, RecordedUsage,
+};
 pub use pricing::{
     input_cost_usd, invalidate_price_cache, price_as_of, price_for_cost, price_for_model,
     price_for_model_with_source, pricing_config_path, pricing_info, reference_pricing,
