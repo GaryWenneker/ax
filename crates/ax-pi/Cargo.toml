@@ -1,6 +1,6 @@
 [package]
 name = "ax-pi"
-version = "6.4.0"
+version = "7.0.0"
 edition = "2021"
 description = "Observe and advise a Pi agent run. Pi owns execution; this crate does not."
 
