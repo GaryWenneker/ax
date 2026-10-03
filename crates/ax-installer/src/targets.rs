@@ -643,21 +643,24 @@ fn install_claude_hook(
         .get_mut(event)
         .and_then(|v| v.as_array_mut())
         .ok_or_else(|| format!("invalid {event}"))?;
-    let existing = groups
-        .iter_mut()
-        .filter_map(|g| g.get_mut("hooks").and_then(|h| h.as_array_mut()))
-        .flatten()
-        .find(|e| {
-            e.get("command")
-                .and_then(|c| c.as_str())
-                .is_some_and(|s| s.contains(hook_subcommand))
-        });
-    match existing {
-        Some(entry) => entry["command"] = Value::String(hook_cmd),
-        None => groups.push(serde_json::json!({
-            "hooks": [{ "type": "command", "command": hook_cmd }]
-        })),
+    let already = groups.iter().any(|g| {
+        g.get("hooks")
+            .and_then(|h| h.as_array())
+            .is_some_and(|hooks| {
+                hooks.iter().any(|e| {
+                    e.get("command")
+                        .and_then(|c| c.as_str())
+                        .is_some_and(|s| s.contains(hook_subcommand))
+                })
+            })
+    });
+    if already {
+        // A hand-formatted file that already names this hook keeps its bytes.
+        return Ok(Some((settings_path.to_path_buf(), FileAction::Unchanged)));
     }
+    groups.push(serde_json::json!({
+        "hooks": [{ "type": "command", "command": hook_cmd }]
+    }));
     let action = write_json_action(settings_path, &settings)?;
     Ok(Some((settings_path.to_path_buf(), action)))
 }
