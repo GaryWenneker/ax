@@ -623,14 +623,17 @@ const CLAUDE_HOOKS: [(&str, &str); 4] = [
 ];
 
 /// Register `ax <hook_subcommand>` under `hooks.<event>` in Claude's `settings.json`.
-/// Idempotent — matches on the subcommand name already appearing in a `command` string.
+/// A command that already runs this binary for that subcommand is left as written.
+/// A command that names the subcommand but points at another binary is replaced in place.
 fn install_claude_hook(
     settings_path: &Path,
     event: &str,
     hook_subcommand: &str,
 ) -> Result<Option<(PathBuf, FileAction)>, String> {
-    let bin = crate::hooks::shell_bin(&ax_bin());
+    let raw_bin = ax_bin();
+    let bin = crate::hooks::shell_bin(&raw_bin);
     let hook_cmd = format!("{bin} {hook_subcommand}");
+    let plain_cmd = format!("{raw_bin} {hook_subcommand}");
     let mut settings = read_json(settings_path);
     if settings.get("hooks").is_none() {
         settings["hooks"] = serde_json::json!({});
@@ -643,24 +646,32 @@ fn install_claude_hook(
         .get_mut(event)
         .and_then(|v| v.as_array_mut())
         .ok_or_else(|| format!("invalid {event}"))?;
-    let already = groups.iter().any(|g| {
+    fn command_of(entry: &Value) -> Option<&str> {
+        entry.get("command").and_then(|c| c.as_str())
+    }
+    let has_current = groups.iter().any(|g| {
         g.get("hooks")
             .and_then(|h| h.as_array())
-            .is_some_and(|hooks| {
-                hooks.iter().any(|e| {
-                    e.get("command")
-                        .and_then(|c| c.as_str())
-                        .is_some_and(|s| s.contains(hook_subcommand))
+            .is_some_and(|list| {
+                list.iter().any(|e| {
+                    command_of(e).is_some_and(|s| s == hook_cmd || s == plain_cmd)
                 })
             })
     });
-    if already {
-        // A hand-formatted file that already names this hook keeps its bytes.
+    if has_current {
         return Ok(Some((settings_path.to_path_buf(), FileAction::Unchanged)));
     }
-    groups.push(serde_json::json!({
-        "hooks": [{ "type": "command", "command": hook_cmd }]
-    }));
+    let stale = groups
+        .iter_mut()
+        .filter_map(|g| g.get_mut("hooks").and_then(|h| h.as_array_mut()))
+        .flatten()
+        .find(|e| command_of(e).is_some_and(|s| s.contains(hook_subcommand)));
+    match stale {
+        Some(entry) => entry["command"] = Value::String(hook_cmd),
+        None => groups.push(serde_json::json!({
+            "hooks": [{ "type": "command", "command": hook_cmd }]
+        })),
+    }
     let action = write_json_action(settings_path, &settings)?;
     Ok(Some((settings_path.to_path_buf(), action)))
 }
