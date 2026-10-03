@@ -43,5 +43,5 @@ Cycles are fully priced turns. The monthly figure is average cycle cost times cy
 - Sync prices (`ax pricing sync`) so known models stop showing as unknown.
 - Import sessions (`ax savings import --all`) before reading `ax costs`.
 - Prefer a cheaper input-price band with `agent.budgetMode` (`cheap`, `balanced`, `quality`). Bands use configured dollars per million input tokens, not a model name list.
-- Set `context.budgetTokens` to drop optional context blocks whole. Always-apply rules stay in the preflight inject.
+- Set `context.budgetTokens` to drop optional context blocks whole. Always-apply rules stay. Once that budget is spent, preflight omits the context catalog and the memory-title list.
 - Ask `ax_budget` before a long run. Treat warn as a reason to shorten the turn, and deny as a reason for the integration to stop. Ax will not stop the provider for you.

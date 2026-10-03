@@ -742,29 +742,41 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 inject.push_str(&ax_section("nudge", &nudge));
             }
         }
+        let context_budget = ax_usage::load_settings(Some(ax.project_root())).context_budget_tokens;
         if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
+            let room = ax_usage::optional_room(&inject, context_budget);
             let unseen: Vec<_> = entries
                 .into_iter()
                 .filter(|e| {
                     let key = format!("cache:{}", e.id);
-                    let seen = session_delivered.as_ref().is_some_and(|m| m.contains_key(&key));
-                    if !seen && session_delivered.is_some() {
-                        delivered.push((key, 1));
-                    }
-                    !seen
+                    !session_delivered.as_ref().is_some_and(|m| m.contains_key(&key))
                 })
                 .collect();
-            if !unseen.is_empty() {
+            if room != Some(0) && !unseen.is_empty() {
+                let cap = match room {
+                    Some(n) => (n as i64).min(1_500),
+                    None => 1_500,
+                };
                 if !inject.is_empty() {
                     inject.push('\n');
                 }
-                inject.push_str(&ax_usage::format_catalog(&unseen, 1_500));
+                inject.push_str(&ax_usage::format_catalog(&unseen, cap));
+                if session_delivered.is_some() {
+                    for entry in &unseen {
+                        delivered.push((format!("cache:{}", entry.id), 1));
+                    }
+                }
             }
         }
         // Recent turn memories are skipped below; fetch enough that they cannot crowd out the rest.
         if let Ok((rows, _)) = ax_memory::list(ax.db_pool(), 200, 0).await {
             let titles = format_memory_titles(&rows, memory_title_tokens());
-            if !titles.is_empty() {
+            let room = ax_usage::optional_room(&inject, context_budget);
+            let fits = match room {
+                None => true,
+                Some(n) => ax_usage::count_tokens(&titles) as u32 <= n,
+            };
+            if !titles.is_empty() && fits {
                 push_once(&mut inject, "block:memory_titles", &titles, session_delivered.as_ref(), &mut delivered);
             }
         }

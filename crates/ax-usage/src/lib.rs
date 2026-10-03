@@ -31,8 +31,8 @@ pub use budget::{
     PriceBand, Simulation,
 };
 pub use context_plan::{
-    compare_snapshots, efficiency, select_context, snapshot_from_parts, ContextBlock,
-    ContextChange, ContextClass, ContextEfficiency, ContextSnapshot,
+    compare_snapshots, efficiency, optional_room, select_context, snapshot_from_parts,
+    ContextBlock, ContextChange, ContextClass, ContextEfficiency, ContextSnapshot,
 };
 pub use cost::{calculate, Cost, CostComponent, CostConfidence, CostUsage};
 pub use cost_report::{

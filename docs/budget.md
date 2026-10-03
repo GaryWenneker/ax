@@ -48,7 +48,7 @@ The month plan uses the first N weekdays. Projection blends the month run-rate w
 
 ## Context
 
-`context.budgetTokens` is the optional token budget for context selection. Hard-required blocks stay even when they exceed it. Optional blocks are dropped whole. A snapshot hash is FNV-1a over the delivered parts so a repeat can be compared as empty, same, partial, or changed. That hash is not a provider prompt cache. Preflight still delivers always-apply rules in full.
+`context.budgetTokens` is the optional token budget for context selection. Hard-required blocks stay even when they exceed it. Optional blocks are dropped whole. When that budget is set, preflight still sends always-apply rules, matched memories, and the working-context snapshot, then omits the context catalog and the memory-title list once the budget is spent. A snapshot hash is FNV-1a over the delivered parts so a repeat can be compared as empty, same, partial, or changed. That hash is not a provider prompt cache.
 
 ## Commands
 

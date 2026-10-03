@@ -69,6 +69,15 @@ pub fn select_context(blocks: &[ContextBlock], budget_tokens: Option<u32>) -> Ve
     kept
 }
 
+/// Tokens left for optional preflight blocks after hard-required text is counted.
+///
+/// `None` means no context budget is configured. The caller keeps its existing caps.
+/// A zero room means optional blocks must be omitted. The hard-required text is not trimmed.
+pub fn optional_room(already_sent: &str, budget_tokens: Option<u32>) -> Option<u32> {
+    let budget = budget_tokens?;
+    Some(budget.saturating_sub(count_tokens(already_sent) as u32))
+}
+
 pub fn fnv_hash(text: &str) -> String {
     let mut hash: u64 = 0xcbf29ce484222325;
     for byte in text.as_bytes() {
@@ -246,5 +255,22 @@ mod tests {
         assert_eq!(row.new_context_tokens, Some(300));
         assert_eq!(row.tokens_avoided, 600);
         assert_eq!(efficiency(10, 4, None, 6).new_context_tokens, None);
+    }
+
+    #[test]
+    fn no_context_budget_leaves_the_room_unset() {
+        assert_eq!(optional_room("always apply stays", None), None);
+    }
+
+    #[test]
+    fn optional_room_is_zero_once_hard_required_text_fills_the_budget() {
+        let hard = "rule ".repeat(80);
+        assert_eq!(optional_room(&hard, Some(1)), Some(0));
+    }
+
+    #[test]
+    fn optional_room_keeps_the_remainder_after_a_short_hard_block() {
+        let room = optional_room("ok", Some(12_000)).unwrap();
+        assert!(room > 11_000);
     }
 }
