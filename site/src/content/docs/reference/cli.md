@@ -936,6 +936,42 @@ ax pricing history claude-sonnet --days 30
 
 Optional overrides in `~/.ax/pricing.toml` always win over synced rates.
 
+### `ax costs`
+
+Quote imported agent turns from the price catalog. Known events are estimates. Missing tokens or a missing model rate stay unknown and are left out of the dollar total. This does not replace `ax savings`.
+
+| Subcommand | Description |
+|---|---|
+| (default) | Summary for the selected period (`--period`, `--from`, `--to`, `--json`) |
+| `today` | Spend since local midnight |
+| `month` | Month to date |
+| `session` | Breakdown labeled by model within each reported group |
+| `model` | Breakdown by model |
+| `project` | Breakdown by project |
+
+```bash
+ax costs
+ax costs today
+ax costs month
+ax costs model
+```
+
+### `ax budget`
+
+Plan, simulate, and store a local monthly budget. Decisions are allow, warn, or deny. Ax does not block a provider API call.
+
+| Subcommand | Description |
+|---|---|
+| `plan` | Monthly, daily, and hourly allowance (`--json`) |
+| `simulate` | Scale recorded cycle cost (`--cycles`, `--days`, `--model`, `--strategy`, `--cost-per-cycle`, `--json`) |
+| `set` | Write `~/.ax/config.json` (`--monthly`, `--currency`, `--usd-per-eur`, `--working-days`, `--hours`, `--warning`, `--critical`, `--hard`) |
+
+```bash
+ax budget plan
+ax budget simulate --cycles 500
+ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 --hours 8
+```
+
 ### `ax mcp audit`
 
 Correlate `<project>/.ax/mcp-verbose-*.log` (daily files) with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Same engine powers the Command Center **Quality** status-bar chip and slide-out. Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.

@@ -234,6 +234,8 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax memory export\|import` | Shared memory JSONL sync for teams (`memorySync` in `ax.json`) |
 | `ax savings` | Context-token and cost savings summary (`import`, `tag-session`, `hook install`) |
 | `ax pricing` | Daily model price sync (OpenRouter) |
+| `ax costs` | Estimated agent spend from imported turns (`today`, `month`, `model`) |
+| `ax budget` | Local monthly plan, simulation, and thresholds (`plan`, `simulate`, `set`) |
 | `ax mcp audit` | MCP quality audit (verbose log ↔ Cursor transcript; Quality slide-out engine) |
 | `ax cursor auth …` | Save/restore Cursor subscription sessions (`status`, `save`, `use`, `list`) |
 | `ax affected <files…>` | Tests affected by file changes |

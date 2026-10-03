@@ -183,6 +183,7 @@ export default defineConfig({
 						{ label: 'Memory Vault', slug: 'guides/memory' },
 						{ label: 'Obsidian Vault', slug: 'guides/obsidian-vault' },
 						{ label: 'Token Savings', slug: 'guides/token-savings' },
+						{ label: 'Agent budget', slug: 'guides/budget' },
 					],
 				},
 				{

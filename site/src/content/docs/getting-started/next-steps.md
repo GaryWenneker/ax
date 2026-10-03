@@ -24,6 +24,7 @@ You've got ax installed and a graph built. Here's where to go next.
 - [Share Command Center](/guides/share/) — LAN token share, PWA, live action stream.
 - [MCP Logging & Quality](/guides/mcp-quality/) — verbose traces, Logging page, Q slide-out, session hooks, and `ax mcp audit`.
 - [Token Savings](/guides/token-savings/) — measure context-token savings from graph queries.
+- [Agent budget](/guides/budget/) — quote imported agent turns and plan a local monthly budget.
 - [Command Center](/guides/command-center/) — rules, skills, memory, graph, and logging in one local UI.
 - [Architecture Insights](/guides/architecture-insights/) — communities, god nodes, interactive Graph, portable HTML export.
 
