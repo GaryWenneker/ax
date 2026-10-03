@@ -284,6 +284,7 @@ pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathB
     let obj = root
         .as_object_mut()
         .ok_or_else(|| "config root is not an object".to_string())?;
+    {
     let budget = obj
         .entry("budget")
         .or_insert_with(|| Value::Object(Default::default()));
@@ -315,6 +316,25 @@ pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathB
         budget.insert("hardLimitPercent".into(), serde_json::json!(v));
     }
     budget.insert("enabled".into(), Value::Bool(true));
+    }
+    if let Some(v) = patch.mode.clone() {
+        let agent = obj
+            .entry("agent")
+            .or_insert_with(|| Value::Object(Default::default()));
+        let agent = agent
+            .as_object_mut()
+            .ok_or_else(|| "agent is not an object".to_string())?;
+        agent.insert("budgetMode".into(), Value::String(v));
+    }
+    if let Some(v) = patch.context_budget_tokens {
+        let context = obj
+            .entry("context")
+            .or_insert_with(|| Value::Object(Default::default()));
+        let context = context
+            .as_object_mut()
+            .ok_or_else(|| "context is not an object".to_string())?;
+        context.insert("budgetTokens".into(), serde_json::json!(v));
+    }
     std::fs::write(
         &path,
         serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
@@ -333,6 +353,8 @@ pub struct BudgetSectionPatch {
     pub warning_percent: Option<f64>,
     pub critical_percent: Option<f64>,
     pub hard_limit_percent: Option<f64>,
+    pub mode: Option<String>,
+    pub context_budget_tokens: Option<u32>,
 }
 
 pub fn monthly_budget_usd(settings: &BudgetSettings) -> Option<f64> {

@@ -58,5 +58,5 @@ ax costs today
 ax costs month
 ax budget plan
 ax budget simulate --cycles 500
-ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 --hours 8
+ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 --hours 8 --mode balanced --context-tokens 12000
 ```

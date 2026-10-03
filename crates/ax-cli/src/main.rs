@@ -606,6 +606,10 @@ enum BudgetAction {
         critical: Option<f64>,
         #[arg(long)]
         hard: Option<f64>,
+        #[arg(long, help = "cheap | balanced | quality")]
+        mode: Option<String>,
+        #[arg(long, help = "Optional context token budget")]
+        context_tokens: Option<u32>,
     },
 }
 
@@ -1768,6 +1772,8 @@ async fn async_main() {
                 warning,
                 critical,
                 hard,
+                mode,
+                context_tokens,
             }) => commands::budget_cmd::run_set(ax_usage::BudgetSectionPatch {
                 monthly,
                 currency,
@@ -1777,6 +1783,8 @@ async fn async_main() {
                 warning_percent: warning,
                 critical_percent: critical,
                 hard_limit_percent: hard,
+                mode,
+                context_budget_tokens: context_tokens,
             }),
         },
         Some(Commands::DocsCatalog { action }) => match action {

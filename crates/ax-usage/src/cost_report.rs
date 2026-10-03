@@ -69,6 +69,10 @@ pub struct CostReport {
     pub cycle_rows: Vec<(String, f64)>,
     pub tokens_avoided: i64,
     pub savings_usd_est: f64,
+    /// Whole-file counterfactual from `ax savings`. Zero when that summary was not attached.
+    pub counterfactual_tokens: i64,
+    /// Graph response tokens from `ax savings`.
+    pub selected_context_tokens: i64,
 }
 
 pub fn quote_recorded(row: &RecordedUsage, pricing: Option<ModelPricing>) -> Cost {
@@ -158,6 +162,8 @@ pub fn build_report(
         cycle_rows,
         tokens_avoided,
         savings_usd_est,
+        counterfactual_tokens: 0,
+        selected_context_tokens: 0,
     }
 }
 
@@ -239,6 +245,16 @@ pub fn format_summary(
         .map(|p| format!("{p:.0}%"))
         .unwrap_or_else(|| "unknown".into());
     out.push_str(&format!("Budget usage           {pct}\n\n"));
+    let today_usd = report
+        .by_day
+        .iter()
+        .find(|day| day.date == snapshot.today)
+        .map(|day| day.usd)
+        .unwrap_or(0.0);
+    out.push_str(&format!(
+        "Today                  {}\n",
+        format_money(today_usd, settings)
+    ));
     out.push_str(&format!(
         "Recommended/day        {}\n",
         money_opt(snapshot.recommended_daily_usd, settings)
@@ -290,6 +306,40 @@ pub fn format_summary(
         "Cache write            {}\n",
         token_cell(report.tokens.cache_write, report.tokens.cache_write_known)
     ));
+    let cache_read = if report.tokens.cache_read_known {
+        Some(report.tokens.cache_read)
+    } else {
+        None
+    };
+    let efficiency = crate::context_plan::efficiency(
+        report.counterfactual_tokens,
+        report.selected_context_tokens,
+        cache_read,
+        report.tokens_avoided,
+    );
+    out.push_str("\nContext efficiency\n--------------------------------\n");
+    out.push_str(&format!(
+        "Raw context            {}\n",
+        efficiency.raw_context_tokens
+    ));
+    out.push_str(&format!(
+        "Selected context       {}\n",
+        efficiency.selected_context_tokens
+    ));
+    out.push_str(&format!(
+        "Cache read             {}\n",
+        efficiency
+            .cache_read_tokens
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    ));
+    out.push_str(&format!(
+        "New context            {}\n",
+        efficiency
+            .new_context_tokens
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    ));
     out.push_str("\nAx savings\n--------------------------------\n");
     out.push_str(&format!(
         "Tokens avoided         {}\n",
@@ -328,12 +378,14 @@ pub async fn collect_report(
     let range = resolve_period(query.period, query.from.as_deref(), query.to.as_deref())?;
     let rows = load_events(range.from_ms, range.to_ms).await?;
     let summary = query_savings_summary(query).await?;
-    let report = build_report(
+    let mut report = build_report(
         &rows,
         |model| model.and_then(|name| price_for_cost(name).map(|(pricing, _)| pricing)),
         summary.tokens_saved_est,
         summary.cost_saved_usd_est,
     );
+    report.counterfactual_tokens = summary.counterfactual_tokens_est;
+    report.selected_context_tokens = summary.graph_response_tokens_est;
     let today = Local::now().date_naive();
     let month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
     let month_range = resolve_period(UsagePeriod::MonthToDate, None, None)?;

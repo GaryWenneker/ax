@@ -10,7 +10,7 @@ Ax reads Claude Code and Cursor session logs already on disk, quotes each turn f
 ## Set a budget
 
 ```bash
-ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 --hours 8
+ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 --hours 8 --mode balanced --context-tokens 12000
 ax budget plan
 ```
 
