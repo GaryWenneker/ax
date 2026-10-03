@@ -48,6 +48,79 @@ CREATE TABLE IF NOT EXISTS mcp_context_cache (
   expires_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mcp_reuse_cache (
+  reuse_key TEXT PRIMARY KEY,
+  conversation TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  args_summary TEXT NOT NULL,
+  cache_id TEXT NOT NULL,
+  body_bytes INTEGER NOT NULL,
+  original_tokens INTEGER NOT NULL,
+  files_json TEXT NOT NULL,
+  index_fingerprint TEXT NOT NULL DEFAULT '',
+  turn INTEGER NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 0,
+  tokens_avoided INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_reuse_cache_conv ON mcp_reuse_cache(conversation, created_at);
+
+CREATE TABLE IF NOT EXISTS mcp_working_context (
+  scope TEXT PRIMARY KEY,
+  objective TEXT NOT NULL DEFAULT '',
+  facts TEXT NOT NULL DEFAULT '[]',
+  files TEXT NOT NULL DEFAULT '[]',
+  symbols TEXT NOT NULL DEFAULT '[]',
+  decisions TEXT NOT NULL DEFAULT '[]',
+  open_questions TEXT NOT NULL DEFAULT '[]',
+  content_hash TEXT NOT NULL,
+  index_fingerprint TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ax_durable_conversation (
+  id TEXT PRIMARY KEY,
+  parent_id TEXT,
+  fork_entry INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ax_durable_entry (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  body TEXT NOT NULL,
+  head INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ax_durable_entry_conv ON ax_durable_entry(conversation_id, id);
+
+CREATE TABLE IF NOT EXISTS ax_durable_document (
+  conversation_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  body TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS ax_durable_task (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  checkpoint TEXT NOT NULL,
+  result TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ax_durable_hook (
+  conversation_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, event, name)
+);
+
 CREATE TABLE IF NOT EXISTS agent_session_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   agent TEXT NOT NULL,
@@ -75,6 +148,7 @@ const MIGRATION_ADD_COLUMNS: &[&str] = &[
     "ALTER TABLE agent_session_log ADD COLUMN model TEXT",
     "ALTER TABLE mcp_call_log ADD COLUMN response_preview TEXT",
     "ALTER TABLE mcp_call_log ADD COLUMN counterfactual_preview TEXT",
+    "ALTER TABLE mcp_reuse_cache ADD COLUMN index_fingerprint TEXT NOT NULL DEFAULT ''",
 ];
 
 const PRICING_SCHEMA: &str = "
@@ -142,13 +216,16 @@ pub fn usage_db_path() -> PathBuf {
 }
 
 pub async fn open_pool() -> Result<SqlitePool, AxError> {
-    let path = usage_db_path();
+    open_pool_at(&usage_db_path()).await
+}
+
+pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, AxError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     }
 
     let options = SqliteConnectOptions::new()
-        .filename(&path)
+        .filename(path)
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)

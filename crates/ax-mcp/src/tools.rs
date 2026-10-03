@@ -33,6 +33,7 @@ impl ToolHandler {
             tools.push(guard_tool());
         }
         tools.extend(extra_tools());
+        advertise_fresh(&mut tools);
         // Lean default: core tools only. Extras via AX_MCP_TOOLS=all|name,name.
         // Unlisted tools remain callable (call_tool is not filtered).
         crate::tool_filter::filter_tools_list(&mut tools);
@@ -60,6 +61,30 @@ impl ToolHandler {
             "ax_lsp" => lsp_tool(ax, params).await,
             "ax_ship" => ship_tool(ax, params).await,
             "ax_policy_index" => policy_index_tool(ax, params).await,
+            "ax_session" => {
+                let conversation = chat_of(&params);
+                let fingerprint = match indexed_hashes(ax.db_pool()).await {
+                    Ok(index) => ax_usage::index_fingerprint(&index),
+                    Err(_) => String::new(),
+                };
+                let action = params.get("action").and_then(Value::as_str).unwrap_or("get");
+                if matches!(action, "fork" | "handoff") {
+                    let child = crate::chat_session::mint_session();
+                    let text = if action == "fork" {
+                        ax_usage::fork_working_context(ax.project_root(), &conversation, &child, &fingerprint).await?
+                    } else {
+                        ax_usage::handoff_working_context(ax.project_root(), &conversation, &child, &params, &fingerprint).await?
+                    };
+                    return Ok(json!({ "text": text, "session": child }));
+                }
+                let text = ax_usage::working_context_apply(ax.project_root(), &conversation, &params, &fingerprint).await?;
+                Ok(json!({ "text": text }))
+            }
+            "ax_durable" => {
+                let conversation = chat_of(&params);
+                let text = ax_usage::durable_apply(&conversation, &params).await?;
+                Ok(json!({ "text": text }))
+            }
             "ax_context" => {
                 let task = params.get("task").and_then(|v| v.as_str()).unwrap_or("");
                 let ctx = ax.build_context(TaskInput::Text(task.to_string()), BuildContextOptions::default()).await.map_err(|e| e.to_string())?;
@@ -667,11 +692,44 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         if !inject.is_empty() {
             inject.push('\n');
         }
-        inject.push_str("<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result. Call ax_cache_status at any time for context-cache and file-token-cache counts (no bodies).</ax_context_cache>");
+        inject.push_str(CONTEXT_CACHE_LINE);
+        let conversation = chat_of(&params);
+        let index = indexed_hashes(ax.db_pool()).await;
+        let graph = index.as_ref().ok().map(ax_usage::index_fingerprint);
+        inject.push('\n');
+        inject.push_str(&chat_line(&conversation, graph.as_deref()));
         let chat = chat_for_client(session_client(&params)).then(ax_usage::read_active_cursor_session).flatten();
         if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
             inject.push('\n');
             inject.push_str(&ledger);
+        }
+        if let Ok(index) = index.as_ref() {
+            let unseen: Vec<_> = ax_usage::reuse_session_entries(ax.project_root(), &conversation, index)
+                .await
+                .into_iter()
+                .filter(|e| !session_delivered.as_ref().is_some_and(|m| m.contains_key(&format!("reuse:{}", e.id))))
+                .collect();
+            let known = ax_usage::format_session_context(&unseen, ax_usage::SESSION_CONTEXT_TOKENS);
+            if !known.is_empty() {
+                if session_delivered.is_some() {
+                    delivered.extend(unseen.iter().filter(|e| known.contains(&e.id)).map(|e| (format!("reuse:{}", e.id), 1)));
+                }
+                inject.push('\n');
+                inject.push_str(&known);
+            }
+            let fingerprint = ax_usage::index_fingerprint(index);
+            let known = params.get("known_context").and_then(Value::as_str);
+            let working = ax_usage::working_context_block(ax.project_root(), &conversation, &fingerprint, known).await;
+            if !working.is_empty() {
+                inject.push('\n');
+                inject.push_str(&ax_section("session", &working));
+            }
+            let turns = params.get(TURNS_ARG).and_then(Value::as_u64).unwrap_or(0) as u32;
+            let stale = working.lines().next().is_some_and(|header| header.contains("stale=true"));
+            if let Some(nudge) = ax_usage::session_nudge(turns, stale) {
+                inject.push('\n');
+                inject.push_str(&ax_section("nudge", &nudge));
+            }
         }
         if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
             let unseen: Vec<_> = entries
@@ -802,6 +860,29 @@ fn skill_inline_chars() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(1_500);
     tokens.saturating_mul(4)
+}
+
+/// Private args key: the chat the server resolved for this call.
+pub(crate) const CHAT_ARG: &str = "__axChat";
+/// Private args key: preflight calls in this chat since its last `ax_session` write.
+pub(crate) const TURNS_ARG: &str = "__axTurns";
+
+fn chat_of(params: &Value) -> String {
+    match params.get(CHAT_ARG).and_then(Value::as_str) {
+        Some(chat) => chat.to_string(),
+        None => ax_usage::conversation_key(ax_usage::read_active_cursor_session()),
+    }
+}
+
+fn ax_section(name: &str, body: &str) -> String {
+    format!("<ax_section name=\"{name}\">\n{body}\n</ax_section>")
+}
+
+fn chat_line(chat: &str, fingerprint: Option<&str>) -> String {
+    let graph = fingerprint.map(|f| format!(" graph={}", &f[..f.len().min(16)])).unwrap_or_default();
+    format!(
+        "<ax_chat session={chat}{graph}>Pass \"session\": \"{chat}\" to ax_preflight and to every ax tool call in this chat. A preflight without it starts a new chat.</ax_chat>"
+    )
 }
 
 fn session_client(params: &Value) -> Option<&str> {
@@ -1615,6 +1696,10 @@ fn preflight_tool() -> Value {
                 "projectPath": {
                     "type": "string",
                     "description": "Optional project root when cwd differs from the MCP --path index (monorepos). Resolves to the nearest ax root."
+                },
+                "known_context": {
+                    "type": "string",
+                    "description": "The <ax_working_context> hash you already have; when it is still current, preflight sends one unchanged line instead of the notes"
                 }
             }
         }
@@ -1697,6 +1782,35 @@ fn guard_tool() -> Value {
     })
 }
 
+/// Indexed `content_hash` per path from the project `files` table; all files when `paths` is `None`.
+pub(crate) async fn indexed_hashes(pool: &sqlx::SqlitePool) -> Result<ax_usage::IndexHashes, String> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT path, content_hash FROM files")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().collect())
+}
+
+fn advertise_fresh(tools: &mut [Value]) {
+    for tool in tools.iter_mut() {
+        let cacheable = tool["name"].as_str().is_some_and(ax_usage::reuse_cacheable);
+        if let (true, Some(props)) = (cacheable, tool["inputSchema"]["properties"].as_object_mut()) {
+            props.insert(
+                "fresh".to_string(),
+                json!({ "type": "boolean", "description": "Skip the per-conversation cache and rerun the query" }),
+            );
+        }
+        let name = tool["name"].as_str().unwrap_or_default();
+        let chat_state = cacheable || matches!(name, "ax_preflight" | "ax_session" | "ax_durable");
+        if let (true, Some(props)) = (chat_state, tool["inputSchema"]["properties"].as_object_mut()) {
+            props.insert(
+                "session".to_string(),
+                json!({ "type": "string", "description": "The session id preflight printed in <ax_chat>; keeps this chat's cache and notes" }),
+            );
+        }
+    }
+}
+
 fn extra_tools() -> Vec<Value> {
     vec![
         json!({
@@ -1764,6 +1878,46 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({ "name": "ax_files", "description": "Project file listing", "inputSchema": { "type": "object", "properties": {} } }),
         json!({ "name": "ax_context", "description": "Build task context", "inputSchema": { "type": "object", "properties": { "task": { "type": "string" } }, "required": ["task"] } }),
+        json!({
+            "name": "ax_durable",
+            "description": "Durable transcript, documents, and tasks for this chat. append/read/search store the conversation. compact writes a summary and hides older entries from read; search still finds them. fork reads the parent up to an entry and copies documents. handoff starts a new transcript from a note. doc_put/doc_get store JSON state. task_start, task_checkpoint, task_resume, and task_finish keep a step that survives a restart. hook records a name that is written into the transcript when that event runs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["append", "read", "search", "compact", "fork", "handoff", "doc_put", "doc_get", "task_start", "task_checkpoint", "task_resume", "task_finish", "hook"] },
+                    "kind": { "type": "string" },
+                    "body": {},
+                    "query": { "type": "string" },
+                    "summary": { "type": "string" },
+                    "first_kept": { "type": "number" },
+                    "at": { "type": "number" },
+                    "note": { "type": "string" },
+                    "task": { "type": "string" },
+                    "phase": { "type": "string" },
+                    "checkpoint": { "type": "object" },
+                    "input": { "type": "object" },
+                    "result": {},
+                    "event": { "type": "string" },
+                    "name": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "ax_session",
+            "description": "Read or update this conversation's working context: the small snapshot of objective, facts, files, symbols, decisions, and open questions. Preflight shows it every turn, or one unchanged line when you pass its hash as known_context. Raw tool results stay in the conversation cache. Actions: get (default), add, update, compact, clear, fork, handoff. fork copies the notes to a new session. handoff stores the note you send as a new session. The old session stays readable and the graph cache is not copied.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["get", "add", "update", "compact", "clear", "fork", "handoff"], "description": "Default get. compact replaces the whole snapshot and requires every section. add appends. update replaces the sections you send. fork copies the notes. handoff starts a new session from the note you send." },
+                    "objective": { "type": "string" },
+                    "facts": { "type": "array", "items": { "type": "string" } },
+                    "files": { "type": "array", "items": { "type": "string" } },
+                    "symbols": { "type": "array", "items": { "type": "string" } },
+                    "decisions": { "type": "array", "items": { "type": "string" } },
+                    "open_questions": { "type": "array", "items": { "type": "string" } }
+                }
+            }
+        }),
         json!({ "name": "ax_callers", "description": "Find callers", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_callees", "description": "Find callees", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
         json!({ "name": "ax_impact", "description": "Impact radius", "inputSchema": { "type": "object", "properties": { "symbol": { "type": "string" } }, "required": ["symbol"] } }),
@@ -2027,6 +2181,8 @@ fn format_node_signatures(result: &ax_types::ExploreResult) -> String {
     out
 }
 
+const CONTEXT_CACHE_LINE: &str = "<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result. Call ax_cache_status at any time for context-cache and file-token-cache counts (no bodies). A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> before searching again; pass fresh: true to force a new query. Record a durable fact, file, symbol, decision, or open question with ax_session (actions add, update, compact, clear). Preflight shows <ax_working_context>; pass its hash as known_context and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; compact confirms the notes against the current index.</ax_context_cache>";
+
 pub fn server_instructions(has_policy: bool) -> String {
     let mut s = String::from(
         "You have access to ax code intelligence tools (MCP).\n\n",
@@ -2049,6 +2205,8 @@ pub fn server_instructions(has_policy: bool) -> String {
          Whole-graph understanding: call ax_insights for Leiden communities (subsystems), god nodes (most-connected concepts), and surprising cross-community connections. Call ax_report for a full Markdown architecture report. Edges carry a confidence tag (extracted / inferred / ambiguous) and Markdown docs are indexed as Doc nodes linked to the code they reference.\n\n\
          Memory vault: when you make a durable decision, fix a tricky bug, or establish a convention, store it with ax_remember. Use ax_recall to search past decisions before re-deriving them. Relevant memories are auto-injected via ax_preflight.\n\n\
          Context cache: an oversized graph reply keeps its head inline and ends with a footer id; other oversized replies become a short stub with an id. Call ax_expand with that id to read the rest. ax_stash stores a chat slice or another tool result the same way. Call ax_cache_status at any time for context-cache and file-token-cache counts (no bodies). Preflight lists recent ids and memory titles, not bodies. This is not a dump of the memory vault.\n\n\
+         Conversation cache: A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> in preflight before searching again; pass fresh: true to force a new query. Editing a cited file invalidates the entry.\n\n\
+         Working context: Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions add, update, compact, clear). Preflight shows `<ax_working_context>`; pass its hash as known_context and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; compact confirms the notes against the current index.\n\n\
          Ops (prefer MCP — do NOT shell ax CLI when MCP is connected):\n\
          - ax_sync after local edits that should refresh the graph\n\
          - ax_index with force=true for a full rebuild\n\
@@ -2507,5 +2665,54 @@ mod tests {
     async fn ax_history_is_in_the_default_catalog() {
         let names = tool_names(&ToolHandler::list_tools(false).await);
         assert!(names.contains(&"ax_history".to_string()), "{names:?}");
+    }
+
+    #[test]
+    fn server_text_and_seeds_share_the_conversation_cache_sentence() {
+        for has_policy in [true, false] {
+            let text = server_instructions(has_policy);
+            assert!(text.contains(ax_policy::CONVERSATION_CACHE_SENTENCE), "instructions({has_policy})");
+            assert!(text.contains("<ax_session_context>") && text.contains("fresh: true"));
+        }
+        assert!(CONTEXT_CACHE_LINE.contains(ax_policy::CONVERSATION_CACHE_SENTENCE));
+        assert!(CONTEXT_CACHE_LINE.contains(ax_policy::SESSION_ID_SENTENCE));
+        assert!(CONTEXT_CACHE_LINE.contains("known_context"));
+        assert!(CONTEXT_CACHE_LINE.contains("fresh: true"));
+    }
+
+    #[tokio::test]
+    async fn cacheable_tools_advertise_fresh_and_others_do_not() {
+        let listed = ToolHandler::list_tools(true).await;
+        let tools = listed["tools"].as_array().unwrap();
+        let schema_has_fresh = |name: &str| {
+            tools
+                .iter()
+                .find(|t| t["name"] == name)
+                .map(|t| t["inputSchema"]["properties"].get("fresh").is_some())
+        };
+        assert_eq!(schema_has_fresh("ax_node"), Some(true));
+        assert_eq!(schema_has_fresh("ax_explore"), Some(true));
+        assert_eq!(schema_has_fresh("ax_search"), Some(true));
+        assert_eq!(schema_has_fresh("ax_preflight"), Some(false));
+        assert_eq!(schema_has_fresh("ax_guard"), Some(false));
+    }
+
+    #[tokio::test]
+    async fn session_is_advertised_where_chat_state_is_read() {
+        let listed = ToolHandler::list_tools(true).await;
+        let tools = listed["tools"].as_array().unwrap();
+        let session_type = |name: &str| {
+            tools
+                .iter()
+                .find(|t| t["name"] == name)
+                .map(|t| t["inputSchema"]["properties"]["session"]["type"].as_str() == Some("string"))
+        };
+        for name in ["ax_preflight", "ax_session", "ax_durable", "ax_node", "ax_explore", "ax_search", "ax_callers"] {
+            assert_eq!(session_type(name), Some(true), "{name}");
+        }
+        assert_eq!(session_type("ax_guard"), Some(false));
+        assert_eq!(session_type("ax_sync"), Some(false));
+        let preflight = tools.iter().find(|t| t["name"] == "ax_preflight").unwrap();
+        assert_eq!(preflight["inputSchema"]["properties"]["known_context"]["type"], "string");
     }
 }

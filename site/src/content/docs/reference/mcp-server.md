@@ -20,7 +20,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 | Group | Tools |
 |---|---|
 | Turn contract | `ax_preflight`, `ax_policy_capture`, and (when policy exists) `ax_rules` / `ax_skill` / `ax_guard` |
-| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash`, `ax_cache_status` |
+| Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_session`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash`, `ax_cache_status` |
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 
@@ -137,6 +137,61 @@ Graph reads (`ax_explore`, `ax_node`, `ax_search`, `ax_callers`, `ax_callees`, `
 ax_stash({ "text": "the bulky tool result", "label": "other-mcp" })
 ax_expand({ "id": "cc_0123456789abcdef", "offset": 0, "limit": 8000 })
 ```
+
+### Conversation cache
+
+Within one agent conversation, ax answers a repeated read-only graph call (`ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_affected`, `ax_context`) with a short reference instead of the full answer again:
+
+```text
+[ax cache hit] tool=ax_node id=cc_f0ae299dd7eef47c turn=2 original_tokens=1840
+Same call already answered in this conversation; cited files unchanged. Use the earlier answer, ax_expand id "cc_f0ae299dd7eef47c" to see it again, or fresh: true to rerun.
+```
+
+- **Same call** means the same conversation, project, tool, and arguments. Argument order and whitespace do not matter.
+- **Freshness** is checked on every lookup. Each entry records the files its answer cites, with the content hash on disk and the indexed `content_hash`, plus a fingerprint of the whole index. If a cited file was edited or deleted, or any file was re-indexed (a new caller can live in a file the answer never cited), the call runs again. Answers that cite no file are never cached.
+- **`fresh: true`** on any of these tools skips the cache for that call.
+- **Preflight** adds an `<ax_session_context>` block (about 1,500 tokens at most) listing what this conversation already asked, with cited files and ids, so the agent can reuse it before searching again. Each entry is listed once per MCP session.
+- **Not cached**: replies of 200 tokens or less (a reference would not save anything), and replies citing more than 64 files.
+- **Conversation id:** every `ax_preflight` reply names the chat in `<ax_chat session=axs_… graph=…>`. The agent passes that `session` back to `ax_preflight` and to the graph tools for the rest of the chat. The id is resolved in this order:
+  1. the `session` argument;
+  2. the Cursor hook file `~/.ax/active-cursor-session`, if `ax turn-hook start` or `ax session-hook` wrote it in the last 10 minutes;
+  3. the session last used on the same MCP connection (one Cursor window).
+  
+  A preflight with none of these starts a new chat with a new id. A forgotten id therefore costs a cold start, never another chat's answers. A usable id is 1 to 128 ASCII letters, digits, or `-_.:`; any other value is ignored, as if no id was given. `graph=` is the first 16 hex characters of the index fingerprint; it changes with every re-index.
+- **Size**: at most `AX_REUSE_CACHE_BYTES` (default 2 MB) of answers per conversation; the oldest go first. `AX_CONTEXT_CACHE=off` disables this too.
+- **Savings** are logged per hit (`tokensAvoided` = original answer tokens minus the reference) and appear in the savings report.
+
+### Working context
+
+The conversation cache reuses raw graph replies. It does not remember what the agent concluded. `ax_session` stores that smaller snapshot for the same conversation and project:
+
+```text
+ax_session({ "action": "add", "objective": "Refactor authentication", "facts": ["JWT validation is in JwtValidator"], "files": ["src/Auth/JwtValidator.cs"] })
+ax_session({ "action": "compact", "objective": "Understand authentication", "facts": ["JWT validation is in JwtValidator"], "files": ["src/Auth/JwtValidator.cs"], "symbols": ["JwtValidator"], "decisions": ["Do not change ClaimsMapper"], "open_questions": ["Where are refresh tokens generated?"] })
+```
+
+- **`get`** (the default) returns the snapshot. **`add`** appends unique entries. **`update`** replaces only the sections you send. **`compact`** replaces the whole snapshot and requires every section; you write the shorter text, ax does not call a model. **`clear`** deletes it. **`fork`** copies the notes to a new `axs_` id and replies `<ax_session_fork parent=… child=…>`. **`handoff`** stores the note you send (the same fields as `compact`) as a new session and replies `<ax_session_handoff parent=… child=…>`. The old session stays readable. Neither action copies the graph cache, and neither resets the parent's quiet-turn count. Fork of a chat with no notes returns `nothing to fork`.
+- **Caps:** 12 entries per section, 200 characters per entry, 300 for the objective, and 800 tokens for the rendered block. A write that would pass a cap is rejected and the stored snapshot stays as it was.
+- **Identity:** the block names a 16-hex content hash. The same text always has the same hash.
+- **Stale, not deleted:** each write records the index fingerprint. If the index changes, preflight still shows the notes and sets `stale=true`. `add` and `update` refresh that fingerprint only when the text changes. `compact` refreshes it even when the text is unchanged, which is how the agent confirms the notes against the current index.
+- **Preflight** appends `<ax_working_context>` inside `<ax_section name="session">` when the snapshot is non-empty. An empty conversation does not get the hint. Pass the hash you already have as `known_context`; if the notes are unchanged and not stale, preflight sends one line, `<ax_working_context hash=… unchanged/>`, instead of the whole block. After the IDE summarizes the chat the agent no longer has the hash, so the full block comes back. A host that caches a request prefix can keep that section when the bytes do not change. Ax emits the tags and does not call the provider, so it does not measure cached input tokens.
+- **Nudge:** after 5 turns without an `ax_session` write, or when the notes are stale, preflight adds `<ax_session_nudge>` inside `<ax_section name="nudge">` asking for `compact`. The turn count lives in daemon memory. Fork and handoff do not reset it.
+- **Bounds:** at most 200 snapshots per project; the least recently written goes first. A snapshot not written for 30 days is deleted on the next write. If the index cannot be read, `add`, `update`, and `compact` are rejected ("index unavailable") instead of storing notes that could never be marked stale.
+- **Not stored here:** full tool bodies. Those stay in the conversation cache and the oversized-reply cache. `ax_context` is unchanged: it still builds a one-shot task context from the graph.
+- **Off:** `AX_CONTEXT_CACHE=off` (or `0`) makes `ax_session` fail and preflight omit the block.
+
+### Durable transcript
+
+`ax_durable` stores the conversation itself in the same usage database. It follows the same `session` id.
+
+- **`append`** writes a `user`, `assistant`, `tool`, or `system` entry. Once a transcript exists, later tool calls in that chat are appended as `tool` entries (the first 160 characters of the reply).
+- **`read`** returns the working view. **`search`** finds text in entries that compaction has hidden, including the parent up to a fork point, at most 50 hits.
+- **`compact`** stores the summary you write. `read` drops entries before that summary. Ax does not call a model to write it.
+- **`fork`** opens a new id that reads the parent through the entry you pass as `at` and copies JSON documents. It does not copy entries. **`handoff`** opens a new id whose first entry is the note. The parent transcript stays.
+- **`doc_put` / `doc_get`** store one JSON document per kind.
+- **Tasks:** `task_start`, `task_checkpoint`, `task_resume`, `task_finish`. `task_resume` returns the last checkpoint after the database is reopened. A finished task returns `task is finished`.
+- **`hook`** registers a name. When that event runs (`append`, `compact`, `fork`, `handoff`, `tool`), a `hook` entry is written.
+- Bodies are capped at 8000 bytes. This is not a second agent loop: generation, automatic summarization, and tool replay stay with the host that calls the model.
 
 ## Lean responses (token savings)
 

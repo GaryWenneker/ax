@@ -60,6 +60,11 @@ enum Commands {
         path: Option<String>,
         #[arg(long, help = "Discover monorepo members and write ax.json members[]")]
         workspace: bool,
+        #[arg(
+            long,
+            help = "Find projects under the home directory and initialize each one, without prompts"
+        )]
+        all: bool,
     },
     /// Remove .ax directory
     #[command(long_about = help_text::UNINIT_LONG)]
@@ -1223,7 +1228,11 @@ async fn async_main() {
             commands::install::run(yes, all, targets, path)
         }
         Some(Commands::Uninstall) => commands::uninstall::run(),
-        Some(Commands::Init { path, workspace }) => commands::init::run(path, workspace).await,
+        Some(Commands::Init {
+            path,
+            workspace,
+            all,
+        }) => commands::init::run(path, workspace, all).await,
         Some(Commands::Uninit { path }) => commands::uninit::run(path).await,
         Some(Commands::Index {
             path,

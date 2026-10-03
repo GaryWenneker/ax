@@ -3,7 +3,9 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v5.1.0](https://github.com/GaryWenneker/ax/releases/tag/v5.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v6.3.0](https://github.com/GaryWenneker/ax/releases/tag/v6.3.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+
+**v6.3.0** (minor) initializes every project it can find when you install or upgrade ax. The scan walks four levels under your home directory, skips hidden and dependency folders, and runs `ax init` on each git repo, project manifest, or existing ax project without asking questions. Run it again with `ax init --all`. Set `AX_SKIP_PROJECT_INIT=1` to skip.
 
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP. The `pr` skill reviews the draft it opened and keeps fixing until a review round has zero findings. `ax init` seeds that skill together with `old-coder`, `old-coder-api`, `review-loop`, `dotnet-code-review`, `typescript-review`, and `react-review`.
 
@@ -199,7 +201,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 |---------|-------------|
 | `ax` / `ax install` | Interactive MCP installer for detected agents |
 | `ax uninstall` | Remove ax from agent configs |
-| `ax init [path] [--workspace]` | Create `.ax/`, full index, git hooks; `--workspace` discovers monorepo members |
+| `ax init [path] [--workspace] [--all]` | Create `.ax/`, full index, git hooks; `--workspace` discovers monorepo members; `--all` initializes every project found under the home directory |
 | `ax uninit [path]` | Delete `.ax/` directory |
 | `ax index [--force] [--quiet] [--all]` | Full re-index; `--all` indexes every `ax.json` workspace member |
 | `ax sync [--watch] [--quiet] [--all]` | Incremental sync; `--all` syncs every workspace member |
@@ -308,7 +310,9 @@ Advertised by default — the turn contract plus the whole graph read surface:
 | `ax_report` | Full Markdown architecture report |
 | `ax_remember` | Store a durable project memory (flags near-duplicates) |
 | `ax_recall` | Hybrid memory search (FTS5 + local vector embeddings) |
-| `ax_expand` | Read a cached oversized MCP reply by id (`offset` / `limit` in characters) |
+| `ax_expand` | Read a cached MCP reply by id (`offset` / `limit` in characters); also returns the answer behind an `[ax cache hit]` |
+| `ax_session` | Read or update this conversation's working context (`get`, `add`, `update`, `compact`, `clear`, `fork`, `handoff`) |
+| `ax_durable` | Transcript, JSON documents, and checkpointed tasks for this chat (`append`, `read`, `search`, `compact`, `fork`, `handoff`, `doc_put`, `doc_get`, `task_start`, `task_checkpoint`, `task_resume`, `task_finish`, `hook`) |
 | `ax_stash` | Store a chat slice or other tool result; returns an id, does not echo the body |
 | `ax_cache_status` | Context-cache and file-token-cache counts. No bodies. Writes two grouped lines to the MCP log |
 | `ax_preflight` | Turn-start policy: matched rules + skills (when `.agents/` or `.ax/policy/` exists) |
@@ -336,6 +340,10 @@ Opt-in via `AX_MCP_TOOLS` (comma-separated names, or `all`) — these mutate the
 **Turn-end post-flight (Claude Code):** `ax install` also wires `Stop`/`SubagentStop` hooks (`ax stop-hook`) so ax gets a say at the *end* of a turn too, not just the start — it re-checks every uncommitted file against `ax_guard` and blocks (`{"decision": "block", ...}`) only on a CRITICAL violation. Disable with `AX_NO_STOP_HOOK=1`.
 
 **Lean by default:** responses never ship the answer twice — `content.text` is authoritative and `structuredContent` is projected down to metadata (no duplicated source/rule bodies). `ax_context` and the data tools return compact markdown / one-line-per-symbol text instead of pretty-JSON. Tune with `AX_MCP_FULL` (restore full structured payload), `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). See the [token savings guide](https://getax.wenneker.io/guides/token-savings/).
+
+**Conversation cache:** within one agent conversation, a repeated read-only graph call (same tool and arguments) returns a short `[ax cache hit]` reference (under 100 tokens) instead of the full answer again; `ax_expand` with its id returns the original byte-for-byte. Every lookup rechecks the content hash of each cited file on disk and a fingerprint of the whole index, so an edit or any re-index makes it a miss. Pass `fresh: true` to rerun, or set `AX_CONTEXT_CACHE=off` to disable it. `ax_preflight` lists what the conversation already knows in `<ax_session_context>`, each entry once. Cap: `AX_REUSE_CACHE_BYTES` (2 MB per conversation). See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/#conversation-cache).
+
+**Working context:** `ax_session` stores the small snapshot a later turn should see without rebuilding it: objective, facts, files, symbols, decisions, and open questions. `add` appends, `update` replaces the sections you send, `compact` replaces the whole snapshot (you write the shorter text), and `clear` deletes it. `fork` copies the notes to a new session. `handoff` starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. Preflight shows `<ax_working_context>` inside `<ax_section name="session">` (800 tokens at most), or one `unchanged` line when the agent passes the hash it has as `known_context`, and nudges for `compact` after 5 quiet turns inside `<ax_section name="nudge">`. A changed index marks the notes stale instead of deleting them; `compact` confirms them. At most 200 snapshots per project, 30 days unused. Both caches follow the `session` id that preflight prints in `<ax_chat session=… graph=…>`; a preflight without one starts a new chat. The same switch, `AX_CONTEXT_CACHE=off`, disables it. `ax_durable` is the transcript next to those notes: `append` and `read` keep the conversation, `compact` hides older entries from `read` while `search` still finds them, `fork` reads the parent up to an entry and copies documents, `handoff` starts a clean transcript from a note, and `task_resume` returns the last checkpoint after a restart. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/#working-context).
 
 **Verbose MCP logging:** enable **Settings → Interface → Verbose MCP logging** (`[ui] verbose_mcp = true` in `.ax/ship.toml`) or set `AX_MCP_VERBOSE=1` to emit inbound args, preflight enrichment steps, and outbound payloads to the Cursor MCP Output channel (stderr) and the Command Center **Logging** page (per-project daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; full current day on load; scroll up for prior days; monochrome table; JSON payloads summarized; tap a row for the fullscreen Call Inspector). Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
 

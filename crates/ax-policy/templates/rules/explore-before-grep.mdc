@@ -5,6 +5,7 @@ alwaysApply: true
 triggers: ["grep", "read file", "how does", "architecture", "call path", "who calls", "impact", "find code", "search codebase", "where is", "blast radius", "fix", "how works"]
 tags: ["mcp", "tokens", "explore", "quality"]
 priority: 95
+seedVersion: 5
 ---
 # Explore before Grep/Read
 
@@ -34,6 +35,11 @@ Treat numbered source returned by `ax_explore` as already read — do not re-Gre
 | ends with an `[ax context cache]` footer | `ax_expand` with the footer id and offset | Read the files it named |
 | missed the symbol you need | `ax_search` / `ax_node` with the exact name; `ax_sync` if the file changed | repo-wide Grep |
 | needs who-calls / what-breaks | `ax_callers` / `ax_callees` / `ax_impact` | Grep for the name |
+| starts with `[ax cache hit]` | use the earlier answer, or `ax_expand` with its id | rerun the search, or Read the files |
+
+A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` in preflight before searching again; pass `fresh: true` to force a new query.
+
+Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`, `fork`, `handoff`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index. fork copies these notes to a new session. handoff starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. `ax_durable` stores this chat's transcript, documents, and checkpointed tasks.
 
 Where the graph covers the code, do not Read or Grep the file to fill the gap. `ax_node` is the full source of a symbol, served from the index.
 

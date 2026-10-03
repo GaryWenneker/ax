@@ -62,6 +62,10 @@ pub async fn run(phase: TurnPhase) -> Result<(), String> {
     let value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
     match phase {
         TurnPhase::Start => {
+            if let Some(chat) = chat_id(&value) {
+                // A lost marker only means MCP calls fall back to the id preflight printed.
+                let _ = ax_usage::write_active_cursor_session(&chat);
+            }
             if let Some(input) = parse_input(&value) {
                 let root = input
                     .root
@@ -101,6 +105,14 @@ pub(crate) async fn end_from_input(value: &serde_json::Value) {
     let root = input.root.unwrap_or_else(|| super::resolve_path(None));
     // Memory capture must never fail or block the turn; a lost turn memory is acceptable.
     let _ = end_turn(&root, &input.conversation, input.reply, now_ms()).await;
+}
+
+/// The chat id for `~/.ax/active-cursor-session`, in the session hook's order.
+pub(crate) fn chat_id(v: &serde_json::Value) -> Option<String> {
+    ["session_id", "conversation_id"].iter().find_map(|key| {
+        let id = v.get(*key)?.as_str()?.trim();
+        (!id.is_empty()).then(|| id.to_string())
+    })
 }
 
 pub(crate) fn parse_input(v: &serde_json::Value) -> Option<HookInput> {
@@ -932,6 +944,16 @@ mod tests {
 
     fn outcome_of(record: &TurnRecord) -> Option<&str> {
         ax_memory::turn_outcome(&record.body)
+    }
+
+    #[test]
+    fn chat_id_prefers_session_then_conversation_and_skips_blanks() {
+        let both = serde_json::json!({ "session_id": "s1", "conversation_id": "c1" });
+        assert_eq!(chat_id(&both).as_deref(), Some("s1"));
+        let cursor = serde_json::json!({ "session_id": "  ", "conversation_id": " c1 " });
+        assert_eq!(chat_id(&cursor).as_deref(), Some("c1"));
+        assert_eq!(chat_id(&serde_json::json!({ "generation_id": "g1" })), None);
+        assert_eq!(chat_id(&serde_json::Value::Null), None);
     }
 
     #[test]

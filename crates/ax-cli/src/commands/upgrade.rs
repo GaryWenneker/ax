@@ -160,6 +160,13 @@ pub async fn run(
                 strip_v(&target_version)
             ))
         );
+        let status = std::process::Command::new(&current_exe)
+            .args(["init", "--all"])
+            .status()
+            .map_err(|e| format!("start project discovery: {e}"))?;
+        if !status.success() {
+            eprintln!("ax: project discovery failed. Re-run `ax init --all`.");
+        }
         Ok(())
     }
 }
@@ -310,6 +317,19 @@ pub fn run_upgrade_apply(parent_pid: u32, staging: PathBuf, dest: PathBuf) -> Re
         tracing::debug!("bin/ax.exe locked; leaving ax.new.exe for next startup swap");
     }
     sync_cargo_shadow(&dest.join("ax.exe"));
+    let init_exe = if bin_exe.is_file() {
+        bin_exe
+    } else {
+        dest.join("ax.exe")
+    };
+    match std::process::Command::new(&init_exe)
+        .args(["init", "--all"])
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        Ok(_) => tracing::debug!("project discovery failed; re-run ax init --all"),
+        Err(err) => tracing::debug!("project discovery did not start: {err}"),
+    }
     Ok(())
 }
 
@@ -555,6 +575,7 @@ fn spawn_upgrade_cmd_batch(parent_pid: u32, staging: &Path, dest: &Path) -> Resu
          copy /Y \"%DEST%\\ax.exe\" \"%BINDIR%\\ax.new.exe\" >nul\r\n\
          move /Y \"%BINDIR%\\ax.new.exe\" \"%BINDIR%\\ax.exe\" >nul 2>&1\r\n\
          if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" copy /Y \"%DEST%\\ax.exe\" \"%CARGOAX%\" >nul\r\n\
+         if exist \"%BINDIR%\\ax.exe\" (\"%BINDIR%\\ax.exe\" init --all) else (\"%DEST%\\ax.exe\" init --all)\r\n\
          del \"%~f0\" >nul 2>&1\r\n",
         staging = staging.display(),
         dest = dest.display(),

@@ -1,6 +1,6 @@
 [package]
 name = "ax-core"
-version = "6.1.2"
+version = "6.3.1"
 edition = "2021"
 
 [dependencies]

@@ -69,7 +69,7 @@ The installer:
 - Adds a marker-fenced ax section to agent instruction files where applicable (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`). Removed cleanly by `ax uninstall`.
 - Creates `~/.ax/config.json` with an empty scaffold for [global index defaults](/getting-started/configuration/#global-config-axconfigjson) if the file doesn't exist yet.
 
-The installer **connects agents only — it does not index your code.** Run `ax init` per project (step 4).
+The installer connects agents, then discovers projects under your home directory and runs `ax init` on each one. You do not have to initialize them yourself. Set `AX_SKIP_PROJECT_INIT=1` to install the binary only.
 
 ### From the Command Center
 
@@ -100,7 +100,17 @@ ax install --yes --path ~/code/my-app         # workspace MCP files for that pro
 
 Restart your agent so the MCP server config loads.
 
-## 4. Initialize projects
+## 4. Projects are initialized for you
+
+Install and `ax upgrade` already run:
+
+```bash
+ax init --all
+```
+
+That walks four levels under your home directory and initializes every git repository, project manifest, or existing ax project it finds. It does not ask questions. A project that already has `.ax/ax.db` gets an incremental sync. Run the same command again any time.
+
+To initialize one directory yourself, and to choose stacks and IDEs in a menu:
 
 ```bash
 cd your-project

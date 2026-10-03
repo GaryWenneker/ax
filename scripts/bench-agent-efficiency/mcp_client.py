@@ -16,9 +16,11 @@ class McpError(RuntimeError):
 class McpSession:
     """One MCP connection. Session-scoped server state lives as long as this object."""
 
-    def __init__(self, project: Path, binary: str | None = None, timeout: float = 120.0) -> None:
+    def __init__(
+        self, project: Path, binary: str | None = None, timeout: float = 120.0, env: dict[str, str] | None = None
+    ) -> None:
         binary = binary or os.environ.get("AX_BIN", "ax")
-        env = os.environ.copy()
+        env = dict(env if env is not None else os.environ)
         env["NO_COLOR"] = "1"
         self.timeout = timeout
         self.proc = subprocess.Popen(

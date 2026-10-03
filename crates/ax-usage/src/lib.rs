@@ -2,6 +2,7 @@
 
 mod cache_status;
 mod context_cache;
+mod durable;
 mod cursor_state;
 mod domain_log;
 mod log_brand;
@@ -11,6 +12,8 @@ mod period;
 mod pricing;
 mod pricing_fetch;
 mod pricing_sync;
+mod reuse_cache;
+mod working_context;
 mod savings;
 mod store;
 mod tokenizer;
@@ -30,8 +33,8 @@ pub use pricing_sync::{
 pub use cursor_state::{
     active_cursor_session_path, cursor_state_vscdb_path, import_cursor_composer_state,
     normalize_cursor_model, parse_composer_data, parse_composer_input_tokens,
-    parse_composer_model_config, read_active_cursor_session, write_active_cursor_session,
-    ComposerStateRow,
+    parse_composer_model_config, read_active_cursor_session, read_recent_cursor_session,
+    write_active_cursor_session, ComposerStateRow,
 };
 pub use mcp_audit::{
     audit_project, cursor_project_slug, find_cursor_transcripts, format_markdown_report,
@@ -66,6 +69,17 @@ pub use context_cache::{
     ingest_jsonl_oversized, note_session_event, recent_catalog, recent_session_catalog,
     session_ledger, spawn_note_session_event, stash_text, tool_chunks_from_jsonl,
     CacheOutcome, CatalogEntry, ExpandPage, StashReceipt,
+};
+pub use reuse_cache::{
+    conversation_key, index_matches, render_hit, reuse_cacheable, reuse_enabled, reuse_lookup,
+    reuse_record_hit, reuse_session_entries, format_session_context, ContextEntry, reuse_store, IndexHashes, ReuseCandidate,
+    ReuseHit, SESSION_CONTEXT_TOKENS, index_fingerprint, session_from_args,
+    HOOK_SESSION_MAX_AGE,
+};
+pub use durable::{durable_apply, note_tool_if_open};
+pub use working_context::{
+    fork_working_context, handoff_working_context, session_nudge, working_context_apply, working_context_block,
+    NUDGE_AFTER_TURNS, WORKING_CONTEXT_TOKENS,
 };
 pub use tokenizer::{
     count_file_tokens, count_tokens, token_cache_status, tokenize_text, tokenizer_available,

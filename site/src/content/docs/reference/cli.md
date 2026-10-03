@@ -84,6 +84,8 @@ ax uninstall
 
 ### `ax init [path]`
 
+`ax init --all` is what the installer and `ax upgrade` run after the binary is in place. It walks four levels under your home directory, skips hidden folders and dependency folders, and initializes every directory that has git, a project manifest, or `.ax/ax.db`. It does not prompt. A nested package inside a discovered project is left to that project. `AX_SKIP_PROJECT_INIT=1` skips the scan.
+
 Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the project, install git hooks, install the Cursor savings hook (`ax savings hook install`), import Claude and Cursor savings logs (`ax savings import --all`), then offer the agent installer. A workspace init runs the savings steps once, after every member.
 
 On **first init**, runs a full index. If `.ax/ax.db` already exists, runs an incremental `ax sync` instead — use `ax index` when you need a full rebuild.
@@ -92,8 +94,9 @@ On **first init**, runs a full index. If `.ax/ax.db` already exists, runs an inc
 
 | Argument / flag | Type | Description |
 |---|---|---|
-| `path` | optional | Project root (default: current directory) |
+| `path` | optional | Project root (default: current directory). Not used with `--all`. |
 | `--workspace` | flag | Discover monorepo members (Cargo workspace + nested `.ax/`), write `members` to `ax.json`, and init each member |
+| `--all` | flag | Initialize every project discovered under the home directory, without prompts |
 
 **Choosing IDEs.** After the stack question, `ax init` asks which IDEs and agents ax should connect, in the same menu (arrow keys or j/k, space toggles, enter confirms, esc keeps the defaults). IDEs installed on this machine are marked "found": the CLI is on PATH, or the app is installed (`/Applications` on macOS, `%LOCALAPPDATA%\Programs` on Windows, the binary or `/usr/share` on Linux; Continue by its VS Code or Cursor extension). A config folder alone does not count, because ax creates those itself.
 
@@ -105,6 +108,7 @@ On **first init**, runs a full index. If `.ax/ax.db` already exists, runs an inc
 ax init
 ax init ./services/api
 ax init --workspace
+ax init --all
 ```
 
 ### `ax uninit [path]`

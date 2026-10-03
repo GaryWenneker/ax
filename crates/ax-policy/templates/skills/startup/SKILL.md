@@ -4,6 +4,7 @@ description: Runs the mandatory ax session-start sequence (ax_preflight with mat
 triggers: ["session start", "new message", "preflight", "startup", "turn start"]
 tags: ["workflow", "preflight"]
 priority: 100
+seedVersion: 5
 ---
 # ax Startup Protocol
 
@@ -41,6 +42,12 @@ ax_policy_capture({ "action": "save", "rule": { "frontmatter": { ... }, "body": 
 ```
 
 Save writes to **ax.db** in database mode — not a disk-only file. Never auto-save without confirmation.
+
+## SS-01a — Reuse what this conversation already knows
+
+From the second turn on, read `<ax_session_context>` in the preflight inject before exploring: it lists graph calls already answered in this conversation whose cited files are unchanged. A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Pass `fresh: true` only when you need a new query.
+
+Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`, `fork`, `handoff`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index. fork copies these notes to a new session. handoff starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. `ax_durable` stores this chat's transcript, documents, and checkpointed tasks.
 
 ## SS-01 — Code context (after preflight)
 

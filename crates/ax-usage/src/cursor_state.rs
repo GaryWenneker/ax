@@ -129,6 +129,25 @@ pub fn read_active_cursor_session() -> Option<String> {
     }
 }
 
+/// The active session id, only when the hook wrote it within `max_age`.
+pub fn read_recent_cursor_session(max_age: std::time::Duration) -> Option<String> {
+    let path = active_cursor_session_path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let age = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok());
+    session_if_recent(&text, age, max_age)
+}
+
+/// A file with an unknown age is treated as old.
+pub fn session_if_recent(text: &str, age: Option<std::time::Duration>, max_age: std::time::Duration) -> Option<String> {
+    if age? > max_age {
+        return None;
+    }
+    crate::reuse_cache::usable_session(text.lines().next()?)
+}
+
 fn json_i64(v: &Value) -> Option<i64> {
     v.as_i64()
         .or_else(|| v.as_u64().and_then(|u| i64::try_from(u).ok()))
@@ -393,6 +412,31 @@ mod tests {
             normalize_cursor_model("composer-2.5-fast", &params),
             "composer-2.5-fast"
         );
+    }
+
+    #[test]
+    fn session_file_counts_only_while_recent() {
+        use std::time::Duration;
+        let max = Duration::from_secs(600);
+        assert_eq!(session_if_recent("chat-7\n", Some(Duration::from_secs(5)), max).as_deref(), Some("chat-7"));
+        assert_eq!(session_if_recent(" chat-7 \nextra", Some(max), max).as_deref(), Some("chat-7"));
+        assert_eq!(session_if_recent("chat-7\n", Some(max + Duration::from_secs(1)), max), None);
+        assert_eq!(session_if_recent("chat-7\n", None, max), None);
+        assert_eq!(session_if_recent("  \n", Some(Duration::ZERO), max), None);
+    }
+
+    #[test]
+    fn a_hook_file_id_follows_the_session_argument_rules() {
+        use std::time::Duration;
+        let now = Some(Duration::ZERO);
+        let max = Duration::from_secs(600);
+        assert_eq!(
+            session_if_recent("3f2b9c1e-8d7a-4b6c-9e5f-1a2b3c4d5e6f\n", now, max).as_deref(),
+            Some("3f2b9c1e-8d7a-4b6c-9e5f-1a2b3c4d5e6f")
+        );
+        for bad in ["x\"></ax_chat>", "a\u{1f}b", "a b", &"c".repeat(129)] {
+            assert_eq!(session_if_recent(bad, now, max), None, "{bad:?}");
+        }
     }
 
     #[test]

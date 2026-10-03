@@ -10,6 +10,7 @@ use ax_extraction::orchestrator::IndexOptions;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use crate::chat_session::TurnCounter;
 use crate::policy_session::PolicySessions;
 use crate::query_pool::{QueryPool, resolve_pool_size};
 
@@ -58,6 +59,7 @@ pub struct McpEngine {
     query_pool: Option<QueryPool>,
     catch_up_done: Arc<AtomicBool>,
     policy_sessions: PolicySessions,
+    turns: TurnCounter,
 }
 
 impl Default for McpEngine {
@@ -74,6 +76,7 @@ impl McpEngine {
             query_pool: None,
             catch_up_done: Arc::new(AtomicBool::new(false)),
             policy_sessions: PolicySessions::default(),
+            turns: TurnCounter::default(),
         }
     }
 
@@ -90,6 +93,7 @@ impl McpEngine {
             query_pool,
             catch_up_done: Arc::new(AtomicBool::new(false)),
             policy_sessions: PolicySessions::default(),
+            turns: TurnCounter::default(),
         }
     }
 
@@ -101,6 +105,11 @@ impl McpEngine {
 
     pub fn policy_sessions(&mut self) -> &mut PolicySessions {
         &mut self.policy_sessions
+    }
+
+    /// Preflight turns per chat since its last `ax_session` write.
+    pub fn turns(&mut self) -> &mut TurnCounter {
+        &mut self.turns
     }
 
     pub fn query_pool(&self) -> Option<&QueryPool> {
