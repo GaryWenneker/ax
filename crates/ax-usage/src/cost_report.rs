@@ -340,6 +340,51 @@ pub fn format_summary(
             .map(|n| n.to_string())
             .unwrap_or_else(|| "unknown".into())
     ));
+    let cycles = u64::try_from(report.known_events).unwrap_or(0);
+    let cycle = crate::context_plan::cycle_efficiency(
+        cycles,
+        report.spend_usd,
+        report.tokens.input,
+        report.tokens.input_known,
+        report.tokens.output,
+        report.tokens.output_known,
+        report.tokens.cache_read,
+        report.tokens.cache_read_known,
+        report.tokens_avoided,
+    );
+    out.push_str("\nCycle efficiency\n--------------------------------\n");
+    out.push_str(&format!("Known cycles           {cycles}\n"));
+    out.push_str(&format!(
+        "Cost/cycle             {}\n",
+        cycle
+            .cost_per_cycle_usd
+            .map(|v| format_money(v, settings))
+            .unwrap_or_else(|| "unknown".into())
+    ));
+    out.push_str(&format!(
+        "Input/cycle            {}\n",
+        cycle
+            .input_per_cycle
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    ));
+    out.push_str(&format!(
+        "Output/cycle           {}\n",
+        cycle
+            .output_per_cycle
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    ));
+    out.push_str(&format!(
+        "Cache hit ratio        {}\n",
+        cycle
+            .cache_hit_ratio
+            .map(|r| format!("{:.0}%", r * 100.0))
+            .unwrap_or_else(|| "unknown".into())
+    ));
+    out.push_str(
+        "Known cycles are quoted usage events. This is not a completed-task count.\n",
+    );
     out.push_str("\nAx savings\n--------------------------------\n");
     out.push_str(&format!(
         "Tokens avoided         {}\n",

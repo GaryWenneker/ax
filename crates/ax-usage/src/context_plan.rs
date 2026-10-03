@@ -169,6 +169,64 @@ pub fn efficiency(
     }
 }
 
+/// Transparent per-cycle figures from recorded quotes.
+///
+/// A cycle is one usage event whose catalog quote is complete. This is not a
+/// completed-task count and it does not rank models. A missing token class
+/// stays `None`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CycleEfficiency {
+    pub cycles: u64,
+    pub cost_per_cycle_usd: Option<f64>,
+    pub input_per_cycle: Option<i64>,
+    pub output_per_cycle: Option<i64>,
+    pub cache_hit_ratio: Option<f64>,
+    pub tokens_avoided: i64,
+}
+
+pub fn cycle_efficiency(
+    cycles: u64,
+    spend_usd: f64,
+    input: i64,
+    input_known: bool,
+    output: i64,
+    output_known: bool,
+    cache_read: i64,
+    cache_read_known: bool,
+    tokens_avoided: i64,
+) -> CycleEfficiency {
+    let per_cycle = |known: bool, total: i64| -> Option<i64> {
+        if cycles == 0 || !known || total < 0 {
+            None
+        } else {
+            Some(total / i64::try_from(cycles).unwrap_or(i64::MAX))
+        }
+    };
+    let cost_per_cycle_usd = if cycles == 0 || !spend_usd.is_finite() || spend_usd < 0.0 {
+        None
+    } else {
+        Some(spend_usd / cycles as f64)
+    };
+    let cache_hit_ratio = if input_known && cache_read_known && input >= 0 && cache_read >= 0 {
+        let denom = input.saturating_add(cache_read);
+        if denom == 0 {
+            None
+        } else {
+            Some(cache_read as f64 / denom as f64)
+        }
+    } else {
+        None
+    };
+    CycleEfficiency {
+        cycles,
+        cost_per_cycle_usd,
+        input_per_cycle: per_cycle(input_known, input),
+        output_per_cycle: per_cycle(output_known, output),
+        cache_hit_ratio,
+        tokens_avoided,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +330,27 @@ mod tests {
     fn optional_room_keeps_the_remainder_after_a_short_hard_block() {
         let room = optional_room("ok", Some(12_000)).unwrap();
         assert!(room > 11_000);
+    }
+
+    #[test]
+    fn cycle_efficiency_uses_known_quotes_only() {
+        let row = cycle_efficiency(2, 4.0, 100, true, 40, true, 80, true, 600);
+        assert_eq!(row.cycles, 2);
+        assert!((row.cost_per_cycle_usd.unwrap() - 2.0).abs() < 1e-9);
+        assert_eq!(row.input_per_cycle, Some(50));
+        assert_eq!(row.output_per_cycle, Some(20));
+        assert!((row.cache_hit_ratio.unwrap() - (80.0 / 180.0)).abs() < 1e-9);
+        assert_eq!(row.tokens_avoided, 600);
+    }
+
+    #[test]
+    fn cycle_efficiency_stays_unknown_without_samples_or_cache_tokens() {
+        let empty = cycle_efficiency(0, 4.0, 10, true, 1, true, 1, true, 0);
+        assert_eq!(empty.cost_per_cycle_usd, None);
+        assert_eq!(empty.input_per_cycle, None);
+        let missing_cache = cycle_efficiency(1, 1.0, 10, true, 1, false, 0, false, 3);
+        assert_eq!(missing_cache.cache_hit_ratio, None);
+        assert_eq!(missing_cache.output_per_cycle, None);
+        assert!((missing_cache.cost_per_cycle_usd.unwrap() - 1.0).abs() < 1e-9);
     }
 }

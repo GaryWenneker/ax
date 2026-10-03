@@ -27,7 +27,7 @@ ax costs month
 ax pricing sync
 ```
 
-Known events sum into the month. Unknown events are counted and omitted from the dollar total. Claude logs can include input, output, cache read, and cache write. Cursor often has input only. OpenCode, Gemini, and Codex do not currently write token usage Ax can quote.
+Known events sum into the month. Unknown events are counted and omitted from the dollar total. `ax costs` also prints cost, input, and output per known cycle, and a cache hit ratio. A missing token class stays unknown. That block is not a model ranking. Claude logs can include input, output, cache read, and cache write. Cursor often has input only. OpenCode, Gemini, and Codex do not currently write token usage Ax can quote.
 
 ## Simulate
 
@@ -36,7 +36,7 @@ ax budget simulate --cycles 500
 ax budget simulate --cycles 500 --cost-per-cycle 0.02
 ```
 
-Cycles are fully priced turns. The monthly figure is average cycle cost times cycles per day times working days. With no history and no `--cost-per-cycle`, the result is unknown.
+Cycles are fully priced turns. The monthly figure is average cycle cost times cycles per day times working days. Recorded cycles also print p50, p90, p95, and p99. A `--cost-per-cycle` fixture has no distribution, so those percentiles stay unknown. With no history and no `--cost-per-cycle`, the result is unknown.
 
 ## Stay under the number
 

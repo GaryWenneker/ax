@@ -99,12 +99,13 @@ pub async fn run_simulate(
         .as_deref()
         .and_then(parse_mode)
         .unwrap_or(settings.mode);
-    let average = if let Some(explicit) = cost_per_cycle {
-        Some(explicit)
+    let stats = if cost_per_cycle.is_some() {
+        None
     } else {
         let costs = filter_cycles(&report, model.as_deref(), mode, &settings);
-        cycle_stats(&costs).map(|s| s.average)
+        cycle_stats(&costs)
     };
+    let average = cost_per_cycle.or_else(|| stats.as_ref().map(|row| row.average));
     let sim = simulate(cycles, days, average, monthly_budget_usd(&settings));
     if json {
         println!(
@@ -114,6 +115,10 @@ pub async fn run_simulate(
                 "workingDays": sim.working_days,
                 "totalCycles": sim.total_cycles,
                 "averageCostUsd": sim.average_cost_usd,
+                "p50Usd": stats.as_ref().map(|row| row.p50),
+                "p90Usd": stats.as_ref().map(|row| row.p90),
+                "p95Usd": stats.as_ref().map(|row| row.p95),
+                "p99Usd": stats.as_ref().map(|row| row.p99),
                 "estimatedMonthlyUsd": sim.estimated_monthly_usd,
                 "budgetUsd": sim.budget_usd,
                 "differenceUsd": sim.difference_usd,
@@ -132,6 +137,27 @@ pub async fn run_simulate(
         sim.average_cost_usd
             .map(|v| format_money(v, &settings))
             .unwrap_or_else(|| "unknown".into())
+    );
+    let percentile = |value: Option<f64>| {
+        value
+            .map(|v| format_money(v, &settings))
+            .unwrap_or_else(|| "unknown".into())
+    };
+    println!(
+        "p50                  {}",
+        percentile(stats.as_ref().map(|row| row.p50))
+    );
+    println!(
+        "p90                  {}",
+        percentile(stats.as_ref().map(|row| row.p90))
+    );
+    println!(
+        "p95                  {}",
+        percentile(stats.as_ref().map(|row| row.p95))
+    );
+    println!(
+        "p99                  {}",
+        percentile(stats.as_ref().map(|row| row.p99))
     );
     println!(
         "Estimated monthly    {}",

@@ -50,6 +50,10 @@ The month plan uses the first N weekdays. Projection blends the month run-rate w
 
 `context.budgetTokens` is the optional token budget for context selection. Hard-required blocks stay even when they exceed it. Optional blocks are dropped whole. When that budget is set, preflight still sends always-apply rules, matched memories, and the working-context snapshot, then omits the context catalog and the memory-title list once the budget is spent. A snapshot hash is FNV-1a over the delivered parts so a repeat can be compared as empty, same, partial, or changed. That hash is not a provider prompt cache.
 
+## Cycle efficiency
+
+`ax costs` prints cost, input, and output per known cycle, plus a cache hit ratio of cache-read tokens over input plus cache-read. A known cycle is one usage event with a complete catalog quote. That is not a completed task, and it is not a model ranking. A missing token class stays unknown. `ax budget simulate` prints p50, p90, p95, and p99 from those recorded cycles. A `--cost-per-cycle` fixture has no distribution, so those percentiles stay unknown.
+
 ## Commands
 
 ```bash
