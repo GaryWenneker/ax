@@ -24,14 +24,14 @@ pub async fn run(
     };
     ax_usage::log_cli(
         Some(&root),
-        format!(
-            "cmd=insights ok communities={}",
-            insights.num_communities
-        ),
+        format!("cmd=insights ok communities={}", insights.num_communities),
     );
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&insights).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&insights).unwrap_or_default()
+        );
         return Ok(());
     }
 
@@ -69,7 +69,10 @@ pub async fn run(
             } else {
                 format!("  — {}", c.key_nodes.join(", "))
             };
-            println!("  #{:<4} {:<28} {} nodes{}", c.community_id, c.label, c.size, members);
+            println!(
+                "  #{:<4} {:<28} {} nodes{}",
+                c.community_id, c.label, c.size, members
+            );
         }
         if insights.communities.len() > 15 {
             println!("  … and {} more", insights.communities.len() - 15);
@@ -83,7 +86,12 @@ pub async fn run(
         for s in &insights.surprising_connections {
             println!(
                 "  {} → {}  ({}, {})  [{} ⇄ {}]",
-                s.source_name, s.target_name, s.kind, s.confidence, s.source_module, s.target_module
+                s.source_name,
+                s.target_name,
+                s.kind,
+                s.confidence,
+                s.source_module,
+                s.target_module
             );
         }
     }

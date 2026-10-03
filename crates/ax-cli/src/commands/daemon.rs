@@ -49,7 +49,10 @@ pub async fn run(path: Option<String>, action: DaemonAction) -> Result<(), Strin
         DaemonAction::Restart => {
             let report = restart_daemon(&root).await?;
             if let Some(old) = report.stopped_pid {
-                println!("{}", info_line(format!("Stopped previous daemon pid {old}")));
+                println!(
+                    "{}",
+                    info_line(format!("Stopped previous daemon pid {old}"))
+                );
             }
             if report.cleared_ax_lock {
                 println!("{}", info_line("Cleared stale .ax/ax.lock"));

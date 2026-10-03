@@ -40,24 +40,36 @@ impl PolicySessions {
     pub fn begin(&mut self, client_name: &str) {
         self.entries.insert(
             self.active,
-            Entry { client_name: client_name.to_string(), ..Entry::default() },
+            Entry {
+                client_name: client_name.to_string(),
+                ..Entry::default()
+            },
         );
     }
 
     pub fn view(&mut self, chat_id: Option<&str>, now: Instant, ttl: Duration) -> SessionView {
         let entry = self.entries.entry(self.active).or_default();
-        let expired = entry.last_seen.is_some_and(|seen| now.duration_since(seen) > ttl);
+        let expired = entry
+            .last_seen
+            .is_some_and(|seen| now.duration_since(seen) > ttl);
         let chat_changed = entry.chat_id.as_deref() != chat_id;
         if expired || chat_changed {
             entry.delivered.clear();
             entry.chat_id = chat_id.map(str::to_string);
         }
         entry.last_seen = Some(now);
-        SessionView { client_name: entry.client_name.clone(), delivered: entry.delivered.clone() }
+        SessionView {
+            client_name: entry.client_name.clone(),
+            delivered: entry.delivered.clone(),
+        }
     }
 
     pub fn record(&mut self, delivered: impl IntoIterator<Item = (String, u64)>) {
-        self.entries.entry(self.active).or_default().delivered.extend(delivered);
+        self.entries
+            .entry(self.active)
+            .or_default()
+            .delivered
+            .extend(delivered);
     }
 
     /// The chat session this connection used last.
@@ -113,7 +125,10 @@ mod tests {
         s.begin("cursor");
         s.view(None, t, TTL);
         s.record([("rule:a".to_string(), 7)]);
-        assert!(s.view(None, t + TTL + Duration::from_secs(1), TTL).delivered.is_empty());
+        assert!(s
+            .view(None, t + TTL + Duration::from_secs(1), TTL)
+            .delivered
+            .is_empty());
     }
 
     #[test]

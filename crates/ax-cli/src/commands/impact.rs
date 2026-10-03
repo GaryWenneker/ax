@@ -12,11 +12,20 @@ pub async fn run(symbol: String) -> Result<(), String> {
     let _spinner = SpinnerGuard::new(format!("Computing impact for \"{}\"...", symbol), false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let nodes = ax
-        .search_nodes(&symbol, &SearchOptions { limit: Some(1), ..Default::default() })
+        .search_nodes(
+            &symbol,
+            &SearchOptions {
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
         .await
         .map_err(|e| e.to_string())?;
     if let Some(n) = nodes.first() {
-        let sg = ax.get_impact_radius(&n.node.id, 3).await.map_err(|e| e.to_string())?;
+        let sg = ax
+            .get_impact_radius(&n.node.id, 3)
+            .await
+            .map_err(|e| e.to_string())?;
         ax_usage::log_cli(Some(&root), "cmd=impact ok");
         println!("{}", serde_json::to_string_pretty(&sg).unwrap_or_default());
     } else {

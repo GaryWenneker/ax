@@ -18,7 +18,10 @@ pub struct SupervisionState {
 /// Returns a shutdown reason when supervision is lost, or `None` while supervised.
 pub fn supervision_lost_reason(state: &SupervisionState) -> Option<String> {
     if state.current_ppid != state.original_ppid {
-        return Some(format!("ppid {} -> {}", state.original_ppid, state.current_ppid));
+        return Some(format!(
+            "ppid {} -> {}",
+            state.original_ppid, state.current_ppid
+        ));
     }
     if state.is_windows && state.original_ppid > 1 && !is_process_alive(state.original_ppid) {
         return Some(format!("parent pid {} exited", state.original_ppid));
@@ -52,7 +55,11 @@ pub fn parse_host_ppid(raw: Option<String>) -> Option<u32> {
         Some(s) if s.is_empty() => None,
         Some(s) => {
             let parsed = s.parse::<i64>().unwrap_or(0);
-            if parsed <= 1 { None } else { Some(parsed as u32) }
+            if parsed <= 1 {
+                None
+            } else {
+                Some(parsed as u32)
+            }
         }
     }
 }

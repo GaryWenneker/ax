@@ -121,7 +121,8 @@ Examples:
   ax watch                 Watch current project
   ax watch ./monorepo/pkg  Watch a specific root";
 
-pub const STATUS_LONG: &str = "Show index statistics: node/edge/file counts, unresolved refs, last indexed time.
+pub const STATUS_LONG: &str =
+    "Show index statistics: node/edge/file counts, unresolved refs, last indexed time.
 
 Examples:
   ax status                Human-readable summary
@@ -141,7 +142,8 @@ Examples:
   ax query User --kind class --limit 20
   ax query handler --json";
 
-pub const EXPLORE_LONG: &str = "Explore an area: summary, blast radius, callers/callees, and numbered source.
+pub const EXPLORE_LONG: &str =
+    "Explore an area: summary, blast radius, callers/callees, and numbered source.
 
 Same output shape as the ax_explore MCP tool. Optional BYO LLM offload via `ax offload`.
 
@@ -195,7 +197,8 @@ Examples:
   ax impact UserService
   ax impact validate_token";
 
-pub const AFFECTED_LONG: &str = "Reverse impact: test files affected by changes to given source paths.
+pub const AFFECTED_LONG: &str =
+    "Reverse impact: test files affected by changes to given source paths.
 
 Use before/after editing to find tests that exercise changed code.
 
@@ -289,7 +292,8 @@ Examples:
   ax desktop --port 17070
   ax desktop ./my-project --port 17070 --bind 127.0.0.1";
 
-pub const OFFLOAD_LONG: &str = "Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API).
+pub const OFFLOAD_LONG: &str =
+    "Configure optional LLM offload for `ax explore` (BYO OpenAI-compatible API).
 
 Stored in ~/.ax/config.json or via AX_OFFLOAD_URL / AX_OFFLOAD_KEY env vars.
 
@@ -303,7 +307,8 @@ Examples:
   ax offload set-endpoint https://api.openai.com/v1 --key-env OPENAI_API_KEY
   ax offload clear";
 
-pub const CURSOR_LONG: &str = "Save and restore Cursor IDE auth sessions for fast subscription switching.
+pub const CURSOR_LONG: &str =
+    "Save and restore Cursor IDE auth sessions for fast subscription switching.
 
 Snapshots cursorAuth/* keys from state.vscdb plus auth.json into ~/.ax/cursor-auth/.
 Close Cursor before `use`, then restart Cursor after applying a profile.
@@ -336,7 +341,8 @@ Examples:
   ax savings tag-session --session-id <uuid> --model composer-2.5-fast
   ax savings hook install";
 
-pub const EXPORT_OKF_LONG: &str = "Export an Open Knowledge Format (OKF) Markdown bundle from the indexed graph.
+pub const EXPORT_OKF_LONG: &str =
+    "Export an Open Knowledge Format (OKF) Markdown bundle from the indexed graph.
 
 Writes one YAML-frontmatter Markdown page per concept (functions, types, …) with
 Calls / Called by links — a git-diffable OKF projection of `.ax/ax.db`.
@@ -395,7 +401,8 @@ Examples:
   ax pricing list --json
   ax pricing history claude-sonnet --days 30";
 
-pub const MCP_LONG: &str = "Audit MCP quality by correlating Cursor transcripts with .ax/mcp-verbose.log.
+pub const MCP_LONG: &str =
+    "Audit MCP quality by correlating Cursor transcripts with .ax/mcp-verbose.log.
 
 Scores preflight/enrichment/policy-tool usage and estimates token waste when agents
 fall back to Read/Grep instead of ax graph tools. Same engine powers the Command Center

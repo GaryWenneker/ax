@@ -25,10 +25,11 @@ pub async fn run_status(json: bool) -> Result<(), String> {
 
 pub async fn run_enrich(path: Option<String>, limit: usize, json: bool) -> Result<(), String> {
     let root = resolve_path(path);
-    let ax = ax_core::Ax::open(&root)
-        .await
-        .map_err(|e| e.to_string())?;
-    ax_usage::log_lsp(Some(ax.project_root()), format!("enrich start limit={limit}"));
+    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    ax_usage::log_lsp(
+        Some(ax.project_root()),
+        format!("enrich start limit={limit}"),
+    );
     let report = ax_lsp::enrich_project(ax.project_root(), ax.queries(), limit)
         .await
         .map_err(|e| e.to_string())?;

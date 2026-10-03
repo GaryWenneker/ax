@@ -14,7 +14,16 @@ import {
   type ProfileEntry,
 } from '../../agentApi';
 import { AX_LOG_ICON } from '../../lib/mcpTrace';
+import AgentActivity from './AgentActivity';
 import AgentMessageBody from './AgentMessageBody';
+import {
+  applyReport,
+  completeActivity,
+  emptyActivity,
+  noteTool,
+  stripContextReports,
+  type ActivitySnapshot,
+} from './activityModel';
 import AgentPtyTerminal from './AgentPtyTerminal';
 import Codicon from '../Codicon';
 import WorkspacePicker from '../WorkspacePicker';
@@ -23,7 +32,8 @@ type ChatLine =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string }
   | { kind: 'system'; text: string }
-  | { kind: 'tool'; text: string; running?: boolean };
+  | { kind: 'tool'; text: string; running?: boolean }
+  | { kind: 'activity'; activity: ActivitySnapshot };
 
 interface Props {
   maximized: boolean;
@@ -34,6 +44,23 @@ function resolveInitialAgent(cfg: AgentsConfig): string {
   if (cfg.last_terminal_agent) return cfg.last_terminal_agent;
   if (cfg.terminal_mode === 'builtin') return 'builtin';
   return cfg.preferred_external ?? 'cursor';
+}
+
+function patchActivity(
+  lines: ChatLine[],
+  update: (activity: ActivitySnapshot) => ActivitySnapshot,
+): ChatLine[] {
+  let seen = false;
+  const next = [...lines];
+  for (let i = next.length - 1; i >= 0; i--) {
+    const line = next[i];
+    if (line.kind !== 'activity' || line.activity.phase === 'completed') continue;
+    next[i] = { kind: 'activity', activity: update(line.activity) };
+    seen = true;
+    break;
+  }
+  if (!seen) next.push({ kind: 'activity', activity: update(emptyActivity()) });
+  return next;
 }
 
 function profileForAgent(cfg: AgentsConfig | null, agent: string): string {
@@ -155,10 +182,14 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
     if (!prompt || busy) return;
 
     setInput('');
-    setLines((l) => [...l, { kind: 'user', text: prompt }]);
+    setLines((l) => [
+      ...l,
+      { kind: 'user', text: prompt },
+      { kind: 'activity', activity: emptyActivity() },
+      { kind: 'assistant', text: '' },
+    ]);
     setBusy(true);
     assistantBuf.current = '';
-    setLines((l) => [...l, { kind: 'assistant', text: '' }]);
 
     abortRef.current?.abort();
     const ac = new AbortController();
@@ -177,7 +208,11 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
         }
         if (ev.type === 'tool_start') {
           const prefix = ev.name.startsWith('ax_') ? `${AX_LOG_ICON} ` : '';
-          setLines((l) => [...l, { kind: 'tool', text: `${prefix}▶ ${ev.name}`, running: true }]);
+          const toolName = ev.name;
+          setLines((l) => [
+            ...patchActivity(l, (activity) => noteTool(activity, toolName)),
+            { kind: 'tool', text: `${prefix}▶ ${ev.name}`, running: true },
+          ]);
         }
         if (ev.type === 'tool_end') {
           const prefix = ev.name.startsWith('ax_') ? `${AX_LOG_ICON} ` : '';
@@ -197,6 +232,15 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
         }
         if (ev.type === 'token') {
           assistantBuf.current += ev.text;
+          const absorbed = stripContextReports(assistantBuf.current);
+          assistantBuf.current = absorbed.text;
+          if (absorbed.reports.length > 0) {
+            setLines((l) =>
+              patchActivity(l, (activity) =>
+                absorbed.reports.reduce((next, report) => applyReport(next, report), activity),
+              ),
+            );
+          }
           const text = assistantBuf.current;
           setLines((l) => {
             const copy = [...l];
@@ -218,7 +262,15 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
     );
     } finally {
       setBusy(false);
-      setLines((l) => l.map((line) => (line.kind === 'tool' && line.running ? { ...line, running: false } : line)));
+      setLines((l) =>
+        l.map((line) => {
+          if (line.kind === 'tool' && line.running) return { ...line, running: false };
+          if (line.kind === 'activity' && line.activity.phase !== 'completed') {
+            return { ...line, activity: completeActivity(line.activity) };
+          }
+          return line;
+        }),
+      );
     }
   }
 
@@ -298,11 +350,15 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
             )}
             {lines.map((line, i) => (
               <div key={i} className={`agent-msg agent-msg--${line.kind}`}>
-                <AgentMessageBody
-                  text={line.text || (line.kind === 'assistant' && busy ? '…' : '')}
-                  kind={line.kind}
-                  running={line.kind === 'tool' && line.running === true}
-                />
+                {line.kind === 'activity' ? (
+                  <AgentActivity snapshot={line.activity} />
+                ) : (
+                  <AgentMessageBody
+                    text={line.text || (line.kind === 'assistant' && busy ? '…' : '')}
+                    kind={line.kind}
+                    running={line.kind === 'tool' && line.running === true}
+                  />
+                )}
               </div>
             ))}
           </div>

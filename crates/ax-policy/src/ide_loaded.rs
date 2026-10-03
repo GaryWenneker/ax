@@ -13,20 +13,30 @@ use crate::types::{MatchedRule, MatchedSkill};
 
 /// Keys (`rule:<id>` / `skill:<name>`) whose identical body the IDE loads itself.
 /// `roots` are searched in order, usually the project root and the home directory.
-pub fn ide_loaded_keys(roots: &[PathBuf], rules: &[MatchedRule], skills: &[MatchedSkill]) -> HashSet<String> {
+pub fn ide_loaded_keys(
+    roots: &[PathBuf],
+    rules: &[MatchedRule],
+    skills: &[MatchedSkill],
+) -> HashSet<String> {
     let mut keys = HashSet::new();
     for r in rules.iter().filter(|r| r.always_apply) {
-        let found = roots
-            .iter()
-            .any(|root| file_matches(&root.join(".cursor/rules").join(format!("{}.mdc", r.id)), &r.body));
+        let found = roots.iter().any(|root| {
+            file_matches(
+                &root.join(".cursor/rules").join(format!("{}.mdc", r.id)),
+                &r.body,
+            )
+        });
         if found {
             keys.insert(rule_key(&r.id));
         }
     }
     for s in skills.iter().filter(|s| s.always_apply) {
-        let found = roots
-            .iter()
-            .any(|root| file_matches(&root.join(".cursor/skills").join(&s.name).join("SKILL.md"), &s.body));
+        let found = roots.iter().any(|root| {
+            file_matches(
+                &root.join(".cursor/skills").join(&s.name).join("SKILL.md"),
+                &s.body,
+            )
+        });
         if found {
             keys.insert(skill_key(&s.name));
         }
@@ -83,23 +93,40 @@ mod tests {
     #[test]
     fn identical_always_apply_rule_is_loaded() {
         let dir = tempfile::tempdir().unwrap();
-        write(&dir.path().join(".cursor/rules/ax.mdc"), "---\nalwaysApply: true\n---\n\n# ax\n\nCall preflight.\n");
-        let keys = ide_loaded_keys(&[dir.path().to_path_buf()], &[rule("ax", "# ax\n\nCall preflight.")], &[]);
+        write(
+            &dir.path().join(".cursor/rules/ax.mdc"),
+            "---\nalwaysApply: true\n---\n\n# ax\n\nCall preflight.\n",
+        );
+        let keys = ide_loaded_keys(
+            &[dir.path().to_path_buf()],
+            &[rule("ax", "# ax\n\nCall preflight.")],
+            &[],
+        );
         assert!(keys.contains("rule:ax"), "{keys:?}");
     }
 
     #[test]
     fn different_body_is_not_loaded() {
         let dir = tempfile::tempdir().unwrap();
-        write(&dir.path().join(".cursor/rules/ax.mdc"), "---\nalwaysApply: true\n---\n# ax\n\nOld text.\n");
-        let keys = ide_loaded_keys(&[dir.path().to_path_buf()], &[rule("ax", "# ax\n\nNew text.")], &[]);
+        write(
+            &dir.path().join(".cursor/rules/ax.mdc"),
+            "---\nalwaysApply: true\n---\n# ax\n\nOld text.\n",
+        );
+        let keys = ide_loaded_keys(
+            &[dir.path().to_path_buf()],
+            &[rule("ax", "# ax\n\nNew text.")],
+            &[],
+        );
         assert!(keys.is_empty(), "{keys:?}");
     }
 
     #[test]
     fn rule_without_always_apply_is_not_loaded() {
         let dir = tempfile::tempdir().unwrap();
-        write(&dir.path().join(".cursor/rules/ax.mdc"), "---\nalwaysApply: false\n---\nSame.\n");
+        write(
+            &dir.path().join(".cursor/rules/ax.mdc"),
+            "---\nalwaysApply: false\n---\nSame.\n",
+        );
         let keys = ide_loaded_keys(&[dir.path().to_path_buf()], &[rule("ax", "Same.")], &[]);
         assert!(keys.is_empty(), "{keys:?}");
     }
@@ -123,7 +150,10 @@ mod tests {
     #[test]
     fn contextual_rule_is_never_counted() {
         let dir = tempfile::tempdir().unwrap();
-        write(&dir.path().join(".cursor/rules/x.mdc"), "---\nalwaysApply: true\n---\nSame.\n");
+        write(
+            &dir.path().join(".cursor/rules/x.mdc"),
+            "---\nalwaysApply: true\n---\nSame.\n",
+        );
         let mut r = rule("x", "Same.");
         r.always_apply = false;
         let keys = ide_loaded_keys(&[dir.path().to_path_buf()], &[r], &[]);

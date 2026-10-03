@@ -140,7 +140,9 @@ const GLOBAL_SKILL_BUNDLES: &[SkillBundle] = &[
             },
             SkillBundleFile {
                 rel: "references/verifier-case-study.md",
-                body: include_str!("../templates/skills/old-coder/references/verifier-case-study.md"),
+                body: include_str!(
+                    "../templates/skills/old-coder/references/verifier-case-study.md"
+                ),
             },
             SkillBundleFile {
                 rel: "references/verifier.md",
@@ -158,7 +160,9 @@ const GLOBAL_SKILL_BUNDLES: &[SkillBundle] = &[
             },
             SkillBundleFile {
                 rel: "references/breaking-changes.md",
-                body: include_str!("../templates/skills/old-coder-api/references/breaking-changes.md"),
+                body: include_str!(
+                    "../templates/skills/old-coder-api/references/breaking-changes.md"
+                ),
             },
             SkillBundleFile {
                 rel: "references/examples.md",
@@ -242,11 +246,7 @@ const MANAGED: &[(&str, &str, bool)] = &[
         "rules/prefer-mcp-ops.mdc",
         true, // ops mapping — not a preflight instruction file
     ),
-    (
-        ".agents/rules/subagents.mdc",
-        "rules/subagents.mdc",
-        true,
-    ),
+    (".agents/rules/subagents.mdc", "rules/subagents.mdc", true),
     (
         ".agents/skills/subagents/SKILL.md",
         "skills/subagents/SKILL.md",
@@ -277,7 +277,10 @@ pub struct SyncResult {
 }
 
 fn policy_path(policy_root: &Path, rel: &str) -> PathBuf {
-    if let Some(id) = rel.strip_prefix("rules/").and_then(|s| s.strip_suffix(".mdc")) {
+    if let Some(id) = rel
+        .strip_prefix("rules/")
+        .and_then(|s| s.strip_suffix(".mdc"))
+    {
         rule_file(&policy_root.join("rules"), id)
     } else if let Some(rest) = rel.strip_prefix("skills/") {
         let name = rest.strip_suffix("/SKILL.md").unwrap_or(rest);
@@ -293,7 +296,10 @@ fn template_by_rel(rel: &str) -> Option<&'static Template> {
 
 fn write_template(policy_root: &Path, rel: &str) -> std::io::Result<PathBuf> {
     let t = template_by_rel(rel).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, format!("unknown template: {rel}"))
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("unknown template: {rel}"),
+        )
     })?;
     let dest = policy_path(policy_root, rel);
     if let Some(parent) = dest.parent() {
@@ -412,7 +418,11 @@ fn seed_bundles<'a>(
     std::fs::create_dir_all(skills_root)?;
     let mut result = SeedResult::default();
     for bundle in bundles {
-        let label = format!("{label_prefix}/{}/{}", bundle.name, crate::paths::SKILL_FILENAME);
+        let label = format!(
+            "{label_prefix}/{}/{}",
+            bundle.name,
+            crate::paths::SKILL_FILENAME
+        );
         if write_skill_bundle(skills_root, bundle)? {
             result.created.push(label);
         } else {
@@ -434,7 +444,11 @@ pub fn seed_cursor_skills(skills_root: &Path) -> std::io::Result<SeedResult> {
 }
 
 fn seed_project_bundles(skills_root: &Path) -> std::io::Result<SeedResult> {
-    seed_bundles(skills_root, ".cursor/skills", GLOBAL_SKILL_BUNDLES.iter().filter(|b| !b.global_db))
+    seed_bundles(
+        skills_root,
+        ".cursor/skills",
+        GLOBAL_SKILL_BUNDLES.iter().filter(|b| !b.global_db),
+    )
 }
 
 fn seed_global_policy_rules(rules_root: &Path) -> std::io::Result<SeedResult> {
@@ -785,7 +799,11 @@ mod tests {
         let skills = dir.path().join(".agents/skills");
         assert!(skills.join("old-coder/SKILL.md").is_file());
         for bundle in GLOBAL_SKILL_BUNDLES.iter().filter(|b| b.global_db) {
-            assert!(!skills.join(bundle.name).exists(), "{} seeded into the project", bundle.name);
+            assert!(
+                !skills.join(bundle.name).exists(),
+                "{} seeded into the project",
+                bundle.name
+            );
         }
     }
 
@@ -796,7 +814,9 @@ mod tests {
         let result = seed_skill_bundles(&skills, "test/skills").unwrap();
         assert_eq!(result.created.len(), GLOBAL_SKILL_BUNDLES.len());
         assert!(skills.join("old-coder/references/gauntlet.md").is_file());
-        assert!(skills.join("old-coder-api/references/patterns.md").is_file());
+        assert!(skills
+            .join("old-coder-api/references/patterns.md")
+            .is_file());
     }
 
     #[test]
@@ -860,7 +880,10 @@ mod tests {
         assert!(body.to_ascii_lowercase().contains("require-skill"));
         let second = seed_global_policy_rules(&rules).unwrap();
         assert!(second.created.is_empty());
-        assert!(second.skipped.iter().any(|s| s.contains("old-coder-mandatory")));
+        assert!(second
+            .skipped
+            .iter()
+            .any(|s| s.contains("old-coder-mandatory")));
     }
 
     fn review_loop_bundle() -> &'static SkillBundle {
@@ -894,9 +917,15 @@ mod tests {
     fn old_coder_rule_requires_the_review_loop() {
         let rule = old_coder_rule();
         assert!(rule.contains("level: CRITICAL"), "stays CRITICAL");
-        assert!(rule.contains("ax_skill({ name: \"review-loop\" })"), "{rule}");
+        assert!(
+            rule.contains("ax_skill({ name: \"review-loop\" })"),
+            "{rule}"
+        );
         assert!(rule.contains("GAUNTLET → REVIEW LOOP → EVIDENCE"));
-        assert!(seed_version(rule) >= 2, "the rule change must bump seedVersion");
+        assert!(
+            seed_version(rule) >= 2,
+            "the rule change must bump seedVersion"
+        );
     }
 
     #[test]
@@ -935,10 +964,22 @@ mod tests {
     #[test]
     fn seed_version_decides_upgrades() {
         let v2 = "---\nid: x\nseedVersion: 2\n---\nbody\n";
-        assert!(seeded_content_needs_upgrade("---\nid: x\n---\nold\n", v2), "missing version upgrades");
-        assert!(seeded_content_needs_upgrade("---\nid: x\nseedVersion: 1\n---\nold\n", v2));
-        assert!(!seeded_content_needs_upgrade("---\nid: x\nseedVersion: 2\n---\nhand edit\n", v2));
-        assert!(!seeded_content_needs_upgrade("---\nid: x\nseedVersion: 3\n---\nnewer\n", v2));
+        assert!(
+            seeded_content_needs_upgrade("---\nid: x\n---\nold\n", v2),
+            "missing version upgrades"
+        );
+        assert!(seeded_content_needs_upgrade(
+            "---\nid: x\nseedVersion: 1\n---\nold\n",
+            v2
+        ));
+        assert!(!seeded_content_needs_upgrade(
+            "---\nid: x\nseedVersion: 2\n---\nhand edit\n",
+            v2
+        ));
+        assert!(!seeded_content_needs_upgrade(
+            "---\nid: x\nseedVersion: 3\n---\nnewer\n",
+            v2
+        ));
         assert!(
             !seeded_content_needs_upgrade("---\nid: x\n---\nold\n", "---\nid: x\n---\nnew\n"),
             "unversioned templates never force an overwrite"
@@ -947,8 +988,15 @@ mod tests {
 
     #[test]
     fn seed_version_only_counts_the_frontmatter() {
-        assert_eq!(seed_version("---\nid: x\n---\nExample:\nseedVersion: 9\n"), 0);
-        assert_eq!(seed_version("seedVersion: 9\n"), 0, "no frontmatter, no version");
+        assert_eq!(
+            seed_version("---\nid: x\n---\nExample:\nseedVersion: 9\n"),
+            0
+        );
+        assert_eq!(
+            seed_version("seedVersion: 9\n"),
+            0,
+            "no frontmatter, no version"
+        );
         assert_eq!(seed_version("---\nseedVersion: 4\n---\nbody\n"), 4);
     }
 
@@ -963,7 +1011,13 @@ mod tests {
         )
         .unwrap();
         let first = seed_global_policy_rules(&rules).unwrap();
-        assert!(first.created.iter().any(|s| s.contains("old-coder-mandatory")), "{first:?}");
+        assert!(
+            first
+                .created
+                .iter()
+                .any(|s| s.contains("old-coder-mandatory")),
+            "{first:?}"
+        );
         let body = std::fs::read_to_string(rules.join("old-coder-mandatory.mdc")).unwrap();
         assert!(body.contains("review-loop"));
         let second = seed_global_policy_rules(&rules).unwrap();
@@ -1046,8 +1100,14 @@ mod tests {
             .body;
         assert!(pr.contains("Review the draft until it is clean"));
         assert!(pr.contains("zero findings"));
-        assert!(pr.contains("az repos pr work-item add"), "creating a PR must try to link the work item");
-        assert!(seed_version(pr) >= 2, "the work-item link must bump seedVersion");
+        assert!(
+            pr.contains("az repos pr work-item add"),
+            "creating a PR must try to link the work item"
+        );
+        assert!(
+            seed_version(pr) >= 2,
+            "the work-item link must bump seedVersion"
+        );
 
         let dir = tempdir().unwrap();
         seed_project_cursor_skills(dir.path()).unwrap();
@@ -1078,21 +1138,43 @@ mod tests {
         let dir = tempdir().unwrap();
         seed_skill_bundles(&dir.path().join("global"), "g").unwrap();
         seed_cursor_skills(&dir.path().join("cursor")).unwrap();
-        let review = std::fs::read_to_string(dir.path().join("global/pr-review-comments/SKILL.md")).unwrap();
-        assert!(review.contains("az repos pr work-item add"), "a PR review must try to link the work item");
-        assert!(seed_version(&review) >= 3, "the work-item link must bump seedVersion");
-        assert!(dir.path().join("cursor/pr-review-comments/SKILL.md").is_file());
+        let review =
+            std::fs::read_to_string(dir.path().join("global/pr-review-comments/SKILL.md")).unwrap();
+        assert!(
+            review.contains("az repos pr work-item add"),
+            "a PR review must try to link the work item"
+        );
+        assert!(
+            seed_version(&review) >= 3,
+            "the work-item link must bump seedVersion"
+        );
+        assert!(dir
+            .path()
+            .join("cursor/pr-review-comments/SKILL.md")
+            .is_file());
     }
 
     #[test]
     fn review_loop_hands_colleague_prs_to_pr_review_comments() {
         let review_loop = review_loop_bundle().files[0].body;
-        assert!(review_loop.contains("`pr-review-comments`"), "{review_loop}");
+        assert!(
+            review_loop.contains("`pr-review-comments`"),
+            "{review_loop}"
+        );
         assert!(review_loop.contains("colleague's pull request"));
-        assert!(seed_version(review_loop) >= 3, "the review-loop change must bump seedVersion");
+        assert!(
+            seed_version(review_loop) >= 3,
+            "the review-loop change must bump seedVersion"
+        );
         let rule = old_coder_rule();
-        assert!(rule.contains("ax_skill({ name: \"pr-review-comments\" })"), "{rule}");
-        assert!(seed_version(rule) >= 3, "the rule change must bump seedVersion");
+        assert!(
+            rule.contains("ax_skill({ name: \"pr-review-comments\" })"),
+            "{rule}"
+        );
+        assert!(
+            seed_version(rule) >= 3,
+            "the rule change must bump seedVersion"
+        );
     }
 
     #[test]
@@ -1131,7 +1213,10 @@ mod tests {
             let old = std::fs::read_to_string(&path)
                 .unwrap()
                 .lines()
-                .filter(|l| !l.contains(crate::CONVERSATION_CACHE_SENTENCE) && !l.starts_with("seedVersion:"))
+                .filter(|l| {
+                    !l.contains(crate::CONVERSATION_CACHE_SENTENCE)
+                        && !l.starts_with("seedVersion:")
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             assert!(!old.contains(crate::CONVERSATION_CACHE_SENTENCE));
@@ -1140,9 +1225,18 @@ mod tests {
         sync_instructions(&ax, true).unwrap();
         for rel in rels {
             let body = std::fs::read_to_string(dir.path().join(rel)).unwrap();
-            assert!(body.contains(crate::CONVERSATION_CACHE_SENTENCE), "{rel} not upgraded");
-            assert!(body.contains(crate::WORKING_CONTEXT_SENTENCE), "{rel} missing working context");
-            assert!(body.contains(crate::SESSION_ID_SENTENCE), "{rel} missing session id");
+            assert!(
+                body.contains(crate::CONVERSATION_CACHE_SENTENCE),
+                "{rel} not upgraded"
+            );
+            assert!(
+                body.contains(crate::WORKING_CONTEXT_SENTENCE),
+                "{rel} missing working context"
+            );
+            assert!(
+                body.contains(crate::SESSION_ID_SENTENCE),
+                "{rel} missing session id"
+            );
         }
     }
 
@@ -1167,10 +1261,22 @@ mod tests {
             include_str!("../templates/skills/startup/SKILL.md"),
             include_str!("../templates/skills/subagents/SKILL.md"),
         ] {
-            assert!(seed_version(body) >= 5, "the durable transcript must bump seedVersion");
-            assert!(body.contains(crate::WORKING_CONTEXT_SENTENCE), "missing working context");
-            assert!(body.contains(crate::SESSION_ID_SENTENCE), "missing session id");
-            assert!(body.contains("`fork`, `handoff`"), "missing fork and handoff");
+            assert!(
+                seed_version(body) >= 5,
+                "the durable transcript must bump seedVersion"
+            );
+            assert!(
+                body.contains(crate::WORKING_CONTEXT_SENTENCE),
+                "missing working context"
+            );
+            assert!(
+                body.contains(crate::SESSION_ID_SENTENCE),
+                "missing session id"
+            );
+            assert!(
+                body.contains("`fork`, `handoff`"),
+                "missing fork and handoff"
+            );
             assert!(body.contains("`ax_durable`"), "missing durable transcript");
         }
     }

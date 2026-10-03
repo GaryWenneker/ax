@@ -57,6 +57,9 @@ pub const CORE_TOOLS: &[&str] = &[
     "ax_expand",
     "ax_stash",
     "ax_cache_status",
+    "ax_tool_economics",
+    "ax_optimization_advice",
+    "ax_cost",
 ];
 
 /// Every `ax_*` tool named by the shipped policy rules and IDE bootstrap text
@@ -197,7 +200,14 @@ mod tests {
             );
         }
         // The graph read surface the policy rules mandate — the audit's C6 gap.
-        for name in ["ax_search", "ax_node", "ax_callers", "ax_impact", "ax_status", "ax_sync"] {
+        for name in [
+            "ax_search",
+            "ax_node",
+            "ax_callers",
+            "ax_impact",
+            "ax_status",
+            "ax_sync",
+        ] {
             assert!(tool_allowed(name, &allow), "{name} must be discoverable");
         }
     }
@@ -241,7 +251,11 @@ mod tests {
             );
         }
         let unique: HashSet<&&str> = CORE_TOOLS.iter().collect();
-        assert_eq!(unique.len(), CORE_TOOLS.len(), "duplicate entry in CORE_TOOLS");
+        assert_eq!(
+            unique.len(),
+            CORE_TOOLS.len(),
+            "duplicate entry in CORE_TOOLS"
+        );
         let unique_gated: HashSet<&&str> = GATED_BY_DESIGN.iter().collect();
         assert_eq!(
             unique_gated.len(),
@@ -262,7 +276,10 @@ mod tests {
         let allow = resolve_tool_allowlist_from(Some("lsp,ax_ship"));
         assert!(tool_allowed("ax_lsp", &allow), "short name should opt in");
         assert!(tool_allowed("ax_ship", &allow), "full name should opt in");
-        assert!(!tool_allowed("ax_diagnostics", &allow), "unlisted stays gated");
+        assert!(
+            !tool_allowed("ax_diagnostics", &allow),
+            "unlisted stays gated"
+        );
         assert!(!tool_allowed("ax_index", &allow), "unlisted stays gated");
         // Core is unaffected by the allowlist.
         assert!(tool_allowed("ax_explore", &allow));

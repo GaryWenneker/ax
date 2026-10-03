@@ -10,9 +10,18 @@ pub async fn run(name: Option<String>) -> Result<(), String> {
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let q = name.unwrap_or_default();
     let results = ax
-        .search_nodes(&q, &SearchOptions { limit: Some(10), ..Default::default() })
+        .search_nodes(
+            &q,
+            &SearchOptions {
+                limit: Some(10),
+                ..Default::default()
+            },
+        )
         .await
         .map_err(|e| e.to_string())?;
-    println!("{}", serde_json::to_string_pretty(&results).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&results).unwrap_or_default()
+    );
     Ok(())
 }

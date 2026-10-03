@@ -18,12 +18,30 @@ async fn default_tools_list_shows_graph_surface_and_gates_heavy_ops() {
     assert!(names.contains(&"ax_preflight"));
     // The graph read surface the CRITICAL policy rules tell agents to prefer
     // over Grep/Read must be visible in the default catalog.
-    for expected in ["ax_search", "ax_cycles", "ax_node", "ax_impact", "ax_status"] {
-        assert!(names.contains(&expected), "{expected} must be advertised by default");
+    for expected in [
+        "ax_search",
+        "ax_cycles",
+        "ax_node",
+        "ax_impact",
+        "ax_status",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "{expected} must be advertised by default"
+        );
     }
     // Heavy ops stay opt-in via AX_MCP_TOOLS.
-    for hidden in ["ax_ship", "ax_lsp", "ax_index", "ax_diagnostics", "ax_policy_index"] {
-        assert!(!names.contains(&hidden), "{hidden} must stay opt-in by default");
+    for hidden in [
+        "ax_ship",
+        "ax_lsp",
+        "ax_index",
+        "ax_diagnostics",
+        "ax_policy_index",
+    ] {
+        assert!(
+            !names.contains(&hidden),
+            "{hidden} must stay opt-in by default"
+        );
     }
 }
 
@@ -60,13 +78,9 @@ async fn cycles_api_path_handlers_work() {
         "unexpected cycles text: {text}"
     );
 
-    let api = ToolHandler::call_tool(
-        &mut ax,
-        "ax_api",
-        json!({ "module": "ax-mcp", "limit": 3 }),
-    )
-    .await
-    .expect("ax_api");
+    let api = ToolHandler::call_tool(&mut ax, "ax_api", json!({ "module": "ax-mcp", "limit": 3 }))
+        .await
+        .expect("ax_api");
     let api_text = api["text"].as_str().unwrap_or("");
     assert!(
         api_text.contains("API surface") || api_text.contains("No exported"),

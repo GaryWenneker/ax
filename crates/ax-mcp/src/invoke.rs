@@ -33,11 +33,7 @@ fn is_policy_tool(name: &str) -> bool {
 }
 
 /// Call an ax MCP tool in-process (no stdio JSON-RPC).
-pub async fn call_tool(
-    engine: &mut McpEngine,
-    name: &str,
-    args: Value,
-) -> Result<Value, String> {
+pub async fn call_tool(engine: &mut McpEngine, name: &str, args: Value) -> Result<Value, String> {
     if is_policy_tool(name) {
         if let Err(e) = engine.ensure_policy_fresh().await {
             tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");

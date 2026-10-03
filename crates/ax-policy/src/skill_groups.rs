@@ -131,26 +131,20 @@ mod tests {
 
     #[test]
     fn empty_groups_remain_in_catalog_for_editor() {
-        assert!(catalog().iter().any(|g| g.id == "security" && g.label == "Security"));
+        assert!(catalog()
+            .iter()
+            .any(|g| g.id == "security" && g.label == "Security"));
     }
 
     #[test]
     fn explicit_group_wins_over_aliases() {
-        let id = resolve_skill_group(
-            Some("testing"),
-            "startup",
-            &["preflight".into()],
-        );
+        let id = resolve_skill_group(Some("testing"), "startup", &["preflight".into()]);
         assert_eq!(id, "testing");
     }
 
     #[test]
     fn legacy_skill_without_group_uses_aliases() {
-        let id = resolve_skill_group(
-            None,
-            "old-coder",
-            &["old-coder".into(), "evidence".into()],
-        );
+        let id = resolve_skill_group(None, "old-coder", &["old-coder".into(), "evidence".into()]);
         assert_eq!(id, "implementation-quality");
     }
 
@@ -182,10 +176,7 @@ mod tests {
             resolve_skill_group(None, "old-coder-mandatory", &[]),
             "implementation-quality"
         );
-        assert_eq!(
-            resolve_skill_group(None, "utf8-no-bom", &[]),
-            "conventions"
-        );
+        assert_eq!(resolve_skill_group(None, "utf8-no-bom", &[]), "conventions");
         assert_eq!(resolve_skill_group(None, "mcp-first", &[]), "tooling");
         assert_eq!(
             resolve_skill_group(None, "docs-with-features", &[]),
@@ -195,11 +186,7 @@ mod tests {
 
     #[test]
     fn first_catalog_alias_in_order_wins() {
-        let id = resolve_skill_group(
-            None,
-            "azdo-pipelines",
-            &["azdo".into(), "cicd".into()],
-        );
+        let id = resolve_skill_group(None, "azdo-pipelines", &["azdo".into(), "cicd".into()]);
         assert_eq!(id, "cicd");
     }
 

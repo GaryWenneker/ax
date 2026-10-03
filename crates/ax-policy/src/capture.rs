@@ -58,9 +58,9 @@ const DIRECTIVE_PREFIXES: &[&str] = &[
 const EXPLICIT_MARKERS: &[&str] = &["@rule", "#rule"];
 
 const STOP_WORDS: &[&str] = &[
-    "the", "and", "for", "with", "that", "this", "from", "your", "have", "will", "when",
-    "what", "how", "where", "which", "must", "moet", "altijd", "nooit", "always", "never",
-    "gebruik", "use", "een", "het", "de", "van", "voor", "met", "die", "dat", "dit",
+    "the", "and", "for", "with", "that", "this", "from", "your", "have", "will", "when", "what",
+    "how", "where", "which", "must", "moet", "altijd", "nooit", "always", "never", "gebruik",
+    "use", "een", "het", "de", "van", "voor", "met", "die", "dat", "dit",
 ];
 
 /// Returns true when the prompt contains directive language worth proposing as a rule.
@@ -218,7 +218,10 @@ pub fn interview_instruction_text() -> String {
 }
 
 /// Apply unique id resolution and refresh preview fields.
-pub fn finalize_proposal(mut proposal: CaptureProposal, existing_ids: &[String]) -> CaptureProposal {
+pub fn finalize_proposal(
+    mut proposal: CaptureProposal,
+    existing_ids: &[String],
+) -> CaptureProposal {
     if !proposal.detected {
         return proposal;
     }
@@ -336,13 +339,7 @@ fn slug_from_text(text: &str) -> String {
     let slug: String = text
         .to_lowercase()
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
 
     let mut parts: Vec<&str> = slug
@@ -426,14 +423,21 @@ mod tests {
         let p = propose_rule_from_prompt("je moet altijd Tailwind gebruiken voor de UI", &[]);
         assert!(p.detected);
         assert_eq!(p.confidence, "high");
-        assert!(p.frontmatter.triggers.iter().any(|t| t.contains("tailwind")));
+        assert!(p
+            .frontmatter
+            .triggers
+            .iter()
+            .any(|t| t.contains("tailwind")));
         assert!(p.preview.contains("---"));
     }
 
     #[test]
     fn detects_moet_altijd_without_je() {
         let p = propose_rule_from_prompt("preflight moet altijd werken", &[]);
-        assert!(p.detected, "expected directive in: preflight moet altijd werken");
+        assert!(
+            p.detected,
+            "expected directive in: preflight moet altijd werken"
+        );
         assert_eq!(p.confidence, "high");
     }
 
@@ -476,10 +480,7 @@ mod tests {
 
     #[test]
     fn globs_from_open_files() {
-        let p = propose_rule_from_prompt(
-            "je moet altijd types gebruiken",
-            &["src/App.tsx".into()],
-        );
+        let p = propose_rule_from_prompt("je moet altijd types gebruiken", &["src/App.tsx".into()]);
         assert!(p.frontmatter.globs.iter().any(|g| g.contains("tsx")));
     }
 }

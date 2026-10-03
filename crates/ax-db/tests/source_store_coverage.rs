@@ -9,8 +9,8 @@
 
 use std::path::{Path, PathBuf};
 
-use ax_db::Database;
 use ax_db::queries::QueryBuilder;
+use ax_db::Database;
 
 fn scratch_db(name: &str) -> PathBuf {
     let mut p = std::env::temp_dir();

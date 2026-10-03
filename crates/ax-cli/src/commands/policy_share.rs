@@ -23,7 +23,10 @@ pub async fn run_config(path: Option<String>, json: bool) -> Result<(), String> 
             "onedrive": cfg.onedrive,
             "github": cfg.github,
         });
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
     } else {
         println!("Scope: project ({})", config_path.display());
         println!("Provider: {}", cfg.provider.as_str());
@@ -104,9 +107,7 @@ pub async fn ms_login() -> Result<(), String> {
             Ok(Some(store)) => {
                 println!(
                     "Signed in as {}",
-                    store
-                        .account
-                        .unwrap_or_else(|| "Microsoft account".into())
+                    store.account.unwrap_or_else(|| "Microsoft account".into())
                 );
                 return Ok(());
             }
@@ -125,7 +126,10 @@ pub fn ms_logout() -> Result<(), String> {
 pub fn ms_status(json: bool) -> Result<(), String> {
     let st = microsoft_auth_status();
     if json {
-        println!("{}", serde_json::to_string_pretty(&st).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&st).map_err(|e| e.to_string())?
+        );
     } else if st.signed_in {
         println!(
             "Signed in: {}",

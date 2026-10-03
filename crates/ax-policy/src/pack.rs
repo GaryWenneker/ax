@@ -120,8 +120,8 @@ fn is_pack_export_candidate(
     if !enabled || !is_approved(status) {
         return false;
     }
-    let scope = crate::types::PolicyScope::parse(scope)
-        .unwrap_or(crate::types::PolicyScope::Project);
+    let scope =
+        crate::types::PolicyScope::parse(scope).unwrap_or(crate::types::PolicyScope::Project);
     if !scope.is_packable() {
         return false;
     }
@@ -176,13 +176,7 @@ pub async fn export_pack(
     };
 
     for rule in &rules {
-        if !is_pack_export_candidate(
-            &rule.tags,
-            &rule.scope,
-            rule.enabled,
-            &rule.status,
-            &tag_l,
-        ) {
+        if !is_pack_export_candidate(&rule.tags, &rule.scope, rule.enabled, &rule.status, &tag_l) {
             continue;
         }
         let doc = rule_row_to_doc(rule, project_root);
@@ -224,7 +218,10 @@ pub async fn export_pack(
 
     let manifest_json =
         serde_json::to_string_pretty(&manifest).map_err(|e| AxError::Other(e.to_string()))?;
-    write_utf8(&pack_root.join("manifest.json"), &format!("{manifest_json}\n"))?;
+    write_utf8(
+        &pack_root.join("manifest.json"),
+        &format!("{manifest_json}\n"),
+    )?;
 
     Ok(PackExportResult {
         rules_exported: manifest.rules.len(),
@@ -327,10 +324,7 @@ pub async fn import_pack_with_options(
     }
 
     for meta in &manifest.skills {
-        let path = pack_root
-            .join("skills")
-            .join(&meta.id)
-            .join(SKILL_FILENAME);
+        let path = pack_root.join("skills").join(&meta.id).join(SKILL_FILENAME);
         if !path.is_file() {
             result.skipped += 1;
             continue;
@@ -471,15 +465,11 @@ pub async fn pack_status(pool: &SqlitePool, project_root: &Path) -> Result<PackS
     let skills = list_skills(pool).await?;
     let local_shared_rules = rules
         .iter()
-        .filter(|r| {
-            is_pack_export_candidate(&r.tags, &r.scope, r.enabled, &r.status, DEFAULT_TAG)
-        })
+        .filter(|r| is_pack_export_candidate(&r.tags, &r.scope, r.enabled, &r.status, DEFAULT_TAG))
         .count();
     let local_shared_skills = skills
         .iter()
-        .filter(|s| {
-            is_pack_export_candidate(&s.tags, &s.scope, s.enabled, &s.status, DEFAULT_TAG)
-        })
+        .filter(|s| is_pack_export_candidate(&s.tags, &s.scope, s.enabled, &s.status, DEFAULT_TAG))
         .count();
 
     let mut status = PackStatus {
@@ -507,15 +497,9 @@ pub async fn pack_status(pool: &SqlitePool, project_root: &Path) -> Result<PackS
 
 /// Convenience: paths helpers for tests / review.
 pub fn active_rule_path(project_root: &Path, id: &str) -> PathBuf {
-    rule_file(
-        &rules_dir(&ax_dir_from_project(project_root)),
-        id,
-    )
+    rule_file(&rules_dir(&ax_dir_from_project(project_root)), id)
 }
 
 pub fn active_skill_path(project_root: &Path, name: &str) -> PathBuf {
-    skill_file(
-        &skills_dir(&ax_dir_from_project(project_root)),
-        name,
-    )
+    skill_file(&skills_dir(&ax_dir_from_project(project_root)), name)
 }

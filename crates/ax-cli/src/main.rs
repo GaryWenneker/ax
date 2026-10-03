@@ -8,8 +8,8 @@ mod installer;
 mod ui;
 mod version_check;
 
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use ax_policy::PolicyStorage;
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -120,7 +120,11 @@ enum Commands {
     },
     /// Explore (same as ax_explore MCP tool)
     #[command(long_about = help_text::EXPLORE_LONG)]
-    Explore { query: Vec<String>, #[arg(long)] json: bool },
+    Explore {
+        query: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Store a durable project memory (decision, fix, convention)
     Remember {
         /// The memory content — what to remember and why
@@ -218,11 +222,19 @@ enum Commands {
     /// Graph insights: communities, god nodes, surprising connections
     Insights {
         path: Option<String>,
-        #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
+        #[arg(
+            long,
+            default_value_t = 1.0,
+            help = "Cluster granularity (higher = more communities)"
+        )]
         resolution: f64,
         #[arg(long, default_value_t = 20, help = "Max god nodes to show")]
         god_limit: usize,
-        #[arg(long, default_value_t = 20, help = "Max surprising connections to show")]
+        #[arg(
+            long,
+            default_value_t = 20,
+            help = "Max surprising connections to show"
+        )]
         surprising_limit: usize,
         #[arg(long)]
         json: bool,
@@ -232,7 +244,11 @@ enum Commands {
         path: Option<String>,
         #[arg(long, help = "Output file (default: AX_REPORT.md at project root)")]
         out: Option<String>,
-        #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
+        #[arg(
+            long,
+            default_value_t = 1.0,
+            help = "Cluster granularity (higher = more communities)"
+        )]
         resolution: f64,
         #[arg(long, help = "Print the report to stdout instead of writing a file")]
         stdout: bool,
@@ -245,7 +261,10 @@ enum Commands {
     /// Graph hygiene: isolated symbols, dangling edges, orphan docs
     Validate {
         path: Option<String>,
-        #[arg(long, help = "Exit non-zero when dangling edges or isolated symbols exist")]
+        #[arg(
+            long,
+            help = "Exit non-zero when dangling edges or isolated symbols exist"
+        )]
         ci: bool,
         #[arg(long)]
         json: bool,
@@ -271,7 +290,10 @@ enum Commands {
         watch: bool,
         #[arg(long, help = "Run one quality gate evaluation")]
         evaluate: bool,
-        #[arg(long, help = "Headless CI mode: evaluate, print JSON, exit 1 if gate failed")]
+        #[arg(
+            long,
+            help = "Headless CI mode: evaluate, print JSON, exit 1 if gate failed"
+        )]
         ci: bool,
         #[arg(long, help = "Create draft PR after quality gate")]
         draft: bool,
@@ -281,11 +303,20 @@ enum Commands {
         port: u16,
         #[arg(long, help = "Open browser")]
         open: bool,
-        #[arg(long, help = "Auto-commit uncommitted changes before the gate runs (this run only; see [auto_commit] in ship.toml to persist)")]
+        #[arg(
+            long,
+            help = "Auto-commit uncommitted changes before the gate runs (this run only; see [auto_commit] in ship.toml to persist)"
+        )]
         auto_commit: bool,
-        #[arg(long, help = "With --auto-commit: undo the checkpoint commit (git reset --mixed, never --hard) if the gate fails (this run only)")]
+        #[arg(
+            long,
+            help = "With --auto-commit: undo the checkpoint commit (git reset --mixed, never --hard) if the gate fails (this run only)"
+        )]
         revert_on_fail: bool,
-        #[arg(long, help = "With --evaluate: print nothing when the gate passes, one line on stderr when it fails")]
+        #[arg(
+            long,
+            help = "With --evaluate: print nothing when the gate passes, one line on stderr when it fails"
+        )]
         quiet: bool,
     },
     /// Affected tests
@@ -294,9 +325,18 @@ enum Commands {
         files: Vec<String>,
         #[arg(long, help = "Read changed file paths from stdin")]
         stdin: bool,
-        #[arg(long, default_value = "main", help = "Base branch for git diff when no files given")]
+        #[arg(
+            long,
+            default_value = "main",
+            help = "Base branch for git diff when no files given"
+        )]
         base: String,
-        #[arg(short, long, default_value = "5", help = "Max dependency traversal depth")]
+        #[arg(
+            short,
+            long,
+            default_value = "5",
+            help = "Max dependency traversal depth"
+        )]
         depth: u32,
         #[arg(short, long, help = "Glob filter for test files")]
         filter: Option<String>,
@@ -339,11 +379,23 @@ enum Commands {
     Savings {
         #[command(subcommand)]
         action: Option<SavingsAction>,
-        #[arg(long, value_name = "PERIOD", help = "week | month_to_date | month | year | custom")]
+        #[arg(
+            long,
+            value_name = "PERIOD",
+            help = "week | month_to_date | month | year | custom"
+        )]
         period: Option<String>,
-        #[arg(long, value_name = "YYYY-MM-DD", help = "Start date (required for custom)")]
+        #[arg(
+            long,
+            value_name = "YYYY-MM-DD",
+            help = "Start date (required for custom)"
+        )]
         from: Option<String>,
-        #[arg(long, value_name = "YYYY-MM-DD", help = "End date (optional for custom)")]
+        #[arg(
+            long,
+            value_name = "YYYY-MM-DD",
+            help = "End date (optional for custom)"
+        )]
         to: Option<String>,
         #[arg(long, help = "JSON output")]
         json: bool,
@@ -358,7 +410,11 @@ enum Commands {
     Costs {
         #[command(subcommand)]
         action: Option<CostsAction>,
-        #[arg(long, value_name = "PERIOD", help = "week | month_to_date | month | year | custom")]
+        #[arg(
+            long,
+            value_name = "PERIOD",
+            help = "week | month_to_date | month | year | custom"
+        )]
         period: Option<String>,
         #[arg(long, value_name = "YYYY-MM-DD")]
         from: Option<String>,
@@ -371,6 +427,24 @@ enum Commands {
     Budget {
         #[command(subcommand)]
         action: Option<BudgetAction>,
+    },
+    /// Pi agent economics and optimization advice
+    Agent {
+        #[command(subcommand)]
+        action: AgentAction,
+    },
+    /// Apply the versioned Ax and Pi architecture seed
+    Bootstrap {
+        path: Option<String>,
+        #[arg(long, help = "Print the seed plan without writing")]
+        dry_run: bool,
+        #[arg(
+            long,
+            help = "Check required seed facts and exit non-zero when any are missing"
+        )]
+        verify: bool,
+        #[arg(long, help = "JSON output")]
+        json: bool,
     },
     /// MCP quality audit (verbose log ↔ Cursor transcript)
     #[command(long_about = help_text::MCP_LONG)]
@@ -397,9 +471,17 @@ enum Commands {
     #[command(long_about = help_text::DESKTOP_LONG)]
     Desktop {
         path: Option<String>,
-        #[arg(long, default_value = "7070", help = "Port for the embedded ax-web server")]
+        #[arg(
+            long,
+            default_value = "7070",
+            help = "Port for the embedded ax-web server"
+        )]
         port: u16,
-        #[arg(long, default_value = "127.0.0.1", help = "Bind address for the embedded server")]
+        #[arg(
+            long,
+            default_value = "127.0.0.1",
+            help = "Bind address for the embedded server"
+        )]
         bind: String,
     },
     /// Share Command Center on the LAN with a token (read-only)
@@ -471,10 +553,7 @@ enum Commands {
     },
     /// Hidden liveness watchdog child (spawned by ax MCP/daemon)
     #[command(hide = true, name = "watchdog-child")]
-    WatchdogChild {
-        parent_pid: u32,
-        timeout_ms: u64,
-    },
+    WatchdogChild { parent_pid: u32, timeout_ms: u64 },
     /// Hidden Windows upgrade helper (spawned by ax upgrade; no PowerShell required)
     #[command(hide = true, name = "upgrade-apply")]
     UpgradeApply {
@@ -514,9 +593,7 @@ enum GlobalAction {
     /// Create ~/.ax/global.db (or AX_GLOBAL_DB) and apply schema
     Init,
     /// Copy this project's .ax/ax.db into the global database
-    Sync {
-        path: Option<String>,
-    },
+    Sync { path: Option<String> },
     /// Show project / node / shared-knowledge counts
     Status,
 }
@@ -535,7 +612,11 @@ enum PricingAction {
     },
     /// List latest synced model rates
     List {
-        #[arg(long, value_name = "SOURCE", help = "Filter by source (default: openrouter)")]
+        #[arg(
+            long,
+            value_name = "SOURCE",
+            help = "Filter by source (default: openrouter)"
+        )]
         source: Option<String>,
         #[arg(long, help = "JSON output")]
         json: bool,
@@ -543,7 +624,11 @@ enum PricingAction {
     /// Daily rate history for a model id/substring
     History {
         model: String,
-        #[arg(long, value_name = "SOURCE", help = "Filter by source (default: all, UI uses openrouter)")]
+        #[arg(
+            long,
+            value_name = "SOURCE",
+            help = "Filter by source (default: all, UI uses openrouter)"
+        )]
         source: Option<String>,
         #[arg(long, default_value = "30", help = "Max days of history")]
         days: i64,
@@ -614,6 +699,26 @@ enum BudgetAction {
 }
 
 #[derive(Subcommand)]
+enum AgentAction {
+    /// Session, turn, model, and tool token economics
+    Economics {
+        path: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+    /// Estimated avoidable context from recorded tool calls
+    Optimize {
+        path: Option<String>,
+        #[arg(long, help = "Print the optimization report")]
+        report: bool,
+        #[arg(long, help = "JSON output")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum SavingsAction {
     /// Import tool-call stats from local Cursor / Claude Code session logs
     Import {
@@ -626,7 +731,11 @@ enum SavingsAction {
     },
     /// Record the model name for an agent session (debug / manual tagging)
     TagSession {
-        #[arg(long, default_value = "cursor", help = "Agent source (cursor or claude)")]
+        #[arg(
+            long,
+            default_value = "cursor",
+            help = "Agent source (cursor or claude)"
+        )]
         agent: String,
         #[arg(long, help = "Session / conversation id")]
         session_id: String,
@@ -645,9 +754,17 @@ enum McpAction {
     /// Correlate .ax/mcp-verbose.log with a Cursor transcript and score quality
     Audit {
         path: Option<String>,
-        #[arg(long, value_name = "UUID|PATH", help = "Cursor session id or transcript .jsonl path")]
+        #[arg(
+            long,
+            value_name = "UUID|PATH",
+            help = "Cursor session id or transcript .jsonl path"
+        )]
         session: Option<String>,
-        #[arg(long, value_name = "MIN", help = "Rolling window minutes when no --session (default 30)")]
+        #[arg(
+            long,
+            value_name = "MIN",
+            help = "Rolling window minutes when no --session (default 30)"
+        )]
         window_minutes: Option<u64>,
         #[arg(long, help = "JSON output")]
         json: bool,
@@ -664,7 +781,11 @@ enum SavingsHookAction {
 enum MemoryCommands {
     /// Export memories tagged for team sync (default tag: shared)
     Export {
-        #[arg(long, default_value = "shared", help = "Only export memories with this tag")]
+        #[arg(
+            long,
+            default_value = "shared",
+            help = "Only export memories with this tag"
+        )]
         tag: String,
         #[arg(long, help = "Output path (default: .ax/memory/shared.jsonl)")]
         out: Option<String>,
@@ -703,7 +824,10 @@ enum ExportCommands {
     #[command(long_about = help_text::EXPORT_OKF_LONG)]
     Okf {
         path: Option<String>,
-        #[arg(long, help = "Output directory (default: ax.json okf.outDir or .ax/knowledge)")]
+        #[arg(
+            long,
+            help = "Output directory (default: ax.json okf.outDir or .ax/knowledge)"
+        )]
         out: Option<String>,
         #[arg(long, default_value_t = 0, help = "Max concepts (0 = all)")]
         limit: usize,
@@ -716,7 +840,10 @@ enum ExportCommands {
             help = "Publish OKF bundle to okf.azdoWiki git remote (Azure DevOps Wiki or any wiki)"
         )]
         publish_wiki: bool,
-        #[arg(long, help = "With --publish-wiki: preview only (no clone/commit/push)")]
+        #[arg(
+            long,
+            help = "With --publish-wiki: preview only (no clone/commit/push)"
+        )]
         dry_run: bool,
         #[arg(long, help = "With --publish-wiki: commit locally but do not push")]
         no_push: bool,
@@ -726,7 +853,10 @@ enum ExportCommands {
     /// Alias for `ax export okf` (Open Knowledge Format)
     Concepts {
         path: Option<String>,
-        #[arg(long, help = "Output directory (default: ax.json okf.outDir or .ax/knowledge)")]
+        #[arg(
+            long,
+            help = "Output directory (default: ax.json okf.outDir or .ax/knowledge)"
+        )]
         out: Option<String>,
         #[arg(long, default_value_t = 0, help = "Max concepts (0 = all)")]
         limit: usize,
@@ -736,21 +866,41 @@ enum ExportCommands {
         path: Option<String>,
         #[arg(long, help = "Output file (default: graph.html at project root)")]
         out: Option<String>,
-        #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
+        #[arg(
+            long,
+            default_value_t = 1.0,
+            help = "Cluster granularity (higher = more communities)"
+        )]
         resolution: f64,
-        #[arg(long, default_value_t = 3000, help = "Max nodes to include (top by degree)")]
+        #[arg(
+            long,
+            default_value_t = 3000,
+            help = "Max nodes to include (top by degree)"
+        )]
         limit: usize,
     },
     /// Export the knowledge graph (html|json|dot|graphml|gexf|cypher|mermaid|plantuml)
     Graph {
         path: Option<String>,
-        #[arg(long, default_value = "json", help = "html|json|dot|graphml|gexf|cypher|mermaid|plantuml")]
+        #[arg(
+            long,
+            default_value = "json",
+            help = "html|json|dot|graphml|gexf|cypher|mermaid|plantuml"
+        )]
         format: String,
         #[arg(long, help = "Output file (default depends on format)")]
         out: Option<String>,
-        #[arg(long, default_value_t = 1.0, help = "Cluster granularity (higher = more communities)")]
+        #[arg(
+            long,
+            default_value_t = 1.0,
+            help = "Cluster granularity (higher = more communities)"
+        )]
         resolution: f64,
-        #[arg(long, default_value_t = 3000, help = "Max nodes to include (top by degree)")]
+        #[arg(
+            long,
+            default_value_t = 3000,
+            help = "Max nodes to include (top by degree)"
+        )]
         limit: usize,
     },
 }
@@ -834,9 +984,7 @@ enum PolicyCommands {
         force: bool,
     },
     /// Import .mdc / SKILL.md from disk into database (merge; keeps DB-only rows)
-    Import {
-        path: Option<String>,
-    },
+    Import { path: Option<String> },
     /// Remove project copies of rules/skills that global.db already holds (files stay on disk)
     Dedup {
         path: Option<String>,
@@ -885,10 +1033,7 @@ enum PolicyCommands {
         json: bool,
     },
     /// Show one skill body
-    Skill {
-        name: String,
-        path: Option<String>,
-    },
+    Skill { name: String, path: Option<String> },
     /// Pre-write guard check
     Guard {
         #[arg(help = "File path relative to project root")]
@@ -909,7 +1054,10 @@ enum PolicyCommands {
     /// Verify ax preflight instruction and IDE bootstrap files (Recall instruction-sync parity)
     Sync {
         path: Option<String>,
-        #[arg(long, help = "Restore missing or drifted managed policy files from embedded templates")]
+        #[arg(
+            long,
+            help = "Restore missing or drifted managed policy files from embedded templates"
+        )]
         fix: bool,
     },
     /// Propose or save a policy rule from directive language in a prompt
@@ -1041,7 +1189,10 @@ enum PolicyPackCommands {
         path: Option<String>,
         #[arg(long, help = "Pack directory (default: .ax/policy/shared)")]
         pack: Option<String>,
-        #[arg(long, help = "Overwrite conflicting local items without staging pending")]
+        #[arg(
+            long,
+            help = "Overwrite conflicting local items without staging pending"
+        )]
         force: bool,
         #[arg(long)]
         quiet: bool,
@@ -1138,15 +1289,9 @@ enum PolicyReviewCommands {
         json: bool,
     },
     /// Approve a pending item into active policy
-    Approve {
-        id: String,
-        path: Option<String>,
-    },
+    Approve { id: String, path: Option<String> },
     /// Reject and drop a pending item
-    Reject {
-        id: String,
-        path: Option<String>,
-    },
+    Reject { id: String, path: Option<String> },
 }
 
 #[derive(Subcommand)]
@@ -1164,7 +1309,10 @@ enum PolicyStorageCommands {
         global: bool,
         #[arg(long, help = "Scan repo and import rules/skills into database")]
         migrate: bool,
-        #[arg(long, help = "Apply exclusive switch: import/export and drop the other source")]
+        #[arg(
+            long,
+            help = "Apply exclusive switch: import/export and drop the other source"
+        )]
         yes: bool,
         #[arg(long, help = "With --yes, import into ax.db but keep markdown on disk")]
         keep_files: bool,
@@ -1176,7 +1324,10 @@ enum PolicyStorageCommands {
         path: Option<String>,
         #[arg(long, help = "Write to ~/.ax/config.json instead of project ax.json")]
         global: bool,
-        #[arg(long, help = "Preview or (with --yes) export database policy to .agents/")]
+        #[arg(
+            long,
+            help = "Preview or (with --yes) export database policy to .agents/"
+        )]
         migrate: bool,
         #[arg(long, help = "Apply exclusive switch: export ax.db to .agents/")]
         yes: bool,
@@ -1191,7 +1342,10 @@ enum PolicyStorageCommands {
         /// Target storage: files | database
         storage: String,
         path: Option<String>,
-        #[arg(long, help = "When switching to database, keep the markdown file on disk")]
+        #[arg(
+            long,
+            help = "When switching to database, keep the markdown file on disk"
+        )]
         keep_file: bool,
         #[arg(long)]
         json: bool,
@@ -1330,13 +1484,21 @@ async fn async_main() {
             commands::sync::run(path, quiet, true, false).await
         }
         Some(Commands::Status { path, json }) => commands::status::run(path, json).await,
-        Some(Commands::Query { text, kind, limit, json }) => {
-            commands::query::run(text, kind, limit, json).await
-        }
+        Some(Commands::Query {
+            text,
+            kind,
+            limit,
+            json,
+        }) => commands::query::run(text, kind, limit, json).await,
         Some(Commands::Explore { query, json }) => commands::explore::run(query, json).await,
-        Some(Commands::Remember { text, title, kind, tags, files, json }) => {
-            commands::memory::run_remember(text, title, kind, tags, files, json).await
-        }
+        Some(Commands::Remember {
+            text,
+            title,
+            kind,
+            tags,
+            files,
+            json,
+        }) => commands::memory::run_remember(text, title, kind, tags, files, json).await,
         Some(Commands::Recall { query, limit, json }) => {
             commands::memory::run_recall(query, limit, json).await
         }
@@ -1366,15 +1528,24 @@ async fn async_main() {
         Some(Commands::Impact { symbol }) => commands::impact::run(symbol).await,
         Some(Commands::Cycles { limit, json }) => commands::cycles::run(limit, json).await,
         Some(Commands::Path { from, to, json }) => commands::path::run(from, to, json).await,
-        Some(Commands::Api { module, limit, json }) => {
-            commands::api::run(module, limit, json).await
-        }
-        Some(Commands::Insights { path, resolution, god_limit, surprising_limit, json }) => {
-            commands::insights::run(path, resolution, god_limit, surprising_limit, json).await
-        }
-        Some(Commands::Report { path, out, resolution, stdout }) => {
-            commands::report::run(path, out, resolution, stdout).await
-        }
+        Some(Commands::Api {
+            module,
+            limit,
+            json,
+        }) => commands::api::run(module, limit, json).await,
+        Some(Commands::Insights {
+            path,
+            resolution,
+            god_limit,
+            surprising_limit,
+            json,
+        }) => commands::insights::run(path, resolution, god_limit, surprising_limit, json).await,
+        Some(Commands::Report {
+            path,
+            out,
+            resolution,
+            stdout,
+        }) => commands::report::run(path, out, resolution, stdout).await,
         Some(Commands::Export { action }) => match action {
             ExportCommands::Okf {
                 path,
@@ -1480,9 +1651,9 @@ async fn async_main() {
             commands::daemon::run(path, act).await
         }
         Some(Commands::Web { path, port, open }) => commands::web::run(path, port, open).await,
-        Some(Commands::Desktop { .. }) => Err(
-            "internal: `ax desktop` must run on the OS main thread (handled in main())".into(),
-        ),
+        Some(Commands::Desktop { .. }) => {
+            Err("internal: `ax desktop` must run on the OS main thread (handled in main())".into())
+        }
         Some(Commands::Share {
             path,
             port,
@@ -1530,23 +1701,36 @@ async fn async_main() {
                 commands::policy::run_pull(url, path, name).await
             }
             PolicyCommands::Export { path, out } => commands::policy::run_export(path, out).await,
-            PolicyCommands::Match { prompt, path, file, json, full } => {
-                commands::policy::run_match(path, prompt, file, json, full).await
-            }
-            PolicyCommands::Dedup { path, dry_run, json } => {
-                commands::policy::run_dedup(path, dry_run, json).await
-            }
+            PolicyCommands::Match {
+                prompt,
+                path,
+                file,
+                json,
+                full,
+            } => commands::policy::run_match(path, prompt, file, json, full).await,
+            PolicyCommands::Dedup {
+                path,
+                dry_run,
+                json,
+            } => commands::policy::run_dedup(path, dry_run, json).await,
             PolicyCommands::Rules { path, json } => commands::policy::run_rules(path, json).await,
             PolicyCommands::Skills { path, json } => commands::policy::run_skills(path, json).await,
             PolicyCommands::Skill { name, path } => commands::policy::run_skill(path, name).await,
-            PolicyCommands::Guard { file, path, delete, json } => {
-                commands::policy::run_guard(path, file, delete, json).await
-            }
+            PolicyCommands::Guard {
+                file,
+                path,
+                delete,
+                json,
+            } => commands::policy::run_guard(path, file, delete, json).await,
             PolicyCommands::Sync { path, fix } => commands::policy::run_sync(path, fix).await,
             PolicyCommands::Test { path, json } => commands::policy::run_test(path, json).await,
-            PolicyCommands::Capture { prompt, path, file, yes, json } => {
-                commands::policy::run_capture(path, prompt, file, yes, json).await
-            }
+            PolicyCommands::Capture {
+                prompt,
+                path,
+                file,
+                yes,
+                json,
+            } => commands::policy::run_capture(path, prompt, file, yes, json).await,
             PolicyCommands::AgentsDir { name, path } => {
                 commands::policy::run_agents_dir(path, name)
             }
@@ -1554,7 +1738,14 @@ async fn async_main() {
                 PolicyStorageCommands::Status { path, json } => {
                     commands::policy::run_storage_status(path, json).await
                 }
-                PolicyStorageCommands::Database { path, global, migrate, yes, keep_files, json } => {
+                PolicyStorageCommands::Database {
+                    path,
+                    global,
+                    migrate,
+                    yes,
+                    keep_files,
+                    json,
+                } => {
                     commands::policy::run_storage_set(
                         path,
                         PolicyStorage::Database,
@@ -1566,7 +1757,13 @@ async fn async_main() {
                     )
                     .await
                 }
-                PolicyStorageCommands::Files { path, global, migrate, yes, json } => {
+                PolicyStorageCommands::Files {
+                    path,
+                    global,
+                    migrate,
+                    yes,
+                    json,
+                } => {
                     commands::policy::run_storage_set(
                         path,
                         PolicyStorage::Files,
@@ -1611,9 +1808,12 @@ async fn async_main() {
                 }
             },
             PolicyCommands::Pack { action } => match action {
-                PolicyPackCommands::Export { path, tag, out, quiet } => {
-                    commands::policy::run_pack_export(path, tag, out, quiet).await
-                }
+                PolicyPackCommands::Export {
+                    path,
+                    tag,
+                    out,
+                    quiet,
+                } => commands::policy::run_pack_export(path, tag, out, quiet).await,
                 PolicyPackCommands::Import {
                     path,
                     pack,
@@ -1637,7 +1837,10 @@ async fn async_main() {
                     description,
                     rules,
                     skills,
-                } => commands::policy::run_pack_zip(path, out, name, description, rules, skills).await,
+                } => {
+                    commands::policy::run_pack_zip(path, out, name, description, rules, skills)
+                        .await
+                }
             },
             PolicyCommands::Review { action } => match action {
                 PolicyReviewCommands::List { path, json } => {
@@ -1657,9 +1860,12 @@ async fn async_main() {
                 PolicyShareCommands::Config { path, json } => {
                     commands::policy_share::run_config(path, json).await
                 }
-                PolicyShareCommands::Sync { path, pull, push, json } => {
-                    commands::policy_share::run_sync(path, pull, push, json).await
-                }
+                PolicyShareCommands::Sync {
+                    path,
+                    pull,
+                    push,
+                    json,
+                } => commands::policy_share::run_sync(path, pull, push, json).await,
             },
             PolicyCommands::Enable { id, path } => commands::policy::run_enable(path, id).await,
             PolicyCommands::Disable { id, path } => commands::policy::run_disable(path, id).await,
@@ -1682,25 +1888,40 @@ async fn async_main() {
         Some(Commands::StopHook) => commands::stop_hook::run().await,
         Some(Commands::TurnHook { phase }) => commands::turn_hook::run(phase).await,
         Some(Commands::ReadGuard { ide }) => commands::read_guard::run(&ide).await,
-        Some(Commands::WatchdogChild { parent_pid, timeout_ms }) => {
+        Some(Commands::WatchdogChild {
+            parent_pid,
+            timeout_ms,
+        }) => {
             ax_mcp::run_watchdog_child(parent_pid, timeout_ms);
             Ok(())
         }
-        Some(Commands::UpgradeApply { parent_pid, staging, dest }) => {
-            commands::upgrade::run_upgrade_apply(parent_pid, staging, dest)
-        }
+        Some(Commands::UpgradeApply {
+            parent_pid,
+            staging,
+            dest,
+        }) => commands::upgrade::run_upgrade_apply(parent_pid, staging, dest),
         Some(Commands::Version) => {
             println!("{} {}", ui::accent("ax"), env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Some(Commands::Upgrade { version, check, local }) => {
-            commands::upgrade::run(version, check, local).await
-        }
+        Some(Commands::Upgrade {
+            version,
+            check,
+            local,
+        }) => commands::upgrade::run(version, check, local).await,
         Some(Commands::Telemetry { action }) => commands::telemetry::run(action).await,
-        Some(Commands::Savings { action, period, from, to, json }) => match action {
-            Some(SavingsAction::Import { claude, cursor, all }) => {
-                commands::savings::run_import(claude, cursor, all).await
-            }
+        Some(Commands::Savings {
+            action,
+            period,
+            from,
+            to,
+            json,
+        }) => match action {
+            Some(SavingsAction::Import {
+                claude,
+                cursor,
+                all,
+            }) => commands::savings::run_import(claude, cursor, all).await,
             Some(SavingsAction::TagSession {
                 agent,
                 session_id,
@@ -1714,9 +1935,7 @@ async fn async_main() {
         Some(Commands::Pricing { action }) => match action {
             PricingAction::Sync { force } => commands::pricing::run_sync(force).await,
             PricingAction::Status { json } => commands::pricing::run_status(json).await,
-            PricingAction::List { source, json } => {
-                commands::pricing::run_list(source, json).await
-            }
+            PricingAction::List { source, json } => commands::pricing::run_list(source, json).await,
             PricingAction::History {
                 model,
                 source,
@@ -1741,6 +1960,24 @@ async fn async_main() {
             };
             commands::costs::run(name, period, from, to, json, None).await
         }
+        Some(Commands::Bootstrap {
+            path,
+            dry_run,
+            verify,
+            json,
+        }) => commands::bootstrap::run(path, dry_run, verify, json),
+        Some(Commands::Agent { action }) => match action {
+            AgentAction::Economics {
+                path,
+                session,
+                json,
+            } => commands::agent::run_economics(path, session, json).await,
+            AgentAction::Optimize {
+                path,
+                report: _,
+                json,
+            } => commands::agent::run_optimize(path, json).await,
+        },
         Some(Commands::Budget { action }) => match action {
             Some(BudgetAction::Plan { json }) => commands::budget_cmd::run_plan(json, None).await,
             None => commands::budget_cmd::run_plan(false, None).await,
@@ -1808,11 +2045,15 @@ async fn async_main() {
             } => commands::mcp::run(path, session, window_minutes, json),
         },
         Some(Commands::Offload { action }) => match action {
-            Some(OffloadCommands::Status) => commands::offload::run(Some("status".into()), None, None),
+            Some(OffloadCommands::Status) => {
+                commands::offload::run(Some("status".into()), None, None)
+            }
             Some(OffloadCommands::SetEndpoint { url, key_env }) => {
                 commands::offload::run(Some("set-endpoint".into()), Some(url), key_env)
             }
-            Some(OffloadCommands::Clear) => commands::offload::run(Some("clear".into()), None, None),
+            Some(OffloadCommands::Clear) => {
+                commands::offload::run(Some("clear".into()), None, None)
+            }
             None => commands::offload::run(Some("status".into()), None, None),
         },
         Some(Commands::Serve { mcp, daemon, path }) if mcp && daemon => {
@@ -1821,7 +2062,9 @@ async fn async_main() {
         }
         Some(Commands::Serve { mcp, path, .. }) if mcp => {
             let root = path.map(std::path::PathBuf::from);
-            ax_mcp::run_stdio_server(root).await.map_err(|e| e.to_string())
+            ax_mcp::run_stdio_server(root)
+                .await
+                .map_err(|e| e.to_string())
         }
         Some(Commands::Serve { .. }) => Err("use ax serve --mcp".to_string()),
     };
@@ -1911,6 +2154,8 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Pricing { .. }) => Some("pricing".into()),
         Some(Commands::Costs { .. }) => Some("costs".into()),
         Some(Commands::Budget { .. }) => Some("budget".into()),
+        Some(Commands::Agent { .. }) => Some("agent".into()),
+        Some(Commands::Bootstrap { .. }) => Some("bootstrap".into()),
         Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
         Some(Commands::Global { .. }) => Some("global".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),

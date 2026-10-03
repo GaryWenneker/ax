@@ -199,7 +199,8 @@ pub struct PendingDiff {
 
 pub fn pending_diff(project_root: &Path, id: &str) -> Result<PendingDiff, AxError> {
     let item = show_pending(project_root, id)?;
-    let pending_raw = std::fs::read_to_string(&item.path).map_err(|e| AxError::Other(e.to_string()))?;
+    let pending_raw =
+        std::fs::read_to_string(&item.path).map_err(|e| AxError::Other(e.to_string()))?;
     let ax_dir = ax_dir_from_project(project_root);
 
     if item.kind == "rule" {
@@ -209,13 +210,11 @@ pub fn pending_diff(project_root: &Path, id: &str) -> Result<PendingDiff, AxErro
         } else {
             None
         };
-        let pending_doc =
-            parse_rule_file(Path::new(&item.path), &pending_raw).map_err(|e| AxError::Other(e.error))?;
-        let local_body = local_raw.as_ref().and_then(|r| {
-            parse_rule_file(&local_path, r)
-                .ok()
-                .map(|d| d.body)
-        });
+        let pending_doc = parse_rule_file(Path::new(&item.path), &pending_raw)
+            .map_err(|e| AxError::Other(e.error))?;
+        let local_body = local_raw
+            .as_ref()
+            .and_then(|r| parse_rule_file(&local_path, r).ok().map(|d| d.body));
         return Ok(PendingDiff {
             kind: "rule".into(),
             id: id.into(),
@@ -232,11 +231,11 @@ pub fn pending_diff(project_root: &Path, id: &str) -> Result<PendingDiff, AxErro
     } else {
         None
     };
-    let pending_doc =
-        parse_skill_file(Path::new(&item.path), &pending_raw).map_err(|e| AxError::Other(e.error))?;
-    let local_body = local_raw.as_ref().and_then(|r| {
-        parse_skill_file(&local_path, r).ok().map(|d| d.body)
-    });
+    let pending_doc = parse_skill_file(Path::new(&item.path), &pending_raw)
+        .map_err(|e| AxError::Other(e.error))?;
+    let local_body = local_raw
+        .as_ref()
+        .and_then(|r| parse_skill_file(&local_path, r).ok().map(|d| d.body));
     Ok(PendingDiff {
         kind: "skill".into(),
         id: id.into(),
@@ -250,7 +249,8 @@ pub fn pending_diff(project_root: &Path, id: &str) -> Result<PendingDiff, AxErro
 /// Ensure pending dirs exist (for UI / import).
 pub fn ensure_pending_dirs(project_root: &Path) -> Result<PathBuf, AxError> {
     let ax_dir = ax_dir_from_project(project_root);
-    std::fs::create_dir_all(pending_rules_dir(&ax_dir)).map_err(|e| AxError::Other(e.to_string()))?;
+    std::fs::create_dir_all(pending_rules_dir(&ax_dir))
+        .map_err(|e| AxError::Other(e.to_string()))?;
     std::fs::create_dir_all(pending_skills_dir(&ax_dir))
         .map_err(|e| AxError::Other(e.to_string()))?;
     Ok(pending_dir(&ax_dir))

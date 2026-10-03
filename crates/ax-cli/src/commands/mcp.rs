@@ -2,9 +2,7 @@
 
 use std::path::PathBuf;
 
-use ax_usage::{
-    audit_project, format_markdown_report, AuditOptions, DEFAULT_WINDOW_MINUTES,
-};
+use ax_usage::{audit_project, format_markdown_report, AuditOptions, DEFAULT_WINDOW_MINUTES};
 
 use crate::commands::resolve_path;
 
@@ -33,7 +31,10 @@ pub fn run(
 
     let snap = audit_project(&root, &opts)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&snap).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&snap).unwrap_or_default()
+        );
         return Ok(());
     }
 

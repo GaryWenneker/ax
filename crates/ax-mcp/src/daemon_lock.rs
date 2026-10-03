@@ -48,20 +48,18 @@ pub fn try_acquire_daemon_lock(project_root: &Path) -> std::io::Result<AcquireRe
             .unwrap_or(0),
     };
     let body = serde_json::to_string_pretty(&info)? + "\n";
-    match OpenOptions::new().write(true).create_new(true).open(&pid_path) {
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pid_path)
+    {
         Ok(mut file) => {
             file.write_all(body.as_bytes())?;
-            Ok(AcquireResult::Acquired {
-                pid_path,
-                info,
-            })
+            Ok(AcquireResult::Acquired { pid_path, info })
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             let existing = read_lock_info(&pid_path);
-            Ok(AcquireResult::Taken {
-                existing,
-                pid_path,
-            })
+            Ok(AcquireResult::Taken { existing, pid_path })
         }
         Err(e) => Err(e),
     }
@@ -100,10 +98,13 @@ pub fn release_daemon_lock(pid_path: &Path) {
 }
 
 pub fn is_pid_alive(pid: u32) -> bool {
-  use sysinfo::{Pid, System};
-  let mut sys = System::new();
-  sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), true);
-  sys.process(Pid::from_u32(pid)).is_some()
+    use sysinfo::{Pid, System};
+    let mut sys = System::new();
+    sys.refresh_processes(
+        sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+        true,
+    );
+    sys.process(Pid::from_u32(pid)).is_some()
 }
 
 /// Force-stop a process by PID (Windows `taskkill` / Unix `kill -9`).

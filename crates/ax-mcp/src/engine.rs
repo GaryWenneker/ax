@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::chat_session::TurnCounter;
 use crate::policy_session::PolicySessions;
-use crate::query_pool::{QueryPool, resolve_pool_size};
+use crate::query_pool::{resolve_pool_size, QueryPool};
 
 async fn seed_memories_if_empty(pool: &SqlitePool, project_root: &Path) {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
@@ -36,14 +36,18 @@ async fn seed_memories_if_empty(pool: &SqlitePool, project_root: &Path) {
             }
             Err(e) => eprintln!(
                 "{}",
-                ax_usage::format_ax_tagged(format!("git memory seed failed, falling back to graph: {e}"))
+                ax_usage::format_ax_tagged(format!(
+                    "git memory seed failed, falling back to graph: {e}"
+                ))
             ),
         }
     }
     match ax_memory::seed_from_graph(pool).await {
         Ok(n) if n > 0 => eprintln!(
             "{}",
-            ax_usage::format_ax_tagged(format!("auto-seeded memory vault from graph: {n} memories"))
+            ax_usage::format_ax_tagged(format!(
+                "auto-seeded memory vault from graph: {n} memories"
+            ))
         ),
         Ok(_) => {}
         Err(e) => eprintln!(
@@ -170,9 +174,7 @@ impl McpEngine {
         };
         self.project_root = Some(root.clone());
         let ax = Ax::open(&root).await.map_err(|e| e.to_string())?;
-        ax.ensure_policy_ready()
-            .await
-            .map_err(|e| e.to_string())?;
+        ax.ensure_policy_ready().await.map_err(|e| e.to_string())?;
         *self.ax.lock().await = Some(ax);
         Ok(())
     }

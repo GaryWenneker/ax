@@ -41,6 +41,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'activity',
     label: 'Activity',
     items: [
+      { id: 'agent', label: 'Agent' },
       { id: 'logging', label: 'Logging' },
       { id: 'stats', label: 'Stats' },
       { id: 'savings', label: 'Savings' },

@@ -84,7 +84,9 @@ pub async fn run() -> Result<(), String> {
         let Ok(bytes) = std::fs::read(&abs_path) else {
             continue;
         };
-        if let Ok(result) = guard_operation(&pool, &cwd, &abs_path, GuardOp::Write, Some(&bytes)).await {
+        if let Ok(result) =
+            guard_operation(&pool, &cwd, &abs_path, GuardOp::Write, Some(&bytes)).await
+        {
             for v in result.violations {
                 violations.push((rel_path.clone(), format!("[{}] {}", v.rule_id, v.message)));
             }
@@ -101,7 +103,10 @@ pub async fn run() -> Result<(), String> {
         .map(|(path, msg)| format!("- {path}: {msg}"))
         .collect();
     if violations.len() > MAX_VIOLATIONS_SHOWN {
-        lines.push(format!("- …and {} more", violations.len() - MAX_VIOLATIONS_SHOWN));
+        lines.push(format!(
+            "- …and {} more",
+            violations.len() - MAX_VIOLATIONS_SHOWN
+        ));
     }
     let reason = format!(
         "ax policy guard found {} CRITICAL violation(s) in files changed this turn — fix before finishing:\n{}",
@@ -128,7 +133,9 @@ fn uncommitted_files(cwd: &Path) -> Option<Vec<String>> {
     if !output.status.success() {
         return None;
     }
-    Some(parse_porcelain_status(&String::from_utf8_lossy(&output.stdout)))
+    Some(parse_porcelain_status(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 /// Parse `git status --porcelain=v1` output into a list of paths worth guard-scanning
@@ -221,7 +228,10 @@ mod tests {
     fn parses_modified_and_untracked() {
         let porcelain = " M src/lib.rs\n?? new_file.txt\n";
         let files = parse_porcelain_status(porcelain);
-        assert_eq!(files, vec!["src/lib.rs".to_string(), "new_file.txt".to_string()]);
+        assert_eq!(
+            files,
+            vec!["src/lib.rs".to_string(), "new_file.txt".to_string()]
+        );
     }
 
     #[test]
@@ -244,6 +254,9 @@ mod tests {
         // this is a smoke check that the JSON field name/shape used in `run()`
         // matches what Claude Code actually sends.
         let input: serde_json::Value = serde_json::json!({ "stop_hook_active": true, "cwd": "." });
-        assert_eq!(input.get("stop_hook_active").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            input.get("stop_hook_active").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 }

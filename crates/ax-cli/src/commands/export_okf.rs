@@ -43,13 +43,18 @@ pub async fn run(args: ExportOkfArgs) -> Result<(), String> {
     );
 
     {
-        let _spinner = SpinnerGuard::new(
-            "Exporting Open Knowledge Format (OKF) bundle...",
-            false,
-        );
+        let _spinner = SpinnerGuard::new("Exporting Open Knowledge Format (OKF) bundle...", false);
         let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-        let nodes = ax.queries().get_all_nodes().await.map_err(|e| e.to_string())?;
-        let edges = ax.queries().get_all_edges().await.map_err(|e| e.to_string())?;
+        let nodes = ax
+            .queries()
+            .get_all_nodes()
+            .await
+            .map_err(|e| e.to_string())?;
+        let edges = ax
+            .queries()
+            .get_all_edges()
+            .await
+            .map_err(|e| e.to_string())?;
         let report = export_okf_bundle(
             &root,
             &nodes,

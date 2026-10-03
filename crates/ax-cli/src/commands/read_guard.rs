@@ -48,8 +48,13 @@ impl Dialect {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Probe {
     Pass,
-    Read { path: PathBuf },
-    Search { pattern: String, path: Option<PathBuf> },
+    Read {
+        path: PathBuf,
+    },
+    Search {
+        pattern: String,
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,9 +78,16 @@ fn str_field<'a>(obj: &'a Value, keys: &[&str]) -> Option<&'a str> {
 }
 
 fn is_partial_read(tool_input: &Value) -> bool {
-    ["offset", "limit", "startLine", "endLine", "start_line", "end_line"]
-        .iter()
-        .any(|k| tool_input.get(*k).is_some_and(|v| !v.is_null()))
+    [
+        "offset",
+        "limit",
+        "startLine",
+        "endLine",
+        "start_line",
+        "end_line",
+    ]
+    .iter()
+    .any(|k| tool_input.get(*k).is_some_and(|v| !v.is_null()))
 }
 
 pub fn classify(input: &Value) -> Probe {
@@ -99,20 +111,33 @@ pub fn classify(input: &Value) -> Probe {
             if is_partial_read(ti) {
                 return Probe::Pass;
             }
-            str_field(ti, &["path", "file_path", "absolute_path", "filePath", "target_file"])
-                .map(|p| Probe::Read { path: p.into() })
+            str_field(
+                ti,
+                &[
+                    "path",
+                    "file_path",
+                    "absolute_path",
+                    "filePath",
+                    "target_file",
+                ],
+            )
+            .map(|p| Probe::Read { path: p.into() })
+            .unwrap_or(Probe::Pass)
+        }
+        "Grep" | "grep" | "grep_search" | "search_file_content" => {
+            match str_field(ti, &["pattern", "query"]) {
+                Some(pattern) => Probe::Search {
+                    pattern: pattern.to_string(),
+                    path: str_field(ti, &["path", "dir_path"]).map(PathBuf::from),
+                },
+                None => Probe::Pass,
+            }
+        }
+        "Bash" | "Shell" | "shell" | "run_shell_command" | "run_in_terminal" => {
+            str_field(ti, &["command"])
+                .map(classify_shell)
                 .unwrap_or(Probe::Pass)
         }
-        "Grep" | "grep" | "grep_search" | "search_file_content" => match str_field(ti, &["pattern", "query"]) {
-            Some(pattern) => Probe::Search {
-                pattern: pattern.to_string(),
-                path: str_field(ti, &["path", "dir_path"]).map(PathBuf::from),
-            },
-            None => Probe::Pass,
-        },
-        "Bash" | "Shell" | "shell" | "run_shell_command" | "run_in_terminal" => str_field(ti, &["command"])
-            .map(classify_shell)
-            .unwrap_or(Probe::Pass),
         _ => Probe::Pass,
     }
 }
@@ -167,7 +192,11 @@ fn first_simple_command(cmd: &str) -> Option<(Vec<String>, bool)> {
             '\\' => cur.push(chars.next()?),
             c if c.is_whitespace() && c != '\n' => flush(&mut cur, &mut quoted, &mut toks),
             '|' | '&' | ';' | '<' | '>' | '(' | ')' | '\n' => {
-                if matches!(c, '<' | '>') && !quoted && !cur.is_empty() && cur.chars().all(|d| d.is_ascii_digit()) {
+                if matches!(c, '<' | '>')
+                    && !quoted
+                    && !cur.is_empty()
+                    && cur.chars().all(|d| d.is_ascii_digit())
+                {
                     cur.clear();
                 }
                 flush(&mut cur, &mut quoted, &mut toks);
@@ -199,9 +228,24 @@ fn program_name(word: &str) -> &str {
 fn takes_value(tool: &str, flag: &str) -> bool {
     let common = ["-e", "-f", "-A", "-B", "-C", "-m"];
     let long = [
-        "--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count",
-        "--glob", "--iglob", "--type", "--type-not", "--include", "--exclude", "--exclude-dir",
-        "--ignore-dir", "--max-depth", "--threads", "--max-columns", "--encoding",
+        "--regexp",
+        "--file",
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--max-count",
+        "--glob",
+        "--iglob",
+        "--type",
+        "--type-not",
+        "--include",
+        "--exclude",
+        "--exclude-dir",
+        "--ignore-dir",
+        "--max-depth",
+        "--threads",
+        "--max-columns",
+        "--encoding",
     ];
     if common.contains(&flag) || long.contains(&flag) {
         return true;
@@ -252,7 +296,10 @@ fn parse_search(tool: &str, args: &[String]) -> Probe {
         1 => (explicit.remove(0), positional.into_iter().next()),
         _ => return Probe::Pass,
     };
-    Probe::Search { pattern, path: path.map(PathBuf::from) }
+    Probe::Search {
+        pattern,
+        path: path.map(PathBuf::from),
+    }
 }
 
 pub fn classify_shell(command: &str) -> Probe {
@@ -273,12 +320,16 @@ pub fn classify_shell(command: &str) -> Probe {
             }
             let files: Vec<&String> = words[1..].iter().filter(|w| !w.starts_with('-')).collect();
             match files.as_slice() {
-                [one] => Probe::Read { path: PathBuf::from(one.as_str()) },
+                [one] => Probe::Read {
+                    path: PathBuf::from(one.as_str()),
+                },
                 _ => Probe::Pass,
             }
         }
         "rg" | "grep" | "egrep" | "fgrep" | "ag" | "ack" => parse_search(prog, &words[1..]),
-        "git" if words.get(1).map(String::as_str) == Some("grep") => parse_search("grep", &words[2..]),
+        "git" if words.get(1).map(String::as_str) == Some("grep") => {
+            parse_search("grep", &words[2..])
+        }
         _ => Probe::Pass,
     }
 }
@@ -352,9 +403,12 @@ fn split_unescaped_bar(pattern: &str) -> Vec<&str> {
 // ---- conversation / switches ----------------------------------------------
 
 pub fn conversation_key(input: &Value) -> String {
-    str_field(input, &["conversation_id", "session_id", "trajectory_id", "turn_id"])
-        .map(str::to_string)
-        .unwrap_or_else(|| "anon".to_string())
+    str_field(
+        input,
+        &["conversation_id", "session_id", "trajectory_id", "turn_id"],
+    )
+    .map(str::to_string)
+    .unwrap_or_else(|| "anon".to_string())
 }
 
 pub fn guard_enabled(env: Option<&str>) -> bool {
@@ -367,8 +421,16 @@ pub fn guard_enabled(env: Option<&str>) -> bool {
 // ---- render ---------------------------------------------------------------
 
 pub fn render(dialect: Dialect, denial: Option<&Denial>) -> Rendered {
-    let out = |v: Value| Rendered { stdout: Some(v.to_string()), stderr: None, exit_code: 0 };
-    let silent = Rendered { stdout: None, stderr: None, exit_code: 0 };
+    let out = |v: Value| Rendered {
+        stdout: Some(v.to_string()),
+        stderr: None,
+        exit_code: 0,
+    };
+    let silent = Rendered {
+        stdout: None,
+        stderr: None,
+        exit_code: 0,
+    };
     match (dialect, denial) {
         (Dialect::Cursor, None) => out(json!({ "permission": "allow" })),
         // Cursor hands the agent `user_message`; `agent_message` alone never reaches it.
@@ -385,7 +447,11 @@ pub fn render(dialect: Dialect, denial: Option<&Denial>) -> Rendered {
             }
         })),
         (Dialect::Gemini, Some(d)) => out(json!({ "decision": "deny", "reason": d.full })),
-        (Dialect::Windsurf, Some(d)) => Rendered { stdout: None, stderr: Some(d.full.clone()), exit_code: 2 },
+        (Dialect::Windsurf, Some(d)) => Rendered {
+            stdout: None,
+            stderr: Some(d.full.clone()),
+            exit_code: 2,
+        },
         (_, None) => silent,
     }
 }
@@ -409,7 +475,11 @@ impl GuardState {
             .into_iter()
             .filter_map(|e| {
                 let a = e.as_array()?;
-                Some((a.first()?.as_str()?.to_string(), a.get(1)?.as_str()?.to_string(), a.get(2)?.as_i64()?))
+                Some((
+                    a.first()?.as_str()?.to_string(),
+                    a.get(1)?.as_str()?.to_string(),
+                    a.get(2)?.as_i64()?,
+                ))
             })
             .collect();
         Self { entries }
@@ -429,12 +499,16 @@ impl GuardState {
     }
 
     pub fn seen(&self, key: &str, target: &str, now: i64) -> bool {
-        self.entries.iter().any(|(k, t, ts)| k == key && t == target && now - ts < TTL_SECS)
+        self.entries
+            .iter()
+            .any(|(k, t, ts)| k == key && t == target && now - ts < TTL_SECS)
     }
 
     pub fn record(&mut self, key: &str, target: &str, now: i64) {
-        self.entries.retain(|(k, t, ts)| now - ts < TTL_SECS && !(k == key && t == target));
-        self.entries.push((key.to_string(), target.to_string(), now));
+        self.entries
+            .retain(|(k, t, ts)| now - ts < TTL_SECS && !(k == key && t == target));
+        self.entries
+            .push((key.to_string(), target.to_string(), now));
         if self.entries.len() > STATE_CAP {
             let excess = self.entries.len() - STATE_CAP;
             self.entries.drain(..excess);
@@ -475,7 +549,10 @@ fn absolute(path: &Path, cwd: Option<&Path>) -> PathBuf {
     if path.is_absolute() {
         normalize(path)
     } else {
-        normalize(&cwd.map(|c| c.join(path)).unwrap_or_else(|| path.to_path_buf()))
+        normalize(
+            &cwd.map(|c| c.join(path))
+                .unwrap_or_else(|| path.to_path_buf()),
+        )
     }
 }
 
@@ -520,7 +597,11 @@ async fn file_symbols(conn: &mut SqliteConnection, rel: &str) -> Option<Vec<Symb
         "SELECT name, kind, start_line, end_line FROM nodes WHERE file_path = ? AND kind NOT IN {NON_SYMBOL_KINDS} ORDER BY start_line LIMIT {}",
         MAX_LISTED + 1
     );
-    let rows = sqlx::query(&sql).bind(rel).fetch_all(&mut *conn).await.ok()?;
+    let rows = sqlx::query(&sql)
+        .bind(rel)
+        .fetch_all(&mut *conn)
+        .await
+        .ok()?;
     Some(
         rows.iter()
             .map(|r| Symbol {
@@ -534,7 +615,11 @@ async fn file_symbols(conn: &mut SqliteConnection, rel: &str) -> Option<Vec<Symb
     )
 }
 
-async fn named_symbols(conn: &mut SqliteConnection, name: &str, scope: &str) -> Option<Vec<Symbol>> {
+async fn named_symbols(
+    conn: &mut SqliteConnection,
+    name: &str,
+    scope: &str,
+) -> Option<Vec<Symbol>> {
     let sql = format!(
         "SELECT qualified_name, kind, file_path, start_line, end_line FROM nodes \
          WHERE name = ? AND kind NOT IN {NON_SYMBOL_KINDS} \
@@ -566,7 +651,11 @@ async fn named_symbols(conn: &mut SqliteConnection, name: &str, scope: &str) -> 
 }
 
 fn listing(symbols: &[Symbol], line: impl Fn(&Symbol) -> String) -> String {
-    let mut out: Vec<String> = symbols.iter().take(MAX_LISTED).map(|s| format!("  - {}", line(s))).collect();
+    let mut out: Vec<String> = symbols
+        .iter()
+        .take(MAX_LISTED)
+        .map(|s| format!("  - {}", line(s)))
+        .collect();
     if symbols.len() > MAX_LISTED {
         out.push("  - … more in the graph".to_string());
     }
@@ -584,7 +673,12 @@ async fn read_denial(path: &Path) -> Option<(String, Denial)> {
     if symbols.is_empty() {
         return None;
     }
-    let list = listing(&symbols, |s| format!("ax_node(\"{}\") — {} {}, lines {}-{}", s.label, s.kind, s.file, s.start, s.end));
+    let list = listing(&symbols, |s| {
+        format!(
+            "ax_node(\"{}\") — {} {}, lines {}-{}",
+            s.label, s.kind, s.file, s.start, s.end
+        )
+    });
     let full = format!(
         "ax read-guard: {rel} is indexed in the ax graph. Read the symbols through the graph instead of the whole file:\n\
          {list}\n\
@@ -618,7 +712,10 @@ async fn search_denial(pattern: &str, scope: &Path) -> Option<(String, Denial)> 
     let mut full = String::from("ax read-guard: this search names symbols in the ax graph:\n");
     for (name, symbols) in &found {
         let list = listing(symbols, |s| {
-            format!("{} — {} at {}:{}-{}", s.label, s.kind, s.file, s.start, s.end)
+            format!(
+                "{} — {} at {}:{}-{}",
+                s.label, s.kind, s.file, s.start, s.end
+            )
         });
         full.push_str(&format!("`{name}`:\n{list}\n"));
     }
@@ -627,7 +724,10 @@ async fn search_denial(pattern: &str, scope: &Path) -> Option<(String, Denial)> 
          instead of a text search. Searching for text that is not a symbol name is not guarded. \
          If you really need the raw text matches, repeat this same search and it will be allowed.",
     );
-    Some((format!("search:{}:{}", scope.display(), pattern), Denial { full }))
+    Some((
+        format!("search:{}:{}", scope.display(), pattern),
+        Denial { full },
+    ))
 }
 
 pub async fn evaluate(input: &Value, state_path: &Path, now: i64) -> Option<Denial> {
@@ -654,7 +754,43 @@ pub async fn evaluate(input: &Value, state_path: &Path, now: i64) -> Option<Deni
     }
     state.record(&key, &target, now);
     state.save(state_path).ok()?;
+    note_pi_advice(input).await;
     Some(denial)
+}
+
+async fn note_pi_advice(input: &Value) {
+    let probe = classify(input);
+    let cwd = input_cwd(input);
+    let (tool, args, entities, paths, start) = match probe {
+        Probe::Pass => return,
+        Probe::Read { path } => {
+            let abs = absolute(&path, cwd.as_deref());
+            (
+                "read",
+                json!({"path": abs.display().to_string()}),
+                Vec::new(),
+                vec![abs.display().to_string()],
+                abs,
+            )
+        }
+        Probe::Search { pattern, path } => {
+            let scope = match path {
+                Some(p) => absolute(&p, cwd.as_deref()),
+                None => cwd.clone().unwrap_or_else(|| PathBuf::from(".")),
+            };
+            let names = symbol_candidates(&pattern);
+            ("rg", json!({"pattern": pattern}), names, Vec::new(), scope)
+        }
+    };
+    let Some(root) = project_root(&start) else {
+        return;
+    };
+    let db = root.join(".ax").join("ax.db");
+    if let Err(err) =
+        ax_pi::note_read_guard(&db, &conversation_key(input), tool, args, entities, paths).await
+    {
+        tracing::warn!("AX_PI_INTEGRATION_ERROR {err}");
+    }
 }
 
 fn state_path() -> Option<PathBuf> {
@@ -715,7 +851,12 @@ mod tests {
     #[test]
     fn cursor_whole_read_is_a_read_probe() {
         let input = json!({ "tool_name": "Read", "tool_input": { "path": "src/lib.rs" } });
-        assert_eq!(classify(&input), Probe::Read { path: "src/lib.rs".into() });
+        assert_eq!(
+            classify(&input),
+            Probe::Read {
+                path: "src/lib.rs".into()
+            }
+        );
     }
 
     #[test]
@@ -732,7 +873,12 @@ mod tests {
     #[test]
     fn null_offset_is_still_a_whole_read() {
         let input = json!({ "tool_name": "Read", "tool_input": { "file_path": "/r/a.rs", "offset": null, "limit": null } });
-        assert_eq!(classify(&input), Probe::Read { path: "/r/a.rs".into() });
+        assert_eq!(
+            classify(&input),
+            Probe::Read {
+                path: "/r/a.rs".into()
+            }
+        );
     }
 
     #[test]
@@ -751,14 +897,37 @@ mod tests {
     #[test]
     fn other_ide_read_shapes_are_recognised() {
         let windsurf = json!({ "agent_action_name": "pre_read_code", "tool_info": { "file_path": "/r/a.rs" } });
-        assert_eq!(classify(&windsurf), Probe::Read { path: "/r/a.rs".into() });
-        let gemini = json!({ "tool_name": "read_file", "tool_input": { "absolute_path": "/r/a.rs" } });
-        assert_eq!(classify(&gemini), Probe::Read { path: "/r/a.rs".into() });
-        let copilot = json!({ "tool_name": "copilot_readFile", "tool_input": { "filePath": "/r/a.rs" } });
-        assert_eq!(classify(&copilot), Probe::Read { path: "/r/a.rs".into() });
+        assert_eq!(
+            classify(&windsurf),
+            Probe::Read {
+                path: "/r/a.rs".into()
+            }
+        );
+        let gemini =
+            json!({ "tool_name": "read_file", "tool_input": { "absolute_path": "/r/a.rs" } });
+        assert_eq!(
+            classify(&gemini),
+            Probe::Read {
+                path: "/r/a.rs".into()
+            }
+        );
+        let copilot =
+            json!({ "tool_name": "copilot_readFile", "tool_input": { "filePath": "/r/a.rs" } });
+        assert_eq!(
+            classify(&copilot),
+            Probe::Read {
+                path: "/r/a.rs".into()
+            }
+        );
         for tool in ["readFile", "view"] {
             let input = json!({ "tool_name": tool, "tool_input": { "path": "/r/a.rs" } });
-            assert_eq!(classify(&input), Probe::Read { path: "/r/a.rs".into() }, "{tool}");
+            assert_eq!(
+                classify(&input),
+                Probe::Read {
+                    path: "/r/a.rs".into()
+                },
+                "{tool}"
+            );
         }
     }
 
@@ -767,12 +936,28 @@ mod tests {
         let cursor = json!({ "tool_name": "Grep", "tool_input": { "pattern": "resolve_stacks", "path": "crates" } });
         assert_eq!(
             classify(&cursor),
-            Probe::Search { pattern: "resolve_stacks".into(), path: Some("crates".into()) }
+            Probe::Search {
+                pattern: "resolve_stacks".into(),
+                path: Some("crates".into())
+            }
         );
-        let vscode = json!({ "tool_name": "grep_search", "tool_input": { "query": "resolve_stacks" } });
-        assert_eq!(classify(&vscode), Probe::Search { pattern: "resolve_stacks".into(), path: None });
+        let vscode =
+            json!({ "tool_name": "grep_search", "tool_input": { "query": "resolve_stacks" } });
+        assert_eq!(
+            classify(&vscode),
+            Probe::Search {
+                pattern: "resolve_stacks".into(),
+                path: None
+            }
+        );
         let gemini = json!({ "tool_name": "search_file_content", "tool_input": { "pattern": "x_y_z", "dir_path": "src" } });
-        assert_eq!(classify(&gemini), Probe::Search { pattern: "x_y_z".into(), path: Some("src".into()) });
+        assert_eq!(
+            classify(&gemini),
+            Probe::Search {
+                pattern: "x_y_z".into(),
+                path: Some("src".into())
+            }
+        );
     }
 
     #[test]
@@ -780,38 +965,82 @@ mod tests {
         let codex = json!({ "tool_name": "Bash", "tool_input": { "command": "rg -n resolve_stacks crates/" } });
         assert_eq!(
             classify(&codex),
-            Probe::Search { pattern: "resolve_stacks".into(), path: Some("crates/".into()) }
+            Probe::Search {
+                pattern: "resolve_stacks".into(),
+                path: Some("crates/".into())
+            }
         );
         let windsurf = json!({ "agent_action_name": "pre_run_command", "tool_info": { "command_line": "cat src/lib.rs", "cwd": "/r" } });
-        assert_eq!(classify(&windsurf), Probe::Read { path: "src/lib.rs".into() });
+        assert_eq!(
+            classify(&windsurf),
+            Probe::Read {
+                path: "src/lib.rs".into()
+            }
+        );
         let gemini = json!({ "tool_name": "run_shell_command", "tool_input": { "command": "grep -rw foo_bar ." } });
-        assert_eq!(classify(&gemini), Probe::Search { pattern: "foo_bar".into(), path: Some(".".into()) });
+        assert_eq!(
+            classify(&gemini),
+            Probe::Search {
+                pattern: "foo_bar".into(),
+                path: Some(".".into())
+            }
+        );
     }
 
     #[test]
     fn shell_parser_only_inspects_the_first_simple_command() {
-        assert_eq!(classify_shell("cat src/lib.rs"), Probe::Read { path: "src/lib.rs".into() });
-        assert_eq!(classify_shell("bat -p 'src/my file.rs'"), Probe::Read { path: "src/my file.rs".into() });
-        assert_eq!(classify_shell("cat src/lib.rs | head -20"), Probe::Pass, "piped cat is a partial read");
+        assert_eq!(
+            classify_shell("cat src/lib.rs"),
+            Probe::Read {
+                path: "src/lib.rs".into()
+            }
+        );
+        assert_eq!(
+            classify_shell("bat -p 'src/my file.rs'"),
+            Probe::Read {
+                path: "src/my file.rs".into()
+            }
+        );
+        assert_eq!(
+            classify_shell("cat src/lib.rs | head -20"),
+            Probe::Pass,
+            "piped cat is a partial read"
+        );
         assert_eq!(classify_shell("cd crates && cat lib.rs"), Probe::Pass);
         assert_eq!(classify_shell("head -50 src/lib.rs"), Probe::Pass);
         assert_eq!(classify_shell("sed -n 1,40p src/lib.rs"), Probe::Pass);
-        assert_eq!(classify_shell("cat a.rs b.rs"), Probe::Pass, "multi-file cat is not one file read");
+        assert_eq!(
+            classify_shell("cat a.rs b.rs"),
+            Probe::Pass,
+            "multi-file cat is not one file read"
+        );
         assert_eq!(
             classify_shell("rg -e foo_bar -g '*.rs' -A 3"),
-            Probe::Search { pattern: "foo_bar".into(), path: None }
+            Probe::Search {
+                pattern: "foo_bar".into(),
+                path: None
+            }
         );
         assert_eq!(
             classify_shell("/usr/bin/grep -rn \"fn main\" ."),
-            Probe::Search { pattern: "fn main".into(), path: Some(".".into()) }
+            Probe::Search {
+                pattern: "fn main".into(),
+                path: Some(".".into())
+            }
         );
         assert_eq!(
             classify_shell("git grep -n resolve_stacks"),
-            Probe::Search { pattern: "resolve_stacks".into(), path: None }
+            Probe::Search {
+                pattern: "resolve_stacks".into(),
+                path: None
+            }
         );
         assert_eq!(
             classify_shell("rg foo_bar | head"),
-            Probe::Search { pattern: "foo_bar".into(), path: None },
+            Probe::Search {
+                pattern: "foo_bar".into(),
+                path: None
+            },
             "a piped search is still a search"
         );
         assert_eq!(classify_shell("FOO=1 cargo test"), Probe::Pass);
@@ -822,10 +1051,16 @@ mod tests {
 
     #[test]
     fn symbol_name_accepts_bare_and_qualified_identifiers() {
-        assert_eq!(symbol_name("choose_stacks_for_init").as_deref(), Some("choose_stacks_for_init"));
+        assert_eq!(
+            symbol_name("choose_stacks_for_init").as_deref(),
+            Some("choose_stacks_for_init")
+        );
         assert_eq!(symbol_name(r"\bfoo_bar\b").as_deref(), Some("foo_bar"));
         assert_eq!(symbol_name(r"\<FooBar\>").as_deref(), Some("FooBar"));
-        assert_eq!(symbol_name("ax_policy::resolve_stacks").as_deref(), Some("resolve_stacks"));
+        assert_eq!(
+            symbol_name("ax_policy::resolve_stacks").as_deref(),
+            Some("resolve_stacks")
+        );
         assert_eq!(symbol_name("Engine.lockAx").as_deref(), Some("lockAx"));
     }
 
@@ -845,7 +1080,16 @@ mod tests {
 
     #[test]
     fn symbol_name_rejects_text_and_regex() {
-        for p in ["fn main", "foo.*bar", "ab", "", "\"quoted\"", "error: failed", "[a-z]+", "1abc"] {
+        for p in [
+            "fn main",
+            "foo.*bar",
+            "ab",
+            "",
+            "\"quoted\"",
+            "error: failed",
+            "[a-z]+",
+            "1abc",
+        ] {
             assert_eq!(symbol_name(p), None, "{p:?}");
         }
     }
@@ -854,7 +1098,10 @@ mod tests {
 
     #[test]
     fn conversation_key_prefers_conversation_then_session_then_anon() {
-        assert_eq!(conversation_key(&json!({ "conversation_id": "c1", "session_id": "s1" })), "c1");
+        assert_eq!(
+            conversation_key(&json!({ "conversation_id": "c1", "session_id": "s1" })),
+            "c1"
+        );
         assert_eq!(conversation_key(&json!({ "session_id": "s1" })), "s1");
         assert_eq!(conversation_key(&json!({ "trajectory_id": "t1" })), "t1");
         assert_eq!(conversation_key(&json!({ "turn_id": "u1" })), "u1");
@@ -885,7 +1132,9 @@ mod tests {
     // ---- render ---------------------------------------------------------
 
     fn denial() -> Denial {
-        Denial { full: "full msg".into() }
+        Denial {
+            full: "full msg".into(),
+        }
     }
 
     fn parse(s: &Option<String>) -> Value {
@@ -929,14 +1178,20 @@ mod tests {
     fn render_gemini() {
         assert_eq!(render(Dialect::Gemini, None).stdout, None);
         let deny = render(Dialect::Gemini, Some(&denial()));
-        assert_eq!(parse(&deny.stdout), json!({ "decision": "deny", "reason": "full msg" }));
+        assert_eq!(
+            parse(&deny.stdout),
+            json!({ "decision": "deny", "reason": "full msg" })
+        );
         assert_eq!(deny.exit_code, 0);
     }
 
     #[test]
     fn render_windsurf_blocks_with_exit_2() {
         let allow = render(Dialect::Windsurf, None);
-        assert_eq!((allow.stdout, allow.stderr, allow.exit_code), (None, None, 0));
+        assert_eq!(
+            (allow.stdout, allow.stderr, allow.exit_code),
+            (None, None, 0)
+        );
         let deny = render(Dialect::Windsurf, Some(&denial()));
         assert_eq!(deny.stdout, None);
         assert_eq!(deny.stderr.as_deref(), Some("full msg"));
@@ -960,7 +1215,10 @@ mod tests {
         assert!(!state.seen("c", "t", 100));
         state.record("c", "t", 100);
         assert!(state.seen("c", "t", 100 + TTL - 1));
-        assert!(!state.seen("c", "t", 100 + TTL + 1), "expired entries do not count");
+        assert!(
+            !state.seen("c", "t", 100 + TTL + 1),
+            "expired entries do not count"
+        );
         assert!(!state.seen("other", "t", 101), "keyed by conversation");
         state.save(&path).unwrap();
         let again = GuardState::load(&path);
@@ -1040,23 +1298,43 @@ mod tests {
         let root = fixture("read").await;
         let state = root.join("state.json");
         let input = read_input(&root, "src/lib.rs", "conv-a");
-        let denial = evaluate(&input, &state, 1_000).await.expect("first read denied");
+        let denial = evaluate(&input, &state, 1_000)
+            .await
+            .expect("first read denied");
         assert!(denial.full.contains("src/lib.rs"));
         assert!(denial.full.contains("alpha_one"), "{}", denial.full);
         assert!(denial.full.contains("BetaTwo"));
         assert!(denial.full.contains("ax_node"));
         assert!(denial.full.contains("repeat this same read"));
         assert!(
-            !denial.full.contains("A partial Read (offset/limit) is not guarded."),
+            !denial
+                .full
+                .contains("A partial Read (offset/limit) is not guarded."),
             "Cursor strips offset/limit from the hook payload, so the message must not promise it"
         );
         assert!(denial.full.contains("Cursor"), "{}", denial.full);
-        assert!(!denial.full.contains("README"), "file/doc nodes are not symbols");
-        assert!(!denial.full.contains("usage_rows"), "table nodes are not symbols");
-        assert!(!denial.full.contains("\"lib.rs\""), "the file node itself is not listed");
-        assert_eq!(evaluate(&input, &state, 1_001).await, None, "identical retry allowed");
+        assert!(
+            !denial.full.contains("README"),
+            "file/doc nodes are not symbols"
+        );
+        assert!(
+            !denial.full.contains("usage_rows"),
+            "table nodes are not symbols"
+        );
+        assert!(
+            !denial.full.contains("\"lib.rs\""),
+            "the file node itself is not listed"
+        );
+        assert_eq!(
+            evaluate(&input, &state, 1_001).await,
+            None,
+            "identical retry allowed"
+        );
         let other = read_input(&root, "src/lib.rs", "conv-b");
-        assert!(evaluate(&other, &state, 1_002).await.is_some(), "new conversation is guarded again");
+        assert!(
+            evaluate(&other, &state, 1_002).await.is_some(),
+            "new conversation is guarded again"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1076,8 +1354,14 @@ mod tests {
     async fn non_source_and_partial_reads_pass() {
         let root = fixture("nonsource").await;
         let state = root.join("state.json");
-        assert_eq!(evaluate(&read_input(&root, "README.md", "c"), &state, 1).await, None);
-        assert_eq!(evaluate(&read_input(&root, "logs/run.log", "c"), &state, 1).await, None);
+        assert_eq!(
+            evaluate(&read_input(&root, "README.md", "c"), &state, 1).await,
+            None
+        );
+        assert_eq!(
+            evaluate(&read_input(&root, "logs/run.log", "c"), &state, 1).await,
+            None
+        );
         assert_eq!(
             evaluate(&read_input(&root, "docs/guide.md", "c"), &state, 1).await,
             None,
@@ -1096,12 +1380,22 @@ mod tests {
         let root = fixture("search").await;
         let state = root.join("state.json");
         let input = search_input(&root, "alpha_one", None, "c");
-        let denial = evaluate(&input, &state, 1).await.expect("symbol search denied");
-        assert!(denial.full.contains("src/lib.rs::alpha_one"), "{}", denial.full);
+        let denial = evaluate(&input, &state, 1)
+            .await
+            .expect("symbol search denied");
+        assert!(
+            denial.full.contains("src/lib.rs::alpha_one"),
+            "{}",
+            denial.full
+        );
         assert!(denial.full.contains("src/lib.rs:1"));
         assert!(denial.full.contains("ax_callers"));
         assert!(denial.full.contains("repeat this same search"));
-        assert_eq!(evaluate(&input, &state, 2).await, None, "identical retry allowed");
+        assert_eq!(
+            evaluate(&input, &state, 2).await,
+            None,
+            "identical retry allowed"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1111,14 +1405,33 @@ mod tests {
         let state = root.join("state.json");
         let pattern = "alpha_one|BetaTwo|live-new";
         let input = search_input(&root, pattern, None, "c");
-        let denial = evaluate(&input, &state, 1).await.expect("alternation denied");
-        assert!(denial.full.contains("src/lib.rs::alpha_one"), "{}", denial.full);
-        assert!(denial.full.contains("src/lib.rs::BetaTwo"), "{}", denial.full);
+        let denial = evaluate(&input, &state, 1)
+            .await
+            .expect("alternation denied");
+        assert!(
+            denial.full.contains("src/lib.rs::alpha_one"),
+            "{}",
+            denial.full
+        );
+        assert!(
+            denial.full.contains("src/lib.rs::BetaTwo"),
+            "{}",
+            denial.full
+        );
         assert!(denial.full.contains("ax_search"), "{}", denial.full);
         assert!(!denial.full.contains("live-new"), "{}", denial.full);
-        assert_eq!(evaluate(&input, &state, 2).await, None, "identical retry allowed");
         assert_eq!(
-            evaluate(&search_input(&root, "no_such_symbol|also_missing", None, "c"), &state, 3).await,
+            evaluate(&input, &state, 2).await,
+            None,
+            "identical retry allowed"
+        );
+        assert_eq!(
+            evaluate(
+                &search_input(&root, "no_such_symbol|also_missing", None, "c"),
+                &state,
+                3
+            )
+            .await,
             None,
             "unknown names stay unguarded"
         );
@@ -1129,10 +1442,24 @@ mod tests {
     async fn non_symbol_or_unknown_or_out_of_index_searches_pass() {
         let root = fixture("search-pass").await;
         let state = root.join("state.json");
-        assert_eq!(evaluate(&search_input(&root, "fn alpha_one", None, "c"), &state, 1).await, None);
-        assert_eq!(evaluate(&search_input(&root, "no_such_symbol", None, "c"), &state, 1).await, None);
+        assert_eq!(
+            evaluate(&search_input(&root, "fn alpha_one", None, "c"), &state, 1).await,
+            None
+        );
+        assert_eq!(
+            evaluate(&search_input(&root, "no_such_symbol", None, "c"), &state, 1).await,
+            None
+        );
         let logs = root.join("logs").display().to_string();
-        assert_eq!(evaluate(&search_input(&root, "alpha_one", Some(&logs), "c"), &state, 1).await, None);
+        assert_eq!(
+            evaluate(
+                &search_input(&root, "alpha_one", Some(&logs), "c"),
+                &state,
+                1
+            )
+            .await,
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1150,7 +1477,10 @@ mod tests {
     async fn unwritable_state_fails_open() {
         let root = fixture("unwritable").await;
         let state = root.join("src"); // a directory: writing the state file fails
-        assert_eq!(evaluate(&read_input(&root, "src/lib.rs", "c"), &state, 1).await, None);
+        assert_eq!(
+            evaluate(&read_input(&root, "src/lib.rs", "c"), &state, 1).await,
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1162,8 +1492,14 @@ mod tests {
         std::fs::write(root.join(".ax/ax.db"), "this is not sqlite").unwrap();
         std::fs::write(root.join("src/lib.rs"), "fn a() {}\n").unwrap();
         let state = root.join("state.json");
-        assert_eq!(evaluate(&read_input(&root, "src/lib.rs", "c"), &state, 1).await, None);
-        assert_eq!(evaluate(&search_input(&root, "alpha_one", None, "c"), &state, 1).await, None);
+        assert_eq!(
+            evaluate(&read_input(&root, "src/lib.rs", "c"), &state, 1).await,
+            None
+        );
+        assert_eq!(
+            evaluate(&search_input(&root, "alpha_one", None, "c"), &state, 1).await,
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

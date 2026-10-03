@@ -47,13 +47,22 @@ pub async fn run_remember(
     );
 
     // Near-identical memories are usually duplicates or contradictions.
-    let similar = ax_memory::find_similar(ax.db_pool(), &format!("{} {}", row.title, row.body), Some(&row.id), 0.80, 3)
-        .await
-        .unwrap_or_default();
+    let similar = ax_memory::find_similar(
+        ax.db_pool(),
+        &format!("{} {}", row.title, row.body),
+        Some(&row.id),
+        0.80,
+        3,
+    )
+    .await
+    .unwrap_or_default();
 
     if json {
         let out = serde_json::json!({ "memory": row, "similar": similar });
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
     } else {
         println!("Remembered [{}] {}", row.kind, row.title);
         println!("  id: {}", row.id);
@@ -63,7 +72,12 @@ pub async fn run_remember(
         if !similar.is_empty() {
             println!("\n  Similar existing memories (possible duplicate/contradiction):");
             for s in &similar {
-                println!("  - [{:.0}% similar] {} ({})", s.score * 100.0, s.memory.title, s.memory.id);
+                println!(
+                    "  - [{:.0}% similar] {} ({})",
+                    s.score * 100.0,
+                    s.memory.title,
+                    s.memory.id
+                );
             }
         }
     }
@@ -77,8 +91,12 @@ pub async fn run_capture_git(limit: Option<u32>, quiet: bool, json: bool) -> Res
         format!("capture-git start limit={}", limit.unwrap_or(100)),
     );
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let result = match ax_memory::capture_git_history(ax.db_pool(), ax.project_root(), limit.unwrap_or(100) as usize)
-        .await
+    let result = match ax_memory::capture_git_history(
+        ax.db_pool(),
+        ax.project_root(),
+        limit.unwrap_or(100) as usize,
+    )
+    .await
     {
         Ok(r) => r,
         Err(e) => {
@@ -98,7 +116,10 @@ pub async fn run_capture_git(limit: Option<u32>, quiet: bool, json: bool) -> Res
         return Ok(());
     }
     if json {
-        println!("{}", serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?
+        );
     } else {
         println!(
             "Git capture: {} commits scanned, {} new memories, {} already captured, {} trivial skipped.",
@@ -174,7 +195,10 @@ pub async fn run_recall(query: String, limit: Option<u32>, json: bool) -> Result
     );
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&matches).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&matches).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
 
@@ -183,10 +207,18 @@ pub async fn run_recall(query: String, limit: Option<u32>, json: bool) -> Result
         return Ok(());
     }
 
-    println!("{} memor{} for \"{}\":\n", matches.len(), if matches.len() == 1 { "y" } else { "ies" }, query);
+    println!(
+        "{} memor{} for \"{}\":\n",
+        matches.len(),
+        if matches.len() == 1 { "y" } else { "ies" },
+        query
+    );
     for m in &matches {
         let age_days = (now_ms() - m.memory.updated_at).max(0) / 86_400_000;
-        println!("[{}] {}  (score {:.1}, {}d old)", m.memory.kind, m.memory.title, m.score, age_days);
+        println!(
+            "[{}] {}  (score {:.1}, {}d old)",
+            m.memory.kind, m.memory.title, m.score, age_days
+        );
         for line in m.memory.body.lines().take(4) {
             println!("    {line}");
         }
@@ -215,20 +247,16 @@ pub async fn run_export(
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let tag = tag.unwrap_or_else(|| "shared".into());
     let out_path = out.map(PathBuf::from);
-    let result = match ax_memory::export_shared(
-        ax.db_pool(),
-        ax.project_root(),
-        &tag,
-        out_path.as_deref(),
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            ax_usage::log_memory(Some(&root), "export fail");
-            return Err(e.to_string());
-        }
-    };
+    let result =
+        match ax_memory::export_shared(ax.db_pool(), ax.project_root(), &tag, out_path.as_deref())
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                ax_usage::log_memory(Some(&root), "export fail");
+                return Err(e.to_string());
+            }
+        };
     ax_usage::log_memory(
         Some(&root),
         format!("export ok written={} tag={tag}", result.written),

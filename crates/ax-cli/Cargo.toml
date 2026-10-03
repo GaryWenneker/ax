@@ -36,6 +36,7 @@ ax-tia = { workspace = true }
 ax-ship = { workspace = true }
 ax-installer = { workspace = true }
 ax-agent = { workspace = true }
+ax-pi = { workspace = true }
 ax-lsp = { workspace = true }
 ax-docs-catalog = { workspace = true }
 ax-global-db = { workspace = true }

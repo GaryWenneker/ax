@@ -16,9 +16,7 @@ use crate::parse::{
     serialize_skill_stub,
 };
 use crate::paths::{resolve_item_write_dir, resolve_source_path, rule_file, skill_file};
-use crate::types::{
-    PolicyRuleDoc, PolicyScope, PolicySkillDoc, RuleFrontmatter, SkillFrontmatter,
-};
+use crate::types::{PolicyRuleDoc, PolicyScope, PolicySkillDoc, RuleFrontmatter, SkillFrontmatter};
 
 pub struct PolicyStore {
     pool: sqlx::SqlitePool,
@@ -76,12 +74,18 @@ impl PolicyStore {
         id: &str,
         raw: &str,
     ) -> Result<(), ValidationError> {
-        crate::revisions::record_if_changed(&self.pool, kind, id, raw, crate::revisions::SOURCE_SAVE)
-            .await
-            .map_err(|e| ValidationError {
-                error: e.to_string(),
-                fields: Default::default(),
-            })?;
+        crate::revisions::record_if_changed(
+            &self.pool,
+            kind,
+            id,
+            raw,
+            crate::revisions::SOURCE_SAVE,
+        )
+        .await
+        .map_err(|e| ValidationError {
+            error: e.to_string(),
+            fields: Default::default(),
+        })?;
         Ok(())
     }
 
@@ -198,12 +202,11 @@ impl PolicyStore {
         {
             let mut fm = frontmatter;
             fm.source = Some(source.clone());
-            let target = resolve_source_path(&self.project_root, &source).map_err(|e| {
-                ValidationError {
+            let target =
+                resolve_source_path(&self.project_root, &source).map_err(|e| ValidationError {
                     error: e,
                     fields: Default::default(),
-                }
-            })?;
+                })?;
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| ValidationError {
                     error: e.to_string(),
@@ -216,12 +219,13 @@ impl PolicyStore {
                 fields: Default::default(),
             })?;
 
-            let stub_dir = resolve_item_write_dir(&self.project_root, scope, None).map_err(|e| {
-                ValidationError {
-                    error: e,
-                    fields: Default::default(),
-                }
-            })?;
+            let stub_dir =
+                resolve_item_write_dir(&self.project_root, scope, None).map_err(|e| {
+                    ValidationError {
+                        error: e,
+                        fields: Default::default(),
+                    }
+                })?;
             let stub_path = existing
                 .and_then(|d| d.stub_path.clone())
                 .map(PathBuf::from)
@@ -243,16 +247,17 @@ impl PolicyStore {
             return Ok((doc, Some(stub_path.to_string_lossy().into())));
         }
 
-        let policy_dir = if frontmatter.root_id.as_deref().filter(|s| !s.is_empty()).is_some() {
-            resolve_item_write_dir(
-                &self.project_root,
-                scope,
-                frontmatter.root_id.as_deref(),
-            )
-            .map_err(|e| ValidationError {
-                error: e,
-                fields: Default::default(),
-            })?
+        let policy_dir = if frontmatter
+            .root_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            resolve_item_write_dir(&self.project_root, scope, frontmatter.root_id.as_deref())
+                .map_err(|e| ValidationError {
+                    error: e,
+                    fields: Default::default(),
+                })?
         } else {
             crate::agents_share::resolve_shareable_write_dir(
                 &self.project_root,
@@ -302,10 +307,13 @@ impl PolicyStore {
             return self.save_rule(frontmatter, body).await;
         }
 
-        let exists_old = self.get_rule_doc(old_id).await.map_err(|e| ValidationError {
-            error: e.to_string(),
-            fields: Default::default(),
-        })?;
+        let exists_old = self
+            .get_rule_doc(old_id)
+            .await
+            .map_err(|e| ValidationError {
+                error: e.to_string(),
+                fields: Default::default(),
+            })?;
         if exists_old.is_none() {
             return Err(ValidationError {
                 error: "not found".into(),
@@ -330,10 +338,12 @@ impl PolicyStore {
             });
         }
 
-        self.delete_rule(old_id).await.map_err(|e| ValidationError {
-            error: e.to_string(),
-            fields: Default::default(),
-        })?;
+        self.delete_rule(old_id)
+            .await
+            .map_err(|e| ValidationError {
+                error: e.to_string(),
+                fields: Default::default(),
+            })?;
 
         self.save_rule(frontmatter, body).await
     }
@@ -414,12 +424,11 @@ impl PolicyStore {
         {
             let mut fm = frontmatter;
             fm.source = Some(source.clone());
-            let target = resolve_source_path(&self.project_root, &source).map_err(|e| {
-                ValidationError {
+            let target =
+                resolve_source_path(&self.project_root, &source).map_err(|e| ValidationError {
                     error: e,
                     fields: Default::default(),
-                }
-            })?;
+                })?;
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| ValidationError {
                     error: e.to_string(),
@@ -432,12 +441,13 @@ impl PolicyStore {
                 fields: Default::default(),
             })?;
 
-            let stub_dir = resolve_item_write_dir(&self.project_root, scope, None).map_err(|e| {
-                ValidationError {
-                    error: e,
-                    fields: Default::default(),
-                }
-            })?;
+            let stub_dir =
+                resolve_item_write_dir(&self.project_root, scope, None).map_err(|e| {
+                    ValidationError {
+                        error: e,
+                        fields: Default::default(),
+                    }
+                })?;
             let stub_path = existing
                 .and_then(|d| d.stub_path.clone())
                 .map(PathBuf::from)
@@ -459,16 +469,17 @@ impl PolicyStore {
             return Ok((doc, Some(stub_path.to_string_lossy().into())));
         }
 
-        let policy_dir = if frontmatter.root_id.as_deref().filter(|s| !s.is_empty()).is_some() {
-            resolve_item_write_dir(
-                &self.project_root,
-                scope,
-                frontmatter.root_id.as_deref(),
-            )
-            .map_err(|e| ValidationError {
-                error: e,
-                fields: Default::default(),
-            })?
+        let policy_dir = if frontmatter
+            .root_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            resolve_item_write_dir(&self.project_root, scope, frontmatter.root_id.as_deref())
+                .map_err(|e| ValidationError {
+                    error: e,
+                    fields: Default::default(),
+                })?
         } else {
             crate::agents_share::resolve_shareable_write_dir(
                 &self.project_root,
@@ -534,8 +545,7 @@ impl PolicyStore {
         if path.is_file() {
             std::fs::remove_file(path).map_err(|e| AxError::Other(e.to_string()))?;
         } else {
-            let scope =
-                PolicyScope::parse(&doc.frontmatter.scope).unwrap_or(PolicyScope::Project);
+            let scope = PolicyScope::parse(&doc.frontmatter.scope).unwrap_or(PolicyScope::Project);
             let fallback = rule_file(
                 &policy_dir_for_scope(&self.project_root, scope).join("rules"),
                 &doc.frontmatter.id,

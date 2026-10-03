@@ -4,8 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+use ax_db::migrations::{get_current_version, CURRENT_SCHEMA_VERSION};
 use ax_db::Database;
-use ax_db::migrations::{CURRENT_SCHEMA_VERSION, get_current_version};
 
 fn scratch_db(name: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -65,7 +65,7 @@ async fn v17_database_upgrades_to_v18_without_losing_skills() {
         let db = Database::open(&path).await.expect("reopen and migrate");
         let version = get_current_version(db.pool()).await.expect("version");
         assert_eq!(version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
 
         let kept: Option<String> =
             sqlx::query_scalar("SELECT description FROM policy_skills WHERE name = 'startup'")
@@ -74,10 +74,12 @@ async fn v17_database_upgrades_to_v18_without_losing_skills() {
                 .expect("query skill");
         assert_eq!(kept.as_deref(), Some("preflight"));
 
-        sqlx::query("UPDATE policy_skills SET skill_group = 'session-protocol' WHERE name = 'startup'")
-            .execute(db.pool())
-            .await
-            .expect("skill_group column must exist");
+        sqlx::query(
+            "UPDATE policy_skills SET skill_group = 'session-protocol' WHERE name = 'startup'",
+        )
+        .execute(db.pool())
+        .await
+        .expect("skill_group column must exist");
     }
 
     cleanup(&path);

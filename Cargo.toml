@@ -27,6 +27,7 @@ members = [
     "crates/ax-remote",
     "crates/ax-installer",
     "crates/ax-agent",
+    "crates/ax-pi",
     "crates/ax-plugins",
     "crates/ax-lsp",
     "crates/ax-docs-catalog",
@@ -104,4 +105,5 @@ ax-plugins = { path = "crates/ax-plugins" }
 ax-lsp = { path = "crates/ax-lsp" }
 ax-docs-catalog = { path = "crates/ax-docs-catalog" }
 ax-agent = { path = "crates/ax-agent" }
+ax-pi = { path = "crates/ax-pi" }
 ax-global-db = { path = "crates/ax-global-db" }

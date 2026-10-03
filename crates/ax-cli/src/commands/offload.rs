@@ -2,11 +2,18 @@
 
 use ax_reasoning::{offload_status, write_offload_config, OffloadConfig};
 
-pub fn run(action: Option<String>, url: Option<String>, key_env: Option<String>) -> Result<(), String> {
+pub fn run(
+    action: Option<String>,
+    url: Option<String>,
+    key_env: Option<String>,
+) -> Result<(), String> {
     let act = action.unwrap_or_else(|| "status".to_string());
     match act.as_str() {
         "status" => {
-            println!("{}", serde_json::to_string_pretty(&offload_status()).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&offload_status()).unwrap_or_default()
+            );
         }
         "set-endpoint" => {
             let endpoint = url.ok_or("usage: ax offload set-endpoint <url> [--key-env VAR]")?;
@@ -24,7 +31,11 @@ pub fn run(action: Option<String>, url: Option<String>, key_env: Option<String>)
             write_offload_config(None)?;
             println!("Offload configuration cleared.");
         }
-        other => return Err(format!("unknown action '{other}' — use status, set-endpoint, or clear")),
+        other => {
+            return Err(format!(
+                "unknown action '{other}' — use status, set-endpoint, or clear"
+            ))
+        }
     }
     Ok(())
 }

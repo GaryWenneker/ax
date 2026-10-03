@@ -64,10 +64,7 @@ pub async fn run(args: ShipArgs) -> Result<(), String> {
             };
             ax_usage::log_ship_ci(
                 Some(&root),
-                format!(
-                    "status={status} steps={}",
-                    report.quality_gate.steps.len()
-                ),
+                format!("status={status} steps={}", report.quality_gate.steps.len()),
             );
             eprintln!(
                 "ax-ship-ci: status={status} steps={} sonar={}",
@@ -89,11 +86,7 @@ pub async fn run(args: ShipArgs) -> Result<(), String> {
             Some(&root),
             format!(
                 "ok mode=evaluate passed={}",
-                if report.quality_gate.passed {
-                    "1"
-                } else {
-                    "0"
-                }
+                if report.quality_gate.passed { "1" } else { "0" }
             ),
         );
         if quiet {

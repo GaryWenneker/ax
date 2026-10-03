@@ -4,8 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+use ax_db::migrations::{get_current_version, CURRENT_SCHEMA_VERSION};
 use ax_db::Database;
-use ax_db::migrations::{CURRENT_SCHEMA_VERSION, get_current_version};
 
 fn scratch_db(name: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -65,7 +65,7 @@ async fn v19_database_upgrades_to_v20_without_losing_rules() {
         let db = Database::open(&path).await.expect("reopen and migrate");
         let version = get_current_version(db.pool()).await.expect("version");
         assert_eq!(version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
 
         let kept: Option<String> =
             sqlx::query_scalar("SELECT level FROM policy_rules WHERE id = 'utf8-no-bom'")

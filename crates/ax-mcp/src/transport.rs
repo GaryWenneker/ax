@@ -53,12 +53,14 @@ impl StdioTransport {
         if line.trim().is_empty() {
             return Err(io::Error::new(io::ErrorKind::WouldBlock, "empty line"));
         }
-        serde_json::from_str(&line).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+        serde_json::from_str(&line)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
     }
 
     pub fn send_response(response: &JsonRpcResponse) -> Result<(), io::Error> {
         let mut stdout = io::stdout().lock();
-        let json = serde_json::to_string(response).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        let json = serde_json::to_string(response)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         writeln!(stdout, "{}", json)?;
         stdout.flush()?;
         Ok(())

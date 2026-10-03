@@ -213,10 +213,7 @@ mod tests {
             r#"{"members":[{"path":"svc"}]}"#,
         )
         .unwrap();
-        assert_eq!(
-            find_workspace_root(&member).as_deref(),
-            Some(dir.path())
-        );
+        assert_eq!(find_workspace_root(&member).as_deref(), Some(dir.path()));
         let layers = policy_layers(&member);
         assert!(
             layers.iter().any(|l| l.scope == PolicyScope::Project),
@@ -231,7 +228,9 @@ mod tests {
         let private = ensure_scope_dirs(root, PolicyScope::PrivateProject).unwrap();
         assert!(private.join("rules").is_dir());
         let layers = policy_layers(root);
-        assert!(layers.iter().any(|l| l.scope == PolicyScope::PrivateProject));
+        assert!(layers
+            .iter()
+            .any(|l| l.scope == PolicyScope::PrivateProject));
         let gi = std::fs::read_to_string(root.join(".ax/.gitignore")).unwrap();
         assert!(gi.contains("policy-private/"));
     }
@@ -239,8 +238,14 @@ mod tests {
     #[test]
     fn scope_parse_aliases() {
         assert_eq!(PolicyScope::parse("global"), Some(PolicyScope::Company));
-        assert_eq!(PolicyScope::parse("private"), Some(PolicyScope::PrivateProject));
-        assert_eq!(PolicyScope::parse("private_user"), Some(PolicyScope::PrivateUser));
+        assert_eq!(
+            PolicyScope::parse("private"),
+            Some(PolicyScope::PrivateProject)
+        );
+        assert_eq!(
+            PolicyScope::parse("private_user"),
+            Some(PolicyScope::PrivateUser)
+        );
     }
 
     #[test]
@@ -253,11 +258,17 @@ mod tests {
         let scopes: Vec<_> = layers.iter().map(|l| l.scope).collect();
         assert!(scopes.contains(&PolicyScope::Project));
         assert!(scopes.contains(&PolicyScope::PrivateProject));
-        let project_i = scopes.iter().position(|s| *s == PolicyScope::Project).unwrap();
+        let project_i = scopes
+            .iter()
+            .position(|s| *s == PolicyScope::Project)
+            .unwrap();
         let private_i = scopes
             .iter()
             .position(|s| *s == PolicyScope::PrivateProject)
             .unwrap();
-        assert!(private_i > project_i, "private_project must win over project");
+        assert!(
+            private_i > project_i,
+            "private_project must win over project"
+        );
     }
 }

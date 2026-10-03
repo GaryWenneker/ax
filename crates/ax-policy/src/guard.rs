@@ -51,7 +51,8 @@ pub async fn guard_operation_with_extra_skills(
         let id_lc = rule.id.to_lowercase();
         let tags: Vec<String> = rule.tags.iter().map(|t| t.to_lowercase()).collect();
 
-        if id_lc.contains("utf8") || id_lc.contains("encoding") || tags.iter().any(|t| t == "utf8") {
+        if id_lc.contains("utf8") || id_lc.contains("encoding") || tags.iter().any(|t| t == "utf8")
+        {
             if let Some(bytes) = content {
                 if has_utf8_bom(bytes) {
                     violations.push(GuardViolation {
@@ -69,17 +70,17 @@ pub async fn guard_operation_with_extra_skills(
 
         if (id_lc.contains("secret") || tags.iter().any(|t| t == "secrets"))
             && is_sensitive_path(&rel_lc)
-                && matches!(op, GuardOp::Write | GuardOp::Delete)
-            {
-                let verb = match op {
-                    GuardOp::Write => "Writing",
-                    GuardOp::Delete => "Deleting",
-                };
-                violations.push(GuardViolation {
-                    rule_id: rule.id.clone(),
-                    message: format!("{verb} sensitive path blocked by rule {}", rule.id),
-                });
-            }
+            && matches!(op, GuardOp::Write | GuardOp::Delete)
+        {
+            let verb = match op {
+                GuardOp::Write => "Writing",
+                GuardOp::Delete => "Deleting",
+            };
+            violations.push(GuardViolation {
+                rule_id: rule.id.clone(),
+                message: format!("{verb} sensitive path blocked by rule {}", rule.id),
+            });
+        }
 
         // Generic static gate: ANY CRITICAL rule can opt in by writing one of
         // these directives as a plain line in its body — no code change needed
@@ -143,16 +144,18 @@ pub async fn guard_operation_with_extra_skills(
                     }
                 }
                 GuardDirective::RequireSkill(name) => {
-                    if matches!(op, GuardOp::Write | GuardOp::Delete) && !require_skill_exempt
-                        && !skill_satisfies_require(&skills, &name) {
-                            violations.push(GuardViolation {
+                    if matches!(op, GuardOp::Write | GuardOp::Delete)
+                        && !require_skill_exempt
+                        && !skill_satisfies_require(&skills, &name)
+                    {
+                        violations.push(GuardViolation {
                                 rule_id: rule.id.clone(),
                                 message: format!(
                                     "Required skill '{name}' is missing, disabled, not approved, or not alwaysApply (rule {})",
                                     rule.id
                                 ),
                             });
-                        }
+                    }
                 }
             }
         }
@@ -241,7 +244,9 @@ fn parse_guard_directives(body: &str) -> Vec<GuardDirective> {
 
         let (prefix_len, build): (usize, fn(String) -> Option<GuardDirective>) =
             if after_guard.starts_with(FORBID_PATH_PREFIX) {
-                (FORBID_PATH_PREFIX.len(), |v| Some(GuardDirective::ForbidPath(v)))
+                (FORBID_PATH_PREFIX.len(), |v| {
+                    Some(GuardDirective::ForbidPath(v))
+                })
             } else if after_guard.starts_with(FORBID_CONTENT_PREFIX) {
                 (FORBID_CONTENT_PREFIX.len(), |v| {
                     GuardMatcher::parse(&v).map(GuardDirective::ForbidContent)
@@ -446,7 +451,13 @@ mod tests {
         // A plain CRITICAL rule with no guard: directive must never block —
         // the generic gate is opt-in, not a blanket "CRITICAL = blocked" rule.
         let (dir, pool) = pool_with_utf8_rule().await;
-        insert_rule(&pool, "no-op-rule", "[]", "Just a reminder, nothing enforceable here.").await;
+        insert_rule(
+            &pool,
+            "no-op-rule",
+            "[]",
+            "Just a reminder, nothing enforceable here.",
+        )
+        .await;
         let root = dir.path();
         let target = root.join("anything.rs");
         let result = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"fn main() {}"))
@@ -458,7 +469,13 @@ mod tests {
     #[tokio::test]
     async fn forbid_path_directive_blocks_matching_glob() {
         let (dir, pool) = pool_with_utf8_rule().await;
-        insert_rule(&pool, "no-pem", "[]", "Never commit key material.\nguard: forbid-path: \"**/*.pem\"\n").await;
+        insert_rule(
+            &pool,
+            "no-pem",
+            "[]",
+            "Never commit key material.\nguard: forbid-path: \"**/*.pem\"\n",
+        )
+        .await;
         let root = dir.path();
         let target = root.join("certs").join("server.pem");
         let result = guard_operation(&pool, root, &target, GuardOp::Write, None)
@@ -474,25 +491,49 @@ mod tests {
         insert_rule(&pool, "no-eval", "[]", "guard: forbid-content: \"eval(\"").await;
         let root = dir.path();
         let target = root.join("app.js");
-        let bad = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"eval(userInput)"))
-            .await
-            .unwrap();
+        let bad = guard_operation(
+            &pool,
+            root,
+            &target,
+            GuardOp::Write,
+            Some(b"eval(userInput)"),
+        )
+        .await
+        .unwrap();
         assert!(!bad.allowed);
-        let good = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"JSON.parse(userInput)"))
-            .await
-            .unwrap();
+        let good = guard_operation(
+            &pool,
+            root,
+            &target,
+            GuardOp::Write,
+            Some(b"JSON.parse(userInput)"),
+        )
+        .await
+        .unwrap();
         assert!(good.allowed);
     }
 
     #[tokio::test]
     async fn forbid_content_directive_supports_regex() {
         let (dir, pool) = pool_with_utf8_rule().await;
-        insert_rule(&pool, "no-secret-key", "[]", "guard: forbid-content: \"/sk-[A-Za-z0-9]{10,}/\"").await;
+        insert_rule(
+            &pool,
+            "no-secret-key",
+            "[]",
+            "guard: forbid-content: \"/sk-[A-Za-z0-9]{10,}/\"",
+        )
+        .await;
         let root = dir.path();
         let target = root.join("config.ts");
-        let bad = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"const key = 'sk-abcdefghijklmnop';"))
-            .await
-            .unwrap();
+        let bad = guard_operation(
+            &pool,
+            root,
+            &target,
+            GuardOp::Write,
+            Some(b"const key = 'sk-abcdefghijklmnop';"),
+        )
+        .await
+        .unwrap();
         assert!(!bad.allowed);
     }
 
@@ -515,16 +556,39 @@ mod tests {
         .await;
         let root = dir.path();
 
-        let in_scope = root.join("crates").join("ax-context").join("src").join("explore.rs");
-        let blocked = guard_operation(&pool, root, &in_scope, GuardOp::Write, Some(b"std::fs::read_to_string(p)"))
-            .await
-            .unwrap();
-        assert!(!blocked.allowed, "the rule's own file must still be guarded");
+        let in_scope = root
+            .join("crates")
+            .join("ax-context")
+            .join("src")
+            .join("explore.rs");
+        let blocked = guard_operation(
+            &pool,
+            root,
+            &in_scope,
+            GuardOp::Write,
+            Some(b"std::fs::read_to_string(p)"),
+        )
+        .await
+        .unwrap();
+        assert!(
+            !blocked.allowed,
+            "the rule's own file must still be guarded"
+        );
 
-        let out_of_scope = root.join("crates").join("ax-extraction").join("src").join("orchestrator.rs");
-        let allowed = guard_operation(&pool, root, &out_of_scope, GuardOp::Write, Some(b"std::fs::read_to_string(p)"))
-            .await
-            .unwrap();
+        let out_of_scope = root
+            .join("crates")
+            .join("ax-extraction")
+            .join("src")
+            .join("orchestrator.rs");
+        let allowed = guard_operation(
+            &pool,
+            root,
+            &out_of_scope,
+            GuardOp::Write,
+            Some(b"std::fs::read_to_string(p)"),
+        )
+        .await
+        .unwrap();
         assert!(
             allowed.allowed,
             "a file outside the rule's globs must not be blocked: {:?}",
@@ -545,21 +609,34 @@ mod tests {
         let root = dir.path();
 
         let route = root.join("src").join("api").join("users.ts");
-        let missing = guard_operation(&pool, root, &route, GuardOp::Write, Some(b"export function handler() {}"))
-            .await
-            .unwrap();
+        let missing = guard_operation(
+            &pool,
+            root,
+            &route,
+            GuardOp::Write,
+            Some(b"export function handler() {}"),
+        )
+        .await
+        .unwrap();
         assert!(!missing.allowed);
 
-        let present = guard_operation(&pool, root, &route, GuardOp::Write, Some(b"requireAuth(); export function handler() {}"))
-            .await
-            .unwrap();
+        let present = guard_operation(
+            &pool,
+            root,
+            &route,
+            GuardOp::Write,
+            Some(b"requireAuth(); export function handler() {}"),
+        )
+        .await
+        .unwrap();
         assert!(present.allowed);
 
         // Out-of-scope path (doesn't match the rule's globs) must not be blocked.
         let other = root.join("src").join("lib.rs");
-        let out_of_scope = guard_operation(&pool, root, &other, GuardOp::Write, Some(b"fn main() {}"))
-            .await
-            .unwrap();
+        let out_of_scope =
+            guard_operation(&pool, root, &other, GuardOp::Write, Some(b"fn main() {}"))
+                .await
+                .unwrap();
         assert!(out_of_scope.allowed);
     }
 
@@ -692,9 +769,15 @@ mod tests {
         .await;
         let root = dir.path();
         let target = root.join(".ax").join("policy").join("rules").join("x.mdc");
-        let result = guard_operation(&pool, root, &target, GuardOp::Write, Some(b"---\nid: x\n---\n"))
-            .await
-            .unwrap();
+        let result = guard_operation(
+            &pool,
+            root,
+            &target,
+            GuardOp::Write,
+            Some(b"---\nid: x\n---\n"),
+        )
+        .await
+        .unwrap();
         assert!(result.allowed, "{:?}", result.violations);
     }
 }

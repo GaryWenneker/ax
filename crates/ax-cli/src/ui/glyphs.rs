@@ -20,7 +20,10 @@ const UNICODE: Glyphs = Glyphs {
     err: "\u{2717}",
     info: "\u{2139}",
     warn: "\u{26A0}",
-    spinner_ticks: &["\u{28CB}", "\u{28FB}", "\u{28F9}", "\u{28F8}", "\u{28FC}", "\u{28F4}", "\u{28F6}", "\u{28F7}", "\u{28F1}", "\u{28CF}"],
+    spinner_ticks: &[
+        "\u{28CB}", "\u{28FB}", "\u{28F9}", "\u{28F8}", "\u{28FC}", "\u{28F4}", "\u{28F6}",
+        "\u{28F7}", "\u{28F1}", "\u{28CF}",
+    ],
     bar_filled: "\u{2588}",
     bar_empty: "\u{2591}",
 };

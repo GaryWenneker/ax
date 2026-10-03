@@ -18,6 +18,15 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v7.0.0
+
+v7.0.0 is a major release. Ax seeds its own architecture, records agent cost without taking over the Pi loop, and shows agent activity as status.
+
+- **Architecture seed.** `ax bootstrap` writes the ownership graph, foundational rules, and skills. `ax init` applies the same seed. The seed version is 2.0.0 and is independent of the app version. `ax bootstrap --verify` checks a project. `ax bootstrap --dry-run` prints the plan and writes nothing.
+- **Pi stays the runtime.** Tool economics, optimization advice, and cost quotes are advisory. The default mode is observe. Ax does not start, fork, or replace Pi.
+- **Agent activity.** The Command Center Agent page shows thinking time, context state, and tool and search counts. A context report is not shown as message text.
+- **Cost quotes.** Catalog and local budget quotes stay advisory. An unknown price stays unknown. Context efficiency is on the cost summary.
+
 ## What's new in v6.4.0
 
 v6.4.0 is a minor release. New Command Center rows show a running light in the letters, and the IDE status bar follows the window's project.

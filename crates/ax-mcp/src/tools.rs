@@ -2,16 +2,18 @@
 
 use std::path::{Path, PathBuf};
 
-use ax_core::Ax;
-use ax_extraction::orchestrator::IndexOptions;
 use ax_context::directory::{find_nearest_ax_root, is_initialized};
 use ax_context::{format_context_as_markdown, format_explore_text};
+use ax_core::Ax;
+use ax_extraction::orchestrator::IndexOptions;
 use ax_policy::{
-    detect_directive, finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput, MatchResult,
-    PolicyStatus, PolicyStore, RuleFrontmatter,
+    detect_directive, finalize_proposal, propose_rule_from_prompt, GuardOp, MatchInput,
+    MatchResult, PolicyStatus, PolicyStore, RuleFrontmatter,
 };
 use ax_reasoning::{maybe_synthesize_explore, ExploreOffloadMeta};
-use ax_types::{BuildContextOptions, ExploreOptions, Node, SearchOptions, SearchResult, Subgraph, TaskInput};
+use ax_types::{
+    BuildContextOptions, ExploreOptions, Node, SearchOptions, SearchResult, Subgraph, TaskInput,
+};
 use serde_json::{json, Value};
 
 pub struct ToolHandler;
@@ -51,7 +53,16 @@ impl ToolHandler {
             "ax_diagnostics" => diagnostics(ax, params).await,
             "ax_search" => {
                 let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                let results = ax.search_nodes(query, &SearchOptions { limit: Some(20), ..Default::default() }).await.map_err(|e| e.to_string())?;
+                let results = ax
+                    .search_nodes(
+                        query,
+                        &SearchOptions {
+                            limit: Some(20),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let text = format_search_results_text(&format!("Search: {query}"), &results);
                 Ok(json!({ "text": text, "results": results }))
             }
@@ -68,17 +79,39 @@ impl ToolHandler {
                     Ok(index) => ax_usage::index_fingerprint(&index),
                     Err(_) => String::new(),
                 };
-                let action = params.get("action").and_then(Value::as_str).unwrap_or("get");
+                let action = params
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("get");
                 if matches!(action, "fork" | "handoff") {
                     let child = crate::chat_session::mint_session();
                     let text = if action == "fork" {
-                        ax_usage::fork_working_context(ax.project_root(), &conversation, &child, &fingerprint).await?
+                        ax_usage::fork_working_context(
+                            ax.project_root(),
+                            &conversation,
+                            &child,
+                            &fingerprint,
+                        )
+                        .await?
                     } else {
-                        ax_usage::handoff_working_context(ax.project_root(), &conversation, &child, &params, &fingerprint).await?
+                        ax_usage::handoff_working_context(
+                            ax.project_root(),
+                            &conversation,
+                            &child,
+                            &params,
+                            &fingerprint,
+                        )
+                        .await?
                     };
                     return Ok(json!({ "text": text, "session": child }));
                 }
-                let text = ax_usage::working_context_apply(ax.project_root(), &conversation, &params, &fingerprint).await?;
+                let text = ax_usage::working_context_apply(
+                    ax.project_root(),
+                    &conversation,
+                    &params,
+                    &fingerprint,
+                )
+                .await?;
                 Ok(json!({ "text": text }))
             }
             "ax_durable" => {
@@ -86,21 +119,53 @@ impl ToolHandler {
                 let text = ax_usage::durable_apply(&conversation, &params).await?;
                 Ok(json!({ "text": text }))
             }
+            "ax_tool_economics" => pi_economics_tool(ax, params).await,
+            "ax_optimization_advice" => pi_optimization_tool(ax, params).await,
+            "ax_cost" => pi_cost_tool(ax, params).await,
             "ax_context" => {
                 let task = params.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                let ctx = ax.build_context(TaskInput::Text(task.to_string()), BuildContextOptions::default()).await.map_err(|e| e.to_string())?;
+                let ctx = ax
+                    .build_context(
+                        TaskInput::Text(task.to_string()),
+                        BuildContextOptions::default(),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let text = format_context_as_markdown(&ctx);
                 let mut value = serde_json::to_value(&ctx).map_err(|e| e.to_string())?;
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("text".to_string(), Value::String(text));
+                    match crate::pi_knowledge::pi_context_for_task(ax, task).await {
+                        Ok(pi) => {
+                            if let Ok(encoded) = serde_json::to_value(&pi) {
+                                obj.insert("piContext".to_string(), encoded);
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!("AX_PI_INTEGRATION_ERROR {err}");
+                            obj.insert("piContext".to_string(), json!({ "degraded": true }));
+                        }
+                    }
                 }
                 Ok(value)
             }
             "ax_callers" => {
                 let sym = params.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
-                let nodes = ax.search_nodes(sym, &SearchOptions { limit: Some(1), ..Default::default() }).await.map_err(|e| e.to_string())?;
+                let nodes = ax
+                    .search_nodes(
+                        sym,
+                        &SearchOptions {
+                            limit: Some(1),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
-                    let callers = ax.get_callers(&first.node.id, 3).await.map_err(|e| e.to_string())?;
+                    let callers = ax
+                        .get_callers(&first.node.id, 3)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     let text = format_nodes_text(&format!("Callers of '{sym}'"), &callers);
                     Ok(json!({ "text": text, "callers": callers }))
                 } else {
@@ -109,9 +174,21 @@ impl ToolHandler {
             }
             "ax_callees" => {
                 let sym = params.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
-                let nodes = ax.search_nodes(sym, &SearchOptions { limit: Some(1), ..Default::default() }).await.map_err(|e| e.to_string())?;
+                let nodes = ax
+                    .search_nodes(
+                        sym,
+                        &SearchOptions {
+                            limit: Some(1),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
-                    let callees = ax.get_callees(&first.node.id, 3).await.map_err(|e| e.to_string())?;
+                    let callees = ax
+                        .get_callees(&first.node.id, 3)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     let text = format_nodes_text(&format!("Callees of '{sym}'"), &callees);
                     Ok(json!({ "text": text, "callees": callees }))
                 } else {
@@ -120,9 +197,21 @@ impl ToolHandler {
             }
             "ax_impact" => {
                 let sym = params.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
-                let nodes = ax.search_nodes(sym, &SearchOptions { limit: Some(1), ..Default::default() }).await.map_err(|e| e.to_string())?;
+                let nodes = ax
+                    .search_nodes(
+                        sym,
+                        &SearchOptions {
+                            limit: Some(1),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if let Some(first) = nodes.first() {
-                    let sg = ax.get_impact_radius(&first.node.id, 3).await.map_err(|e| e.to_string())?;
+                    let sg = ax
+                        .get_impact_radius(&first.node.id, 3)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     let text = format_subgraph_text(sym, &sg);
                     let mut value = serde_json::to_value(&sg).map_err(|e| e.to_string())?;
                     if let Some(obj) = value.as_object_mut() {
@@ -165,11 +254,23 @@ impl ToolHandler {
                     return Err("from and to are required".into());
                 }
                 let from_hits = ax
-                    .search_nodes(from, &SearchOptions { limit: Some(1), ..Default::default() })
+                    .search_nodes(
+                        from,
+                        &SearchOptions {
+                            limit: Some(1),
+                            ..Default::default()
+                        },
+                    )
                     .await
                     .map_err(|e| e.to_string())?;
                 let to_hits = ax
-                    .search_nodes(to, &SearchOptions { limit: Some(1), ..Default::default() })
+                    .search_nodes(
+                        to,
+                        &SearchOptions {
+                            limit: Some(1),
+                            ..Default::default()
+                        },
+                    )
                     .await
                     .map_err(|e| e.to_string())?;
                 let (Some(f), Some(t)) = (from_hits.first(), to_hits.first()) else {
@@ -214,7 +315,10 @@ impl ToolHandler {
                     return Err("module is required".into());
                 }
                 let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(200) as usize;
-                let nodes = ax.module_api(module, limit).await.map_err(|e| e.to_string())?;
+                let nodes = ax
+                    .module_api(module, limit)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let text = if nodes.is_empty() {
                     format!("No exported symbols matching module '{module}'.")
                 } else {
@@ -227,7 +331,11 @@ impl ToolHandler {
                 Ok(json!({ "text": text, "module": module, "symbols": nodes }))
             }
             "ax_files" => {
-                let files = ax.queries().get_all_files().await.map_err(|e| e.to_string())?;
+                let files = ax
+                    .queries()
+                    .get_all_files()
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(json!({ "files": files }))
             }
             "ax_node" => node(ax, params).await,
@@ -235,9 +343,16 @@ impl ToolHandler {
                 let files: Vec<String> = params
                     .get("files")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
-                let affected = ax.get_affected_files(&files).await.map_err(|e| e.to_string())?;
+                let affected = ax
+                    .get_affected_files(&files)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(json!({ "affected": affected }))
             }
             "ax_remember" => remember(ax, params).await,
@@ -275,6 +390,38 @@ async fn explore(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "blastRadius": result.blast_radius,
         "entries": result.entries,
     }))
+}
+
+async fn pi_economics_tool(ax: &Ax, params: Value) -> Result<Value, String> {
+    let db = ax.project_root().join(".ax").join("ax.db");
+    let session = params.get("sessionId").and_then(|v| v.as_str());
+    let settings = ax_usage::load_settings(Some(ax.project_root()));
+    let currency = match settings.currency {
+        ax_usage::Currency::Eur => "EUR",
+        ax_usage::Currency::Usd => "USD",
+    };
+    match ax_pi::read_economics(&db, session, currency, settings.usd_per_eur).await {
+        Ok((text, value)) => Ok(json!({ "text": text, "report": value, "degraded": false })),
+        Err(err) => {
+            tracing::warn!("AX_PI_INTEGRATION_ERROR {err}");
+            Ok(json!({ "text": "AX_PI_INTEGRATION_ERROR", "degraded": true, "error": err }))
+        }
+    }
+}
+
+async fn pi_optimization_tool(ax: &Ax, _params: Value) -> Result<Value, String> {
+    let db = ax.project_root().join(".ax").join("ax.db");
+    match ax_pi::read_optimization(&db).await {
+        Ok((text, value)) => Ok(json!({ "text": text, "report": value, "degraded": false })),
+        Err(err) => {
+            tracing::warn!("AX_PI_INTEGRATION_ERROR {err}");
+            Ok(json!({ "text": "AX_PI_INTEGRATION_ERROR", "degraded": true, "error": err }))
+        }
+    }
+}
+
+async fn pi_cost_tool(ax: &Ax, params: Value) -> Result<Value, String> {
+    pi_economics_tool(ax, params).await
 }
 
 async fn budget_tool(ax: &Ax) -> Result<Value, String> {
@@ -333,7 +480,10 @@ async fn sync_tool(ax: &mut Ax) -> Result<Value, String> {
 }
 
 async fn index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let force = params
+        .get("force")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let root = ax.project_root().to_path_buf();
     if !force {
         return sync_tool(ax).await;
@@ -429,7 +579,9 @@ async fn lsp_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 "report": report,
             }))
         }
-        other => Err(format!("ax_lsp action must be status or enrich, got {other}")),
+        other => Err(format!(
+            "ax_lsp action must be status or enrich, got {other}"
+        )),
     }
 }
 
@@ -493,7 +645,10 @@ async fn ship_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let force = params
+        .get("force")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let root = ax.project_root().to_path_buf();
     ax_usage::log_policy(
         Some(&root),
@@ -545,7 +700,11 @@ fn resolve_preflight_cwd(ax: &Ax, params: &Value) -> PathBuf {
 }
 
 async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let prompt = params
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let files = string_array(params.get("files"));
     let cwd = resolve_preflight_cwd(ax, &params);
     let input = MatchInput {
@@ -633,7 +792,13 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     if let Some(ref stats) = index_stats {
         let block = ax_core::stats_format::format_index_inject_block(stats, &pending);
         if !block.is_empty() {
-            push_once(&mut inject, "block:index", &block, session_delivered.as_ref(), &mut delivered);
+            push_once(
+                &mut inject,
+                "block:index",
+                &block,
+                session_delivered.as_ref(),
+                &mut delivered,
+            );
             crate::verbose::push_line(format!(
                 "enrich index block_chars={} pending_files={}",
                 block.len(),
@@ -709,34 +874,55 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         let graph = index.as_ref().ok().map(ax_usage::index_fingerprint);
         inject.push('\n');
         inject.push_str(&chat_line(&conversation, graph.as_deref()));
-        let chat = chat_for_client(session_client(&params)).then(ax_usage::read_active_cursor_session).flatten();
+        let chat = chat_for_client(session_client(&params))
+            .then(ax_usage::read_active_cursor_session)
+            .flatten();
         if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
             inject.push('\n');
             inject.push_str(&ledger);
         }
         if let Ok(index) = index.as_ref() {
-            let unseen: Vec<_> = ax_usage::reuse_session_entries(ax.project_root(), &conversation, index)
-                .await
-                .into_iter()
-                .filter(|e| !session_delivered.as_ref().is_some_and(|m| m.contains_key(&format!("reuse:{}", e.id))))
-                .collect();
+            let unseen: Vec<_> =
+                ax_usage::reuse_session_entries(ax.project_root(), &conversation, index)
+                    .await
+                    .into_iter()
+                    .filter(|e| {
+                        !session_delivered
+                            .as_ref()
+                            .is_some_and(|m| m.contains_key(&format!("reuse:{}", e.id)))
+                    })
+                    .collect();
             let known = ax_usage::format_session_context(&unseen, ax_usage::SESSION_CONTEXT_TOKENS);
             if !known.is_empty() {
                 if session_delivered.is_some() {
-                    delivered.extend(unseen.iter().filter(|e| known.contains(&e.id)).map(|e| (format!("reuse:{}", e.id), 1)));
+                    delivered.extend(
+                        unseen
+                            .iter()
+                            .filter(|e| known.contains(&e.id))
+                            .map(|e| (format!("reuse:{}", e.id), 1)),
+                    );
                 }
                 inject.push('\n');
                 inject.push_str(&known);
             }
             let fingerprint = ax_usage::index_fingerprint(index);
             let known = params.get("known_context").and_then(Value::as_str);
-            let working = ax_usage::working_context_block(ax.project_root(), &conversation, &fingerprint, known).await;
+            let working = ax_usage::working_context_block(
+                ax.project_root(),
+                &conversation,
+                &fingerprint,
+                known,
+            )
+            .await;
             if !working.is_empty() {
                 inject.push('\n');
                 inject.push_str(&ax_section("session", &working));
             }
             let turns = params.get(TURNS_ARG).and_then(Value::as_u64).unwrap_or(0) as u32;
-            let stale = working.lines().next().is_some_and(|header| header.contains("stale=true"));
+            let stale = working
+                .lines()
+                .next()
+                .is_some_and(|header| header.contains("stale=true"));
             if let Some(nudge) = ax_usage::session_nudge(turns, stale) {
                 inject.push('\n');
                 inject.push_str(&ax_section("nudge", &nudge));
@@ -749,7 +935,9 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 .into_iter()
                 .filter(|e| {
                     let key = format!("cache:{}", e.id);
-                    !session_delivered.as_ref().is_some_and(|m| m.contains_key(&key))
+                    !session_delivered
+                        .as_ref()
+                        .is_some_and(|m| m.contains_key(&key))
                 })
                 .collect();
             if room != Some(0) && !unseen.is_empty() {
@@ -777,7 +965,13 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                 Some(n) => ax_usage::count_tokens(&titles) as u32 <= n,
             };
             if !titles.is_empty() && fits {
-                push_once(&mut inject, "block:memory_titles", &titles, session_delivered.as_ref(), &mut delivered);
+                push_once(
+                    &mut inject,
+                    "block:memory_titles",
+                    &titles,
+                    session_delivered.as_ref(),
+                    &mut delivered,
+                );
             }
         }
     }
@@ -819,7 +1013,8 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         crate::verbose::push_line("enrich directive none");
     }
 
-    let mut instruction = "Apply CRITICAL rules before editing. If a skill matched, follow its workflow.".to_string();
+    let mut instruction =
+        "Apply CRITICAL rules before editing. If a skill matched, follow its workflow.".to_string();
     if has_directive {
         instruction.push_str(" DIRECTIVE DETECTED — captureProposal holds a ready rule. Ask the user the questions in captureProposal.questions, then call ax_policy_capture(action=\"save\", rule) after they say yes. This persists even in a project with no prior policy.");
     }
@@ -911,14 +1106,19 @@ fn ax_section(name: &str, body: &str) -> String {
 }
 
 fn chat_line(chat: &str, fingerprint: Option<&str>) -> String {
-    let graph = fingerprint.map(|f| format!(" graph={}", &f[..f.len().min(16)])).unwrap_or_default();
+    let graph = fingerprint
+        .map(|f| format!(" graph={}", &f[..f.len().min(16)]))
+        .unwrap_or_default();
     format!(
         "<ax_chat session={chat}{graph}>Pass \"session\": \"{chat}\" to ax_preflight and to every ax tool call in this chat. A preflight without it starts a new chat.</ax_chat>"
     )
 }
 
 fn session_client(params: &Value) -> Option<&str> {
-    params.get(crate::server::SESSION_ARG)?.get("client")?.as_str()
+    params
+        .get(crate::server::SESSION_ARG)?
+        .get("client")?
+        .as_str()
 }
 
 /// The active Cursor chat belongs to Cursor clients (and to calls with no known client).
@@ -935,7 +1135,11 @@ fn rule_inline_chars() -> usize {
 }
 
 /// Policy inject for one MCP connection: skip bodies the agent already holds.
-fn session_policy_inject(ax: &Ax, session: &Value, result: &MatchResult) -> (String, Vec<(String, u64)>) {
+fn session_policy_inject(
+    ax: &Ax,
+    session: &Value,
+    result: &MatchResult,
+) -> (String, Vec<(String, u64)>) {
     let delivered: std::collections::HashMap<String, u64> = session
         .get("delivered")
         .and_then(|d| serde_json::from_value(d.clone()).ok())
@@ -970,14 +1174,23 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .ok_or("body required")?
         .to_string();
     let input = ax_memory::RememberInput {
-        title: params.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        title: params
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         body,
-        kind: params.get("kind").and_then(|v| v.as_str()).map(String::from),
+        kind: params
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         tags: string_array(params.get("tags")),
         files: string_array(params.get("files")),
         source: Some("mcp".into()),
     };
-    let row = ax_memory::remember(ax.db_pool(), input).await.map_err(|e| e.to_string())?;
+    let row = ax_memory::remember(ax.db_pool(), input)
+        .await
+        .map_err(|e| e.to_string())?;
     let similar = ax_memory::find_similar(
         ax.db_pool(),
         &format!("{} {}", row.title, row.body),
@@ -988,7 +1201,8 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
     .await
     .unwrap_or_default();
     let instruction = if similar.is_empty() {
-        "Memory saved. It will surface in future ax_preflight and ax_recall calls when relevant.".to_string()
+        "Memory saved. It will surface in future ax_preflight and ax_recall calls when relevant."
+            .to_string()
     } else {
         "Memory saved, but very similar memories already exist (see similar[]). If they contradict the new memory, tell the user and consider deleting the stale one.".to_string()
     };
@@ -1003,9 +1217,18 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let query = params.get("query").and_then(|v| v.as_str()).ok_or("query required")?;
-    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5).min(25) as usize;
-    let matches = ax_memory::recall(ax.db_pool(), query, limit).await.map_err(|e| e.to_string())?;
+    let query = params
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("query required")?;
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5)
+        .min(25) as usize;
+    let matches = ax_memory::recall(ax.db_pool(), query, limit)
+        .await
+        .map_err(|e| e.to_string())?;
     let text = if matches.is_empty() {
         format!("No memories match '{query}'.")
     } else {
@@ -1085,7 +1308,10 @@ async fn expand_tool(params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("id required")?;
     let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let limit = params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
     match ax_usage::expand_cached(id, offset, limit).await {
         Ok(page) => Ok(json!({
             "text": page.text,
@@ -1222,7 +1448,10 @@ async fn report(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn rules(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let prompt = params.get("prompt").and_then(|v| v.as_str()).map(String::from);
+    let prompt = params
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     if let Some(p) = prompt {
         let files = string_array(params.get("files"));
         let input = MatchInput {
@@ -1234,7 +1463,9 @@ async fn rules(ax: &mut Ax, params: Value) -> Result<Value, String> {
         let result = ax.match_policy(input).await.map_err(|e| e.to_string())?;
         Ok(json!({ "rules": result.rules }))
     } else {
-        let all = ax_policy::list_rules(ax.db_pool()).await.map_err(|e| e.to_string())?;
+        let all = ax_policy::list_rules(ax.db_pool())
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(json!({ "rules": all }))
     }
 }
@@ -1267,7 +1498,10 @@ async fn policy_capture(ax: &mut Ax, params: Value) -> Result<Value, String> {
 
         let store = PolicyStore::new(ax.db_pool().clone(), ax.project_root().to_path_buf());
         let storage = store.storage();
-        let doc = store.save_rule(fm.clone(), body).await.map_err(|e| e.error)?;
+        let doc = store
+            .save_rule(fm.clone(), body)
+            .await
+            .map_err(|e| e.error)?;
         let storage_label = match storage {
             ax_policy::PolicyStorage::Database => "database",
             ax_policy::PolicyStorage::Files => "files",
@@ -1314,7 +1548,10 @@ async fn policy_capture(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn skill(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let name = params.get("name").and_then(|v| v.as_str()).ok_or("name required")?;
+    let name = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("name required")?;
     let row = ax
         .get_policy_skill(name)
         .await
@@ -1401,7 +1638,8 @@ async fn diagnostics(ax: &mut Ax, params: Value) -> Result<Value, String> {
         }));
     }
 
-    let mut by_path: std::collections::BTreeMap<String, Vec<&DiagnosticEntry>> = std::collections::BTreeMap::new();
+    let mut by_path: std::collections::BTreeMap<String, Vec<&DiagnosticEntry>> =
+        std::collections::BTreeMap::new();
     for d in &entries {
         by_path.entry(d.path.clone()).or_default().push(d);
     }
@@ -1507,10 +1745,7 @@ fn diagnostics_from_params(params: &Value) -> Vec<DiagnosticEntry> {
                         .unwrap_or("error")
                         .to_ascii_lowercase();
                     let line = d.get("line").and_then(|v| v.as_u64());
-                    let source = d
-                        .get("source")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
+                    let source = d.get("source").and_then(|v| v.as_str()).map(String::from);
                     Some(DiagnosticEntry {
                         path,
                         line,
@@ -1815,7 +2050,9 @@ fn guard_tool() -> Value {
 }
 
 /// Indexed `content_hash` per path from the project `files` table; all files when `paths` is `None`.
-pub(crate) async fn indexed_hashes(pool: &sqlx::SqlitePool) -> Result<ax_usage::IndexHashes, String> {
+pub(crate) async fn indexed_hashes(
+    pool: &sqlx::SqlitePool,
+) -> Result<ax_usage::IndexHashes, String> {
     let rows: Vec<(String, String)> = sqlx::query_as("SELECT path, content_hash FROM files")
         .fetch_all(pool)
         .await
@@ -1826,7 +2063,8 @@ pub(crate) async fn indexed_hashes(pool: &sqlx::SqlitePool) -> Result<ax_usage::
 fn advertise_fresh(tools: &mut [Value]) {
     for tool in tools.iter_mut() {
         let cacheable = tool["name"].as_str().is_some_and(ax_usage::reuse_cacheable);
-        if let (true, Some(props)) = (cacheable, tool["inputSchema"]["properties"].as_object_mut()) {
+        if let (true, Some(props)) = (cacheable, tool["inputSchema"]["properties"].as_object_mut())
+        {
             props.insert(
                 "fresh".to_string(),
                 json!({ "type": "boolean", "description": "Skip the per-conversation cache and rerun the query" }),
@@ -1834,7 +2072,10 @@ fn advertise_fresh(tools: &mut [Value]) {
         }
         let name = tool["name"].as_str().unwrap_or_default();
         let chat_state = cacheable || matches!(name, "ax_preflight" | "ax_session" | "ax_durable");
-        if let (true, Some(props)) = (chat_state, tool["inputSchema"]["properties"].as_object_mut()) {
+        if let (true, Some(props)) = (
+            chat_state,
+            tool["inputSchema"]["properties"].as_object_mut(),
+        ) {
             props.insert(
                 "session".to_string(),
                 json!({ "type": "string", "description": "The session id preflight printed in <ax_chat>; keeps this chat's cache and notes" }),
@@ -2104,6 +2345,21 @@ fn extra_tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "ax_tool_economics",
+            "description": "Pi session tool and model economics recorded by the Ax adapter. Estimates only. Does not include prompts or tool output.",
+            "inputSchema": { "type": "object", "properties": { "sessionId": { "type": "string" } } }
+        }),
+        json!({
+            "name": "ax_optimization_advice",
+            "description": "Estimated avoidable context from recorded Pi tool calls. Advisory. Ax does not replace the tool.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "ax_cost",
+            "description": "Estimated model cost for a recorded Pi session, using the existing Ax price catalog. Unknown rates stay unknown.",
+            "inputSchema": { "type": "object", "properties": { "sessionId": { "type": "string" } } }
+        }),
+        json!({
             "name": "ax_recall",
             "description": "Search durable project memories (decisions, fixes, conventions) by free text. Fresh memories outrank stale ones via confidence decay.",
             "inputSchema": {
@@ -2221,9 +2477,7 @@ fn format_node_signatures(result: &ax_types::ExploreResult) -> String {
 const CONTEXT_CACHE_LINE: &str = "<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result. Call ax_cache_status at any time for context-cache and file-token-cache counts (no bodies). A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> before searching again; pass fresh: true to force a new query. Record a durable fact, file, symbol, decision, or open question with ax_session (actions add, update, compact, clear). Preflight shows <ax_working_context>; pass its hash as known_context and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; compact confirms the notes against the current index.</ax_context_cache>";
 
 pub fn server_instructions(has_policy: bool) -> String {
-    let mut s = String::from(
-        "You have access to ax code intelligence tools (MCP).\n\n",
-    );
+    let mut s = String::from("You have access to ax code intelligence tools (MCP).\n\n");
     // Always shipped — works even in a project with no policy yet, so the
     // first durable directive can bootstrap the policy store.
     s.push_str(
@@ -2322,7 +2576,13 @@ mod tests {
     #[tokio::test]
     async fn policy_tools_appear_when_policy_present() {
         let names = tool_names(&ToolHandler::list_tools(true).await);
-        for expected in ["ax_preflight", "ax_policy_capture", "ax_guard", "ax_rules", "ax_skill"] {
+        for expected in [
+            "ax_preflight",
+            "ax_policy_capture",
+            "ax_guard",
+            "ax_rules",
+            "ax_skill",
+        ] {
             assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
     }
@@ -2358,7 +2618,11 @@ mod tests {
         assert!(s.contains("ax_lsp"));
         assert!(s.contains("ax_ship"));
         assert!(s.contains("ax_policy_index"));
-        assert!(s.contains("do NOT shell") || s.contains("Do NOT shell") || s.contains("Shell CLI only"));
+        assert!(
+            s.contains("do NOT shell")
+                || s.contains("Do NOT shell")
+                || s.contains("Shell CLI only")
+        );
     }
 
     #[test]
@@ -2540,7 +2804,9 @@ mod tests {
             .unwrap();
         let desc = tool["description"].as_str().unwrap();
         assert!(desc.contains("full numbered source"), "{desc}");
-        assert!(tool["inputSchema"]["properties"].get("maxLinesPerSnippet").is_some());
+        assert!(tool["inputSchema"]["properties"]
+            .get("maxLinesPerSnippet")
+            .is_some());
     }
 
     #[test]
@@ -2708,7 +2974,10 @@ mod tests {
     fn server_text_and_seeds_share_the_conversation_cache_sentence() {
         for has_policy in [true, false] {
             let text = server_instructions(has_policy);
-            assert!(text.contains(ax_policy::CONVERSATION_CACHE_SENTENCE), "instructions({has_policy})");
+            assert!(
+                text.contains(ax_policy::CONVERSATION_CACHE_SENTENCE),
+                "instructions({has_policy})"
+            );
             assert!(text.contains("<ax_session_context>") && text.contains("fresh: true"));
         }
         assert!(CONTEXT_CACHE_LINE.contains(ax_policy::CONVERSATION_CACHE_SENTENCE));
@@ -2739,17 +3008,27 @@ mod tests {
         let listed = ToolHandler::list_tools(true).await;
         let tools = listed["tools"].as_array().unwrap();
         let session_type = |name: &str| {
-            tools
-                .iter()
-                .find(|t| t["name"] == name)
-                .map(|t| t["inputSchema"]["properties"]["session"]["type"].as_str() == Some("string"))
+            tools.iter().find(|t| t["name"] == name).map(|t| {
+                t["inputSchema"]["properties"]["session"]["type"].as_str() == Some("string")
+            })
         };
-        for name in ["ax_preflight", "ax_session", "ax_durable", "ax_node", "ax_explore", "ax_search", "ax_callers"] {
+        for name in [
+            "ax_preflight",
+            "ax_session",
+            "ax_durable",
+            "ax_node",
+            "ax_explore",
+            "ax_search",
+            "ax_callers",
+        ] {
             assert_eq!(session_type(name), Some(true), "{name}");
         }
         assert_eq!(session_type("ax_guard"), Some(false));
         assert_eq!(session_type("ax_sync"), Some(false));
         let preflight = tools.iter().find(|t| t["name"] == "ax_preflight").unwrap();
-        assert_eq!(preflight["inputSchema"]["properties"]["known_context"]["type"], "string");
+        assert_eq!(
+            preflight["inputSchema"]["properties"]["known_context"]["type"],
+            "string"
+        );
     }
 }

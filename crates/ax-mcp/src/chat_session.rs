@@ -98,27 +98,45 @@ mod tests {
     #[test]
     fn the_argument_wins_over_hook_and_connection() {
         for kind in [CallKind::Preflight, CallKind::Tool] {
-            assert_eq!(resolve_session(kind, some("axs_arg"), some("hook"), Some("conn"), minted), "axs_arg");
+            assert_eq!(
+                resolve_session(kind, some("axs_arg"), some("hook"), Some("conn"), minted),
+                "axs_arg"
+            );
         }
     }
 
     #[test]
     fn a_recent_hook_id_wins_over_the_connection() {
         for kind in [CallKind::Preflight, CallKind::Tool] {
-            assert_eq!(resolve_session(kind, None, some("hook"), Some("conn"), minted), "hook");
+            assert_eq!(
+                resolve_session(kind, None, some("hook"), Some("conn"), minted),
+                "hook"
+            );
         }
     }
 
     #[test]
     fn preflight_without_an_id_starts_a_new_chat() {
-        assert_eq!(resolve_session(CallKind::Preflight, None, None, Some("conn"), minted), "axs_minted");
-        assert_eq!(resolve_session(CallKind::Preflight, None, None, None, minted), "axs_minted");
+        assert_eq!(
+            resolve_session(CallKind::Preflight, None, None, Some("conn"), minted),
+            "axs_minted"
+        );
+        assert_eq!(
+            resolve_session(CallKind::Preflight, None, None, None, minted),
+            "axs_minted"
+        );
     }
 
     #[test]
     fn a_tool_without_an_id_uses_its_connection_then_mints() {
-        assert_eq!(resolve_session(CallKind::Tool, None, None, Some("conn"), minted), "conn");
-        assert_eq!(resolve_session(CallKind::Tool, None, None, None, minted), "axs_minted");
+        assert_eq!(
+            resolve_session(CallKind::Tool, None, None, Some("conn"), minted),
+            "conn"
+        );
+        assert_eq!(
+            resolve_session(CallKind::Tool, None, None, None, minted),
+            "axs_minted"
+        );
     }
 
     #[test]
@@ -128,7 +146,11 @@ mod tests {
         for id in [&a, &b] {
             let hex = id.strip_prefix("axs_").unwrap_or_else(|| panic!("{id}"));
             assert_eq!(hex.len(), 16, "{id}");
-            assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "{id}");
+            assert!(
+                hex.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "{id}"
+            );
         }
         assert_ne!(a, b);
     }

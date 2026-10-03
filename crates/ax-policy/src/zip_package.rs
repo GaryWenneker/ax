@@ -110,7 +110,9 @@ impl<'de> Deserialize<'de> for RestoreAction {
                 accept_hunks,
                 hunks,
             }),
-            Raw::Obj { action, .. } => Err(de::Error::custom(format!("unknown restore action {action}"))),
+            Raw::Obj { action, .. } => Err(de::Error::custom(format!(
+                "unknown restore action {action}"
+            ))),
         }
     }
 }
@@ -138,7 +140,11 @@ pub struct ManifestPath {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mtime: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "contentHash")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "contentHash"
+    )]
     pub content_hash: Option<String>,
 }
 
@@ -391,7 +397,8 @@ pub fn build_policy_zip(project_root: &Path, spec: &PackSpec) -> Result<Vec<u8>,
         rules: rules_meta,
         skills: skills_meta,
     };
-    let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| ZipPkgError::Io(e.to_string()))?;
+    let manifest_json =
+        serde_json::to_string_pretty(&manifest).map_err(|e| ZipPkgError::Io(e.to_string()))?;
 
     let mut cursor = Cursor::new(Vec::new());
     {
@@ -485,7 +492,11 @@ pub fn preview_policy_zip(project_root: &Path, bytes: &[u8]) -> Result<ZipPrevie
     })
 }
 
-fn preview_rule(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &ManifestPath) -> PreviewItem {
+fn preview_rule(
+    agents: &Path,
+    files: &HashMap<String, Vec<u8>>,
+    meta: &ManifestPath,
+) -> PreviewItem {
     if !safe_item_id(&meta.id) || !zip_entry_ok(&meta.path) {
         return invalid_item("rule", &meta.id, "unsafe path");
     }
@@ -497,10 +508,12 @@ fn preview_rule(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &Manifest
     }
     let dest = agents.join(RULES_DIR).join(format!("{}.mdc", meta.id));
     let (status, compare, newer) = compare_local(&dest, packaged, meta.mtime);
-    let summary = std::str::from_utf8(packaged).ok().map(|raw| match parse_rule_file(&dest, raw) {
-        Ok(d) => summarize_item_description(&d.frontmatter.id, None, &d.body),
-        Err(_) => summarize_item_description(&meta.id, None, raw),
-    });
+    let summary = std::str::from_utf8(packaged)
+        .ok()
+        .map(|raw| match parse_rule_file(&dest, raw) {
+            Ok(d) => summarize_item_description(&d.frontmatter.id, None, &d.body),
+            Err(_) => summarize_item_description(&meta.id, None, raw),
+        });
     PreviewItem {
         kind: "rule".into(),
         id: meta.id.clone(),
@@ -512,7 +525,11 @@ fn preview_rule(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &Manifest
     }
 }
 
-fn preview_skill(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &ManifestPath) -> PreviewItem {
+fn preview_skill(
+    agents: &Path,
+    files: &HashMap<String, Vec<u8>>,
+    meta: &ManifestPath,
+) -> PreviewItem {
     if !safe_item_id(&meta.id) || !zip_entry_ok(&meta.path) {
         return invalid_item("skill", &meta.id, "unsafe path");
     }
@@ -524,10 +541,17 @@ fn preview_skill(agents: &Path, files: &HashMap<String, Vec<u8>>, meta: &Manifes
     }
     let dest = agents.join(SKILLS_DIR).join(&meta.id).join(SKILL_FILENAME);
     let (status, compare, newer) = compare_local(&dest, packaged, meta.mtime);
-    let summary = std::str::from_utf8(packaged).ok().map(|raw| match parse_skill_file(&dest, raw) {
-        Ok(d) => summarize_item_description(&meta.id, Some(d.frontmatter.description.as_str()), &d.body),
-        Err(_) => summarize_item_description(&meta.id, None, raw),
-    });
+    let summary =
+        std::str::from_utf8(packaged)
+            .ok()
+            .map(|raw| match parse_skill_file(&dest, raw) {
+                Ok(d) => summarize_item_description(
+                    &meta.id,
+                    Some(d.frontmatter.description.as_str()),
+                    &d.body,
+                ),
+                Err(_) => summarize_item_description(&meta.id, None, raw),
+            });
     PreviewItem {
         kind: "skill".into(),
         id: meta.id.clone(),
@@ -619,7 +643,11 @@ fn invalid_item(kind: &str, id: &str, reason: &str) -> PreviewItem {
     }
 }
 
-fn compare_local(dest: &Path, packaged: &[u8], pack_mtime: Option<u64>) -> (String, String, String) {
+fn compare_local(
+    dest: &Path,
+    packaged: &[u8],
+    pack_mtime: Option<u64>,
+) -> (String, String, String) {
     if !dest.is_file() {
         return ("new".into(), "new".into(), "none".into());
     }
@@ -745,7 +773,10 @@ fn resolve_hunk_takes(
     }
     for pick in picks {
         if pick.index >= hunk_count {
-            return Err(ZipPkgError::BadZip(format!("invalid hunk index {}", pick.index)));
+            return Err(ZipPkgError::BadZip(format!(
+                "invalid hunk index {}",
+                pick.index
+            )));
         }
         takes[pick.index] = pick.take;
     }
@@ -830,10 +861,11 @@ fn write_plan(
             let local = std::fs::read_to_string(dest).unwrap_or_default();
             let pkg = String::from_utf8_lossy(packaged).into_owned();
             let hunks = split_diff_hunks(&local, &pkg);
-            let takes = resolve_hunk_takes(hunks.len(), accept_hunks, picks).map_err(|e| match e {
-                ZipPkgError::BadZip(m) => ZipPkgError::BadZip(format!("{key}: {m}")),
-                other => other,
-            })?;
+            let takes =
+                resolve_hunk_takes(hunks.len(), accept_hunks, picks).map_err(|e| match e {
+                    ZipPkgError::BadZip(m) => ZipPkgError::BadZip(format!("{key}: {m}")),
+                    other => other,
+                })?;
             if takes.iter().all(|t| *t == HunkTake::Local) {
                 return Ok(WritePlan::Skip);
             }
@@ -953,7 +985,10 @@ pub fn restore_policy_zip(
     for item in &preview.items {
         let key = decision_key(&item.kind, &item.id);
         if item.status == "invalid" {
-            result.errors.push(format!("{key}: {}", item.reason.clone().unwrap_or_else(|| "invalid".into())));
+            result.errors.push(format!(
+                "{key}: {}",
+                item.reason.clone().unwrap_or_else(|| "invalid".into())
+            ));
             continue;
         }
         let action = decisions.get(&key).cloned().unwrap_or_else(|| {
@@ -996,8 +1031,8 @@ pub fn restore_policy_zip(
             "skill" => {
                 let prefix = format!("skills/{}/", item.id);
                 let dest_root = agents.join(SKILLS_DIR).join(&item.id);
-                let merge_skill_md_only = matches!(&action, RestoreAction::Merge { .. })
-                    && item.status != "new";
+                let merge_skill_md_only =
+                    matches!(&action, RestoreAction::Merge { .. }) && item.status != "new";
                 if merge_skill_md_only {
                     let zip_path = format!("{prefix}{SKILL_FILENAME}");
                     let Some(content) = files.get(&zip_path) else {
@@ -1039,10 +1074,13 @@ pub fn restore_policy_zip(
 }
 
 fn read_zip_map(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, ZipPkgError> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|e| ZipPkgError::BadZip(e.to_string()))?;
+    let mut archive =
+        ZipArchive::new(Cursor::new(bytes)).map_err(|e| ZipPkgError::BadZip(e.to_string()))?;
     let mut files = HashMap::new();
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| ZipPkgError::BadZip(e.to_string()))?;
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| ZipPkgError::BadZip(e.to_string()))?;
         let name = file.name().replace('\\', "/");
         if name.ends_with('/') {
             continue;
@@ -1061,9 +1099,12 @@ fn parse_manifest(files: &HashMap<String, Vec<u8>>) -> Result<Manifest, ZipPkgEr
     let raw = files
         .get("ax-package.json")
         .ok_or_else(|| ZipPkgError::BadZip("missing ax-package.json".into()))?;
-    let text = std::str::from_utf8(raw).map_err(|_| ZipPkgError::BadZip("manifest is not UTF-8".into()))?;
+    let text = std::str::from_utf8(raw)
+        .map_err(|_| ZipPkgError::BadZip("manifest is not UTF-8".into()))?;
     if text.starts_with('\u{feff}') {
-        return Err(ZipPkgError::BadZip("manifest must be UTF-8 without BOM".into()));
+        return Err(ZipPkgError::BadZip(
+            "manifest must be UTF-8 without BOM".into(),
+        ));
     }
     let manifest: Manifest =
         serde_json::from_str(text).map_err(|e| ZipPkgError::BadZip(format!("manifest: {e}")))?;
@@ -1122,7 +1163,13 @@ fn write_rule_file(root: &Path, id: &str, enabled: bool, scope: &str) {
 }
 
 #[cfg(test)]
-fn write_skill_file(root: &Path, name: &str, enabled: bool, scope: &str, extra: Option<(&str, &str)>) {
+fn write_skill_file(
+    root: &Path,
+    name: &str,
+    enabled: bool,
+    scope: &str,
+    extra: Option<(&str, &str)>,
+) {
     let dir = agents_dir(root).join(SKILLS_DIR).join(name);
     std::fs::create_dir_all(&dir).unwrap();
     let enabled_s = if enabled { "true" } else { "false" };
@@ -1230,7 +1277,9 @@ mod tests {
         let mut dec = HashMap::new();
         dec.insert("rule:alpha".into(), RestoreAction::Overwrite);
         restore_policy_zip(dest.path(), &zip, &dec).unwrap();
-        assert!(std::fs::read_to_string(&dest_file).unwrap().contains("id: alpha"));
+        assert!(std::fs::read_to_string(&dest_file)
+            .unwrap()
+            .contains("id: alpha"));
     }
 
     #[test]
@@ -1257,7 +1306,10 @@ mod tests {
             ),
             "English only"
         );
-        assert_eq!(summarize_item_description("utf8-no-bom", None, ""), "utf8 no bom");
+        assert_eq!(
+            summarize_item_description("utf8-no-bom", None, ""),
+            "utf8 no bom"
+        );
     }
 
     #[test]
@@ -1284,7 +1336,10 @@ mod tests {
 
     #[test]
     fn slug_and_rfc3339() {
-        assert_eq!(slug_package_filename("Team Pack!"), "team-pack.ax-policy.zip");
+        assert_eq!(
+            slug_package_filename("Team Pack!"),
+            "team-pack.ax-policy.zip"
+        );
         assert!(unix_secs_to_rfc3339(0).starts_with("1970-01-01T00:00:00Z"));
     }
 
@@ -1381,7 +1436,9 @@ mod tests {
         let mut dec = HashMap::new();
         dec.insert("rule:alpha".into(), RestoreAction::Overwrite);
         restore_policy_zip(dest.path(), &zip, &dec).unwrap();
-        assert!(std::fs::read_to_string(&dest_file).unwrap().contains("id: alpha"));
+        assert!(std::fs::read_to_string(&dest_file)
+            .unwrap()
+            .contains("id: alpha"));
     }
 
     #[test]
@@ -1398,7 +1455,8 @@ mod tests {
         {
             let mut zw = ZipWriter::new(&mut cursor);
             zw.start_file("ax-package.json", zip_opts()).unwrap();
-            zw.write_all(serde_json::to_string(&man).unwrap().as_bytes()).unwrap();
+            zw.write_all(serde_json::to_string(&man).unwrap().as_bytes())
+                .unwrap();
             zw.start_file("rules/alpha.mdc", zip_opts()).unwrap();
             zw.write_all(&files["rules/alpha.mdc"]).unwrap();
             zw.finish().unwrap();
@@ -1420,7 +1478,8 @@ mod tests {
         {
             let mut zw = ZipWriter::new(&mut cursor);
             zw.start_file("ax-package.json", zip_opts()).unwrap();
-            zw.write_all(serde_json::to_string(man).unwrap().as_bytes()).unwrap();
+            zw.write_all(serde_json::to_string(man).unwrap().as_bytes())
+                .unwrap();
             for (name, bytes) in files {
                 if name == "ax-package.json" {
                     continue;
@@ -1441,7 +1500,10 @@ mod tests {
         let files = read_zip_map(&zip).unwrap();
         let man: Manifest = serde_json::from_slice(&files["ax-package.json"]).unwrap();
         let expected = content_hash_bytes(&files["rules/alpha.mdc"]);
-        assert_eq!(man.rules[0].content_hash.as_deref(), Some(expected.as_str()));
+        assert_eq!(
+            man.rules[0].content_hash.as_deref(),
+            Some(expected.as_str())
+        );
     }
 
     #[test]
@@ -1456,7 +1518,10 @@ mod tests {
         let dest = tempfile::tempdir().unwrap();
         let preview = preview_policy_zip(dest.path(), &tampered).unwrap();
         assert_eq!(preview.items[0].status, "invalid");
-        assert_eq!(preview.items[0].reason.as_deref(), Some("contentHash mismatch"));
+        assert_eq!(
+            preview.items[0].reason.as_deref(),
+            Some("contentHash mismatch")
+        );
     }
 
     #[test]
@@ -1520,12 +1585,7 @@ mod tests {
         assert_eq!(all, new);
         let err = merge_selected_hunks(old, new, &[2]).unwrap_err();
         assert!(err.to_string().contains("hunk"));
-        let both = merge_hunk_takes(
-            old,
-            new,
-            &[HunkTake::Both, HunkTake::Local],
-        )
-        .unwrap();
+        let both = merge_hunk_takes(old, new, &[HunkTake::Both, HunkTake::Local]).unwrap();
         assert_eq!(both, "a\nb\nX\nc\nd\ne\n");
     }
 
@@ -1579,7 +1639,8 @@ mod tests {
         let parsed: HashMap<String, RestoreAction> =
             serde_json::from_str(r#"{"rule:alpha":"overwrite"}"#).unwrap();
         restore_policy_zip(dest.path(), &zip, &parsed).unwrap();
-        let body = std::fs::read_to_string(agents_dir(dest.path()).join("rules/alpha.mdc")).unwrap();
+        let body =
+            std::fs::read_to_string(agents_dir(dest.path()).join("rules/alpha.mdc")).unwrap();
         assert!(body.contains("PACK-ONE"));
         assert!(body.contains("PACK-TWO"));
     }

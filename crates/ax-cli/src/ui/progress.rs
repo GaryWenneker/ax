@@ -127,6 +127,13 @@ fn truncate_path(path: &str, max: usize) -> String {
     if path.chars().count() <= max {
         return path.to_string();
     }
-    let tail: String = path.chars().rev().take(max.saturating_sub(1)).collect::<String>().chars().rev().collect();
+    let tail: String = path
+        .chars()
+        .rev()
+        .take(max.saturating_sub(1))
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("…{tail}")
 }

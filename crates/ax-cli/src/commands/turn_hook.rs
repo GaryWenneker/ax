@@ -637,7 +637,10 @@ mod tests {
             changes,
             vec![
                 ("src/a.rs".to_string(), ax_memory::FileChangeKind::Modified),
-                ("src/gone.rs".to_string(), ax_memory::FileChangeKind::Deleted),
+                (
+                    "src/gone.rs".to_string(),
+                    ax_memory::FileChangeKind::Deleted
+                ),
                 ("src/new.rs".to_string(), ax_memory::FileChangeKind::Added),
             ],
             "{}",

@@ -96,7 +96,10 @@ pub fn remove_daemon_info(project_root: &Path) {
 }
 
 pub fn resolve_idle_timeout_ms() -> u64 {
-    parse_env_ms(std::env::var(IDLE_TIMEOUT_ENV).ok(), DEFAULT_IDLE_TIMEOUT_MS)
+    parse_env_ms(
+        std::env::var(IDLE_TIMEOUT_ENV).ok(),
+        DEFAULT_IDLE_TIMEOUT_MS,
+    )
 }
 
 pub fn resolve_max_idle_ms() -> u64 {
@@ -310,14 +313,20 @@ fn acquire_daemon_lock_or_exit(project_root: &Path) -> PathBuf {
 
 pub async fn run_daemon(project_root: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let pid_path = acquire_daemon_lock_or_exit(&project_root);
-    if run_socket_daemon(project_root.clone(), pid_path.clone()).await.is_err() {
+    if run_socket_daemon(project_root.clone(), pid_path.clone())
+        .await
+        .is_err()
+    {
         tracing::warn!("socket daemon unavailable; falling back to TCP");
         run_tcp_daemon(project_root, pid_path).await?;
     }
     Ok(())
 }
 
-async fn run_socket_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_socket_daemon(
+    project_root: PathBuf,
+    pid_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         return run_windows_pipe_daemon(project_root, pid_path).await;
@@ -333,16 +342,17 @@ async fn run_socket_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(
 }
 
 #[cfg(windows)]
-async fn run_windows_pipe_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio::net::windows::named_pipe::{ServerOptions};
+async fn run_windows_pipe_daemon(
+    project_root: PathBuf,
+    pid_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio::net::windows::named_pipe::ServerOptions;
 
     let candidates = daemon_socket_candidates(&project_root);
-    let pipe_name = candidates
-        .first()
-        .cloned()
-        .ok_or("no pipe candidates")?;
+    let pipe_name = candidates.first().cloned().ok_or("no pipe candidates")?;
 
-    write_daemon_info(&project_root, 0, Some(pipe_name.clone()))?; let _ = rewrite_lock_socket_path(&pid_path, &pipe_name);
+    write_daemon_info(&project_root, 0, Some(pipe_name.clone()))?;
+    let _ = rewrite_lock_socket_path(&pid_path, &pipe_name);
     let _liveness = install_main_thread_watchdog();
     tracing::info!(
         "ax daemon on pipe {} pid {} idle {}ms",
@@ -352,7 +362,9 @@ async fn run_windows_pipe_daemon(project_root: PathBuf, pid_path: PathBuf) -> Re
     );
 
     let lifecycle = start_daemon_core(project_root.clone(), pid_path.clone()).await?;
-    let engine = Arc::new(Mutex::new(McpEngine::with_project_root(project_root.clone())));
+    let engine = Arc::new(Mutex::new(McpEngine::with_project_root(
+        project_root.clone(),
+    )));
 
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
@@ -372,8 +384,7 @@ async fn run_windows_pipe_daemon(project_root: PathBuf, pid_path: PathBuf) -> Re
         tokio::spawn(async move {
             lc.on_client_connected().await;
             let session = DaemonSession::from_io(connected);
-            let result =
-                serve_session(session, engine, &root, 0, Some(sp), lc.clone()).await;
+            let result = serve_session(session, engine, &root, 0, Some(sp), lc.clone()).await;
             lc.on_client_disconnected().await;
             if let Err(e) = result {
                 tracing::warn!("daemon client: {}", e);
@@ -384,7 +395,10 @@ async fn run_windows_pipe_daemon(project_root: PathBuf, pid_path: PathBuf) -> Re
 }
 
 #[cfg(unix)]
-async fn run_unix_socket_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_unix_socket_daemon(
+    project_root: PathBuf,
+    pid_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
     use tokio::net::UnixListener;
 
     let candidates = daemon_socket_candidates(&project_root);
@@ -408,7 +422,8 @@ async fn run_unix_socket_daemon(project_root: PathBuf, pid_path: PathBuf) -> Res
     let listener = listener.ok_or("no socket path could be bound")?;
     let socket_path = bound_path.unwrap_or_default();
 
-    write_daemon_info(&project_root, 0, Some(socket_path.clone()))?; let _ = rewrite_lock_socket_path(&pid_path, &socket_path);
+    write_daemon_info(&project_root, 0, Some(socket_path.clone()))?;
+    let _ = rewrite_lock_socket_path(&pid_path, &socket_path);
     let _liveness = install_main_thread_watchdog();
     tracing::info!(
         "ax daemon on {} pid {} idle {}ms",
@@ -418,7 +433,9 @@ async fn run_unix_socket_daemon(project_root: PathBuf, pid_path: PathBuf) -> Res
     );
 
     let lifecycle = start_daemon_core(project_root.clone(), pid_path.clone()).await?;
-    let engine = Arc::new(Mutex::new(McpEngine::with_project_root(project_root.clone())));
+    let engine = Arc::new(Mutex::new(McpEngine::with_project_root(
+        project_root.clone(),
+    )));
 
     loop {
         if lifecycle.is_stopping() {
@@ -442,7 +459,10 @@ async fn run_unix_socket_daemon(project_root: PathBuf, pid_path: PathBuf) -> Res
     Ok(())
 }
 
-async fn run_tcp_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_tcp_daemon(
+    project_root: PathBuf,
+    pid_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     write_daemon_info(&project_root, port, None)?;
@@ -455,7 +475,9 @@ async fn run_tcp_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(), 
     );
 
     let lifecycle = start_daemon_core(project_root.clone(), pid_path.clone()).await?;
-    let engine = Arc::new(Mutex::new(McpEngine::with_project_root(project_root.clone())));
+    let engine = Arc::new(Mutex::new(McpEngine::with_project_root(
+        project_root.clone(),
+    )));
 
     loop {
         if lifecycle.is_stopping() {
@@ -478,7 +500,10 @@ async fn run_tcp_daemon(project_root: PathBuf, pid_path: PathBuf) -> Result<(), 
     Ok(())
 }
 
-async fn start_daemon_core(project_root: PathBuf, pid_path: PathBuf) -> Result<Arc<DaemonLifecycle>, Box<dyn std::error::Error>> {
+async fn start_daemon_core(
+    project_root: PathBuf,
+    pid_path: PathBuf,
+) -> Result<Arc<DaemonLifecycle>, Box<dyn std::error::Error>> {
     McpEngine::start_background_services(&project_root);
     let lifecycle = DaemonLifecycle::new(project_root.clone(), Some(pid_path));
     lifecycle.spawn_watchers();

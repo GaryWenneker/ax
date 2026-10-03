@@ -27,13 +27,13 @@ pub fn print_update_notice(current: &str, latest: &str) {
         bold(latest).yellow()
     );
     bar(g);
-    eprintln!(
-        "{}  Run {}",
-        g.bar.dimmed(),
-        accent("ax upgrade")
-    );
+    eprintln!("{}  Run {}", g.bar.dimmed(), accent("ax upgrade"));
     bar(g);
-    eprint!("{} {}", g.bar_end.dimmed(), g.bar_h.repeat(inner_w).dimmed());
+    eprint!(
+        "{} {}",
+        g.bar_end.dimmed(),
+        g.bar_h.repeat(inner_w).dimmed()
+    );
     eprintln!();
     eprintln!();
 }

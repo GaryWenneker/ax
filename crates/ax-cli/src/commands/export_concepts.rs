@@ -2,11 +2,7 @@
 
 use super::export_okf::{self, ExportOkfArgs};
 
-pub async fn run(
-    path: Option<String>,
-    out: Option<String>,
-    limit: usize,
-) -> Result<(), String> {
+pub async fn run(path: Option<String>, out: Option<String>, limit: usize) -> Result<(), String> {
     export_okf::run(ExportOkfArgs {
         path,
         out,

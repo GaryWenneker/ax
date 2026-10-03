@@ -29,7 +29,10 @@ pub async fn run(path: Option<String>) -> Result<(), String> {
         std::fs::remove_file(&lock_path).map_err(|e| e.to_string())?;
     }
 
-    println!("{}", ok_line("Lock cleared. You can run ax init or ax index again."));
+    println!(
+        "{}",
+        ok_line("Lock cleared. You can run ax init or ax index again.")
+    );
     Ok(())
 }
 
@@ -56,7 +59,14 @@ fn kill_ax_windows(self_pid: u32) -> Result<usize, String> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut killed = 0usize;
     let procs = std::process::Command::new("wmic")
-        .args(["process", "where", "name='ax.exe'", "get", "ProcessId", "/format:csv"])
+        .args([
+            "process",
+            "where",
+            "name='ax.exe'",
+            "get",
+            "ProcessId",
+            "/format:csv",
+        ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| e.to_string())?;

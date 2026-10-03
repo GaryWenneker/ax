@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::parse::{parse_rule_file, parse_skill_file};
-use crate::paths::{RULES_DIR, SKILL_FILENAME, SKILLS_DIR};
+use crate::paths::{RULES_DIR, SKILLS_DIR, SKILL_FILENAME};
 use crate::types::PolicyScope;
 
 pub const AGENTS_DIR: &str = ".agents";
@@ -22,7 +22,11 @@ pub fn agents_dir(project_root: &Path) -> PathBuf {
 
 /// Move an existing rules/skills folder when `policy.agentsDir` changes.
 /// No-op when the names match. Errors when the destination already exists.
-pub fn relocate_agents_dir(project_root: &Path, from_name: &str, to_name: &str) -> Result<(), String> {
+pub fn relocate_agents_dir(
+    project_root: &Path,
+    from_name: &str,
+    to_name: &str,
+) -> Result<(), String> {
     if from_name == to_name {
         return Ok(());
     }
@@ -304,7 +308,10 @@ pub fn link_cursor_skills_to_agents(project_root: &Path) -> Result<Vec<String>, 
         }
         let name = entry.file_name();
         let dest = cursor_skills.join(&name);
-        let target = PathBuf::from("../../").join(AGENTS_DIR).join(SKILLS_DIR).join(&name);
+        let target = PathBuf::from("../../")
+            .join(AGENTS_DIR)
+            .join(SKILLS_DIR)
+            .join(&name);
         if dest.exists() || dest.symlink_metadata().is_ok() {
             if dest
                 .symlink_metadata()
@@ -491,7 +498,10 @@ mod tests {
         ensure_scope_dirs(p, PolicyScope::PrivateProject).unwrap();
         let layers = policy_layers(p);
         let dirs: Vec<_> = layers.iter().map(|l| l.dir.clone()).collect();
-        let i_legacy = dirs.iter().position(|d| d == &legacy_policy_dir(p)).unwrap();
+        let i_legacy = dirs
+            .iter()
+            .position(|d| d == &legacy_policy_dir(p))
+            .unwrap();
         let i_agents = dirs.iter().position(|d| d == &agents_dir(p)).unwrap();
         let i_inactive = dirs.iter().position(|d| d == &inactive_dir(p)).unwrap();
         let i_private = dirs
@@ -510,12 +520,7 @@ mod tests {
         let p = dir.path();
         std::fs::create_dir_all(p.join(".ax/policy/rules")).unwrap();
         std::fs::create_dir_all(p.join(".ax/policy/pending/rules")).unwrap();
-        write_rule(
-            &p.join(".ax/policy/rules/foo.mdc"),
-            "foo",
-            true,
-            "project",
-        );
+        write_rule(&p.join(".ax/policy/rules/foo.mdc"), "foo", true, "project");
         std::fs::write(p.join(".ax/policy/pending/rules/bar.mdc"), "x").unwrap();
         let moved = migrate_legacy_policy_to_agents(p).unwrap();
         assert!(moved.iter().any(|m| m.contains("foo.mdc")));
@@ -600,12 +605,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
         assert!(agents_share_violations(p).is_empty());
-        write_rule(
-            &p.join(".agents/rules/bad.mdc"),
-            "bad",
-            false,
-            "project",
-        );
+        write_rule(&p.join(".agents/rules/bad.mdc"), "bad", false, "project");
         assert!(!agents_share_violations(p).is_empty());
         std::fs::remove_file(p.join(".agents/rules/bad.mdc")).unwrap();
         write_rule(

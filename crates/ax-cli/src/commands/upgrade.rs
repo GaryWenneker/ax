@@ -107,10 +107,7 @@ pub async fn run(
     } else {
         println!(
             "{}",
-            ok_line(format!(
-                "Installing {}…",
-                strip_v(&target_version)
-            ))
+            ok_line(format!("Installing {}…", strip_v(&target_version)))
         );
     }
     let archive_name = format!("ax-{bundle}.{ext}");
@@ -209,7 +206,11 @@ fn resolve_local_archive_path(
         candidates.push(cwd.join("dist").join(&name));
     }
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        if let Some(root) = exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
             candidates.push(root.join("dist").join(&name));
         }
     }
@@ -234,7 +235,9 @@ fn download_archive(version: &str, bundle: &str, ext: &str) -> Result<Vec<u8>, S
         Err(e) => {
             eprintln!(
                 "{}",
-                info_line(format!("GitHub download failed ({e}); trying getax redirect…"))
+                info_line(format!(
+                    "GitHub download failed ({e}); trying getax redirect…"
+                ))
             );
         }
     }
@@ -255,15 +258,11 @@ fn download_bytes(url: &str, token: Option<&str>) -> Result<Vec<u8>, String> {
         req = req.header("Authorization", format!("Bearer {t}"));
     }
 
-    let resp = req
-        .send()
-        .map_err(|e| format!("download failed: {e}"))?;
+    let resp = req.send().map_err(|e| format!("download failed: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {} for {url}", resp.status()));
     }
-    resp.bytes()
-        .map(|b| b.to_vec())
-        .map_err(|e| e.to_string())
+    resp.bytes().map(|b| b.to_vec()).map_err(|e| e.to_string())
 }
 
 #[cfg(not(windows))]
@@ -363,7 +362,14 @@ fn stop_other_ax_processes(self_pid: u32) -> Result<usize, String> {
     use std::os::windows::process::CommandExt;
     let mut killed = 0usize;
     let procs = std::process::Command::new("wmic")
-        .args(["process", "where", "name='ax.exe'", "get", "ProcessId", "/format:csv"])
+        .args([
+            "process",
+            "where",
+            "name='ax.exe'",
+            "get",
+            "ProcessId",
+            "/format:csv",
+        ])
         .creation_flags(windows_no_window())
         .output()
         .map_err(|e| e.to_string())?;
@@ -387,7 +393,11 @@ fn stop_other_ax_processes(self_pid: u32) -> Result<usize, String> {
 }
 
 #[cfg(not(windows))]
-pub fn run_upgrade_apply(_parent_pid: u32, _staging: PathBuf, _dest: PathBuf) -> Result<(), String> {
+pub fn run_upgrade_apply(
+    _parent_pid: u32,
+    _staging: PathBuf,
+    _dest: PathBuf,
+) -> Result<(), String> {
     Err("upgrade-apply is only used on Windows".into())
 }
 
@@ -505,7 +515,12 @@ fn staging_helper_exe(staging: &Path) -> PathBuf {
 }
 
 #[cfg(windows)]
-fn spawn_upgrade_apply_helper(helper: &Path, parent_pid: u32, staging: &Path, dest: &Path) -> Result<(), String> {
+fn spawn_upgrade_apply_helper(
+    helper: &Path,
+    parent_pid: u32,
+    staging: &Path,
+    dest: &Path,
+) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -629,7 +644,9 @@ fn replace_binary_unix(current_exe: &Path, new_bytes: &[u8]) -> Result<(), Strin
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&tmp).map_err(|e| e.to_string())?.permissions();
+        let mut perms = std::fs::metadata(&tmp)
+            .map_err(|e| e.to_string())?
+            .permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&tmp, perms).map_err(|e| e.to_string())?;
     }
@@ -643,8 +660,10 @@ mod tests {
 
     #[test]
     fn bundle_names() {
-        assert!(release_bundle_target().starts_with("win32-")
-            || release_bundle_target().starts_with("linux-")
-            || release_bundle_target().starts_with("darwin-"));
+        assert!(
+            release_bundle_target().starts_with("win32-")
+                || release_bundle_target().starts_with("linux-")
+                || release_bundle_target().starts_with("darwin-")
+        );
     }
 }

@@ -21,6 +21,7 @@ By default the server lists the **turn contract** plus the **whole graph read su
 |---|---|
 | Turn contract | `ax_preflight`, `ax_policy_capture`, and (when policy exists) `ax_rules` / `ax_skill` / `ax_guard` |
 | Graph reads | `ax_explore`, `ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`, `ax_path`, `ax_cycles`, `ax_api`, `ax_context`, `ax_session`, `ax_affected`, `ax_insights`, `ax_report`, `ax_status`, `ax_sync`, `ax_remember`, `ax_recall`, `ax_history`, `ax_expand`, `ax_stash`, `ax_cache_status` |
+| Pi economics | `ax_tool_economics`, `ax_optimization_advice`, `ax_cost` (estimates from the Pi adapter; `ax_context` and `ax_explore` are the existing graph tools) |
 
 `ax_explore` remains the one call that usually answers a whole question: give it a natural-language question or a bag of symbol and file names and it returns the **verbatim, line-numbered source** of the relevant symbols grouped by file, plus call paths and a blast-radius summary. Reach for the narrower tools when you already know exactly what you want.
 

@@ -11,8 +11,8 @@ use crate::commands::{check_unsafe_root, resolve_path};
 use crate::installer::{run_installer, InstallOptions};
 use crate::ui::install_log::tildify;
 use crate::ui::{
-    dim, finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, info_line,
-    ok_line,
+    dim, finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback,
+    info_line, ok_line,
 };
 
 pub async fn run(path: Option<String>, workspace: bool, all: bool) -> Result<(), String> {
@@ -151,7 +151,10 @@ async fn run_inner(
             "{}",
             info_line(format!("Initializing ax in {}", tildify(&root)))
         );
-        println!("  {}", dim("Large projects take several minutes — progress updates below."));
+        println!(
+            "  {}",
+            dim("Large projects take several minutes — progress updates below.")
+        );
     }
     println!();
 
@@ -256,10 +259,7 @@ async fn run_inner(
         if !i.created.is_empty() {
             println!(
                 "{}",
-                ok_line(format!(
-                    "Seeded {} IDE bootstrap file(s)",
-                    i.created.len()
-                ))
+                ok_line(format!("Seeded {} IDE bootstrap file(s)", i.created.len()))
             );
             for rel in &i.created {
                 println!("  {}", dim(rel));
@@ -268,10 +268,7 @@ async fn run_inner(
         } else if !i.updated.is_empty() {
             println!(
                 "{}",
-                ok_line(format!(
-                    "Updated {} IDE bootstrap file(s)",
-                    i.updated.len()
-                ))
+                ok_line(format!("Updated {} IDE bootstrap file(s)", i.updated.len()))
             );
             for rel in &i.updated {
                 println!("  {}", dim(rel));
@@ -333,10 +330,7 @@ async fn run_inner(
                 } else {
                     println!(
                         "{}",
-                        ok_line(format!(
-                            "Offload active: {} ({})",
-                            active.name, active.url
-                        ))
+                        ok_line(format!("Offload active: {} ({})", active.name, active.url))
                     );
                 }
                 println!();
@@ -398,6 +392,19 @@ async fn run_inner(
         );
     }
 
+    match ax_policy::apply(&root, false) {
+        Ok(report) => {
+            println!(
+                "{}",
+                ok_line(format!(
+                    "Architecture seed {} (+{} entities, +{} rules)",
+                    report.seed_version, report.entities_created, report.rules_created
+                ))
+            );
+        }
+        Err(err) => return Err(format!("architecture seed failed: {err}")),
+    }
+
     // Database policy mode — always merge from disk so ~/.ax/global_policy/ stays in ax.db.
     let force_policy = true;
     match ax.index_policy(force_policy).await {
@@ -407,8 +414,7 @@ async fn run_inner(
                     "{}",
                     ok_line(format!(
                         "Policy indexed {} rules, {} skills (startup protocol via ax_preflight)",
-                        policy.rules_indexed,
-                        policy.skills_indexed
+                        policy.rules_indexed, policy.skills_indexed
                     ))
                 );
             }
@@ -471,11 +477,26 @@ fn choose_agents_dir_for_init(root: &std::path::Path, interactive: bool) -> Resu
 
 const STACK_GROUPS: &[(&str, &[&str])] = &[
     ("Platforms", &["dotnet", "java", "kotlin", "scala"]),
-    ("Web", &["javascript", "typescript", "react", "nextjs", "angular", "vue", "svelte", "astro"]),
+    (
+        "Web",
+        &[
+            "javascript",
+            "typescript",
+            "react",
+            "nextjs",
+            "angular",
+            "vue",
+            "svelte",
+            "astro",
+        ],
+    ),
     ("PHP", &["php", "laravel", "drupal"]),
     ("CMS", &["sitecore", "optimizely"]),
     ("Systems", &["rust", "go", "c", "cpp", "swift", "objc"]),
-    ("Languages", &["python", "ruby", "dart", "lua", "luau", "r", "pascal"]),
+    (
+        "Languages",
+        &["python", "ruby", "dart", "lua", "luau", "r", "pascal"],
+    ),
 ];
 
 fn grouped_stacks(catalog: &[ax_policy::StackInfo]) -> Vec<(String, &ax_policy::StackInfo)> {
@@ -634,9 +655,15 @@ fn prompt_menu(checked: &mut [bool], items: &[MenuItem]) -> Result<(), String> {
 
 /// Ask which stacks to install. Runs on every `ax init`, including a second run.
 /// A non-interactive stdin keeps the saved selection so CI does not block.
-fn choose_stacks_for_init(root: &std::path::Path, interactive: bool) -> Result<Vec<String>, String> {
+fn choose_stacks_for_init(
+    root: &std::path::Path,
+    interactive: bool,
+) -> Result<Vec<String>, String> {
     let current = ax_policy::read_configured_stacks(root);
-    let detected: Vec<String> = ax_policy::detect_stacks(root).into_iter().map(|d| d.id).collect();
+    let detected: Vec<String> = ax_policy::detect_stacks(root)
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
     if !interactive || !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         return Ok(current);
     }
@@ -697,7 +724,11 @@ fn ide_items(detected: &[String]) -> Vec<MenuItem> {
             MenuItem {
                 group: group.to_string(),
                 id: id.to_string(),
-                note: if found { format!("{name} (found)") } else { name.to_string() },
+                note: if found {
+                    format!("{name} (found)")
+                } else {
+                    name.to_string()
+                },
             }
         })
         .collect()
@@ -712,7 +743,13 @@ fn choose_ides_for_init(root: &std::path::Path, interactive: bool) -> Result<Ide
     let saved = raw.as_deref().map(|list| {
         let (known, unknown) = ax_installer::known_ides(list);
         if !unknown.is_empty() {
-            eprintln!("{}", dim(format!("Ignoring unknown saved IDE(s): {}", unknown.join(", "))));
+            eprintln!(
+                "{}",
+                dim(format!(
+                    "Ignoring unknown saved IDE(s): {}",
+                    unknown.join(", ")
+                ))
+            );
         }
         known
     });
@@ -724,7 +761,10 @@ fn choose_ides_for_init(root: &std::path::Path, interactive: bool) -> Result<Ide
     let defaults = ax_installer::ide_defaults(saved.as_deref(), &detected);
     if let Ok(answer) = std::env::var(ANSWER_ENV) {
         let chosen = ax_installer::parse_ide_choice(&answer, &defaults)?;
-        return Ok(IdeChoice { chosen, asked: true });
+        return Ok(IdeChoice {
+            chosen,
+            asked: true,
+        });
     }
     if !interactive || !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         return Ok(IdeChoice {
@@ -745,16 +785,23 @@ fn choose_ides_for_init(root: &std::path::Path, interactive: bool) -> Result<Ide
         Err(err) => {
             println!(
                 "  {}",
-                dim(format!("Menu unavailable ({err}). Type ids separated by spaces, or 'none'."))
+                dim(format!(
+                    "Menu unavailable ({err}). Type ids separated by spaces, or 'none'."
+                ))
             );
             print!("IDEs: ");
             let _ = std::io::Write::flush(&mut std::io::stdout());
             let mut line = String::new();
-            std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+            std::io::stdin()
+                .read_line(&mut line)
+                .map_err(|e| e.to_string())?;
             ax_installer::parse_ide_choice(&line, &defaults)?
         }
     };
-    Ok(IdeChoice { chosen, asked: true })
+    Ok(IdeChoice {
+        chosen,
+        asked: true,
+    })
 }
 
 /// Save the answer, remove ax from IDEs that were dropped, and connect the chosen ones.
@@ -776,14 +823,24 @@ fn apply_ide_choice(root: &std::path::Path, choice: IdeChoice) -> Result<(), Str
                     .map(|f| tildify(&f.path))
                     .filter(|p| seen.insert(p.clone()))
                     .collect();
-                let what = if files.is_empty() { "nothing to remove".to_string() } else { files.join(", ") };
-                println!("{}", ok_line(format!("Removed ax from {}: {what}", report.display_name)));
+                let what = if files.is_empty() {
+                    "nothing to remove".to_string()
+                } else {
+                    files.join(", ")
+                };
+                println!(
+                    "{}",
+                    ok_line(format!("Removed ax from {}: {what}", report.display_name))
+                );
             }
         }
     }
     if choice.chosen.is_empty() {
         ax_installer::ensure_global_config();
-        println!("{}", ok_line("No IDEs chosen; ax is not connected to any IDE"));
+        println!(
+            "{}",
+            ok_line("No IDEs chosen; ax is not connected to any IDE")
+        );
         return Ok(());
     }
     run_installer(
@@ -796,7 +853,9 @@ fn apply_ide_choice(root: &std::path::Path, choice: IdeChoice) -> Result<(), Str
     )
 }
 
-async fn store_dotnet_code_review_in_global_db(project_root: &std::path::Path) -> Result<(), String> {
+async fn store_dotnet_code_review_in_global_db(
+    project_root: &std::path::Path,
+) -> Result<(), String> {
     let path = ax_policy::agents_dir(project_root)
         .join("skills")
         .join("dotnet-code-review")
@@ -806,7 +865,10 @@ async fn store_dotnet_code_review_in_global_db(project_root: &std::path::Path) -
     ax_global_db::policy::upsert_machine_skill(&doc.frontmatter.name, &global_skill_payload(&doc))
         .await
         .map_err(|e| e.to_string())?;
-    println!("{}", ok_line("Stored dotnet-code-review in ~/.ax/global.db"));
+    println!(
+        "{}",
+        ok_line("Stored dotnet-code-review in ~/.ax/global.db")
+    );
     Ok(())
 }
 
@@ -843,7 +905,8 @@ pub(crate) async fn store_seeded_skills_in_global_db(
         let mut stored = Vec::new();
         for (name, raw) in ax_policy::global_db_seed_skills() {
             let path = std::path::Path::new(name).join("SKILL.md");
-            let doc = ax_policy::parse_skill_file(&path, raw).map_err(|e| format!("{name}: {e:?}"))?;
+            let doc =
+                ax_policy::parse_skill_file(&path, raw).map_err(|e| format!("{name}: {e:?}"))?;
             ax_global_db::policy::upsert_policy_item(
                 &pool,
                 project_id,
@@ -866,7 +929,9 @@ pub(crate) async fn store_seeded_skills_in_global_db(
 /// runtime, so it works inside or outside an async context.
 pub(crate) fn store_seeded_skills_in_global_db_blocking() -> Result<Vec<String>, String> {
     let db = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
-    let machine = ax_utils::paths::home_dir().ok_or("no home dir")?.join(".ax");
+    let machine = ax_utils::paths::home_dir()
+        .ok_or("no home dir")?
+        .join(".ax");
     store_seeded_skills_blocking_at(db, machine)
 }
 
@@ -925,16 +990,21 @@ mod tests {
             depends_on: Vec::new(),
             files: 0,
         };
-        let (rust, go, ts) = (stack("rust", "Rust rules"), stack("go", "Go rules"), stack("typescript", "TS rules"));
+        let (rust, go, ts) = (
+            stack("rust", "Rust rules"),
+            stack("go", "Go rules"),
+            stack("typescript", "TS rules"),
+        );
         let grouped = vec![
             ("Systems".to_string(), &rust),
             ("Systems".to_string(), &go),
             ("Web".to_string(), &ts),
         ];
-        let text: Vec<(Option<usize>, String)> = stack_menu_lines(&grouped, &[true, false, false], 1)
-            .into_iter()
-            .map(|l| (l.item, strip_ansi(&l.text)))
-            .collect();
+        let text: Vec<(Option<usize>, String)> =
+            stack_menu_lines(&grouped, &[true, false, false], 1)
+                .into_iter()
+                .map(|l| (l.item, strip_ansi(&l.text)))
+                .collect();
         assert_eq!(
             text,
             vec![
@@ -961,13 +1031,12 @@ mod tests {
 
     async fn skill_rows(db: &std::path::Path, item_id: &str) -> Vec<(String, String)> {
         let pool = ax_global_db::open_and_init(db).await.unwrap();
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT item_id, payload FROM global_policy_skills WHERE item_id = ?",
-        )
-        .bind(item_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT item_id, payload FROM global_policy_skills WHERE item_id = ?")
+                .bind(item_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
         pool.close().await;
         rows
     }
@@ -977,11 +1046,22 @@ mod tests {
         let dir = temp_dir("global-db");
         let db = dir.join("global.db");
         let machine = dir.join(".ax");
-        let stored = store_seeded_skills_in_global_db(&db, &machine).await.unwrap();
-        assert_eq!(stored, vec!["review-loop".to_string(), "pr-review-comments".to_string()]);
-        store_seeded_skills_in_global_db(&db, &machine).await.unwrap();
+        let stored = store_seeded_skills_in_global_db(&db, &machine)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored,
+            vec!["review-loop".to_string(), "pr-review-comments".to_string()]
+        );
+        store_seeded_skills_in_global_db(&db, &machine)
+            .await
+            .unwrap();
         let rows = skill_rows(&db, "review-loop").await;
-        assert_eq!(rows.len(), 1, "a second store updates the row instead of duplicating it");
+        assert_eq!(
+            rows.len(),
+            1,
+            "a second store updates the row instead of duplicating it"
+        );
         let payload: serde_json::Value = serde_json::from_str(&rows[0].1).unwrap();
         assert_eq!(payload["name"], "review-loop");
         assert_eq!(payload["scope"], "company");
@@ -995,7 +1075,10 @@ mod tests {
         let dir = temp_dir("global-db-bad");
         let result = store_seeded_skills_in_global_db(&dir, &dir.join(".ax")).await;
         let err = result.expect_err("a directory is not a database");
-        assert!(err.contains(&dir.display().to_string()), "error names the path: {err}");
+        assert!(
+            err.contains(&dir.display().to_string()),
+            "error names the path: {err}"
+        );
         cleanup(&dir);
     }
 
@@ -1003,10 +1086,16 @@ mod tests {
     fn blocking_store_works_from_inside_a_runtime() {
         let dir = temp_dir("global-db-blocking");
         let db = dir.join("global.db");
-        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let result =
             rt.block_on(async { store_seeded_skills_blocking_at(db.clone(), dir.join(".ax")) });
-        assert_eq!(result.unwrap(), vec!["review-loop".to_string(), "pr-review-comments".to_string()]);
+        assert_eq!(
+            result.unwrap(),
+            vec!["review-loop".to_string(), "pr-review-comments".to_string()]
+        );
         assert!(db.is_file());
         cleanup(&dir);
     }

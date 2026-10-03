@@ -19,6 +19,7 @@ import LoggingPage from './pages/Logging';
 import SavingsPage from './pages/Savings';
 import PricesPage from './pages/Prices';
 import MemoryPage from './pages/Memory';
+import AgentPage from './pages/Agent';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
 import HeaderWaves from './components/HeaderWaves';
@@ -138,7 +139,7 @@ function AppShell() {
   }, [sidebarOpen]);
 
   useEffect(() => {
-    if (page === 'sonar' || page === 'agent') {
+    if (page === 'sonar') {
       const next = { ...route, page: 'stats' as const };
       setRoute(next);
       navigateRoute(next, true);
@@ -415,6 +416,7 @@ function AppShell() {
             {page === 'files' && <FilesPage key={workspaceKey} />}
             {page === 'search' && <SearchPage key={workspaceKey} />}
             {page === 'memory' && <MemoryPage key={workspaceKey} />}
+            {page === 'agent' && <AgentPage key={workspaceKey} />}
             {page === 'unresolved' && <UnresolvedPage key={workspaceKey} route={route} onRouteChange={applyRoute} />}
             {page === 'savings' && showSavings && <SavingsPage key={workspaceKey} />}
             {page === 'prices' && <PricesPage key={workspaceKey} />}

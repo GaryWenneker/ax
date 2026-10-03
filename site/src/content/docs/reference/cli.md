@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v5.2.0).
+description: Complete reference for every ax command, argument, and flag (v7.0.0).
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.
@@ -109,6 +109,24 @@ ax init
 ax init ./services/api
 ax init --workspace
 ax init --all
+```
+
+### `ax bootstrap [path]`
+
+Apply the versioned architecture seed. The seed version is independent of the ax binary version. A second run does not duplicate entities, relationships, rules, or skills. The command does not start Pi.
+
+| Argument / flag | Type | Description |
+|---|---|---|
+| `path` | optional | Project root (default: current directory) |
+| `--dry-run` | flag | Print the seed plan and write nothing |
+| `--verify` | flag | Check required entities, relationships, rules, and skills. Exit non-zero when any are missing |
+| `--json` | flag | Machine-readable result (`seedVersion`, `status`, `entitiesCreated`, `relationshipsCreated`, `rulesCreated`, `skillsCreated`) |
+
+```bash
+ax bootstrap
+ax bootstrap --dry-run
+ax bootstrap --verify
+ax bootstrap --json
 ```
 
 ### `ax uninit [path]`
@@ -954,6 +972,25 @@ ax costs
 ax costs today
 ax costs month
 ax costs model
+```
+
+### `ax agent economics`
+
+Estimated tokens and catalog cost for a Pi session recorded by the Ax adapter. Tool output tokens are estimates of what was delivered into context. Tool execution itself is not priced as model tokens. Missing rates stay unknown.
+
+```bash
+ax agent economics
+ax agent economics --session abc123
+ax agent economics --json
+```
+
+### `ax agent optimize`
+
+Estimated avoidable context from recorded tool calls. The report is advisory. `optimization.mode` defaults to `observe`. `optimize` approves only high-confidence deterministic rules and does not rewrite Pi's transcript.
+
+```bash
+ax agent optimize --report
+ax agent optimize --report --json
 ```
 
 ### `ax budget`

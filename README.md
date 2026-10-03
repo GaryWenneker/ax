@@ -3,9 +3,9 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v6.4.0](https://github.com/GaryWenneker/ax/releases/tag/v6.4.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v7.0.0](https://github.com/GaryWenneker/ax/releases/tag/v7.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
-**v6.4.0** (minor) runs a narrow light through the title of a new Command Center row, without a background glow. Clicking **ax** in the Cursor or VS Code status bar switches Command Center to that window's project and opens a pop-out. A search that alternates several symbol names is steered back to the graph, the same way a search for one symbol name is.
+**v7.0.0** (major) seeds Ax's architecture with `ax bootstrap`, keeps Pi as the agent runtime, and shows Agent activity as status instead of a raw context report. Cost quotes stay advisory.
 
 **v6.3.0** (minor) initializes every project it can find when you install or upgrade ax. The scan walks four levels under your home directory, skips hidden and dependency folders, and runs `ax init` on each git repo, project manifest, or existing ax project without asking questions. Run it again with `ax init --all`. Set `AX_SKIP_PROJECT_INIT=1` to skip.
 
@@ -236,6 +236,9 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax pricing` | Daily model price sync (OpenRouter) |
 | `ax costs` | Estimated agent spend from imported turns (`today`, `month`, `model`) |
 | `ax budget` | Local monthly plan, simulation, and thresholds (`plan`, `simulate`, `set`) |
+| `ax bootstrap` | Versioned Ax and Pi architecture seed (`--dry-run`, `--verify`, `--json`) |
+| `ax agent economics` | Pi session token and cost estimates (`--session`, `--json`) |
+| `ax agent optimize --report` | Estimated avoidable context from recorded Pi tool calls |
 | `ax mcp audit` | MCP quality audit (verbose log ↔ Cursor transcript; Quality slide-out engine) |
 | `ax cursor auth …` | Save/restore Cursor subscription sessions (`status`, `save`, `use`, `list`) |
 | `ax affected <files…>` | Tests affected by file changes |
@@ -378,6 +381,7 @@ Per-project indexes: pass `projectPath` when the workspace root differs from cwd
 | `ax-reasoning` | Optional BYO LLM offload for explore |
 | `ax-policy` | Rules/skills parse, index, match, guard |
 | `ax-agent` | Cursor auth session management (save/restore profiles) |
+| `ax-pi` | Pi observer: events, context advice, tool economics. Pi keeps the agent loop |
 | `ax-ship` | Quality-gate pipeline, SonarQube orchestration, draft PRs |
 | `ax-web` | Embedded web UI (graph + policy management + Command Center) |
 | `ax-desktop-client` | Native wgpu Command Center (`ax-desktop` binary; embeds `ax-web`) |

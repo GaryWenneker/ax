@@ -1,8 +1,8 @@
 //! `ax cursor auth` — save and restore Cursor subscription sessions.
 
 use ax_agent::{
-    active_profile_name, cursor_process_running, enrich_snapshot_metadata,
-    jwt_issued_at, jwt_subject, list_cursor_auth_profiles, load_cursor_auth_profile,
+    active_profile_name, cursor_process_running, enrich_snapshot_metadata, jwt_issued_at,
+    jwt_subject, list_cursor_auth_profiles, load_cursor_auth_profile,
     read_legacy_auth_json_snapshot, read_live_snapshot, save_cursor_auth_profile,
     use_cursor_auth_profile,
 };
@@ -82,10 +82,7 @@ pub fn run_list(json: bool) -> Result<(), String> {
         } else {
             ""
         };
-        println!(
-            "  {}{} — {} ({})",
-            p.name, mark, p.email, p.membership
-        );
+        println!("  {}{} — {} ({})", p.name, mark, p.email, p.membership);
     }
     Ok(())
 }
@@ -141,7 +138,10 @@ pub fn run_use(name: String, force: bool, json: bool) -> Result<(), String> {
             .unwrap_or_default()
         );
     } else {
-        println!("Applied profile '{name}' — {} ({})", snapshot.email, snapshot.membership);
+        println!(
+            "Applied profile '{name}' — {} ({})",
+            snapshot.email, snapshot.membership
+        );
         println!("Restart Cursor to pick up the new session.");
     }
     Ok(())
@@ -150,7 +150,10 @@ pub fn run_use(name: String, force: bool, json: bool) -> Result<(), String> {
 pub fn run_show(name: String, json: bool) -> Result<(), String> {
     let snapshot = load_cursor_auth_profile(&name)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&snapshot).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&snapshot).unwrap_or_default()
+        );
     } else {
         println!("Profile '{name}'");
         println!("  email:      {}", snapshot.email);

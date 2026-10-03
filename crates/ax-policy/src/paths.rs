@@ -71,9 +71,7 @@ pub fn resolve_policy_path(base: &Path, relative: &str) -> Result<PathBuf, Strin
         return Err("invalid path".into());
     }
     let full = base.join(rel);
-    let canon_base = base
-        .canonicalize()
-        .unwrap_or_else(|_| base.to_path_buf());
+    let canon_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
     let canon_full = full
         .canonicalize()
         .or_else(|_| {

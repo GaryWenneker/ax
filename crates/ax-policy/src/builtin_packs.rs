@@ -38,7 +38,9 @@ const AZDO_FULLSTACK: BuiltinPack = BuiltinPack {
         },
         PackFile {
             rel: "rules/azdo-shift-left-security.mdc",
-            body: include_str!("../templates/packs/azdo-fullstack/rules/azdo-shift-left-security.mdc"),
+            body: include_str!(
+                "../templates/packs/azdo-fullstack/rules/azdo-shift-left-security.mdc"
+            ),
         },
         PackFile {
             rel: "rules/azdo-dod-code.mdc",
@@ -58,15 +60,21 @@ const AZDO_FULLSTACK: BuiltinPack = BuiltinPack {
         },
         PackFile {
             rel: "rules/azdo-build-once-deploy-many.mdc",
-            body: include_str!("../templates/packs/azdo-fullstack/rules/azdo-build-once-deploy-many.mdc"),
+            body: include_str!(
+                "../templates/packs/azdo-fullstack/rules/azdo-build-once-deploy-many.mdc"
+            ),
         },
         PackFile {
             rel: "rules/azdo-prod-approval-gate.mdc",
-            body: include_str!("../templates/packs/azdo-fullstack/rules/azdo-prod-approval-gate.mdc"),
+            body: include_str!(
+                "../templates/packs/azdo-fullstack/rules/azdo-prod-approval-gate.mdc"
+            ),
         },
         PackFile {
             rel: "rules/azdo-release-verification.mdc",
-            body: include_str!("../templates/packs/azdo-fullstack/rules/azdo-release-verification.mdc"),
+            body: include_str!(
+                "../templates/packs/azdo-fullstack/rules/azdo-release-verification.mdc"
+            ),
         },
         PackFile {
             rel: "skills/azdo-refinement/SKILL.md",
@@ -74,7 +82,9 @@ const AZDO_FULLSTACK: BuiltinPack = BuiltinPack {
         },
         PackFile {
             rel: "skills/azdo-development/SKILL.md",
-            body: include_str!("../templates/packs/azdo-fullstack/skills/azdo-development/SKILL.md"),
+            body: include_str!(
+                "../templates/packs/azdo-fullstack/skills/azdo-development/SKILL.md"
+            ),
         },
         PackFile {
             rel: "skills/azdo-testing/SKILL.md",
@@ -82,7 +92,9 @@ const AZDO_FULLSTACK: BuiltinPack = BuiltinPack {
         },
         PackFile {
             rel: "skills/azdo-code-review/SKILL.md",
-            body: include_str!("../templates/packs/azdo-fullstack/skills/azdo-code-review/SKILL.md"),
+            body: include_str!(
+                "../templates/packs/azdo-fullstack/skills/azdo-code-review/SKILL.md"
+            ),
         },
         PackFile {
             rel: "skills/azdo-pipelines/SKILL.md",
@@ -140,7 +152,10 @@ fn find_pack(name: &str) -> Option<&'static BuiltinPack> {
 }
 
 fn dest_for_rel(policy_dir: &Path, rel: &str) -> PathBuf {
-    if let Some(id) = rel.strip_prefix("rules/").and_then(|s| s.strip_suffix(".mdc")) {
+    if let Some(id) = rel
+        .strip_prefix("rules/")
+        .and_then(|s| s.strip_suffix(".mdc"))
+    {
         return rule_file(&policy_dir.join("rules"), id);
     }
     if let Some(rest) = rel.strip_prefix("skills/") {
@@ -163,17 +178,17 @@ pub fn install_builtin_pack(
         return Ok(BuiltinPackInstallResult {
             pack: name.to_string(),
             created: report.created,
-            skipped: report.unchanged.into_iter().chain(report.skipped_user_edit).collect(),
+            skipped: report
+                .unchanged
+                .into_iter()
+                .chain(report.skipped_user_edit)
+                .collect(),
             overwritten: report.updated,
             policy_dir: project_root.join(".agents").display().to_string(),
         });
     }
     let pack = find_pack(name).ok_or_else(|| {
-        let known = PACKS
-            .iter()
-            .map(|p| p.name)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let known = PACKS.iter().map(|p| p.name).collect::<Vec<_>>().join(", ");
         AxError::Other(format!("unknown pack '{name}'. Available: {known}"))
     })?;
 

@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
+use ax_db::migrations::{get_current_version, CURRENT_SCHEMA_VERSION};
 use ax_db::Database;
-use ax_db::migrations::{CURRENT_SCHEMA_VERSION, get_current_version};
 
 fn scratch_db(name: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -68,12 +68,16 @@ async fn v16_database_upgrades_to_v17_without_losing_data() {
         let version = get_current_version(db.pool()).await.expect("version");
         assert_eq!(version, 16, "test fixture must start at v16");
 
-        let has_table: Option<String> =
-            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='file_contents'")
-                .fetch_optional(db.pool())
-                .await
-                .expect("query sqlite_master");
-        assert!(has_table.is_none(), "v16 fixture must not have file_contents");
+        let has_table: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='file_contents'",
+        )
+        .fetch_optional(db.pool())
+        .await
+        .expect("query sqlite_master");
+        assert!(
+            has_table.is_none(),
+            "v16 fixture must not have file_contents"
+        );
     }
 
     // Reopening runs apply_initial_schema + run_migrations: the real upgrade path.
@@ -85,13 +89,14 @@ async fn v16_database_upgrades_to_v17_without_losing_data() {
             version, CURRENT_SCHEMA_VERSION,
             "upgrade must land on the current schema version"
         );
-        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
 
-        let has_table: Option<String> =
-            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='file_contents'")
-                .fetch_optional(db.pool())
-                .await
-                .expect("query sqlite_master");
+        let has_table: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='file_contents'",
+        )
+        .fetch_optional(db.pool())
+        .await
+        .expect("query sqlite_master");
         assert!(has_table.is_some(), "v17 must create file_contents");
 
         // Pre-existing data survives.
@@ -145,7 +150,9 @@ async fn interrupted_v17_upgrade_recovers_on_next_open() {
     }
 
     {
-        let db = Database::open(&path).await.expect("recovery open must succeed");
+        let db = Database::open(&path)
+            .await
+            .expect("recovery open must succeed");
         assert_eq!(
             get_current_version(db.pool()).await.expect("version"),
             CURRENT_SCHEMA_VERSION,

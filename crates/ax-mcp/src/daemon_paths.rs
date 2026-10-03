@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use ax_context::directory::get_ax_dir;
 use sha2::{Digest, Sha256};
 
-
 pub const DAEMON_PID_FILE: &str = "daemon.pid";
 
 pub fn daemon_pid_path(project_root: &Path) -> PathBuf {
@@ -34,7 +33,9 @@ pub fn daemon_socket_candidates(project_root: &Path) -> Vec<String> {
     }
     let in_project = get_ax_dir(project_root).join("daemon.sock");
     let in_project_str = in_project.to_string_lossy().replace('\\', "/");
-    let tmp = tmpdir_socket_path(project_root).to_string_lossy().replace('\\', "/");
+    let tmp = tmpdir_socket_path(project_root)
+        .to_string_lossy()
+        .replace('\\', "/");
     if in_project_str.len() > POSIX_SOCKET_PATH_LIMIT {
         vec![tmp]
     } else {
@@ -43,7 +44,10 @@ pub fn daemon_socket_candidates(project_root: &Path) -> Vec<String> {
 }
 
 pub fn primary_socket_path(project_root: &Path) -> String {
-    daemon_socket_candidates(project_root).first().cloned().unwrap_or_default()
+    daemon_socket_candidates(project_root)
+        .first()
+        .cloned()
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

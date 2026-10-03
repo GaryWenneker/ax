@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::Path;
 
-use ax_usage::{import_agent_logs, query_savings_summary, record_session_model_tag, SavingsQuery, UsagePeriod};
+use ax_usage::{
+    import_agent_logs, query_savings_summary, record_session_model_tag, SavingsQuery, UsagePeriod,
+};
 use serde_json::{json, Value};
 
 const HOOK_PS1: &str = include_str!("../../assets/cursor-hooks/ax-session-model.ps1");
@@ -27,7 +29,10 @@ pub async fn run_summary(
     let summary = query_savings_summary(&SavingsQuery { period, from, to }).await?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&summary).unwrap_or_default()
+        );
         return Ok(());
     }
 
@@ -43,9 +48,7 @@ pub async fn run_summary(
     );
     println!(
         "Cost saved: ${:.2} (input tokens at {} — ${}/M in)",
-        summary.cost_saved_usd_est,
-        summary.pricing.reference_model,
-        summary.pricing.input_per_mtok,
+        summary.cost_saved_usd_est, summary.pricing.reference_model, summary.pricing.input_per_mtok,
     );
     println!(
         "Without ax (full files): ~{} tokens",
@@ -67,7 +70,10 @@ pub async fn run_summary(
         format_num(summary.response_tokens_est),
     );
     if summary.failed_calls > 0 {
-        println!("Failed calls (excluded from savings): {}", format_num(summary.failed_calls));
+        println!(
+            "Failed calls (excluded from savings): {}",
+            format_num(summary.failed_calls)
+        );
     }
     if summary.assumptions.exact_tokenizer {
         println!(
@@ -94,7 +100,9 @@ pub async fn run_summary(
     if summary.by_tool.is_empty() {
         println!();
         println!("No MCP calls recorded in this period.");
-        println!("Use ax with MCP enabled — savings are logged on each ax_explore / graph tool call.");
+        println!(
+            "Use ax with MCP enabled — savings are logged on each ax_explore / graph tool call."
+        );
     } else {
         println!();
         println!("By tool:");
@@ -154,7 +162,11 @@ pub async fn run_summary(
     Ok(())
 }
 
-pub async fn run_tag_session(agent: String, session_id: String, model: String) -> Result<(), String> {
+pub async fn run_tag_session(
+    agent: String,
+    session_id: String,
+    model: String,
+) -> Result<(), String> {
     record_session_model_tag(&agent, &session_id, &model).await?;
     println!("Tagged session {session_id} as {model} ({agent})");
     Ok(())
@@ -206,7 +218,11 @@ fn merge_hooks_json(path: &Path, script_name: &str) -> Result<(), String> {
     }
     let hooks = root
         .as_object_mut()
-        .and_then(|o| o.entry("hooks").or_insert_with(|| json!({})).as_object_mut())
+        .and_then(|o| {
+            o.entry("hooks")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+        })
         .ok_or("invalid hooks.json shape")?;
 
     let session_start = hooks
@@ -216,7 +232,10 @@ fn merge_hooks_json(path: &Path, script_name: &str) -> Result<(), String> {
         .as_array_mut()
         .ok_or("hooks.sessionStart must be an array")?;
 
-    if !arr.iter().any(|item| hook_points_to_ax_session_model(item, &command)) {
+    if !arr
+        .iter()
+        .any(|item| hook_points_to_ax_session_model(item, &command))
+    {
         arr.push(entry.clone());
     }
 

@@ -49,14 +49,17 @@ fn print_event(ev: SyncEvent) {
 
 fn print_summary(report: &SyncReport) {
     println!();
-    println!("{}", kv_line("Memories", format!(
-        "{} blocks (tag: documentation-catalog)",
-        report.memories_built
-    )));
     println!(
-        "  {}",
-        kv_line("Wiki pages", report.wiki_pages.to_string())
+        "{}",
+        kv_line(
+            "Memories",
+            format!(
+                "{} blocks (tag: documentation-catalog)",
+                report.memories_built
+            )
+        )
     );
+    println!("  {}", kv_line("Wiki pages", report.wiki_pages.to_string()));
     println!(
         "  {}",
         kv_line("JSONL", ".ax/memory/documentation-catalog.jsonl")

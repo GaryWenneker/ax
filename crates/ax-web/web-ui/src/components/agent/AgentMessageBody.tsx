@@ -1,3 +1,5 @@
+import { stripContextReports } from './activityModel';
+
 interface Props {
   text: string;
   kind: 'user' | 'assistant' | 'system' | 'tool';
@@ -55,8 +57,11 @@ export default function AgentMessageBody({ text, kind, running }: Props) {
     );
   }
 
-  if (kind === 'assistant') {
-    const blocks = parseBlocks(text);
+  if (kind === 'assistant' || kind === 'system') {
+    const visible = stripContextReports(text).text;
+    if (!visible.trim()) return null;
+    if (kind === 'system') return <>{visible}</>;
+    const blocks = parseBlocks(visible);
     return (
       <div className="agent-md">
         {blocks.map((block, i) => {

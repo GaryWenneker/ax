@@ -298,12 +298,23 @@ mod tests {
         let items = vec![
             LinkItem::new(LinkKind::Rule, LinkOrigin::Project, "review", "review"),
             LinkItem::new(LinkKind::Rule, LinkOrigin::Global, "review", "review"),
-            LinkItem::new(LinkKind::Rule, LinkOrigin::Global, "only-global", "only-global"),
+            LinkItem::new(
+                LinkKind::Rule,
+                LinkOrigin::Global,
+                "only-global",
+                "only-global",
+            ),
             LinkItem::new(LinkKind::Skill, LinkOrigin::Project, "pr", "pr"),
             LinkItem::new(LinkKind::Memory, LinkOrigin::Project, "m1", "Use SQLite"),
         ];
         let index = LinkIndex::new(items.clone());
-        let want = ["review", "global/rules/review", "only-global", "pr", "memories/Use SQLite"];
+        let want = [
+            "review",
+            "global/rules/review",
+            "only-global",
+            "pr",
+            "memories/Use SQLite",
+        ];
         for (item, want) in items.iter().zip(want) {
             let target = index.link_target(item);
             assert_eq!(target, want);

@@ -13,7 +13,8 @@ pub const CONVERSATION_CACHE_SENTENCE: &str =
 pub const WORKING_CONTEXT_SENTENCE: &str =
     "Record a durable fact, file, symbol, decision, or open question with `ax_session`";
 
-pub const SESSION_ID_SENTENCE: &str = "Pass the `session` id from `<ax_chat>` to every ax call in this chat";
+pub const SESSION_ID_SENTENCE: &str =
+    "Pass the `session` id from `<ax_chat>` to every ax call in this chat";
 
 const AX_SECTION_START: &str = "<!-- AX_START -->";
 const AX_SECTION_END: &str = "<!-- AX_END -->";
@@ -216,7 +217,10 @@ fn mcp_callmcp_shape_stale(content: &str) -> bool {
     content.trim() != MCP_CALLMCP_SHAPE_BODY.trim()
 }
 
-fn seed_mcp_callmcp_shape_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+fn seed_mcp_callmcp_shape_rule(
+    project_root: &Path,
+    result: &mut IdeSeedResult,
+) -> std::io::Result<()> {
     let cursor_rules = cursor_rules_dir(project_root);
     std::fs::create_dir_all(&cursor_rules)?;
 
@@ -345,11 +349,16 @@ fn seed_continue_mcp(project_root: &Path, result: &mut IdeSeedResult) -> std::io
     Ok(())
 }
 
-fn write_if_missing_or_stale(path: &Path, body: &str, rel: &str, result: &mut IdeSeedResult) -> std::io::Result<()> {
+fn write_if_missing_or_stale(
+    path: &Path,
+    body: &str,
+    rel: &str,
+    result: &mut IdeSeedResult,
+) -> std::io::Result<()> {
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        let stale = !crate::seed::verify_content(&content).is_empty()
-            || content.trim() != body.trim();
+        let stale =
+            !crate::seed::verify_content(&content).is_empty() || content.trim() != body.trim();
         if !stale {
             result.record_skipped(rel);
             return Ok(());
@@ -367,7 +376,10 @@ fn write_if_missing_or_stale(path: &Path, body: &str, rel: &str, result: &mut Id
 }
 
 fn seed_claude_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
-    let rule_path = project_root.join(".claude").join("rules").join(CLAUDE_RULE_FILE);
+    let rule_path = project_root
+        .join(".claude")
+        .join("rules")
+        .join(CLAUDE_RULE_FILE);
     let rule_rel = format!(".claude/rules/{CLAUDE_RULE_FILE}");
     write_if_missing_or_stale(&rule_path, CLAUDE_RULE_BODY, &rule_rel, result)?;
 
@@ -636,7 +648,10 @@ fn verify_continue_mcp(project_root: &Path) -> InstructionCheck {
 }
 
 fn verify_claude_rule_bootstrap(project_root: &Path) -> InstructionCheck {
-    let path = project_root.join(".claude").join("rules").join(CLAUDE_RULE_FILE);
+    let path = project_root
+        .join(".claude")
+        .join("rules")
+        .join(CLAUDE_RULE_FILE);
     let label = format!(".claude/rules/{CLAUDE_RULE_FILE}");
     let issues = verify_dedicated_file(&path);
     if path.exists() {
@@ -660,7 +675,12 @@ fn verify_claude_rule_bootstrap(project_root: &Path) -> InstructionCheck {
     }
 }
 
-fn check_instruction(label: impl Into<String>, path: PathBuf, issues: Vec<String>, optional: bool) -> InstructionCheck {
+fn check_instruction(
+    label: impl Into<String>,
+    path: PathBuf,
+    issues: Vec<String>,
+    optional: bool,
+) -> InstructionCheck {
     InstructionCheck {
         label: label.into(),
         path,
@@ -808,7 +828,10 @@ mod tests {
                 body.contains("`ax_node`") && body.contains("full source"),
                 "{name}: must say ax_node returns full source"
             );
-            assert!(body.contains("`ax_expand`"), "{name}: must name ax_expand for cut replies");
+            assert!(
+                body.contains("`ax_expand`"),
+                "{name}: must name ax_expand for cut replies"
+            );
             assert!(
                 body.contains("do not Read or Grep"),
                 "{name}: must forbid re-reading indexed source"
@@ -826,11 +849,26 @@ mod tests {
             ("cline rules", CLINE_RULE_BODY),
             ("cline block", CLINE_INSTRUCTIONS_BLOCK),
             ("agents", AGENTS_INSTRUCTIONS_BLOCK),
-            ("explore-before-grep", include_str!("../templates/rules/explore-before-grep.mdc")),
-            ("prefer-mcp-ops", include_str!("../templates/rules/prefer-mcp-ops.mdc")),
-            ("subagents rule", include_str!("../templates/rules/subagents.mdc")),
-            ("startup skill", include_str!("../templates/skills/startup/SKILL.md")),
-            ("subagents skill", include_str!("../templates/skills/subagents/SKILL.md")),
+            (
+                "explore-before-grep",
+                include_str!("../templates/rules/explore-before-grep.mdc"),
+            ),
+            (
+                "prefer-mcp-ops",
+                include_str!("../templates/rules/prefer-mcp-ops.mdc"),
+            ),
+            (
+                "subagents rule",
+                include_str!("../templates/rules/subagents.mdc"),
+            ),
+            (
+                "startup skill",
+                include_str!("../templates/skills/startup/SKILL.md"),
+            ),
+            (
+                "subagents skill",
+                include_str!("../templates/skills/subagents/SKILL.md"),
+            ),
         ];
         for (name, body) in surfaces {
             for needle in [
@@ -882,7 +920,10 @@ mod tests {
         let result = seed_ide_agent_workflow(dir.path()).unwrap();
         assert!(!legacy.exists());
         assert!(cursor_rule_path(dir.path()).exists());
-        assert!(result.updated.iter().any(|p| p.contains("ax-agent-workflow")));
+        assert!(result
+            .updated
+            .iter()
+            .any(|p| p.contains("ax-agent-workflow")));
     }
 
     #[test]
@@ -916,10 +957,7 @@ mod tests {
     fn seeds_continue_rule() {
         let dir = tempdir().unwrap();
         let result = seed_ide_agent_workflow(dir.path()).unwrap();
-        assert!(result
-            .created
-            .iter()
-            .any(|p| p == ".continue/rules/ax.md"));
+        assert!(result.created.iter().any(|p| p == ".continue/rules/ax.md"));
         let path = continue_rule_path(dir.path());
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
@@ -989,8 +1027,12 @@ mod tests {
     fn seeds_copilot_instructions() {
         let dir = tempdir().unwrap();
         let result = seed_ide_agent_workflow(dir.path()).unwrap();
-        assert!(result.created.iter().any(|p| p == ".github/copilot-instructions.md"));
-        let content = std::fs::read_to_string(dir.path().join(".github/copilot-instructions.md")).unwrap();
+        assert!(result
+            .created
+            .iter()
+            .any(|p| p == ".github/copilot-instructions.md"));
+        let content =
+            std::fs::read_to_string(dir.path().join(".github/copilot-instructions.md")).unwrap();
         assert!(content.contains("ax_preflight"));
         assert!(content.contains(AX_SECTION_START));
     }
@@ -1028,15 +1070,24 @@ mod tests {
         let dir = tempdir().unwrap();
         let synced = sync_ide_bootstrap(dir.path(), true).unwrap();
         assert_eq!(synced.fail_count, 0);
-        assert!(synced.fixed.iter().any(|p| p.contains(".continue/rules/ax.md")));
+        assert!(synced
+            .fixed
+            .iter()
+            .any(|p| p.contains(".continue/rules/ax.md")));
         assert!(synced
             .fixed
             .iter()
             .any(|p| p.contains(".continue/mcpServers/ax.json")));
         assert!(synced.fixed.iter().any(|p| p.contains("AGENTS.md")));
         assert!(synced.fixed.iter().any(|p| p.contains("GEMINI.md")));
-        assert!(synced.fixed.iter().any(|p| p.contains(".claude/rules/ax.md")));
-        assert!(synced.fixed.iter().any(|p| p.contains("copilot-instructions.md")));
+        assert!(synced
+            .fixed
+            .iter()
+            .any(|p| p.contains(".claude/rules/ax.md")));
+        assert!(synced
+            .fixed
+            .iter()
+            .any(|p| p.contains("copilot-instructions.md")));
         assert!(synced.fixed.iter().any(|p| p.contains(".windsurfrules")));
         assert!(synced.fixed.iter().any(|p| p.contains(".clinerules")));
         assert!(synced

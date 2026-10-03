@@ -7,10 +7,10 @@ pub mod schema;
 use std::path::Path;
 use std::time::Duration;
 
-use sqlx::ConnectOptions;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
+use sqlx::ConnectOptions;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
@@ -58,9 +58,7 @@ pub fn connect_options(path: &Path, create_if_missing: bool) -> SqliteConnectOpt
 /// True when SQLite reports SQLITE_BUSY / database is locked (code 5).
 pub fn is_sqlite_busy(err: &sqlx::Error) -> bool {
     let msg = err.to_string();
-    msg.contains("database is locked")
-        || msg.contains("(code: 5)")
-        || msg.contains("SQLITE_BUSY")
+    msg.contains("database is locked") || msg.contains("(code: 5)") || msg.contains("SQLITE_BUSY")
 }
 
 /// Retry an async SQLite operation while the database is busy.

@@ -1,8 +1,6 @@
 //! `ax pricing` — daily model price sync and history.
 
-use ax_usage::{
-    list_latest_prices, price_history, pricing_status, sync_pricing, usage_db_path,
-};
+use ax_usage::{list_latest_prices, price_history, pricing_status, sync_pricing, usage_db_path};
 
 pub async fn run_sync(force: bool) -> Result<(), String> {
     let report = sync_pricing(force).await?;
@@ -26,7 +24,10 @@ pub async fn run_sync(force: bool) -> Result<(), String> {
 pub async fn run_status(json: bool) -> Result<(), String> {
     let status = pricing_status().await?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&status).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status).unwrap_or_default()
+        );
         return Ok(());
     }
     println!("Model pricing status");
@@ -35,10 +36,7 @@ pub async fn run_status(json: bool) -> Result<(), String> {
         "  Synced today: {}",
         if status.synced_today { "yes" } else { "no" }
     );
-    println!(
-        "  Rows: {} OpenRouter prices",
-        status.price_rows
-    );
+    println!("  Rows: {} OpenRouter prices", status.price_rows);
     println!("  Database: {}", usage_db_path().display());
     if status.sources.is_empty() {
         println!("  No sync yet — run `ax pricing sync`.");
@@ -68,7 +66,10 @@ pub async fn run_status(json: bool) -> Result<(), String> {
 pub async fn run_list(source: Option<String>, json: bool) -> Result<(), String> {
     let rows = list_latest_prices(source.as_deref()).await?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
+        );
         return Ok(());
     }
     if rows.is_empty() {
@@ -103,7 +104,10 @@ pub async fn run_history(
 ) -> Result<(), String> {
     let rows = price_history(&model, source.as_deref(), days).await?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
+        );
         return Ok(());
     }
     if rows.is_empty() {

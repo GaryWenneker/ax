@@ -21,7 +21,33 @@ const MAX_NODES: usize = 2_000;
 const MAX_EDGES: usize = 5_000;
 
 const NODE_KINDS: &[&str] = &["domain", "flow", "step"];
-const EDGE_KINDS: &[&str] = &["contains_flow", "flow_step", "cross_domain"];
+const EDGE_KINDS: &[&str] = &[
+    "contains_flow",
+    "flow_step",
+    "cross_domain",
+    "owns",
+    "contains",
+    "integrates",
+    "provides",
+    "must_not_own",
+    "must_not_duplicate",
+    "must_not_fork",
+    "emits",
+    "consumed_by",
+    "produces",
+    "may_become",
+    "creates",
+    "may_be",
+    "depends_on",
+    "consumes",
+    "accumulates",
+    "limits",
+    "defines",
+    "references",
+    "belongs_to",
+    "proposes",
+    "has",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -110,7 +136,7 @@ pub fn validate(graph: &DomainGraph) -> Result<(), String> {
     for edge in &graph.edges {
         if !EDGE_KINDS.contains(&edge.kind.as_str()) {
             return Err(format!(
-                "unsupported domain edge kind '{}' (expected contains_flow|flow_step|cross_domain)",
+                "unsupported domain edge kind '{}' (expected a domain-flow kind or an architecture seed kind)",
                 edge.kind
             ));
         }

@@ -59,15 +59,14 @@ pub async fn run_import(path: Option<String>) -> Result<(), String> {
     let root = resolve_path(path);
     ax_usage::log_policy(Some(&root), "import start");
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let result = match ax_policy::import_policy_from_files(ax.db_pool(), &root, ImportMode::Merge)
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            ax_usage::log_policy(Some(&root), "import fail");
-            return Err(e.to_string());
-        }
-    };
+    let result =
+        match ax_policy::import_policy_from_files(ax.db_pool(), &root, ImportMode::Merge).await {
+            Ok(r) => r,
+            Err(e) => {
+                ax_usage::log_policy(Some(&root), "import fail");
+                return Err(e.to_string());
+            }
+        };
     ax_usage::log_policy(
         Some(&root),
         format!(
@@ -189,10 +188,7 @@ pub async fn run_pull(
     );
 
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let result = ax
-        .index_policy(true)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = ax.index_policy(true).await.map_err(|e| e.to_string())?;
     println!(
         "Re-indexed policy: {} rules, {} skills",
         result.rules_indexed, result.skills_indexed
@@ -272,7 +268,10 @@ pub async fn run_match(
         if !full {
             strip_match_bodies(&mut value);
         }
-        println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
     } else {
         if result.rules.is_empty() && result.skills.is_empty() {
             println!("No rules or skills matched.");
@@ -301,7 +300,10 @@ pub async fn run_dedup(path: Option<String>, dry_run: bool, json: bool) -> Resul
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let report = ax_core::policy_dedup::run_default(Some((ax.db_pool(), &root)), dry_run).await;
     if json {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
     } else if report.skipped.is_none() && report.error.is_none() && report.actions.is_empty() {
         println!("policy dedup: nothing to clean");
     } else {
@@ -332,9 +334,14 @@ pub(crate) fn dedup_global_blocking() -> Result<ax_core::policy_dedup::DedupRepo
 pub async fn run_rules(path: Option<String>, json: bool) -> Result<(), String> {
     let root = resolve_path(path);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let rules = ax_policy::list_rules(ax.db_pool()).await.map_err(|e| e.to_string())?;
+    let rules = ax_policy::list_rules(ax.db_pool())
+        .await
+        .map_err(|e| e.to_string())?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&rules).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rules).unwrap_or_default()
+        );
     } else {
         for r in rules {
             println!("{} [{}] priority={}", r.id, r.level, r.priority);
@@ -348,7 +355,10 @@ pub async fn run_skills(path: Option<String>, json: bool) -> Result<(), String> 
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let skills = ax.list_policy_skills().await.map_err(|e| e.to_string())?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&skills).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&skills).unwrap_or_default()
+        );
     } else {
         for s in skills {
             println!("{} — {}", s.name, s.description);
@@ -388,15 +398,12 @@ pub async fn run_guard(
     let _ = ax.ensure_policy_ready().await.map_err(|e| e.to_string())?;
     let target = root.join(&file_path);
     let content = std::fs::read(&target).ok();
-    let op = if delete { GuardOp::Delete } else { GuardOp::Write };
-    let result = match ax
-        .guard_operation(
-            &target,
-            op,
-            content.as_deref(),
-        )
-        .await
-    {
+    let op = if delete {
+        GuardOp::Delete
+    } else {
+        GuardOp::Write
+    };
+    let result = match ax.guard_operation(&target, op, content.as_deref()).await {
         Ok(r) => r,
         Err(e) => {
             ax_usage::log_policy(Some(&root), "guard fail");
@@ -412,7 +419,10 @@ pub async fn run_guard(
         ),
     );
     if json {
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
     } else if result.allowed {
         println!("allowed");
     } else {
@@ -507,17 +517,25 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
     check(
         "ensure_policy_ready",
         ready.rules_indexed > 0,
-        &format!("{} rules, {} skills", ready.rules_indexed, ready.skills_indexed),
+        &format!(
+            "{} rules, {} skills",
+            ready.rules_indexed, ready.skills_indexed
+        ),
     );
 
     let status = ax.policy_status().await.map_err(|e| e.to_string())?;
     check(
         "policy_status",
         status.indexed && status.rules >= 4,
-        &format!("mode={} rules={} skills={}", status.mode, status.rules, status.skills),
+        &format!(
+            "mode={} rules={} skills={}",
+            status.mode, status.rules, status.skills
+        ),
     );
 
-    let rules = ax_policy::list_rules(ax.db_pool()).await.map_err(|e| e.to_string())?;
+    let rules = ax_policy::list_rules(ax.db_pool())
+        .await
+        .map_err(|e| e.to_string())?;
     let always: Vec<_> = rules.iter().filter(|r| r.always_apply).collect();
     check(
         "always_apply_rules",
@@ -528,10 +546,16 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
     let subagents_rule = rules.iter().any(|r| r.id == "subagents");
     check("subagents_rule", subagents_rule, "subagents rule indexed");
 
-    let skills = ax_policy::list_skills(ax.db_pool()).await.map_err(|e| e.to_string())?;
+    let skills = ax_policy::list_skills(ax.db_pool())
+        .await
+        .map_err(|e| e.to_string())?;
     let subagents_skill = skills.iter().any(|s| s.name == "subagents");
     let startup_skill = skills.iter().any(|s| s.name == "startup");
-    check("subagents_skill", subagents_skill, "subagents skill indexed");
+    check(
+        "subagents_skill",
+        subagents_skill,
+        "subagents skill indexed",
+    );
     check("startup_skill", startup_skill, "startup skill indexed");
 
     let baseline = MatchInput {
@@ -554,7 +578,10 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
         changed_files: vec![],
     };
     let release_match = ax.match_policy(release).await.map_err(|e| e.to_string())?;
-    let has_release = release_match.rules.iter().any(|r| r.id == "release-all-platforms");
+    let has_release = release_match
+        .rules
+        .iter()
+        .any(|r| r.id == "release-all-platforms");
     check(
         "match_release_trigger",
         has_release,
@@ -572,8 +599,15 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
             changed_files: vec![],
         };
         let savings_match = ax.match_policy(savings).await.map_err(|e| e.to_string())?;
-        let matched = savings_match.skills.iter().any(|s| s.name == "savings-gauntlet");
-        check("match_savings_gauntlet", matched, &format!("savings-gauntlet matched={matched}"));
+        let matched = savings_match
+            .skills
+            .iter()
+            .any(|s| s.name == "savings-gauntlet");
+        check(
+            "match_savings_gauntlet",
+            matched,
+            &format!("savings-gauntlet matched={matched}"),
+        );
     }
 
     let meta = ax_policy::build_preflight_meta(&status, &baseline_match);
@@ -592,11 +626,19 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
 
     let guard_target = root.join("crates/ax-cli/src/main.rs");
     let guard_ok = ax
-        .guard_operation(&guard_target, GuardOp::Write, std::fs::read(&guard_target).ok().as_deref())
+        .guard_operation(
+            &guard_target,
+            GuardOp::Write,
+            std::fs::read(&guard_target).ok().as_deref(),
+        )
         .await
         .map(|r| r.allowed)
         .unwrap_or(false);
-    check("guard_utf8_existing", guard_ok, "existing UTF-8 file allowed");
+    check(
+        "guard_utf8_existing",
+        guard_ok,
+        "existing UTF-8 file allowed",
+    );
 
     let new_target = root.join("target-dev/policy-test-new.rs");
     let bom = [0xEFu8, 0xBB, 0xBF, b'x'];
@@ -605,7 +647,11 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
         .await
         .map(|r| !r.allowed)
         .unwrap_or(false);
-    check("guard_utf8_bom_blocked", guard_bom, "UTF-8 BOM in proposed content blocked");
+    check(
+        "guard_utf8_bom_blocked",
+        guard_bom,
+        "UTF-8 BOM in proposed content blocked",
+    );
 
     let env_target = root.join(".env");
     let has_secrets_rule = rules
@@ -617,7 +663,11 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
             .await
             .map(|r| !r.allowed)
             .unwrap_or(false);
-        check("guard_sensitive_delete", guard_env, ".env delete blocked by secrets rule");
+        check(
+            "guard_sensitive_delete",
+            guard_env,
+            ".env delete blocked by secrets rule",
+        );
     } else {
         check(
             "guard_sensitive_delete",
@@ -628,7 +678,10 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
 
     let ax_dir = root.join(".ax");
     let sync = ax_policy::sync_instructions(&ax_dir, false).map_err(|e| e.to_string())?;
-    let startup_ok = sync.checks.iter().any(|c| c.label.contains("startup") && c.ok);
+    let startup_ok = sync
+        .checks
+        .iter()
+        .any(|c| c.label.contains("startup") && c.ok);
     check("bootstrap_startup", startup_ok, "startup skill file OK");
 
     let ide = ax_policy::sync_ide_bootstrap(&root, false).map_err(|e| e.to_string())?;
@@ -640,7 +693,10 @@ pub async fn run_test(path: Option<String>, json: bool) -> Result<(), String> {
 
     let failed: Vec<_> = results.iter().filter(|r| !r.ok).collect();
     if json {
-        println!("{}", serde_json::to_string_pretty(&results).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&results).unwrap_or_default()
+        );
     } else {
         for r in &results {
             let mark = if r.ok { "OK" } else { "FAIL" };
@@ -688,7 +744,10 @@ pub async fn run_storage_status(path: Option<String>, json: bool) -> Result<(), 
     let root = resolve_path(path);
     let status = ax_policy::policy_storage_status(&root);
     if json {
-        println!("{}", serde_json::to_string_pretty(&status).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status).unwrap_or_default()
+        );
     } else {
         println!("Policy storage: {}", status.effective);
         println!("  source: {}", status.source);
@@ -750,7 +809,10 @@ pub async fn run_storage_set_item(
         .await
         .map_err(|e| e.to_string())?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
     } else {
         println!(
             "Set {} storage to {}.",
@@ -782,7 +844,10 @@ pub async fn run_storage_set(
     if do_migrate && target == PolicyStorage::Database && !yes && !global {
         let plan = ax_policy::scan_policy_candidates(&root);
         if json {
-            println!("{}", serde_json::to_string_pretty(&plan).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&plan).unwrap_or_default()
+            );
         } else {
             println!(
                 "Migration scan: {} rules, {} skills ({} skipped)",
@@ -811,7 +876,9 @@ pub async fn run_storage_set(
             println!("{}", plan.interview_instruction);
             println!();
             println!("Apply exclusive database mode: ax policy storage database --yes");
-            println!("Keep markdown on disk:         ax policy storage database --yes --keep-files");
+            println!(
+                "Keep markdown on disk:         ax policy storage database --yes --keep-files"
+            );
         }
         return Ok(());
     }
@@ -865,9 +932,10 @@ pub async fn run_storage_set(
         let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
         match target {
             PolicyStorage::Database => {
-                let (plan, apply) = ax_policy::exclusive_to_database(ax.db_pool(), &root, keep_files)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let (plan, apply) =
+                    ax_policy::exclusive_to_database(ax.db_pool(), &root, keep_files)
+                        .await
+                        .map_err(|e| e.to_string())?;
                 if !json {
                     println!(
                         "Migrated {} rules, {} skills into database (scanned {} candidates, {} skipped)",
@@ -885,14 +953,10 @@ pub async fn run_storage_set(
             }
             PolicyStorage::Files => {
                 let out = ax_policy::agents_dir(&root);
-                let result = ax_policy::export_policy_to_files_filtered(
-                    ax.db_pool(),
-                    &root,
-                    &out,
-                    false,
-                )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let result =
+                    ax_policy::export_policy_to_files_filtered(ax.db_pool(), &root, &out, false)
+                        .await
+                        .map_err(|e| e.to_string())?;
                 ax.index_policy(true).await.map_err(|e| e.to_string())?;
                 if !json {
                     println!(
@@ -920,7 +984,10 @@ pub async fn run_storage_set(
             payload["skillsFound"] = serde_json::json!(plan.skills_found);
             payload["candidates"] = serde_json::json!(plan.candidates.len());
         }
-        println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload).unwrap_or_default()
+        );
     } else {
         println!("Policy storage set to {}.", target.as_str());
         println!("  updated: {}", config_path.display());
@@ -944,7 +1011,10 @@ pub async fn run_capture(
     let mut proposal = ax_policy::propose_rule_from_prompt(&prompt, &files);
     if !proposal.detected {
         if json {
-            println!("{}", serde_json::to_string_pretty(&proposal).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&proposal).unwrap_or_default()
+            );
         } else {
             println!("No directive detected in prompt.");
         }
@@ -961,7 +1031,10 @@ pub async fn run_capture(
 
     if !yes {
         if json {
-            println!("{}", serde_json::to_string_pretty(&proposal).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&proposal).unwrap_or_default()
+            );
         } else {
             println!("Directive detected (confidence: {})", proposal.confidence);
             println!("Suggested id: {}", proposal.suggested_id);
@@ -1074,7 +1147,11 @@ pub async fn run_pack_import(
         .map_err(|e| e.to_string())?;
     // Best-effort refresh of IDEs that already have ax; never connects one the user left off.
     if let Ok(statuses) = ax_installer::agent_status(&root) {
-        let configured: Vec<String> = statuses.into_iter().filter(|s| s.configured).map(|s| s.id).collect();
+        let configured: Vec<String> = statuses
+            .into_iter()
+            .filter(|s| s.configured)
+            .map(|s| s.id)
+            .collect();
         let saved = ax_policy::read_project_ides(&root);
         let targets = ax_installer::pack_refresh_targets(&configured, saved.as_deref());
         let _ = ax_installer::install_targets(&root, &targets);
@@ -1152,8 +1229,8 @@ pub async fn run_pack_install(
 
     let pack_name = name.unwrap();
     let root = resolve_path(path);
-    let result = ax_policy::install_builtin_pack(&root, &pack_name, force)
-        .map_err(|e| e.to_string())?;
+    let result =
+        ax_policy::install_builtin_pack(&root, &pack_name, force).map_err(|e| e.to_string())?;
 
     // Re-index / import so MCP/preflight see the new items.
     // Database mode needs force=true — otherwise index_policy only returns counts.
@@ -1215,7 +1292,10 @@ pub async fn run_review_show(path: Option<String>, id: String, json: bool) -> Re
     let root = resolve_path(path);
     let diff = ax_policy::pending_diff(&root, &id).map_err(|e| e.to_string())?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&diff).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&diff).unwrap_or_default()
+        );
     } else {
         println!("=== pending {} {} ===", diff.kind, diff.id);
         println!("{}", diff.pending_raw);
@@ -1296,7 +1376,10 @@ pub async fn run_policy_restore(
     let bytes = std::fs::read(&zip).map_err(|e| format!("{zip}: {e}"))?;
     if preview {
         let p = ax_policy::preview_policy_zip(&root, &bytes).map_err(|e| e.to_string())?;
-        println!("{}", serde_json::to_string_pretty(&p).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&p).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
     let decisions: std::collections::HashMap<String, ax_policy::RestoreAction> = match decisions {
@@ -1306,7 +1389,8 @@ pub async fn run_policy_restore(
         }
         None => std::collections::HashMap::new(),
     };
-    let result = ax_policy::restore_policy_zip(&root, &bytes, &decisions).map_err(|e| e.to_string())?;
+    let result =
+        ax_policy::restore_policy_zip(&root, &bytes, &decisions).map_err(|e| e.to_string())?;
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     ax_policy::index_policy(ax.db_pool(), &root, true)
         .await
@@ -1334,7 +1418,10 @@ async fn reindex_policy(root: &std::path::Path) -> Result<(), String> {
 pub fn run_stack_list(json: bool) -> Result<(), String> {
     let stacks = ax_policy::stack_catalog_list();
     if json {
-        println!("{}", serde_json::to_string_pretty(&stacks).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&stacks).unwrap_or_default()
+        );
     } else {
         println!("{}", info_line("Stacks"));
         for s in &stacks {
@@ -1363,7 +1450,10 @@ pub fn run_stack_detect(path: Option<String>, json: bool) -> Result<(), String> 
             .iter()
             .map(|d| serde_json::json!({"id": d.id, "reason": d.reason}))
             .collect();
-        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
+        );
     } else if found.is_empty() {
         println!("{}", warn_line("No stacks detected."));
     } else {
@@ -1371,8 +1461,15 @@ pub fn run_stack_detect(path: Option<String>, json: bool) -> Result<(), String> 
         for d in &found {
             println!("  {} {}", d.id.cyan().bold(), dim(&d.reason));
         }
-        let ids = found.iter().map(|d| d.id.as_str()).collect::<Vec<_>>().join(" ");
-        println!("  {}", dim(format!("Install with: ax policy stack apply {ids}")));
+        let ids = found
+            .iter()
+            .map(|d| d.id.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        println!(
+            "  {}",
+            dim(format!("Install with: ax policy stack apply {ids}"))
+        );
     }
     Ok(())
 }
@@ -1397,18 +1494,21 @@ pub async fn run_stack_apply(
             let tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
             if !yes {
                 if !tty {
-                    return Err(
-                        "detected stacks require --yes when stdin is not a terminal".into(),
-                    );
+                    return Err("detected stacks require --yes when stdin is not a terminal".into());
                 }
                 let list = detected
                     .iter()
                     .map(|d| d.id.as_str())
                     .collect::<Vec<_>>()
                     .join(" ");
-                println!("{}", info_line(format!("Apply detected stacks: {list}? [y/N]")));
+                println!(
+                    "{}",
+                    info_line(format!("Apply detected stacks: {list}? [y/N]"))
+                );
                 let mut line = String::new();
-                std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+                std::io::stdin()
+                    .read_line(&mut line)
+                    .map_err(|e| e.to_string())?;
                 if !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
                     return Err("aborted".into());
                 }
@@ -1421,7 +1521,10 @@ pub async fn run_stack_apply(
     let report = ax_policy::apply_stacks(&root, &chosen, force)?;
     reindex_policy(&root).await?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
     } else {
         println!(
             "{}",
@@ -1446,7 +1549,10 @@ pub async fn run_stack_remove(path: Option<String>, id: String, json: bool) -> R
     let removed = ax_policy::remove_stack(&root, &id)?;
     reindex_policy(&root).await?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&removed).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&removed).unwrap_or_default()
+        );
     } else {
         println!(
             "{}",
@@ -1460,7 +1566,10 @@ pub fn run_stack_status(path: Option<String>, json: bool) -> Result<(), String> 
     let root = resolve_path(path);
     let rows = ax_policy::stack_status(&root);
     if json {
-        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
+        );
     } else if rows.is_empty() {
         println!("{}", warn_line("No stacks installed."));
     } else {
@@ -1493,7 +1602,10 @@ pub async fn run_stack_upgrade(path: Option<String>, json: bool) -> Result<(), S
     let report = ax_policy::upgrade_stacks(&root)?;
     reindex_policy(&root).await?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
     } else {
         println!(
             "{}",

@@ -10,10 +10,15 @@ use crate::types::{
 pub fn split_frontmatter(raw: &str) -> Result<(String, String), ValidationError> {
     let trimmed = raw.trim_start();
     if !trimmed.starts_with("---") {
-        return Err(field_err("body", "document must start with YAML frontmatter (---)"));
+        return Err(field_err(
+            "body",
+            "document must start with YAML frontmatter (---)",
+        ));
     }
     let rest = trimmed.trim_start_matches("---").trim_start();
-    let end = rest.find("\n---").ok_or_else(|| field_err("body", "missing closing ---"))?;
+    let end = rest
+        .find("\n---")
+        .ok_or_else(|| field_err("body", "missing closing ---"))?;
     let yaml = rest[..end].trim();
     let body = rest[end + 4..].trim_start().trim_end().to_string();
     Ok((yaml.to_string(), body))
@@ -46,7 +51,8 @@ pub fn parse_skill_file(path: &Path, raw: &str) -> Result<PolicySkillDoc, Valida
 }
 
 fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError> {
-    let v: Value = serde_yaml::from_str(yaml).map_err(|e| field_err("frontmatter", &e.to_string()))?;
+    let v: Value =
+        serde_yaml::from_str(yaml).map_err(|e| field_err("frontmatter", &e.to_string()))?;
     let mut map = HashMap::new();
     if let Value::Mapping(m) = v {
         for (k, val) in m {
@@ -70,9 +76,8 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
         .unwrap_or(crate::types::PolicyScope::Project)
         .as_str()
         .to_string();
-    let storage = get_str(&map, "storage").and_then(|s| {
-        crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string())
-    });
+    let storage = get_str(&map, "storage")
+        .and_then(|s| crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string()));
     Ok(RuleFrontmatter {
         id,
         level,
@@ -96,7 +101,8 @@ fn parse_rule_frontmatter(yaml: &str) -> Result<RuleFrontmatter, ValidationError
 }
 
 fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationError> {
-    let v: Value = serde_yaml::from_str(yaml).map_err(|e| field_err("frontmatter", &e.to_string()))?;
+    let v: Value =
+        serde_yaml::from_str(yaml).map_err(|e| field_err("frontmatter", &e.to_string()))?;
     let mut map = HashMap::new();
     if let Value::Mapping(m) = v {
         for (k, val) in m {
@@ -106,7 +112,8 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
         }
     }
     let name = get_str(&map, "name").ok_or_else(|| field_err("name", "required"))?;
-    let description = get_str(&map, "description").ok_or_else(|| field_err("description", "required"))?;
+    let description =
+        get_str(&map, "description").ok_or_else(|| field_err("description", "required"))?;
     let share = get_bool(&map, "share");
     let mut tags = get_str_list(&map, "tags");
     ensure_shared_tag(&mut tags, share);
@@ -120,9 +127,8 @@ fn parse_skill_frontmatter(yaml: &str) -> Result<SkillFrontmatter, ValidationErr
         .unwrap_or(crate::types::PolicyScope::Project)
         .as_str()
         .to_string();
-    let storage = get_str(&map, "storage").and_then(|s| {
-        crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string())
-    });
+    let storage = get_str(&map, "storage")
+        .and_then(|s| crate::config::PolicyStorage::parse(&s).map(|p| p.as_str().to_string()));
     Ok(SkillFrontmatter {
         name,
         description,
@@ -183,7 +189,10 @@ const SKILL_KNOWN_KEYS: &[&str] = &[
     "group",
 ];
 
-fn extra_properties(map: &HashMap<String, Value>, known: &[&str]) -> crate::types::PolicyProperties {
+fn extra_properties(
+    map: &HashMap<String, Value>,
+    known: &[&str],
+) -> crate::types::PolicyProperties {
     let mut props = crate::types::PolicyProperties::new();
     for (key, val) in map {
         if known.iter().any(|k| *k == key) {
@@ -261,7 +270,11 @@ fn validate_rule(fm: &RuleFrontmatter) -> Result<(), ValidationError> {
     let mut fields = HashMap::new();
     if fm.id.is_empty() {
         fields.insert("id".into(), "required".into());
-    } else if !fm.id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    } else if !fm
+        .id
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
         fields.insert("id".into(), "must be kebab-case".into());
     }
     if crate::types::PolicyLevel::parse(&fm.level).is_none() {
@@ -527,7 +540,8 @@ mod tests {
 
     #[test]
     fn parse_skill_group_roundtrip() {
-        let raw = "---\nname: perf-skill\ndescription: latency\ngroup: performance\n---\n\nTune it.\n";
+        let raw =
+            "---\nname: perf-skill\ndescription: latency\ngroup: performance\n---\n\nTune it.\n";
         let doc = parse_skill_file(Path::new("SKILL.md"), raw).unwrap();
         assert_eq!(doc.frontmatter.group.as_deref(), Some("performance"));
         let round = serialize_skill(&doc.frontmatter, &doc.body);
@@ -556,7 +570,10 @@ mod tests {
         assert!(!doc.frontmatter.properties.contains_key("aliases"));
         assert_eq!(doc.frontmatter.properties["owner"], "platform");
         assert_eq!(doc.frontmatter.properties["kind"], "review");
-        assert_eq!(doc.frontmatter.properties["files"], serde_json::json!(["src/a.rs"]));
+        assert_eq!(
+            doc.frontmatter.properties["files"],
+            serde_json::json!(["src/a.rs"])
+        );
         assert_eq!(doc.frontmatter.properties["experimental"], false);
         let again = serialize_rule(&doc.frontmatter, &doc.body);
         let doc2 = parse_rule_file(Path::new("demo.mdc"), &again).unwrap();

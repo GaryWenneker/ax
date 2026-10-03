@@ -1,0 +1,17 @@
+[package]
+name = "ax-pi"
+version = "6.4.0"
+edition = "2021"
+description = "Observe and advise a Pi agent run. Pi owns execution; this crate does not."
+
+[dependencies]
+ax-usage = { workspace = true }
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

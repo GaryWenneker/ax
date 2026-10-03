@@ -4,8 +4,8 @@ use ax_extraction::orchestrator::IndexOptions;
 
 use crate::commands::{check_unsafe_root, resolve_path};
 use crate::ui::{
-    finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, info_line,
-    ok_line,
+    finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback,
+    info_line, ok_line,
 };
 
 pub async fn run(

@@ -1,20 +1,21 @@
 //! MCP server for ax.
 
-pub mod daemon;
-pub mod daemon_paths;
-pub mod daemon_lock;
-pub mod query_pool;
-pub mod policy_session;
 pub mod chat_session;
+pub mod daemon;
 pub mod daemon_conn;
+pub mod daemon_lock;
+pub mod daemon_paths;
 pub mod engine;
 pub mod exe_identity;
 pub mod invoke;
 pub mod links;
 pub mod liveness_watchdog;
+pub mod pi_knowledge;
+pub mod policy_session;
 pub mod ppid_watchdog;
 pub mod proxy;
 pub mod proxy_pump;
+pub mod query_pool;
 pub mod server;
 pub mod staleness;
 pub mod tool_filter;
@@ -25,8 +26,8 @@ pub mod verbose;
 pub use daemon::run_daemon;
 pub use engine::McpEngine;
 pub use invoke::{call_tool, format_tool_result};
+pub use liveness_watchdog::run_watchdog_child;
 pub use proxy::{attach_or_spawn, restart_daemon, DaemonRestartReport};
 pub use server::{resolve_mcp_project_root, run_stdio_server};
-pub use liveness_watchdog::run_watchdog_child;
 pub use tools::ToolHandler;
 pub use transport::{JsonRpcRequest, JsonRpcResponse, StdioTransport};

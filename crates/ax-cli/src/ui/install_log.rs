@@ -32,7 +32,12 @@ pub fn render_install(summary: &InstallSummary, project_hint: &str, warning: Opt
             if file.action == FileAction::Skipped {
                 continue;
             }
-            log_file(g, report.display_name, file.action.verb(), &tildify(&file.path));
+            log_file(
+                g,
+                report.display_name,
+                file.action.verb(),
+                &tildify(&file.path),
+            );
             any = true;
         }
         for note in &report.notes {
@@ -170,7 +175,10 @@ fn log_warn(g: &ClackGlyphs, message: &str) {
 fn clack_note(g: &ClackGlyphs, title: &str, lines: &[String]) {
     log_bar(g);
     let title_painted = title.cyan().bold().to_string();
-    let widths: Vec<usize> = lines.iter().map(|line| console::measure_text_width(line)).collect();
+    let widths: Vec<usize> = lines
+        .iter()
+        .map(|line| console::measure_text_width(line))
+        .collect();
     let max_w = widths
         .iter()
         .copied()
@@ -212,7 +220,10 @@ pub fn tildify(path: &std::path::Path) -> String {
     if let Some(home) = ax_utils::paths::home_dir() {
         if path.starts_with(&home) {
             let rest = path.strip_prefix(&home).unwrap_or(path);
-            let rest = rest.to_string_lossy().trim_start_matches(['\\', '/']).to_string();
+            let rest = rest
+                .to_string_lossy()
+                .trim_start_matches(['\\', '/'])
+                .to_string();
             return format!("~/{rest}");
         }
     }

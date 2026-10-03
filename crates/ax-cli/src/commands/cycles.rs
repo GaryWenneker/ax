@@ -7,10 +7,7 @@ pub async fn run(limit: usize, json: bool) -> Result<(), String> {
     let _spinner = SpinnerGuard::new("Finding call-graph cycles...", false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let cycles = ax.find_cycles(limit).await.map_err(|e| e.to_string())?;
-    ax_usage::log_cli(
-        Some(&root),
-        format!("cmd=cycles ok count={}", cycles.len()),
-    );
+    ax_usage::log_cli(Some(&root), format!("cmd=cycles ok count={}", cycles.len()));
     if json {
         println!(
             "{}",

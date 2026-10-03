@@ -30,7 +30,12 @@ pub async fn run(module: String, limit: usize, json: bool) -> Result<(), String>
     }
     println!("## API surface: {module} ({} symbols)\n", nodes.len());
     for n in &nodes {
-        println!("- {} ({}) — {}", n.qualified_name, n.kind.as_str(), n.file_path);
+        println!(
+            "- {} ({}) — {}",
+            n.qualified_name,
+            n.kind.as_str(),
+            n.file_path
+        );
     }
     Ok(())
 }

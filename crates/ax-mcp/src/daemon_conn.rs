@@ -82,6 +82,8 @@ pub async fn connect_path(path: &str) -> Option<DaemonSession> {
 }
 
 pub async fn connect_tcp(port: u16) -> Option<DaemonSession> {
-    let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).await.ok()?;
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+        .await
+        .ok()?;
     Some(DaemonSession::from_tcp(stream))
 }

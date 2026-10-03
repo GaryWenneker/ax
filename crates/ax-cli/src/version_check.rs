@@ -58,7 +58,11 @@ fn github_token_from_gh_cli() -> Option<String> {
         return None;
     }
     let t = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if t.is_empty() { None } else { Some(t) }
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
+    }
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -240,9 +244,13 @@ async fn fetch_latest_from_cdn(client: &reqwest::Client) -> Result<String, Strin
 
 pub async fn resolve_latest_version(repo: &str) -> Result<String, String> {
     let client = http_client()?;
-    collect_latest_candidates(&client, repo).await.into_iter().next().ok_or_else(|| {
-        "could not resolve latest release (no GitHub releases or CDN latest.txt)".to_string()
-    })
+    collect_latest_candidates(&client, repo)
+        .await
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            "could not resolve latest release (no GitHub releases or CDN latest.txt)".to_string()
+        })
 }
 
 /// Highest semver release tag that has a downloadable bundle for this platform (matches install.ps1).
@@ -322,7 +330,11 @@ async fn fetch_releases_with_assets(
     Ok(body
         .iter()
         .filter(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
-        .filter(|r| !r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter(|r| {
+            !r.get("prerelease")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
         .filter_map(|r| {
             let tag = r.get("tag_name")?.as_str()?;
             let assets = r
@@ -396,7 +408,11 @@ async fn fetch_release_tags(
     Ok(body
         .iter()
         .filter(|r| !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false))
-        .filter(|r| !r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter(|r| {
+            !r.get("prerelease")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
         .filter_map(|r| r.get("tag_name").and_then(|v| v.as_str()))
         .map(normalize_version)
         .filter(|s| !s.is_empty())
@@ -529,7 +545,9 @@ pub async fn run_check(force_refresh: bool) -> Result<(), String> {
             }
             Err(e) if e.contains("private repo") => {
                 eprintln!("{}", warn_line(e));
-                eprintln!("  Set GITHUB_TOKEN or run `gh auth login`, then retry `ax upgrade --check`.");
+                eprintln!(
+                    "  Set GITHUB_TOKEN or run `gh auth login`, then retry `ax upgrade --check`."
+                );
                 return Ok(());
             }
             Err(e) => {
@@ -595,10 +613,7 @@ mod tests {
     #[test]
     fn collect_latest_candidates_prefers_github_over_stale_cdn() {
         // When GitHub tags are present, stale CDN latest.txt must not appear alone.
-        let sorted = unique_tags_desc(vec![
-            "v2.0.12".into(),
-            "v2.0.5".into(),
-        ]);
+        let sorted = unique_tags_desc(vec!["v2.0.12".into(), "v2.0.5".into()]);
         assert_eq!(sorted.first().map(String::as_str), Some("v2.0.12"));
     }
 

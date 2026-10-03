@@ -44,7 +44,9 @@ pub async fn index_policy(
                 db_counts(pool).await
             }
         }
-        PolicyStorage::Files => import_policy_from_files(pool, project_root, ImportMode::Replace).await,
+        PolicyStorage::Files => {
+            import_policy_from_files(pool, project_root, ImportMode::Replace).await
+        }
     }
 }
 
@@ -206,7 +208,11 @@ async fn import_one_policy_dir(
             let mut doc = match parse_skill_file(&skill_path, &raw) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("[ax policy] skip skill {}: {}", skill_path.display(), e.error);
+                    eprintln!(
+                        "[ax policy] skip skill {}: {}",
+                        skill_path.display(),
+                        e.error
+                    );
                     continue;
                 }
             };
@@ -398,14 +404,18 @@ fn policy_dir_nonempty(policy_dir: &Path) -> bool {
     let rules_path = policy_dir.join(crate::paths::RULES_DIR);
     let has_rules = rules_path
         .read_dir()
-        .map(|d| d.flatten().any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("mdc")))
+        .map(|d| {
+            d.flatten()
+                .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("mdc"))
+        })
         .unwrap_or(false);
     let skills_path = policy_dir.join(crate::paths::SKILLS_DIR);
     let has_skills = skills_path
         .read_dir()
         .map(|d| {
             d.flatten().any(|e| {
-                e.path().is_dir() && skill_file(&skills_path, &e.file_name().to_string_lossy()).is_file()
+                e.path().is_dir()
+                    && skill_file(&skills_path, &e.file_name().to_string_lossy()).is_file()
             })
         })
         .unwrap_or(false);
@@ -414,7 +424,10 @@ fn policy_dir_nonempty(policy_dir: &Path) -> bool {
 
 /// Load policy into SQLite when the DB is empty or disk files changed (database mode),
 /// or refresh from disk (files mode). Safe to call on every MCP policy tool invocation.
-pub async fn ensure_policy_ready(pool: &SqlitePool, project_root: &Path) -> Result<PolicyIndexResult, AxError> {
+pub async fn ensure_policy_ready(
+    pool: &SqlitePool,
+    project_root: &Path,
+) -> Result<PolicyIndexResult, AxError> {
     let config = load_policy_config(project_root);
     match config.storage {
         PolicyStorage::Database => {
@@ -426,7 +439,9 @@ pub async fn ensure_policy_ready(pool: &SqlitePool, project_root: &Path) -> Resu
                 Ok(counts)
             }
         }
-        PolicyStorage::Files => import_policy_from_files(pool, project_root, ImportMode::Replace).await,
+        PolicyStorage::Files => {
+            import_policy_from_files(pool, project_root, ImportMode::Replace).await
+        }
     }
 }
 
@@ -459,17 +474,24 @@ async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<b
                 continue;
             };
             let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
-            let db_hash: Option<String> = sqlx::query_scalar(
-                "SELECT content_hash FROM policy_rules WHERE id = ?",
-            )
-            .bind(&doc.frontmatter.id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            let db_hash: Option<String> =
+                sqlx::query_scalar("SELECT content_hash FROM policy_rules WHERE id = ?")
+                    .bind(&doc.frontmatter.id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
             if db_hash.as_deref() != Some(hash.as_str()) {
                 return Ok(true);
             }
-            if properties_differ(pool, "policy_rules", "id", &doc.frontmatter.id, &doc.frontmatter.properties).await? {
+            if properties_differ(
+                pool,
+                "policy_rules",
+                "id",
+                &doc.frontmatter.id,
+                &doc.frontmatter.properties,
+            )
+            .await?
+            {
                 return Ok(true);
             }
         }
@@ -499,17 +521,24 @@ async fn policy_dir_disk_stale(pool: &SqlitePool, policy_dir: &Path) -> Result<b
                 continue;
             };
             let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
-            let db_hash: Option<String> = sqlx::query_scalar(
-                "SELECT content_hash FROM policy_skills WHERE name = ?",
-            )
-            .bind(&doc.frontmatter.name)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+            let db_hash: Option<String> =
+                sqlx::query_scalar("SELECT content_hash FROM policy_skills WHERE name = ?")
+                    .bind(&doc.frontmatter.name)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
             if db_hash.as_deref() != Some(hash.as_str()) {
                 return Ok(true);
             }
-            if properties_differ(pool, "policy_skills", "name", &doc.frontmatter.name, &doc.frontmatter.properties).await? {
+            if properties_differ(
+                pool,
+                "policy_skills",
+                "name",
+                &doc.frontmatter.name,
+                &doc.frontmatter.properties,
+            )
+            .await?
+            {
                 return Ok(true);
             }
         }
@@ -534,15 +563,15 @@ async fn properties_differ(
         .fetch_optional(pool)
         .await
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-    let stored = stored
-        .as_deref()
-        .map(parse_properties)
-        .unwrap_or_default();
+    let stored = stored.as_deref().map(parse_properties).unwrap_or_default();
     Ok(stored != *parsed)
 }
 
 /// Policy counts and storage mode for status / diagnostics.
-pub async fn policy_status(pool: &SqlitePool, project_root: &Path) -> Result<crate::types::PolicyStatus, AxError> {
+pub async fn policy_status(
+    pool: &SqlitePool,
+    project_root: &Path,
+) -> Result<crate::types::PolicyStatus, AxError> {
     let counts = db_counts(pool).await?;
     let config = load_policy_config(project_root);
     Ok(crate::types::PolicyStatus {
@@ -721,12 +750,11 @@ const SKILL_SELECT: &str = "SELECT name, description, COALESCE(always_apply, 0) 
          FROM policy_skills";
 
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError> {
-    let rows = sqlx::query_as::<_, RuleDbRow>(&format!(
-        "{RULE_SELECT} ORDER BY id COLLATE NOCASE ASC"
-    ))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let rows =
+        sqlx::query_as::<_, RuleDbRow>(&format!("{RULE_SELECT} ORDER BY id COLLATE NOCASE ASC"))
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(rows.into_iter().map(RuleDbRow::into_row).collect())
 }
 
@@ -771,7 +799,11 @@ pub fn enrich_rule_row(row: &mut PolicyRuleRow, default: PolicyStorage) {
     row.storage_is_override = row.storage.is_some();
     let stored = row.group.trim();
     row.group = crate::skill_groups::resolve_skill_group(
-        if stored.is_empty() { None } else { Some(stored) },
+        if stored.is_empty() {
+            None
+        } else {
+            Some(stored)
+        },
         &row.id,
         &row.tags,
     );
@@ -783,7 +815,11 @@ pub fn enrich_skill_row(row: &mut PolicySkillRow, default: PolicyStorage) {
     row.storage_is_override = row.storage.is_some();
     let stored = row.group.trim();
     row.group = crate::skill_groups::resolve_skill_group(
-        if stored.is_empty() { None } else { Some(stored) },
+        if stored.is_empty() {
+            None
+        } else {
+            Some(stored)
+        },
         &row.name,
         &row.tags,
     );
@@ -985,7 +1021,10 @@ impl RuleDbRow {
             stub_path: self.stub_path.filter(|s| !s.is_empty()),
             effective_storage: String::new(),
             storage_is_override: false,
-            group: self.skill_group.filter(|s| !s.is_empty()).unwrap_or_default(),
+            group: self
+                .skill_group
+                .filter(|s| !s.is_empty())
+                .unwrap_or_default(),
             properties: parse_properties(&self.properties),
         }
     }
@@ -1043,7 +1082,10 @@ impl SkillDbRow {
             stub_path: self.stub_path.filter(|s| !s.is_empty()),
             effective_storage: String::new(),
             storage_is_override: false,
-            group: self.skill_group.filter(|s| !s.is_empty()).unwrap_or_default(),
+            group: self
+                .skill_group
+                .filter(|s| !s.is_empty())
+                .unwrap_or_default(),
             properties: parse_properties(&self.properties),
         }
     }
@@ -1066,10 +1108,7 @@ mod tests {
         let opts = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(&db_path)
             .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .connect_with(opts)
-            .await
-            .unwrap();
+        let pool = SqlitePoolOptions::new().connect_with(opts).await.unwrap();
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS policy_rules (
                 id TEXT PRIMARY KEY, level TEXT NOT NULL, always_apply INTEGER NOT NULL DEFAULT 0,
@@ -1112,11 +1151,7 @@ mod tests {
     async fn database_mode_save_without_files() {
         let (_dir, pool) = test_pool().await;
         let root = _dir.path();
-        std::fs::write(
-            root.join("ax.json"),
-            r#"{"policy":{"storage":"database"}}"#,
-        )
-        .unwrap();
+        std::fs::write(root.join("ax.json"), r#"{"policy":{"storage":"database"}}"#).unwrap();
 
         let fm = RuleFrontmatter {
             id: "test-rule".into(),
@@ -1201,7 +1236,9 @@ mod tests {
         let rules = list_rules(&pool).await.unwrap();
         assert!(rules.iter().any(|r| r.id == "ok"));
         assert!(
-            !rules.iter().any(|r| r.id.contains("no-ab-prefix") || r.id == "contoso-pr"),
+            !rules
+                .iter()
+                .any(|r| r.id.contains("no-ab-prefix") || r.id == "contoso-pr"),
             "cursor-native files must not be upserted: {:?}",
             rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>()
         );
@@ -1211,11 +1248,7 @@ mod tests {
     async fn ensure_policy_ready_skips_cursor_files_when_checking_stale() {
         let (_dir, pool) = test_pool().await;
         let root = _dir.path();
-        std::fs::write(
-            root.join("ax.json"),
-            r#"{"policy":{"storage":"database"}}"#,
-        )
-        .unwrap();
+        std::fs::write(root.join("ax.json"), r#"{"policy":{"storage":"database"}}"#).unwrap();
         std::fs::create_dir_all(root.join(".agents/rules")).unwrap();
         std::fs::write(
             root.join(".agents/rules/ok.mdc"),
@@ -1291,11 +1324,7 @@ mod tests {
     async fn ensure_policy_ready_imports_when_db_empty() {
         let (_dir, pool) = test_pool().await;
         let root = _dir.path();
-        std::fs::write(
-            root.join("ax.json"),
-            r#"{"policy":{"storage":"database"}}"#,
-        )
-        .unwrap();
+        std::fs::write(root.join("ax.json"), r#"{"policy":{"storage":"database"}}"#).unwrap();
         let ax_dir = root.join(".ax");
         let rules_path = rules_dir(&ax_dir);
         std::fs::create_dir_all(&rules_path).unwrap();
@@ -1377,10 +1406,18 @@ mod tests {
 
     fn fixture_policy(root: &Path) {
         write_skill(root, "noti", "short");
-        write_skill(root, "extra", "a project copy that is longer than the global one");
+        write_skill(
+            root,
+            "extra",
+            "a project copy that is longer than the global one",
+        );
         write_skill(root, "solo", "only here");
         write_rule(root, "utf8", "short");
-        write_rule(root, "longrule", "a project rule body longer than the global one");
+        write_rule(
+            root,
+            "longrule",
+            "a project rule body longer than the global one",
+        );
     }
 
     #[tokio::test]
@@ -1391,10 +1428,25 @@ mod tests {
         global_db_with(
             &global,
             &[
-                ("global_policy_skills", "noti", "the global copy is the longer one", "global"),
+                (
+                    "global_policy_skills",
+                    "noti",
+                    "the global copy is the longer one",
+                    "global",
+                ),
                 ("global_policy_skills", "extra", "short global", "global"),
-                ("global_policy_skills", "solo", "a mirror only, never shadows a project copy", "mirror"),
-                ("global_policy_rules", "utf8", "the global rule is the longer one", "global"),
+                (
+                    "global_policy_skills",
+                    "solo",
+                    "a mirror only, never shadows a project copy",
+                    "mirror",
+                ),
+                (
+                    "global_policy_rules",
+                    "utf8",
+                    "the global rule is the longer one",
+                    "global",
+                ),
                 ("global_policy_rules", "longrule", "short", "global"),
             ],
         )
@@ -1402,10 +1454,22 @@ mod tests {
         fixture_policy(root);
         crate::global_level::set_test_global_db(Some(global));
 
-        import_policy_from_files(&pool, root, ImportMode::Replace).await.unwrap();
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
 
-        let skills: Vec<String> = list_skills(&pool).await.unwrap().into_iter().map(|s| s.name).collect();
-        let rules: Vec<String> = list_rules(&pool).await.unwrap().into_iter().map(|r| r.id).collect();
+        let skills: Vec<String> = list_skills(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        let rules: Vec<String> = list_rules(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
         crate::global_level::set_test_global_db(None);
         assert!(!skills.contains(&"noti".to_string()), "{skills:?}");
         assert!(skills.contains(&"extra".to_string()), "{skills:?}");
@@ -1422,13 +1486,28 @@ mod tests {
         fixture_policy(root);
         crate::global_level::set_test_global_db(Some(root.join("missing-global.db")));
 
-        import_policy_from_files(&pool, root, ImportMode::Replace).await.unwrap();
+        import_policy_from_files(&pool, root, ImportMode::Replace)
+            .await
+            .unwrap();
 
-        let skills: Vec<String> = list_skills(&pool).await.unwrap().into_iter().map(|s| s.name).collect();
-        let rules: Vec<String> = list_rules(&pool).await.unwrap().into_iter().map(|r| r.id).collect();
+        let skills: Vec<String> = list_skills(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        let rules: Vec<String> = list_rules(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
         crate::global_level::set_test_global_db(None);
         for name in ["noti", "extra", "solo"] {
-            assert!(skills.contains(&name.to_string()), "{name} missing: {skills:?}");
+            assert!(
+                skills.contains(&name.to_string()),
+                "{name} missing: {skills:?}"
+            );
         }
         for id in ["utf8", "longrule"] {
             assert!(rules.contains(&id.to_string()), "{id} missing: {rules:?}");

@@ -40,7 +40,8 @@ pub async fn run() -> Result<(), String> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(ax_usage::read_active_cursor_session);
-        let _ = ax_usage::note_session_event(session.as_deref(), "user_prompt", &prompt, None).await;
+        let _ =
+            ax_usage::note_session_event(session.as_deref(), "user_prompt", &prompt, None).await;
     }
     let cwd = input
         .get("cwd")
@@ -168,7 +169,9 @@ pub async fn run() -> Result<(), String> {
 
     if !out.is_empty() {
         let mut stdout = io::stdout();
-        stdout.write_all(out.as_bytes()).map_err(|e| e.to_string())?;
+        stdout
+            .write_all(out.as_bytes())
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }

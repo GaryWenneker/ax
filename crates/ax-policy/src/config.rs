@@ -36,7 +36,10 @@ impl PolicyStorage {
 }
 
 /// Resolve per-item storage override against the project default.
-pub fn effective_storage(project_default: PolicyStorage, item_storage: Option<&str>) -> PolicyStorage {
+pub fn effective_storage(
+    project_default: PolicyStorage,
+    item_storage: Option<&str>,
+) -> PolicyStorage {
     item_storage
         .and_then(PolicyStorage::parse)
         .unwrap_or(project_default)
@@ -111,7 +114,9 @@ pub fn load_policy_config(project_root: &Path) -> PolicyConfig {
     append_roots(
         &mut roots,
         &global.roots,
-        global_config_path().parent().unwrap_or_else(|| Path::new(".")),
+        global_config_path()
+            .parent()
+            .unwrap_or_else(|| Path::new(".")),
         project_root,
     );
     if let Some(ws) = crate::hierarchy::find_workspace_root(project_root) {
@@ -236,7 +241,10 @@ fn member_path_matches(project_root: &Path, member_key: &str) -> bool {
         .file_name()
         .map(|n| n.to_string_lossy() == member_key)
         .unwrap_or(false)
-        || project_root.to_string_lossy().replace('\\', "/").ends_with(member_key)
+        || project_root
+            .to_string_lossy()
+            .replace('\\', "/")
+            .ends_with(member_key)
 }
 
 /// True when project `ax.json` has `"policySync": true`.
@@ -384,7 +392,10 @@ pub fn policy_storage_status(project_root: &Path) -> PolicyStorageStatus {
 }
 
 /// Set `policy.storage` in per-project `ax.json` (merges other keys).
-pub fn write_project_policy_storage(project_root: &Path, storage: PolicyStorage) -> Result<PathBuf, String> {
+pub fn write_project_policy_storage(
+    project_root: &Path,
+    storage: PolicyStorage,
+) -> Result<PathBuf, String> {
     let path = project_root.join(CONFIG_FILENAME);
     write_policy_storage_at(&path, storage)?;
     Ok(path)
@@ -414,7 +425,10 @@ fn write_policy_storage_at(path: &Path, storage: PolicyStorage) -> Result<(), St
         .remove("policy")
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default();
-    policy_obj.insert("storage".into(), serde_json::Value::String(storage.as_str().into()));
+    policy_obj.insert(
+        "storage".into(),
+        serde_json::Value::String(storage.as_str().into()),
+    );
     policy.insert("policy".into(), serde_json::Value::Object(policy_obj));
 
     let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n";
@@ -477,7 +491,11 @@ pub fn read_project_ides(project_root: &Path) -> Option<Vec<String>> {
     let text = std::fs::read_to_string(project_root.join(CONFIG_FILENAME)).ok()?;
     let root: serde_json::Value = serde_json::from_str(&text).ok()?;
     let list = root.get("agents")?.get("ides")?.as_array()?;
-    Some(list.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+    Some(
+        list.iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+    )
 }
 
 /// Save `agents.ides` in the project `ax.json`, keeping every other key.
@@ -490,9 +508,7 @@ pub fn write_project_ides(project_root: &Path, ides: &[String]) -> Result<(), St
     let obj = root
         .as_object_mut()
         .ok_or_else(|| "config root must be a JSON object".to_string())?;
-    let agents = obj
-        .entry("agents")
-        .or_insert_with(|| serde_json::json!({}));
+    let agents = obj.entry("agents").or_insert_with(|| serde_json::json!({}));
     if !agents.is_object() {
         *agents = serde_json::json!({});
     }
@@ -562,12 +578,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(read_project_ides(dir.path()), None);
         let path = dir.path().join(CONFIG_FILENAME);
-        std::fs::write(&path, r#"{"policy":{"stacks":["rust"]},"agents":{"other":1}}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"policy":{"stacks":["rust"]},"agents":{"other":1}}"#,
+        )
+        .unwrap();
         assert_eq!(read_project_ides(dir.path()), None);
 
         write_project_ides(dir.path(), &["cursor".into(), "zed".into()]).unwrap();
-        assert_eq!(read_project_ides(dir.path()), Some(vec!["cursor".to_string(), "zed".to_string()]));
-        let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            read_project_ides(dir.path()),
+            Some(vec!["cursor".to_string(), "zed".to_string()])
+        );
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(saved["policy"]["stacks"][0], "rust");
         assert_eq!(saved["agents"]["other"], 1);
 
@@ -663,6 +687,9 @@ mod tests {
         assert_eq!(validate_agents_dir_name("").unwrap(), ".agents");
         let saved = write_project_agents_dir(dir.path(), "team-policy").unwrap();
         assert_eq!(saved, "team-policy");
-        assert_eq!(configured_agents_dir(dir.path()).as_deref(), Some("team-policy"));
+        assert_eq!(
+            configured_agents_dir(dir.path()).as_deref(),
+            Some("team-policy")
+        );
     }
 }

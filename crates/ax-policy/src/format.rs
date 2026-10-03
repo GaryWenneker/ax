@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::types::{
-    MatchedRule, MatchedSkill, MatchResult, PolicyProperties, PolicyStatus, PreflightMeta,
+    MatchResult, MatchedRule, MatchedSkill, PolicyProperties, PolicyStatus, PreflightMeta,
 };
 
 /// Per-call delivery context for [`format_inject_block_with`].
@@ -79,13 +79,22 @@ struct Tracker<'a> {
 
 impl<'a> Tracker<'a> {
     fn new(opts: InjectOptions<'a>) -> Self {
-        Self { opts, unchanged: Vec::new(), client_loaded: Vec::new(), delivered: Vec::new() }
+        Self {
+            opts,
+            unchanged: Vec::new(),
+            client_loaded: Vec::new(),
+            delivered: Vec::new(),
+        }
     }
 
     /// Decide whether a body goes out, and record that decision.
     fn decide(&mut self, key: String, label: &str, body: &str) -> Delivery {
         let hash = content_hash(body);
-        if self.opts.client_loaded.is_some_and(|set| set.contains(&key)) {
+        if self
+            .opts
+            .client_loaded
+            .is_some_and(|set| set.contains(&key))
+        {
             self.client_loaded.push(label.to_string());
             return Delivery::ClientLoaded;
         }
@@ -122,7 +131,10 @@ pub fn format_inject_block_with(
     opts: InjectOptions<'_>,
 ) -> InjectOutput {
     if rules.is_empty() && skills.is_empty() {
-        return InjectOutput { text: String::new(), delivered: Vec::new() };
+        return InjectOutput {
+            text: String::new(),
+            delivered: Vec::new(),
+        };
     }
     let mut tracker = Tracker::new(opts);
     let (always, contextual): (Vec<_>, Vec<_>) = rules.iter().partition(|r| r.always_apply);
@@ -133,8 +145,9 @@ pub fn format_inject_block_with(
 
     // Always-apply rules are the preflight contract — never hard-truncate them.
     // If they exceed max_chars, the inject grows rather than cutting mid-rule.
-    let (out_of_scope, always): (Vec<_>, Vec<_>) =
-        always.into_iter().partition(|r| r.reason.contains(crate::matcher::OUT_OF_SCOPE));
+    let (out_of_scope, always): (Vec<_>, Vec<_>) = always
+        .into_iter()
+        .partition(|r| r.reason.contains(crate::matcher::OUT_OF_SCOPE));
     if !always.is_empty() {
         body.push_str("## Rules (always apply)\n\n");
         for r in &always {
@@ -202,8 +215,14 @@ pub fn format_inject_block_with(
                 &label,
                 delivery_text(&s.body, &s.properties).as_ref(),
             ) {
-                let summarize = opts.skill_inline_chars.is_some_and(|limit| s.body.len() > limit);
-                body.push_str(&if summarize { skill_summary_block(s) } else { skill_block(s) });
+                let summarize = opts
+                    .skill_inline_chars
+                    .is_some_and(|limit| s.body.len() > limit);
+                body.push_str(&if summarize {
+                    skill_summary_block(s)
+                } else {
+                    skill_block(s)
+                });
             }
         }
     }
@@ -246,10 +265,17 @@ pub fn format_inject_block_with(
 
     body.push_str(&tracker.notes());
     body.push_str(FOOTER);
-    InjectOutput { text: body, delivered: tracker.delivered }
+    InjectOutput {
+        text: body,
+        delivered: tracker.delivered,
+    }
 }
 
-pub fn format_inject_block(rules: &[MatchedRule], skills: &[MatchedSkill], max_chars: usize) -> String {
+pub fn format_inject_block(
+    rules: &[MatchedRule],
+    skills: &[MatchedSkill],
+    max_chars: usize,
+) -> String {
     format_inject_block_with(rules, skills, max_chars, InjectOptions::default()).text
 }
 
@@ -298,7 +324,9 @@ const DIRECTIVE_HEADINGS: &[&str] = &[
 ];
 
 fn is_directive_heading(line: &str) -> bool {
-    let Some(title) = line.strip_prefix("## ") else { return false };
+    let Some(title) = line.strip_prefix("## ") else {
+        return false;
+    };
     let title = title.trim().trim_end_matches(':').to_ascii_lowercase();
     DIRECTIVE_HEADINGS.contains(&title.as_str())
 }
@@ -323,7 +351,11 @@ fn compact_rule_body(body: &str) -> String {
         }
     }
     if !found_section && kept.is_empty() {
-        kept = body.lines().filter(|l| !l.trim().is_empty()).take(3).collect();
+        kept = body
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .take(3)
+            .collect();
     }
     kept.join("\n")
 }
@@ -370,7 +402,11 @@ mod tests {
             id: id.into(),
             level: "CRITICAL".into(),
             score: if always { 100 } else { 20 },
-            reason: if always { "alwaysApply".into() } else { "trigger:x".into() },
+            reason: if always {
+                "alwaysApply".into()
+            } else {
+                "trigger:x".into()
+            },
             always_apply: always,
             body: body.into(),
             properties: PolicyProperties::new(),
@@ -413,7 +449,11 @@ mod tests {
         MatchedSkill {
             name: name.into(),
             score: if always { 100 } else { 25 },
-            reason: if always { "alwaysApply".into() } else { "trigger:x".into() },
+            reason: if always {
+                "alwaysApply".into()
+            } else {
+                "trigger:x".into()
+            },
             description: "desc".into(),
             body: body.into(),
             always_apply: always,
@@ -444,37 +484,63 @@ mod tests {
         let rules = vec![rule("english-only", true, "WRITE ENGLISH")];
         let out = format_inject_block_with(&rules, &[], 16_000, InjectOptions::default());
         assert!(out.text.contains("WRITE ENGLISH"));
-        assert_eq!(out.delivered, vec![(rule_key("english-only"), content_hash("WRITE ENGLISH"))]);
+        assert_eq!(
+            out.delivered,
+            vec![(rule_key("english-only"), content_hash("WRITE ENGLISH"))]
+        );
     }
 
     #[test]
     fn unchanged_always_rule_is_listed_not_resent() {
-        let rules = vec![rule("english-only", true, "WRITE ENGLISH"), rule("utf8", true, "NO BOM")];
+        let rules = vec![
+            rule("english-only", true, "WRITE ENGLISH"),
+            rule("utf8", true, "NO BOM"),
+        ];
         let delivered = delivered_of(&rules, &[]);
-        let opts = InjectOptions { delivered: Some(&delivered), ..Default::default() };
+        let opts = InjectOptions {
+            delivered: Some(&delivered),
+            ..Default::default()
+        };
         let out = format_inject_block_with(&rules, &[], 16_000, opts);
         assert!(!out.text.contains("WRITE ENGLISH"), "{}", out.text);
         assert!(!out.text.contains("NO BOM"), "{}", out.text);
         assert!(out.text.contains("english-only"));
         assert!(out.text.contains("utf8"));
-        assert!(out.text.contains("ax_rules"), "recovery pointer missing:\n{}", out.text);
+        assert!(
+            out.text.contains("ax_rules"),
+            "recovery pointer missing:\n{}",
+            out.text
+        );
         assert!(out.delivered.is_empty());
     }
 
     #[test]
     fn changed_rule_body_is_resent() {
         let delivered = delivered_of(&[rule("english-only", true, "OLD TEXT")], &[]);
-        let opts = InjectOptions { delivered: Some(&delivered), ..Default::default() };
-        let out = format_inject_block_with(&[rule("english-only", true, "NEW TEXT")], &[], 16_000, opts);
+        let opts = InjectOptions {
+            delivered: Some(&delivered),
+            ..Default::default()
+        };
+        let out =
+            format_inject_block_with(&[rule("english-only", true, "NEW TEXT")], &[], 16_000, opts);
         assert!(out.text.contains("NEW TEXT"));
-        assert_eq!(out.delivered, vec![(rule_key("english-only"), content_hash("NEW TEXT"))]);
+        assert_eq!(
+            out.delivered,
+            vec![(rule_key("english-only"), content_hash("NEW TEXT"))]
+        );
     }
 
     #[test]
     fn client_loaded_rule_is_listed_not_sent() {
         let loaded: HashSet<String> = [rule_key("mcp-shape")].into_iter().collect();
-        let opts = InjectOptions { client_loaded: Some(&loaded), ..Default::default() };
-        let rules = vec![rule("mcp-shape", true, "SHAPE BODY"), rule("english-only", true, "WRITE ENGLISH")];
+        let opts = InjectOptions {
+            client_loaded: Some(&loaded),
+            ..Default::default()
+        };
+        let rules = vec![
+            rule("mcp-shape", true, "SHAPE BODY"),
+            rule("english-only", true, "WRITE ENGLISH"),
+        ];
         let out = format_inject_block_with(&rules, &[], 16_000, opts);
         assert!(!out.text.contains("SHAPE BODY"));
         assert!(out.text.contains("mcp-shape"));
@@ -483,22 +549,39 @@ mod tests {
 
     #[test]
     fn large_always_skill_is_summarized_with_ax_skill_pointer() {
-        let body = format!("# Old Coder\n\n## The Loop\n\n{}\n\n### 1. SPEC\n\n{}", "L".repeat(3_000), "S".repeat(3_000));
+        let body = format!(
+            "# Old Coder\n\n## The Loop\n\n{}\n\n### 1. SPEC\n\n{}",
+            "L".repeat(3_000),
+            "S".repeat(3_000)
+        );
         let skills = vec![skill_with("old-coder", &body, true)];
-        let opts = InjectOptions { skill_inline_chars: Some(1_000), ..Default::default() };
+        let opts = InjectOptions {
+            skill_inline_chars: Some(1_000),
+            ..Default::default()
+        };
         let out = format_inject_block_with(&[], &skills, 200, opts);
         assert!(out.text.contains("old-coder"));
         assert!(out.text.contains("The Loop"));
         assert!(out.text.contains("1. SPEC"));
         assert!(out.text.contains("ax_skill"));
-        assert!(!out.text.contains(&"L".repeat(80)), "full body leaked:\n{}", out.text);
-        assert_eq!(out.delivered, vec![(skill_key("old-coder"), content_hash(&body))]);
+        assert!(
+            !out.text.contains(&"L".repeat(80)),
+            "full body leaked:\n{}",
+            out.text
+        );
+        assert_eq!(
+            out.delivered,
+            vec![(skill_key("old-coder"), content_hash(&body))]
+        );
     }
 
     #[test]
     fn small_always_skill_stays_inline() {
         let skills = vec![skill_with("tiny", "SMALL SKILL BODY", true)];
-        let opts = InjectOptions { skill_inline_chars: Some(1_000), ..Default::default() };
+        let opts = InjectOptions {
+            skill_inline_chars: Some(1_000),
+            ..Default::default()
+        };
         let out = format_inject_block_with(&[], &skills, 16_000, opts);
         assert!(out.text.contains("SMALL SKILL BODY"));
     }
@@ -513,11 +596,18 @@ mod tests {
     #[test]
     fn long_rule_is_sent_compact_with_directive_sections() {
         let body = long_rule_body();
-        let opts = InjectOptions { rule_inline_chars: Some(600), ..Default::default() };
+        let opts = InjectOptions {
+            rule_inline_chars: Some(600),
+            ..Default::default()
+        };
         let out = format_inject_block_with(&[rule("utf8", true, &body)], &[], 16_000, opts);
         assert!(out.text.contains("utf8"), "{}", out.text);
         assert!(out.text.contains("ALWAYS UTF-8"), "{}", out.text);
-        assert!(out.text.contains("NO UTF-16") && out.text.contains("NO BOM"), "{}", out.text);
+        assert!(
+            out.text.contains("NO UTF-16") && out.text.contains("NO BOM"),
+            "{}",
+            out.text
+        );
         assert!(out.text.contains("ax_rules"), "{}", out.text);
         assert!(!out.text.contains("WHY TEXT"), "{}", out.text);
         assert!(!out.text.contains("EXAMPLE CODE"), "{}", out.text);
@@ -527,11 +617,25 @@ mod tests {
 
     #[test]
     fn long_rule_without_directive_sections_keeps_first_lines() {
-        let body = format!("Line one.\nLine two.\nLine three.\nLine four.\n\n## Background\n\n{}", "FILLER ".repeat(200));
-        let opts = InjectOptions { rule_inline_chars: Some(600), ..Default::default() };
+        let body = format!(
+            "Line one.\nLine two.\nLine three.\nLine four.\n\n## Background\n\n{}",
+            "FILLER ".repeat(200)
+        );
+        let opts = InjectOptions {
+            rule_inline_chars: Some(600),
+            ..Default::default()
+        };
         let out = format_inject_block_with(&[rule("plain", true, &body)], &[], 16_000, opts);
-        assert!(out.text.contains("Line one.") && out.text.contains("Line three."), "{}", out.text);
-        assert!(!out.text.contains("Line four.") && !out.text.contains("FILLER"), "{}", out.text);
+        assert!(
+            out.text.contains("Line one.") && out.text.contains("Line three."),
+            "{}",
+            out.text
+        );
+        assert!(
+            !out.text.contains("Line four.") && !out.text.contains("FILLER"),
+            "{}",
+            out.text
+        );
         assert!(out.text.contains("ax_rules"), "{}", out.text);
     }
 
@@ -544,13 +648,24 @@ mod tests {
         assert!(!out.text.contains("UI CONTRAST BODY"), "{}", out.text);
         assert!(out.text.contains("wcag-contrast"), "{}", out.text);
         assert!(out.text.contains("WRITE ENGLISH"), "{}", out.text);
-        assert_eq!(out.delivered, vec![(rule_key("english-only"), content_hash("WRITE ENGLISH"))]);
+        assert_eq!(
+            out.delivered,
+            vec![(rule_key("english-only"), content_hash("WRITE ENGLISH"))]
+        );
     }
 
     #[test]
     fn short_rule_stays_full_with_rule_limit() {
-        let opts = InjectOptions { rule_inline_chars: Some(600), ..Default::default() };
-        let out = format_inject_block_with(&[rule("english-only", true, "WRITE ENGLISH")], &[], 16_000, opts);
+        let opts = InjectOptions {
+            rule_inline_chars: Some(600),
+            ..Default::default()
+        };
+        let out = format_inject_block_with(
+            &[rule("english-only", true, "WRITE ENGLISH")],
+            &[],
+            16_000,
+            opts,
+        );
         assert!(out.text.contains("WRITE ENGLISH"));
         assert!(!out.text.contains("Full rule"), "{}", out.text);
     }
@@ -559,7 +674,10 @@ mod tests {
     fn unchanged_skill_is_listed_not_resent() {
         let skills = vec![skill_with("tiny", "SMALL SKILL BODY", true)];
         let delivered = delivered_of(&[], &skills);
-        let opts = InjectOptions { delivered: Some(&delivered), ..Default::default() };
+        let opts = InjectOptions {
+            delivered: Some(&delivered),
+            ..Default::default()
+        };
         let out = format_inject_block_with(&[], &skills, 16_000, opts);
         assert!(!out.text.contains("SMALL SKILL BODY"));
         assert!(out.text.contains("tiny"));
@@ -568,7 +686,10 @@ mod tests {
     #[test]
     fn default_options_match_legacy_formatter() {
         let rules = vec![rule("always-a", true, "AAAA"), rule("ctx-b", false, "BBBB")];
-        let skills = vec![skill_with("old-coder", &"G".repeat(8_000), true), skill("ctx", "CCCC")];
+        let skills = vec![
+            skill_with("old-coder", &"G".repeat(8_000), true),
+            skill("ctx", "CCCC"),
+        ];
         let legacy = format_inject_block(&rules, &skills, 16_000);
         let with = format_inject_block_with(&rules, &skills, 16_000, InjectOptions::default()).text;
         assert_eq!(legacy, with);

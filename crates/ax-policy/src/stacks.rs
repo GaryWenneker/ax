@@ -17,7 +17,14 @@ use crate::types::PolicyScope;
 const LOCK_REL: &str = ".ax/stacks.lock.json";
 const MAX_DETECT_DEPTH: usize = 8;
 const IGNORE_DIRS: &[&str] = &[
-    "node_modules", "bin", "obj", "target", "vendor", ".git", ".ax", "dist",
+    "node_modules",
+    "bin",
+    "obj",
+    "target",
+    "vendor",
+    ".git",
+    ".ax",
+    "dist",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,7 +112,11 @@ pub fn resolve(ids: &[String]) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-fn push_resolved(id: &str, out: &mut Vec<String>, seen: &mut BTreeSet<String>) -> Result<(), String> {
+fn push_resolved(
+    id: &str,
+    out: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+) -> Result<(), String> {
     if seen.contains(id) {
         return Ok(());
     }
@@ -130,10 +141,13 @@ pub fn detect(root: &Path) -> Vec<DetectedStack> {
     let mut saw_artisan = false;
     let mut saw_drupal = false;
 
-    let walk = WalkDir::new(root).max_depth(MAX_DETECT_DEPTH).into_iter().filter_entry(|entry| {
-        let name = entry.file_name().to_str().unwrap_or("");
-        !IGNORE_DIRS.contains(&name)
-    });
+    let walk = WalkDir::new(root)
+        .max_depth(MAX_DETECT_DEPTH)
+        .into_iter()
+        .filter_entry(|entry| {
+            let name = entry.file_name().to_str().unwrap_or("");
+            !IGNORE_DIRS.contains(&name)
+        });
     for entry in walk.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
@@ -149,22 +163,32 @@ pub fn detect(root: &Path) -> Vec<DetectedStack> {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".csproj") || lower.ends_with(".sln") {
-            found.entry("dotnet".into()).or_insert_with(|| name.to_string());
+            found
+                .entry("dotnet".into())
+                .or_insert_with(|| name.to_string());
             if let Ok(text) = fs::read_to_string(path) {
                 let l = text.to_ascii_lowercase();
                 if l.contains("optimizely") || l.contains("episerver") {
-                    found.entry("optimizely".into()).or_insert_with(|| name.to_string());
+                    found
+                        .entry("optimizely".into())
+                        .or_insert_with(|| name.to_string());
                 }
             }
         }
         if lower.ends_with(".scproj") || lower.contains("unicorn") {
-            found.entry("sitecore".into()).or_insert_with(|| name.to_string());
+            found
+                .entry("sitecore".into())
+                .or_insert_with(|| name.to_string());
         }
         if lower == "pom.xml" || lower == "build.gradle" || lower == "build.gradle.kts" {
-            found.entry("java".into()).or_insert_with(|| name.to_string());
+            found
+                .entry("java".into())
+                .or_insert_with(|| name.to_string());
         }
         if lower == "angular.json" {
-            found.entry("angular".into()).or_insert_with(|| name.to_string());
+            found
+                .entry("angular".into())
+                .or_insert_with(|| name.to_string());
         }
         if lower.starts_with("next.config.") {
             saw_next_config = true;
@@ -197,29 +221,43 @@ pub fn detect(root: &Path) -> Vec<DetectedStack> {
                         saw_react_dep = true;
                     }
                     if deps.iter().any(|d| d == "vue") {
-                        found.entry("vue".into()).or_insert_with(|| "package.json vue".into());
+                        found
+                            .entry("vue".into())
+                            .or_insert_with(|| "package.json vue".into());
                     }
                 }
             }
         }
         if path.components().any(|c| c.as_os_str() == "serialization") && lower.ends_with(".yml") {
-            found.entry("sitecore".into()).or_insert_with(|| "serialization".into());
+            found
+                .entry("sitecore".into())
+                .or_insert_with(|| "serialization".into());
         }
         note_language(&mut found, &lower, name);
     }
 
     if saw_next_config {
-        found.entry("nextjs".into()).or_insert_with(|| "package.json next".into());
+        found
+            .entry("nextjs".into())
+            .or_insert_with(|| "package.json next".into());
     }
     if saw_react_dep {
-        found.entry("react".into()).or_insert_with(|| "package.json react".into());
+        found
+            .entry("react".into())
+            .or_insert_with(|| "package.json react".into());
     }
     if saw_drupal {
-        found.entry("drupal".into()).or_insert_with(|| "composer.json drupal".into());
+        found
+            .entry("drupal".into())
+            .or_insert_with(|| "composer.json drupal".into());
     } else if saw_artisan && saw_composer {
-        found.entry("laravel".into()).or_insert_with(|| "artisan".into());
+        found
+            .entry("laravel".into())
+            .or_insert_with(|| "artisan".into());
     } else if saw_composer {
-        found.entry("php".into()).or_insert_with(|| "composer.json".into());
+        found
+            .entry("php".into())
+            .or_insert_with(|| "composer.json".into());
     }
 
     found
@@ -246,7 +284,11 @@ pub fn apply(root: &Path, ids: &[String], force: bool) -> Result<ApplyReport, St
             let label = format!("{id}:{rel}", rel = file.rel);
             let existing = fs::read_to_string(&dest).ok();
             let existing_hash = existing.as_deref().map(content_hash);
-            let locked = lock.stacks.get(id).and_then(|s| s.files.get(file.rel)).cloned();
+            let locked = lock
+                .stacks
+                .get(id)
+                .and_then(|s| s.files.get(file.rel))
+                .cloned();
 
             let user_edit = match (&existing_hash, &locked) {
                 (Some(disk), Some(prev)) => disk != prev && disk != &template_hash,
@@ -349,18 +391,20 @@ pub fn status(root: &Path) -> Vec<StackStatus> {
             let mut upgrade = installed.template_version != def.version;
             for file in def.files {
                 let locked = installed.files.get(file.rel);
-                let disk = policy_dir.as_ref().and_then(|dir| {
-                    fs::read_to_string(dest_for_rel(dir, file.rel)).ok()
-                });
+                let disk = policy_dir
+                    .as_ref()
+                    .and_then(|dir| fs::read_to_string(dest_for_rel(dir, file.rel)).ok());
                 let disk_hash = disk.as_deref().map(content_hash);
                 let template_hash = content_hash(file.body);
                 if locked.map(|h| h != &template_hash).unwrap_or(true) {
                     upgrade = true;
                 }
-                if (disk_hash.as_ref() != locked || disk_hash.as_deref() != Some(template_hash.as_str()))
-                    && disk_hash.as_deref() != Some(template_hash.as_str()) {
-                        drifted.push(file.rel.to_string());
-                    }
+                if (disk_hash.as_ref() != locked
+                    || disk_hash.as_deref() != Some(template_hash.as_str()))
+                    && disk_hash.as_deref() != Some(template_hash.as_str())
+                {
+                    drifted.push(file.rel.to_string());
+                }
             }
             StackStatus {
                 id: def.id.into(),
@@ -386,7 +430,11 @@ pub fn upgrade(root: &Path) -> Result<ApplyReport, String> {
 /// Interpret one line from the init stack prompt.
 /// Empty keeps the current selection, or the detection when nothing is saved.
 /// `none` clears stacks. Other text is a list of ids separated by spaces or commas.
-pub fn parse_stack_choice(line: &str, current: &[String], detected: &[String]) -> Result<Vec<String>, String> {
+pub fn parse_stack_choice(
+    line: &str,
+    current: &[String],
+    detected: &[String],
+) -> Result<Vec<String>, String> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         if !current.is_empty() {
@@ -480,7 +528,10 @@ fn note_language(found: &mut BTreeMap<String, String>, lower: &str, name: &str) 
 }
 
 fn dest_for_rel(policy_dir: &Path, rel: &str) -> PathBuf {
-    if let Some(id) = rel.strip_prefix("rules/").and_then(|s| s.strip_suffix(".mdc")) {
+    if let Some(id) = rel
+        .strip_prefix("rules/")
+        .and_then(|s| s.strip_suffix(".mdc"))
+    {
         return rule_file(&policy_dir.join("rules"), id);
     }
     if let Some(rest) = rel.strip_prefix("skills/") {
@@ -581,7 +632,11 @@ mod tests {
     #[test]
     fn detect_drupal_and_optimizely() {
         let dir = tempdir().unwrap();
-        touch(dir.path(), "composer.json", r#"{"name":"drupal/recommended-project"}"#);
+        touch(
+            dir.path(),
+            "composer.json",
+            r#"{"name":"drupal/recommended-project"}"#,
+        );
         let ids: Vec<_> = detect(dir.path()).into_iter().map(|d| d.id).collect();
         assert!(ids.contains(&"drupal".into()));
         assert!(!ids.contains(&"php".into()));
@@ -614,15 +669,21 @@ mod tests {
     fn stack_choice_keeps_current_or_detected() {
         let current = vec!["dotnet".into()];
         let detected = vec!["rust".into()];
-        assert_eq!(parse_stack_choice("", &current, &detected).unwrap(), current);
         assert_eq!(
-            parse_stack_choice("  ", &[], &detected).unwrap(),
-            detected
+            parse_stack_choice("", &current, &detected).unwrap(),
+            current
         );
-        assert!(parse_stack_choice("none", &current, &detected).unwrap().is_empty());
+        assert_eq!(parse_stack_choice("  ", &[], &detected).unwrap(), detected);
+        assert!(parse_stack_choice("none", &current, &detected)
+            .unwrap()
+            .is_empty());
         assert_eq!(
             parse_stack_choice("nextjs, rust", &[], &[]).unwrap(),
-            vec!["react".to_string(), "nextjs".to_string(), "rust".to_string()]
+            vec![
+                "react".to_string(),
+                "nextjs".to_string(),
+                "rust".to_string()
+            ]
         );
     }
 
@@ -644,10 +705,19 @@ mod tests {
     fn apply_two_stacks_is_idempotent_and_respects_edits() {
         let dir = tempdir().unwrap();
         let first = apply(dir.path(), &["dotnet".into(), "react".into()], false).unwrap();
-        assert!(first.created.iter().any(|c| c.contains("dotnet-code-review")));
+        assert!(first
+            .created
+            .iter()
+            .any(|c| c.contains("dotnet-code-review")));
         assert!(first.created.iter().any(|c| c.contains("react-review")));
-        assert!(dir.path().join(".agents/skills/dotnet-code-review/SKILL.md").is_file());
-        assert!(dir.path().join(".agents/skills/react-review/SKILL.md").is_file());
+        assert!(dir
+            .path()
+            .join(".agents/skills/dotnet-code-review/SKILL.md")
+            .is_file());
+        assert!(dir
+            .path()
+            .join(".agents/skills/react-review/SKILL.md")
+            .is_file());
         assert!(!dir.path().join(".agents/skills/noti/SKILL.md").exists());
 
         let second = apply(dir.path(), &["dotnet".into(), "react".into()], false).unwrap();
@@ -657,12 +727,17 @@ mod tests {
         let skill = dir.path().join(".agents/skills/react-review/SKILL.md");
         fs::write(&skill, "user edit\n").unwrap();
         let third = apply(dir.path(), &["react".into()], false).unwrap();
-        assert!(third.skipped_user_edit.iter().any(|s| s.contains("react-review")));
+        assert!(third
+            .skipped_user_edit
+            .iter()
+            .any(|s| s.contains("react-review")));
         assert_eq!(fs::read_to_string(&skill).unwrap(), "user edit\n");
 
         let forced = apply(dir.path(), &["react".into()], true).unwrap();
         assert!(forced.updated.iter().any(|s| s.contains("react-review")));
-        assert!(fs::read_to_string(&skill).unwrap().contains("name: react-review"));
+        assert!(fs::read_to_string(&skill)
+            .unwrap()
+            .contains("name: react-review"));
     }
 
     #[test]
@@ -673,8 +748,14 @@ mod tests {
         fs::write(dir.path().join(".agents/skills/startup/SKILL.md"), "core\n").unwrap();
         let removed = remove(dir.path(), "react").unwrap();
         assert!(removed.iter().any(|r| r.contains("react-review")));
-        assert!(dir.path().join(".agents/skills/dotnet-code-review/SKILL.md").is_file());
-        assert!(!dir.path().join(".agents/skills/react-review/SKILL.md").exists());
+        assert!(dir
+            .path()
+            .join(".agents/skills/dotnet-code-review/SKILL.md")
+            .is_file());
+        assert!(!dir
+            .path()
+            .join(".agents/skills/react-review/SKILL.md")
+            .exists());
         assert!(dir.path().join(".agents/skills/startup/SKILL.md").is_file());
     }
 
@@ -685,7 +766,10 @@ mod tests {
         let skill = dir.path().join(".agents/skills/php-review/SKILL.md");
         fs::write(&skill, "local change\n").unwrap();
         let report = upgrade(dir.path()).unwrap();
-        assert!(report.skipped_user_edit.iter().any(|s| s.contains("php-review")));
+        assert!(report
+            .skipped_user_edit
+            .iter()
+            .any(|s| s.contains("php-review")));
         assert_eq!(fs::read_to_string(&skill).unwrap(), "local change\n");
     }
 
@@ -722,14 +806,21 @@ mod tests {
 
     /// Apply `stack`, pretend the project still has an older unedited copy of `rel`,
     /// then upgrade. The temp dir is returned so the project outlives the caller's asserts.
-    fn upgrade_from_older_copy(stack: &str, rel: &str) -> (tempfile::TempDir, ApplyReport, PathBuf) {
+    fn upgrade_from_older_copy(
+        stack: &str,
+        rel: &str,
+    ) -> (tempfile::TempDir, ApplyReport, PathBuf) {
         let dir = tempdir().unwrap();
         apply(dir.path(), &[stack.into()], false).unwrap();
         let file = dest_for_rel(&dir.path().join(".agents"), rel);
         let old = "---\nname: old\n---\nversion 1.1.0 body\n";
         fs::write(&file, old).unwrap();
         let mut lock = read_lock(dir.path());
-        lock.stacks.get_mut(stack).unwrap().files.insert(rel.into(), content_hash(old));
+        lock.stacks
+            .get_mut(stack)
+            .unwrap()
+            .files
+            .insert(rel.into(), content_hash(old));
         write_lock(dir.path(), &lock).unwrap();
         let report = upgrade(dir.path()).unwrap();
         (dir, report, file)
@@ -778,15 +869,28 @@ mod tests {
     #[test]
     fn dotnet_review_skill_has_no_duplicate_bullets() {
         let seen = assert_no_duplicate_bullets(dotnet_review_body());
-        assert!(seen.len() > 50, "expected the full rule set, got {} bullets", seen.len());
+        assert!(
+            seen.len() > 50,
+            "expected the full rule set, got {} bullets",
+            seen.len()
+        );
     }
 
     #[test]
     fn upgrade_rewrites_an_unedited_older_dotnet_review() {
         let (dir, report, skill) = upgrade_from_older_copy("dotnet", DOTNET_REVIEW_REL);
-        assert!(report.updated.iter().any(|s| s.contains("dotnet-code-review")), "{report:?}");
+        assert!(
+            report
+                .updated
+                .iter()
+                .any(|s| s.contains("dotnet-code-review")),
+            "{report:?}"
+        );
         assert_eq!(fs::read_to_string(&skill).unwrap(), dotnet_review_body());
-        assert_eq!(read_lock(dir.path()).stacks["dotnet"].template_version, "1.2.0");
+        assert_eq!(
+            read_lock(dir.path()).stacks["dotnet"].template_version,
+            "1.2.0"
+        );
     }
 
     const NEXTJS_REVIEW_REL: &str = "skills/nextjs-review/SKILL.md";
@@ -835,7 +939,11 @@ mod tests {
     #[test]
     fn nextjs_review_skill_has_no_duplicate_bullets() {
         let seen = assert_no_duplicate_bullets(nextjs_review_body());
-        assert!(seen.len() > 50, "expected the full rule set, got {} bullets", seen.len());
+        assert!(
+            seen.len() > 50,
+            "expected the full rule set, got {} bullets",
+            seen.len()
+        );
         let react = bullets(stack_file_body("react", "skills/react-review/SKILL.md"));
         for bullet in react {
             assert!(!seen.contains(&bullet), "already in react-review: {bullet}");
@@ -845,9 +953,15 @@ mod tests {
     #[test]
     fn upgrade_rewrites_an_unedited_older_nextjs_review() {
         let (dir, report, skill) = upgrade_from_older_copy("nextjs", NEXTJS_REVIEW_REL);
-        assert!(report.updated.iter().any(|s| s.contains("nextjs-review")), "{report:?}");
+        assert!(
+            report.updated.iter().any(|s| s.contains("nextjs-review")),
+            "{report:?}"
+        );
         assert_eq!(fs::read_to_string(&skill).unwrap(), nextjs_review_body());
-        assert_eq!(read_lock(dir.path()).stacks["nextjs"].template_version, "1.2.0");
+        assert_eq!(
+            read_lock(dir.path()).stacks["nextjs"].template_version,
+            "1.2.0"
+        );
     }
 
     /// Building skill, base skill: the building skill loads the base and must not repeat it.
@@ -897,12 +1011,31 @@ mod tests {
         for stack in STACKS {
             let body = review_body(stack.id);
             let sections = numbered_sections(body);
-            assert!(sections.len() >= 11, "{}: {} numbered sections", stack.id, sections.len());
+            assert!(
+                sections.len() >= 11,
+                "{}: {} numbered sections",
+                stack.id,
+                sections.len()
+            );
             let last = sections.last().unwrap();
-            assert!(last.ends_with(". Output format"), "{}: last section is {last:?}", stack.id);
+            assert!(
+                last.ends_with(". Output format"),
+                "{}: last section is {last:?}",
+                stack.id
+            );
             let output = &body[body.find(last).unwrap()..];
-            for phrase in ["**Verdict:**", "**Location:**", "**Section:**", "**Impact:**", "**Suggested code:**"] {
-                assert!(output.contains(phrase), "{}: output format lacks {phrase}", stack.id);
+            for phrase in [
+                "**Verdict:**",
+                "**Location:**",
+                "**Section:**",
+                "**Impact:**",
+                "**Suggested code:**",
+            ] {
+                assert!(
+                    output.contains(phrase),
+                    "{}: output format lacks {phrase}",
+                    stack.id
+                );
             }
             let count = bullets(body).len();
             assert!(count >= 50, "{}: {count} bullets", stack.id);
@@ -914,7 +1047,11 @@ mod tests {
         for stack in STACKS {
             let mut seen = BTreeSet::new();
             for bullet in bullets(review_body(stack.id)) {
-                assert!(seen.insert(bullet.clone()), "{}: duplicate bullet: {bullet}", stack.id);
+                assert!(
+                    seen.insert(bullet.clone()),
+                    "{}: duplicate bullet: {bullet}",
+                    stack.id
+                );
             }
         }
     }
@@ -924,11 +1061,19 @@ mod tests {
         for (building, base) in BUILDS_ON {
             let body = review_body(building);
             let base_name = review_skill_name(base);
-            let intro = &body[..body.find("\n## ").unwrap_or_else(|| panic!("{building} has no sections"))];
-            assert!(intro.contains(&format!("`{base_name}`")), "{building} intro does not name {base_name}");
+            let intro = &body[..body
+                .find("\n## ")
+                .unwrap_or_else(|| panic!("{building} has no sections"))];
+            assert!(
+                intro.contains(&format!("`{base_name}`")),
+                "{building} intro does not name {base_name}"
+            );
             let base_bullets: BTreeSet<String> = bullets(review_body(base)).into_iter().collect();
             for bullet in bullets(body) {
-                assert!(!base_bullets.contains(&bullet), "{building} repeats {base_name}: {bullet}");
+                assert!(
+                    !base_bullets.contains(&bullet),
+                    "{building} repeats {base_name}: {bullet}"
+                );
             }
         }
     }
@@ -939,9 +1084,16 @@ mod tests {
             let rel = review_rel(stack);
             let (dir, report, skill) = upgrade_from_older_copy(stack.id, rel);
             let name = review_skill_name(stack.id);
-            assert!(report.updated.iter().any(|s| s.contains(name)), "{}: {report:?}", stack.id);
+            assert!(
+                report.updated.iter().any(|s| s.contains(name)),
+                "{}: {report:?}",
+                stack.id
+            );
             assert_eq!(fs::read_to_string(&skill).unwrap(), review_body(stack.id));
-            assert_eq!(read_lock(dir.path()).stacks[stack.id].template_version, "1.2.0");
+            assert_eq!(
+                read_lock(dir.path()).stacks[stack.id].template_version,
+                "1.2.0"
+            );
         }
     }
 
@@ -950,7 +1102,11 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/stacks");
         for stack in STACKS {
             let toml = fs::read_to_string(root.join(stack.id).join("pack.toml")).unwrap();
-            assert!(toml.contains("version = \"1.2.0\""), "{} pack.toml is not 1.2.0", stack.id);
+            assert!(
+                toml.contains("version = \"1.2.0\""),
+                "{} pack.toml is not 1.2.0",
+                stack.id
+            );
             assert_eq!(stack.version, "1.2.0", "{} catalog version", stack.id);
         }
     }

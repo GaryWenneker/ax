@@ -9,9 +9,16 @@ pub async fn run(base: String, json: bool) -> Result<(), String> {
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
     let pool = ax.db_pool();
     let dirty = if diff.hunks.is_empty() {
-        ax_git::map_files_to_nodes(pool, &diff.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>())
-            .await
-            .map_err(|e| e.to_string())?
+        ax_git::map_files_to_nodes(
+            pool,
+            &diff
+                .files
+                .iter()
+                .map(|f| f.path.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .map_err(|e| e.to_string())?
     } else {
         ax_git::map_hunks_to_nodes(pool, &diff.hunks)
             .await
@@ -26,7 +33,10 @@ pub async fn run(base: String, json: bool) -> Result<(), String> {
     });
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
     } else {
         println!(
             "Branch {:?} vs {} — {} files, {} symbols",

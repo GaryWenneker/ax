@@ -283,8 +283,7 @@ pub fn migrate_rule_questions(doc: &PolicyRuleDoc, source: &str) -> Vec<CaptureI
             field: "import".into(),
             question: format!(
                 "Import rule `{}` from {source} ({}) into ax.db?",
-                fm.id,
-                doc.source_path
+                fm.id, doc.source_path
             ),
             current: "pending".into(),
             options: vec!["yes".into(), "no".into(), "skip".into()],
@@ -359,15 +358,17 @@ pub fn migrate_rule_questions(doc: &PolicyRuleDoc, source: &str) -> Vec<CaptureI
     ]
 }
 
-pub fn migrate_skill_questions(doc: &PolicySkillDoc, source: &str) -> Vec<CaptureInterviewQuestion> {
+pub fn migrate_skill_questions(
+    doc: &PolicySkillDoc,
+    source: &str,
+) -> Vec<CaptureInterviewQuestion> {
     let fm = &doc.frontmatter;
     vec![
         CaptureInterviewQuestion {
             field: "import".into(),
             question: format!(
                 "Import skill `{}` from {source} ({}) into ax.db?",
-                fm.name,
-                doc.source_path
+                fm.name, doc.source_path
             ),
             current: "pending".into(),
             options: vec!["yes".into(), "no".into(), "skip".into()],
@@ -567,7 +568,10 @@ triggers: [test]
 
         let plan = scan_policy_candidates(dir.path());
         assert_eq!(plan.rules_found, 2);
-        assert!(plan.skipped.iter().any(|s| s.source_path.contains("ax.mdc")));
+        assert!(plan
+            .skipped
+            .iter()
+            .any(|s| s.source_path.contains("ax.mdc")));
         assert!(plan.candidates.iter().any(|c| c.key == "rule:team"));
         assert!(plan.candidates.iter().any(|c| c.key == "rule:custom"));
     }
@@ -575,11 +579,7 @@ triggers: [test]
     #[test]
     fn scan_finds_skills_recursively() {
         let dir = tempfile::tempdir().unwrap();
-        write_skill(
-            dir.path(),
-            ".cursor/skills/deploy/SKILL.md",
-            "deploy",
-        );
+        write_skill(dir.path(), ".cursor/skills/deploy/SKILL.md", "deploy");
         write_skill(
             dir.path(),
             "packages/app/.cursor/skills/review/SKILL.md",

@@ -11,10 +11,10 @@ use crate::liveness_watchdog::install_main_thread_watchdog;
 use crate::ppid_watchdog::spawn_ppid_watchdog;
 use crate::proxy::attach_or_spawn;
 use crate::tools::{server_instructions, ToolHandler};
-use crate::transport::{is_notification, StdioTransport, PARSE_ERROR, METHOD_NOT_FOUND};
+use crate::transport::{is_notification, StdioTransport, METHOD_NOT_FOUND, PARSE_ERROR};
 use crate::verbose::{
-    deliver_local, format_mcp_log_notification, push_error, push_inbound, push_internal,
-    push_line, push_outbound, verbose_enabled, with_trace_buffer,
+    deliver_local, format_mcp_log_notification, push_error, push_inbound, push_internal, push_line,
+    push_outbound, verbose_enabled, with_trace_buffer,
 };
 use ax_telemetry::telemetry;
 use ax_usage::{estimate_savings, spawn_record_mcp_call, McpCallRecord};
@@ -55,7 +55,9 @@ pub fn resolve_mcp_project_root(explicit: Option<PathBuf>) -> Option<PathBuf> {
     find_nearest_ax_root(&cwd)
 }
 
-pub async fn run_stdio_server(explicit_root: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_stdio_server(
+    explicit_root: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let project_root = resolve_mcp_project_root(explicit_root);
     if let Some(ref root) = project_root {
         repair_hooks_at_startup(root);
@@ -90,11 +92,13 @@ pub async fn run_stdio_server(explicit_root: Option<PathBuf>) -> Result<(), Box<
                 }
                 // Embedded stdio path (no daemon proxy): stderr + log file +
                 // MCP logging notifications on stdout for Cursor Output.
-                deliver_local(&outcome.verbose_lines, engine.project_root().map(|p| p.as_path()));
+                deliver_local(
+                    &outcome.verbose_lines,
+                    engine.project_root().map(|p| p.as_path()),
+                );
                 for text in &outcome.verbose_lines {
-                    let _ = StdioTransport::send_notification_line(&format_mcp_log_notification(
-                        text,
-                    ));
+                    let _ =
+                        StdioTransport::send_notification_line(&format_mcp_log_notification(text));
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
@@ -118,7 +122,8 @@ fn resolve_request_project_root(engine: &McpEngine) -> Option<PathBuf> {
         .or_else(|| resolve_mcp_project_root(None))
 }
 
-const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 fn negotiate_protocol_version(params: &Value) -> &'static str {
     let requested = params.get("protocolVersion").and_then(|v| v.as_str());
@@ -205,9 +210,11 @@ fn policy_session_ttl() -> std::time::Duration {
 
 fn attach_policy_session(engine: &mut McpEngine, mut args: Value) -> Value {
     let chat = ax_usage::read_active_cursor_session();
-    let view = engine
-        .policy_sessions()
-        .view(chat.as_deref(), std::time::Instant::now(), policy_session_ttl());
+    let view = engine.policy_sessions().view(
+        chat.as_deref(),
+        std::time::Instant::now(),
+        policy_session_ttl(),
+    );
     if !args.is_object() {
         args = json!({});
     }
@@ -216,7 +223,10 @@ fn attach_policy_session(engine: &mut McpEngine, mut args: Value) -> Value {
 }
 
 fn record_policy_delivery(engine: &mut McpEngine, mut value: Value) -> Value {
-    let Some(delivered) = value.as_object_mut().and_then(|obj| obj.remove(DELIVERED_KEY)) else {
+    let Some(delivered) = value
+        .as_object_mut()
+        .and_then(|obj| obj.remove(DELIVERED_KEY))
+    else {
         return value;
     };
     let pairs: Vec<(String, u64)> = delivered
@@ -242,7 +252,11 @@ pub(crate) fn tool_runs(root: &std::path::Path, tool: &str) -> usize {
 /// The chat this call belongs to, remembered as the connection's current chat.
 fn resolve_chat(engine: &mut McpEngine, name: &str, args: &Value) -> String {
     use crate::chat_session::{mint_session, resolve_session, CallKind};
-    let kind = if name == "ax_preflight" { CallKind::Preflight } else { CallKind::Tool };
+    let kind = if name == "ax_preflight" {
+        CallKind::Preflight
+    } else {
+        CallKind::Tool
+    };
     let chat = resolve_session(
         kind,
         ax_usage::session_from_args(args),
@@ -284,11 +298,18 @@ async fn call_tool_and_wrap(
     if verbose {
         push_inbound(name, &args);
     }
-    let args = if matches!(name, "ax_preflight" | "ax_skill") { attach_policy_session(engine, args) } else { args };
+    let args = if matches!(name, "ax_preflight" | "ax_skill") {
+        attach_policy_session(engine, args)
+    } else {
+        args
+    };
     let started = std::time::Instant::now();
     let conversation = resolve_chat(engine, name, &args);
     let session_write = name == "ax_session"
-        && matches!(args.get("action").and_then(Value::as_str), Some("add" | "update" | "compact" | "clear"));
+        && matches!(
+            args.get("action").and_then(Value::as_str),
+            Some("add" | "update" | "compact" | "clear")
+        );
     let args = match name {
         "ax_preflight" => {
             let turns = engine.turns().on_preflight(&conversation);
@@ -299,7 +320,8 @@ async fn call_tool_and_wrap(
         "ax_session" | "ax_durable" => with_chat(args, &conversation),
         _ => args,
     };
-    let reuse_root = project_root.filter(|_| ax_usage::reuse_enabled() && ax_usage::reuse_cacheable(name));
+    let reuse_root =
+        project_root.filter(|_| ax_usage::reuse_enabled() && ax_usage::reuse_cacheable(name));
     if let Some(root) = reuse_root {
         if let Some(hit) = confirmed_reuse_hit(engine, root, &conversation, name, &args).await {
             let (wrapped, text, sent, avoided) = reuse_hit_reply(&hit);
@@ -329,7 +351,10 @@ async fn call_tool_and_wrap(
     let reuse_args = reuse_root.map(|_| args.clone());
     #[cfg(test)]
     if let Some(root) = project_root {
-        TOOL_RUNS.lock().unwrap_or_else(|e| e.into_inner()).push((root.to_path_buf(), name.to_string()));
+        TOOL_RUNS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((root.to_path_buf(), name.to_string()));
     }
     let result = if let Some(pool) = engine.query_pool() {
         if pool.healthy() && crate::query_pool::is_read_tool(name) {
@@ -395,12 +420,23 @@ async fn call_tool_and_wrap(
                 .map(ax_sync::global_pending_files)
                 .unwrap_or_default();
             let annotated = crate::staleness::annotate_staleness(&text, value, &pending);
-            let is_error = value.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_error = value
+                .get("isError")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if let (Some(root), Some(reuse_args)) = (reuse_root, reuse_args.as_ref()) {
                 if !is_error {
                     if let Ok(index) = project_index_hashes(engine).await {
                         // A failed store only costs a future hit; this reply is unaffected.
-                        let _ = ax_usage::reuse_store(root, &conversation, name, reuse_args, &annotated, &index).await;
+                        let _ = ax_usage::reuse_store(
+                            root,
+                            &conversation,
+                            name,
+                            reuse_args,
+                            &annotated,
+                            &index,
+                        )
+                        .await;
                     }
                 }
             }
@@ -582,7 +618,8 @@ fn reuse_hit_reply(hit: &ax_usage::ReuseHit) -> (Value, String, i64, i64) {
         "sentTokens": sent,
         "tokensAvoided": avoided,
     });
-    let wrapped = wrap_call_tool_result_parts(&json!({ "text": text }), Some(structured), false, None);
+    let wrapped =
+        wrap_call_tool_result_parts(&json!({ "text": text }), Some(structured), false, None);
     (wrapped, text, sent, avoided)
 }
 
@@ -714,7 +751,9 @@ fn token_budget_hint(tool: &str, response_tokens: i64) -> Option<String> {
     let advice = match tool {
         "ax_explore" | "ax_context" => "narrow the question or pass a smaller depth",
         "ax_search" | "ax_files" | "ax_recall" => "add a `limit` or a more specific query",
-        "ax_impact" | "ax_affected" | "ax_callers" | "ax_callees" => "reduce depth or target a more specific symbol",
+        "ax_impact" | "ax_affected" | "ax_callers" | "ax_callees" => {
+            "reduce depth or target a more specific symbol"
+        }
         _ => "use a more specific query",
     };
     Some(ax_usage::format_ax_tagged(format!(
@@ -790,7 +829,10 @@ mod wrap_tests {
     fn wrap_error_sets_is_error() {
         let wrapped = wrap_call_tool_result(json!({ "error": "skill not found" }), true);
         assert_eq!(wrapped["isError"], true);
-        assert!(wrapped["content"][0]["text"].as_str().unwrap().contains("skill not found"));
+        assert!(wrapped["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("skill not found"));
     }
 
     #[test]
@@ -814,8 +856,14 @@ mod wrap_tests {
         assert_eq!(entry["name"], "f");
         assert_eq!(entry["file"], "a.rs");
         assert_eq!(entry["startLine"], 1);
-        assert!(entry.get("source").is_none(), "source lives in content.text");
-        assert!(entry.get("callers").is_none(), "callers live in content.text");
+        assert!(
+            entry.get("source").is_none(),
+            "source lives in content.text"
+        );
+        assert!(
+            entry.get("callers").is_none(),
+            "callers live in content.text"
+        );
     }
 
     #[test]
@@ -944,7 +992,10 @@ mod policy_integration {
     }
 
     fn reply_text(result: &Value) -> String {
-        result["content"][0]["text"].as_str().unwrap_or_default().to_string()
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
     }
 
     /// A project whose only policy is three always-apply rules without links, so reply sizes
@@ -954,7 +1005,10 @@ mod policy_integration {
         let rules = root.join(".agents").join("rules");
         std::fs::create_dir_all(&rules).unwrap();
         for id in ["alpha", "beta", "gamma"] {
-            let body = format!("## Rules\n\n{}", format!("- Rule {id} applies to every change.\n").repeat(80));
+            let body = format!(
+                "## Rules\n\n{}",
+                format!("- Rule {id} applies to every change.\n").repeat(80)
+            );
             std::fs::write(
                 rules.join(format!("{id}.mdc")),
                 format!("---\nid: {id}\nlevel: WARNING\nalwaysApply: true\n---\n\n{body}"),
@@ -962,7 +1016,9 @@ mod policy_integration {
             .unwrap();
         }
         let ax = ax_core::Ax::init(&root).await.unwrap();
-        ax_policy::index_policy(ax.db_pool(), &root, true).await.unwrap();
+        ax_policy::index_policy(ax.db_pool(), &root, true)
+            .await
+            .unwrap();
         root
     }
 
@@ -970,15 +1026,34 @@ mod policy_integration {
     async fn second_preflight_on_a_connection_skips_unchanged_bodies() {
         let root = session_fixture().await;
         let mut engine = McpEngine::with_project_root(root.clone());
-        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
+        handle_request(
+            &mut engine,
+            "initialize",
+            json!({ "clientInfo": { "name": "gauntlet" } }),
+        )
+        .await;
         let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
-        let first = handle_request(&mut engine, "tools/call", call.clone()).await.result.expect("first");
-        let second = handle_request(&mut engine, "tools/call", call).await.result.expect("second");
+        let first = handle_request(&mut engine, "tools/call", call.clone())
+            .await
+            .result
+            .expect("first");
+        let second = handle_request(&mut engine, "tools/call", call)
+            .await
+            .result
+            .expect("second");
         let (first, second) = (reply_text(&first), reply_text(&second));
         assert!(first.contains("## Rules (always apply)"), "{first}");
         assert!(!first.contains(DELIVERED_KEY) && !second.contains(DELIVERED_KEY));
-        assert!(second.contains("Unchanged since earlier in this session"), "{second}");
-        assert!(second.len() * 2 < first.len(), "first={} second={}", first.len(), second.len());
+        assert!(
+            second.contains("Unchanged since earlier in this session"),
+            "{second}"
+        );
+        assert!(
+            second.len() * 2 < first.len(),
+            "first={} second={}",
+            first.len(),
+            second.len()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -995,15 +1070,26 @@ mod policy_integration {
             }
             json!({ "name": "ax_node", "arguments": args })
         };
-        let sig = handle_request(&mut engine, "tools/call", call(Some("signature"))).await.result.expect("sig");
-        let full = handle_request(&mut engine, "tools/call", call(None)).await.result.expect("full");
+        let sig = handle_request(&mut engine, "tools/call", call(Some("signature")))
+            .await
+            .result
+            .expect("sig");
+        let full = handle_request(&mut engine, "tools/call", call(None))
+            .await
+            .result
+            .expect("full");
         let (sig, full) = (reply_text(&sig), reply_text(&full));
         assert!(sig.contains("crates/ax-mcp/src/server.rs"), "{sig}");
         assert!(sig.contains("fn lean_structured"), "{sig}");
         assert!(!sig.contains("explore_entries_compact(value)"), "{sig}");
         assert!(!sig.contains("### Callers"), "{sig}");
         assert!(full.contains("explore_entries_compact(value)"), "{full}");
-        assert!(sig.len() * 3 < full.len(), "sig={} full={}", sig.len(), full.len());
+        assert!(
+            sig.len() * 3 < full.len(),
+            "sig={} full={}",
+            sig.len(),
+            full.len()
+        );
     }
 
     #[tokio::test]
@@ -1012,19 +1098,45 @@ mod policy_integration {
             return;
         };
         let mut engine = McpEngine::with_project_root(root);
-        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
+        handle_request(
+            &mut engine,
+            "initialize",
+            json!({ "clientInfo": { "name": "gauntlet" } }),
+        )
+        .await;
         let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
-        let first = reply_text(&handle_request(&mut engine, "tools/call", call.clone()).await.result.expect("first"));
-        let second = reply_text(&handle_request(&mut engine, "tools/call", call).await.result.expect("second"));
-        assert!(!second.contains("<ax_memory_titles>"), "memory titles resent:\n{second}");
+        let first = reply_text(
+            &handle_request(&mut engine, "tools/call", call.clone())
+                .await
+                .result
+                .expect("first"),
+        );
+        let second = reply_text(
+            &handle_request(&mut engine, "tools/call", call)
+                .await
+                .result
+                .expect("second"),
+        );
+        assert!(
+            !second.contains("<ax_memory_titles>"),
+            "memory titles resent:\n{second}"
+        );
         assert!(first.contains("<ax_index"), "{first}");
-        assert!(!second.contains("<ax_index"), "unchanged index snapshot resent:\n{second}");
+        assert!(
+            !second.contains("<ax_index"),
+            "unchanged index snapshot resent:\n{second}"
+        );
         let catalog_ids = |text: &str| -> Vec<String> {
             text.split("<ax_context_catalog>")
                 .nth(1)
                 .map(|rest| {
                     rest.lines()
-                        .filter_map(|l| l.strip_prefix("- ")?.split_whitespace().next().map(str::to_string))
+                        .filter_map(|l| {
+                            l.strip_prefix("- ")?
+                                .split_whitespace()
+                                .next()
+                                .map(str::to_string)
+                        })
                         .collect()
                 })
                 .unwrap_or_default()
@@ -1033,7 +1145,10 @@ mod policy_integration {
         for id in catalog_ids(&second) {
             assert!(!first_ids.contains(&id), "catalog entry {id} resent");
         }
-        assert!(first.contains("<ax_memory_titles>"), "fixture repo should have memories:\n{first}");
+        assert!(
+            first.contains("<ax_memory_titles>"),
+            "fixture repo should have memories:\n{first}"
+        );
     }
 
     #[tokio::test]
@@ -1043,7 +1158,12 @@ mod policy_integration {
         };
         let mut engine = McpEngine::with_project_root(root);
         let call = json!({ "name": "ax_node", "arguments": { "name": "crates/ax-mcp/src/tools.rs::skill" } });
-        let text = reply_text(&handle_request(&mut engine, "tools/call", call).await.result.expect("node"));
+        let text = reply_text(
+            &handle_request(&mut engine, "tools/call", call)
+                .await
+                .result
+                .expect("node"),
+        );
         assert_eq!(text.matches("## Entry").count(), 1, "{text}");
         assert!(text.contains("crates/ax-mcp/src/tools.rs::skill"), "{text}");
     }
@@ -1054,14 +1174,38 @@ mod policy_integration {
             return;
         };
         let mut engine = McpEngine::with_project_root(root);
-        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
+        handle_request(
+            &mut engine,
+            "initialize",
+            json!({ "clientInfo": { "name": "gauntlet" } }),
+        )
+        .await;
         let preflight = json!({ "name": "ax_preflight", "arguments": { "prompt": "start" } });
-        handle_request(&mut engine, "tools/call", preflight).await.result.expect("preflight");
+        handle_request(&mut engine, "tools/call", preflight)
+            .await
+            .result
+            .expect("preflight");
         let call = json!({ "name": "ax_skill", "arguments": { "name": "startup" } });
-        let first = reply_text(&handle_request(&mut engine, "tools/call", call.clone()).await.result.expect("first"));
-        let second = reply_text(&handle_request(&mut engine, "tools/call", call).await.result.expect("second"));
-        assert!(first.contains("SS-00"), "first load must carry the body:\n{first}");
-        assert!(!second.contains("SS-00"), "second load resent the body:\n{second}");
+        let first = reply_text(
+            &handle_request(&mut engine, "tools/call", call.clone())
+                .await
+                .result
+                .expect("first"),
+        );
+        let second = reply_text(
+            &handle_request(&mut engine, "tools/call", call)
+                .await
+                .result
+                .expect("second"),
+        );
+        assert!(
+            first.contains("SS-00"),
+            "first load must carry the body:\n{first}"
+        );
+        assert!(
+            !second.contains("SS-00"),
+            "second load resent the body:\n{second}"
+        );
         assert!(second.contains("startup"), "{second}");
         assert!(second.len() < 400, "{second}");
     }
@@ -1073,10 +1217,26 @@ mod policy_integration {
         };
         let mut engine = McpEngine::with_project_root(root);
         let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
-        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
-        let first = handle_request(&mut engine, "tools/call", call.clone()).await.result.expect("first");
-        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "gauntlet" } })).await;
-        let again = handle_request(&mut engine, "tools/call", call).await.result.expect("again");
+        handle_request(
+            &mut engine,
+            "initialize",
+            json!({ "clientInfo": { "name": "gauntlet" } }),
+        )
+        .await;
+        let first = handle_request(&mut engine, "tools/call", call.clone())
+            .await
+            .result
+            .expect("first");
+        handle_request(
+            &mut engine,
+            "initialize",
+            json!({ "clientInfo": { "name": "gauntlet" } }),
+        )
+        .await;
+        let again = handle_request(&mut engine, "tools/call", call)
+            .await
+            .result
+            .expect("again");
         assert!(!reply_text(&again).contains("Unchanged since earlier in this session"));
         assert!(reply_text(&again).len() * 10 > reply_text(&first).len() * 9);
     }
@@ -1151,7 +1311,8 @@ mod reuse_integration {
     fn isolate_usage_db() {
         static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         ONCE.get_or_init(|| {
-            let db = std::env::temp_dir().join(format!("ax-reuse-usage-{}.db", uuid::Uuid::new_v4()));
+            let db =
+                std::env::temp_dir().join(format!("ax-reuse-usage-{}.db", uuid::Uuid::new_v4()));
             std::env::set_var("AX_USAGE_DB", db);
         });
     }
@@ -1161,24 +1322,38 @@ mod reuse_integration {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join("src/lib.rs"), fixture_source("reuse_beta_helper() + 1")).unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            fixture_source("reuse_beta_helper() + 1"),
+        )
+        .unwrap();
         {
             let mut ax = ax_core::Ax::init(&root).await.unwrap();
             ax.index_all(
-                ax_extraction::orchestrator::IndexOptions { quiet: true, ..Default::default() },
+                ax_extraction::orchestrator::IndexOptions {
+                    quiet: true,
+                    ..Default::default()
+                },
                 None,
             )
             .await
             .unwrap();
         }
         let mut engine = McpEngine::with_project_root(root);
-        handle_request(&mut engine, "initialize", json!({ "clientInfo": { "name": "reuse-test" } })).await;
+        handle_request(
+            &mut engine,
+            "initialize",
+            json!({ "clientInfo": { "name": "reuse-test" } }),
+        )
+        .await;
         (dir, engine)
     }
 
     /// Large enough that `ax_node` and `ax_callers` replies clear the 200-token reuse minimum.
     fn fixture_source(alpha_tail: &str) -> String {
-        let steps: String = (0..30).map(|i| format!("    let s{i} = {i}u64.rotate_left({i});\n")).collect();
+        let steps: String = (0..30)
+            .map(|i| format!("    let s{i} = {i}u64.rotate_left({i});\n"))
+            .collect();
         let callers: String = (0..15)
             .map(|i| format!("pub fn reuse_caller_{i}() -> u64 {{ reuse_beta_helper() + {i} }}\n"))
             .collect();
@@ -1189,10 +1364,14 @@ mod reuse_integration {
     }
 
     async fn call(engine: &mut McpEngine, name: &str, args: Value) -> Value {
-        handle_request(engine, "tools/call", json!({ "name": name, "arguments": args }))
-            .await
-            .result
-            .unwrap_or_else(|e| panic!("{name}: {e}"))
+        handle_request(
+            engine,
+            "tools/call",
+            json!({ "name": name, "arguments": args }),
+        )
+        .await
+        .result
+        .unwrap_or_else(|e| panic!("{name}: {e}"))
     }
 
     /// The `<ax_session_context>` block itself; the cache instruction line also names the tag.
@@ -1203,7 +1382,10 @@ mod reuse_integration {
     }
 
     fn text(v: &Value) -> String {
-        v["content"][0]["text"].as_str().unwrap_or_default().to_string()
+        v["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
     }
 
     fn working_block(body: &str) -> String {
@@ -1265,7 +1447,9 @@ mod reuse_integration {
             .split("<ax_chat session=")
             .nth(1)
             .unwrap_or_else(|| panic!("no session id:\n{preflight}"));
-        rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect()
+        rest.chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .collect()
     }
 
     fn with_session(mut args: Value, session: &str) -> Value {
@@ -1278,11 +1462,22 @@ mod reuse_integration {
         let _guard = env_lock().await;
         let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
-        let a = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "one" })).await));
-        let b = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "two" })).await));
+        let a = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "one" })).await,
+        ));
+        let b = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "two" })).await,
+        ));
         assert!(a.starts_with("axs_") && a.len() == 20, "{a}");
         assert_ne!(a, b, "a preflight without a session is a new chat");
-        let kept = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "three", "session": a })).await);
+        let kept = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                json!({ "prompt": "three", "session": a }),
+            )
+            .await,
+        );
         assert_eq!(session_of(&kept), a, "a passed session is echoed back");
     }
 
@@ -1293,20 +1488,50 @@ mod reuse_integration {
         let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
         let alpha = json!({ "name": "reuse_alpha_target" });
-        let chat_a = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "chat a" })).await));
-        assert!(!hit(&text(&call(&mut engine, "ax_node", alpha.clone()).await)));
-        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["chat a note"] })).await;
-        assert!(hit(&text(&call(&mut engine, "ax_node", alpha.clone()).await)), "a tool without session uses its connection's chat");
+        let chat_a = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "chat a" })).await,
+        ));
+        assert!(!hit(&text(
+            &call(&mut engine, "ax_node", alpha.clone()).await
+        )));
+        call(
+            &mut engine,
+            "ax_session",
+            json!({ "action": "add", "facts": ["chat a note"] }),
+        )
+        .await;
+        assert!(
+            hit(&text(&call(&mut engine, "ax_node", alpha.clone()).await)),
+            "a tool without session uses its connection's chat"
+        );
 
         let pre_b = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "chat b" })).await);
         let chat_b = session_of(&pre_b);
         assert_ne!(chat_a, chat_b);
-        assert!(!pre_b.contains("chat a note"), "chat B must not see chat A's notes:\n{pre_b}");
-        assert_eq!(session_block(&pre_b), None, "chat B must not list chat A's entries:\n{pre_b}");
-        assert!(!hit(&text(&call(&mut engine, "ax_node", with_session(alpha.clone(), &chat_b)).await)));
+        assert!(
+            !pre_b.contains("chat a note"),
+            "chat B must not see chat A's notes:\n{pre_b}"
+        );
+        assert_eq!(
+            session_block(&pre_b),
+            None,
+            "chat B must not list chat A's entries:\n{pre_b}"
+        );
+        assert!(!hit(&text(
+            &call(&mut engine, "ax_node", with_session(alpha.clone(), &chat_b)).await
+        )));
 
-        assert!(hit(&text(&call(&mut engine, "ax_node", with_session(alpha, &chat_a)).await)));
-        let back = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "chat a again", "session": chat_a })).await);
+        assert!(hit(&text(
+            &call(&mut engine, "ax_node", with_session(alpha, &chat_a)).await
+        )));
+        let back = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                json!({ "prompt": "chat a again", "session": chat_a }),
+            )
+            .await,
+        );
         assert!(working_block(&back).contains("chat a note"), "{back}");
     }
 
@@ -1316,16 +1541,41 @@ mod reuse_integration {
         let _home = isolated_home();
         let (dir, mut engine) = fixture().await;
         let alpha = json!({ "name": "reuse_alpha_target" });
-        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "before" })).await));
+        let chat = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "before" })).await,
+        ));
         call(&mut engine, "ax_node", alpha.clone()).await;
-        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["kept across restarts"] })).await;
+        call(
+            &mut engine,
+            "ax_session",
+            json!({ "action": "add", "facts": ["kept across restarts"] }),
+        )
+        .await;
         drop(engine);
 
         let mut restarted = McpEngine::with_project_root(dir.path().canonicalize().unwrap());
-        handle_request(&mut restarted, "initialize", json!({ "clientInfo": { "name": "reuse-test" } })).await;
-        let pre = text(&call(&mut restarted, "ax_preflight", json!({ "prompt": "after", "session": chat })).await);
-        assert!(working_block(&pre).contains("kept across restarts"), "{pre}");
-        assert!(hit(&text(&call(&mut restarted, "ax_node", alpha).await)), "the restarted daemon reuses the chat's answer");
+        handle_request(
+            &mut restarted,
+            "initialize",
+            json!({ "clientInfo": { "name": "reuse-test" } }),
+        )
+        .await;
+        let pre = text(
+            &call(
+                &mut restarted,
+                "ax_preflight",
+                json!({ "prompt": "after", "session": chat }),
+            )
+            .await,
+        );
+        assert!(
+            working_block(&pre).contains("kept across restarts"),
+            "{pre}"
+        );
+        assert!(
+            hit(&text(&call(&mut restarted, "ax_node", alpha).await)),
+            "the restarted daemon reuses the chat's answer"
+        );
     }
 
     #[tokio::test]
@@ -1333,21 +1583,62 @@ mod reuse_integration {
         let _guard = env_lock().await;
         let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
-        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await));
-        let first = text(&call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["note one"], "session": chat })).await);
+        let chat = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await,
+        ));
+        let first = text(
+            &call(
+                &mut engine,
+                "ax_session",
+                json!({ "action": "add", "facts": ["note one"], "session": chat }),
+            )
+            .await,
+        );
         let hash = hash_of(&first);
 
-        let full = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "p", "session": chat })).await);
+        let full = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                json!({ "prompt": "p", "session": chat }),
+            )
+            .await,
+        );
         assert!(working_block(&full).contains("note one"), "{full}");
-        let short = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "p", "session": chat, "known_context": hash })).await);
-        assert!(short.contains(&format!("<ax_working_context hash={hash} unchanged/>")), "{short}");
+        let short = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                json!({ "prompt": "p", "session": chat, "known_context": hash }),
+            )
+            .await,
+        );
+        assert!(
+            short.contains(&format!("<ax_working_context hash={hash} unchanged/>")),
+            "{short}"
+        );
         assert!(!short.contains("note one"), "{short}");
         assert!(ax_usage::count_tokens(&short) < ax_usage::count_tokens(&full));
 
-        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["note two"], "session": chat })).await;
-        let changed = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "p", "session": chat, "known_context": hash })).await);
+        call(
+            &mut engine,
+            "ax_session",
+            json!({ "action": "add", "facts": ["note two"], "session": chat }),
+        )
+        .await;
+        let changed = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                json!({ "prompt": "p", "session": chat, "known_context": hash }),
+            )
+            .await,
+        );
         let block = working_block(&changed);
-        assert!(block.contains("note two") && block.contains("note one"), "{changed}");
+        assert!(
+            block.contains("note two") && block.contains("note one"),
+            "{changed}"
+        );
         assert_ne!(hash_of(&block), hash);
     }
 
@@ -1358,24 +1649,44 @@ mod reuse_integration {
         let _guard = env_lock().await;
         let _home = isolated_home();
         let (dir, mut engine) = fixture().await;
-        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "turn 1" })).await));
+        let chat = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "turn 1" })).await,
+        ));
         let turn = json!({ "prompt": "next", "session": chat });
         for n in 2..=5 {
             let pre = text(&call(&mut engine, "ax_preflight", turn.clone()).await);
             assert!(!pre.contains(NUDGE), "turn {n}: {pre}");
         }
         let sixth = text(&call(&mut engine, "ax_preflight", turn.clone()).await);
-        assert!(sixth.contains(NUDGE) && sixth.contains("5 turns"), "{sixth}");
+        assert!(
+            sixth.contains(NUDGE) && sixth.contains("5 turns"),
+            "{sixth}"
+        );
 
-        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["noted"], "session": chat })).await;
+        call(
+            &mut engine,
+            "ax_session",
+            json!({ "action": "add", "facts": ["noted"], "session": chat }),
+        )
+        .await;
         let after_write = text(&call(&mut engine, "ax_preflight", turn.clone()).await);
-        assert!(!after_write.contains(NUDGE), "a write starts the count over: {after_write}");
+        assert!(
+            !after_write.contains(NUDGE),
+            "a write starts the count over: {after_write}"
+        );
 
-        std::fs::write(dir.path().join("src/lib.rs"), fixture_source("reuse_beta_helper() + 4")).unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            fixture_source("reuse_beta_helper() + 4"),
+        )
+        .unwrap();
         call(&mut engine, "ax_sync", json!({})).await;
         let stale = text(&call(&mut engine, "ax_preflight", turn).await);
         assert!(stale.contains("stale=true"), "{stale}");
-        assert!(stale.contains(NUDGE) && stale.contains("stale"), "stale notes get the nudge: {stale}");
+        assert!(
+            stale.contains(NUDGE) && stale.contains("stale"),
+            "stale notes get the nudge: {stale}"
+        );
     }
 
     #[tokio::test]
@@ -1383,15 +1694,30 @@ mod reuse_integration {
         let _guard = env_lock().await;
         let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
-        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "turn 1" })).await));
-        call(&mut engine, "ax_session", json!({ "action": "add", "facts": ["noted"], "session": chat })).await;
+        let chat = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "turn 1" })).await,
+        ));
+        call(
+            &mut engine,
+            "ax_session",
+            json!({ "action": "add", "facts": ["noted"], "session": chat }),
+        )
+        .await;
         let turn = json!({ "prompt": "next", "session": chat });
         for _ in 2..=6 {
             call(&mut engine, "ax_preflight", turn.clone()).await;
         }
         let before = text(&call(&mut engine, "ax_preflight", turn.clone()).await);
-        assert!(before.contains(NUDGE), "the parent is past the quiet window: {before}");
-        call(&mut engine, "ax_session", json!({ "action": "fork", "session": chat })).await;
+        assert!(
+            before.contains(NUDGE),
+            "the parent is past the quiet window: {before}"
+        );
+        call(
+            &mut engine,
+            "ax_session",
+            json!({ "action": "fork", "session": chat }),
+        )
+        .await;
         let note = json!({
             "action": "handoff",
             "objective": "Continue",
@@ -1404,18 +1730,25 @@ mod reuse_integration {
         });
         call(&mut engine, "ax_session", note).await;
         let after = text(&call(&mut engine, "ax_preflight", turn).await);
-        assert!(after.contains(NUDGE), "fork and handoff leave the parent's count: {after}");
+        assert!(
+            after.contains(NUDGE),
+            "fork and handoff leave the parent's count: {after}"
+        );
     }
 
     async fn stored_row(root: &std::path::Path, tool: &str) -> (i64, String) {
         let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
-        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}")).await.unwrap();
-        sqlx::query_as("SELECT hits, cache_id FROM mcp_reuse_cache WHERE tool = ? AND conversation LIKE ?")
-            .bind(tool)
-            .bind(format!("%\u{1f}{}", root.display()))
-            .fetch_one(&pool)
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}"))
             .await
-            .unwrap()
+            .unwrap();
+        sqlx::query_as(
+            "SELECT hits, cache_id FROM mcp_reuse_cache WHERE tool = ? AND conversation LIKE ?",
+        )
+        .bind(tool)
+        .bind(format!("%\u{1f}{}", root.display()))
+        .fetch_one(&pool)
+        .await
+        .unwrap()
     }
 
     #[tokio::test]
@@ -1430,21 +1763,38 @@ mod reuse_integration {
         let (hits, first_id) = stored_row(&root, "ax_callers").await;
         assert_eq!(hits, 0);
 
-        assert!(hit(&text(&call(&mut engine, "ax_callers", args.clone()).await)));
-        assert_eq!(tool_runs(&root, "ax_callers"), 1, "a hit must not run the tool");
+        assert!(hit(&text(
+            &call(&mut engine, "ax_callers", args.clone()).await
+        )));
+        assert_eq!(
+            tool_runs(&root, "ax_callers"),
+            1,
+            "a hit must not run the tool"
+        );
         assert_eq!(stored_row(&root, "ax_callers").await, (1, first_id.clone()));
 
-        std::fs::write(root.join("src/extra.rs"), "pub fn reuse_late_caller() -> u64 { reuse_beta_helper() }\n").unwrap();
+        std::fs::write(
+            root.join("src/extra.rs"),
+            "pub fn reuse_late_caller() -> u64 { reuse_beta_helper() }\n",
+        )
+        .unwrap();
         call(&mut engine, "ax_sync", json!({})).await;
         assert!(!hit(&text(&call(&mut engine, "ax_callers", args).await)));
-        assert_eq!(tool_runs(&root, "ax_callers"), 2, "a miss runs the tool again");
+        assert_eq!(
+            tool_runs(&root, "ax_callers"),
+            2,
+            "a miss runs the tool again"
+        );
         let (hits, new_id) = stored_row(&root, "ax_callers").await;
         assert_eq!(hits, 0, "the miss replaced the row");
         assert_ne!(new_id, first_id, "the new answer has its own cache id");
     }
 
     fn graph_of(preflight: &str) -> String {
-        let chat = preflight.split("<ax_chat ").nth(1).unwrap_or_else(|| panic!("no ax_chat:\n{preflight}"));
+        let chat = preflight
+            .split("<ax_chat ")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no ax_chat:\n{preflight}"));
         let header = chat.split('>').next().unwrap();
         header
             .split("graph=")
@@ -1464,15 +1814,37 @@ mod reuse_integration {
         let pre = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "v1" })).await);
         let chat = session_of(&pre);
         let v1 = graph_of(&pre);
-        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", root.join(".ax/ax.db").display())).await.unwrap();
-        let expected = ax_usage::index_fingerprint(&crate::tools::indexed_hashes(&pool).await.unwrap());
+        let pool =
+            sqlx::SqlitePool::connect(&format!("sqlite://{}", root.join(".ax/ax.db").display()))
+                .await
+                .unwrap();
+        let expected =
+            ax_usage::index_fingerprint(&crate::tools::indexed_hashes(&pool).await.unwrap());
         assert_eq!(v1, expected[..16], "{pre}");
 
-        let same = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "v1 again", "session": chat })).await);
+        let same = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                json!({ "prompt": "v1 again", "session": chat }),
+            )
+            .await,
+        );
         assert_eq!(graph_of(&same), v1);
-        std::fs::write(root.join("src/lib.rs"), fixture_source("reuse_beta_helper() + 6")).unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            fixture_source("reuse_beta_helper() + 6"),
+        )
+        .unwrap();
         call(&mut engine, "ax_sync", json!({})).await;
-        let moved = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "v2", "session": chat })).await);
+        let moved = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                json!({ "prompt": "v2", "session": chat }),
+            )
+            .await,
+        );
         assert_ne!(graph_of(&moved), v1, "a new index is a new graph version");
         assert_eq!(graph_of(&moved).len(), 16);
     }
@@ -1484,18 +1856,50 @@ mod reuse_integration {
         set_chat("hook-chat");
         let (_dir, mut engine) = fixture().await;
         let alpha = json!({ "name": "reuse_alpha_target" });
-        call(&mut engine, "ax_node", with_session(alpha.clone(), "axs_explicit")).await;
-        assert!(!hit(&text(&call(&mut engine, "ax_node", alpha.clone()).await)), "no argument: the hook chat");
-        assert!(hit(&text(&call(&mut engine, "ax_node", with_session(alpha, "axs_explicit")).await)));
-        let pre = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "which chat" })).await);
-        assert_eq!(session_of(&pre), "hook-chat", "a recent hook id names the chat");
+        call(
+            &mut engine,
+            "ax_node",
+            with_session(alpha.clone(), "axs_explicit"),
+        )
+        .await;
+        assert!(
+            !hit(&text(&call(&mut engine, "ax_node", alpha.clone()).await)),
+            "no argument: the hook chat"
+        );
+        assert!(hit(&text(
+            &call(&mut engine, "ax_node", with_session(alpha, "axs_explicit")).await
+        )));
+        let pre = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                json!({ "prompt": "which chat" }),
+            )
+            .await,
+        );
+        assert_eq!(
+            session_of(&pre),
+            "hook-chat",
+            "a recent hook id names the chat"
+        );
     }
 
     fn child_of(kind: &str, body: &str) -> String {
         let tag = format!("<ax_session_{kind} ");
-        let rest = body.split(&tag).nth(1).unwrap_or_else(|| panic!("no {kind}:\n{body}"));
-        let child = rest.split(" child=").nth(1).unwrap_or_else(|| panic!("no child:\n{rest}"));
-        child.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.' || *c == ':').collect()
+        let rest = body
+            .split(&tag)
+            .nth(1)
+            .unwrap_or_else(|| panic!("no {kind}:\n{body}"));
+        let child = rest
+            .split(" child=")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no child:\n{rest}"));
+        child
+            .chars()
+            .take_while(|c| {
+                c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.' || *c == ':'
+            })
+            .collect()
     }
 
     #[tokio::test]
@@ -1505,23 +1909,70 @@ mod reuse_integration {
         let (_dir, mut engine) = fixture().await;
         let started = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "auth" })).await);
         let chat = session_of(&started);
-        let empty = call(&mut engine, "ax_session", with_session(json!({ "action": "fork" }), &chat)).await;
+        let empty = call(
+            &mut engine,
+            "ax_session",
+            with_session(json!({ "action": "fork" }), &chat),
+        )
+        .await;
         assert!(text(&empty).contains("nothing to fork"), "{}", text(&empty));
 
-        call(&mut engine, "ax_session", with_session(json!({ "action": "add", "facts": ["kept on the parent"] }), &chat)).await;
+        call(
+            &mut engine,
+            "ax_session",
+            with_session(
+                json!({ "action": "add", "facts": ["kept on the parent"] }),
+                &chat,
+            ),
+        )
+        .await;
         let node = json!({ "name": "reuse_alpha_target" });
         call(&mut engine, "ax_node", with_session(node.clone(), &chat)).await;
-        assert!(hit(&text(&call(&mut engine, "ax_node", with_session(node.clone(), &chat)).await)));
+        assert!(hit(&text(
+            &call(&mut engine, "ax_node", with_session(node.clone(), &chat)).await
+        )));
 
-        let forked = text(&call(&mut engine, "ax_session", with_session(json!({ "action": "fork" }), &chat)).await);
+        let forked = text(
+            &call(
+                &mut engine,
+                "ax_session",
+                with_session(json!({ "action": "fork" }), &chat),
+            )
+            .await,
+        );
         let child = child_of("fork", &forked);
         assert!(forked.contains("kept on the parent"), "{forked}");
-        let parent_notes = text(&call(&mut engine, "ax_preflight", with_session(json!({ "prompt": "still here" }), &chat)).await);
-        assert!(parent_notes.contains("<ax_section name=\"session\">"), "{parent_notes}");
-        assert!(parent_notes.contains("kept on the parent"), "{parent_notes}");
-        let child_notes = text(&call(&mut engine, "ax_preflight", with_session(json!({ "prompt": "branch" }), &child)).await);
+        let parent_notes = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                with_session(json!({ "prompt": "still here" }), &chat),
+            )
+            .await,
+        );
+        assert!(
+            parent_notes.contains("<ax_section name=\"session\">"),
+            "{parent_notes}"
+        );
+        assert!(
+            parent_notes.contains("kept on the parent"),
+            "{parent_notes}"
+        );
+        let child_notes = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                with_session(json!({ "prompt": "branch" }), &child),
+            )
+            .await,
+        );
         assert!(child_notes.contains("kept on the parent"), "{child_notes}");
-        assert!(!hit(&text(&call(&mut engine, "ax_node", with_session(node, &child)).await)), "the child cache starts empty");
+        assert!(
+            !hit(&text(
+                &call(&mut engine, "ax_node", with_session(node, &child)).await
+            )),
+            "the child cache starts empty"
+        );
 
         let note = json!({
             "action": "handoff",
@@ -1534,11 +1985,35 @@ mod reuse_integration {
         });
         let handed = text(&call(&mut engine, "ax_session", with_session(note, &chat)).await);
         let next = child_of("handoff", &handed);
-        assert!(handed.contains("TokenValidator") && !handed.contains("kept on the parent"), "{handed}");
-        let parent_after = text(&call(&mut engine, "ax_preflight", with_session(json!({ "prompt": "parent remains" }), &chat)).await);
-        assert!(parent_after.contains("kept on the parent"), "{parent_after}");
-        let next_notes = text(&call(&mut engine, "ax_preflight", with_session(json!({ "prompt": "next" }), &next)).await);
-        assert!(next_notes.contains("TokenValidator") && next_notes.contains("<ax_section name=\"session\">"), "{next_notes}");
+        assert!(
+            handed.contains("TokenValidator") && !handed.contains("kept on the parent"),
+            "{handed}"
+        );
+        let parent_after = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                with_session(json!({ "prompt": "parent remains" }), &chat),
+            )
+            .await,
+        );
+        assert!(
+            parent_after.contains("kept on the parent"),
+            "{parent_after}"
+        );
+        let next_notes = text(
+            &call(
+                &mut engine,
+                "ax_preflight",
+                with_session(json!({ "prompt": "next" }), &next),
+            )
+            .await,
+        );
+        assert!(
+            next_notes.contains("TokenValidator")
+                && next_notes.contains("<ax_section name=\"session\">"),
+            "{next_notes}"
+        );
     }
 
     #[tokio::test]
@@ -1546,25 +2021,62 @@ mod reuse_integration {
         let _guard = env_lock().await;
         let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
-        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "durable" })).await));
+        let chat = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "durable" })).await,
+        ));
         call(
             &mut engine,
             "ax_durable",
-            with_session(json!({ "action": "append", "kind": "user", "body": "the secret token is pine" }), &chat),
+            with_session(
+                json!({ "action": "append", "kind": "user", "body": "the secret token is pine" }),
+                &chat,
+            ),
         )
         .await;
-        call(&mut engine, "ax_node", with_session(json!({ "name": "reuse_alpha_target" }), &chat)).await;
-        let view = text(&call(&mut engine, "ax_durable", with_session(json!({ "action": "read" }), &chat)).await);
+        call(
+            &mut engine,
+            "ax_node",
+            with_session(json!({ "name": "reuse_alpha_target" }), &chat),
+        )
+        .await;
+        let view = text(
+            &call(
+                &mut engine,
+                "ax_durable",
+                with_session(json!({ "action": "read" }), &chat),
+            )
+            .await,
+        );
         assert!(view.contains("pine") && view.contains("ax_node"), "{view}");
         call(
             &mut engine,
             "ax_durable",
-            with_session(json!({ "action": "compact", "summary": "User mentioned a token." }), &chat),
+            with_session(
+                json!({ "action": "compact", "summary": "User mentioned a token." }),
+                &chat,
+            ),
         )
         .await;
-        let after = text(&call(&mut engine, "ax_durable", with_session(json!({ "action": "read" }), &chat)).await);
-        assert!(after.contains("User mentioned a token.") && !after.contains("pine"), "{after}");
-        let found = text(&call(&mut engine, "ax_durable", with_session(json!({ "action": "search", "query": "pine" }), &chat)).await);
+        let after = text(
+            &call(
+                &mut engine,
+                "ax_durable",
+                with_session(json!({ "action": "read" }), &chat),
+            )
+            .await,
+        );
+        assert!(
+            after.contains("User mentioned a token.") && !after.contains("pine"),
+            "{after}"
+        );
+        let found = text(
+            &call(
+                &mut engine,
+                "ax_durable",
+                with_session(json!({ "action": "search", "query": "pine" }), &chat),
+            )
+            .await,
+        );
         assert!(found.contains("pine"), "{found}");
     }
 
@@ -1584,7 +2096,10 @@ mod reuse_integration {
         assert!(second_text.starts_with("[ax cache hit]"), "{second_text}");
         let sent = ax_usage::count_tokens(&second_text) as i64;
         let first_tokens = ax_usage::count_tokens(&first_text) as i64;
-        assert!(sent < first_tokens, "hit {sent} tokens vs first {first_tokens}");
+        assert!(
+            sent < first_tokens,
+            "hit {sent} tokens vs first {first_tokens}"
+        );
 
         let meta = &second["structuredContent"];
         assert_eq!(meta["sentTokens"].as_i64(), Some(sent));
@@ -1592,7 +2107,9 @@ mod reuse_integration {
         assert_eq!(meta["tokensAvoided"].as_i64(), Some(original - sent));
 
         let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
-        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}")).await.unwrap();
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}"))
+            .await
+            .unwrap();
         let (hits, avoided): (i64, i64) =
             sqlx::query_as("SELECT hits, tokens_avoided FROM mcp_reuse_cache WHERE cache_id = ? AND conversation LIKE ?")
                 .bind(meta["contextCacheHit"].as_str().unwrap())
@@ -1600,10 +2117,23 @@ mod reuse_integration {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!((hits, avoided), (1, original - sent), "hit counter and avoided tokens are recorded");
+        assert_eq!(
+            (hits, avoided),
+            (1, original - sent),
+            "hit counter and avoided tokens are recorded"
+        );
         let id = meta["contextCacheHit"].as_str().unwrap().to_string();
-        let expanded = call(&mut engine, "ax_expand", json!({ "id": id, "limit": 12_000 })).await;
-        assert_eq!(text(&expanded), first_text, "expanded body must equal the first reply");
+        let expanded = call(
+            &mut engine,
+            "ax_expand",
+            json!({ "id": id, "limit": 12_000 }),
+        )
+        .await;
+        assert_eq!(
+            text(&expanded),
+            first_text,
+            "expanded body must equal the first reply"
+        );
         assert_eq!(ax_usage::count_tokens(&first_text) as i64, original);
     }
 
@@ -1614,7 +2144,12 @@ mod reuse_integration {
         let (_dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         call(&mut engine, "ax_node", args).await;
-        let again = call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target", "fresh": true })).await;
+        let again = call(
+            &mut engine,
+            "ax_node",
+            json!({ "name": "reuse_alpha_target", "fresh": true }),
+        )
+        .await;
         assert!(text(&again).contains("reuse_alpha_target"));
         assert!(!text(&again).starts_with("[ax cache hit]"));
     }
@@ -1626,10 +2161,14 @@ mod reuse_integration {
         let (dir, mut engine) = fixture().await;
         let args = json!({ "name": "reuse_alpha_target" });
         call(&mut engine, "ax_node", args.clone()).await;
-        let edited = fixture_source("reuse_beta_helper() + 2 + edited_marker()") + "pub fn edited_marker() -> u64 { 0 }\n";
+        let edited = fixture_source("reuse_beta_helper() + 2 + edited_marker()")
+            + "pub fn edited_marker() -> u64 { 0 }\n";
         std::fs::write(dir.path().join("src/lib.rs"), edited).unwrap();
         let miss_before_sync = call(&mut engine, "ax_node", args.clone()).await;
-        assert!(!text(&miss_before_sync).starts_with("[ax cache hit]"), "stale hit before sync");
+        assert!(
+            !text(&miss_before_sync).starts_with("[ax cache hit]"),
+            "stale hit before sync"
+        );
         call(&mut engine, "ax_sync", json!({})).await;
         let after = call(&mut engine, "ax_node", args).await;
         let after_text = text(&after);
@@ -1647,7 +2186,10 @@ mod reuse_integration {
         assert!(before.contains("src/lib.rs:"), "{before}");
         assert!(!before.contains("reuse_new_caller"), "{before}");
         let repeat = text(&call(&mut engine, "ax_callers", args.clone()).await);
-        assert!(repeat.starts_with("[ax cache hit]"), "the callers reply must be cached: {repeat}");
+        assert!(
+            repeat.starts_with("[ax cache hit]"),
+            "the callers reply must be cached: {repeat}"
+        );
         std::fs::write(
             dir.path().join("src/extra.rs"),
             "pub fn reuse_new_caller() -> u64 { reuse_beta_helper() }\n",
@@ -1664,9 +2206,21 @@ mod reuse_integration {
         let _guard = env_lock().await;
         let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
-        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await));
-        call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target" })).await;
-        let pre = call(&mut engine, "ax_preflight", json!({ "prompt": "continue", "session": chat })).await;
+        let chat = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await,
+        ));
+        call(
+            &mut engine,
+            "ax_node",
+            json!({ "name": "reuse_alpha_target" }),
+        )
+        .await;
+        let pre = call(
+            &mut engine,
+            "ax_preflight",
+            json!({ "prompt": "continue", "session": chat }),
+        )
+        .await;
         let pre_text = text(&pre);
         let block = session_block(&pre_text).unwrap_or_else(|| panic!("no block: {pre_text}"));
         assert!(block.contains("reuse_alpha_target"), "{block}");
@@ -1678,18 +2232,36 @@ mod reuse_integration {
         let _guard = env_lock().await;
         let _home = isolated_home();
         let (_dir, mut engine) = fixture().await;
-        let chat = session_of(&text(&call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await));
+        let chat = session_of(&text(
+            &call(&mut engine, "ax_preflight", json!({ "prompt": "start" })).await,
+        ));
         let again = json!({ "prompt": "continue", "session": chat });
-        call(&mut engine, "ax_node", json!({ "name": "reuse_alpha_target" })).await;
+        call(
+            &mut engine,
+            "ax_node",
+            json!({ "name": "reuse_alpha_target" }),
+        )
+        .await;
         let first = text(&call(&mut engine, "ax_preflight", again.clone()).await);
-        assert!(session_block(&first).is_some_and(|b| b.contains("reuse_alpha_target")), "{first}");
+        assert!(
+            session_block(&first).is_some_and(|b| b.contains("reuse_alpha_target")),
+            "{first}"
+        );
         let second = text(&call(&mut engine, "ax_preflight", again.clone()).await);
         assert_eq!(session_block(&second), None, "listed again: {second}");
-        call(&mut engine, "ax_node", json!({ "name": "reuse_beta_helper" })).await;
+        call(
+            &mut engine,
+            "ax_node",
+            json!({ "name": "reuse_beta_helper" }),
+        )
+        .await;
         let third = text(&call(&mut engine, "ax_preflight", again).await);
         let block = session_block(&third).unwrap_or_else(|| panic!("no block: {third}"));
         assert!(block.contains("reuse_beta_helper"), "{block}");
-        assert!(!block.contains("reuse_alpha_target"), "old entry listed again: {block}");
+        assert!(
+            !block.contains("reuse_alpha_target"),
+            "old entry listed again: {block}"
+        );
     }
 
     fn hit(body: &str) -> bool {
@@ -1699,17 +2271,31 @@ mod reuse_integration {
     async fn prompts_record_and_repeat(engine: &mut McpEngine) -> String {
         let alpha = json!({ "name": "reuse_alpha_target" });
         assert!(!hit(&text(&call(engine, "ax_node", alpha.clone()).await)));
-        let noted = text(&call(engine, "ax_session", json!({
-            "action": "add",
-            "objective": "Understand reuse_alpha_target",
-            "facts": ["alpha returns u64"],
-            "files": ["src/lib.rs"],
-            "symbols": ["reuse_alpha_target"]
-        })).await);
+        let noted = text(
+            &call(
+                engine,
+                "ax_session",
+                json!({
+                    "action": "add",
+                    "objective": "Understand reuse_alpha_target",
+                    "facts": ["alpha returns u64"],
+                    "files": ["src/lib.rs"],
+                    "symbols": ["reuse_alpha_target"]
+                }),
+            )
+            .await,
+        );
         assert!(!hit(&noted), "ax_session must not be reused as a graph hit");
         let hash = hash_of(&noted);
         assert!(noted.contains("stale=false"));
-        let second = text(&call(engine, "ax_preflight", json!({ "prompt": "what did we find?" })).await);
+        let second = text(
+            &call(
+                engine,
+                "ax_preflight",
+                json!({ "prompt": "what did we find?" }),
+            )
+            .await,
+        );
         let block = working_block(&second);
         assert_eq!(hash_of(&block), hash);
         assert!(block.contains("alpha returns u64"));
@@ -1720,48 +2306,113 @@ mod reuse_integration {
     async fn prompts_reuse_only_the_same_call(engine: &mut McpEngine, hash: &str) {
         let alpha = json!({ "name": "reuse_alpha_target" });
         let beta = json!({ "name": "reuse_beta_helper" });
-        assert!(hit(&text(&call(engine, "ax_node", alpha.clone()).await)), "the second alpha prompt must hit");
-        assert!(!hit(&text(&call(engine, "ax_node", beta.clone()).await)), "a different symbol is a different entry");
+        assert!(
+            hit(&text(&call(engine, "ax_node", alpha.clone()).await)),
+            "the second alpha prompt must hit"
+        );
+        assert!(
+            !hit(&text(&call(engine, "ax_node", beta.clone()).await)),
+            "a different symbol is a different entry"
+        );
         assert!(hit(&text(&call(engine, "ax_node", beta).await)));
-        assert!(hit(&text(&call(engine, "ax_node", alpha).await)), "a later prompt still hits the first answer");
+        assert!(
+            hit(&text(&call(engine, "ax_node", alpha).await)),
+            "a later prompt still hits the first answer"
+        );
         let third = text(&call(engine, "ax_preflight", json!({ "prompt": "remind me" })).await);
-        assert_eq!(hash_of(&working_block(&third)), hash, "working context is repeated, not delivered once");
-        let dup = text(&call(engine, "ax_session", json!({
-            "action": "add",
-            "facts": ["alpha returns u64"]
-        })).await);
-        assert_eq!(hash_of(&dup), hash, "the same fact must not change the content hash");
+        assert_eq!(
+            hash_of(&working_block(&third)),
+            hash,
+            "working context is repeated, not delivered once"
+        );
+        let dup = text(
+            &call(
+                engine,
+                "ax_session",
+                json!({
+                    "action": "add",
+                    "facts": ["alpha returns u64"]
+                }),
+            )
+            .await,
+        );
+        assert_eq!(
+            hash_of(&dup),
+            hash,
+            "the same fact must not change the content hash"
+        );
     }
 
-    async fn prompts_keep_the_hash_when_the_index_changes(engine: &mut McpEngine, root: &std::path::Path, hash: &str) {
+    async fn prompts_keep_the_hash_when_the_index_changes(
+        engine: &mut McpEngine,
+        root: &std::path::Path,
+        hash: &str,
+    ) {
         let alpha = json!({ "name": "reuse_alpha_target" });
         let edited = fixture_source("reuse_beta_helper() + 9");
         std::fs::write(root.join("src/lib.rs"), edited).unwrap();
         call(engine, "ax_sync", json!({})).await;
         let missed = text(&call(engine, "ax_node", alpha).await);
         assert!(!hit(&missed), "a changed file must miss");
-        assert!(missed.contains("reuse_beta_helper() + 9"), "the miss must be the new source");
-        let stale = working_block(&text(&call(engine, "ax_preflight", json!({ "prompt": "after the edit" })).await));
+        assert!(
+            missed.contains("reuse_beta_helper() + 9"),
+            "the miss must be the new source"
+        );
+        let stale = working_block(&text(
+            &call(
+                engine,
+                "ax_preflight",
+                json!({ "prompt": "after the edit" }),
+            )
+            .await,
+        ));
         assert!(stale.contains("stale=true"));
-        assert_eq!(hash_of(&stale), hash, "the notes keep their hash when the index moves");
+        assert_eq!(
+            hash_of(&stale),
+            hash,
+            "the notes keep their hash when the index moves"
+        );
         assert!(stale.contains("alpha returns u64"));
-        let still = text(&call(engine, "ax_session", json!({
-            "action": "add",
-            "facts": ["alpha returns u64"]
-        })).await);
-        assert!(still.contains("stale=true"), "repeating a fact does not confirm a stale snapshot");
-        let compact = text(&call(engine, "ax_session", json!({
-            "action": "compact",
-            "objective": "Understand reuse_alpha_target",
-            "facts": ["alpha returns u64"],
-            "files": ["src/lib.rs"],
-            "symbols": ["reuse_alpha_target"],
-            "decisions": [],
-            "open_questions": []
-        })).await);
+        let still = text(
+            &call(
+                engine,
+                "ax_session",
+                json!({
+                    "action": "add",
+                    "facts": ["alpha returns u64"]
+                }),
+            )
+            .await,
+        );
+        assert!(
+            still.contains("stale=true"),
+            "repeating a fact does not confirm a stale snapshot"
+        );
+        let compact = text(
+            &call(
+                engine,
+                "ax_session",
+                json!({
+                    "action": "compact",
+                    "objective": "Understand reuse_alpha_target",
+                    "facts": ["alpha returns u64"],
+                    "files": ["src/lib.rs"],
+                    "symbols": ["reuse_alpha_target"],
+                    "decisions": [],
+                    "open_questions": []
+                }),
+            )
+            .await,
+        );
         assert!(compact.contains("stale=false"));
-        assert_eq!(hash_of(&compact), hash, "confirming the same notes keeps the hash");
-        let confirmed = working_block(&text(&call(engine, "ax_preflight", json!({ "prompt": "confirmed" })).await));
+        assert_eq!(
+            hash_of(&compact),
+            hash,
+            "confirming the same notes keeps the hash"
+        );
+        let confirmed = working_block(&text(
+            &call(engine, "ax_preflight", json!({ "prompt": "confirmed" })).await,
+        ));
         assert!(confirmed.contains("stale=false"));
         assert_eq!(hash_of(&confirmed), hash);
     }
@@ -1769,12 +2420,35 @@ mod reuse_integration {
     async fn prompts_in_a_second_chat_start_cold(engine: &mut McpEngine, hash: &str) {
         let alpha = json!({ "name": "reuse_alpha_target" });
         set_chat("prompt-chat-b");
-        let other = text(&call(engine, "ax_preflight", json!({ "prompt": "a different chat" })).await);
-        assert!(!other.contains("alpha returns u64"), "chat B must not see chat A's notes");
-        assert!(!hit(&text(&call(engine, "ax_node", alpha.clone()).await)), "chat B does not inherit chat A's graph hit");
-        assert!(hit(&text(&call(engine, "ax_node", alpha).await)), "chat B's own second call hits");
+        let other = text(
+            &call(
+                engine,
+                "ax_preflight",
+                json!({ "prompt": "a different chat" }),
+            )
+            .await,
+        );
+        assert!(
+            !other.contains("alpha returns u64"),
+            "chat B must not see chat A's notes"
+        );
+        assert!(
+            !hit(&text(&call(engine, "ax_node", alpha.clone()).await)),
+            "chat B does not inherit chat A's graph hit"
+        );
+        assert!(
+            hit(&text(&call(engine, "ax_node", alpha).await)),
+            "chat B's own second call hits"
+        );
         set_chat("prompt-chat-a");
-        let back = working_block(&text(&call(engine, "ax_preflight", json!({ "prompt": "back to the first chat" })).await));
+        let back = working_block(&text(
+            &call(
+                engine,
+                "ax_preflight",
+                json!({ "prompt": "back to the first chat" }),
+            )
+            .await,
+        ));
         assert_eq!(hash_of(&back), hash);
         assert!(back.contains("alpha returns u64"));
         assert!(back.contains("stale=false"));

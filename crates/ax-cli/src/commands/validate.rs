@@ -21,8 +21,16 @@ pub async fn run(path: Option<String>, ci: bool, json: bool) -> Result<(), Strin
     ax_usage::log_cli(Some(&root), "cmd=validate start");
     let _spinner = SpinnerGuard::new("Validating graph hygiene...", false);
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let nodes = ax.queries().get_all_nodes().await.map_err(|e| e.to_string())?;
-    let edges = ax.queries().get_all_edges().await.map_err(|e| e.to_string())?;
+    let nodes = ax
+        .queries()
+        .get_all_nodes()
+        .await
+        .map_err(|e| e.to_string())?;
+    let edges = ax
+        .queries()
+        .get_all_edges()
+        .await
+        .map_err(|e| e.to_string())?;
 
     let node_ids: HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
     let mut degree: HashMap<&str, usize> = HashMap::new();

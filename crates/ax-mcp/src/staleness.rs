@@ -147,9 +147,10 @@ fn looks_like_path(s: &str) -> bool {
         return false;
     }
     let has_sep = t.contains('/') || t.contains('\\');
-    let has_dot_ext = t.rsplit(['/', '\\']).next().is_some_and(|leaf| {
-        leaf.contains('.') && !leaf.starts_with('.')
-    });
+    let has_dot_ext = t
+        .rsplit(['/', '\\'])
+        .next()
+        .is_some_and(|leaf| leaf.contains('.') && !leaf.starts_with('.'));
     has_sep || has_dot_ext
 }
 

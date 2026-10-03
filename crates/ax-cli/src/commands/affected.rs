@@ -8,9 +8,18 @@ pub struct AffectedArgs {
     pub files: Vec<String>,
     #[arg(long, help = "Read changed file paths from stdin")]
     pub stdin: bool,
-    #[arg(long, default_value = "main", help = "Base branch for git diff when no files given")]
+    #[arg(
+        long,
+        default_value = "main",
+        help = "Base branch for git diff when no files given"
+    )]
     pub base: String,
-    #[arg(short, long, default_value = "5", help = "Max dependency traversal depth")]
+    #[arg(
+        short,
+        long,
+        default_value = "5",
+        help = "Max dependency traversal depth"
+    )]
     pub depth: u32,
     #[arg(short, long, help = "Glob filter for test files")]
     pub filter: Option<String>,
@@ -46,7 +55,10 @@ pub async fn run(args: AffectedArgs) -> Result<(), String> {
     }
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
     } else {
         println!("Affected test files ({}):", result.test_files.len());
         for f in &result.test_files {
@@ -62,7 +74,10 @@ pub async fn run(args: AffectedArgs) -> Result<(), String> {
     Ok(())
 }
 
-async fn resolve_changed_files(root: &std::path::Path, args: &AffectedArgs) -> Result<Vec<String>, String> {
+async fn resolve_changed_files(
+    root: &std::path::Path,
+    args: &AffectedArgs,
+) -> Result<Vec<String>, String> {
     if args.stdin {
         let mut buf = String::new();
         io::stdin()

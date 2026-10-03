@@ -4,8 +4,8 @@ use ax_extraction::orchestrator::IndexOptions;
 
 use crate::commands::{quiet_and_uninitialized, resolve_path};
 use crate::ui::{
-    finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback, info_line,
-    ok_line,
+    finish_progress_bar, format_duration_ms, index_progress_bar, index_progress_callback,
+    info_line, ok_line,
 };
 
 pub async fn run(
@@ -91,7 +91,10 @@ async fn sync_one(root: &std::path::Path, quiet: bool, watch: bool) -> Result<()
 
     if watch {
         if !quiet {
-            println!("{}", info_line("Watching for file changes (Ctrl+C to stop)..."));
+            println!(
+                "{}",
+                info_line("Watching for file changes (Ctrl+C to stop)...")
+            );
         }
         let result = tokio::select! {
             res = ax.watch_and_sync(opts, on_progress) => res.map_err(|e| e.to_string()),

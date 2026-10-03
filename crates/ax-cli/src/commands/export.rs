@@ -97,10 +97,7 @@ pub async fn run_graph(
     let limit = limit.max(1);
 
     let data = {
-        let _spinner = SpinnerGuard::new(
-            format!("Exporting graph ({})...", format),
-            false,
-        );
+        let _spinner = SpinnerGuard::new(format!("Exporting graph ({})...", format), false);
         load_export_data(&root, resolution, limit).await?
     };
 
@@ -157,8 +154,16 @@ async fn load_export_data(
         .await
         .map_err(|e| e.to_string())?;
 
-    let nodes = ax.queries().get_all_nodes().await.map_err(|e| e.to_string())?;
-    let edges = ax.queries().get_all_edges().await.map_err(|e| e.to_string())?;
+    let nodes = ax
+        .queries()
+        .get_all_nodes()
+        .await
+        .map_err(|e| e.to_string())?;
+    let edges = ax
+        .queries()
+        .get_all_edges()
+        .await
+        .map_err(|e| e.to_string())?;
     let communities = ax
         .queries()
         .get_node_communities()
@@ -189,7 +194,8 @@ async fn load_export_data(
     });
     ranked.truncate(limit);
 
-    let god_cutoff = ranked.first()
+    let god_cutoff = ranked
+        .first()
         .and_then(|n| degree.get(n.id.as_str()).copied())
         .unwrap_or(0);
     // Top 5% by degree (min 1) count as god-nodes in the export payload.
@@ -202,16 +208,12 @@ async fn load_export_data(
         .collect();
     let _ = god_cutoff;
 
-    let selected: std::collections::HashSet<&str> =
-        ranked.iter().map(|n| n.id.as_str()).collect();
+    let selected: std::collections::HashSet<&str> = ranked.iter().map(|n| n.id.as_str()).collect();
 
     let export_nodes: Vec<ExportNode> = ranked
         .iter()
         .map(|n| {
-            let (cid, label) = community_map
-                .get(&n.id)
-                .cloned()
-                .unwrap_or((-1, None));
+            let (cid, label) = community_map.get(&n.id).cloned().unwrap_or((-1, None));
             let deg = degree.get(n.id.as_str()).copied().unwrap_or(0);
             ExportNode {
                 id: n.id.clone(),
@@ -429,10 +431,7 @@ fn render_mermaid(data: &GraphExportData) -> String {
         let Some(t) = id_map.get(e.target.as_str()) else {
             continue;
         };
-        out.push_str(&format!(
-            "  {s} -->|{}| {t}\n",
-            mermaid_label(&e.kind)
-        ));
+        out.push_str(&format!("  {s} -->|{}| {t}\n", mermaid_label(&e.kind)));
     }
     out
 }

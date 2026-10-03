@@ -67,8 +67,16 @@ impl QueryBuilder {
         .bind(node.is_async.unwrap_or(false))
         .bind(node.is_static.unwrap_or(false))
         .bind(node.is_abstract.unwrap_or(false))
-        .bind(node.decorators.as_ref().map(|d| serde_json::to_string(d).unwrap_or_default()))
-        .bind(node.type_parameters.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default()))
+        .bind(
+            node.decorators
+                .as_ref()
+                .map(|d| serde_json::to_string(d).unwrap_or_default()),
+        )
+        .bind(
+            node.type_parameters
+                .as_ref()
+                .map(|t| serde_json::to_string(t).unwrap_or_default()),
+        )
         .bind(&node.return_type)
         .bind(node.updated_at)
         .execute(&self.pool)
@@ -148,8 +156,16 @@ impl QueryBuilder {
                     .push_bind(node.is_async.unwrap_or(false))
                     .push_bind(node.is_static.unwrap_or(false))
                     .push_bind(node.is_abstract.unwrap_or(false))
-                    .push_bind(node.decorators.as_ref().map(|d| serde_json::to_string(d).unwrap_or_default()))
-                    .push_bind(node.type_parameters.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default()))
+                    .push_bind(
+                        node.decorators
+                            .as_ref()
+                            .map(|d| serde_json::to_string(d).unwrap_or_default()),
+                    )
+                    .push_bind(
+                        node.type_parameters
+                            .as_ref()
+                            .map(|t| serde_json::to_string(t).unwrap_or_default()),
+                    )
                     .push_bind(&node.return_type)
                     .push_bind(node.updated_at);
             });
@@ -196,7 +212,11 @@ impl QueryBuilder {
                 b.push_bind(&edge.source)
                     .push_bind(&edge.target)
                     .push_bind(edge.kind.as_str())
-                    .push_bind(edge.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()))
+                    .push_bind(
+                        edge.metadata
+                            .as_ref()
+                            .map(|m| serde_json::to_string(m).unwrap_or_default()),
+                    )
                     .push_bind(edge.line)
                     .push_bind(edge.column)
                     .push_bind(edge.provenance.map(|p| match p {
@@ -417,7 +437,9 @@ impl QueryBuilder {
 
     /// Paths that already have stored source — used to find the backfill gap on
     /// databases indexed before the source store existed (pre-v17).
-    pub async fn get_file_content_paths(&self) -> Result<std::collections::HashSet<String>, AxError> {
+    pub async fn get_file_content_paths(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, AxError> {
         let rows: Vec<String> = sqlx::query_scalar("SELECT path FROM file_contents")
             .fetch_all(&self.pool)
             .await
@@ -522,7 +544,11 @@ impl QueryBuilder {
         Ok(rows.into_iter().map(|r| r.into_node()).collect())
     }
 
-    pub async fn get_outgoing_edges(&self, node_id: &str, kinds: Option<&[EdgeKind]>) -> Result<Vec<Edge>, AxError> {
+    pub async fn get_outgoing_edges(
+        &self,
+        node_id: &str,
+        kinds: Option<&[EdgeKind]>,
+    ) -> Result<Vec<Edge>, AxError> {
         let rows = if let Some(kinds) = kinds {
             let placeholders: Vec<String> = kinds.iter().map(|k| k.as_str().to_string()).collect();
             let sql = format!(
@@ -640,7 +666,11 @@ impl QueryBuilder {
 
     /// Node ids whose exact `qualified_name` or `name` equals `symbol`
     /// (excluding doc nodes). Used to link doc mentions to code symbols.
-    pub async fn get_node_ids_by_symbol(&self, symbol: &str, limit: i64) -> Result<Vec<String>, AxError> {
+    pub async fn get_node_ids_by_symbol(
+        &self,
+        symbol: &str,
+        limit: i64,
+    ) -> Result<Vec<String>, AxError> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT id FROM nodes WHERE kind != 'doc' AND (qualified_name = ? OR name = ?) LIMIT ?",
         )
@@ -662,7 +692,11 @@ impl QueryBuilder {
         Ok(v)
     }
 
-    pub async fn search_nodes(&self, query: &str, opts: &SearchOptions) -> Result<Vec<SearchResult>, AxError> {
+    pub async fn search_nodes(
+        &self,
+        query: &str,
+        opts: &SearchOptions,
+    ) -> Result<Vec<SearchResult>, AxError> {
         let limit = opts.limit.unwrap_or(50) as i64;
         let offset = opts.offset.unwrap_or(0) as i64;
         let kind_filter: Option<Vec<String>> = opts
@@ -774,7 +808,11 @@ impl QueryBuilder {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         if let Some(patterns) = &opts.include_patterns {
             results.retain(|r| patterns.iter().any(|p| r.node.file_path.contains(p)));
@@ -829,7 +867,10 @@ impl QueryBuilder {
         Ok(())
     }
 
-    pub async fn insert_unresolved_refs(&self, refs: &[UnresolvedReference]) -> Result<(), AxError> {
+    pub async fn insert_unresolved_refs(
+        &self,
+        refs: &[UnresolvedReference],
+    ) -> Result<(), AxError> {
         if refs.is_empty() {
             return Ok(());
         }
@@ -850,7 +891,11 @@ impl QueryBuilder {
                     .push_bind(ref_.reference_kind.as_str())
                     .push_bind(ref_.line)
                     .push_bind(ref_.column)
-                    .push_bind(ref_.candidates.as_ref().map(|c| serde_json::to_string(c).unwrap_or_default()))
+                    .push_bind(
+                        ref_.candidates
+                            .as_ref()
+                            .map(|c| serde_json::to_string(c).unwrap_or_default()),
+                    )
                     .push_bind(ref_.file_path.as_deref().unwrap_or(""))
                     .push_bind(ref_.language.map(|l| l.as_str()).unwrap_or("unknown"));
             });
@@ -873,12 +918,18 @@ impl QueryBuilder {
         Ok(rows.into_iter().map(|r| r.into_ref()).collect())
     }
 
-    pub async fn get_unresolved_refs_by_files(&self, files: &[String]) -> Result<Vec<UnresolvedReference>, AxError> {
+    pub async fn get_unresolved_refs_by_files(
+        &self,
+        files: &[String],
+    ) -> Result<Vec<UnresolvedReference>, AxError> {
         if files.is_empty() {
             return Ok(vec![]);
         }
         let placeholders = files.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("SELECT * FROM unresolved_refs WHERE file_path IN ({})", placeholders);
+        let sql = format!(
+            "SELECT * FROM unresolved_refs WHERE file_path IN ({})",
+            placeholders
+        );
         let mut query = sqlx::query_as::<_, UnresolvedRefRow>(&sql);
         for f in files {
             query = query.bind(f);
@@ -889,7 +940,6 @@ impl QueryBuilder {
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         Ok(rows.into_iter().map(|r| r.into_ref()).collect())
     }
-
 
     pub async fn delete_unresolved_ref(&self, ref_: &UnresolvedReference) -> Result<(), AxError> {
         sqlx::query(
@@ -1042,10 +1092,11 @@ impl QueryBuilder {
         let docs_by_extension = self.count_doc_extensions().await?;
         let files_by_language = self.count_grouped("files", "language").await?;
 
-        let last_updated: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(updated_at), 0) FROM nodes")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        let last_updated: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(updated_at), 0) FROM nodes")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
 
         let unresolved_ref_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM unresolved_refs")
             .fetch_one(&self.pool)
@@ -1077,8 +1128,15 @@ impl QueryBuilder {
         })
     }
 
-    async fn count_grouped(&self, table: &str, column: &str) -> Result<HashMap<String, i64>, AxError> {
-        let sql = format!("SELECT {}, COUNT(*) as cnt FROM {} GROUP BY {}", column, table, column);
+    async fn count_grouped(
+        &self,
+        table: &str,
+        column: &str,
+    ) -> Result<HashMap<String, i64>, AxError> {
+        let sql = format!(
+            "SELECT {}, COUNT(*) as cnt FROM {} GROUP BY {}",
+            column, table, column
+        );
         let rows: Vec<(String, i64)> = sqlx::query_as(&sql)
             .fetch_all(&self.pool)
             .await
@@ -1130,17 +1188,21 @@ impl QueryBuilder {
     }
 
     pub async fn get_metadata(&self, key: &str) -> Result<Option<String>, AxError> {
-        let result: Option<String> = sqlx::query_scalar("SELECT value FROM project_metadata WHERE key = ?")
-            .bind(key)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        let result: Option<String> =
+            sqlx::query_scalar("SELECT value FROM project_metadata WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
         Ok(result)
     }
 
     pub async fn set_project_name_tokens(&self, tokens: &[String]) -> Result<(), AxError> {
-        self.set_metadata("project_name_tokens", &serde_json::to_string(tokens).unwrap_or_default())
-            .await
+        self.set_metadata(
+            "project_name_tokens",
+            &serde_json::to_string(tokens).unwrap_or_default(),
+        )
+        .await
     }
 
     pub async fn get_project_name_tokens(&self) -> Result<Vec<String>, AxError> {
@@ -1159,11 +1221,26 @@ impl QueryBuilder {
     }
 
     pub async fn clear_all(&self) -> Result<(), AxError> {
-        sqlx::query("DELETE FROM edges").execute(&self.pool).await.map_err(db_err)?;
-        sqlx::query("DELETE FROM unresolved_refs").execute(&self.pool).await.map_err(db_err)?;
-        sqlx::query("DELETE FROM nodes").execute(&self.pool).await.map_err(db_err)?;
-        sqlx::query("DELETE FROM files").execute(&self.pool).await.map_err(db_err)?;
-        sqlx::query("DELETE FROM file_contents").execute(&self.pool).await.map_err(db_err)?;
+        sqlx::query("DELETE FROM edges")
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        sqlx::query("DELETE FROM unresolved_refs")
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        sqlx::query("DELETE FROM nodes")
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        sqlx::query("DELETE FROM files")
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        sqlx::query("DELETE FROM file_contents")
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
         Ok(())
     }
 
@@ -1221,7 +1298,10 @@ fn score_node_for_query(query: &str, node: &Node) -> f64 {
             qualified_name: &node.qualified_name,
             docstring: node.docstring.as_deref(),
             signature: node.signature.as_deref(),
-            is_data: matches!(node.language, Language::Yaml | Language::Xml | Language::Properties),
+            is_data: matches!(
+                node.language,
+                Language::Yaml | Language::Xml | Language::Properties
+            ),
         },
     )
 }
@@ -1236,16 +1316,19 @@ pub(crate) struct TermFields<'a> {
 }
 
 const QUESTION_STOPWORDS: &[&str] = &[
-    "a", "an", "and", "are", "be", "by", "did", "do", "does", "for", "from", "get", "gets", "how", "in",
-    "is", "it", "of", "on", "or", "the", "this", "that", "to", "was", "what", "when", "where", "which",
-    "who", "why", "with", "work", "works",
+    "a", "an", "and", "are", "be", "by", "did", "do", "does", "for", "from", "get", "gets", "how",
+    "in", "is", "it", "of", "on", "or", "the", "this", "that", "to", "was", "what", "when",
+    "where", "which", "who", "why", "with", "work", "works",
 ];
 
 fn raw_terms(query: &str) -> Vec<String> {
     query
         .replace("::", " ")
         .split_whitespace()
-        .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric() && c != '_').to_lowercase())
+        .map(|t| {
+            t.trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+                .to_lowercase()
+        })
         .filter(|t| !t.is_empty())
         .collect()
 }
@@ -1301,7 +1384,10 @@ pub(crate) fn term_coverage_score(query: &str, fields: &TermFields<'_>) -> f64 {
         fields.signature.unwrap_or("")
     )
     .to_lowercase();
-    let matched = terms.iter().filter(|t| haystack.contains(t.as_str())).count();
+    let matched = terms
+        .iter()
+        .filter(|t| haystack.contains(t.as_str()))
+        .count();
     let coverage = 3.0 * matched as f64 / terms.len() as f64;
     let weight = if fields.is_data { 0.4 } else { 1.0 };
     1.0 + coverage * weight
@@ -1324,10 +1410,8 @@ fn build_fts_prefix_query(text: &str) -> Option<String> {
         .collect::<String>()
         .split_whitespace()
         .filter(|term| {
-            !term.is_empty() && !matches!(
-                term.to_uppercase().as_str(),
-                "AND" | "OR" | "NOT" | "NEAR"
-            )
+            !term.is_empty()
+                && !matches!(term.to_uppercase().as_str(), "AND" | "OR" | "NOT" | "NEAR")
         })
         .map(|term| format!("\"{}\"*", term))
         .collect::<Vec<_>>()
@@ -1344,19 +1428,34 @@ mod tests {
     use super::{build_fts_prefix_query, content_terms, term_coverage_score, TermFields};
 
     fn fields<'a>(name: &'a str, doc: Option<&'a str>, is_data: bool) -> TermFields<'a> {
-        TermFields { name, qualified_name: name, docstring: doc, signature: None, is_data }
+        TermFields {
+            name,
+            qualified_name: name,
+            docstring: doc,
+            signature: None,
+            is_data,
+        }
     }
 
     #[test]
     fn content_terms_drop_stopwords_and_stem() {
-        assert_eq!(content_terms("How does token savings get logged?"), vec!["token", "sav", "log"]);
+        assert_eq!(
+            content_terms("How does token savings get logged?"),
+            vec!["token", "sav", "log"]
+        );
     }
 
     #[test]
     fn fts_query_skips_stopwords_when_content_terms_exist() {
         let q = build_fts_prefix_query("how does token savings get logged").unwrap();
-        assert!(!q.contains("\"how\"") && !q.contains("\"does\"") && !q.contains("\"get\""), "{q}");
-        assert!(q.contains("\"token\"*") && q.contains("\"sav\"*") && q.contains("\"log\"*"), "{q}");
+        assert!(
+            !q.contains("\"how\"") && !q.contains("\"does\"") && !q.contains("\"get\""),
+            "{q}"
+        );
+        assert!(
+            q.contains("\"token\"*") && q.contains("\"sav\"*") && q.contains("\"log\"*"),
+            "{q}"
+        );
     }
 
     #[test]
@@ -1369,32 +1468,52 @@ mod tests {
         let query = "how does token savings get logged";
         let documented = term_coverage_score(
             query,
-            &fields("run_and_wrap_tool", Some("Logs the call with its token savings estimate."), false),
+            &fields(
+                "run_and_wrap_tool",
+                Some("Logs the call with its token savings estimate."),
+                false,
+            ),
         );
         let one_term = term_coverage_score(query, &fields("chars_per_token", None, false));
-        assert!(documented > one_term, "documented={documented} one_term={one_term}");
+        assert!(
+            documented > one_term,
+            "documented={documented} one_term={one_term}"
+        );
     }
 
     #[test]
     fn data_file_line_ranks_below_code_with_same_coverage() {
         let query = "how does token savings get logged";
-        let yaml = term_coverage_score(query, &fields("prompt: How does token savings get logged?", None, true));
+        let yaml = term_coverage_score(
+            query,
+            &fields("prompt: How does token savings get logged?", None, true),
+        );
         let code = term_coverage_score(
             query,
-            &fields("record_call", Some("Log token savings for one call."), false),
+            &fields(
+                "record_call",
+                Some("Log token savings for one call."),
+                false,
+            ),
         );
         assert!(code > yaml, "code={code} yaml={yaml}");
     }
 
     #[test]
     fn coverage_score_stays_below_prefix_tier() {
-        let s = term_coverage_score("token savings", &fields("token_savings_total", Some("token savings"), false));
+        let s = term_coverage_score(
+            "token savings",
+            &fields("token_savings_total", Some("token savings"), false),
+        );
         assert!(s < 5.0 && s > 1.0, "{s}");
     }
 
     #[test]
     fn no_overlap_scores_baseline() {
-        assert_eq!(term_coverage_score("token savings", &fields("parse_yaml", None, false)), 1.0);
+        assert_eq!(
+            term_coverage_score("token savings", &fields("parse_yaml", None, false)),
+            1.0
+        );
     }
 
     #[test]
@@ -1464,7 +1583,9 @@ impl NodeRow {
             is_static: self.is_static,
             is_abstract: self.is_abstract,
             decorators: self.decorators.and_then(|d| serde_json::from_str(&d).ok()),
-            type_parameters: self.type_parameters.and_then(|t| serde_json::from_str(&t).ok()),
+            type_parameters: self
+                .type_parameters
+                .and_then(|t| serde_json::from_str(&t).ok()),
             return_type: self.return_type,
             updated_at: self.updated_at,
         }
@@ -1537,7 +1658,8 @@ impl UnresolvedRefRow {
         UnresolvedReference {
             from_node_id: self.from_node_id,
             reference_name: self.reference_name,
-            reference_kind: ReferenceKind::parse(&self.reference_kind).unwrap_or(ReferenceKind::References),
+            reference_kind: ReferenceKind::parse(&self.reference_kind)
+                .unwrap_or(ReferenceKind::References),
             line: self.line,
             column: self.col,
             file_path: Some(self.file_path),

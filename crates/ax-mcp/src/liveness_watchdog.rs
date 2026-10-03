@@ -187,7 +187,10 @@ mod tests {
     #[test]
     fn parse_timeout_defaults() {
         assert_eq!(parse_watchdog_timeout_ms(None), DEFAULT_WATCHDOG_TIMEOUT_MS);
-        assert_eq!(parse_watchdog_timeout_ms(Some("0".into())), DEFAULT_WATCHDOG_TIMEOUT_MS);
+        assert_eq!(
+            parse_watchdog_timeout_ms(Some("0".into())),
+            DEFAULT_WATCHDOG_TIMEOUT_MS
+        );
         assert_eq!(parse_watchdog_timeout_ms(Some("5000".into())), 5000);
     }
 

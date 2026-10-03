@@ -15,14 +15,19 @@ pub async fn run(action: Option<String>) -> Result<(), String> {
         let had_queue = queue_before.exists();
         ax_telemetry::flush_global(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
         let remaining = if queue_before.exists() {
-            std::fs::metadata(&queue_before).map(|m| m.len()).unwrap_or(0)
+            std::fs::metadata(&queue_before)
+                .map(|m| m.len())
+                .unwrap_or(0)
         } else {
             0
         };
         if had_queue && remaining == 0 {
             println!("Telemetry flushed to ingest.");
         } else if had_queue {
-            println!("Telemetry flush sent partial batch; {} bytes still queued.", remaining);
+            println!(
+                "Telemetry flush sent partial batch; {} bytes still queued.",
+                remaining
+            );
         } else {
             println!("Nothing queued to flush.");
         }
@@ -53,7 +58,11 @@ pub async fn run(action: Option<String>) -> Result<(), String> {
                 println!("queued_bytes: {}", bytes);
             }
         }
-        other => return Err(format!("unknown action '{other}' — use on, off, status, or flush")),
+        other => {
+            return Err(format!(
+                "unknown action '{other}' — use on, off, status, or flush"
+            ))
+        }
     }
     t.persist_sync();
     Ok(())
@@ -62,7 +71,9 @@ pub async fn run(action: Option<String>) -> Result<(), String> {
 pub fn ask_installer_consent() -> bool {
     use dialoguer::Confirm;
     Confirm::new()
-        .with_prompt("Share anonymous ax usage data? (no code, paths, or names — see docs/TELEMETRY.md)")
+        .with_prompt(
+            "Share anonymous ax usage data? (no code, paths, or names — see docs/TELEMETRY.md)",
+        )
         .default(true)
         .interact()
         .unwrap_or(true)

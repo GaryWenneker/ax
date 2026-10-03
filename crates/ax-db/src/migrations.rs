@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 22;
+pub const CURRENT_SCHEMA_VERSION: i32 = 23;
 
 struct Migration {
     version: i32,
@@ -290,6 +290,77 @@ const MIGRATIONS: &[Migration] = &[
             ALTER TABLE policy_skills ADD COLUMN properties TEXT NOT NULL DEFAULT '{}';
         ",
     },
+    Migration {
+        version: 23,
+        description: "Pi agent economics (derived metrics only)",
+        sql: "
+            CREATE TABLE IF NOT EXISTS agent_sessions (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                repository_root TEXT,
+                active_branch TEXT,
+                cache_namespace TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS agent_turns (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                started_at INTEGER,
+                ended_at INTEGER,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                estimated_cost REAL
+            );
+            CREATE TABLE IF NOT EXISTS agent_tool_calls (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                cache_hit INTEGER NOT NULL DEFAULT 0,
+                repeated INTEGER NOT NULL DEFAULT 0,
+                estimated_cost REAL
+            );
+            CREATE TABLE IF NOT EXISTS agent_model_calls (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_id TEXT,
+                provider TEXT,
+                model TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cached_input_tokens INTEGER,
+                estimated_cost REAL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS agent_optimizations (
+                id TEXT PRIMARY KEY,
+                tool_call_id TEXT NOT NULL,
+                alternative_tool TEXT NOT NULL,
+                current_tokens INTEGER NOT NULL,
+                alternative_tokens INTEGER NOT NULL,
+                reduction_percent REAL NOT NULL,
+                confidence TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                accepted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS agent_context_cache (
+                key TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                estimated_tokens INTEGER NOT NULL,
+                source_hashes TEXT NOT NULL,
+                git_revision TEXT,
+                policy_version TEXT,
+                skill_version TEXT,
+                graph_version TEXT
+            );
+        ",
+    },
 ];
 
 pub async fn get_current_version(pool: &SqlitePool) -> Result<i32, AxError> {
@@ -323,7 +394,11 @@ pub async fn run_migrations(pool: &SqlitePool, from_version: i32) -> Result<(), 
     Ok(())
 }
 
-async fn record_migration(pool: &SqlitePool, version: i32, description: &str) -> Result<(), AxError> {
+async fn record_migration(
+    pool: &SqlitePool,
+    version: i32,
+    description: &str,
+) -> Result<(), AxError> {
     let now = chrono_now_ms();
     sqlx::query("INSERT INTO schema_versions (version, applied_at, description) VALUES (?, ?, ?)")
         .bind(version)

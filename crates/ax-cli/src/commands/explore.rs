@@ -14,10 +14,7 @@ pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
     );
     let _spinner = SpinnerGuard::new(format!("Exploring \"{}\"...", query_text), json);
     let mut ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let result = match ax
-        .explore(&query_text, ExploreOptions::default())
-        .await
-    {
+    let result = match ax.explore(&query_text, ExploreOptions::default()).await {
         Ok(r) => r,
         Err(e) => {
             ax_usage::log_cli(Some(&root), "cmd=explore fail");
@@ -37,7 +34,10 @@ pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
     });
     if json {
         let _ = maybe_synthesize_explore(&query_text, &raw, meta).await;
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
     } else {
         let out = maybe_synthesize_explore(&query_text, &raw, meta).await;
         println!("{}", out);

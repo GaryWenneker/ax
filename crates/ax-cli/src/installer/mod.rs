@@ -54,7 +54,10 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
             eprintln!("Note: policy dedup stopped: {e}")
         }
         Ok(report) if !report.actions.is_empty() => {
-            eprintln!("Cleaned {} duplicate policy row(s) in ~/.ax/global.db", report.actions.len())
+            eprintln!(
+                "Cleaned {} duplicate policy row(s) in ~/.ax/global.db",
+                report.actions.len()
+            )
         }
         Ok(_) => {}
         Err(e) => eprintln!("Note: policy dedup skipped: {e}"),

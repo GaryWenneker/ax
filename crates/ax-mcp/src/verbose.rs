@@ -59,7 +59,9 @@ pub fn active_session_id() -> Option<String> {
             return Some(v.to_string());
         }
     }
-    let path = ax_utils::paths::home_dir()?.join(".ax").join("active-cursor-session");
+    let path = ax_utils::paths::home_dir()?
+        .join(".ax")
+        .join("active-cursor-session");
     let text = std::fs::read_to_string(path).ok()?;
     let id = text.lines().next()?.trim();
     if id.is_empty() {
@@ -89,12 +91,7 @@ pub fn push_inbound(tool: &str, args: &Value) {
 pub fn push_internal(tool: &str, value: &Value) {
     let keys = value
         .as_object()
-        .map(|o| {
-            o.keys()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(",")
-        })
+        .map(|o| o.keys().cloned().collect::<Vec<_>>().join(","))
         .unwrap_or_else(|| "(non-object)".into());
     let inject_len = value
         .get("inject")

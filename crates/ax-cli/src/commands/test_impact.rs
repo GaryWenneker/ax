@@ -14,7 +14,10 @@ pub async fn run(base: String, json: bool) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
     } else {
         println!("Changed files: {}", changed.len());
         println!("Impacted tests: {}", result.tests.len());

@@ -73,7 +73,10 @@ pub async fn cached_rules_and_skills(
 }
 
 /// Global rows (`extras`) win on the same `name`. Project rows fill names global does not have.
-pub fn merge_skills(local: Vec<PolicySkillRow>, extras: Vec<PolicySkillRow>) -> Vec<PolicySkillRow> {
+pub fn merge_skills(
+    local: Vec<PolicySkillRow>,
+    extras: Vec<PolicySkillRow>,
+) -> Vec<PolicySkillRow> {
     let mut by_name = HashMap::new();
     for skill in local {
         by_name.insert(skill.name.clone(), skill);
@@ -147,8 +150,7 @@ pub async fn match_policy_with_extra_skills(
 }
 
 pub fn is_approved_status(status: &str) -> bool {
-    status.is_empty()
-        || status.eq_ignore_ascii_case("approved")
+    status.is_empty() || status.eq_ignore_ascii_case("approved")
 }
 
 /// `needle` occurs in `haystack` with no letter or digit directly before or after it.
@@ -238,7 +240,10 @@ fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<
     }
 
     let desc_lc = skill.description.to_lowercase();
-    let words: Vec<&str> = prompt_lc.split_whitespace().filter(|w| w.len() > 3).collect();
+    let words: Vec<&str> = prompt_lc
+        .split_whitespace()
+        .filter(|w| w.len() > 3)
+        .collect();
     for w in words {
         if desc_lc.contains(w) {
             score += 5;
@@ -361,7 +366,12 @@ mod tests {
     #[test]
     fn single_letter_trigger_needs_a_whole_word() {
         let rule = rule_row("c-memory", false, &[], &["c"]);
-        assert!(score_rule(&rule, "edit crates/ax-db/src/queries.rs. which rules apply?", &[]).is_none());
+        assert!(score_rule(
+            &rule,
+            "edit crates/ax-db/src/queries.rs. which rules apply?",
+            &[]
+        )
+        .is_none());
         assert!(score_rule(&rule, "fix the c code in main", &[]).is_some());
     }
 
@@ -376,7 +386,12 @@ mod tests {
         let rule = rule_row("wcag", true, &["crates/ax-web/web-ui/**"], &[]);
         let rs = score_rule(&rule, "edit", &["crates/ax-db/src/queries.rs".into()]).unwrap();
         assert!(rs.reason.contains(OUT_OF_SCOPE), "{}", rs.reason);
-        let ui = score_rule(&rule, "edit", &["crates/ax-web/web-ui/src/pages/Ship.tsx".into()]).unwrap();
+        let ui = score_rule(
+            &rule,
+            "edit",
+            &["crates/ax-web/web-ui/src/pages/Ship.tsx".into()],
+        )
+        .unwrap();
         assert!(!ui.reason.contains(OUT_OF_SCOPE), "{}", ui.reason);
         let none = score_rule(&rule, "edit", &[]).unwrap();
         assert!(!none.reason.contains(OUT_OF_SCOPE), "{}", none.reason);
@@ -400,51 +415,66 @@ mod tests {
     #[test]
     fn select_keeps_all_always_apply_plus_two_contextual() {
         let matched = vec![
-            (10, MatchedSkill {
-                name: "a".into(),
-                score: 100,
-                reason: "alwaysApply".into(),
-                description: String::new(),
-                body: String::new(),
-                always_apply: true,
-                properties: Default::default(),
-            }),
-            (90, MatchedSkill {
-                name: "b".into(),
-                score: 100,
-                reason: "alwaysApply".into(),
-                description: String::new(),
-                body: String::new(),
-                always_apply: true,
-                properties: Default::default(),
-            }),
-            (50, MatchedSkill {
-                name: "c".into(),
-                score: 25,
-                reason: "trigger:x".into(),
-                description: String::new(),
-                body: String::new(),
-                always_apply: false,
-                properties: Default::default(),
-            }),
-            (40, MatchedSkill {
-                name: "d".into(),
-                score: 25,
-                reason: "trigger:x".into(),
-                description: String::new(),
-                body: String::new(),
-                always_apply: false,
-                properties: Default::default(),
-            }),
-            (30, MatchedSkill {
-                name: "e".into(),
-                score: 25,
-                reason: "trigger:x".into(),
-                description: String::new(),
-                body: String::new(),
-                always_apply: false,
-                properties: Default::default(),
-            }),
+            (
+                10,
+                MatchedSkill {
+                    name: "a".into(),
+                    score: 100,
+                    reason: "alwaysApply".into(),
+                    description: String::new(),
+                    body: String::new(),
+                    always_apply: true,
+                    properties: Default::default(),
+                },
+            ),
+            (
+                90,
+                MatchedSkill {
+                    name: "b".into(),
+                    score: 100,
+                    reason: "alwaysApply".into(),
+                    description: String::new(),
+                    body: String::new(),
+                    always_apply: true,
+                    properties: Default::default(),
+                },
+            ),
+            (
+                50,
+                MatchedSkill {
+                    name: "c".into(),
+                    score: 25,
+                    reason: "trigger:x".into(),
+                    description: String::new(),
+                    body: String::new(),
+                    always_apply: false,
+                    properties: Default::default(),
+                },
+            ),
+            (
+                40,
+                MatchedSkill {
+                    name: "d".into(),
+                    score: 25,
+                    reason: "trigger:x".into(),
+                    description: String::new(),
+                    body: String::new(),
+                    always_apply: false,
+                    properties: Default::default(),
+                },
+            ),
+            (
+                30,
+                MatchedSkill {
+                    name: "e".into(),
+                    score: 25,
+                    reason: "trigger:x".into(),
+                    description: String::new(),
+                    body: String::new(),
+                    always_apply: false,
+                    properties: Default::default(),
+                },
+            ),
         ];
         let out = select_matched_skills(matched);
         let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();

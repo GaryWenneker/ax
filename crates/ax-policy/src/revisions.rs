@@ -90,11 +90,11 @@ async fn prune_old(pool: &SqlitePool, kind: &str, item_id: &str) -> Result<(), A
          )"
     );
     sqlx::query(&sql)
-    .bind(kind)
-    .bind(item_id)
-    .execute(pool)
-    .await
-    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        .bind(kind)
+        .bind(item_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(())
 }
 
@@ -204,23 +204,32 @@ mod tests {
         let db = Database::open(&path).await.expect("open");
         let pool = db.pool();
 
-        assert!(record_if_changed(pool, "rule", "rev-a", "body_a", SOURCE_SAVE)
-            .await
-            .unwrap());
+        assert!(
+            record_if_changed(pool, "rule", "rev-a", "body_a", SOURCE_SAVE)
+                .await
+                .unwrap()
+        );
         let rows = list_revisions(pool, "rule", "rev-a").await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].body, "body_a");
         assert_eq!(rows[0].content_hash, content_hash("body_a"));
         assert_eq!(rows[0].source, SOURCE_SAVE);
 
-        assert!(!record_if_changed(pool, "rule", "rev-a", "body_a", SOURCE_SAVE)
-            .await
-            .unwrap());
-        assert_eq!(list_revisions(pool, "rule", "rev-a").await.unwrap().len(), 1);
+        assert!(
+            !record_if_changed(pool, "rule", "rev-a", "body_a", SOURCE_SAVE)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            list_revisions(pool, "rule", "rev-a").await.unwrap().len(),
+            1
+        );
 
-        assert!(record_if_changed(pool, "rule", "rev-a", "body_b", SOURCE_SAVE)
-            .await
-            .unwrap());
+        assert!(
+            record_if_changed(pool, "rule", "rev-a", "body_b", SOURCE_SAVE)
+                .await
+                .unwrap()
+        );
         let rows = list_revisions(pool, "rule", "rev-a").await.unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].body, "body_b");
@@ -268,7 +277,10 @@ mod tests {
     #[test]
     fn parse_written_key_rule_and_skill() {
         assert_eq!(parse_written_key("rule:alpha"), Some(("rule", "alpha")));
-        assert_eq!(parse_written_key("skill:startup"), Some(("skill", "startup")));
+        assert_eq!(
+            parse_written_key("skill:startup"),
+            Some(("skill", "startup"))
+        );
         assert!(parse_written_key("nope").is_none());
         assert!(parse_written_key("file:x").is_none());
     }
@@ -301,8 +313,14 @@ mod tests {
         let db = Database::open(&db_path).await.expect("open");
         let store = crate::store::PolicyStore::new(db.pool().clone(), dir.path().to_path_buf());
         let fm = test_rule_fm("rev-a");
-        store.save_rule(fm.clone(), "one".into()).await.expect("save 1");
-        store.save_rule(fm.clone(), "one".into()).await.expect("save 2");
+        store
+            .save_rule(fm.clone(), "one".into())
+            .await
+            .expect("save 1");
+        store
+            .save_rule(fm.clone(), "one".into())
+            .await
+            .expect("save 2");
         store.save_rule(fm, "two".into()).await.expect("save 3");
         let rows = list_revisions(db.pool(), "rule", "rev-a").await.unwrap();
         assert_eq!(rows.len(), 2);
