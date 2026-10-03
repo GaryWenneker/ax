@@ -134,14 +134,15 @@ async fn upsert_prices(pool: &SqlitePool, date: &str, source: &str, rows: &[Fetc
         sqlx::query(
             "INSERT INTO model_price_daily
                 (date, source, model_id, display_name, provider, input_per_mtok, output_per_mtok,
-                 cache_read_per_mtok, blended_3_to_1, context_length, raw_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cache_read_per_mtok, cache_write_per_mtok, blended_3_to_1, context_length, raw_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(date, source, model_id) DO UPDATE SET
                 display_name = excluded.display_name,
                 provider = excluded.provider,
                 input_per_mtok = excluded.input_per_mtok,
                 output_per_mtok = excluded.output_per_mtok,
                 cache_read_per_mtok = excluded.cache_read_per_mtok,
+                cache_write_per_mtok = excluded.cache_write_per_mtok,
                 blended_3_to_1 = excluded.blended_3_to_1,
                 context_length = excluded.context_length,
                 raw_json = excluded.raw_json",
@@ -154,6 +155,7 @@ async fn upsert_prices(pool: &SqlitePool, date: &str, source: &str, rows: &[Fetc
         .bind(row.pricing.input_per_mtok)
         .bind(row.pricing.output_per_mtok)
         .bind(row.cache_read_per_mtok)
+        .bind(row.cache_write_per_mtok)
         .bind(row.blended_3_to_1)
         .bind(row.context_length)
         .bind(&row.raw_json)
@@ -586,10 +588,10 @@ pub async fn lookup_price_as_of(
 ) -> Result<Option<(crate::pricing::ModelPricing, String)>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     let lowered = model.to_ascii_lowercase();
-    type Row = (f64, f64, String, String);
+    type Row = (f64, f64, Option<f64>, Option<f64>, String, String);
     // Prefer AA over OpenRouter when both match.
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT input_per_mtok, output_per_mtok, source, model_id
+        "SELECT input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, source, model_id
          FROM model_price_daily
          WHERE date <= ?
          ORDER BY date DESC,
@@ -602,9 +604,9 @@ pub async fn lookup_price_as_of(
 
     let mut best: Option<(usize, i32, Row)> = None;
     for row in rows {
-        let key = row.3.to_ascii_lowercase();
+        let key = row.5.to_ascii_lowercase();
         let short = key.rsplit('/').next().unwrap_or(&key).to_string();
-        let or_rank = if row.2 == "openrouter" { 0 } else { 1 };
+        let or_rank = if row.4 == "openrouter" { 0 } else { 1 };
         let matched = if lowered == key
             || lowered == short
             || lowered.contains(&short) && short.len() >= 4
@@ -620,11 +622,13 @@ pub async fn lookup_price_as_of(
             _ => best = Some((score, or_rank, row)),
         }
     }
-    Ok(best.map(|(_, _, (input, output, source, _))| {
+    Ok(best.map(|(_, _, (input, output, cache_read, cache_write, source, _))| {
         (
             crate::pricing::ModelPricing {
                 input_per_mtok: input,
                 output_per_mtok: output,
+                cache_read_per_mtok: cache_read,
+                cache_write_per_mtok: cache_write,
             },
             source,
         )

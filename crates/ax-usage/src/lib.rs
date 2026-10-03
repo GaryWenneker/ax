@@ -1,6 +1,7 @@
 //! Context-token savings metrics stored in `~/.ax/usage.db`.
 
 mod cache_status;
+mod cost;
 mod context_cache;
 mod durable;
 mod cursor_state;
@@ -19,8 +20,9 @@ mod store;
 mod tokenizer;
 
 pub use period::{resolve_period, UsagePeriod};
+pub use cost::{calculate, Cost, CostComponent, CostConfidence, CostUsage};
 pub use pricing::{
-    input_cost_usd, invalidate_price_cache, price_as_of, price_for_model,
+    input_cost_usd, invalidate_price_cache, price_as_of, price_for_cost, price_for_model,
     price_for_model_with_source, pricing_config_path, pricing_info, reference_pricing,
     reference_pricing_with_source, refresh_price_cache_from_db, ModelPricing, PricingInfo,
 };

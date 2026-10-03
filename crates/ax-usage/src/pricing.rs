@@ -24,10 +24,28 @@ use crate::store::open_pool;
 pub const PRICING_FILENAME: &str = "pricing.toml";
 
 /// USD per million tokens.
+///
+/// Cache rates stay `None` when the catalog row did not include them.
+/// Missing rates are not filled from another model.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct ModelPricing {
     pub input_per_mtok: f64,
     pub output_per_mtok: f64,
+    #[serde(default)]
+    pub cache_read_per_mtok: Option<f64>,
+    #[serde(default)]
+    pub cache_write_per_mtok: Option<f64>,
+}
+
+impl ModelPricing {
+    pub const fn rates(input_per_mtok: f64, output_per_mtok: f64) -> Self {
+        Self {
+            input_per_mtok,
+            output_per_mtok,
+            cache_read_per_mtok: None,
+            cache_write_per_mtok: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,16 +96,16 @@ fn price_cache() -> &'static RwLock<PriceCache> {
 fn default_models() -> HashMap<String, ModelPricing> {
     let mut m = HashMap::new();
     // USD per 1M tokens. Users can pin exact numbers in ~/.ax/pricing.toml.
-    m.insert("claude-opus", ModelPricing { input_per_mtok: 5.0, output_per_mtok: 25.0 });
-    m.insert("claude-sonnet", ModelPricing { input_per_mtok: 3.0, output_per_mtok: 15.0 });
-    m.insert("claude-haiku", ModelPricing { input_per_mtok: 1.0, output_per_mtok: 5.0 });
-    m.insert("gpt-5", ModelPricing { input_per_mtok: 1.25, output_per_mtok: 10.0 });
-    m.insert("gpt-4o", ModelPricing { input_per_mtok: 2.5, output_per_mtok: 10.0 });
-    m.insert("gpt-4.1", ModelPricing { input_per_mtok: 2.0, output_per_mtok: 8.0 });
-    m.insert("gemini-2.5-pro", ModelPricing { input_per_mtok: 1.25, output_per_mtok: 10.0 });
-    m.insert("gemini", ModelPricing { input_per_mtok: 0.30, output_per_mtok: 2.5 });
+    m.insert("claude-opus", ModelPricing::rates(5.0, 25.0));
+    m.insert("claude-sonnet", ModelPricing::rates(3.0, 15.0));
+    m.insert("claude-haiku", ModelPricing::rates(1.0, 5.0));
+    m.insert("gpt-5", ModelPricing::rates(1.25, 10.0));
+    m.insert("gpt-4o", ModelPricing::rates(2.5, 10.0));
+    m.insert("gpt-4.1", ModelPricing::rates(2.0, 8.0));
+    m.insert("gemini-2.5-pro", ModelPricing::rates(1.25, 10.0));
+    m.insert("gemini", ModelPricing::rates(0.30, 2.5));
     // Cursor Composer labels (e.g. composer-2.5-fast) match via substring "composer".
-    m.insert("composer", ModelPricing { input_per_mtok: 1.25, output_per_mtok: 10.0 });
+    m.insert("composer", ModelPricing::rates(1.25, 10.0));
     m.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
@@ -196,10 +214,11 @@ pub fn invalidate_price_cache() {
 /// Load latest-per-model prices from usage.db into the in-memory cache.
 pub async fn refresh_price_cache_from_db() -> Result<usize, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    type Row = (String, String, f64, f64);
+    type Row = (String, String, f64, f64, Option<f64>, Option<f64>);
     // Prefer OpenRouter over other sources for the same calendar max date set.
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT p.model_id, p.source, p.input_per_mtok, p.output_per_mtok
+        "SELECT p.model_id, p.source, p.input_per_mtok, p.output_per_mtok,
+                p.cache_read_per_mtok, p.cache_write_per_mtok
          FROM model_price_daily p
          INNER JOIN (
            SELECT model_id, MAX(date) AS max_date FROM model_price_daily
@@ -213,11 +232,13 @@ pub async fn refresh_price_cache_from_db() -> Result<usize, String> {
     .map_err(|e| e.to_string())?;
 
     let mut by_model: HashMap<String, DbPriceEntry> = HashMap::new();
-    for (model_id, source, input, output) in rows {
+    for (model_id, source, input, output, cache_read, cache_write) in rows {
         by_model.entry(model_id.clone()).or_insert(DbPriceEntry {
             pricing: ModelPricing {
                 input_per_mtok: input,
                 output_per_mtok: output,
+                cache_read_per_mtok: cache_read,
+                cache_write_per_mtok: cache_write,
             },
             source,
             model_id,
@@ -242,6 +263,26 @@ fn ensure_cache_loaded_blocking() {
 /// by longest substring key match. Falls back to the reference model.
 pub fn price_for_model(model: &str) -> ModelPricing {
     price_for_model_with_source(model).0
+}
+
+/// Catalog or user-override price for a cost quote.
+///
+/// Returns `None` when the model is absent. Does not fall back to the
+/// reference model or the built-in savings table.
+pub fn price_for_cost(model: &str) -> Option<(ModelPricing, String)> {
+    if model.trim().is_empty() {
+        return None;
+    }
+    if let Some(p) = user_override_for(model) {
+        return Some((p, "user".into()));
+    }
+    ensure_cache_loaded_blocking();
+    if let Ok(cache) = price_cache().read() {
+        if let Some(hit) = match_db_entry(model, &cache.entries) {
+            return Some(hit);
+        }
+    }
+    None
 }
 
 pub fn price_for_model_with_source(model: &str) -> (ModelPricing, String) {
@@ -329,10 +370,7 @@ mod tests {
 
     #[test]
     fn cost_math() {
-        let pricing = ModelPricing {
-            input_per_mtok: 3.0,
-            output_per_mtok: 15.0,
-        };
+        let pricing = ModelPricing::rates(3.0, 15.0);
         assert_eq!(input_cost_usd(1_000_000, pricing), 3.0);
         assert_eq!(input_cost_usd(0, pricing), 0.0);
         assert_eq!(input_cost_usd(-5, pricing), 0.0);

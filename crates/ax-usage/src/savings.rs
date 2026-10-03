@@ -1401,6 +1401,10 @@ struct SessionAccum {
     ax_calls: i64,
     session_input_tokens: i64,
     session_output_tokens: i64,
+    cache_read_tokens: i64,
+    cache_write_tokens: i64,
+    saw_usage: bool,
+    events: Vec<crate::cost::CostUsage>,
     model: Option<String>,
     started_at: Option<i64>,
     ended_at: Option<i64>,
@@ -1441,14 +1445,16 @@ async fn upsert_agent_session(
     let result = sqlx::query(
         "INSERT INTO agent_session_log
          (agent, session_id, read_calls, grep_calls, ax_calls, session_input_tokens,
-          session_output_tokens, model, source_mtime, started_at, ended_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          session_output_tokens, cache_read_tokens, cache_write_tokens, model, source_mtime, started_at, ended_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(agent, session_id) DO UPDATE SET
            read_calls = excluded.read_calls,
            grep_calls = excluded.grep_calls,
            ax_calls = excluded.ax_calls,
            session_input_tokens = COALESCE(excluded.session_input_tokens, agent_session_log.session_input_tokens),
            session_output_tokens = COALESCE(excluded.session_output_tokens, agent_session_log.session_output_tokens),
+           cache_read_tokens = COALESCE(excluded.cache_read_tokens, agent_session_log.cache_read_tokens),
+           cache_write_tokens = COALESCE(excluded.cache_write_tokens, agent_session_log.cache_write_tokens),
            model = COALESCE(excluded.model, agent_session_log.model),
            source_mtime = excluded.source_mtime,
            started_at = COALESCE(excluded.started_at, agent_session_log.started_at),
@@ -1462,6 +1468,8 @@ async fn upsert_agent_session(
     .bind(acc.ax_calls)
     .bind(input)
     .bind(output)
+    .bind(if acc.saw_usage { Some(acc.cache_read_tokens) } else { None })
+    .bind(if acc.saw_usage { Some(acc.cache_write_tokens) } else { None })
     .bind(&acc.model)
     .bind(source_mtime)
     .bind(acc.started_at)
@@ -1499,7 +1507,7 @@ fn classify_cursor_tool(name: &str, input: &Value, acc: &mut SessionAccum) {
     }
 }
 
-fn add_usage_from_message(msg: &Value, acc: &mut SessionAccum) {
+fn add_usage_from_message(msg: &Value, acc: &mut SessionAccum, capture_event: bool) {
     if acc.model.is_none() {
         if let Some(model) = msg.get("model").and_then(|m| m.as_str()) {
             if !model.is_empty() {
@@ -1510,23 +1518,34 @@ fn add_usage_from_message(msg: &Value, acc: &mut SessionAccum) {
     let Some(usage) = msg.get("usage") else {
         return;
     };
-    let mut input = usage
+    let input = usage
         .get("input_tokens")
         .or_else(|| usage.get("prompt_tokens"))
-        .and_then(json_i64)
-        .unwrap_or(0);
-    for key in ["cache_read_input_tokens", "cache_creation_input_tokens"] {
-        if let Some(n) = usage.get(key).and_then(json_i64) {
-            input += n;
-        }
-    }
-    acc.session_input_tokens += input;
-    if let Some(output) = usage
+        .and_then(json_i64);
+    let output = usage
         .get("output_tokens")
         .or_else(|| usage.get("completion_tokens"))
-        .and_then(json_i64)
-    {
-        acc.session_output_tokens += output;
+        .and_then(json_i64);
+    let cache_read = usage.get("cache_read_input_tokens").and_then(json_i64);
+    let cache_write = usage.get("cache_creation_input_tokens").and_then(json_i64);
+    acc.saw_usage = true;
+    acc.session_input_tokens += input.unwrap_or(0).max(0);
+    acc.session_output_tokens += output.unwrap_or(0).max(0);
+    acc.cache_read_tokens += cache_read.unwrap_or(0).max(0);
+    acc.cache_write_tokens += cache_write.unwrap_or(0).max(0);
+    if capture_event {
+        acc.events.push(crate::cost::CostUsage {
+            provider: None,
+            model: acc.model.clone(),
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cache_read,
+            cache_write_tokens: cache_write,
+            timestamp_ms: acc.ended_at.or(acc.started_at),
+            session_id: None,
+            turn_id: Some(acc.events.len().to_string()),
+            confidence: crate::cost::CostConfidence::Estimated,
+        });
     }
 }
 
@@ -1539,12 +1558,11 @@ fn process_claude_line(line: &str, acc: &mut SessionAccum) {
         acc.ended_at = Some(acc.ended_at.map_or(ts, |e| e.max(ts)));
     }
     let msg = v.get("message").unwrap_or(&v);
-    if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
-        if role == "assistant" {
-            add_usage_from_message(msg, acc);
-        }
+    let on_message = msg.get("role").and_then(|r| r.as_str()) == Some("assistant") && msg.get("usage").is_some();
+    if msg.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+        add_usage_from_message(msg, acc, on_message);
     }
-    add_usage_from_message(&v, acc);
+    add_usage_from_message(&v, acc, !on_message && v.get("usage").is_some());
     let content = msg
         .get("content")
         .and_then(|c| c.as_array())
@@ -1579,7 +1597,7 @@ fn process_cursor_line(line: &str, acc: &mut SessionAccum) {
         return;
     };
     // Cursor transcripts usually omit usage; capture it (and the model) when present.
-    add_usage_from_message(msg, acc);
+    add_usage_from_message(msg, acc, true);
     let Some(items) = msg.get("content").and_then(|c| c.as_array()) else {
         return;
     };
@@ -1607,11 +1625,22 @@ async fn import_claude_file(path: &Path) -> Result<bool, String> {
         }
         process_claude_line(line, &mut acc);
     }
-    if acc.read_calls == 0 && acc.grep_calls == 0 && acc.ax_calls == 0 && acc.session_input_tokens == 0
+    if acc.read_calls == 0
+        && acc.grep_calls == 0
+        && acc.ax_calls == 0
+        && acc.session_input_tokens == 0
+        && acc.session_output_tokens == 0
+        && acc.cache_read_tokens == 0
+        && acc.cache_write_tokens == 0
     {
         return Ok(false);
     }
-    upsert_agent_session("claude", &session_id, &acc, mtime).await
+    let wrote = upsert_agent_session("claude", &session_id, &acc, mtime).await?;
+    if wrote {
+        let project = path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str());
+        persist_usage_events("claude", &session_id, project, &acc.events).await?;
+    }
+    Ok(wrote)
 }
 
 async fn import_cursor_file(path: &Path) -> Result<bool, String> {
@@ -1631,10 +1660,74 @@ async fn import_cursor_file(path: &Path) -> Result<bool, String> {
         }
         process_cursor_line(line, &mut acc);
     }
-    if acc.read_calls == 0 && acc.grep_calls == 0 && acc.ax_calls == 0 {
+    if acc.read_calls == 0
+        && acc.grep_calls == 0
+        && acc.ax_calls == 0
+        && acc.session_input_tokens == 0
+        && acc.session_output_tokens == 0
+        && acc.cache_read_tokens == 0
+        && acc.cache_write_tokens == 0
+    {
         return Ok(false);
     }
-    upsert_agent_session("cursor", &session_id, &acc, mtime).await
+    let wrote = upsert_agent_session("cursor", &session_id, &acc, mtime).await?;
+    if wrote {
+        let project = path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str());
+        persist_usage_events("cursor", &session_id, project, &acc.events).await?;
+    }
+    Ok(wrote)
+}
+
+async fn persist_usage_events(
+    agent: &str,
+    session_id: &str,
+    project: Option<&str>,
+    events: &[crate::cost::CostUsage],
+) -> Result<(), String> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    for event in events {
+        let turn_id = event.turn_id.clone().unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO agent_usage_event
+             (agent, session_id, turn_id, project, provider, model,
+              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+              confidence, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(agent, session_id, turn_id) DO UPDATE SET
+               project = excluded.project,
+               provider = excluded.provider,
+               model = excluded.model,
+               input_tokens = excluded.input_tokens,
+               output_tokens = excluded.output_tokens,
+               cache_read_tokens = excluded.cache_read_tokens,
+               cache_write_tokens = excluded.cache_write_tokens,
+               confidence = excluded.confidence,
+               created_at = excluded.created_at",
+        )
+        .bind(agent)
+        .bind(session_id)
+        .bind(turn_id)
+        .bind(project)
+        .bind(&event.provider)
+        .bind(&event.model)
+        .bind(event.input_tokens)
+        .bind(event.output_tokens)
+        .bind(event.cache_read_tokens)
+        .bind(event.cache_write_tokens)
+        .bind(match event.confidence {
+            crate::cost::CostConfidence::Actual => "actual",
+            crate::cost::CostConfidence::Estimated => "estimated",
+            crate::cost::CostConfidence::Unknown => "unknown",
+        })
+        .bind(event.timestamp_ms.unwrap_or(0))
+        .execute(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn claude_projects_dir() -> Option<PathBuf> {
@@ -1854,6 +1947,21 @@ mod tests {
         let est = estimate_savings("ax_preflight", &json!({}), &long_response(5000), None);
         assert!(!est.savings_eligible);
         assert_eq!(est.tokens_saved_est, 0);
+    }
+
+    #[test]
+    fn cache_tokens_stay_out_of_input() {
+        let line = r#"{"timestamp":"2026-10-03T12:00:00Z","message":{"role":"assistant","model":"claude-sonnet","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":40,"cache_creation_input_tokens":10}}}"#;
+        let mut acc = SessionAccum::default();
+        process_claude_line(line, &mut acc);
+        assert_eq!(acc.session_input_tokens, 100);
+        assert_eq!(acc.session_output_tokens, 20);
+        assert_eq!(acc.cache_read_tokens, 40);
+        assert_eq!(acc.cache_write_tokens, 10);
+        assert_eq!(acc.events.len(), 1);
+        assert_eq!(acc.events[0].input_tokens, Some(100));
+        assert_eq!(acc.events[0].cache_read_tokens, Some(40));
+        assert_eq!(acc.events[0].cache_write_tokens, Some(10));
     }
 
     #[test]

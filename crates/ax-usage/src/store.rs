@@ -130,12 +130,32 @@ CREATE TABLE IF NOT EXISTS agent_session_log (
   ax_calls INTEGER NOT NULL DEFAULT 0,
   session_input_tokens INTEGER,
   session_output_tokens INTEGER,
+  cache_read_tokens INTEGER,
+  cache_write_tokens INTEGER,
   model TEXT,
   source_mtime INTEGER NOT NULL,
   started_at INTEGER,
   ended_at INTEGER,
   UNIQUE(agent, session_id)
 );
+
+CREATE TABLE IF NOT EXISTS agent_usage_event (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL DEFAULT '',
+  project TEXT,
+  provider TEXT,
+  model TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cache_read_tokens INTEGER,
+  cache_write_tokens INTEGER,
+  confidence TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(agent, session_id, turn_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_usage_event_created ON agent_usage_event(created_at);
 ";
 
 const MIGRATION_DROP_TOKEN_USAGE: &str = "DROP TABLE IF EXISTS token_usage";
@@ -149,6 +169,9 @@ const MIGRATION_ADD_COLUMNS: &[&str] = &[
     "ALTER TABLE mcp_call_log ADD COLUMN response_preview TEXT",
     "ALTER TABLE mcp_call_log ADD COLUMN counterfactual_preview TEXT",
     "ALTER TABLE mcp_reuse_cache ADD COLUMN index_fingerprint TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE agent_session_log ADD COLUMN cache_read_tokens INTEGER",
+    "ALTER TABLE agent_session_log ADD COLUMN cache_write_tokens INTEGER",
+    "ALTER TABLE model_price_daily ADD COLUMN cache_write_per_mtok REAL",
 ];
 
 const PRICING_SCHEMA: &str = "
@@ -171,6 +194,7 @@ CREATE TABLE IF NOT EXISTS model_price_daily (
   input_per_mtok REAL NOT NULL,
   output_per_mtok REAL NOT NULL,
   cache_read_per_mtok REAL,
+  cache_write_per_mtok REAL,
   blended_3_to_1 REAL,
   context_length INTEGER,
   raw_json TEXT,

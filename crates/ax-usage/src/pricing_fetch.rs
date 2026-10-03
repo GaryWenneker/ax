@@ -18,6 +18,7 @@ pub struct FetchedPrice {
     pub provider: String,
     pub pricing: ModelPricing,
     pub cache_read_per_mtok: Option<f64>,
+    pub cache_write_per_mtok: Option<f64>,
     pub blended_3_to_1: Option<f64>,
     pub context_length: Option<i64>,
     pub raw_json: Option<String>,
@@ -112,6 +113,8 @@ struct OpenRouterPricing {
     completion: Option<String>,
     #[serde(default)]
     input_cache_read: Option<String>,
+    #[serde(default)]
+    input_cache_write: Option<String>,
 }
 
 pub fn parse_openrouter_models(body: &Value) -> Vec<FetchedPrice> {
@@ -142,6 +145,10 @@ pub fn parse_openrouter_models(body: &Value) -> Vec<FetchedPrice> {
             .input_cache_read
             .as_deref()
             .and_then(per_token_to_per_mtok);
+        let cache_write = pricing
+            .input_cache_write
+            .as_deref()
+            .and_then(per_token_to_per_mtok);
         let display_name = m.name.unwrap_or_else(|| m.id.clone());
         let raw = serde_json::to_string(&serde_json::json!({
             "id": m.id,
@@ -158,8 +165,11 @@ pub fn parse_openrouter_models(body: &Value) -> Vec<FetchedPrice> {
             pricing: ModelPricing {
                 input_per_mtok: input,
                 output_per_mtok: output,
+                cache_read_per_mtok: cache_read,
+                cache_write_per_mtok: cache_write,
             },
             cache_read_per_mtok: cache_read,
+            cache_write_per_mtok: cache_write,
             blended_3_to_1: None,
             context_length: m.context_length,
             raw_json: raw,
@@ -239,8 +249,11 @@ pub fn parse_aa_models(body: &Value) -> (Vec<FetchedPrice>, Vec<FetchedBenchmark
                 pricing: ModelPricing {
                     input_per_mtok: input,
                     output_per_mtok: output,
+                    cache_read_per_mtok: None,
+                    cache_write_per_mtok: None,
                 },
                 cache_read_per_mtok: None,
+                cache_write_per_mtok: None,
                 blended_3_to_1: blended,
                 context_length: f64_field(&row, &["context_window", "context_length"])
                     .map(|n| n as i64),
