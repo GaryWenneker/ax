@@ -5,6 +5,8 @@
 
 **Current release: [v7.0.0](https://github.com/GaryWenneker/ax/releases/tag/v7.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
+Sharing a page on [getax.wenneker.io](https://getax.wenneker.io) previews that page. The site build screenshots it and stamps the current release on the card.
+
 **v7.0.0** (major) seeds Ax's architecture with `ax bootstrap`, keeps Pi as the agent runtime, and shows Agent activity as status instead of a raw context report. Cost quotes stay advisory.
 
 **v6.3.0** (minor) initializes every project it can find when you install or upgrade ax. The scan walks four levels under your home directory, skips hidden and dependency folders, and runs `ax init` on each git repo, project manifest, or existing ax project without asking questions. Run it again with `ax init --all`. Set `AX_SKIP_PROJECT_INIT=1` to skip.

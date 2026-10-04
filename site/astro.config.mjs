@@ -13,19 +13,8 @@ export default defineConfig({
 			description:
 				'Structured context for AI agents — entirely on your machine. Graph it. Remember it. Ship it.',
 			favicon: '/logo.png',
-			head: [
-				{
-					tag: 'meta',
-					attrs: { property: 'og:image', content: 'https://getax.wenneker.io/social/v5.0.0/ax-5.0.0-og-1200x630.png' },
-				},
-				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
-				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
-				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
-				{
-					tag: 'meta',
-					attrs: { name: 'twitter:image', content: 'https://getax.wenneker.io/social/v5.0.0/ax-5.0.0-og-1200x630.png' },
-				},
-				{
+				head: [
+					{
 					tag: 'script',
 					content: pageLockScript(),
 				},
@@ -128,11 +117,12 @@ export default defineConfig({
 				'@fontsource/bebas-neue',
 				'./src/styles/theme.css',
 			],
-			components: {
-				Header: './src/components/Header.astro',
-				SiteTitle: './src/components/SiteTitle.astro',
-				SocialIcons: './src/components/SocialIcons.astro',
-			},
+				components: {
+					Head: './src/components/Head.astro',
+					Header: './src/components/Header.astro',
+					SiteTitle: './src/components/SiteTitle.astro',
+					SocialIcons: './src/components/SocialIcons.astro',
+				},
 			expressiveCode: {
 				themes: ['github-light', 'github-dark'],
 				styleOverrides: {

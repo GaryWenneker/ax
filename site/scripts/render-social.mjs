@@ -3,7 +3,7 @@
  *
  * Usage (from repo root or site/):
  *   node site/scripts/render-social.mjs
- *   AX_SOCIAL_VERSION=5.0.0 AX_SOCIAL_SHOT=cc-policy-skills.png node site/scripts/render-social.mjs
+ *   AX_SOCIAL_VERSION=7.0.0 AX_SOCIAL_SHOT=cc-policy-skills.png node site/scripts/render-social.mjs
  *
  * If the bundled Chrome for Testing does not start, set PUPPETEER_EXECUTABLE_PATH to an installed Chrome.
  * Output: site/public/social/v<version>/ax-<version>-<format>.png at exact platform sizes.
@@ -11,14 +11,17 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdirSync, writeFileSync, existsSync, rmSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, rmSync, mkdtempSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const siteDir = path.resolve(__dirname, '..');
 const require = createRequire(path.join(siteDir, 'scripts', 'render-social.mjs'));
 
-const version = process.env.AX_SOCIAL_VERSION || '5.0.0';
+const version = (
+	process.env.AX_SOCIAL_VERSION ||
+	readFileSync(path.join(siteDir, 'public', 'releases', 'latest.txt'), 'utf8').trim().replace(/^v/, '')
+);
 const shotName = process.env.AX_SOCIAL_SHOT || 'cc-policy-skills.png';
 const outDir = path.join(siteDir, 'public', 'social', `v${version}`);
 

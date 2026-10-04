@@ -313,6 +313,10 @@ Extraction is **deterministic** — derived from the AST, never LLM-summarized.
 
 No data leaves your machine. No API keys, no cloud index — just SQLite in `.ax/`.
 
+## Link previews
+
+Sharing a page URL uses a preview of that page. The site build screenshots the page, paints the release from `latest.txt` on the card, and points `og:image` at that file. The version on the card is the same release the site is shipping.
+
 Ready to try it? Head to the [Quickstart](/getting-started/quickstart/).
 
 <sub>ax · Aero Xecution</sub>
