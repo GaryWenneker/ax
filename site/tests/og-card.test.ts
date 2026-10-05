@@ -42,7 +42,7 @@ test('share titles drop the site suffix and the ax prefix', () => {
 
 test('release labels must look like v7.0.0', () => {
 	assert.equal(releaseLabel('v7.0.0\n'), 'v7.0.0');
-	assert.equal(releaseLabel(readFileSync(path.join(siteDir, 'public', 'releases', 'latest.txt'), 'utf8')), 'v7.0.0');
+	assert.equal(releaseLabel(readFileSync(path.join(siteDir, 'public', 'releases', 'latest.txt'), 'utf8')), 'v7.1.0');
 	assert.throws(() => releaseLabel('5.0.0'), /v7\.0\.0/);
 	assert.throws(() => releaseLabel(''), /v7\.0\.0/);
 });

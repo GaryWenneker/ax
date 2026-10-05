@@ -18,6 +18,15 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v7.1.0
+
+v7.1.0 is a minor release. New projects get a broader default policy, the cost report can use sessions you already imported, and Command Center plays a short intro on a full page load.
+
+- **Default policy.** `ax init` now also seeds rules for generated clients, Kubernetes changes, container images, design tokens, and CSS cascade layers, plus a skill for pnpm's minimum release age. A React project gets composition and test rules. A TypeScript project is told to keep `"strict": true`.
+- **Costs from imported sessions.** When a period has no quoted usage events, `ax costs` lists the models and agents already imported from Cursor and Claude, with input tokens and catalog spend. Output and cache stay unknown when the session did not record them. The text report opens with an AX banner and the recorded session minutes.
+- **Contract files.** Sniffing a YAML or JSON file for an OpenAPI marker no longer panics when byte 400 lands in the middle of a multibyte character.
+- **Green Vessel.** Each full page load plays a short green edge glow and a startup chime, then removes the cover. Moving between pages does not replay it. Reduced motion skips the glow.
+
 ## What's new in v7.0.0
 
 v7.0.0 is a major release. Ax seeds its own architecture, records agent cost without taking over the Pi loop, and shows agent activity as status.

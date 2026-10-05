@@ -3,9 +3,11 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v7.0.0](https://github.com/GaryWenneker/ax/releases/tag/v7.0.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Current release: [v7.1.0](https://github.com/GaryWenneker/ax/releases/tag/v7.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 Sharing a page on [getax.wenneker.io](https://getax.wenneker.io) previews that page. The site build screenshots it and stamps the current release on the card.
+
+**v7.1.0** (minor) seeds generated-client, Kubernetes, container-image, design-token, and CSS-layer rules, plus a pnpm release-age skill. React and TypeScript stacks gain composition, test, and strictness rules. `ax costs` can report imported sessions when a period has no quoted usage events. Command Center plays a short green intro on a full page load.
 
 **v7.0.0** (major) seeds Ax's architecture with `ax bootstrap`, keeps Pi as the agent runtime, and shows Agent activity as status instead of a raw context report. Cost quotes stay advisory.
 

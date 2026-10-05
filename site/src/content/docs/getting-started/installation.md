@@ -1,18 +1,18 @@
 ---
 title: Installation
-description: Install ax v5.1.0 and configure your AI coding agents.
+description: Install ax v7.1.0 and configure your AI coding agents.
 ---
 
 ## Current version
 
-**Latest release: v5.1.0** — install scripts and `ax upgrade` resolve the tag from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Check your install:
+**Latest release: v7.1.0** — install scripts and `ax upgrade` resolve the tag from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Check your install:
 
 ```bash
 ax version
-# ax 5.1.0
+# ax 7.1.0
 ```
 
-Pin a specific release with `AX_VERSION=v5.1.0` when running `install.sh` / `install.ps1`.
+Pin a specific release with `AX_VERSION=v7.1.0` when running `install.sh` / `install.ps1`.
 
 ### Local dev upgrade (maintainers)
 
@@ -73,7 +73,11 @@ The installer connects agents, then discovers projects under your home directory
 
 ### From the Command Center
 
-Run `ax web` and open **Settings → IDEs & agents**. It lists every IDE and agent ax supports (Claude Code, Cursor, Codex CLI, opencode, Hermes, Gemini CLI, Antigravity, Kiro, VS Code, Windsurf, Zed, Continue) as **Connected**, **Found** (installed, ax not connected yet), or **Not found**. "Installed" means the CLI is on PATH or the app (or, for Continue, the extension) is present; a leftover config folder does not count.
+Run `ax web` and open **Settings → IDEs & agents**.
+
+![Settings — IDEs and coding agents found on this machine, with Connect and Disconnect](/screenshots/cc-settings.png)
+
+It lists every IDE and agent ax supports (Claude Code, Cursor, Codex CLI, opencode, Hermes, Gemini CLI, Antigravity, Kiro, VS Code, Windsurf, Zed, Continue) as **Connected**, **Found** (installed, ax not connected yet), or **Not found**. "Installed" means the CLI is on PATH or the app (or, for Continue, the extension) is present; a leftover config folder does not count.
 
 - **Connect** writes the same config as `ax install --target=<id>`. **Disconnect** removes it, like `ax uninstall`.
 - **Connect all found** connects every IDE that is installed but not connected yet.

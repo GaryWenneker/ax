@@ -4,6 +4,7 @@
  * Usage (from repo root or site/):
  *   node site/scripts/capture-screenshots.mjs
  *   AX_WEB_URL=http://127.0.0.1:7070 node site/scripts/capture-screenshots.mjs
+ *   AX_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" node site/scripts/capture-screenshots.mjs
  *
  *   AX_SHOTS=cc-graph.png,cc-memory-vault.png node site/scripts/capture-screenshots.mjs
  *
@@ -144,16 +145,20 @@ async function clickOrFail(page, selector) {
 
 /** Show the home folder as `~` so screenshots do not carry the local user name. */
 async function maskHome(page) {
-	await page.evaluate((home) => {
+	const user = path.basename(os.homedir());
+	await page.evaluate((home, user) => {
 		const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
 		while (walker.nextNode()) {
 			const n = walker.currentNode;
-			if (n.nodeValue && n.nodeValue.includes(home)) n.nodeValue = n.nodeValue.split(home).join('~');
+			if (!n.nodeValue) continue;
+			if (n.nodeValue.includes(home)) n.nodeValue = n.nodeValue.split(home).join('~');
+			if (user && n.nodeValue.includes(user)) n.nodeValue = n.nodeValue.split(user).join('me');
 		}
 		for (const el of document.querySelectorAll('input, textarea')) {
 			if (el.value.includes(home)) el.value = el.value.split(home).join('~');
+			if (user && el.value.includes(user)) el.value = el.value.split(user).join('me');
 		}
-	}, os.homedir());
+	}, os.homedir(), user);
 }
 
 async function loadPuppeteer() {
@@ -264,11 +269,12 @@ async function main() {
 	console.log(`Base URL: ${baseUrl}`);
 	console.log(`Output:   ${outDir}`);
 
-	const browser = await puppeteer.launch({
-		headless: true,
-		defaultViewport: VIEWPORT,
-		args: ['--no-sandbox', '--disable-dev-shm-usage', '--window-size=1440,900'],
-	});
+		const browser = await puppeteer.launch({
+			headless: true,
+			defaultViewport: VIEWPORT,
+			args: ['--no-sandbox', '--disable-dev-shm-usage', '--window-size=1440,900'],
+			...(process.env.AX_CHROME_PATH ? { executablePath: process.env.AX_CHROME_PATH } : {}),
+		});
 
 	const page = await browser.newPage();
 	await page.setViewport(VIEWPORT);
@@ -292,6 +298,12 @@ async function main() {
 		await waitReady(page, shot.ready);
 		if (shot.waitMs) await new Promise((r) => setTimeout(r, shot.waitMs));
 		if (shot.after) await shot.after(page);
+		await page
+			.waitForFunction(() => !document.getElementById('ax-green-vessel'), { timeout: 8000 })
+			.catch(() => {});
+		await page
+			.waitForFunction(() => !document.getElementById('ax-green-vessel'), { timeout: 8000 })
+			.catch(() => {});
 
 		await maskHome(page);
 		const { removed, remaining, where } = await redactPage(page, terms);
