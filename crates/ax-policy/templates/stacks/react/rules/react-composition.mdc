@@ -1,0 +1,17 @@
+---
+id: react-composition
+level: WARNING
+alwaysApply: false
+globs: ["**/*.tsx"]
+triggers: ["react", "component", "compound", "props"]
+tags: ["react"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Compound components
+
+New components that have layout variants use a compound shape. The root owns shared state and provides it to parts. Parts read that context and fail with a clear error outside the root. Consumers compose with children (`Component.Part`), not with boolean or slot props. Do not duplicate the root's state in a part. Keep the context private to the folder. Prefer one file until it is hard to navigate, then split parts inside the same folder without exporting the context.

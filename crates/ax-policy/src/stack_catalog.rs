@@ -56,6 +56,14 @@ const REACT_FILES: &[StackFile] = &[
         body: include_str!("../templates/stacks/react/rules/react-state.mdc"),
     },
     StackFile {
+        rel: "rules/react-composition.mdc",
+        body: include_str!("../templates/stacks/react/rules/react-composition.mdc"),
+    },
+    StackFile {
+        rel: "rules/react-tests.mdc",
+        body: include_str!("../templates/stacks/react/rules/react-tests.mdc"),
+    },
+    StackFile {
         rel: "skills/react-review/SKILL.md",
         body: include_str!("../templates/stacks/react/skills/react-review/SKILL.md"),
     },
@@ -452,6 +460,10 @@ const TYPESCRIPT_FILES: &[StackFile] = &[
     StackFile {
         rel: "rules/typescript-types.mdc",
         body: include_str!("../templates/stacks/typescript/rules/typescript-types.mdc"),
+    },
+    StackFile {
+        rel: "rules/typescript-strict.mdc",
+        body: include_str!("../templates/stacks/typescript/rules/typescript-strict.mdc"),
     },
     StackFile {
         rel: "skills/typescript-review/SKILL.md",

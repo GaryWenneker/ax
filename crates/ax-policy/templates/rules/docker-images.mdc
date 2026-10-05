@@ -1,0 +1,22 @@
+---
+id: docker-images
+level: WARNING
+alwaysApply: false
+globs: ["**/Dockerfile*", "**/*.dockerfile", "**/docker-compose*.yml", "**/compose*.yaml", "**/.dockerignore"]
+triggers: ["docker", "dockerfile", "container", "image", "compose"]
+tags: ["docker", "containers"]
+priority: 80
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Container images
+
+- Multi-stage build. The runtime stage has no build tools, runs as a non-root user, and uses a pinned base image.
+- No secrets in the image: no build args or environment values that are secrets, and no copied env files. The ignore file excludes env files, dependency directories, and the version-control directory.
+- One image for every environment. Inject environment values at run time.
+- Tag with a commit id or a version, never `latest`.
+- Scan the image before pushing a new base or a new dependency set.
+- Push only when the user asks.

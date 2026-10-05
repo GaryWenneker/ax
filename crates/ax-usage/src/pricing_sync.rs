@@ -129,7 +129,12 @@ async fn record_meta(
     Ok(())
 }
 
-async fn upsert_prices(pool: &SqlitePool, date: &str, source: &str, rows: &[FetchedPrice]) -> Result<(), String> {
+async fn upsert_prices(
+    pool: &SqlitePool,
+    date: &str,
+    source: &str,
+    rows: &[FetchedPrice],
+) -> Result<(), String> {
     for row in rows {
         sqlx::query(
             "INSERT INTO model_price_daily
@@ -204,7 +209,11 @@ async fn upsert_benchmarks(
 }
 
 #[allow(dead_code)]
-async fn upsert_agents(pool: &SqlitePool, date: &str, rows: &[FetchedCodingAgent]) -> Result<(), String> {
+async fn upsert_agents(
+    pool: &SqlitePool,
+    date: &str,
+    rows: &[FetchedCodingAgent],
+) -> Result<(), String> {
     for row in rows {
         sqlx::query(
             "INSERT INTO coding_agent_daily
@@ -560,22 +569,16 @@ pub async fn list_coding_agents(days: i64) -> Result<Vec<CodingAgentRow>, String
     Ok(rows
         .into_iter()
         .map(
-            |(
-                date,
-                agent,
-                model,
-                index_score,
-                cost_per_task,
-                time_per_task,
-                tokens_per_task,
-            )| CodingAgentRow {
-                date,
-                agent,
-                model,
-                index_score,
-                cost_per_task,
-                time_per_task,
-                tokens_per_task,
+            |(date, agent, model, index_score, cost_per_task, time_per_task, tokens_per_task)| {
+                CodingAgentRow {
+                    date,
+                    agent,
+                    model,
+                    index_score,
+                    cost_per_task,
+                    time_per_task,
+                    tokens_per_task,
+                }
             },
         )
         .collect())
@@ -622,17 +625,19 @@ pub async fn lookup_price_as_of(
             _ => best = Some((score, or_rank, row)),
         }
     }
-    Ok(best.map(|(_, _, (input, output, cache_read, cache_write, source, _))| {
-        (
-            crate::pricing::ModelPricing {
-                input_per_mtok: input,
-                output_per_mtok: output,
-                cache_read_per_mtok: cache_read,
-                cache_write_per_mtok: cache_write,
-            },
-            source,
-        )
-    }))
+    Ok(best.map(
+        |(_, _, (input, output, cache_read, cache_write, source, _))| {
+            (
+                crate::pricing::ModelPricing {
+                    input_per_mtok: input,
+                    output_per_mtok: output,
+                    cache_read_per_mtok: cache_read,
+                    cache_write_per_mtok: cache_write,
+                },
+                source,
+            )
+        },
+    ))
 }
 
 #[cfg(test)]

@@ -119,13 +119,19 @@ fn hex(bytes: &[u8]) -> String {
 
 pub fn reuse_key(conversation: &str, tool: &str, args: &Value) -> String {
     let canon = canonical_args(args);
-    let framed = format!("{}:{conversation}|{}:{tool}|{canon}", conversation.len(), tool.len());
+    let framed = format!(
+        "{}:{conversation}|{}:{tool}|{canon}",
+        conversation.len(),
+        tool.len()
+    );
     hex(&Sha256::digest(framed.as_bytes())[..16])
 }
 
 fn safe_relative(path: &str) -> bool {
     let p = Path::new(path);
-    !path.is_empty() && p.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+    !path.is_empty()
+        && p.components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
 /// Project-relative paths cited as `path:line` or `path::symbol` that exist under `root`.
@@ -134,7 +140,9 @@ pub(crate) fn cited_files(body: &str, root: &Path) -> Vec<String> {
     let mut found = BTreeSet::new();
     for token in body.split_whitespace() {
         let token = token.trim_start_matches(['`', '(', '[', '<', '"', '\'']);
-        let Some(colon) = token.find(':') else { continue };
+        let Some(colon) = token.find(':') else {
+            continue;
+        };
         let path = &token[..colon];
         let next = token[colon + 1..].chars().next();
         if !matches!(next, Some(c) if c.is_ascii_digit() || c == ':') {
@@ -192,7 +200,10 @@ fn disk_unchanged(root: &Path, files: &Snapshot) -> bool {
 }
 
 /// Each cited file has the indexed hash it had when the reply was stored.
-pub(crate) fn index_unchanged(recorded: &[(String, Option<String>)], current: &IndexHashes) -> bool {
+pub(crate) fn index_unchanged(
+    recorded: &[(String, Option<String>)],
+    current: &IndexHashes,
+) -> bool {
     !recorded.is_empty()
         && recorded
             .iter()
@@ -201,7 +212,8 @@ pub(crate) fn index_unchanged(recorded: &[(String, Option<String>)], current: &I
 
 /// The cited files and the whole index are as they were when the reply was stored.
 pub fn index_matches(candidate: &ReuseCandidate, current: &IndexHashes) -> bool {
-    index_unchanged(&candidate.indexed, current) && index_fingerprint(current) == candidate.index_fingerprint
+    index_unchanged(&candidate.indexed, current)
+        && index_fingerprint(current) == candidate.index_fingerprint
 }
 
 /// Hash of every indexed path and content hash. A graph answer can depend on files it does
@@ -215,7 +227,10 @@ pub fn index_fingerprint(index: &IndexHashes) -> String {
 }
 
 fn indexed_of(files: &Snapshot) -> Vec<(String, Option<String>)> {
-    files.iter().map(|(p, _, i)| (p.clone(), i.clone())).collect()
+    files
+        .iter()
+        .map(|(p, _, i)| (p.clone(), i.clone()))
+        .collect()
 }
 
 pub fn render_hit(hit: &ReuseHit) -> String {
@@ -234,7 +249,8 @@ pub fn format_session_context(entries: &[ContextEntry], max_tokens: i64) -> Stri
     if entries.is_empty() {
         return String::new();
     }
-    const OPEN: &str = "<ax_session_context>\nAlready answered in this conversation (cited files unchanged). \
+    const OPEN: &str =
+        "<ax_session_context>\nAlready answered in this conversation (cited files unchanged). \
                         Repeating one returns [ax cache hit]; ax_expand id returns the answer.";
     const CLOSE: &str = "</ax_session_context>";
     let mut lines = vec![OPEN.to_string()];
@@ -266,7 +282,9 @@ pub(crate) fn usable_session(raw: &str) -> Option<String> {
     let id = raw.trim();
     let usable = !id.is_empty()
         && id.len() <= MAX_SESSION_CHARS
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'));
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'));
     usable.then(|| id.to_string())
 }
 
@@ -305,7 +323,10 @@ fn scope(conversation: &str, root: &Path) -> String {
 }
 
 fn args_summary(args: &Value) -> String {
-    canonical_args(args).chars().take(ARGS_SUMMARY_CHARS).collect()
+    canonical_args(args)
+        .chars()
+        .take(ARGS_SUMMARY_CHARS)
+        .collect()
 }
 
 async fn conversation_turn(pool: &SqlitePool, conversation: &str) -> Result<i64, String> {
@@ -520,7 +541,15 @@ pub async fn reuse_store(
     index: &IndexHashes,
 ) -> Result<Option<String>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    store_reply(&pool, root, conversation, Reply { tool, args, body }, index, reuse_cap_bytes()).await
+    store_reply(
+        &pool,
+        root,
+        conversation,
+        Reply { tool, args, body },
+        index,
+        reuse_cap_bytes(),
+    )
+    .await
 }
 
 pub async fn reuse_record_hit(key: &str, tokens_avoided: i64) -> Result<(), String> {
@@ -528,11 +557,17 @@ pub async fn reuse_record_hit(key: &str, tokens_avoided: i64) -> Result<(), Stri
     record_hit(&pool, key, tokens_avoided).await
 }
 
-pub async fn reuse_session_entries(root: &Path, conversation: &str, index: &IndexHashes) -> Vec<ContextEntry> {
+pub async fn reuse_session_entries(
+    root: &Path,
+    conversation: &str,
+    index: &IndexHashes,
+) -> Vec<ContextEntry> {
     let Ok(pool) = open_pool().await else {
         return Vec::new();
     };
-    session_entries(&pool, root, conversation, index).await.unwrap_or_default()
+    session_entries(&pool, root, conversation, index)
+        .await
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -6,6 +6,8 @@ Ax quotes local agent usage against a price catalog and compares that quote to a
 
 Each imported turn is one event in `~/.ax/usage.db` (`agent_usage_event`). Claude Code JSONL can include input, output, cache read, and cache write. Those four counts stay separate. Cursor transcripts often have a model name and sometimes input tokens. Output and cache are unknown when the file does not contain them. OpenCode, Gemini, and Codex are installed as MCP clients only. Ax does not invent token counts for them.
 
+`ax costs` imports local Cursor transcripts, Claude transcripts, and Cursor composer state before it builds the report. When a period has no quoted usage events, `ax costs` uses the imported agent sessions already shown in Command Center (`agent_session_log`). That fills models, agents, input tokens, catalog spend, and the daily spend used for the month projection. Output and cache stay unknown when the session row has no count. Known cycles stay 0, because a cycle is still one quoted usage event. Session spend is not added on top of usage events. The text report opens with a block-letter AX banner and a line of period, spend, model, and recorded session minutes. Tokens, context efficiency, and cycle efficiency show that minute total instead of the word unknown when a token count was not recorded. Cost per minute and input tokens per minute use the same total.
+
 ## Actual, estimated, unknown
 
 | Label | Meaning |

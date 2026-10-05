@@ -185,6 +185,15 @@ struct ScannedContract {
     kind: ContractKind,
 }
 
+/// First 400 bytes, stopped on a char boundary so a multibyte character is not split.
+fn contract_head(text: &str) -> &str {
+    let mut end = text.len().min(400);
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 fn scan_contract_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedContract> {
     let walker = WalkBuilder::new(project_root)
         .hidden(true)
@@ -236,7 +245,7 @@ fn scan_contract_files(project_root: &Path, exclude: &[String]) -> Vec<ScannedCo
         } else if matches!(ext.as_str(), "yaml" | "yml" | "json") {
             // Content sniff for openapi key — cheap peek.
             if let Ok(head) = std::fs::read_to_string(path) {
-                let head = &head[..head.len().min(400)];
+                let head = contract_head(&head);
                 if head.contains("openapi:")
                     || head.contains("\"openapi\"")
                     || head.contains("swagger:")
@@ -503,6 +512,46 @@ service UserService {
         assert!(ops
             .iter()
             .any(|o| o.id == "contract:proto:UserService.GetUser"));
+    }
+
+    #[test]
+    fn sniff_does_not_panic_when_byte_400_splits_a_multibyte_char() {
+        let dir = std::env::temp_dir().join(format!(
+            "ax-contract-head-{}-{}",
+            std::process::id(),
+            "split"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut body = "a".repeat(399);
+        body.push('ï');
+        body.push_str("\nopenapi: 3.0.0\n");
+        std::fs::write(dir.join("service.yaml"), &body).unwrap();
+        let found = scan_contract_files(&dir, &[]);
+        assert!(
+            found.is_empty(),
+            "the openapi marker sits past the 400-byte peek"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sniff_still_detects_openapi_before_a_multibyte_char() {
+        let dir = std::env::temp_dir().join(format!(
+            "ax-contract-head-{}-{}",
+            std::process::id(),
+            "detect"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut body = "openapi: 3.0.0\n".to_string();
+        body.push_str(&"a".repeat(399 - body.len()));
+        body.push('ï');
+        std::fs::write(dir.join("service.yaml"), &body).unwrap();
+        let found = scan_contract_files(&dir, &[]);
+        assert_eq!(found.len(), 1);
+        assert!(matches!(found[0].kind, ContractKind::OpenApi));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

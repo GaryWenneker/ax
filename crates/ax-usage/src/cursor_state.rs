@@ -141,7 +141,11 @@ pub fn read_recent_cursor_session(max_age: std::time::Duration) -> Option<String
 }
 
 /// A file with an unknown age is treated as old.
-pub fn session_if_recent(text: &str, age: Option<std::time::Duration>, max_age: std::time::Duration) -> Option<String> {
+pub fn session_if_recent(
+    text: &str,
+    age: Option<std::time::Duration>,
+    max_age: std::time::Duration,
+) -> Option<String> {
     if age? > max_age {
         return None;
     }
@@ -162,10 +166,9 @@ fn parse_iso_ms(s: &str) -> Option<i64> {
 }
 
 fn timestamp_ms(v: &Value) -> Option<i64> {
-    json_i64(v).filter(|n| *n > 0).or_else(|| {
-        v.as_str()
-            .and_then(parse_iso_ms)
-    })
+    json_i64(v)
+        .filter(|n| *n > 0)
+        .or_else(|| v.as_str().and_then(parse_iso_ms))
 }
 
 /// Extract model label from `composerData.modelConfig`.
@@ -273,7 +276,10 @@ pub fn parse_composer_data(session_id: &str, value: &Value) -> Option<ComposerSt
 
 async fn open_cursor_vscdb_readonly(path: &Path) -> Result<SqlitePool, String> {
     if !path.is_file() {
-        return Err(format!("Cursor state database not found: {}", path.display()));
+        return Err(format!(
+            "Cursor state database not found: {}",
+            path.display()
+        ));
     }
 
     let options = SqliteConnectOptions::new()
@@ -294,16 +300,13 @@ async fn open_cursor_vscdb_readonly(path: &Path) -> Result<SqlitePool, String> {
 }
 
 /// Load all `composerData:*` rows from Cursor `state.vscdb`.
-pub async fn load_composer_state_rows(
-    path: &Path,
-) -> Result<Vec<ComposerStateRow>, String> {
+pub async fn load_composer_state_rows(path: &Path) -> Result<Vec<ComposerStateRow>, String> {
     let pool = open_cursor_vscdb_readonly(path).await?;
-    let keys: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("cursor state query: {e}"))?;
+    let keys: Vec<(String, String)> =
+        sqlx::query_as("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| format!("cursor state query: {e}"))?;
 
     let mut rows = Vec::with_capacity(keys.len());
     for (key, raw) in keys {
@@ -418,9 +421,18 @@ mod tests {
     fn session_file_counts_only_while_recent() {
         use std::time::Duration;
         let max = Duration::from_secs(600);
-        assert_eq!(session_if_recent("chat-7\n", Some(Duration::from_secs(5)), max).as_deref(), Some("chat-7"));
-        assert_eq!(session_if_recent(" chat-7 \nextra", Some(max), max).as_deref(), Some("chat-7"));
-        assert_eq!(session_if_recent("chat-7\n", Some(max + Duration::from_secs(1)), max), None);
+        assert_eq!(
+            session_if_recent("chat-7\n", Some(Duration::from_secs(5)), max).as_deref(),
+            Some("chat-7")
+        );
+        assert_eq!(
+            session_if_recent(" chat-7 \nextra", Some(max), max).as_deref(),
+            Some("chat-7")
+        );
+        assert_eq!(
+            session_if_recent("chat-7\n", Some(max + Duration::from_secs(1)), max),
+            None
+        );
         assert_eq!(session_if_recent("chat-7\n", None, max), None);
         assert_eq!(session_if_recent("  \n", Some(Duration::ZERO), max), None);
     }

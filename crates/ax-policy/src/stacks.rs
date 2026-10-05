@@ -1098,6 +1098,25 @@ mod tests {
     }
 
     #[test]
+    fn generic_candidate_stack_rules_are_embedded() {
+        let typescript = find_stack("typescript").unwrap();
+        assert!(
+            typescript
+                .files
+                .iter()
+                .any(|f| f.rel == "rules/typescript-strict.mdc"),
+            "typescript stack is missing typescript-strict"
+        );
+        let react = find_stack("react").unwrap();
+        for rel in ["rules/react-composition.mdc", "rules/react-tests.mdc"] {
+            assert!(
+                react.files.iter().any(|f| f.rel == rel),
+                "react stack is missing {rel}"
+            );
+        }
+    }
+
+    #[test]
     fn every_stack_pack_is_version_1_2_0() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/stacks");
         for stack in STACKS {

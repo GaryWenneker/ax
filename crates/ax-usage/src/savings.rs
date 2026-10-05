@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use chrono::Datelike;
 use serde::Serialize;
 use serde_json::Value;
 use walkdir::WalkDir;
@@ -149,7 +150,12 @@ impl FileSpan {
     }
 }
 
-fn merge_file_span(files: &mut HashMap<String, FileSpan>, path: &str, start: Option<i64>, end: Option<i64>) {
+fn merge_file_span(
+    files: &mut HashMap<String, FileSpan>,
+    path: &str,
+    start: Option<i64>,
+    end: Option<i64>,
+) {
     files
         .entry(path.to_string())
         .and_modify(|span| span.merge(start, end))
@@ -164,12 +170,7 @@ fn collect_file_refs(value: &Value, files: &mut HashMap<String, FileSpan>) {
     match value {
         Value::Object(map) => {
             if let Some(fp) = file_path_from_obj(map) {
-                merge_file_span(
-                    files,
-                    fp,
-                    start_line_from_obj(map),
-                    end_line_from_obj(map),
-                );
+                merge_file_span(files, fp, start_line_from_obj(map), end_line_from_obj(map));
                 if let Some(content) = map.get("content").and_then(|v| v.as_str()) {
                     if !content.is_empty() {
                         let tokens = count_tokens(content) as i64;
@@ -234,11 +235,7 @@ fn counterfactual_tokens_for_file(
 ) -> (i64, bool) {
     let full = count_file_tokens(resolved);
     let range = if span.has_line_span() {
-        count_file_line_range_tokens(
-            resolved,
-            span.min_start as u32,
-            span.max_end as u32,
-        )
+        count_file_line_range_tokens(resolved, span.min_start as u32, span.max_end as u32)
     } else {
         None
     };
@@ -551,6 +548,135 @@ pub struct ProjectSavingsRow {
     pub counterfactual_files: i64,
 }
 
+/// One model or agent line in a session cost rollup.
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+pub struct SessionGroupSpend {
+    pub label: String,
+    pub usd: f64,
+}
+
+/// Catalog spend from imported sessions on one local calendar day.
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+pub struct SessionDaySpend {
+    pub day: String,
+    pub usd: f64,
+}
+
+/// Model, agent, and input-token totals from `agent_session_log` for one period.
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+pub struct SessionCostCoverage {
+    pub models: Vec<SessionGroupSpend>,
+    pub agents: Vec<SessionGroupSpend>,
+    pub input_tokens: i64,
+    pub input_known: bool,
+    pub output_tokens: i64,
+    pub output_known: bool,
+    pub spend_usd: f64,
+    pub by_day: Vec<SessionDaySpend>,
+    /// Recorded session time, rounded up to the next minute. Zero when no session has an end at or after its start.
+    pub minutes: u64,
+}
+
+pub(crate) fn session_cost_coverage(sessions: &[AgentSessionRow]) -> SessionCostCoverage {
+    let mut models: HashMap<String, f64> = HashMap::new();
+    let mut agents: HashMap<String, f64> = HashMap::new();
+    let mut days: HashMap<String, f64> = HashMap::new();
+    let mut input_tokens = 0i64;
+    let mut input_known = false;
+    let mut output_tokens = 0i64;
+    let mut output_known = false;
+    let mut spend_usd = 0.0;
+    let mut total_ms = 0i64;
+    for session in sessions {
+        let usd = session
+            .session_cost_usd_est
+            .filter(|n| n.is_finite())
+            .unwrap_or(0.0);
+        let model = session_model_label(&session.model);
+        let agent = agent_label(&session.agent);
+        *models.entry(model).or_default() += usd;
+        *agents.entry(agent).or_default() += usd;
+        spend_usd += usd;
+        if let Some(day) = session.started_at.and_then(local_iso_day) {
+            *days.entry(day).or_default() += usd;
+        }
+        if let Some(n) = session.session_input_tokens {
+            input_tokens += n.max(0);
+            input_known = true;
+        }
+        if let Some(n) = session.session_output_tokens {
+            output_tokens += n.max(0);
+            output_known = true;
+        }
+        if let (Some(start), Some(end)) = (session.started_at, session.ended_at) {
+            if end >= start {
+                total_ms = total_ms.saturating_add(end - start);
+            }
+        }
+    }
+    let mut by_day: Vec<SessionDaySpend> = days
+        .into_iter()
+        .map(|(day, usd)| SessionDaySpend { day, usd })
+        .collect();
+    by_day.sort_by(|a, b| a.day.cmp(&b.day));
+    SessionCostCoverage {
+        models: groups_by_usd(models),
+        agents: groups_by_usd(agents),
+        input_tokens,
+        input_known,
+        output_tokens,
+        output_known,
+        spend_usd,
+        by_day,
+        minutes: minutes_from_span_ms(total_ms),
+    }
+}
+
+fn minutes_from_span_ms(total_ms: i64) -> u64 {
+    if total_ms <= 0 {
+        0
+    } else {
+        (total_ms as u64).saturating_add(59_999) / 60_000
+    }
+}
+
+fn agent_label(agent: &str) -> String {
+    let trimmed = agent.trim();
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn groups_by_usd(map: HashMap<String, f64>) -> Vec<SessionGroupSpend> {
+    let mut rows: Vec<SessionGroupSpend> = map
+        .into_iter()
+        .map(|(label, usd)| SessionGroupSpend { label, usd })
+        .collect();
+    rows.sort_by(|a, b| {
+        b.usd
+            .partial_cmp(&a.usd)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    rows
+}
+
+fn local_iso_day(ms: i64) -> Option<String> {
+    if ms <= 0 {
+        return None;
+    }
+    let utc = chrono::DateTime::from_timestamp_millis(ms)?;
+    let day = utc.with_timezone(&chrono::Local).date_naive();
+    Some(format!(
+        "{:04}-{:02}-{:02}",
+        day.year(),
+        day.month(),
+        day.day()
+    ))
+}
+
 /// Savings and session spend grouped by agent model (from imported transcripts).
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelSavingsRow {
@@ -711,6 +837,9 @@ pub struct SavingsSummary {
     pub daily: Vec<DailySavings>,
     pub recent_calls: Vec<RecentCallRow>,
     pub agent_sessions: Vec<AgentSessionRow>,
+    /// Model, agent, token, and spend totals for every session in the period.
+    /// `agent_sessions` is only the latest 50 rows for the table.
+    pub session_cost: SessionCostCoverage,
     pub db_path: String,
 }
 
@@ -789,19 +918,21 @@ fn aggregate_sessions_by_model(sessions: &[AgentSessionRow]) -> Vec<ModelSavings
             .unwrap_or_else(reference_pricing_with_source);
         let session_cost = s.session_cost_usd_est.unwrap_or(0.0);
         let cost_saved = input_cost_usd(s.tokens_saved_in_window, pricing);
-        let row = by_model.entry(model.clone()).or_insert_with(|| ModelSavingsRow {
-            model,
-            sessions: 0,
-            session_input_tokens: 0,
-            tokens_saved_est: 0,
-            ax_calls: 0,
-            read_calls: 0,
-            grep_calls: 0,
-            session_cost_usd_est: 0.0,
-            cost_saved_usd_est: 0.0,
-            input_per_mtok: pricing.input_per_mtok,
-            pricing_source: pricing_source.clone(),
-        });
+        let row = by_model
+            .entry(model.clone())
+            .or_insert_with(|| ModelSavingsRow {
+                model,
+                sessions: 0,
+                session_input_tokens: 0,
+                tokens_saved_est: 0,
+                ax_calls: 0,
+                read_calls: 0,
+                grep_calls: 0,
+                session_cost_usd_est: 0.0,
+                cost_saved_usd_est: 0.0,
+                input_per_mtok: pricing.input_per_mtok,
+                pricing_source: pricing_source.clone(),
+            });
         row.sessions += 1;
         row.session_input_tokens += s.session_input_tokens.unwrap_or(0);
         row.tokens_saved_est += s.tokens_saved_in_window;
@@ -837,7 +968,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
                 COALESCE(SUM(response_tokens_est), 0),
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_exact_files ELSE 0 END), 0),
                 COUNT(DISTINCT CASE WHEN project IS NOT NULL AND project != '' THEN project END),
-                COALESCE(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END), 0),
+                COALESCE(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END), 0.0),
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 AND tokens_saved_est > 0 THEN 1 ELSE 0 END), 0)
          FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?",
     )
@@ -856,7 +987,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_files ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_tokens_est ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN response_tokens_est ELSE 0 END), 0),
-                COALESCE(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END), 0)
+                COALESCE(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END), 0.0)
          FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
          GROUP BY tool ORDER BY 5 DESC, 2 DESC",
     )
@@ -1045,17 +1176,19 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
 
     let by_weekday: Vec<WeekdaySavingsRow> = weekday_raw
         .into_iter()
-        .map(|(weekday, tokens_saved_est, calls, graph_calls)| WeekdaySavingsRow {
-            label: WEEKDAY_LABELS
-                .get(weekday as usize)
-                .copied()
-                .unwrap_or("?")
-                .to_string(),
-            weekday,
-            tokens_saved_est,
-            calls,
-            graph_calls,
-        })
+        .map(
+            |(weekday, tokens_saved_est, calls, graph_calls)| WeekdaySavingsRow {
+                label: WEEKDAY_LABELS
+                    .get(weekday as usize)
+                    .copied()
+                    .unwrap_or("?")
+                    .to_string(),
+                weekday,
+                tokens_saved_est,
+                calls,
+                graph_calls,
+            },
+        )
         .collect();
 
     type HourTuple = (i64, i64, i64, i64);
@@ -1073,13 +1206,15 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .await
     .map_err(|e| e.to_string())?;
 
-    let mut hour_map: std::collections::HashMap<i64, (i64, i64, i64)> = std::collections::HashMap::new();
+    let mut hour_map: std::collections::HashMap<i64, (i64, i64, i64)> =
+        std::collections::HashMap::new();
     for (hour, tokens_saved_est, calls, graph_calls) in hour_raw {
         hour_map.insert(hour, (tokens_saved_est, calls, graph_calls));
     }
     let by_hour: Vec<HourSavingsRow> = (0..24)
         .map(|hour| {
-            let (tokens_saved_est, calls, graph_calls) = hour_map.get(&hour).copied().unwrap_or((0, 0, 0));
+            let (tokens_saved_est, calls, graph_calls) =
+                hour_map.get(&hour).copied().unwrap_or((0, 0, 0));
             HourSavingsRow {
                 hour,
                 label: format!("{hour:02}"),
@@ -1105,12 +1240,14 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     .await
     .map_err(|e| e.to_string())?
     .into_iter()
-    .map(|(bucket, tokens_saved_est, calls, graph_calls)| TimelineBucket {
-        bucket,
-        tokens_saved_est,
-        calls,
-        graph_calls,
-    })
+    .map(
+        |(bucket, tokens_saved_est, calls, graph_calls)| TimelineBucket {
+            bucket,
+            tokens_saved_est,
+            calls,
+            graph_calls,
+        },
+    )
     .collect();
 
     type SessionTuple = (
@@ -1151,6 +1288,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         .map(session_tuple_to_row)
         .collect();
 
+    let session_cost = session_cost_coverage(&session_rows);
     let by_model = aggregate_sessions_by_model(&session_rows);
     let agent_sessions: Vec<AgentSessionRow> = session_rows.into_iter().take(50).collect();
 
@@ -1215,6 +1353,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         daily,
         recent_calls,
         agent_sessions,
+        session_cost,
         db_path: usage_db_path().display().to_string(),
     })
 }
@@ -1497,10 +1636,7 @@ fn classify_cursor_tool(name: &str, input: &Value, acc: &mut SessionAccum) {
         acc.grep_calls += 1;
     } else if name == "CallMcpTool" {
         let server = input.get("server").and_then(|v| v.as_str()).unwrap_or("");
-        let tool = input
-            .get("toolName")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let tool = input.get("toolName").and_then(|v| v.as_str()).unwrap_or("");
         if server.contains("ax") || tool.starts_with("ax_") {
             acc.ax_calls += 1;
         }
@@ -1553,20 +1689,26 @@ fn process_claude_line(line: &str, acc: &mut SessionAccum) {
     let Ok(v) = serde_json::from_str::<Value>(line) else {
         return;
     };
-    if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()).and_then(parse_iso_ms) {
+    if let Some(ts) = v
+        .get("timestamp")
+        .and_then(|t| t.as_str())
+        .and_then(parse_iso_ms)
+    {
         acc.started_at = Some(acc.started_at.map_or(ts, |s| s.min(ts)));
         acc.ended_at = Some(acc.ended_at.map_or(ts, |e| e.max(ts)));
     }
     let msg = v.get("message").unwrap_or(&v);
-    let on_message = msg.get("role").and_then(|r| r.as_str()) == Some("assistant") && msg.get("usage").is_some();
+    let on_message =
+        msg.get("role").and_then(|r| r.as_str()) == Some("assistant") && msg.get("usage").is_some();
     if msg.get("role").and_then(|r| r.as_str()) == Some("assistant") {
         add_usage_from_message(msg, acc, on_message);
     }
     add_usage_from_message(&v, acc, !on_message && v.get("usage").is_some());
-    let content = msg
-        .get("content")
-        .and_then(|c| c.as_array())
-        .or_else(|| v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()));
+    let content = msg.get("content").and_then(|c| c.as_array()).or_else(|| {
+        v.get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+    });
     if let Some(items) = content {
         for item in items {
             if item.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
@@ -1637,7 +1779,10 @@ async fn import_claude_file(path: &Path) -> Result<bool, String> {
     }
     let wrote = upsert_agent_session("claude", &session_id, &acc, mtime).await?;
     if wrote {
-        let project = path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str());
+        let project = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str());
         persist_usage_events("claude", &session_id, project, &acc.events).await?;
     }
     Ok(wrote)
@@ -1672,7 +1817,10 @@ async fn import_cursor_file(path: &Path) -> Result<bool, String> {
     }
     let wrote = upsert_agent_session("cursor", &session_id, &acc, mtime).await?;
     if wrote {
-        let project = path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str());
+        let project = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str());
         persist_usage_events("cursor", &session_id, project, &acc.events).await?;
     }
     Ok(wrote)
@@ -1747,7 +1895,10 @@ fn cursor_transcript_matches(path: &Path) -> bool {
     if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         return false;
     }
-    let parent_name = path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str());
+    let parent_name = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str());
     let file_stem = path.file_stem().and_then(|s| s.to_str());
     parent_name.is_some() && parent_name == file_stem
 }
@@ -1803,7 +1954,8 @@ pub async fn import_agent_logs(claude: bool, cursor: bool) -> Result<ImportResul
             }
         }
 
-        let (state_enriched, state_skipped) = import_cursor_composer_state().await.unwrap_or((0, 0));
+        let (state_enriched, state_skipped) =
+            import_cursor_composer_state().await.unwrap_or((0, 0));
         skipped += state_skipped;
         return Ok(ImportResult {
             claude_sessions,
@@ -1831,6 +1983,95 @@ mod tests {
 
     fn long_response(chars: usize) -> String {
         "response text ".repeat(chars / 14 + 1)
+    }
+
+    fn session_row(
+        agent: &str,
+        model: Option<&str>,
+        input: Option<i64>,
+        cost: Option<f64>,
+        started_at: Option<i64>,
+    ) -> AgentSessionRow {
+        AgentSessionRow {
+            agent: agent.into(),
+            session_id: "s".into(),
+            read_calls: 0,
+            grep_calls: 0,
+            ax_calls: 0,
+            session_input_tokens: input,
+            session_output_tokens: None,
+            model: model.map(str::to_string),
+            session_cost_usd_est: cost,
+            mcp_calls_in_window: 0,
+            tokens_saved_in_window: 0,
+            started_at,
+            ended_at: started_at,
+        }
+    }
+
+    #[test]
+    fn session_cost_coverage_groups_models_and_agents() {
+        let rows = vec![
+            session_row(
+                "cursor",
+                Some("grok-4.7"),
+                Some(100),
+                Some(1.25),
+                Some(1_759_000_000_000),
+            ),
+            session_row(
+                "cursor",
+                Some("claude-opus-5-5"),
+                Some(40),
+                Some(0.5),
+                Some(1_759_000_000_000),
+            ),
+            session_row("cursor", Some("composer-2.5"), None, None, None),
+        ];
+        let cov = session_cost_coverage(&rows);
+        assert_eq!(cov.input_tokens, 140);
+        assert!(cov.input_known);
+        assert!(!cov.output_known);
+        assert!((cov.spend_usd - 1.75).abs() < 1e-9);
+        let models: Vec<&str> = cov.models.iter().map(|m| m.label.as_str()).collect();
+        assert!(models.contains(&"grok-4.7"), "{models:?}");
+        assert!(models.contains(&"claude-opus-5-5"), "{models:?}");
+        assert!(models.contains(&"composer-2.5"), "{models:?}");
+        assert_eq!(cov.agents.len(), 1);
+        assert_eq!(cov.agents[0].label, "cursor");
+        assert!((cov.agents[0].usd - 1.75).abs() < 1e-9);
+        assert_eq!(cov.by_day.len(), 1);
+        assert!((cov.by_day[0].usd - 1.75).abs() < 1e-9);
+        assert_eq!(cov.minutes, 0);
+    }
+
+    #[test]
+    fn session_cost_coverage_rounds_spans_up_to_minutes() {
+        let start = 1_759_000_000_000;
+        let mut one = session_row("cursor", Some("grok-4.7"), Some(60), Some(1.0), Some(start));
+        one.ended_at = Some(start + 90_000);
+        assert_eq!(session_cost_coverage(&[one]).minutes, 2);
+
+        let mut left = session_row("cursor", Some("grok-4.7"), Some(10), Some(0.1), Some(start));
+        left.ended_at = Some(start + 30_000);
+        let mut right = session_row(
+            "cursor",
+            Some("grok-4.7"),
+            Some(10),
+            Some(0.1),
+            Some(start + 60_000),
+        );
+        right.ended_at = Some(start + 90_000);
+        assert_eq!(session_cost_coverage(&[left, right]).minutes, 1);
+
+        let mut open = session_row("cursor", Some("grok-4.7"), Some(10), Some(0.1), Some(start));
+        open.ended_at = None;
+        assert_eq!(session_cost_coverage(&[open]).minutes, 0);
+
+        let mut backwards =
+            session_row("cursor", Some("grok-4.7"), Some(10), Some(0.1), Some(start));
+        backwards.ended_at = Some(start - 1);
+        assert_eq!(session_cost_coverage(&[backwards]).minutes, 0);
     }
 
     #[test]
@@ -1861,7 +2102,12 @@ mod tests {
     #[test]
     fn no_file_refs_means_zero_savings() {
         // Conservative: a graph response without file references claims no savings.
-        let est = estimate_savings("ax_search", &json!({ "matches": [] }), &long_response(400), None);
+        let est = estimate_savings(
+            "ax_search",
+            &json!({ "matches": [] }),
+            &long_response(400),
+            None,
+        );
         assert!(est.savings_eligible);
         assert_eq!(est.counterfactual_files, 0);
         assert_eq!(est.counterfactual_tokens_est, 0);
@@ -1930,7 +2176,14 @@ mod tests {
         let dir = std::env::temp_dir().join("ax-usage-savings-range-mode");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("span.rs");
-        std::fs::write(&file, (1..=50).map(|i| format!("fn f{i}() {{}}")).collect::<Vec<_>>().join("\n")).unwrap();
+        std::fs::write(
+            &file,
+            (1..=50)
+                .map(|i| format!("fn f{i}() {{}}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
 
         std::env::set_var("AX_SAVINGS_CF_MODE", "range");
         let structured = json!({ "node": { "filePath": "span.rs", "startLine": 2, "endLine": 4 } });
@@ -1976,17 +2229,13 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn cursor_transcript_path_filter() {
-        let ok = PathBuf::from(
-            r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\uuid.jsonl",
-        );
+        let ok = PathBuf::from(r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\uuid.jsonl");
         assert!(cursor_transcript_matches(&ok));
-        let bad_ext = PathBuf::from(
-            r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\uuid.txt",
-        );
+        let bad_ext =
+            PathBuf::from(r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\uuid.txt");
         assert!(!cursor_transcript_matches(&bad_ext));
-        let bad_name = PathBuf::from(
-            r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\other.jsonl",
-        );
+        let bad_name =
+            PathBuf::from(r"C:\Users\me\.cursor\projects\p\agent-transcripts\uuid\other.jsonl");
         assert!(!cursor_transcript_matches(&bad_name));
     }
 
@@ -1994,9 +2243,15 @@ mod tests {
     #[test]
     fn cursor_transcript_path_filter_unix() {
         let dir = "/home/me/.cursor/projects/p/agent-transcripts/uuid";
-        assert!(cursor_transcript_matches(&PathBuf::from(format!("{dir}/uuid.jsonl"))));
-        assert!(!cursor_transcript_matches(&PathBuf::from(format!("{dir}/uuid.txt"))));
-        assert!(!cursor_transcript_matches(&PathBuf::from(format!("{dir}/other.jsonl"))));
+        assert!(cursor_transcript_matches(&PathBuf::from(format!(
+            "{dir}/uuid.jsonl"
+        ))));
+        assert!(!cursor_transcript_matches(&PathBuf::from(format!(
+            "{dir}/uuid.txt"
+        ))));
+        assert!(!cursor_transcript_matches(&PathBuf::from(format!(
+            "{dir}/other.jsonl"
+        ))));
     }
 
     #[test]

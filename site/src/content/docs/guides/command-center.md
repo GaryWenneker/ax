@@ -11,6 +11,8 @@ Prefer a native GPU window instead of the browser? Use `ax desktop` — see the 
 
 Embedding Command Center in an IDE webview? Append `?embed=1` to hide the browser titlebar.
 
+Each full page load and hard refresh plays a short green edge glow (Green Vessel) with a startup chime. The overlay is removed when that animation ends, so the dashboard is usable again. Moving between pages inside the app does not replay it. `prefers-reduced-motion: reduce` skips the glow. If the browser blocks the chime until a gesture, the first click or key plays it.
+
 ![Command Center — Rules page with the Policy, Code, Activity, and System sidebar groups](/screenshots/cc-policy-rules.png)
 
 ## Quick start

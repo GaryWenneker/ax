@@ -285,37 +285,37 @@ pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathB
         .as_object_mut()
         .ok_or_else(|| "config root is not an object".to_string())?;
     {
-    let budget = obj
-        .entry("budget")
-        .or_insert_with(|| Value::Object(Default::default()));
-    let budget = budget
-        .as_object_mut()
-        .ok_or_else(|| "budget is not an object".to_string())?;
-    if let Some(v) = patch.monthly {
-        budget.insert("monthly".into(), serde_json::json!(v));
-    }
-    if let Some(v) = patch.currency.clone() {
-        budget.insert("currency".into(), Value::String(v));
-    }
-    if let Some(v) = patch.usd_per_eur {
-        budget.insert("usdPerEur".into(), serde_json::json!(v));
-    }
-    if let Some(v) = patch.working_days {
-        budget.insert("workingDays".into(), serde_json::json!(v));
-    }
-    if let Some(v) = patch.hours_per_day {
-        budget.insert("hoursPerDay".into(), serde_json::json!(v));
-    }
-    if let Some(v) = patch.warning_percent {
-        budget.insert("warningPercent".into(), serde_json::json!(v));
-    }
-    if let Some(v) = patch.critical_percent {
-        budget.insert("criticalPercent".into(), serde_json::json!(v));
-    }
-    if let Some(v) = patch.hard_limit_percent {
-        budget.insert("hardLimitPercent".into(), serde_json::json!(v));
-    }
-    budget.insert("enabled".into(), Value::Bool(true));
+        let budget = obj
+            .entry("budget")
+            .or_insert_with(|| Value::Object(Default::default()));
+        let budget = budget
+            .as_object_mut()
+            .ok_or_else(|| "budget is not an object".to_string())?;
+        if let Some(v) = patch.monthly {
+            budget.insert("monthly".into(), serde_json::json!(v));
+        }
+        if let Some(v) = patch.currency.clone() {
+            budget.insert("currency".into(), Value::String(v));
+        }
+        if let Some(v) = patch.usd_per_eur {
+            budget.insert("usdPerEur".into(), serde_json::json!(v));
+        }
+        if let Some(v) = patch.working_days {
+            budget.insert("workingDays".into(), serde_json::json!(v));
+        }
+        if let Some(v) = patch.hours_per_day {
+            budget.insert("hoursPerDay".into(), serde_json::json!(v));
+        }
+        if let Some(v) = patch.warning_percent {
+            budget.insert("warningPercent".into(), serde_json::json!(v));
+        }
+        if let Some(v) = patch.critical_percent {
+            budget.insert("criticalPercent".into(), serde_json::json!(v));
+        }
+        if let Some(v) = patch.hard_limit_percent {
+            budget.insert("hardLimitPercent".into(), serde_json::json!(v));
+        }
+        budget.insert("enabled".into(), Value::Bool(true));
     }
     if let Some(v) = patch.mode.clone() {
         let agent = obj

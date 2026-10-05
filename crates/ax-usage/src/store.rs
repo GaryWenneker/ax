@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 use sqlx::ConnectOptions;
 
 use ax_utils::errors::{AxError, DatabaseError};
@@ -245,7 +247,8 @@ pub async fn open_pool() -> Result<SqlitePool, AxError> {
 
 pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, AxError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     }
 
     let options = SqliteConnectOptions::new()
@@ -283,7 +286,11 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
             .map_err(|e| AxError::Database(DatabaseError::new(format!("usage schema: {e}"))))?;
     }
 
-    for stmt in PRICING_SCHEMA.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+    for stmt in PRICING_SCHEMA
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         sqlx::query(stmt)
             .execute(&pool)
             .await

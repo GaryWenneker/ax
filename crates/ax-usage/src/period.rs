@@ -48,7 +48,9 @@ pub fn resolve_period(
         UsagePeriod::MonthToDate => NaiveDate::from_ymd_opt(to_date.year(), to_date.month(), 1)
             .ok_or("invalid month start")?,
         UsagePeriod::Month => to_date - chrono::Duration::days(29),
-        UsagePeriod::Year => NaiveDate::from_ymd_opt(to_date.year(), 1, 1).ok_or("invalid year start")?,
+        UsagePeriod::Year => {
+            NaiveDate::from_ymd_opt(to_date.year(), 1, 1).ok_or("invalid year start")?
+        }
         UsagePeriod::Custom => {
             let from_s = custom_from.ok_or("custom period requires --from (YYYY-MM-DD)")?;
             parse_date(from_s)?
@@ -111,7 +113,10 @@ mod tests {
 
     #[test]
     fn parses_period_aliases() {
-        assert_eq!(UsagePeriod::parse("month_to_date"), Some(UsagePeriod::MonthToDate));
+        assert_eq!(
+            UsagePeriod::parse("month_to_date"),
+            Some(UsagePeriod::MonthToDate)
+        );
         assert_eq!(UsagePeriod::parse("mtd"), Some(UsagePeriod::MonthToDate));
         assert_eq!(UsagePeriod::parse("week"), Some(UsagePeriod::Week));
     }

@@ -180,11 +180,7 @@ fn match_db_entry(model: &str, entries: &[DbPriceEntry]) -> Option<(ModelPricing
     for entry in entries {
         let key = entry.model_id.to_ascii_lowercase();
         let short = key.rsplit('/').next().unwrap_or(&key);
-        let or_rank = if entry.source == "openrouter" {
-            0
-        } else {
-            1
-        };
+        let or_rank = if entry.source == "openrouter" { 0 } else { 1 };
         let matched = if lowered == key
             || lowered == short
             || (lowered.contains(short) && short.len() >= 4)

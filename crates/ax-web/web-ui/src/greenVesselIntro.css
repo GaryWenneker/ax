@@ -1,0 +1,107 @@
+#ax-green-vessel {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.45s ease;
+  overflow: hidden;
+}
+
+#ax-green-vessel::before,
+#ax-green-vessel::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse at center, transparent 74%, rgba(0, 0, 0, 0.35) 86%, #000 96%);
+}
+
+#ax-green-vessel::before {
+  inset: 0;
+  background:
+    linear-gradient(
+      to bottom,
+      rgba(70, 230, 220, 0.55) 0%,
+      rgba(40, 190, 170, 0.22) 8%,
+      transparent 18%,
+      transparent 84%,
+      rgba(20, 160, 110, 0.2) 92%,
+      rgba(40, 210, 130, 0.5) 100%
+    ),
+    linear-gradient(
+      to right,
+      rgba(40, 210, 130, 0.42) 0%,
+      rgba(20, 160, 110, 0.14) 7%,
+      transparent 16%,
+      transparent 82%,
+      rgba(20, 170, 115, 0.22) 92%,
+      rgba(40, 220, 140, 0.72) 100%
+    );
+  filter: blur(40px);
+  opacity: 0;
+}
+
+#ax-green-vessel::after {
+  inset: 0;
+  background:
+    linear-gradient(to bottom, rgba(70, 230, 220, 0.48), transparent 16%),
+    radial-gradient(ellipse at 50% 0%, rgba(80, 235, 220, 0.42), transparent 18%),
+    radial-gradient(ellipse at 0% 50%, rgba(30, 200, 120, 0.36), transparent 14%),
+    radial-gradient(ellipse at 100% 50%, rgba(40, 220, 140, 0.62), transparent 16%),
+    radial-gradient(ellipse at 50% 100%, rgba(30, 210, 125, 0.4), transparent 16%);
+  filter: blur(40px);
+  mix-blend-mode: screen;
+  opacity: 0;
+}
+
+#ax-green-vessel.is-playing {
+  animation: ax-green-vessel 3.6s ease-in-out forwards;
+}
+
+#ax-green-vessel.is-playing::before,
+#ax-green-vessel.is-playing::after {
+  animation: ax-green-vessel-bloom 3.6s linear forwards;
+}
+
+@keyframes ax-green-vessel-bloom {
+  0% {
+    opacity: 0;
+  }
+  16% {
+    opacity: 0.78;
+  }
+  52% {
+    opacity: 0.78;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes ax-green-vessel {
+  0%,
+  50% {
+    opacity: 1;
+    background-color: #000;
+    box-shadow: inset 0 0 42px rgba(0, 237, 130, 0.35), 0 0 28px rgba(0, 237, 130, 0.28);
+  }
+  100% {
+    opacity: 1;
+    background-color: transparent;
+    box-shadow: inset 0 0 30px rgba(0, 237, 130, 0), 0 0 20px #1ce783;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ax-green-vessel {
+    box-shadow: inset 0 0 60px #00ed82, 0 0 40px #00ed82;
+  }
+
+  #ax-green-vessel.is-playing,
+  #ax-green-vessel.is-playing::before,
+  #ax-green-vessel.is-playing::after {
+    animation: none;
+    opacity: 0;
+  }
+}

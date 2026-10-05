@@ -92,6 +92,30 @@ const TEMPLATES: &[Template] = &[
         rel: "skills/design-first/SKILL.md",
         body: include_str!("../templates/skills/design-first/SKILL.md"),
     },
+    Template {
+        rel: "rules/generated-files.mdc",
+        body: include_str!("../templates/rules/generated-files.mdc"),
+    },
+    Template {
+        rel: "rules/kubernetes-safety.mdc",
+        body: include_str!("../templates/rules/kubernetes-safety.mdc"),
+    },
+    Template {
+        rel: "rules/docker-images.mdc",
+        body: include_str!("../templates/rules/docker-images.mdc"),
+    },
+    Template {
+        rel: "rules/design-tokens.mdc",
+        body: include_str!("../templates/rules/design-tokens.mdc"),
+    },
+    Template {
+        rel: "rules/css-layers.mdc",
+        body: include_str!("../templates/rules/css-layers.mdc"),
+    },
+    Template {
+        rel: "skills/pnpm-release-age/SKILL.md",
+        body: include_str!("../templates/skills/pnpm-release-age/SKILL.md"),
+    },
 ];
 
 /// Relative path + embedded body within a skill directory (e.g. `SKILL.md`, `references/gauntlet.md`).
@@ -726,6 +750,29 @@ pub fn check_cursor_rule_duplicates(project_root: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_candidate_rules_are_in_the_default_seed() {
+        for rel in [
+            "rules/generated-files.mdc",
+            "rules/kubernetes-safety.mdc",
+            "rules/docker-images.mdc",
+            "rules/design-tokens.mdc",
+            "rules/css-layers.mdc",
+            "skills/pnpm-release-age/SKILL.md",
+        ] {
+            let body = TEMPLATES
+                .iter()
+                .find(|t| t.rel == rel)
+                .unwrap_or_else(|| panic!("missing {rel}"))
+                .body;
+            assert!(!body.trim().is_empty(), "{rel} is empty");
+            let lower = body.to_ascii_lowercase();
+            for banned in ["vanlanschot", "sitecore", "vfpf", "mijn-pf", "adviseur"] {
+                assert!(!lower.contains(banned), "{rel} still names {banned}");
+            }
+        }
+    }
     use tempfile::tempdir;
 
     #[test]

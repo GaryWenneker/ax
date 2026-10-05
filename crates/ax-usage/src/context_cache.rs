@@ -140,7 +140,10 @@ pub fn keeps_graph_head(tool: &str) -> bool {
 
 pub fn graph_inline_budget() -> i64 {
     match std::env::var("AX_GRAPH_INLINE_TOKENS") {
-        Ok(raw) => raw.trim().parse::<i64>().unwrap_or(DEFAULT_GRAPH_INLINE_TOKENS),
+        Ok(raw) => raw
+            .trim()
+            .parse::<i64>()
+            .unwrap_or(DEFAULT_GRAPH_INLINE_TOKENS),
         Err(_) => DEFAULT_GRAPH_INLINE_TOKENS,
     }
 }
@@ -153,7 +156,14 @@ pub fn threshold_for_with(tool: &str, base: i64, graph: i64) -> i64 {
     }
 }
 
-fn head_footer(tool: &str, id: &str, original: i64, shown: usize, total: usize, offset: usize) -> String {
+fn head_footer(
+    tool: &str,
+    id: &str,
+    original: i64,
+    shown: usize,
+    total: usize,
+    offset: usize,
+) -> String {
     format!(
         "\n[ax context cache] tool={tool} id={id} original_tokens={original} shown_lines={shown}/{total}\n\
          This graph answer is cut; the rest is stored. Continue with ax_expand id \"{id}\" offset {offset}, \
@@ -176,10 +186,17 @@ fn fit_prefix(line: &str, budget: i64) -> &str {
 
 /// Keep the top of a graph reply inline (whole lines, within `budget` tokens
 /// including the footer) instead of replacing all of it with a bare stub.
-fn render_head_stub(tool: &str, id: &str, body: &str, original: i64, budget: i64) -> (String, i64, i64) {
+fn render_head_stub(
+    tool: &str,
+    id: &str,
+    body: &str,
+    original: i64,
+    budget: i64,
+) -> (String, i64, i64) {
     let lines: Vec<&str> = body.split_inclusive('\n').collect();
     let total = lines.len();
-    let footer_budget = count_tokens(&head_footer(tool, id, original, total, total, body.len())) as i64 + 8;
+    let footer_budget =
+        count_tokens(&head_footer(tool, id, original, total, total, body.len())) as i64 + 8;
     let head_budget = (budget - footer_budget).max(1);
 
     let mut kept = 0usize;
@@ -202,7 +219,10 @@ fn render_head_stub(tool: &str, id: &str, body: &str, original: i64, budget: i64
             let offset = joined.chars().count();
             (joined.trim_end_matches('\n').to_string(), offset)
         };
-        format!("{head}{}", head_footer(tool, id, original, kept, total, offset))
+        format!(
+            "{head}{}",
+            head_footer(tool, id, original, kept, total, offset)
+        )
     };
 
     let mut text = build(kept);
@@ -265,7 +285,10 @@ pub async fn stash_text(label: Option<&str>, text: &str) -> Result<StashReceipt,
     let original_tokens = count_tokens(text) as i64;
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     store_body(&pool, &id, &tool, text, original_tokens).await?;
-    Ok(StashReceipt { id, original_tokens })
+    Ok(StashReceipt {
+        id,
+        original_tokens,
+    })
 }
 
 pub async fn recent_catalog(limit: usize) -> Result<Vec<CatalogEntry>, String> {
@@ -385,7 +408,11 @@ pub struct ContextCacheCounts {
     pub session_inline_tokens: i64,
 }
 
-pub async fn expand_cached(id: &str, offset: usize, limit: Option<usize>) -> Result<ExpandPage, String> {
+pub async fn expand_cached(
+    id: &str,
+    offset: usize,
+    limit: Option<usize>,
+) -> Result<ExpandPage, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     let body = load_body(&pool, id).await?;
     Ok(page_body(&body, offset, limit))
@@ -399,7 +426,9 @@ pub fn page_body(body: &str, offset: usize, limit: Option<usize>) -> ExpandPage 
             next_offset: None,
         };
     }
-    let limit = limit.unwrap_or(EXPAND_DEFAULT_CHARS).clamp(1, EXPAND_MAX_CHARS);
+    let limit = limit
+        .unwrap_or(EXPAND_DEFAULT_CHARS)
+        .clamp(1, EXPAND_MAX_CHARS);
     let end = (offset + limit).min(chars.len());
     let text: String = chars[offset..end].iter().collect();
     let next_offset = if end < chars.len() { Some(end) } else { None };
@@ -557,15 +586,19 @@ pub async fn recent_session_catalog(
 type CatalogRow = (Option<String>, String, String, i64, Option<String>);
 
 /// Entries from other chats and entries without a cache id cannot be expanded here; drop them.
-fn scope_catalog(
-    rows: Vec<CatalogRow>,
-    session_id: Option<&str>,
-) -> Vec<CatalogEntry> {
-    let Some(session_id) = session_id else { return Vec::new() };
+fn scope_catalog(rows: Vec<CatalogRow>, session_id: Option<&str>) -> Vec<CatalogEntry> {
+    let Some(session_id) = session_id else {
+        return Vec::new();
+    };
     rows.into_iter()
         .filter(|(_, _, _, _, session)| session.as_deref() == Some(session_id))
         .filter_map(|(cache_id, tool, summary, original_tokens, _)| {
-            Some(CatalogEntry { id: cache_id?, tool, summary, original_tokens })
+            Some(CatalogEntry {
+                id: cache_id?,
+                tool,
+                summary,
+                original_tokens,
+            })
         })
         .collect()
 }
@@ -649,7 +682,10 @@ fn value_text(value: &serde_json::Value) -> Option<String> {
 }
 
 /// Stash tool-result chunks that cross the token threshold. Returns how many were stored.
-pub async fn ingest_jsonl_oversized(session_id: Option<&str>, jsonl: &str) -> Result<usize, String> {
+pub async fn ingest_jsonl_oversized(
+    session_id: Option<&str>,
+    jsonl: &str,
+) -> Result<usize, String> {
     if !cache_enabled() {
         return Ok(0);
     }
@@ -687,14 +723,13 @@ async fn cache_id_recorded(pool: &SqlitePool, id: &str) -> Result<bool, String> 
 
 pub(crate) async fn load_body(pool: &SqlitePool, id: &str) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT body FROM mcp_context_cache WHERE id = ? AND expires_at >= ?",
-    )
-    .bind(id)
-    .bind(now)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT body FROM mcp_context_cache WHERE id = ? AND expires_at >= ?")
+            .bind(id)
+            .bind(now)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| e.to_string())?;
     row.map(|r| r.0)
         .ok_or_else(|| format!("No cached MCP reply for id {id}"))
 }
@@ -707,7 +742,13 @@ mod tests {
     type Row = (Option<String>, String, String, i64, Option<String>);
 
     fn row(id: Option<&str>, session: Option<&str>) -> Row {
-        (id.map(str::to_string), "ax_explore".into(), "summary".into(), 900, session.map(str::to_string))
+        (
+            id.map(str::to_string),
+            "ax_explore".into(),
+            "summary".into(),
+            900,
+            session.map(str::to_string),
+        )
     }
 
     #[test]
@@ -718,7 +759,10 @@ mod tests {
             row(None, Some("chat-a")),
             row(Some("orphan"), None),
         ];
-        let ids: Vec<String> = scope_catalog(rows, Some("chat-a")).into_iter().map(|e| e.id).collect();
+        let ids: Vec<String> = scope_catalog(rows, Some("chat-a"))
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
         assert_eq!(ids, vec!["mine".to_string()]);
     }
 
@@ -750,9 +794,18 @@ mod tests {
         assert!(exempt_from_cache("ax_guard"));
         assert!(exempt_from_cache("ax_policy_capture"));
         assert!(exempt_from_cache("ax_expand"));
-        assert!(exempt_from_cache("ax_cache_status"), "status must stay inline");
-        assert!(exempt_from_cache("ax_rules"), "policy delivery must never be stubbed");
-        assert!(exempt_from_cache("ax_skill"), "policy delivery must never be stubbed");
+        assert!(
+            exempt_from_cache("ax_cache_status"),
+            "status must stay inline"
+        );
+        assert!(
+            exempt_from_cache("ax_rules"),
+            "policy delivery must never be stubbed"
+        );
+        assert!(
+            exempt_from_cache("ax_skill"),
+            "policy delivery must never be stubbed"
+        );
         assert!(!exempt_from_cache("ax_explore"));
     }
 
@@ -775,15 +828,24 @@ mod tests {
     fn graph_head_stub_keeps_whole_lines_inline_within_budget() {
         let body = numbered_body(3_000);
         let original = count_tokens(&body) as i64;
-        let (text, sent, removed) = render_head_stub("ax_explore", "cc_head", &body, original, 2_000);
-        assert!(text.starts_with("1\tlet value_1"), "head must start at the top");
+        let (text, sent, removed) =
+            render_head_stub("ax_explore", "cc_head", &body, original, 2_000);
+        assert!(
+            text.starts_with("1\tlet value_1"),
+            "head must start at the top"
+        );
         assert!(sent <= 2_000, "sent={sent} exceeds the inline budget");
         assert!(sent > 1_000, "sent={sent} wastes most of the inline budget");
         assert_eq!(count_tokens(&text) as i64, sent);
         assert_eq!(removed, original - sent);
-        let (head, footer) = text.split_once("\n[ax context cache]").expect("footer present");
+        let (head, footer) = text
+            .split_once("\n[ax context cache]")
+            .expect("footer present");
         assert!(body.starts_with(head), "head is a verbatim prefix");
-        assert!(body[head.len()..].starts_with('\n'), "head ends on a line boundary");
+        assert!(
+            body[head.len()..].starts_with('\n'),
+            "head ends on a line boundary"
+        );
         assert!(footer.contains("cc_head"));
         assert!(footer.contains("ax_expand"));
         assert!(footer.contains("ax_node"));
@@ -846,10 +908,8 @@ mod tests {
 
     #[tokio::test]
     async fn store_roundtrip_and_expiry() {
-        let path: PathBuf = std::env::temp_dir().join(format!(
-            "ax-context-cache-{}.db",
-            std::process::id()
-        ));
+        let path: PathBuf =
+            std::env::temp_dir().join(format!("ax-context-cache-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.display()))
             .await
@@ -916,10 +976,8 @@ mod tests {
 
     #[tokio::test]
     async fn counts_live_and_expired_without_selecting_bodies() {
-        let path: PathBuf = std::env::temp_dir().join(format!(
-            "ax-context-cache-counts-{}.db",
-            std::process::id()
-        ));
+        let path: PathBuf =
+            std::env::temp_dir().join(format!("ax-context-cache-counts-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.display()))
             .await
@@ -969,7 +1027,9 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let counts = context_cache_counts(&pool, 50, Some("sess-1")).await.unwrap();
+        let counts = context_cache_counts(&pool, 50, Some("sess-1"))
+            .await
+            .unwrap();
         assert_eq!(counts.live_rows, 1);
         assert_eq!(counts.stored_tokens, 10);
         assert_eq!(counts.expired_rows, 1);

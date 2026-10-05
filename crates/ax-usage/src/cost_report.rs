@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Datelike, Local, NaiveDate};
 
 use crate::budget::{
-    currency_label, format_money, load_settings, project_budget, BudgetSettings, BudgetSnapshot,
-    DaySpend,
+    currency_label, display_amount, format_money, load_settings, project_budget, BudgetSettings,
+    BudgetSnapshot, Currency, DaySpend,
 };
 use crate::cost::{calculate, Cost, CostConfidence, CostUsage};
 use crate::period::{resolve_period, UsagePeriod};
@@ -73,6 +73,12 @@ pub struct CostReport {
     pub counterfactual_tokens: i64,
     /// Graph response tokens from `ax savings`.
     pub selected_context_tokens: i64,
+    pub by_agent: Vec<GroupSpend>,
+    /// True when models, agents, and spend were taken from imported sessions
+    /// because this period has no quoted usage events.
+    pub session_sourced: bool,
+    /// Recorded session minutes for this period. Set only when the report is session-sourced.
+    pub session_minutes: Option<u64>,
 }
 
 pub fn quote_recorded(row: &RecordedUsage, pricing: Option<ModelPricing>) -> Cost {
@@ -108,6 +114,7 @@ pub fn build_report(
         .collect();
     let mut tokens = TokenTotals::default();
     let mut by_model: BTreeMap<String, (f64, i64)> = BTreeMap::new();
+    let mut by_agent: BTreeMap<String, (f64, i64)> = BTreeMap::new();
     let mut by_project: BTreeMap<String, (f64, i64)> = BTreeMap::new();
     let mut by_day: BTreeMap<NaiveDate, f64> = BTreeMap::new();
     let mut cycle_costs = Vec::new();
@@ -123,6 +130,14 @@ pub fn build_report(
             .clone()
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| "unknown".into());
+        let agent = {
+            let name = item.recorded.agent.trim();
+            if name.is_empty() {
+                "unknown".to_string()
+            } else {
+                name.to_string()
+            }
+        };
         let project = item
             .recorded
             .project
@@ -136,6 +151,7 @@ pub fn build_report(
             cycle_costs.push(usd);
             cycle_rows.push((label.clone(), usd));
             by_model.entry(label).or_default().0 += usd;
+            by_agent.entry(agent).or_default().0 += usd;
             by_project.entry(project).or_default().0 += usd;
             if let Some(day) = local_day(item.recorded.created_at) {
                 *by_day.entry(day).or_default() += usd;
@@ -143,6 +159,7 @@ pub fn build_report(
         } else {
             unknown += 1;
             by_model.entry(label).or_default().1 += 1;
+            by_agent.entry(agent).or_default().1 += 1;
             by_project.entry(project).or_default().1 += 1;
         }
     }
@@ -154,6 +171,7 @@ pub fn build_report(
         tokens,
         by_model: groups(by_model),
         by_project: groups(by_project),
+        by_agent: groups(by_agent),
         by_day: by_day
             .into_iter()
             .map(|(date, usd)| DaySpend { date, usd })
@@ -164,7 +182,62 @@ pub fn build_report(
         savings_usd_est,
         counterfactual_tokens: 0,
         selected_context_tokens: 0,
+        session_sourced: false,
+        session_minutes: None,
     }
+}
+
+/// Fill an empty usage-event report from imported agent sessions.
+/// Quoted usage events win: a non-empty event list is left unchanged.
+pub fn apply_session_cost(report: &mut CostReport, coverage: &crate::savings::SessionCostCoverage) {
+    if report.events != 0 || (coverage.models.is_empty() && coverage.agents.is_empty()) {
+        return;
+    }
+    report.by_model = coverage
+        .models
+        .iter()
+        .map(|row| GroupSpend {
+            label: row.label.clone(),
+            usd: row.usd,
+            unknown_events: 0,
+        })
+        .collect();
+    report.by_agent = coverage
+        .agents
+        .iter()
+        .map(|row| GroupSpend {
+            label: row.label.clone(),
+            usd: row.usd,
+            unknown_events: 0,
+        })
+        .collect();
+    report.spend_usd = coverage.spend_usd;
+    if coverage.input_known {
+        report.tokens.input = coverage.input_tokens;
+        report.tokens.input_known = true;
+    }
+    if coverage.output_known {
+        report.tokens.output = coverage.output_tokens;
+        report.tokens.output_known = true;
+    }
+    report.by_day = coverage
+        .by_day
+        .iter()
+        .filter_map(|row| parse_iso_date(&row.day).map(|date| DaySpend { date, usd: row.usd }))
+        .collect();
+    report.session_minutes = Some(coverage.minutes);
+    report.session_sourced = true;
+}
+
+fn parse_iso_date(value: &str) -> Option<NaiveDate> {
+    let mut parts = value.split('-');
+    let year: i32 = parts.next()?.parse().ok()?;
+    let month: u32 = parts.next()?.parse().ok()?;
+    let day: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    NaiveDate::from_ymd_opt(year, month, day)
 }
 
 fn add_tokens(totals: &mut TokenTotals, row: &RecordedUsage) {
@@ -215,6 +288,15 @@ fn local_day(ms: i64) -> Option<NaiveDate> {
     DateTime::from_timestamp_millis(ms).map(|utc| utc.with_timezone(&Local).date_naive())
 }
 
+const AX_BANNER: &str = "\
+ █████╗ ██╗  ██╗\n\
+██╔══██╗╚██╗██╔╝\n\
+███████║ ╚███╔╝ \n\
+██╔══██║ ██╔██╗ \n\
+██║  ██║██╔╝ ██╗\n\
+╚═╝  ╚═╝╚═╝  ╚═╝\n\
+";
+
 pub fn format_summary(
     report: &CostReport,
     snapshot: &BudgetSnapshot,
@@ -222,7 +304,10 @@ pub fn format_summary(
     period_label: &str,
 ) -> String {
     let mut out = String::new();
-    out.push_str("AX COST SUMMARY\n\n");
+    out.push_str(AX_BANNER);
+    out.push('\n');
+    out.push_str(&banner_info(period_label, report, settings));
+    out.push_str("\n\nAX COST SUMMARY\n\n");
     out.push_str(&format!("Period: {period_label}\n\n"));
     out.push_str(&format!(
         "Budget                 {}\n",
@@ -289,23 +374,50 @@ pub fn format_summary(
             out.push_str(&format!("  unknown events       {}\n", row.unknown_events));
         }
     }
+    out.push_str("\nAgents\n--------------------------------\n");
+    if report.by_agent.is_empty() {
+        out.push_str("(no recorded usage)\n");
+    }
+    for row in &report.by_agent {
+        let amount = if row.unknown_events > 0 && row.usd == 0.0 {
+            "unknown".to_string()
+        } else {
+            format_money(row.usd, settings)
+        };
+        out.push_str(&format!("{:<24} {amount}\n", row.label));
+    }
+    if report.session_sourced {
+        out.push_str(
+            "Models, agents, input tokens, and spend come from imported agent sessions.\n",
+        );
+    }
+    let minutes = report.session_minutes;
     out.push_str("\nTokens\n--------------------------------\n");
-    out.push_str(&format!(
-        "Input                  {}\n",
-        token_cell(report.tokens.input, report.tokens.input_known)
-    ));
-    out.push_str(&format!(
-        "Output                 {}\n",
-        token_cell(report.tokens.output, report.tokens.output_known)
-    ));
-    out.push_str(&format!(
-        "Cache read             {}\n",
-        token_cell(report.tokens.cache_read, report.tokens.cache_read_known)
-    ));
-    out.push_str(&format!(
-        "Cache write            {}\n",
-        token_cell(report.tokens.cache_write, report.tokens.cache_write_known)
-    ));
+    push_optional_metric(
+        &mut out,
+        "Input",
+        known_count(report.tokens.input, report.tokens.input_known),
+        minutes,
+    );
+    push_optional_metric(
+        &mut out,
+        "Output",
+        known_count(report.tokens.output, report.tokens.output_known),
+        minutes,
+    );
+    push_optional_metric(
+        &mut out,
+        "Cache read",
+        known_count(report.tokens.cache_read, report.tokens.cache_read_known),
+        minutes,
+    );
+    push_optional_metric(
+        &mut out,
+        "Cache write",
+        known_count(report.tokens.cache_write, report.tokens.cache_write_known),
+        minutes,
+    );
+    push_session_time(&mut out, minutes);
     let cache_read = if report.tokens.cache_read_known {
         Some(report.tokens.cache_read)
     } else {
@@ -318,28 +430,29 @@ pub fn format_summary(
         report.tokens_avoided,
     );
     out.push_str("\nContext efficiency\n--------------------------------\n");
-    out.push_str(&format!(
-        "Raw context            {}\n",
-        efficiency.raw_context_tokens
-    ));
-    out.push_str(&format!(
-        "Selected context       {}\n",
-        efficiency.selected_context_tokens
-    ));
-    out.push_str(&format!(
-        "Cache read             {}\n",
-        efficiency
-            .cache_read_tokens
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "unknown".into())
-    ));
-    out.push_str(&format!(
-        "New context            {}\n",
-        efficiency
-            .new_context_tokens
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "unknown".into())
-    ));
+    push_metric(
+        &mut out,
+        "Raw context",
+        &efficiency.raw_context_tokens.to_string(),
+    );
+    push_metric(
+        &mut out,
+        "Selected context",
+        &efficiency.selected_context_tokens.to_string(),
+    );
+    push_optional_metric(
+        &mut out,
+        "Cache read",
+        efficiency.cache_read_tokens.map(|n| n.to_string()),
+        minutes,
+    );
+    push_optional_metric(
+        &mut out,
+        "New context",
+        efficiency.new_context_tokens.map(|n| n.to_string()),
+        minutes,
+    );
+    push_session_time(&mut out, minutes);
     let cycles = u64::try_from(report.known_events).unwrap_or(0);
     let cycle = crate::context_plan::cycle_efficiency(
         cycles,
@@ -353,38 +466,50 @@ pub fn format_summary(
         report.tokens_avoided,
     );
     out.push_str("\nCycle efficiency\n--------------------------------\n");
-    out.push_str(&format!("Known cycles           {cycles}\n"));
-    out.push_str(&format!(
-        "Cost/cycle             {}\n",
-        cycle
-            .cost_per_cycle_usd
-            .map(|v| format_money(v, settings))
-            .unwrap_or_else(|| "unknown".into())
-    ));
-    out.push_str(&format!(
-        "Input/cycle            {}\n",
-        cycle
-            .input_per_cycle
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "unknown".into())
-    ));
-    out.push_str(&format!(
-        "Output/cycle           {}\n",
-        cycle
-            .output_per_cycle
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "unknown".into())
-    ));
-    out.push_str(&format!(
-        "Cache hit ratio        {}\n",
-        cycle
-            .cache_hit_ratio
-            .map(|r| format!("{:.0}%", r * 100.0))
-            .unwrap_or_else(|| "unknown".into())
-    ));
-    out.push_str(
-        "Known cycles are quoted usage events. This is not a completed-task count.\n",
+    push_metric(&mut out, "Known cycles", &cycles.to_string());
+    push_optional_metric(
+        &mut out,
+        "Cost/cycle",
+        cycle.cost_per_cycle_usd.map(|v| format_money(v, settings)),
+        minutes,
     );
+    push_optional_metric(
+        &mut out,
+        "Input/cycle",
+        cycle.input_per_cycle.map(|n| n.to_string()),
+        minutes,
+    );
+    push_optional_metric(
+        &mut out,
+        "Output/cycle",
+        cycle.output_per_cycle.map(|n| n.to_string()),
+        minutes,
+    );
+    push_optional_metric(
+        &mut out,
+        "Cache hit ratio",
+        cycle.cache_hit_ratio.map(|r| format!("{:.0}%", r * 100.0)),
+        minutes,
+    );
+    if let Some(mins) = minutes {
+        push_metric(&mut out, "Time", &format!("{mins} min"));
+        if mins > 0 {
+            push_metric(
+                &mut out,
+                "Cost/min",
+                &format_rate(report.spend_usd / mins as f64, settings),
+            );
+            if report.tokens.input_known {
+                let per_min = i64::try_from(mins).unwrap_or(i64::MAX);
+                push_metric(
+                    &mut out,
+                    "Input/min",
+                    &(report.tokens.input / per_min).to_string(),
+                );
+            }
+        }
+    }
+    out.push_str("Known cycles are quoted usage events. This is not a completed-task count.\n");
     out.push_str("\nAx savings\n--------------------------------\n");
     out.push_str(&format!(
         "Tokens avoided         {}\n",
@@ -407,12 +532,78 @@ fn money_opt(usd: Option<f64>, settings: &BudgetSettings) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-fn token_cell(n: i64, known: bool) -> String {
-    if known {
-        n.to_string()
-    } else {
-        "unknown".into()
+fn banner_info(period_label: &str, report: &CostReport, settings: &BudgetSettings) -> String {
+    let mut parts = vec![
+        period_label.to_string(),
+        format_money(report.spend_usd, settings),
+    ];
+    if let Some(model) = report.by_model.first() {
+        parts.push(model.label.clone());
     }
+    if let Some(mins) = report.session_minutes {
+        parts.push(format!("{mins} min"));
+    }
+    parts.join("  ·  ")
+}
+
+fn format_rate(usd: f64, settings: &BudgetSettings) -> String {
+    match display_amount(usd, settings) {
+        Some(amount) if amount.abs() > 0.0 && amount.abs() < 0.005 => match settings.currency {
+            Currency::Usd => format!("${amount:.4}"),
+            Currency::Eur => format!("€{amount:.4}"),
+        },
+        _ => format_money(usd, settings),
+    }
+}
+
+fn push_metric(out: &mut String, label: &str, value: &str) {
+    out.push_str(&format!("{label:<23}{value}\n"));
+}
+
+fn known_count(n: i64, known: bool) -> Option<String> {
+    known.then(|| n.to_string())
+}
+
+/// A missing count stays "unknown" until session minutes exist. Then the row is omitted
+/// and the section shows `Time` instead.
+fn push_optional_metric(
+    out: &mut String,
+    label: &str,
+    value: Option<String>,
+    minutes: Option<u64>,
+) {
+    match (value, minutes) {
+        (Some(text), _) => push_metric(out, label, &text),
+        (None, None) => push_metric(out, label, "unknown"),
+        (None, Some(_)) => {}
+    }
+}
+
+fn push_session_time(out: &mut String, minutes: Option<u64>) {
+    if let Some(mins) = minutes {
+        push_metric(out, "Time", &format!("{mins} min"));
+    }
+}
+
+/// Paint the six-line AX banner when `color` is set. The rest of the report stays uncolored.
+pub fn color_cost_banner(text: &str, color: bool) -> String {
+    if !color {
+        return text.to_string();
+    }
+    const BANNER_LINES: usize = 6;
+    let mut out = String::from("\u{1b}[96m");
+    let mut rest_started = false;
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        if index == BANNER_LINES {
+            out.push_str("\u{1b}[0m");
+            rest_started = true;
+        }
+        out.push_str(line);
+    }
+    if !rest_started {
+        out.push_str("\u{1b}[0m");
+    }
+    out
 }
 
 pub async fn collect_report(
@@ -431,16 +622,28 @@ pub async fn collect_report(
     );
     report.counterfactual_tokens = summary.counterfactual_tokens_est;
     report.selected_context_tokens = summary.graph_response_tokens_est;
+    apply_session_cost(&mut report, &summary.session_cost);
     let today = Local::now().date_naive();
     let month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
     let month_range = resolve_period(UsagePeriod::MonthToDate, None, None)?;
     let month_rows = load_events(month_range.from_ms, month_range.to_ms).await?;
-    let month_report = build_report(
+    let mut month_report = build_report(
         &month_rows,
         |model| model.and_then(|name| price_for_cost(name).map(|(pricing, _)| pricing)),
         0,
         0.0,
     );
+    if range.from_ms == month_range.from_ms && range.to_ms == month_range.to_ms {
+        apply_session_cost(&mut month_report, &summary.session_cost);
+    } else {
+        let month_summary = query_savings_summary(&SavingsQuery {
+            period: UsagePeriod::MonthToDate,
+            from: None,
+            to: None,
+        })
+        .await?;
+        apply_session_cost(&mut month_report, &month_summary.session_cost);
+    }
     let snapshot = project_budget(&settings, month, today, &month_report.by_day);
     Ok((report, snapshot, settings))
 }
@@ -585,5 +788,150 @@ mod tests {
         assert!(text.contains("AX COST SUMMARY"));
         assert!(text.contains("unknown"));
         assert!(text.contains("Tokens avoided"));
+    }
+
+    fn coverage_fixture() -> crate::savings::SessionCostCoverage {
+        crate::savings::SessionCostCoverage {
+            models: vec![
+                crate::savings::SessionGroupSpend {
+                    label: "grok-4.7".into(),
+                    usd: 1.25,
+                },
+                crate::savings::SessionGroupSpend {
+                    label: "claude-opus-5-5".into(),
+                    usd: 0.5,
+                },
+            ],
+            agents: vec![crate::savings::SessionGroupSpend {
+                label: "cursor".into(),
+                usd: 1.75,
+            }],
+            input_tokens: 140,
+            input_known: true,
+            output_tokens: 0,
+            output_known: false,
+            spend_usd: 1.75,
+            by_day: vec![crate::savings::SessionDaySpend {
+                day: "2026-10-05".into(),
+                usd: 1.75,
+            }],
+            minutes: 46,
+        }
+    }
+
+    #[test]
+    fn imported_sessions_fill_empty_cost_report() {
+        let mut report = build_report(&[], price, 0, 0.0);
+        apply_session_cost(&mut report, &coverage_fixture());
+        assert_eq!(report.events, 0);
+        assert_eq!(report.known_events, 0);
+        assert!(report.session_sourced);
+        assert!((report.spend_usd - 1.75).abs() < 1e-9);
+        assert_eq!(report.tokens.input, 140);
+        assert!(report.tokens.input_known);
+        assert!(!report.tokens.output_known);
+        assert!(!report.tokens.cache_read_known);
+        assert!(!report.tokens.cache_write_known);
+        let labels: Vec<&str> = report.by_model.iter().map(|m| m.label.as_str()).collect();
+        assert!(labels.contains(&"grok-4.7"), "{labels:?}");
+        assert_eq!(report.by_agent.len(), 1);
+        assert_eq!(report.by_agent[0].label, "cursor");
+        assert_eq!(
+            report.by_day[0].date,
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 5).unwrap()
+        );
+        let text = format_summary(
+            &report,
+            &project_budget(
+                &BudgetSettings::default(),
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                &report.by_day,
+            ),
+            &BudgetSettings::default(),
+            "October 2026",
+        );
+        assert!(text.contains("grok-4.7"), "{text}");
+        assert!(text.contains("\nAgents\n"), "{text}");
+        assert!(text.contains("cursor"), "{text}");
+        assert!(text.contains("imported agent sessions"), "{text}");
+    }
+
+    #[test]
+    fn session_report_leads_with_ax_banner_and_minutes() {
+        let mut report = build_report(&[], price, 0, 0.0);
+        apply_session_cost(&mut report, &coverage_fixture());
+        let text = format_summary(
+            &report,
+            &project_budget(
+                &BudgetSettings::default(),
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                &report.by_day,
+            ),
+            &BudgetSettings::default(),
+            "Today",
+        );
+        assert!(text.contains("█████"), "{text}");
+        assert!(text.starts_with("█████╗"), "{text}");
+        assert!(text.contains("46 min"), "{text}");
+        assert!(text.contains("Cost/min"), "{text}");
+        assert!(text.contains("Input/min"), "{text}");
+        let body = text
+            .split("\nTokens\n")
+            .nth(1)
+            .unwrap()
+            .split("\nAx savings\n")
+            .next()
+            .unwrap();
+        assert!(!body.to_ascii_lowercase().contains("unknown"), "{body}");
+        assert!(!body.contains("Output"), "{body}");
+    }
+
+    #[test]
+    fn color_cost_banner_paints_only_the_six_art_lines() {
+        let plain = "█████╗\n2\n3\n4\n5\n6\n\nToday\n";
+        assert_eq!(color_cost_banner(plain, false), plain);
+        let colored = color_cost_banner(plain, true);
+        assert!(colored.starts_with("\u{1b}[96m█████╗\n"), "{colored}");
+        assert!(colored.contains("6\n\u{1b}[0m\nToday\n"), "{colored}");
+        assert!(!colored.contains("\u{1b}[96m\nToday"), "{colored}");
+    }
+
+    #[test]
+    fn tiny_cost_per_minute_keeps_four_decimals() {
+        let mut report = build_report(&[], price, 0, 0.0);
+        let mut coverage = coverage_fixture();
+        coverage.spend_usd = 0.5;
+        coverage.minutes = 201;
+        apply_session_cost(&mut report, &coverage);
+        let text = format_summary(
+            &report,
+            &project_budget(
+                &BudgetSettings::default(),
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                &report.by_day,
+            ),
+            &BudgetSettings::default(),
+            "Today",
+        );
+        assert!(
+            text.lines()
+                .any(|line| line.starts_with("Cost/min") && line.contains("$0.0025")),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn usage_events_are_not_replaced_by_sessions() {
+        let mut report = build_report(&[row("known", Some(1_000_000), Some(0))], price, 0, 0.0);
+        let spend = report.spend_usd;
+        apply_session_cost(&mut report, &coverage_fixture());
+        assert!((report.spend_usd - spend).abs() < 1e-9);
+        assert!(!report.session_sourced);
+        assert!(report.by_agent.iter().any(|row| row.label == "claude"));
+        assert!(report.by_model.iter().any(|m| m.label == "known"));
+        assert!(!report.by_model.iter().any(|m| m.label == "grok-4.7"));
     }
 }

@@ -59,13 +59,19 @@ pub fn calculate(usage: &CostUsage, pricing: Option<ModelPricing>) -> Cost {
     let _ = usage.confidence;
     let input = price_component(usage.input_tokens, pricing.map(|p| p.input_per_mtok));
     let output = price_component(usage.output_tokens, pricing.map(|p| p.output_per_mtok));
-    let cache_read = price_component(usage.cache_read_tokens, pricing.and_then(|p| p.cache_read_per_mtok));
+    let cache_read = price_component(
+        usage.cache_read_tokens,
+        pricing.and_then(|p| p.cache_read_per_mtok),
+    );
     let cache_write = price_component(
         usage.cache_write_tokens,
         pricing.and_then(|p| p.cache_write_per_mtok),
     );
     let components = [input, output, cache_read, cache_write];
-    let (total_usd, total_confidence) = if components.iter().any(|c| c.confidence == CostConfidence::Unknown) {
+    let (total_usd, total_confidence) = if components
+        .iter()
+        .any(|c| c.confidence == CostConfidence::Unknown)
+    {
         (None, CostConfidence::Unknown)
     } else {
         let sum = components.iter().filter_map(|c| c.usd).sum();
@@ -145,7 +151,15 @@ mod tests {
 
     #[test]
     fn prices_each_token_class_from_the_catalog_rate() {
-        let cost = calculate(&usage(Some(1_000_000), Some(1_000_000), Some(1_000_000), Some(1_000_000)), Some(priced()));
+        let cost = calculate(
+            &usage(
+                Some(1_000_000),
+                Some(1_000_000),
+                Some(1_000_000),
+                Some(1_000_000),
+            ),
+            Some(priced()),
+        );
         assert_eq!(cost.input.usd, Some(3.0));
         assert_eq!(cost.output.usd, Some(15.0));
         assert_eq!(cost.cache_read.usd, Some(0.30));
@@ -159,7 +173,10 @@ mod tests {
     fn missing_rate_marks_that_component_and_the_total_unknown() {
         let mut pricing = priced();
         pricing.cache_write_per_mtok = None;
-        let cost = calculate(&usage(Some(1_000), Some(0), Some(0), Some(50)), Some(pricing));
+        let cost = calculate(
+            &usage(Some(1_000), Some(0), Some(0), Some(50)),
+            Some(pricing),
+        );
         assert_eq!(cost.cache_write.confidence, CostConfidence::Unknown);
         assert_eq!(cost.cache_write.usd, None);
         assert_eq!(cost.input.confidence, CostConfidence::Estimated);
@@ -194,7 +211,10 @@ mod tests {
 
     #[test]
     fn unknown_model_does_not_invent_a_rate() {
-        let cost = calculate(&usage(Some(1_000), Some(1_000), Some(1_000), Some(1_000)), None);
+        let cost = calculate(
+            &usage(Some(1_000), Some(1_000), Some(1_000), Some(1_000)),
+            None,
+        );
         assert_eq!(cost.input.confidence, CostConfidence::Unknown);
         assert_eq!(cost.output.confidence, CostConfidence::Unknown);
         assert_eq!(cost.cache_read.confidence, CostConfidence::Unknown);

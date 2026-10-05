@@ -490,7 +490,12 @@ pub(crate) async fn fork_with(
         save(pool, &parent_key, &current).await?;
         evict(pool, root, &parent_key).await?;
     }
-    Ok(branch_header("fork", parent, child, &render(&current, fingerprint)))
+    Ok(branch_header(
+        "fork",
+        parent,
+        child,
+        &render(&current, fingerprint),
+    ))
 }
 
 /// Store `request` (a compact note) as a new session. The parent notes stay readable.
@@ -529,10 +534,20 @@ pub(crate) async fn handoff_with(
         save(pool, &parent_key, &parent_ctx).await?;
         evict(pool, root, &parent_key).await?;
     }
-    Ok(branch_header("handoff", parent, child, &render(&next, fingerprint)))
+    Ok(branch_header(
+        "handoff",
+        parent,
+        child,
+        &render(&next, fingerprint),
+    ))
 }
 
-pub async fn fork_working_context(root: &Path, parent: &str, child: &str, fingerprint: &str) -> Result<String, String> {
+pub async fn fork_working_context(
+    root: &Path,
+    parent: &str,
+    child: &str,
+    fingerprint: &str,
+) -> Result<String, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     fork_with(&pool, root, parent, child, fingerprint, reuse_enabled()).await
 }
@@ -545,7 +560,16 @@ pub async fn handoff_working_context(
     fingerprint: &str,
 ) -> Result<String, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    handoff_with(&pool, root, parent, child, request, fingerprint, reuse_enabled()).await
+    handoff_with(
+        &pool,
+        root,
+        parent,
+        child,
+        request,
+        fingerprint,
+        reuse_enabled(),
+    )
+    .await
 }
 
 pub async fn working_context_apply(
@@ -568,7 +592,12 @@ pub async fn working_context_apply(
 
 /// Preflight block. Empty when there is nothing to repeat, the switch is off, or the db is unreachable.
 /// One `unchanged` line when `known` is the current hash and the notes are not stale.
-pub async fn working_context_block(root: &Path, conversation: &str, fingerprint: &str, known: Option<&str>) -> String {
+pub async fn working_context_block(
+    root: &Path,
+    conversation: &str,
+    fingerprint: &str,
+    known: Option<&str>,
+) -> String {
     if !reuse_enabled() {
         return String::new();
     }
@@ -608,7 +637,10 @@ mod tests {
     static SEQ: AtomicUsize = AtomicUsize::new(0);
 
     fn hash_of(block: &str) -> String {
-        let rest = block.split("hash=").nth(1).unwrap_or_else(|| panic!("no hash: {block}"));
+        let rest = block
+            .split("hash=")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no hash: {block}"));
         rest.split(|c: char| c.is_whitespace() || c == '>')
             .next()
             .unwrap()
@@ -650,24 +682,43 @@ mod tests {
         let second = content_hash(&ctx);
         assert_ne!(second, first, "a different fact with the same count");
         ctx.objective = "two".into();
-        assert_ne!(content_hash(&ctx), second, "a different objective with the same lists");
+        assert_ne!(
+            content_hash(&ctx),
+            second,
+            "a different objective with the same lists"
+        );
     }
 
     #[test]
     fn limits_accept_the_last_allowed_character_and_reject_the_next() {
         let max = "a".repeat(MAX_OBJECTIVE_CHARS);
-        assert_eq!(parse_objective(&json!({"objective": &max})).unwrap().as_deref(), Some(max.as_str()));
-        let err = parse_objective(&json!({"objective": "a".repeat(MAX_OBJECTIVE_CHARS + 1)})).unwrap_err();
+        assert_eq!(
+            parse_objective(&json!({"objective": &max}))
+                .unwrap()
+                .as_deref(),
+            Some(max.as_str())
+        );
+        let err = parse_objective(&json!({"objective": "a".repeat(MAX_OBJECTIVE_CHARS + 1)}))
+            .unwrap_err();
         assert!(err.contains("exceeds"), "{err}");
 
         let item = "b".repeat(MAX_ITEM_CHARS);
-        assert_eq!(parse_section(&json!({"facts": [&item]}), "facts").unwrap().unwrap(), vec![item]);
-        let err = parse_section(&json!({"facts": ["b".repeat(MAX_ITEM_CHARS + 1)]}), "facts").unwrap_err();
+        assert_eq!(
+            parse_section(&json!({"facts": [&item]}), "facts")
+                .unwrap()
+                .unwrap(),
+            vec![item]
+        );
+        let err = parse_section(&json!({"facts": ["b".repeat(MAX_ITEM_CHARS + 1)]}), "facts")
+            .unwrap_err();
         assert!(err.contains("exceeds"), "{err}");
     }
 
     fn tokens_of(fact: &str) -> i64 {
-        let ctx = WorkingContext { facts: vec![fact.to_string()], ..WorkingContext::default() };
+        let ctx = WorkingContext {
+            facts: vec![fact.to_string()],
+            ..WorkingContext::default()
+        };
         count_tokens(&render(&ctx, "fp-1")) as i64
     }
 
@@ -681,13 +732,21 @@ mod tests {
         if tokens_of(&fact) != WORKING_CONTEXT_TOKENS {
             fact.pop();
             let base = fact.clone();
-            fact = "abcdefghijklmnopqrstuvwxyz .,;:!?".chars().find_map(|c| {
-                let mut trial = base.clone();
-                trial.push(c);
-                (tokens_of(&trial) == WORKING_CONTEXT_TOKENS).then_some(trial)
-            }).unwrap_or_else(|| panic!("no one-character step lands on {WORKING_CONTEXT_TOKENS} tokens"));
+            fact = "abcdefghijklmnopqrstuvwxyz .,;:!?"
+                .chars()
+                .find_map(|c| {
+                    let mut trial = base.clone();
+                    trial.push(c);
+                    (tokens_of(&trial) == WORKING_CONTEXT_TOKENS).then_some(trial)
+                })
+                .unwrap_or_else(|| {
+                    panic!("no one-character step lands on {WORKING_CONTEXT_TOKENS} tokens")
+                });
         }
-        let ctx = WorkingContext { facts: vec![fact.clone()], ..WorkingContext::default() };
+        let ctx = WorkingContext {
+            facts: vec![fact.clone()],
+            ..WorkingContext::default()
+        };
         assert_eq!(tokens_of(&fact), WORKING_CONTEXT_TOKENS);
         ensure_fits(&ctx, "fp-1").expect("exactly the cap is allowed");
     }
@@ -708,17 +767,25 @@ mod tests {
     }
 
     async fn note(pool: &SqlitePool, root: &Path, chat: &str, fact: &str) {
-        apply_with(pool, root, chat, &json!({"action": "add", "facts": [fact]}), "fp-1", true)
-            .await
-            .unwrap();
+        apply_with(
+            pool,
+            root,
+            chat,
+            &json!({"action": "add", "facts": [fact]}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
     }
 
     async fn chats_in(pool: &SqlitePool, root: &Path) -> Vec<String> {
         let suffix = format!("\u{1f}{}", root.display());
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT scope FROM mcp_working_context ORDER BY scope")
-            .fetch_all(pool)
-            .await
-            .unwrap();
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT scope FROM mcp_working_context ORDER BY scope")
+                .fetch_all(pool)
+                .await
+                .unwrap();
         rows.into_iter()
             .filter_map(|(s,)| s.strip_suffix(&suffix).map(str::to_string))
             .collect()
@@ -739,46 +806,100 @@ mod tests {
             assert_eq!(session_nudge(turns, false), None, "turn {turns}");
         }
         let quiet = session_nudge(NUDGE_AFTER_TURNS + 1, false).expect("nudge after 5 quiet turns");
-        assert!(quiet.starts_with("<ax_session_nudge>") && quiet.ends_with("</ax_session_nudge>"), "{quiet}");
-        assert!(quiet.contains("ax_session") && quiet.contains("compact") && quiet.contains("5 turns"), "{quiet}");
+        assert!(
+            quiet.starts_with("<ax_session_nudge>") && quiet.ends_with("</ax_session_nudge>"),
+            "{quiet}"
+        );
+        assert!(
+            quiet.contains("ax_session") && quiet.contains("compact") && quiet.contains("5 turns"),
+            "{quiet}"
+        );
         let stale = session_nudge(1, true).expect("nudge for stale notes");
-        assert!(stale.contains("stale") && stale.contains("compact"), "{stale}");
+        assert!(
+            stale.contains("stale") && stale.contains("compact"),
+            "{stale}"
+        );
         assert_ne!(stale, quiet);
-        assert_eq!(session_nudge(NUDGE_AFTER_TURNS + 1, true), Some(stale), "stale wins over quiet");
+        assert_eq!(
+            session_nudge(NUDGE_AFTER_TURNS + 1, true),
+            Some(stale),
+            "stale wins over quiet"
+        );
     }
 
     #[tokio::test]
     async fn a_known_fresh_hash_gets_one_line_and_anything_else_the_full_block() {
         let (dir, pool) = pool().await;
-        assert_eq!(block_with(&pool, &dir, "chat-1", "fp-1", Some("abc")).await, "", "no notes, no block");
+        assert_eq!(
+            block_with(&pool, &dir, "chat-1", "fp-1", Some("abc")).await,
+            "",
+            "no notes, no block"
+        );
         note(&pool, &dir, "chat-1", "alpha returns u64").await;
         let full = block_with(&pool, &dir, "chat-1", "fp-1", None).await;
         let hash = hash_of(&full);
         assert!(full.contains("alpha returns u64"), "{full}");
 
         let short = block_with(&pool, &dir, "chat-1", "fp-1", Some(&hash)).await;
-        assert_eq!(short, format!("<ax_working_context hash={hash} unchanged/>"));
+        assert_eq!(
+            short,
+            format!("<ax_working_context hash={hash} unchanged/>")
+        );
 
         let other = block_with(&pool, &dir, "chat-1", "fp-1", Some("0000000000000000")).await;
         assert_eq!(other, full, "a different hash gets the full block");
         let stale = block_with(&pool, &dir, "chat-1", "fp-2", Some(&hash)).await;
-        assert!(stale.contains("stale=true") && stale.contains("alpha returns u64"), "stale notes are resent: {stale}");
+        assert!(
+            stale.contains("stale=true") && stale.contains("alpha returns u64"),
+            "stale notes are resent: {stale}"
+        );
         let cross = block_with(&pool, &dir, "chat-2", "fp-1", Some(&hash)).await;
-        assert_eq!(cross, "", "a hash from another chat does not reveal or confirm anything");
+        assert_eq!(
+            cross, "",
+            "a hash from another chat does not reveal or confirm anything"
+        );
     }
 
     #[tokio::test]
     async fn fork_copies_the_notes_and_handoff_starts_a_new_session_from_the_note() {
         let (dir, pool) = pool().await;
-        let err = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true).await.unwrap_err();
+        let err = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true)
+            .await
+            .unwrap_err();
         assert!(err.contains("nothing to fork"), "{err}");
         note(&pool, &dir, "parent", "kept on the parent").await;
-        let forked = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true).await.unwrap();
-        assert!(forked.starts_with("<ax_session_fork parent=parent child=axs_child>"), "{forked}");
+        let forked = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true)
+            .await
+            .unwrap();
+        assert!(
+            forked.starts_with("<ax_session_fork parent=parent child=axs_child>"),
+            "{forked}"
+        );
         assert!(forked.contains("kept on the parent"), "{forked}");
-        let parent = apply_with(&pool, &dir, "parent", &json!({"action": "get"}), "fp-1", true).await.unwrap();
-        assert!(parent.contains("kept on the parent"), "the parent stays: {parent}");
-        let child = apply_with(&pool, &dir, "axs_child", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        let parent = apply_with(
+            &pool,
+            &dir,
+            "parent",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(
+            parent.contains("kept on the parent"),
+            "the parent stays: {parent}"
+        );
+        let child = apply_with(
+            &pool,
+            &dir,
+            "axs_child",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
         assert_eq!(hash_of(&child), hash_of(&parent));
 
         let note = json!({
@@ -790,43 +911,113 @@ mod tests {
             "decisions": [],
             "open_questions": []
         });
-        let handed = handoff_with(&pool, &dir, "parent", "axs_next", &note, "fp-1", true).await.unwrap();
-        assert!(handed.starts_with("<ax_session_handoff parent=parent child=axs_next>"), "{handed}");
-        assert!(handed.contains("TokenValidator") && !handed.contains("kept on the parent"), "{handed}");
-        let parent_after = apply_with(&pool, &dir, "parent", &json!({"action": "get"}), "fp-1", true).await.unwrap();
-        assert!(parent_after.contains("kept on the parent"), "{parent_after}");
+        let handed = handoff_with(&pool, &dir, "parent", "axs_next", &note, "fp-1", true)
+            .await
+            .unwrap();
+        assert!(
+            handed.starts_with("<ax_session_handoff parent=parent child=axs_next>"),
+            "{handed}"
+        );
+        assert!(
+            handed.contains("TokenValidator") && !handed.contains("kept on the parent"),
+            "{handed}"
+        );
+        let parent_after = apply_with(
+            &pool,
+            &dir,
+            "parent",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(
+            parent_after.contains("kept on the parent"),
+            "{parent_after}"
+        );
         let empty = json!({"action": "handoff", "objective": "", "facts": [], "files": [], "symbols": [], "decisions": [], "open_questions": []});
-        let err = handoff_with(&pool, &dir, "parent", "axs_empty", &empty, "fp-1", true).await.unwrap_err();
+        let err = handoff_with(&pool, &dir, "parent", "axs_empty", &empty, "fp-1", true)
+            .await
+            .unwrap_err();
         assert!(err.contains("handoff needs a note"), "{err}");
-        let err = handoff_with(&pool, &dir, "parent", "axs_empty", &note, "", true).await.unwrap_err();
+        let err = handoff_with(&pool, &dir, "parent", "axs_empty", &note, "", true)
+            .await
+            .unwrap_err();
         assert!(err.contains("index unavailable"), "{err}");
-        let err = fork_with(&pool, &dir, "parent", "bad id", "fp-1", true).await.unwrap_err();
+        let err = fork_with(&pool, &dir, "parent", "bad id", "fp-1", true)
+            .await
+            .unwrap_err();
         assert!(err.contains("fork needs a new session id"), "{err}");
-        let from_empty = handoff_with(&pool, &dir, "nobody", "axs_from_empty", &note, "fp-1", true).await.unwrap();
+        let from_empty = handoff_with(&pool, &dir, "nobody", "axs_from_empty", &note, "fp-1", true)
+            .await
+            .unwrap();
         assert!(from_empty.contains("TokenValidator"), "{from_empty}");
-        let nobody = apply_with(&pool, &dir, "nobody", &json!({"action": "get"}), "fp-1", true).await.unwrap();
-        assert!(!nobody.contains("TokenValidator"), "an empty parent is not filled: {nobody}");
+        let nobody = apply_with(
+            &pool,
+            &dir,
+            "nobody",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !nobody.contains("TokenValidator"),
+            "an empty parent is not filled: {nobody}"
+        );
     }
 
     #[tokio::test]
     async fn writes_need_a_readable_index_and_leave_the_snapshot_unchanged() {
         let (dir, pool) = pool().await;
         note(&pool, &dir, "chat-1", "kept").await;
-        let before = apply_with(&pool, &dir, "chat-1", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        let before = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
         let writes = [
             json!({"action": "add", "facts": ["new"]}),
             json!({"action": "update", "facts": ["new"]}),
             json!({"action": "compact", "objective": "", "facts": ["new"], "files": [], "symbols": [], "decisions": [], "open_questions": []}),
         ];
         for request in writes {
-            let err = apply_with(&pool, &dir, "chat-1", &request, "", true).await.unwrap_err();
+            let err = apply_with(&pool, &dir, "chat-1", &request, "", true)
+                .await
+                .unwrap_err();
             assert!(err.contains("index unavailable"), "{err}");
         }
-        let after = apply_with(&pool, &dir, "chat-1", &json!({"action": "get"}), "fp-1", true).await.unwrap();
+        let after = apply_with(
+            &pool,
+            &dir,
+            "chat-1",
+            &json!({"action": "get"}),
+            "fp-1",
+            true,
+        )
+        .await
+        .unwrap();
         assert_eq!(after, before);
-        assert!(apply_with(&pool, &dir, "chat-1", &json!({"action": "get"}), "", true).await.unwrap().contains("kept"));
-        apply_with(&pool, &dir, "chat-1", &json!({"action": "clear"}), "", true).await.unwrap();
-        assert!(chats_in(&pool, &dir).await.is_empty(), "clear works without an index");
+        assert!(
+            apply_with(&pool, &dir, "chat-1", &json!({"action": "get"}), "", true)
+                .await
+                .unwrap()
+                .contains("kept")
+        );
+        apply_with(&pool, &dir, "chat-1", &json!({"action": "clear"}), "", true)
+            .await
+            .unwrap();
+        assert!(
+            chats_in(&pool, &dir).await.is_empty(),
+            "clear works without an index"
+        );
     }
 
     #[tokio::test]
@@ -847,7 +1038,10 @@ mod tests {
         assert_eq!(kept.len(), MAX_SNAPSHOTS);
         assert!(!kept.contains(&"chat-000".to_string()), "the oldest goes");
         assert!(kept.contains(&"chat-001".to_string()));
-        assert!(kept.contains(&"chat-new".to_string()), "the snapshot just written stays");
+        assert!(
+            kept.contains(&"chat-new".to_string()),
+            "the snapshot just written stays"
+        );
         assert_eq!(chats_in(&pool, &other).await, vec!["elsewhere".to_string()]);
     }
 
@@ -863,12 +1057,20 @@ mod tests {
             age(&pool, &dir, &chat, now - 5_000 + i as i64).await;
         }
         assert_eq!(chats_in(&pool, &dir).await.len(), MAX_SNAPSHOTS);
-        let forked = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true).await.unwrap();
+        let forked = fork_with(&pool, &dir, "parent", "axs_child", "fp-1", true)
+            .await
+            .unwrap();
         assert!(forked.contains("kept on the parent"), "{forked}");
         let kept = chats_in(&pool, &dir).await;
         assert_eq!(kept.len(), MAX_SNAPSHOTS, "{kept:?}");
-        assert!(kept.contains(&"parent".to_string()), "the parent stays: {kept:?}");
-        assert!(kept.contains(&"axs_child".to_string()), "the child stays: {kept:?}");
+        assert!(
+            kept.contains(&"parent".to_string()),
+            "the parent stays: {kept:?}"
+        );
+        assert!(
+            kept.contains(&"axs_child".to_string()),
+            "the child stays: {kept:?}"
+        );
     }
 
     #[tokio::test]
@@ -883,8 +1085,14 @@ mod tests {
         age(&pool, &other, "old-elsewhere", now - MAX_AGE_SECS - 60).await;
         age(&pool, &dir, "recent", now - MAX_AGE_SECS + 3_600).await;
         note(&pool, &dir, "writer", "x").await;
-        assert_eq!(chats_in(&pool, &dir).await, vec!["recent".to_string(), "writer".to_string()]);
-        assert!(chats_in(&pool, &other).await.is_empty(), "age-out is not limited to one project");
+        assert_eq!(
+            chats_in(&pool, &dir).await,
+            vec!["recent".to_string(), "writer".to_string()]
+        );
+        assert!(
+            chats_in(&pool, &other).await.is_empty(),
+            "age-out is not limited to one project"
+        );
     }
 
     #[tokio::test]
@@ -1200,8 +1408,15 @@ mod tests {
         let second = apply_with(&pool, &dir, "chat", &json!({"action": "get"}), "fp-1", true)
             .await
             .unwrap();
-        assert_eq!(hash_of(&second), hash, "prompt 2 must return the same snapshot: {second}");
-        assert!(second.contains("JWT validation is in JwtValidator"), "{second}");
+        assert_eq!(
+            hash_of(&second),
+            hash,
+            "prompt 2 must return the same snapshot: {second}"
+        );
+        assert!(
+            second.contains("JWT validation is in JwtValidator"),
+            "{second}"
+        );
         let third = apply_with(
             &pool,
             &dir,
@@ -1212,7 +1427,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(hash_of(&third), hash, "a repeated fact must not fork the snapshot: {third}");
+        assert_eq!(
+            hash_of(&third),
+            hash,
+            "a repeated fact must not fork the snapshot: {third}"
+        );
         let fourth = apply_with(
             &pool,
             &dir,
@@ -1224,13 +1443,19 @@ mod tests {
         .await
         .unwrap();
         assert_ne!(hash_of(&fourth), hash);
-        assert!(fourth.contains("JWT validation is in JwtValidator"), "{fourth}");
+        assert!(
+            fourth.contains("JWT validation is in JwtValidator"),
+            "{fourth}"
+        );
         assert!(fourth.contains("Do not change ClaimsMapper"), "{fourth}");
         let fifth = apply_with(&pool, &dir, "chat", &json!({"action": "get"}), "fp-2", true)
             .await
             .unwrap();
         assert_eq!(hash_of(&fifth), hash_of(&fourth), "{fifth}");
-        assert!(fifth.contains("stale=true"), "a new index marks the same notes stale: {fifth}");
+        assert!(
+            fifth.contains("stale=true"),
+            "a new index marks the same notes stale: {fifth}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

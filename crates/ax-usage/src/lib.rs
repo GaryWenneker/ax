@@ -2,13 +2,13 @@
 
 mod budget;
 mod cache_status;
+mod context_cache;
 mod context_plan;
 mod cost;
 mod cost_report;
-mod context_cache;
-mod durable;
 mod cursor_state;
 mod domain_log;
+mod durable;
 mod log_brand;
 mod mcp_audit;
 mod mcp_verbose_log;
@@ -17,18 +17,27 @@ mod pricing;
 mod pricing_fetch;
 mod pricing_sync;
 mod reuse_cache;
-mod working_context;
 mod savings;
 mod store;
 mod tokenizer;
+mod working_context;
 
-pub use period::{resolve_period, UsagePeriod};
 pub use budget::{
     banner, cycle_stats, daily_plan, display_amount, format_money, global_config_path, level_for,
     load_settings, monthly_budget_usd, parse_mode, parse_settings, price_band, project_budget,
     save_global_budget, simulate, working_schedule, BudgetDecision, BudgetLevel, BudgetMode,
     BudgetSectionPatch, BudgetSettings, BudgetSnapshot, Currency, CycleStats, DailyPlan, DaySpend,
     PriceBand, Simulation,
+};
+pub use cache_status::{
+    cache_group_key, format_cache_status_lines, format_context_store_line, load_cache_status,
+    CacheStatusSnapshot,
+};
+pub use context_cache::{
+    cache_enabled, cache_oversized_reply, expand_cached, format_catalog, format_session_ledger,
+    ingest_jsonl_oversized, note_session_event, recent_catalog, recent_session_catalog,
+    session_ledger, spawn_note_session_event, stash_text, tool_chunks_from_jsonl, CacheOutcome,
+    CatalogEntry, ExpandPage, StashReceipt,
 };
 pub use context_plan::{
     compare_snapshots, cycle_efficiency, efficiency, optional_room, select_context,
@@ -37,19 +46,8 @@ pub use context_plan::{
 };
 pub use cost::{calculate, Cost, CostComponent, CostConfidence, CostUsage};
 pub use cost_report::{
-    budget_check, build_report, collect_report, format_summary, load_events, quote_recorded,
-    today_iso, CostReport, RecordedUsage,
-};
-pub use pricing::{
-    input_cost_usd, invalidate_price_cache, price_as_of, price_for_cost, price_for_model,
-    price_for_model_with_source, pricing_config_path, pricing_info, reference_pricing,
-    reference_pricing_with_source, refresh_price_cache_from_db, ModelPricing, PricingInfo,
-};
-pub use pricing_fetch::{aa_api_key, SOURCE_ARTIFICIAL_ANALYSIS, SOURCE_CODING_AGENTS, SOURCE_OPENROUTER};
-pub use pricing_sync::{
-    ensure_daily_pricing_sync, list_coding_agents, list_latest_prices, price_history,
-    pricing_status, spawn_ensure_daily_pricing_sync, sync_pricing, CodingAgentRow,
-    PricingCatalogRow, PricingHistoryPoint, PricingStatus, PricingSyncReport, SourceSyncStatus,
+    budget_check, build_report, collect_report, color_cost_banner, format_summary, load_events,
+    quote_recorded, today_iso, CostReport, RecordedUsage,
 };
 pub use cursor_state::{
     active_cursor_session_path, cursor_state_vscdb_path, import_cursor_composer_state,
@@ -57,6 +55,12 @@ pub use cursor_state::{
     parse_composer_model_config, read_active_cursor_session, read_recent_cursor_session,
     write_active_cursor_session, ComposerStateRow,
 };
+pub use domain_log::{
+    log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,
+    log_share, log_ship, log_ship_ci, log_workspace,
+};
+pub use durable::{durable_apply, note_tool_if_open};
+pub use log_brand::{format_ax_mcp_trace, format_ax_tagged, AX_LOG_ICON};
 pub use mcp_audit::{
     audit_project, cursor_project_slug, find_cursor_transcripts, format_markdown_report,
     latest_snapshot_path, load_latest_snapshot, persist_snapshot, AuditOptions, EnrichmentMetrics,
@@ -68,10 +72,25 @@ pub use mcp_verbose_log::{
     previous_calendar_day, read_log_for_day, read_merged_verbose_log, read_ship_timezone,
     rotation_calendar_date, verbose_enabled, LEGACY_LOG_NAME,
 };
-pub use log_brand::{format_ax_mcp_trace, format_ax_tagged, AX_LOG_ICON};
-pub use domain_log::{
-    log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,
-    log_share, log_ship, log_ship_ci, log_workspace,
+pub use period::{resolve_period, UsagePeriod};
+pub use pricing::{
+    input_cost_usd, invalidate_price_cache, price_as_of, price_for_cost, price_for_model,
+    price_for_model_with_source, pricing_config_path, pricing_info, reference_pricing,
+    reference_pricing_with_source, refresh_price_cache_from_db, ModelPricing, PricingInfo,
+};
+pub use pricing_fetch::{
+    aa_api_key, SOURCE_ARTIFICIAL_ANALYSIS, SOURCE_CODING_AGENTS, SOURCE_OPENROUTER,
+};
+pub use pricing_sync::{
+    ensure_daily_pricing_sync, list_coding_agents, list_latest_prices, price_history,
+    pricing_status, spawn_ensure_daily_pricing_sync, sync_pricing, CodingAgentRow,
+    PricingCatalogRow, PricingHistoryPoint, PricingStatus, PricingSyncReport, SourceSyncStatus,
+};
+pub use reuse_cache::{
+    conversation_key, format_session_context, index_fingerprint, index_matches, render_hit,
+    reuse_cacheable, reuse_enabled, reuse_lookup, reuse_record_hit, reuse_session_entries,
+    reuse_store, session_from_args, ContextEntry, IndexHashes, ReuseCandidate, ReuseHit,
+    HOOK_SESSION_MAX_AGE, SESSION_CONTEXT_TOKENS,
 };
 pub use savings::{
     current_assumptions, estimate_savings, import_agent_logs, is_savings_eligible_tool,
@@ -81,29 +100,12 @@ pub use savings::{
     SavingsQuery, SavingsSummary, PREVIEW_MAX_BYTES,
 };
 pub use store::{open_pool, usage_db_path};
-pub use cache_status::{
-    cache_group_key, format_cache_status_lines, format_context_store_line, load_cache_status,
-    CacheStatusSnapshot,
-};
-pub use context_cache::{
-    cache_enabled, cache_oversized_reply, expand_cached, format_catalog, format_session_ledger,
-    ingest_jsonl_oversized, note_session_event, recent_catalog, recent_session_catalog,
-    session_ledger, spawn_note_session_event, stash_text, tool_chunks_from_jsonl,
-    CacheOutcome, CatalogEntry, ExpandPage, StashReceipt,
-};
-pub use reuse_cache::{
-    conversation_key, index_matches, render_hit, reuse_cacheable, reuse_enabled, reuse_lookup,
-    reuse_record_hit, reuse_session_entries, format_session_context, ContextEntry, reuse_store, IndexHashes, ReuseCandidate,
-    ReuseHit, SESSION_CONTEXT_TOKENS, index_fingerprint, session_from_args,
-    HOOK_SESSION_MAX_AGE,
-};
-pub use durable::{durable_apply, note_tool_if_open};
-pub use working_context::{
-    fork_working_context, handoff_working_context, session_nudge, working_context_apply, working_context_block,
-    NUDGE_AFTER_TURNS, WORKING_CONTEXT_TOKENS,
-};
 pub use tokenizer::{
     count_file_tokens, count_tokens, token_cache_status, tokenize_text, tokenizer_available,
     truncate_utf8, TokenCacheStatus, TokenizeResult, FILE_TOKEN_CACHE_CAPACITY,
     TOKENIZE_MAX_INPUT_BYTES, TOKENIZE_MAX_TOKENS,
+};
+pub use working_context::{
+    fork_working_context, handoff_working_context, session_nudge, working_context_apply,
+    working_context_block, NUDGE_AFTER_TURNS, WORKING_CONTEXT_TOKENS,
 };

@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use ax_usage::{collect_report, format_summary, SavingsQuery, UsagePeriod};
+use ax_usage::{
+    collect_report, color_cost_banner, format_summary, import_agent_logs, SavingsQuery, UsagePeriod,
+};
 
 pub async fn run(
     action: &str,
@@ -30,6 +32,7 @@ pub async fn run(
         return Err("custom period requires --from YYYY-MM-DD".into());
     }
     let query = SavingsQuery { period, from, to };
+    import_agent_logs(true, true).await?;
     let (report, snapshot, settings) = collect_report(&query, project).await?;
     if json {
         println!(
@@ -44,6 +47,17 @@ pub async fn run(
                 "decision": format!("{:?}", snapshot.decision),
                 "tokensAvoided": report.tokens_avoided,
                 "group": action,
+                "models": report
+                    .by_model
+                    .iter()
+                    .map(|row| serde_json::json!({ "label": row.label, "usd": row.usd }))
+                    .collect::<Vec<_>>(),
+                "agents": report
+                    .by_agent
+                    .iter()
+                    .map(|row| serde_json::json!({ "label": row.label, "usd": row.usd }))
+                    .collect::<Vec<_>>(),
+                "sessionSourced": report.session_sourced,
             })
         );
         return Ok(());
@@ -55,16 +69,21 @@ pub async fn run(
         "project" => "Projects".to_string(),
         _ => format!("{} to {}", query_label(&query), ""),
     };
-    let mut text = format_summary(&report, &snapshot, &settings, label.trim());
+    let mut text = color_cost_banner(
+        &format_summary(&report, &snapshot, &settings, label.trim()),
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+    );
     if action == "session" || action == "project" || action == "model" {
         text.push_str("\nBreakdown\n--------------------------------\n");
         let rows = if action == "project" {
             &report.by_project
+        } else if action == "session" {
+            &report.by_agent
         } else {
             &report.by_model
         };
         if action == "session" {
-            text.push_str("Session totals are the known event costs in this period.\n");
+            text.push_str("Agent totals for this period.\n");
         }
         for row in rows {
             text.push_str(&format!(
@@ -75,6 +94,64 @@ pub async fn run(
     }
     println!("{text}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+    use ax_usage::{collect_report, SavingsQuery, UsagePeriod};
+
+    #[tokio::test]
+    async fn run_imports_a_cursor_transcript_before_the_report() {
+        let home = tempfile::tempdir().unwrap();
+        let db = tempfile::NamedTempFile::new().unwrap();
+        let session = "sess-cost-import";
+        let dir = home
+            .path()
+            .join(".cursor/projects/demo/agent-transcripts")
+            .join(session);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{session}.jsonl")),
+            r#"{"role":"assistant","timestamp":"2026-10-05T08:00:00Z","message":{"model":"grok-4.7","usage":{"input_tokens":42,"output_tokens":7}}}"#,
+        )
+        .unwrap();
+
+        let prev_home = std::env::var_os("AX_HOME_DIR");
+        let prev_db = std::env::var_os("AX_USAGE_DB");
+        std::env::set_var("AX_HOME_DIR", home.path());
+        std::env::set_var("AX_USAGE_DB", db.path());
+
+        let ran = run("month", None, None, None, true, None).await;
+        let report = collect_report(
+            &SavingsQuery {
+                period: UsagePeriod::MonthToDate,
+                from: None,
+                to: None,
+            },
+            None,
+        )
+        .await;
+
+        match prev_home {
+            Some(value) => std::env::set_var("AX_HOME_DIR", value),
+            None => std::env::remove_var("AX_HOME_DIR"),
+        }
+        match prev_db {
+            Some(value) => std::env::set_var("AX_USAGE_DB", value),
+            None => std::env::remove_var("AX_USAGE_DB"),
+        }
+
+        ran.unwrap();
+        let (report, _, _) = report.unwrap();
+        assert!(
+            report.by_model.iter().any(|row| row.label == "grok-4.7"),
+            "models: {:?}",
+            report.by_model
+        );
+        assert_eq!(report.tokens.input, 42);
+        assert!(report.tokens.input_known);
+    }
 }
 
 fn query_label(query: &SavingsQuery) -> String {

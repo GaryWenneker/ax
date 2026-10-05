@@ -135,12 +135,7 @@ pub fn parse_openrouter_models(body: &Value) -> Vec<FetchedPrice> {
         else {
             continue;
         };
-        let provider = m
-            .id
-            .split('/')
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let provider = m.id.split('/').next().unwrap_or("").to_string();
         let cache_read = pricing
             .input_cache_read
             .as_deref()
@@ -279,10 +274,7 @@ pub fn parse_aa_models(body: &Value) -> (Vec<FetchedPrice>, Vec<FetchedBenchmark
         );
         let median_output_tps = f64_field(
             &row,
-            &[
-                "median_output_tokens_per_second",
-                "median_output_tps",
-            ],
+            &["median_output_tokens_per_second", "median_output_tps"],
         )
         .or_else(|| {
             row.get("performance")
@@ -290,10 +282,7 @@ pub fn parse_aa_models(body: &Value) -> (Vec<FetchedPrice>, Vec<FetchedBenchmark
         });
         let median_ttft = f64_field(
             &row,
-            &[
-                "median_time_to_first_token_seconds",
-                "median_ttft_seconds",
-            ],
+            &["median_time_to_first_token_seconds", "median_ttft_seconds"],
         )
         .or_else(|| {
             row.get("performance")
@@ -324,11 +313,8 @@ pub fn parse_coding_agents(body: &Value) -> Vec<FetchedCodingAgent> {
         .unwrap_or_default();
     let mut out = Vec::new();
     for row in rows {
-        let agent = str_field(
-            &row,
-            &["agent", "agent_name", "name", "harness", "slug"],
-        )
-        .unwrap_or_default();
+        let agent = str_field(&row, &["agent", "agent_name", "name", "harness", "slug"])
+            .unwrap_or_default();
         if agent.is_empty() {
             continue;
         }
@@ -348,10 +334,7 @@ pub fn parse_coding_agents(body: &Value) -> Vec<FetchedCodingAgent> {
             ),
             cost_per_task: f64_field(&row, &["cost_per_task", "avg_cost_per_task", "cost"]),
             time_per_task: f64_field(&row, &["time_per_task", "avg_time_per_task", "time"]),
-            tokens_per_task: f64_field(
-                &row,
-                &["tokens_per_task", "avg_tokens_per_task", "tokens"],
-            ),
+            tokens_per_task: f64_field(&row, &["tokens_per_task", "avg_tokens_per_task", "tokens"]),
             raw_json: serde_json::to_string(&row).ok(),
         });
     }

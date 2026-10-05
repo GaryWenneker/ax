@@ -52,7 +52,9 @@ pub fn path_for_date(ax_dir: &Path, day: NaiveDate) -> PathBuf {
 }
 
 pub fn parse_log_day_from_filename(name: &str) -> Option<NaiveDate> {
-    let stem = name.strip_prefix(DATED_LOG_PREFIX)?.strip_suffix(DATED_LOG_SUFFIX)?;
+    let stem = name
+        .strip_prefix(DATED_LOG_PREFIX)?
+        .strip_suffix(DATED_LOG_SUFFIX)?;
     NaiveDate::parse_from_str(stem, "%Y-%m-%d").ok()
 }
 
@@ -92,11 +94,7 @@ pub fn append_verbose_log(lines: &[String], project_root: Option<&Path>) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let Ok(mut f) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    else {
+    let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
         return;
     };
     let ts = iso_timestamp_utc();
@@ -247,7 +245,9 @@ fn parse_line_timestamp(line: &str) -> Option<DateTime<Utc>> {
             } else {
                 return None;
             };
-            DateTime::parse_from_rfc3339(&z).ok().map(|dt| dt.with_timezone(&Utc))
+            DateTime::parse_from_rfc3339(&z)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
         })
 }
 
@@ -336,7 +336,11 @@ mod tests {
         let dir = tempfile_dir();
         let ax = dir.join(".ax");
         fs::create_dir_all(&ax).unwrap();
-        fs::write(ax.join(LEGACY_LOG_NAME), "2026-07-20T10:00:00.000Z [ax-mcp] test\n").unwrap();
+        fs::write(
+            ax.join(LEGACY_LOG_NAME),
+            "2026-07-20T10:00:00.000Z [ax-mcp] test\n",
+        )
+        .unwrap();
         migrate_legacy_log(Some(&dir)).unwrap();
         assert!(!ax.join(LEGACY_LOG_NAME).exists());
         assert!(ax.join("mcp-verbose-2026-07-20.log").exists());

@@ -5,10 +5,13 @@ import '@uiw/react-md-editor/markdown-editor.css';
 import '@uiw/react-markdown-preview/markdown.css';
 import './index.css';
 import './agent-terminal.css';
+import './greenVesselIntro.css';
 import App from './App';
 import { installContextMenuGuard } from './lib/contextMenuGuard';
+import { startGreenVesselIntro, startWebAudioChime } from './greenVesselIntro';
 
 installContextMenuGuard();
+startGreenVesselIntro(document, () => startWebAudioChime());
 
 const root = document.getElementById('root');
 if (root) {

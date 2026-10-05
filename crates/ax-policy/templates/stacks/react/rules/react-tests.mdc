@@ -1,0 +1,19 @@
+---
+id: react-tests
+level: WARNING
+alwaysApply: false
+globs: ["**/*.test.tsx", "**/*.test.ts", "**/*.spec.tsx"]
+triggers: ["react", "test", "testing library", "component test"]
+tags: ["react", "testing"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Component tests
+
+Write component tests in three labeled phases: arrange, act, assert. Render is arrange. Each test protects something a caller can observe: a public part renders, a handler fires, a disabled or loading state blocks the handler, native attributes and refs pass through, and a part used outside its root fails clearly.
+
+Prefer accessible queries over selectors. Do not snapshot the component, assert on class names, read private state, or add a test id when a role, label, or text query works. Each test builds its own state. When a thrown error is expected, silence the console in arrange and restore it in assert.

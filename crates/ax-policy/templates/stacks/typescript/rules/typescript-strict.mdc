@@ -1,0 +1,17 @@
+---
+id: typescript-strict
+level: WARNING
+alwaysApply: false
+globs: ["**/*.ts", "**/*.tsx", "**/tsconfig*.json"]
+triggers: ["typescript", "tsconfig", "strict", "type error"]
+tags: ["typescript"]
+priority: 80
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# TypeScript strictness
+
+Keep `"strict": true`. Do not loosen other compiler flags unless the user asks. The type checker must exit 0 before the work is reported done. Validate data from outside the typed boundary (third-party responses, request input, environment) with a schema or a type guard before trusting it.

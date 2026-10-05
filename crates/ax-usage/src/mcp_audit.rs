@@ -275,9 +275,7 @@ fn extract_kv(body: &str, key: &str) -> Option<String> {
         // JSON payload — take until matching close is hard; grab rest of line.
         return Some(rest.to_string());
     }
-    let end = rest
-        .find(|c: char| c.is_whitespace())
-        .unwrap_or(rest.len());
+    let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
     Some(rest[..end].to_string())
 }
 
@@ -444,10 +442,7 @@ fn classify_cursor_tool_event(name: &str, input: &Value) -> TranscriptEvent {
         }
     } else if name.starts_with("ax_") || name.starts_with("mcp__ax__") {
         ev.kind = TranscriptKind::AxTool;
-        let tool = name
-            .strip_prefix("mcp__ax__")
-            .unwrap_or(name)
-            .to_string();
+        let tool = name.strip_prefix("mcp__ax__").unwrap_or(name).to_string();
         ev.ax_tool = Some(tool.clone());
         ev.name = tool;
     }
@@ -547,7 +542,11 @@ fn find_transcripts_fallback(projects: &Path, slug: &str) -> Vec<PathBuf> {
         return Vec::new();
     }
     let mut best: Vec<PathBuf> = Vec::new();
-    for entry in WalkDir::new(projects).max_depth(1).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(projects)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if !entry.file_type().is_dir() {
             continue;
         }
@@ -574,7 +573,10 @@ fn collect_transcripts(dir: &Path) -> Vec<PathBuf> {
                 && !s.contains("subagents")
                 && p.extension().and_then(|x| x.to_str()) == Some("jsonl")
                 && {
-                    let parent = p.parent().and_then(|x| x.file_name()).and_then(|n| n.to_str());
+                    let parent = p
+                        .parent()
+                        .and_then(|x| x.file_name())
+                        .and_then(|n| n.to_str());
                     let stem = p.file_stem().and_then(|n| n.to_str());
                     parent.is_some() && parent == stem
                 }
@@ -848,7 +850,11 @@ fn score_and_findings(
     score_mode: ScoreMode,
     domain_blob: &str,
 ) -> (u8, Vec<Finding>, i64) {
-    let ScoreMode { mode, verbose_present, verbose_enabled } = score_mode;
+    let ScoreMode {
+        mode,
+        verbose_present,
+        verbose_enabled,
+    } = score_mode;
     let mut findings = Vec::new();
     let mut score: i32 = 100;
     let mut tokens_at_risk: i64 = 0;
@@ -878,8 +884,7 @@ fn score_and_findings(
         let non_preflight_inbound = enrichment
             .inbound_count
             .saturating_sub(enrichment.preflight_count);
-        let ratio = enrichment.preflight_count as f64
-            / enrichment.inbound_count.max(1) as f64;
+        let ratio = enrichment.preflight_count as f64 / enrichment.inbound_count.max(1) as f64;
         if ratio > 0.85 && non_preflight_inbound < 2 {
             score -= 5;
             findings.push(Finding {
@@ -1048,9 +1053,14 @@ fn score_and_findings(
     }
 
     // LspAvailableUnused — only when MCP is active (not domain-only noise)
-    let lsp_on_path = ["rust-analyzer", "typescript-language-server", "pyright-langserver", "gopls"]
-        .iter()
-        .any(|bin| command_on_path(bin));
+    let lsp_on_path = [
+        "rust-analyzer",
+        "typescript-language-server",
+        "pyright-langserver",
+        "gopls",
+    ]
+    .iter()
+    .any(|bin| command_on_path(bin));
     if lsp_on_path && enrichment.inbound_count > 0 && !joined.contains("lsp enrich") {
         score -= 5;
         findings.push(Finding {
@@ -1219,14 +1229,12 @@ fn score_and_findings(
                 truncate_hint(&msg, 120)
             })
             .collect();
-        let hint = error_clusters
-            .first()
-            .and_then(|c| {
-                c.lines
-                    .iter()
-                    .find(|l| l.starts_with("error ") || l.contains(" error "))
-                    .cloned()
-            });
+        let hint = error_clusters.first().and_then(|c| {
+            c.lines
+                .iter()
+                .find(|l| l.starts_with("error ") || l.contains(" error "))
+                .cloned()
+        });
         findings.push(Finding {
             id: "mcp-errors".into(),
             check: "VerboseGap".into(),
@@ -1482,13 +1490,14 @@ pub fn audit_project(project_root: &Path, opts: &AuditOptions) -> Result<Quality
         &mix,
         &enrichment,
         correlation_pct,
-        ScoreMode { mode, verbose_present, verbose_enabled },
+        ScoreMode {
+            mode,
+            verbose_present,
+            verbose_enabled,
+        },
         &domain_blob,
     );
-    let critical_count = findings
-        .iter()
-        .filter(|f| f.severity == "critical")
-        .count();
+    let critical_count = findings.iter().filter(|f| f.severity == "critical").count();
 
     let snap = QualitySnapshot {
         project_root: project_root.display().to_string(),
@@ -1537,10 +1546,7 @@ pub fn load_latest_snapshot(project_root: &Path) -> Option<QualitySnapshot> {
 /// Markdown report for CLI / deep-dive.
 pub fn format_markdown_report(snap: &QualitySnapshot) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "# MCP quality audit — {}\n\n",
-        snap.project_label
-    ));
+    out.push_str(&format!("# MCP quality audit — {}\n\n", snap.project_label));
     out.push_str(&format!(
         "**Score:** {} ({}) · **Mode:** {} · **Window:** {}m\n\n",
         snap.score, snap.grade, snap.mode, snap.window_minutes
@@ -1621,8 +1627,19 @@ mod tests {
         let (_l, clusters) = parse_verbose_log(text, 0);
         let mix = tool_mix_from(&clusters, &[]);
         let enrichment = enrichment_from(&clusters);
-        let (score, findings, _) =
-            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, ScoreMode { mode: "verbose_only", verbose_present: true, verbose_enabled: true },  "");
+        let (score, findings, _) = score_and_findings(
+            &clusters,
+            &[],
+            &mix,
+            &enrichment,
+            100.0,
+            ScoreMode {
+                mode: "verbose_only",
+                verbose_present: true,
+                verbose_enabled: true,
+            },
+            "",
+        );
         assert!(score < 100);
         assert!(findings.iter().any(|f| f.check == "PreflightOnce"));
     }
@@ -1676,7 +1693,11 @@ mod tests {
             mix,
             &EnrichmentMetrics::default(),
             100.0,
-            ScoreMode { mode: "verbose_only", verbose_present: true, verbose_enabled: true },
+            ScoreMode {
+                mode: "verbose_only",
+                verbose_present: true,
+                verbose_enabled: true,
+            },
             "",
         );
         findings.iter().any(|f| f.check == "GuardBeforeWrite")
@@ -1684,19 +1705,32 @@ mod tests {
 
     #[test]
     fn read_only_traffic_skips_guard_before_write() {
-        let mix = ToolMix { explore: 5, graph: 12, ..ToolMix::default() };
+        let mix = ToolMix {
+            explore: 5,
+            graph: 12,
+            ..ToolMix::default()
+        };
         assert!(!guard_findings(&mix));
     }
 
     #[test]
     fn writes_without_guard_flag_guard_before_write() {
-        let mix = ToolMix { graph: 1, write: 2, ..ToolMix::default() };
+        let mix = ToolMix {
+            graph: 1,
+            write: 2,
+            ..ToolMix::default()
+        };
         assert!(guard_findings(&mix));
     }
 
     #[test]
     fn writes_with_guard_skip_guard_before_write() {
-        let mix = ToolMix { graph: 12, write: 2, guard: 1, ..ToolMix::default() };
+        let mix = ToolMix {
+            graph: 12,
+            write: 2,
+            guard: 1,
+            ..ToolMix::default()
+        };
         assert!(!guard_findings(&mix));
     }
 
@@ -1733,8 +1767,19 @@ mod tests {
         let (_l, clusters) = parse_verbose_log(text, 0);
         let mix = tool_mix_from(&clusters, &[]);
         let enrichment = enrichment_from(&clusters);
-        let (_score, findings, _) =
-            score_and_findings(&clusters, &[], &mix, &enrichment, 100.0, ScoreMode { mode: "verbose_only", verbose_present: true, verbose_enabled: true },  "");
+        let (_score, findings, _) = score_and_findings(
+            &clusters,
+            &[],
+            &mix,
+            &enrichment,
+            100.0,
+            ScoreMode {
+                mode: "verbose_only",
+                verbose_present: true,
+                verbose_enabled: true,
+            },
+            "",
+        );
         assert!(
             !findings.iter().any(|f| f.id == "mcp-errors"),
             "recovered ax_guard error should not create VerboseGap finding"
@@ -1753,10 +1798,8 @@ mod tests {
 
     #[test]
     fn carry_forward_embed_ts_filters_old_events() {
-        let path = std::env::temp_dir().join(format!(
-            "ax-mcp-audit-embed-{}.jsonl",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("ax-mcp-audit-embed-{}.jsonl", std::process::id()));
         let body = r#"{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Tuesday, Jul 21, 2026, 7:31 PM (UTC+2)</timestamp>"}]}}
 {"role":"assistant","message":{"content":[{"type":"tool_use","name":"CallDynamicTool","input":{"namespace":"user-ax","toolName":"ax_preflight","arguments":{"prompt":"x"}}}]}}
 "#;
@@ -1792,8 +1835,11 @@ mod tests {
             &mix,
             &enrichment,
             0.0,
-            ScoreMode { mode: "transcript_linked", verbose_present: true, verbose_enabled: false },
-            
+            ScoreMode {
+                mode: "transcript_linked",
+                verbose_present: true,
+                verbose_enabled: false,
+            },
             "",
         );
         let f = findings
@@ -1820,11 +1866,17 @@ mod tests {
             &mix,
             &enrichment,
             0.0,
-            ScoreMode { mode: "transcript_linked", verbose_present: true, verbose_enabled: true },
-            
+            ScoreMode {
+                mode: "transcript_linked",
+                verbose_present: true,
+                verbose_enabled: true,
+            },
             "",
         );
-        assert_eq!(score, 100, "verbose-enabled idle MCP must not penalize score");
+        assert_eq!(
+            score, 100,
+            "verbose-enabled idle MCP must not penalize score"
+        );
         let f = findings
             .iter()
             .find(|f| f.id == "uncorrelated-tool")
@@ -1838,7 +1890,11 @@ mod tests {
 2026-07-26T13:02:14.805Z [ax] workspace switch path=C:\\gary\\ax\n\
 2026-07-26T13:02:15.000Z [ax] lsp enrich start limit=200\n";
         let (lines, clusters) = parse_verbose_log(text, 0);
-        assert_eq!(clusters.len(), 0, "domain lines must not create MCP clusters");
+        assert_eq!(
+            clusters.len(),
+            0,
+            "domain lines must not create MCP clusters"
+        );
         let blob = domain_blob_from(&lines);
         assert!(blob.contains("lsp enrich"));
         assert!(blob.contains("workspace switch"));
@@ -1879,8 +1935,11 @@ mod tests {
             &mix,
             &enrichment,
             0.0,
-            ScoreMode { mode: "transcript_linked", verbose_present: true, verbose_enabled: true },
-            
+            ScoreMode {
+                mode: "transcript_linked",
+                verbose_present: true,
+                verbose_enabled: true,
+            },
             "[ax] workspace switch path=x",
         );
         assert!(

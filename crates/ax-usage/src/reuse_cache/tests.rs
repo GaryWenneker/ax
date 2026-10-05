@@ -35,13 +35,23 @@ impl Fixture {
     }
 
     fn set_index(&self, path: &str, hash: &str) {
-        self.index.lock().unwrap().insert(path.to_string(), hash.to_string());
+        self.index
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), hash.to_string());
     }
 
     async fn store(&self, conv: &str, tool: &str, args: &Value, body: &str) -> Option<String> {
-        store_reply(&self.pool, self.root(), conv, Reply { tool, args, body }, &self.index(), 2_000_000)
-            .await
-            .unwrap()
+        store_reply(
+            &self.pool,
+            self.root(),
+            conv,
+            Reply { tool, args, body },
+            &self.index(),
+            2_000_000,
+        )
+        .await
+        .unwrap()
     }
 
     async fn lookup(&self, conv: &str, tool: &str, args: &Value) -> Option<ReuseHit> {
@@ -61,11 +71,15 @@ impl Drop for Fixture {
 }
 
 fn index_of(paths: &[&str], hash: &str) -> IndexHashes {
-    paths.iter().map(|p| (p.to_string(), hash.to_string())).collect()
+    paths
+        .iter()
+        .map(|p| (p.to_string(), hash.to_string()))
+        .collect()
 }
 
 fn node_body() -> String {
-    "# Node: alpha\n## Entry 1: src/lib.rs::alpha (Function) — src/lib.rs:1-1\n1\tfn alpha() {}\n".repeat(20)
+    "# Node: alpha\n## Entry 1: src/lib.rs::alpha (Function) — src/lib.rs:1-1\n1\tfn alpha() {}\n"
+        .repeat(20)
 }
 
 fn args() -> Value {
@@ -77,14 +91,31 @@ fn args() -> Value {
 #[test]
 fn cacheable_tools_are_the_read_only_graph_tools() {
     for tool in [
-        "ax_explore", "ax_search", "ax_node", "ax_callers", "ax_callees", "ax_impact", "ax_path",
-        "ax_affected", "ax_context",
+        "ax_explore",
+        "ax_search",
+        "ax_node",
+        "ax_callers",
+        "ax_callees",
+        "ax_impact",
+        "ax_path",
+        "ax_affected",
+        "ax_context",
     ] {
         assert!(reuse_cacheable(tool), "{tool} should be cacheable");
     }
     for tool in [
-        "ax_preflight", "ax_guard", "ax_sync", "ax_remember", "ax_policy_capture", "ax_expand",
-        "ax_stash", "ax_rules", "ax_skill", "ax_index", "ax_session", "unknown",
+        "ax_preflight",
+        "ax_guard",
+        "ax_sync",
+        "ax_remember",
+        "ax_policy_capture",
+        "ax_expand",
+        "ax_stash",
+        "ax_rules",
+        "ax_skill",
+        "ax_index",
+        "ax_session",
+        "unknown",
     ] {
         assert!(!reuse_cacheable(tool), "{tool} must never be cached");
     }
@@ -93,10 +124,17 @@ fn cacheable_tools_are_the_read_only_graph_tools() {
 #[test]
 fn key_ignores_key_order_whitespace_and_fresh() {
     let a: Value = serde_json::from_str(r#"{"symbol":"x","file":"a.rs","depth":2}"#).unwrap();
-    let b: Value = serde_json::from_str("{ \"depth\" : 2,\n \"file\":\"a.rs\", \"symbol\":\"x\" }").unwrap();
+    let b: Value =
+        serde_json::from_str("{ \"depth\" : 2,\n \"file\":\"a.rs\", \"symbol\":\"x\" }").unwrap();
     let c = json!({"symbol":"x","file":"a.rs","depth":2,"fresh":true});
-    assert_eq!(reuse_key("c1", "ax_node", &a), reuse_key("c1", "ax_node", &b));
-    assert_eq!(reuse_key("c1", "ax_node", &a), reuse_key("c1", "ax_node", &c));
+    assert_eq!(
+        reuse_key("c1", "ax_node", &a),
+        reuse_key("c1", "ax_node", &b)
+    );
+    assert_eq!(
+        reuse_key("c1", "ax_node", &a),
+        reuse_key("c1", "ax_node", &c)
+    );
     assert!(!reuse_key("c1", "ax_node", &a).is_empty());
 }
 
@@ -107,7 +145,10 @@ fn key_differs_for_conversation_tool_and_any_argument() {
     assert_ne!(base, reuse_key("c2", "ax_node", &a));
     assert_ne!(base, reuse_key("c1", "ax_search", &a));
     assert_ne!(base, reuse_key("c1", "ax_node", &json!({"symbol":"y"})));
-    assert_ne!(base, reuse_key("c1", "ax_node", &json!({"symbol":"x","limit":5})));
+    assert_ne!(
+        base,
+        reuse_key("c1", "ax_node", &json!({"symbol":"x","limit":5}))
+    );
     assert_ne!(base, reuse_key("c1", "ax_node", &json!({"symbol":["x"]})));
     assert_ne!(
         reuse_key("c1", "ax_node", &json!({"q":"1"})),
@@ -121,7 +162,10 @@ fn key_differs_for_conversation_tool_and_any_argument() {
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0 >> 33
     }
     fn value(&mut self, depth: u32) -> Value {
@@ -130,7 +174,11 @@ impl Lcg {
             1 => json!(format!("s{}", self.next() % 5)),
             2 => json!(self.next().is_multiple_of(2)),
             3 => Value::Null,
-            4 => Value::Array((0..self.next() % 3).map(|_| self.value(depth + 1)).collect()),
+            4 => Value::Array(
+                (0..self.next() % 3)
+                    .map(|_| self.value(depth + 1))
+                    .collect(),
+            ),
             _ => {
                 let mut m = serde_json::Map::new();
                 for _ in 0..self.next() % 4 {
@@ -174,7 +222,11 @@ fn property_key_equal_exactly_when_canonical_equal() {
             assert_eq!(same_canon, same_key, "{a} vs {b}");
             let a_no_fresh = strip_fresh(a);
             let b_no_fresh = strip_fresh(b);
-            assert_eq!(same_canon, a_no_fresh == b_no_fresh, "canonical form lost information: {a} vs {b}");
+            assert_eq!(
+                same_canon,
+                a_no_fresh == b_no_fresh,
+                "canonical form lost information: {a} vs {b}"
+            );
         }
     }
 }
@@ -207,9 +259,15 @@ fn cited_files_finds_existing_paths_only() {
                 - missing/nope.rs::gamma @ missing/nope.rs:1-2\n\
                 (`src/lib.rs:7`) and 12:30 and http://x.io:80";
     let files = cited_files(body, &dir);
-    assert_eq!(files, vec!["src/b.rs".to_string(), "src/lib.rs".to_string()]);
+    assert_eq!(
+        files,
+        vec!["src/b.rs".to_string(), "src/lib.rs".to_string()]
+    );
     assert!(cited_files("no paths here", &dir).is_empty());
-    assert!(cited_files("../../etc/passwd:1", &dir).is_empty(), "paths escaping the root are ignored");
+    assert!(
+        cited_files("../../etc/passwd:1", &dir).is_empty(),
+        "paths escaping the root are ignored"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -229,7 +287,11 @@ fn hit_text_is_short_and_names_the_id_and_turn() {
     assert!(text.contains("original_tokens=4000"));
     assert!(text.contains("ax_expand"));
     assert!(text.contains("fresh: true"));
-    assert!(count_tokens(&text) < 100, "hit text costs {} tokens", count_tokens(&text));
+    assert!(
+        count_tokens(&text) < 100,
+        "hit text costs {} tokens",
+        count_tokens(&text)
+    );
 }
 
 #[test]
@@ -245,7 +307,11 @@ fn session_context_lists_entries_within_cap() {
     let text = format_session_context(&entries, 1_500);
     assert!(text.starts_with("<ax_session_context"), "{text}");
     assert!(text.trim_end().ends_with("</ax_session_context>"));
-    assert!(count_tokens(&text) <= 1_500, "{} tokens", count_tokens(&text));
+    assert!(
+        count_tokens(&text) <= 1_500,
+        "{} tokens",
+        count_tokens(&text)
+    );
     assert!(text.contains("cc_0000"));
     assert!(text.contains("src/f0.rs"));
     let lines = text.lines().filter(|l| l.starts_with("- ")).count();
@@ -273,7 +339,10 @@ fn cap_defaults_to_two_megabytes() {
 async fn store_then_lookup_hits_and_expand_returns_the_body() {
     let f = Fixture::new().await;
     let body = node_body();
-    let id = f.store("c1", "ax_node", &args(), &body).await.expect("stored");
+    let id = f
+        .store("c1", "ax_node", &args(), &body)
+        .await
+        .expect("stored");
     let hit = f.lookup("c1", "ax_node", &args()).await.expect("hit");
     assert_eq!(hit.id, id);
     assert_eq!(hit.original_tokens, count_tokens(&body) as i64);
@@ -284,7 +353,9 @@ async fn store_then_lookup_hits_and_expand_returns_the_body() {
 #[tokio::test]
 async fn other_conversation_misses() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     assert!(f.lookup("c2", "ax_node", &args()).await.is_none());
 }
 
@@ -292,26 +363,52 @@ async fn other_conversation_misses() {
 async fn same_call_in_another_project_misses_even_with_identical_files() {
     let a = Fixture::new().await;
     let b = Fixture::new().await;
-    a.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
-    assert!(lookup(&a.pool, b.root(), "c1", "ax_node", &args()).await.is_none());
-    assert!(session_context(&a.pool, b.root(), "c1", 1_500, &b.index()).await.is_none());
-    b.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
-    assert!(a.lookup("c1", "ax_node", &args()).await.is_some(), "b must not evict a");
+    a.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
+    assert!(lookup(&a.pool, b.root(), "c1", "ax_node", &args())
+        .await
+        .is_none());
+    assert!(session_context(&a.pool, b.root(), "c1", 1_500, &b.index())
+        .await
+        .is_none());
+    b.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
+    assert!(
+        a.lookup("c1", "ax_node", &args()).await.is_some(),
+        "b must not evict a"
+    );
 }
 
 #[tokio::test]
 async fn different_args_or_tool_miss() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
-    assert!(f.lookup("c1", "ax_node", &json!({"symbol":"beta"})).await.is_none());
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
+    assert!(f
+        .lookup("c1", "ax_node", &json!({"symbol":"beta"}))
+        .await
+        .is_none());
     assert!(f.lookup("c1", "ax_callers", &args()).await.is_none());
 }
 
 #[tokio::test]
 async fn exempt_tools_are_never_stored() {
     let f = Fixture::new().await;
-    for tool in ["ax_preflight", "ax_guard", "ax_sync", "ax_remember", "ax_policy_capture", "ax_expand"] {
-        assert!(f.store("c1", tool, &args(), &node_body()).await.is_none(), "{tool} was stored");
+    for tool in [
+        "ax_preflight",
+        "ax_guard",
+        "ax_sync",
+        "ax_remember",
+        "ax_policy_capture",
+        "ax_expand",
+    ] {
+        assert!(
+            f.store("c1", tool, &args(), &node_body()).await.is_none(),
+            "{tool} was stored"
+        );
         assert!(f.lookup("c1", tool, &args()).await.is_none());
     }
 }
@@ -319,7 +416,9 @@ async fn exempt_tools_are_never_stored() {
 #[tokio::test]
 async fn fresh_skips_lookup() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     let mut fresh = args();
     fresh["fresh"] = json!(true);
     assert!(f.lookup("c1", "ax_node", &fresh).await.is_none());
@@ -328,7 +427,10 @@ async fn fresh_skips_lookup() {
 #[tokio::test]
 async fn reply_without_cited_files_is_not_cached() {
     let f = Fixture::new().await;
-    assert!(f.store("c1", "ax_search", &args(), "no results").await.is_none());
+    assert!(f
+        .store("c1", "ax_search", &args(), "no results")
+        .await
+        .is_none());
     assert!(f.lookup("c1", "ax_search", &args()).await.is_none());
 }
 
@@ -345,14 +447,18 @@ async fn turn_counts_preflights_of_the_conversation() {
         .await
         .unwrap();
     }
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     assert_eq!(f.lookup("c1", "ax_node", &args()).await.unwrap().turn, 2);
 }
 
 #[tokio::test]
 async fn record_hit_accumulates_tokens_avoided() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     let hit = f.lookup("c1", "ax_node", &args()).await.unwrap();
     record_hit(&f.pool, &hit.key, 100).await.unwrap();
     record_hit(&f.pool, &hit.key, 50).await.unwrap();
@@ -370,7 +476,9 @@ async fn record_hit_accumulates_tokens_avoided() {
 #[tokio::test]
 async fn edited_file_invalidates_without_sync() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     std::fs::write(f.root().join("src/lib.rs"), "fn alpha() { changed() }\n").unwrap();
     assert!(f.lookup("c1", "ax_node", &args()).await.is_none());
 }
@@ -378,7 +486,9 @@ async fn edited_file_invalidates_without_sync() {
 #[tokio::test]
 async fn touch_without_content_change_still_hits() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
     std::fs::write(f.root().join("src/lib.rs"), "fn alpha() {}\n").unwrap();
     assert!(f.lookup("c1", "ax_node", &args()).await.is_some());
@@ -387,7 +497,9 @@ async fn touch_without_content_change_still_hits() {
 #[tokio::test]
 async fn deleted_file_invalidates() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     std::fs::remove_file(f.root().join("src/lib.rs")).unwrap();
     assert!(f.lookup("c1", "ax_node", &args()).await.is_none());
 }
@@ -395,7 +507,9 @@ async fn deleted_file_invalidates() {
 #[tokio::test]
 async fn edit_to_an_uncited_file_keeps_the_hit() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     std::fs::write(f.root().join("src/other.rs"), "fn beta() { changed() }\n").unwrap();
     assert!(f.lookup("c1", "ax_node", &args()).await.is_some());
 }
@@ -403,7 +517,10 @@ async fn edit_to_an_uncited_file_keeps_the_hit() {
 #[tokio::test]
 async fn restore_after_miss_stores_the_new_body() {
     let f = Fixture::new().await;
-    let old = f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    let old = f
+        .store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     std::fs::write(f.root().join("src/lib.rs"), "fn alpha() { v2() }\n").unwrap();
     assert!(f.lookup("c1", "ax_node", &args()).await.is_none());
     let new_body = format!("{}v2\n", node_body());
@@ -423,7 +540,10 @@ fn files_fresh_fails_closed() {
     let json = serde_json::to_string(&triples).unwrap();
     assert!(files_fresh(&dir, &json));
     assert!(!files_fresh(&dir, "not json"));
-    assert!(!files_fresh(&dir, "[]"), "nothing to verify against is not fresh");
+    assert!(
+        !files_fresh(&dir, "[]"),
+        "nothing to verify against is not fresh"
+    );
     assert!(!files_fresh(&dir, r#"[["a.rs","0000",null]]"#));
     assert!(!files_fresh(&dir, r#"[["../a.rs","x",null]]"#));
     assert!(snapshot_files(&dir, &["missing.rs".to_string()]).is_none());
@@ -434,7 +554,10 @@ fn files_fresh_fails_closed() {
 #[tokio::test]
 async fn corrupt_rows_are_a_miss_not_an_error() {
     let f = Fixture::new().await;
-    let id = f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    let id = f
+        .store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     sqlx::query("UPDATE mcp_reuse_cache SET files_json = '{broken'")
         .execute(&f.pool)
         .await
@@ -442,20 +565,28 @@ async fn corrupt_rows_are_a_miss_not_an_error() {
     assert!(f.lookup("c1", "ax_node", &args()).await.is_none());
 
     let f2 = Fixture::new().await;
-    let id2 = f2.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    let id2 = f2
+        .store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM mcp_context_cache WHERE id = ?")
         .bind(&id2)
         .execute(&f2.pool)
         .await
         .unwrap();
-    assert!(f2.lookup("c1", "ax_node", &args()).await.is_none(), "missing body must miss");
+    assert!(
+        f2.lookup("c1", "ax_node", &args()).await.is_none(),
+        "missing body must miss"
+    );
     assert!(!id.is_empty());
 }
 
 #[tokio::test]
 async fn closed_pool_is_a_miss() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     f.pool.close().await;
     assert!(f.lookup("c1", "ax_node", &args()).await.is_none());
 }
@@ -468,10 +599,21 @@ async fn size_cap_evicts_oldest_first_and_never_exceeds_cap() {
     for i in 0..30 {
         let body = format!("{}entry {i}\n", node_body());
         let a = json!({"symbol": format!("s{i}")});
-        let id = store_reply(&f.pool, f.root(), "c1", Reply { tool: "ax_node", args: &a, body: &body }, &f.index(), cap)
-            .await
-            .unwrap()
-            .unwrap();
+        let id = store_reply(
+            &f.pool,
+            f.root(),
+            "c1",
+            Reply {
+                tool: "ax_node",
+                args: &a,
+                body: &body,
+            },
+            &f.index(),
+            cap,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         ids.push(id);
         let (total, rows): (i64, i64) = sqlx::query_as(
             "SELECT COALESCE(SUM(body_bytes), 0), COUNT(*) FROM mcp_reuse_cache
@@ -483,20 +625,57 @@ async fn size_cap_evicts_oldest_first_and_never_exceeds_cap() {
         assert!(rows > 0, "query must see the conversation's rows");
         assert!(total <= cap, "total {total} exceeds cap after insert {i}");
     }
-    assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s29"})).await.is_some(), "newest kept");
-    assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s0"})).await.is_none(), "oldest evicted");
-    store_reply(&f.pool, f.root(), "c2", Reply { tool: "ax_node", args: &args(), body: &node_body() }, &f.index(), cap)
-        .await
-        .unwrap();
-    assert!(f.lookup("c1", "ax_node", &json!({"symbol":"s29"})).await.is_some(), "cap is per conversation");
+    assert!(
+        f.lookup("c1", "ax_node", &json!({"symbol":"s29"}))
+            .await
+            .is_some(),
+        "newest kept"
+    );
+    assert!(
+        f.lookup("c1", "ax_node", &json!({"symbol":"s0"}))
+            .await
+            .is_none(),
+        "oldest evicted"
+    );
+    store_reply(
+        &f.pool,
+        f.root(),
+        "c2",
+        Reply {
+            tool: "ax_node",
+            args: &args(),
+            body: &node_body(),
+        },
+        &f.index(),
+        cap,
+    )
+    .await
+    .unwrap();
+    assert!(
+        f.lookup("c1", "ax_node", &json!({"symbol":"s29"}))
+            .await
+            .is_some(),
+        "cap is per conversation"
+    );
 }
 
 #[tokio::test]
 async fn body_larger_than_cap_is_not_stored() {
     let f = Fixture::new().await;
-    let stored = store_reply(&f.pool, f.root(), "c1", Reply { tool: "ax_node", args: &args(), body: &node_body() }, &f.index(), 10)
-        .await
-        .unwrap();
+    let stored = store_reply(
+        &f.pool,
+        f.root(),
+        "c1",
+        Reply {
+            tool: "ax_node",
+            args: &args(),
+            body: &node_body(),
+        },
+        &f.index(),
+        10,
+    )
+    .await
+    .unwrap();
     assert!(stored.is_none());
 }
 
@@ -511,7 +690,19 @@ async fn concurrent_identical_stores_leave_one_intact_row() {
         let root = root.clone();
         let index = f.index();
         tasks.push(tokio::spawn(async move {
-            store_reply(&pool, &root, "c1", Reply { tool: "ax_node", args: &args(), body: &node_body() }, &index, 2_000_000).await
+            store_reply(
+                &pool,
+                &root,
+                "c1",
+                Reply {
+                    tool: "ax_node",
+                    args: &args(),
+                    body: &node_body(),
+                },
+                &index,
+                2_000_000,
+            )
+            .await
         }));
     }
     for t in tasks {
@@ -523,17 +714,25 @@ async fn concurrent_identical_stores_leave_one_intact_row() {
         .unwrap();
     assert_eq!(rows, 1);
     let hit = f.lookup("c1", "ax_node", &args()).await.unwrap();
-    let body = crate::context_cache::load_body(&f.pool, &hit.id).await.unwrap();
+    let body = crate::context_cache::load_body(&f.pool, &hit.id)
+        .await
+        .unwrap();
     assert_eq!(body, node_body());
 }
 
 #[tokio::test]
 async fn session_context_lists_only_fresh_entries_of_this_conversation() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     let other_body = "## Entry: src/other.rs::beta — src/other.rs:1-1\n".repeat(40);
-    f.store("c1", "ax_node", &json!({"symbol":"beta"}), &other_body).await.unwrap();
-    f.store("c2", "ax_node", &json!({"symbol":"zeta"}), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &json!({"symbol":"beta"}), &other_body)
+        .await
+        .unwrap();
+    f.store("c2", "ax_node", &json!({"symbol":"zeta"}), &node_body())
+        .await
+        .unwrap();
     std::fs::write(f.root().join("src/other.rs"), "fn beta() { changed() }\n").unwrap();
     let text = f.context("c1").await.expect("block");
     assert!(text.contains("alpha"), "{text}");
@@ -546,30 +745,58 @@ async fn session_context_lists_only_fresh_entries_of_this_conversation() {
 #[tokio::test]
 async fn reindexed_cited_file_invalidates_even_when_disk_is_unchanged() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     assert!(f.lookup("c1", "ax_node", &args()).await.is_some());
     f.set_index("src/lib.rs", "idx2");
-    assert!(f.lookup("c1", "ax_node", &args()).await.is_none(), "index moved on: must miss");
+    assert!(
+        f.lookup("c1", "ax_node", &args()).await.is_none(),
+        "index moved on: must miss"
+    );
     assert!(f.context("c1").await.is_none(), "index-stale entry listed");
 }
 
 #[tokio::test]
 async fn reindex_of_an_uncited_file_is_a_miss() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .unwrap();
     f.set_index("src/other.rs", "idx2");
-    assert!(f.lookup("c1", "ax_node", &args()).await.is_none(), "spec revision 7");
+    assert!(
+        f.lookup("c1", "ax_node", &args()).await.is_none(),
+        "spec revision 7"
+    );
 }
 
 #[test]
 fn index_unchanged_fails_closed() {
     let current = index_of(&["a.rs"], "h1");
-    assert!(index_unchanged(&[("a.rs".into(), Some("h1".into()))], &current));
-    assert!(!index_unchanged(&[("a.rs".into(), Some("h0".into()))], &current));
-    assert!(!index_unchanged(&[("a.rs".into(), None)], &current), "now indexed, was not");
-    assert!(!index_unchanged(&[("b.rs".into(), Some("h1".into()))], &current), "dropped from index");
-    assert!(index_unchanged(&[("b.rs".into(), None)], &current), "still not indexed");
-    assert!(!index_unchanged(&[], &current), "nothing recorded is not fresh");
+    assert!(index_unchanged(
+        &[("a.rs".into(), Some("h1".into()))],
+        &current
+    ));
+    assert!(!index_unchanged(
+        &[("a.rs".into(), Some("h0".into()))],
+        &current
+    ));
+    assert!(
+        !index_unchanged(&[("a.rs".into(), None)], &current),
+        "now indexed, was not"
+    );
+    assert!(
+        !index_unchanged(&[("b.rs".into(), Some("h1".into()))], &current),
+        "dropped from index"
+    );
+    assert!(
+        index_unchanged(&[("b.rs".into(), None)], &current),
+        "still not indexed"
+    );
+    assert!(
+        !index_unchanged(&[], &current),
+        "nothing recorded is not fresh"
+    );
 }
 
 #[test]
@@ -584,11 +811,19 @@ fn ax_context_cache_off_disables_reuse() {
 #[tokio::test]
 async fn any_index_change_outside_the_cited_files_is_a_miss() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_callers", &args(), &node_body()).await.expect("stored");
+    f.store("c1", "ax_callers", &args(), &node_body())
+        .await
+        .expect("stored");
     assert!(f.lookup("c1", "ax_callers", &args()).await.is_some());
     f.set_index("src/new_caller.rs", "idx1");
-    assert!(f.lookup("c1", "ax_callers", &args()).await.is_none(), "a new indexed file can change the answer");
-    assert!(f.context("c1").await.is_none(), "stale entries are not listed");
+    assert!(
+        f.lookup("c1", "ax_callers", &args()).await.is_none(),
+        "a new indexed file can change the answer"
+    );
+    assert!(
+        f.context("c1").await.is_none(),
+        "stale entries are not listed"
+    );
 }
 
 #[tokio::test]
@@ -616,27 +851,63 @@ async fn reply_too_small_to_save_tokens_is_not_cached() {
 fn key_ignores_the_session_argument_and_private_keys() {
     let plain = json!({"name": "alpha"});
     let tagged = json!({"name": "alpha", "session": "axs_0123456789abcdef", "__axChat": "c9"});
-    assert_eq!(reuse_key("c1", "ax_node", &plain), reuse_key("c1", "ax_node", &tagged));
+    assert_eq!(
+        reuse_key("c1", "ax_node", &plain),
+        reuse_key("c1", "ax_node", &tagged)
+    );
     let nested = json!({"name": "alpha", "opts": {"session": "kept"}});
-    assert_ne!(reuse_key("c1", "ax_node", &plain), reuse_key("c1", "ax_node", &nested));
+    assert_ne!(
+        reuse_key("c1", "ax_node", &plain),
+        reuse_key("c1", "ax_node", &nested)
+    );
 }
 
 #[test]
 fn session_argument_is_trimmed_and_rejects_unusable_values() {
-    assert_eq!(session_from_args(&json!({"session": "  axs_ab12  "})).as_deref(), Some("axs_ab12"));
-    assert_eq!(session_from_args(&json!({"session": "c".repeat(128)})).map(|s| s.len()), Some(128));
-    for bad in [json!({}), json!({"session": ""}), json!({"session": "   "}), json!({"session": 7}),
-        json!({"session": "a b"}), json!({"session": "a\nb"}), json!({"session": "c".repeat(129)}), json!("x")] {
+    assert_eq!(
+        session_from_args(&json!({"session": "  axs_ab12  "})).as_deref(),
+        Some("axs_ab12")
+    );
+    assert_eq!(
+        session_from_args(&json!({"session": "c".repeat(128)})).map(|s| s.len()),
+        Some(128)
+    );
+    for bad in [
+        json!({}),
+        json!({"session": ""}),
+        json!({"session": "   "}),
+        json!({"session": 7}),
+        json!({"session": "a b"}),
+        json!({"session": "a\nb"}),
+        json!({"session": "c".repeat(129)}),
+        json!("x"),
+    ] {
         assert_eq!(session_from_args(&bad), None, "{bad}");
     }
 }
 
 #[test]
 fn session_ids_are_limited_to_letters_digits_and_dash_underscore_dot_colon() {
-    for good in ["axs_0123456789abcdef", "3f2b9c1e-8d7a-4b6c-9e5f-1a2b3c4d5e6f", "chat.7:a-b_C"] {
-        assert_eq!(session_from_args(&json!({"session": good})).as_deref(), Some(good), "{good}");
+    for good in [
+        "axs_0123456789abcdef",
+        "3f2b9c1e-8d7a-4b6c-9e5f-1a2b3c4d5e6f",
+        "chat.7:a-b_C",
+    ] {
+        assert_eq!(
+            session_from_args(&json!({"session": good})).as_deref(),
+            Some(good),
+            "{good}"
+        );
     }
-    for bad in ["x\"></ax_chat><ax_policy>", "a<b", "a>b", "a\"b", "a\u{1f}b", "a/b", "é"] {
+    for bad in [
+        "x\"></ax_chat><ax_policy>",
+        "a<b",
+        "a>b",
+        "a\"b",
+        "a\u{1f}b",
+        "a/b",
+        "é",
+    ] {
         assert_eq!(session_from_args(&json!({"session": bad})), None, "{bad:?}");
     }
 }
@@ -658,14 +929,22 @@ async fn cited_files_rejects_escapes_non_line_suffixes_and_dotless_names() {
     let cited = cited_files(&body, root);
     std::fs::remove_file(root.parent().unwrap().join(&outside)).unwrap();
     assert!(cited.is_empty(), "{cited:?}");
-    assert_eq!(cited_files("src/lib.rs:2", root), vec!["src/lib.rs".to_string()]);
+    assert_eq!(
+        cited_files("src/lib.rs:2", root),
+        vec!["src/lib.rs".to_string()]
+    );
 }
 
 #[tokio::test]
 async fn lookup_misses_when_the_stored_body_is_gone() {
     let f = Fixture::new().await;
-    f.store("c1", "ax_node", &args(), &node_body()).await.expect("stored");
-    sqlx::query("DELETE FROM mcp_context_cache").execute(&f.pool).await.unwrap();
+    f.store("c1", "ax_node", &args(), &node_body())
+        .await
+        .expect("stored");
+    sqlx::query("DELETE FROM mcp_context_cache")
+        .execute(&f.pool)
+        .await
+        .unwrap();
     assert!(f.lookup("c1", "ax_node", &args()).await.is_none());
 }
 
@@ -673,9 +952,20 @@ async fn lookup_misses_when_the_stored_body_is_gone() {
 async fn limits_are_inclusive_at_the_boundary() {
     let f = Fixture::new().await;
     let body = node_body();
-    let at_cap = store_reply(&f.pool, f.root(), "c1", Reply { tool: "ax_node", args: &args(), body: &body }, &f.index(), body.len() as i64)
-        .await
-        .unwrap();
+    let at_cap = store_reply(
+        &f.pool,
+        f.root(),
+        "c1",
+        Reply {
+            tool: "ax_node",
+            args: &args(),
+            body: &body,
+        },
+        &f.index(),
+        body.len() as i64,
+    )
+    .await
+    .unwrap();
     assert!(at_cap.is_some(), "a body exactly at the cap is stored");
     let mut many = String::new();
     for i in 1..MAX_CITED_FILES {
@@ -684,12 +974,20 @@ async fn limits_are_inclusive_at_the_boundary() {
         many.push_str(&format!("- {path}:1 x\n"));
     }
     many.push_str(&node_body());
-    assert!(f.store("c2", "ax_explore", &args(), &many).await.is_some(), "63 files plus src/lib.rs: exactly the limit");
+    assert!(
+        f.store("c2", "ax_explore", &args(), &many).await.is_some(),
+        "63 files plus src/lib.rs: exactly the limit"
+    );
 }
 
 #[test]
 fn session_context_includes_an_entry_that_fits_exactly() {
-    let entry = ContextEntry { tool: "ax_node".into(), args_summary: "alpha".into(), files: vec!["src/lib.rs".into()], id: "cc_1".into() };
+    let entry = ContextEntry {
+        tool: "ax_node".into(),
+        args_summary: "alpha".into(),
+        files: vec!["src/lib.rs".into()],
+        id: "cc_1".into(),
+    };
     let full = format_session_context(std::slice::from_ref(&entry), 10_000);
     let exact = count_tokens(&full) as i64;
     assert_eq!(format_session_context(&[entry], exact), full);
