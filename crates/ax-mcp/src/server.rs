@@ -285,6 +285,13 @@ async fn call_tool_and_wrap(
     project_root: Option<&std::path::Path>,
     verbose: bool,
 ) -> Result<Value, String> {
+    if let Some(path) = args
+        .get("projectPath")
+        .or_else(|| args.get("project_path"))
+        .and_then(|v| v.as_str())
+    {
+        engine.align_root(std::path::Path::new(path)).await?;
+    }
     if is_policy_tool(name) {
         if let Err(e) = engine.ensure_policy_fresh().await {
             tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");
@@ -682,6 +689,8 @@ fn lean_structured(name: &str, value: &Value) -> Option<Value> {
             "instruction": value.get("instruction"),
             "indexStats": value.get("indexStats"),
             "pendingFiles": value.get("pendingFiles"),
+            "injectTokens": value.get("injectTokens"),
+            "budgetTokens": value.get("budgetTokens"),
         })),
         // Summary text is in content.text; keep structured stats for scripts.
         "ax_status" => Some(json!({
@@ -738,29 +747,17 @@ fn explore_entries_compact(value: &Value) -> Value {
     Value::Array(compact)
 }
 
-/// Above this size, nudge the agent toward narrower queries instead of a follow-up dump.
-const TOKEN_HINT_THRESHOLD: i64 = 3_000;
-
-/// One-line budget hint appended to large tool responses so agents self-correct
+/// One-line size report appended to every tool response.
 /// (narrower depth/limit) instead of pulling ever-bigger contexts.
 fn token_budget_hint(tool: &str, response_tokens: i64) -> Option<String> {
-    // Preflight size follows team policy, not the query, so the advice would not help.
-    if response_tokens < TOKEN_HINT_THRESHOLD || tool == "ax_preflight" {
-        return None;
-    }
-    let advice = match tool {
-        "ax_explore" | "ax_context" => "narrow the question or pass a smaller depth",
-        "ax_search" | "ax_files" | "ax_recall" => "add a `limit` or a more specific query",
-        "ax_impact" | "ax_affected" | "ax_callers" | "ax_callees" => {
-            "reduce depth or target a more specific symbol"
-        }
-        _ => "use a more specific query",
+    let budget = if tool == "ax_preflight" {
+        ax_usage::load_settings(None)
+            .context_budget_tokens
+            .unwrap_or(ax_usage::DEFAULT_PREFLIGHT_TOKENS) as i64
+    } else {
+        ax_usage::cache_threshold()
     };
-    Some(ax_usage::format_ax_tagged(format!(
-        "token budget: this response is ~{}k tokens; {} to keep context small.",
-        (response_tokens + 500) / 1000,
-        advice
-    )))
+    Some(format!("tokens={response_tokens} budget={budget}"))
 }
 
 fn tool_result_text(value: &Value) -> String {
@@ -807,9 +804,13 @@ mod wrap_tests {
     use super::*;
 
     #[test]
-    fn preflight_gets_no_token_budget_banner() {
-        assert!(token_budget_hint("ax_preflight", 9_000).is_none());
-        assert!(token_budget_hint("ax_explore", 9_000).is_some());
+    fn every_tool_reports_its_token_size() {
+        let preflight = token_budget_hint("ax_preflight", 900).unwrap();
+        assert!(preflight.starts_with("tokens=900 budget="), "{preflight}");
+        let search = token_budget_hint("ax_search", 12).unwrap();
+        assert!(search.starts_with("tokens=12 budget="), "{search}");
+        let node = token_budget_hint("ax_node", 40).unwrap();
+        assert!(node.starts_with("tokens=40 budget="), "{node}");
     }
 
     #[test]

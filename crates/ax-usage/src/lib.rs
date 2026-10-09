@@ -24,8 +24,10 @@ mod working_context;
 
 pub use budget::{
     banner, cycle_stats, daily_plan, display_amount, format_money, global_config_path, level_for,
-    load_settings, monthly_budget_usd, parse_mode, parse_settings, price_band, project_budget,
-    save_global_budget, simulate, working_schedule, BudgetDecision, BudgetLevel, BudgetMode,
+    fit_preflight, level_to_tokens, load_settings, monthly_budget_usd, parse_mode, parse_settings,
+    preflight_tokens_in_band, price_band, project_budget, save_global_budget,
+    save_project_preflight_tokens, simulate, tokens_to_level, working_schedule, BudgetDecision,
+    BudgetLevel, BudgetMode, DEFAULT_PREFLIGHT_TOKENS, MAX_PREFLIGHT_TOKENS, MIN_PREFLIGHT_TOKENS,
     BudgetSectionPatch, BudgetSettings, BudgetSnapshot, Currency, CycleStats, DailyPlan, DaySpend,
     PriceBand, Simulation,
 };
@@ -34,7 +36,8 @@ pub use cache_status::{
     CacheStatusSnapshot,
 };
 pub use context_cache::{
-    cache_enabled, cache_oversized_reply, expand_cached, format_catalog, format_session_ledger,
+    cache_enabled, cache_oversized_reply, cache_threshold, expand_cached, format_catalog,
+    format_session_ledger,
     ingest_jsonl_oversized, note_session_event, recent_catalog, recent_session_catalog,
     session_ledger, spawn_note_session_event, stash_text, tool_chunks_from_jsonl, CacheOutcome,
     CatalogEntry, ExpandPage, StashReceipt,

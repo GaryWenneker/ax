@@ -213,8 +213,54 @@ fn filter_cycles(
 }
 
 pub fn run_set(patch: BudgetSectionPatch) -> Result<(), String> {
+    if let Some(tokens) = patch.context_budget_tokens {
+        ax_usage::preflight_tokens_in_band(tokens)?;
+    }
     let path = save_global_budget(&patch)?;
     println!("Saved budget settings in {}", path.display());
+    Ok(())
+}
+
+/// `ax budget context --level N` or `--tokens N`. Tokens win when both are set.
+pub fn run_context(
+    level: Option<u8>,
+    tokens: Option<u32>,
+    project: Option<&std::path::Path>,
+) -> Result<(), String> {
+    if let Some(level) = level {
+        if level > 100 {
+            return Err("preflight level must be 0..=100".into());
+        }
+    }
+    let tokens = match (tokens, level) {
+        (Some(tokens), _) => ax_usage::preflight_tokens_in_band(tokens)?,
+        (None, Some(level)) => ax_usage::level_to_tokens(level),
+        (None, None) => {
+            return Err("pass --level 0..=100 or --tokens 400..=8000".into());
+        }
+    };
+    let path = if let Some(project) = project {
+        ax_usage::save_project_preflight_tokens(project, tokens)?
+    } else {
+        save_global_budget(&BudgetSectionPatch {
+            monthly: None,
+            currency: None,
+            usd_per_eur: None,
+            working_days: None,
+            hours_per_day: None,
+            warning_percent: None,
+            critical_percent: None,
+            hard_limit_percent: None,
+            mode: None,
+            context_budget_tokens: Some(tokens),
+        })?
+    };
+    println!(
+        "Preflight size {} tokens (level {}) in {}",
+        tokens,
+        ax_usage::tokens_to_level(tokens),
+        path.display()
+    );
     Ok(())
 }
 
@@ -231,5 +277,33 @@ fn mode_label(mode: BudgetMode) -> &'static str {
         BudgetMode::Cheap => "cheap",
         BudgetMode::Balanced => "balanced",
         BudgetMode::Quality => "quality",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_context;
+
+    #[test]
+    fn level_zero_writes_400_tokens_win_and_level_101_writes_nothing() {
+        let home = std::env::temp_dir().join(format!("ax-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let previous = std::env::var_os("AX_HOME_DIR");
+        std::env::set_var("AX_HOME_DIR", &home);
+        let err = run_context(Some(101), None, None).unwrap_err();
+        assert!(err.contains("0..=100"), "{err}");
+        assert!(!home.join(".ax/config.json").exists());
+        run_context(Some(0), None, None).unwrap();
+        let text = std::fs::read_to_string(home.join(".ax/config.json")).unwrap();
+        assert!(text.contains("\"budgetTokens\": 400"), "{text}");
+        run_context(Some(10), Some(1500), None).unwrap();
+        let text = std::fs::read_to_string(home.join(".ax/config.json")).unwrap();
+        assert!(text.contains("\"budgetTokens\": 1500"), "{text}");
+        match previous {
+            Some(value) => std::env::set_var("AX_HOME_DIR", value),
+            None => std::env::remove_var("AX_HOME_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

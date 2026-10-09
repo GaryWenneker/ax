@@ -16,8 +16,10 @@ import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
 import { loadThemeId } from '../lib/themes';
 import { TIMEZONE_OPTIONS, browserTimeZone } from '../lib/timeZone';
 import {
+  fetchPreflightSize,
   fetchReviewLanguage,
   fetchShipConfig,
+  savePreflightSize,
   saveReviewLanguage,
   saveShipConfig,
   type ReviewLanguageChoice,
@@ -114,6 +116,7 @@ export default function SettingsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [themeId, setThemeId] = useState(loadThemeId);
   const [reviewLanguage, setReviewLanguage] = useState('en');
+  const [preflightLevel, setPreflightLevel] = useState(50);
   const [reviewLanguages, setReviewLanguages] = useState<ReviewLanguageChoice[]>(REVIEW_LANGUAGES);
 
   usePageContext('Settings', 'Command Center · pipeline & agents');
@@ -127,6 +130,12 @@ export default function SettingsPage() {
         if (cancelled) return;
         try {
           const language = await fetchReviewLanguage();
+          try {
+            const size = await fetchPreflightSize();
+            if (!cancelled) setPreflightLevel(size.level);
+          } catch {
+            // Slider stays at the default level when the endpoint is missing.
+          }
           if (!cancelled) {
             setReviewLanguage(language.code);
             if (language.languages.length > 0) setReviewLanguages(language.languages);
@@ -413,6 +422,36 @@ export default function SettingsPage() {
                   </option>
                 ))}
               </select>
+            </SettingRow>
+
+            <SettingRow
+              title="Preflight size"
+              description="How much of the ax preflight budget to spend. 0 is 400 tokens, 50 is 4,000, 100 is 8,000. This is not a percentage of the model window."
+            >
+              <label className="settings-select" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={preflightLevel}
+                  disabled={!!busy || !configLoaded}
+                  aria-label="Preflight size"
+                  onChange={(e) => {
+                    const level = Number(e.target.value);
+                    setPreflightLevel(level);
+                    void savePreflightSize(level)
+                      .then((saved) => setMsg(`Preflight size ${saved.level} (${saved.tokens} tokens)`))
+                      .catch((err) => setErr(String(err)));
+                  }}
+                />
+                <span>
+                  {preflightLevel} ·{' '}
+                  {preflightLevel <= 50
+                    ? 400 + preflightLevel * 72
+                    : 4000 + (preflightLevel - 50) * 80}{' '}
+                  tokens
+                </span>
+              </label>
             </SettingRow>
 
             <SettingRow title="PR provider" description="Where ship opens and updates pull requests.">

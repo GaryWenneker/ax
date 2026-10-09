@@ -66,3 +66,16 @@ ax budget plan
 ax budget simulate --cycles 500
 ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 --hours 8 --mode balanced --context-tokens 12000
 ```
+
+
+## Preflight size
+
+`ax budget context` sets how large `ax_preflight` may be. The band is level 0–100, which is 400–8,000 tokens. The default is level 50 (4,000 tokens). This is not a percentage of the model window.
+
+```text
+ax budget context --level 50
+ax budget context --tokens 4000
+ax budget context --level 0 --project .
+```
+
+When both flags are set, `--tokens` wins. Values outside 400–8,000 are rejected. The same slider is on the Command Center Settings page ("Preflight size"). Every MCP tool reply ends with `tokens=<N> budget=<cap>`.

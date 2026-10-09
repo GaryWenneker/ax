@@ -47,6 +47,10 @@ pub fn router_hub(hub: WebHub) -> Router {
             "/review-language",
             get(handle_get_review_language).put(handle_put_review_language),
         )
+        .route(
+            "/preflight-size",
+            get(handle_get_preflight_size).put(handle_put_preflight_size),
+        )
         .route("/sonar/discover", get(handle_sonar_discover))
         .route("/sonar/install", post(handle_sonar_install))
         .route("/sonar/install/stream", post(handle_sonar_install_stream))
@@ -349,6 +353,84 @@ async fn handle_put_review_language(
         &body.code,
     ) {
         Ok(language) => Json(review_language_body(language)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+fn preflight_size_body(tokens: u32) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "tokens": tokens,
+        "level": ax_usage::tokens_to_level(tokens),
+        "minTokens": ax_usage::MIN_PREFLIGHT_TOKENS,
+        "maxTokens": ax_usage::MAX_PREFLIGHT_TOKENS,
+    })
+}
+
+async fn handle_get_preflight_size() -> impl IntoResponse {
+    let tokens = ax_usage::load_settings(None)
+        .context_budget_tokens
+        .unwrap_or(ax_usage::DEFAULT_PREFLIGHT_TOKENS);
+    Json(preflight_size_body(tokens))
+}
+
+async fn handle_put_preflight_size(
+    State(hub): State<WebHub>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if hub.readonly {
+        return readonly_err().into_response();
+    }
+    let tokens = if let Some(level) = body.get("level").and_then(|v| v.as_u64()) {
+        if level > 100 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": "level must be 0..=100" })),
+            )
+                .into_response();
+        }
+        ax_usage::level_to_tokens(level as u8)
+    } else if let Some(tokens) = body.get("tokens").and_then(|v| v.as_u64()) {
+        match ax_usage::preflight_tokens_in_band(tokens as u32) {
+            Ok(tokens) => tokens,
+            Err(error) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "ok": false, "error": error })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": "pass level or tokens" })),
+        )
+            .into_response();
+    };
+    // An explicit token count wins when both are sent.
+    let tokens = body
+        .get("tokens")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| ax_usage::preflight_tokens_in_band(n as u32).ok())
+        .unwrap_or(tokens);
+    match ax_usage::save_global_budget(&ax_usage::BudgetSectionPatch {
+        monthly: None,
+        currency: None,
+        usd_per_eur: None,
+        working_days: None,
+        hours_per_day: None,
+        warning_percent: None,
+        critical_percent: None,
+        hard_limit_percent: None,
+        mode: None,
+        context_budget_tokens: Some(tokens),
+    }) {
+        Ok(_) => Json(preflight_size_body(tokens)).into_response(),
         Err(error) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "ok": false, "error": error })),

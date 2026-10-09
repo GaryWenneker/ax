@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::cost::CostConfidence;
+use crate::count_tokens;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Currency {
@@ -40,6 +41,122 @@ pub struct BudgetSettings {
     pub context_budget_tokens: Option<u32>,
 }
 
+/// Floor of the preflight band (level 0): project line and session id.
+pub const MIN_PREFLIGHT_TOKENS: u32 = 400;
+/// Default preflight size (level 50).
+pub const DEFAULT_PREFLIGHT_TOKENS: u32 = 4_000;
+/// Ceiling of the preflight band (level 100).
+pub const MAX_PREFLIGHT_TOKENS: u32 = 8_000;
+
+/// Level 0 is 400, level 50 is 4_000, level 100 is 8_000.
+/// One linear step cannot hit all three, so 0..=50 steps by 72 and 51..=100 steps by 80.
+pub fn level_to_tokens(level: u8) -> u32 {
+    let level = u32::from(level.min(100));
+    if level <= 50 {
+        MIN_PREFLIGHT_TOKENS + level * 72
+    } else {
+        DEFAULT_PREFLIGHT_TOKENS + (level - 50) * 80
+    }
+}
+
+/// Inverse of [`level_to_tokens`], clamped to the band.
+pub fn tokens_to_level(tokens: u32) -> u8 {
+    let tokens = tokens.clamp(MIN_PREFLIGHT_TOKENS, MAX_PREFLIGHT_TOKENS);
+    if tokens <= DEFAULT_PREFLIGHT_TOKENS {
+        ((tokens - MIN_PREFLIGHT_TOKENS) / 72) as u8
+    } else {
+        (50 + (tokens - DEFAULT_PREFLIGHT_TOKENS) / 80) as u8
+    }
+}
+
+/// Accept a token count only inside the band.
+pub fn preflight_tokens_in_band(tokens: u32) -> Result<u32, String> {
+    if (MIN_PREFLIGHT_TOKENS..=MAX_PREFLIGHT_TOKENS).contains(&tokens) {
+        Ok(tokens)
+    } else {
+        Err(format!(
+            "preflight size must be {MIN_PREFLIGHT_TOKENS}..={MAX_PREFLIGHT_TOKENS} tokens (level 0..=100)"
+        ))
+    }
+}
+
+fn strip_tag(text: &str, tag: &str) -> String {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(&open) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        if let Some(end) = after.find(&close) {
+            rest = &after[end + close.len()..];
+        } else {
+            rest = "";
+            break;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn rule_ids(policy: &str) -> Vec<String> {
+    policy
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line.strip_prefix("### ")?;
+            let id = rest.split_whitespace().last()?.trim();
+            (!id.is_empty()).then(|| id.to_string())
+        })
+        .collect()
+}
+
+/// Keep `inject` inside `budget_tokens`. Heavy sections drop first. The project
+/// line and session id remain even at the floor.
+pub fn fit_preflight(text: &str, budget_tokens: u32, project: &str, session: &str) -> String {
+    let mut omitted = Vec::new();
+    if let Some(start) = text.find("<ax_policy") {
+        if let Some(end) = text[start..].find("</ax_policy>") {
+            omitted = rule_ids(&text[start..start + end]);
+        }
+    }
+    let mut current = text.to_string();
+    for tag in [
+        "ax_context_catalog",
+        "ax_memory_titles",
+        "ax_turn_history",
+        "ax_context_cache",
+        "ax_memories",
+        "ax_policy",
+        "ax_index",
+    ] {
+        if count_tokens(&current) as u32 <= budget_tokens {
+            break;
+        }
+        current = strip_tag(&current, tag);
+    }
+    if !current.contains(project) {
+        current = format!("<ax_project>{project}</ax_project>\n{current}");
+    }
+    if !session.is_empty() && !current.contains(session) {
+        current = format!("{current}<ax_chat session={session}></ax_chat>\n");
+    }
+    if !omitted.is_empty() && count_tokens(&current) as u32 > budget_tokens.saturating_sub(40) {
+        current.push_str(&format!("_omitted rules: {}._\n", omitted.join(", ")));
+    }
+    if count_tokens(&current) as u32 > budget_tokens {
+        let mut floor = format!("<ax_project>{project}</ax_project>\n<ax_chat session={session}></ax_chat>\n");
+        if !omitted.is_empty() {
+            let note = format!("_omitted rules: {}._\n", omitted.join(", "));
+            if count_tokens(&format!("{floor}{note}")) as u32 <= budget_tokens {
+                floor.push_str(&note);
+            }
+        }
+        return floor;
+    }
+    current
+}
+
 impl Default for BudgetSettings {
     fn default() -> Self {
         Self {
@@ -55,7 +172,7 @@ impl Default for BudgetSettings {
             mode: BudgetMode::Balanced,
             cheap_max_input_per_mtok: 1.0,
             standard_max_input_per_mtok: 5.0,
-            context_budget_tokens: None,
+            context_budget_tokens: Some(DEFAULT_PREFLIGHT_TOKENS),
         }
     }
 }
@@ -335,6 +452,35 @@ pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathB
             .ok_or_else(|| "context is not an object".to_string())?;
         context.insert("budgetTokens".into(), serde_json::json!(v));
     }
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+/// Write `context.budgetTokens` into `{project}/ax.json`, leaving other keys.
+pub fn save_project_preflight_tokens(
+    project: &std::path::Path,
+    tokens: u32,
+) -> Result<std::path::PathBuf, String> {
+    let tokens = preflight_tokens_in_band(tokens)?;
+    let path = project.join("ax.json");
+    let mut root: Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "ax.json root is not an object".to_string())?;
+    let context = obj
+        .entry("context")
+        .or_insert_with(|| Value::Object(Default::default()));
+    let context = context
+        .as_object_mut()
+        .ok_or_else(|| "context is not an object".to_string())?;
+    context.insert("budgetTokens".into(), serde_json::json!(tokens));
     std::fs::write(
         &path,
         serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
@@ -810,5 +956,49 @@ mod tests {
         assert_eq!(settings.currency, Currency::Eur);
         assert_eq!(settings.mode, BudgetMode::Cheap);
         assert_eq!(settings.context_budget_tokens, Some(12_000));
+    }
+
+    #[test]
+    fn missing_context_defaults_to_level_50() {
+        let settings = parse_settings(None, None);
+        assert_eq!(settings.context_budget_tokens, Some(DEFAULT_PREFLIGHT_TOKENS));
+    }
+
+    #[test]
+    fn level_band_maps_to_tokens() {
+        assert_eq!(level_to_tokens(0), 400);
+        assert_eq!(level_to_tokens(50), 4_000);
+        assert_eq!(level_to_tokens(100), 8_000);
+        assert_eq!(level_to_tokens(101), 8_000);
+        assert_eq!(tokens_to_level(400), 0);
+        assert_eq!(tokens_to_level(4_000), 50);
+        assert_eq!(tokens_to_level(8_000), 100);
+        assert!(preflight_tokens_in_band(399).is_err());
+        assert!(preflight_tokens_in_band(8_001).is_err());
+        assert_eq!(preflight_tokens_in_band(1_500).unwrap(), 1_500);
+    }
+
+    #[test]
+    fn explicit_context_tokens_are_kept() {
+        let settings = parse_settings(None, Some(r#"{"context":{"budgetTokens":1234}}"#));
+        assert_eq!(settings.context_budget_tokens, Some(1234));
+    }
+
+    #[test]
+    fn floor_budget_keeps_project_and_session_and_drops_rule_bodies() {
+        let raw = format!(
+            "<ax_policy>\n### [CRITICAL] big-rule\n\n{}\n</ax_policy>\n<ax_memories>\nsecret-memory-body\n</ax_memories>\n",
+            "rule body that must not survive the floor. ".repeat(80)
+        );
+        let fitted = fit_preflight(&raw, 400, "/tmp/proj", "sess-1");
+        assert!(fitted.contains("/tmp/proj"), "{fitted}");
+        assert!(fitted.contains("sess-1"), "{fitted}");
+        assert!(!fitted.contains("must not survive"), "{fitted}");
+        assert!(!fitted.contains("secret-memory-body"), "{fitted}");
+        assert!(
+            crate::count_tokens(&fitted) as u32 <= 400,
+            "{}",
+            crate::count_tokens(&fitted)
+        );
     }
 }

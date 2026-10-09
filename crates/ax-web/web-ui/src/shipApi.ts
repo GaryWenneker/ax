@@ -180,6 +180,22 @@ export function saveReviewLanguage(code: string): Promise<ReviewLanguageSetting>
   return request('/review-language', { method: 'PUT', body: JSON.stringify({ code }) });
 }
 
+export interface PreflightSizeSetting {
+  ok: boolean;
+  tokens: number;
+  level: number;
+  minTokens: number;
+  maxTokens: number;
+}
+
+export function fetchPreflightSize(): Promise<PreflightSizeSetting> {
+  return request('/preflight-size');
+}
+
+export function savePreflightSize(level: number): Promise<PreflightSizeSetting> {
+  return request('/preflight-size', { method: 'PUT', body: JSON.stringify({ level }) });
+}
+
 export const SONAR_UI_PROXY = '/api/ship/sonar/ui/';
 
 export interface SonarUiInfo {

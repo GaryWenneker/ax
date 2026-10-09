@@ -120,6 +120,25 @@ impl McpEngine {
         self.query_pool.as_ref()
     }
 
+    /// Reopen when `requested` resolves to a different initialized ax root than the one already open.
+    pub async fn align_root(&mut self, requested: &Path) -> Result<(), String> {
+        let Some(desired) = find_nearest_ax_root(requested) else {
+            return Ok(());
+        };
+        let desired = desired.canonicalize().unwrap_or(desired);
+        if let (Some(open), true) = (self.project_root.clone(), self.ax.lock().await.is_some()) {
+            let open = open.canonicalize().unwrap_or(open);
+            if open == desired {
+                return Ok(());
+            }
+        }
+        let ax = Ax::open(&desired).await.map_err(|e| e.to_string())?;
+        seed_memories_if_empty(ax.db_pool(), &desired).await;
+        self.project_root = Some(desired);
+        *self.ax.lock().await = Some(ax);
+        Ok(())
+    }
+
     pub async fn ensure_initialized(&mut self) -> Result<(), String> {
         if self.ax.lock().await.is_some() {
             return Ok(());

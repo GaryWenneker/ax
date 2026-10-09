@@ -1025,6 +1025,17 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         has_directive
     ));
 
+    let budget_tokens = ax_usage::load_settings(Some(ax.project_root()))
+        .context_budget_tokens
+        .unwrap_or(ax_usage::DEFAULT_PREFLIGHT_TOKENS);
+    inject = ax_usage::fit_preflight(
+        &inject,
+        budget_tokens,
+        &ax.project_root().display().to_string(),
+        &chat_of(&params),
+    );
+    let inject_tokens = ax_usage::count_tokens(&inject) as u32;
+
     let mut out = json!({
         "policyStatus": meta.policy_status,
         "matchedRules": meta.matched_rules,
@@ -1040,6 +1051,8 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "indexStats": index_stats,
         "pendingFiles": pending,
         "inject": inject,
+        "injectTokens": inject_tokens,
+        "budgetTokens": budget_tokens,
         "instruction": instruction,
     });
     if let Some(err) = policy_error {

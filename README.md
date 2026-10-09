@@ -239,7 +239,7 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax savings` | Context-token and cost savings summary (`import`, `tag-session`, `hook install`) |
 | `ax pricing` | Daily model price sync (OpenRouter) |
 | `ax costs` | Estimated agent spend from imported turns (`today`, `month`, `model`) |
-| `ax budget` | Local monthly plan, simulation, and thresholds (`plan`, `simulate`, `set`) |
+| `ax budget` | Local monthly plan, simulation, and thresholds (`plan`, `simulate`, `set`, `context`). `ax budget context --level 0..100` sets the preflight band (400–8,000 tokens; 50 = 4,000). Every MCP tool result ends with `tokens=N budget=cap`. Command Center Settings has the same slider. |
 | `ax bootstrap` | Versioned Ax and Pi architecture seed (`--dry-run`, `--verify`, `--json`) |
 | `ax agent economics` | Pi session token and cost estimates (`--session`, `--json`) |
 | `ax agent optimize --report` | Estimated avoidable context from recorded Pi tool calls |

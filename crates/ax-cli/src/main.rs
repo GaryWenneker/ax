@@ -693,8 +693,17 @@ enum BudgetAction {
         hard: Option<f64>,
         #[arg(long, help = "cheap | balanced | quality")]
         mode: Option<String>,
-        #[arg(long, help = "Optional context token budget")]
+        #[arg(long, help = "Optional context token budget (400..=8000)")]
         context_tokens: Option<u32>,
+    },
+    /// Preflight size: level 0..=100 or tokens 400..=8000
+    Context {
+        #[arg(long, help = "0 = 400 tokens, 50 = 4000, 100 = 8000")]
+        level: Option<u8>,
+        #[arg(long, help = "Token count inside 400..=8000; wins over --level")]
+        tokens: Option<u32>,
+        #[arg(long, help = "Write ax.json in this project instead of the global config")]
+        project: Option<std::path::PathBuf>,
     },
 }
 
@@ -2023,6 +2032,11 @@ async fn async_main() {
                 mode,
                 context_budget_tokens: context_tokens,
             }),
+            Some(BudgetAction::Context {
+                level,
+                tokens,
+                project,
+            }) => commands::budget_cmd::run_context(level, tokens, project.as_deref()),
         },
         Some(Commands::DocsCatalog { action }) => match action {
             DocsCatalogAction::Sync {
