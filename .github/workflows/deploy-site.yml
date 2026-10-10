@@ -1,4 +1,4 @@
-name: Deploy site to GitHub Pages
+name: Build docs site
 
 on:
   push:
@@ -6,7 +6,16 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/deploy-site.yml'
+  pull_request:
+    paths:
+      - 'site/**'
+      - '.github/workflows/deploy-site.yml'
   workflow_dispatch:
+    inputs:
+      deploy_pages:
+        description: 'Publish to GitHub Pages (requires Pages enabled in repository settings)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,7 +23,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: docs-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -35,7 +44,9 @@ jobs:
           path: site
           node-version: 22
 
+  # Netlify hosts the production site. GitHub Pages is an optional manual target.
   deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_pages
     needs: build
     runs-on: ubuntu-latest
     environment:
