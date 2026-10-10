@@ -18,6 +18,7 @@ pub mod proxy;
 pub mod proxy_pump;
 pub mod query_pool;
 pub mod request_context;
+pub mod remote;
 pub mod server;
 pub mod smart_output;
 pub mod staleness;

@@ -58,6 +58,7 @@ async fn seed_memories_if_empty(pool: &SqlitePool, project_root: &Path) {
 }
 
 pub struct McpEngine {
+    remote: bool,
     ax: Arc<Mutex<Option<Ax>>>,
     project_root: Option<PathBuf>,
     query_pool: Option<QueryPool>,
@@ -75,6 +76,7 @@ impl Default for McpEngine {
 impl McpEngine {
     pub fn new() -> Self {
         Self {
+            remote: false,
             ax: Arc::new(Mutex::new(None)),
             project_root: None,
             query_pool: None,
@@ -92,6 +94,7 @@ impl McpEngine {
             None
         };
         Self {
+            remote: false,
             ax: Arc::new(Mutex::new(None)),
             project_root: Some(project_root),
             query_pool,
@@ -109,6 +112,17 @@ impl McpEngine {
 
     pub fn policy_sessions(&mut self) -> &mut PolicySessions {
         &mut self.policy_sessions
+    }
+
+    /// Remote conversations must never inherit a local Cursor hook's chat ID.
+    pub fn for_remote(project_root: PathBuf) -> Self {
+        let mut engine = Self::with_project_root(project_root);
+        engine.remote = true;
+        engine
+    }
+
+    pub fn is_remote(&self) -> bool {
+        self.remote
     }
 
     /// Preflight turns per chat since its last `ax_session` write.

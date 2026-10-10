@@ -24,6 +24,7 @@ mod policy_share;
 mod pricing_api;
 mod project_purge;
 mod queries;
+mod remote_mcp;
 mod savings;
 mod share_api;
 mod share_auth;

@@ -153,6 +153,7 @@ impl WebHub {
             .nest("/api/share", crate::share_api::router_hub(hub.clone()))
             .nest("/api/lsp", crate::lsp_api::router_hub(hub.clone()))
             .nest("/api/plugins", crate::plugins_api::router_hub(hub.clone()))
+            .nest("/api/remote-mcp", crate::remote_mcp::router(hub.clone()))
             .nest("/api/ops", crate::mcp_ops::router_hub(hub.clone()))
             .nest("/api/dav/mount", crate::dav::mount::router(hub.clone()))
             .nest(

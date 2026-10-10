@@ -1009,6 +1009,21 @@ ax budget simulate --cycles 500
 ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 --hours 8 --mode balanced --context-tokens 12000
 ```
 
+### `ax mcp remote`
+
+Run project-scoped MCP behind your existing HTTPS tunnel. The dedicated listener uses an available loopback port; it does not expose the Command Center administration API. Native browser login uses Authorization Code + PKCE and the operating system credential store.
+
+```bash
+ax mcp remote serve --config /absolute/path/remote-mcp.json --port 0
+ax mcp remote serve --config /absolute/path/remote-mcp.json --port 0 --socket /absolute/path/ax-remote.sock
+ax mcp remote login --url https://ax.example.com/projects/my-project/mcp --client-id YOUR_NATIVE_CLIENT_ID
+ax mcp remote status
+ax mcp remote proxy --url https://ax.example.com/projects/my-project/mcp
+ax mcp remote logout --url https://ax.example.com/projects/my-project/mcp
+```
+
+The optional Unix socket supports macOS/Linux. `login --write` requests additional memory/policy permissions; the server must also grant them. Configure your OAuth issuer and client registrations before connecting. See [Remote MCP and browser login](/guides/remote-mcp/) for configuration, Cloudflare routing, ChatGPT registration and deployment limits.
+
 ### `ax mcp audit`
 
 Correlate `<project>/.ax/mcp-verbose-*.log` (daily files) with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Same engine powers the Command Center **Quality** status-bar chip and slide-out. Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.

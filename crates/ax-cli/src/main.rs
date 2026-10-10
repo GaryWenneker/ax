@@ -751,6 +751,11 @@ enum SavingsAction {
 
 #[derive(Subcommand)]
 enum McpAction {
+    /// Authenticated HTTP MCP server and browser login for remote context
+    Remote {
+        #[command(subcommand)]
+        action: RemoteMcpAction,
+    },
     /// Correlate .ax/mcp-verbose.log with a Cursor transcript and score quality
     Audit {
         path: Option<String>,
@@ -768,6 +773,44 @@ enum McpAction {
         window_minutes: Option<u64>,
         #[arg(long, help = "JSON output")]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemoteMcpAction {
+    /// Serve registered projects behind an existing HTTPS tunnel
+    Serve {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(
+            long,
+            default_value = "0",
+            help = "Local TCP port; 0 selects a free port"
+        )]
+        port: u16,
+        #[arg(long, help = "Optional stable Unix socket upstream for Cloudflare")]
+        socket: Option<std::path::PathBuf>,
+    },
+    /// Connect using the system browser (Authorization Code + PKCE)
+    Login {
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        client_id: String,
+        #[arg(long, help = "Request memory/policy writes in addition to context")]
+        write: bool,
+    },
+    /// Show stored connections without exposing credentials
+    Status,
+    /// Remove local credentials and attempt provider token revocation
+    Logout {
+        #[arg(long)]
+        url: String,
+    },
+    /// Bridge authenticated remote MCP to an IDE's local stdio transport
+    Proxy {
+        #[arg(long)]
+        url: String,
     },
 }
 
@@ -2037,6 +2080,21 @@ async fn async_main() {
             GlobalAction::Status => commands::global::run_status().await,
         },
         Some(Commands::Mcp { action }) => match action {
+            McpAction::Remote { action } => match action {
+                RemoteMcpAction::Serve { config, port, socket } => {
+                    match ax_mcp::remote::RemoteConfig::load(&config) {
+                        Ok(config) => ax_mcp::remote::serve(config, port, socket).await,
+                        Err(error) => Err(error),
+                    }
+                }
+                RemoteMcpAction::Login { url, client_id, write } => ax_mcp::remote::client::login(url, client_id, write).await,
+                RemoteMcpAction::Status => ax_mcp::remote::credentials::connections().map(|connections| {
+                    let rows: Vec<_> = connections.into_iter().map(|c| serde_json::json!({"url":c.url,"issuer":c.issuer,"expires_at":c.expires_at,"state":if c.expires_at > ax_mcp::remote::credentials::now() { "stored" } else { "expired" }})).collect();
+                    println!("{}", serde_json::json!({"connections":rows}));
+                }),
+                RemoteMcpAction::Logout { url } => ax_mcp::remote::client::logout(&url).await,
+                RemoteMcpAction::Proxy { url } => ax_mcp::remote::client::proxy(url).await,
+            },
             McpAction::Audit {
                 path,
                 session,
