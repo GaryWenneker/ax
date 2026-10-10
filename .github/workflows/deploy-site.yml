@@ -2,7 +2,7 @@ name: Build docs site
 
 on:
   push:
-    branches: [main, feat/minimal-project-safe-context, feature/remote-mcp-oauth-complete]
+    branches: [main, feat/minimal-project-safe-context, feature/remote-mcp-oauth-complete, fix/site-main-version]
     paths:
       - 'site/**'
       - '.github/workflows/deploy-site.yml'
