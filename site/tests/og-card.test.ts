@@ -26,8 +26,8 @@ test('each page gets its own share-image path', () => {
 	assert.equal(ogImagePath('https://evil.example/x'), '/og/home.png');
 });
 
-test('kickers follow the section, and the home page is the current release', () => {
-	assert.equal(kickerFor('/'), 'Current release');
+test('kickers follow the section, and the home page is the current version', () => {
+	assert.equal(kickerFor('/'), 'Current version');
 	assert.equal(kickerFor('/guides/policy-engine/'), 'Guide');
 	assert.equal(kickerFor('/reference/cli/'), 'Reference');
 	assert.equal(kickerFor('/core-concepts/how-it-works/'), 'Core concepts');
@@ -42,7 +42,7 @@ test('share titles drop the site suffix and the ax prefix', () => {
 
 test('release labels must look like v7.0.0', () => {
 	assert.equal(releaseLabel('v7.0.0\n'), 'v7.0.0');
-	assert.equal(releaseLabel(readFileSync(path.join(siteDir, 'public', 'releases', 'latest.txt'), 'utf8')), 'v7.1.0');
+	assert.match(releaseLabel(readFileSync(path.join(siteDir, 'public', 'releases', 'latest.txt'), 'utf8')), /^v\d+\.\d+\.\d+$/);
 	assert.throws(() => releaseLabel('5.0.0'), /v7\.0\.0/);
 	assert.throws(() => releaseLabel(''), /v7\.0\.0/);
 });

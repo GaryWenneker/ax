@@ -11,7 +11,7 @@ import HeaderWaves from '../components/HeaderWaves.astro';
 import BokehField from '../components/BokehField.astro';
 import MotionControl from '../components/MotionControl.astro';
 import { getStarsLabel } from '../lib/github';
-import { AX_VERSION } from '../lib/version';
+import { AX_VERSION, AX_RELEASE_VERSION } from '../lib/version';
 import { AX_FULL_NAME, DOCS_SITE } from '../lib/brand';
 import { ogImagePath } from '../lib/og-card.mjs';
 import { INSTALL_UNIX, installBootScript } from '../lib/install-command';
@@ -51,6 +51,18 @@ const pipeline = [
 ];
 
 const pillars = [
+	{
+		title: 'Smart Output',
+		body: 'Compact agent text and lean metadata, full context on demand, and required policy preserved across turns.',
+		href: '/guides/smart-output/',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="8" y="10" width="32" height="28"/><path d="M16 18h16M16 24h10M16 30h14"/></svg>`,
+	},
+	{
+		title: 'Remote MCP',
+		body: 'Connect ChatGPT and other IDEs to your Ax through HTTPS and OAuth, with explicit access to each project.',
+		href: '/guides/remote-mcp/',
+		icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="10" width="14" height="24"/><rect x="28" y="10" width="14" height="24"/><path d="M20 22h8M12 29h2M34 29h2"/></svg>`,
+	},
 	{
 		title: 'Knowledge graph',
 		body: 'MCP tools replace hundreds of greps — explore call paths, impact, and architecture in one shot.',
@@ -164,9 +176,15 @@ const stats = [
 				<div class="hero-content">
 					<div class="hero-meta">
 						<span class="release-tag">{AX_VERSION}</span>
+						{AX_VERSION !== AX_RELEASE_VERSION && (
+							<a class="hero-meta-note" href={`${base}/getting-started/installation/#build-from-main`}>main source</a>
+						)}
 						<span class="hero-meta-sep" aria-hidden="true">&middot;</span>
 						<span class="hero-meta-note">Open source &middot; MIT</span>
 					</div>
+					{AX_VERSION !== AX_RELEASE_VERSION && (
+						<p class="tagline">Downloads: <a href={`${repo}/releases/latest`}>{AX_RELEASE_VERSION}</a> · <a href={`${base}/getting-started/installation/#build-from-main`}>Build {AX_VERSION} from main</a></p>
+					)}
 					<p class="tagline">{TAGLINE}</p>
 					<h1>
 						<span class="h1-line">Graph it.</span>

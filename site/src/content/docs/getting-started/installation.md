@@ -1,18 +1,44 @@
 ---
 title: Installation
-description: Install ax v7.1.0 and configure your AI coding agents.
+description: Build current ax from main or install a published release, then configure your AI coding agents.
 ---
 
-## Current version
+## Source and download versions
 
-**Latest release: v7.1.0** — install scripts and `ax upgrade` resolve the tag from [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Check your install:
+The website documents the CLI version in the current `main` source. The download installer and `ax upgrade` install published GitHub releases. A source build does not need a release tag; a download does need published binaries.
+
+## Build from main
+
+Use a new checkout to preserve any changes in your existing project:
+
+```bash
+git clone --branch main --single-branch https://github.com/GaryWenneker/ax.git ax-main
+cd ax-main
+git fetch origin main
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || exit 1
+bash scripts/reinstall-cli.sh
+```
+
+On macOS, the script builds `target-dev/release/ax` and installs a PATH shim at `~/.local/bin/ax`. Verify both binaries against the version in `crates/ax-cli/Cargo.toml`:
+
+```bash
+./target-dev/release/ax --version
+~/.local/bin/ax --version
+type -a ax
+```
+
+Both versions must match the source manifest. If your terminal resolves a different installation, refresh its command cache with `hash -r` and check again. Configure your IDE's MCP command to use this checkout's `target-dev/release/ax`, then restart its MCP server and any running `ax web` process to load the new build.
+
+## Published downloads
+
+**Latest published release:** [getax.wenneker.io/releases/latest.txt](https://getax.wenneker.io/releases/latest.txt). Install scripts and `ax upgrade` resolve the published tag independently of your local source checkout. Check your install:
 
 ```bash
 ax version
 # ax 7.1.0
 ```
 
-Pin a specific release with `AX_VERSION=v7.1.0` when running `install.sh` / `install.ps1`.
+Pin a specific published release with `AX_VERSION` when running `install.sh` / `install.ps1`. Confirm that the tag and your platform binary exist on [GitHub Releases](https://github.com/GaryWenneker/ax/releases) before pinning it.
 
 ### Local dev upgrade (maintainers)
 
