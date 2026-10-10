@@ -170,8 +170,7 @@ async fn ingest_transcript_tail(cwd: &Path, input: &serde_json::Value) {
     let session = input
         .get("session_id")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(ax_usage::read_active_cursor_session);
+        .map(|s| s.to_string());
     let path = ax_usage::find_cursor_transcripts(cwd)
         .into_iter()
         .next()
@@ -184,7 +183,14 @@ async fn ingest_transcript_tail(cwd: &Path, input: &serde_json::Value) {
     };
     let tail: Vec<&str> = text.lines().rev().take(200).collect();
     let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
-    let _ = ax_usage::ingest_jsonl_oversized(session.as_deref(), &tail).await;
+    let Some(root) = ax_context::directory::find_nearest_ax_root(cwd) else { return; };
+    let Some(session) = session.filter(|s| ax_usage::session_from_args(&serde_json::json!({"session":s})).is_some()) else { return; };
+    for (tool, body) in ax_usage::tool_chunks_from_jsonl(&tail) {
+        if ax_usage::count_tokens(&body) as i64 >= ax_usage::cache_threshold() {
+            let _ = ax_usage::stash_project_text(&root, Some(&tool), &body).await;
+            let _ = ax_usage::note_project_tool_if_open(&root, &session, &tool, &body).await;
+        }
+    }
 }
 
 fn newest_claude_jsonl(cwd: &Path) -> Option<PathBuf> {
@@ -202,7 +208,7 @@ fn newest_claude_jsonl(cwd: &Path) -> Option<PathBuf> {
             continue;
         }
         let name = dir.file_name()?.to_string_lossy();
-        if !name.contains(slug.as_str()) && !slug.contains(name.as_ref()) {
+        if name.as_ref() != slug {
             continue;
         }
         let files = std::fs::read_dir(&dir).ok()?;

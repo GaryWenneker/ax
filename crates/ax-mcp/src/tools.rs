@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use ax_context::directory::find_nearest_ax_root;
 use ax_context::{format_context_as_markdown, format_explore_text};
 use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
@@ -43,6 +42,7 @@ impl ToolHandler {
     }
 
     pub async fn call_tool(ax: &mut Ax, name: &str, params: Value) -> Result<Value, String> {
+        crate::request_context::validate(ax.project_root(), &params)?;
         match name {
             "ax_explore" => explore(ax, params).await,
             "ax_preflight" => preflight(ax, params).await,
@@ -647,6 +647,11 @@ async fn ship_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    if params.get("action").and_then(Value::as_str) == Some("audit") {
+        return ax_policy::audit::inventory(ax.db_pool(), ax.project_root())
+            .await
+            .map_err(|e| e.to_string());
+    }
     let force = params
         .get("force")
         .and_then(|v| v.as_bool())
@@ -685,17 +690,7 @@ async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> 
 }
 
 fn resolve_preflight_cwd(ax: &Ax, params: &Value) -> Result<PathBuf, String> {
-    if let Some(path) = params
-        .get("projectPath")
-        .or_else(|| params.get("project_path"))
-        .and_then(Value::as_str)
-    {
-        let root = find_nearest_ax_root(&PathBuf::from(path))
-            .ok_or("projectPath does not identify an initialized project; connect MCP to the intended project")?;
-        if ax_usage::project_scope(&root) != ax_usage::project_scope(ax.project_root()) {
-            return Err("projectPath differs from this MCP server's project; connect a separate server to that project".into());
-        }
-    }
+    crate::request_context::validate(ax.project_root(), params)?;
     Ok(ax.project_root().to_path_buf())
 }
 
@@ -754,16 +749,21 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .unwrap_or_default();
     if crate::links::has_links(&result, &memories) {
         let rows = ax.policy_rows().await;
-        let memory_rows = ax_memory::list(ax.db_pool(), 100_000, 0).await;
-        if let (Ok((rules, skills)), Ok((memory_rows, _))) = (rows, memory_rows) {
-            let added = crate::links::expand_links(
+        if let Ok((rules, skills)) = rows {
+            match crate::links::expand_project_links(
+                ax.db_pool(),
                 &mut result,
                 &mut memories,
                 &rules,
                 &skills,
-                &memory_rows,
-            );
-            crate::verbose::push_line(format!("enrich links added={added}"));
+            )
+            .await
+            {
+                Ok(added) => crate::verbose::push_line(format!("enrich links added={added}")),
+                Err(error) => {
+                    crate::verbose::push_line(format!("enrich links unavailable: {error}"))
+                }
+            }
         }
     }
     let meta = ax_policy::build_preflight_meta(&status, &result);
@@ -771,10 +771,59 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .get(crate::server::SESSION_ARG)
         .and_then(|s| s.get("delivered"))
         .and_then(|d| serde_json::from_value(d.clone()).ok());
-    let (policy_inject, mut delivered) = match params.get(crate::server::SESSION_ARG) {
-        Some(session) if policy_error.is_none() => session_policy_inject(ax, session, &result),
-        _ => (result.inject.clone(), Vec::new()),
+    let required_result = MatchResult {
+        rules: result
+            .rules
+            .iter()
+            .filter(|r| r.always_apply || r.level.eq_ignore_ascii_case("CRITICAL"))
+            .cloned()
+            .collect(),
+        skills: result
+            .skills
+            .iter()
+            .filter(|s| s.always_apply)
+            .cloned()
+            .collect(),
+        inject: String::new(),
     };
+    let session = params.get(crate::server::SESSION_ARG);
+    let (mut policy_inject, mut delivered) = policy_block(ax, session, &required_result);
+    if policy_error.is_some() {
+        policy_inject.push_str(&result.inject);
+    }
+    let mut policy_blocks = Vec::new();
+    for r in result
+        .rules
+        .iter()
+        .filter(|r| !r.always_apply && !r.level.eq_ignore_ascii_case("CRITICAL"))
+    {
+        let item = MatchResult {
+            rules: vec![r.clone()],
+            skills: vec![],
+            inject: String::new(),
+        };
+        let (text, sent) = policy_block(ax, session, &item);
+        delivered.extend(sent);
+        policy_blocks.push(ax_usage::ContextBlock {
+            id: format!("rule:{}", r.id),
+            class: ax_usage::ContextClass::HighValue,
+            text: crate::smart_output::policy_markdown(&text),
+        });
+    }
+    for s in result.skills.iter().filter(|s| !s.always_apply) {
+        let item = MatchResult {
+            rules: vec![],
+            skills: vec![s.clone()],
+            inject: String::new(),
+        };
+        let (text, sent) = policy_block(ax, session, &item);
+        delivered.extend(sent);
+        policy_blocks.push(ax_usage::ContextBlock {
+            id: format!("skill:{}", s.name),
+            class: ax_usage::ContextClass::HighValue,
+            text: crate::smart_output::policy_markdown(&text),
+        });
+    }
     crate::verbose::push_line(format!(
         "enrich policy matched_rules={} matched_skills={} inject_chars={} mode={}",
         meta.matched_rules,
@@ -788,7 +837,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let index_stats = ax.get_stats().await.ok();
     let pending = ax.get_pending_files().await;
 
-    let mut optional_blocks: Vec<ax_usage::ContextBlock> = Vec::new();
+    let mut optional_blocks: Vec<ax_usage::ContextBlock> = policy_blocks;
     let mut inject = format!(
         "# Ax context\n\nProject: `{}`\n\n{}",
         ax_usage::project_scope(ax.project_root()),
@@ -906,16 +955,22 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         inject.push('\n');
         inject.push_str(&chat_line(&conversation, graph.as_deref()));
         if let Ok(index) = index.as_ref() {
-            let unseen: Vec<_> =
-                ax_usage::reuse_session_entries(ax.project_root(), &conversation, index)
-                    .await
-                    .into_iter()
-                    .filter(|e| {
-                        !session_delivered
-                            .as_ref()
-                            .is_some_and(|m| m.contains_key(&format!("reuse:{}", e.id)))
-                    })
-                    .collect();
+            let unseen: Vec<_> = ax_usage::reuse_session_entries(
+                ax.project_root(),
+                params
+                    .get("__axGraphChat")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&conversation),
+                index,
+            )
+            .await
+            .into_iter()
+            .filter(|e| {
+                !session_delivered
+                    .as_ref()
+                    .is_some_and(|m| m.contains_key(&format!("reuse:{}", e.id)))
+            })
+            .collect();
             let known = ax_usage::format_session_context(&unseen, ax_usage::SESSION_CONTEXT_TOKENS);
             if !known.is_empty() {
                 if session_delivered.is_some() {
@@ -1027,37 +1082,34 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         text: inject,
     }];
     blocks.extend(optional_blocks);
-    let selected = ax_usage::select_context(&blocks, budget);
-    let included: Vec<_> = selected.iter().map(|b| b.id.as_str()).collect();
-    let omitted: Vec<_> = blocks
+    let (rule_rows, skill_rows) = match ax.policy_rows().await {
+        Ok(rows) => rows,
+        Err(error) => {
+            let message = format!("Policy provenance unavailable: {error}");
+            blocks.push(ax_usage::ContextBlock { id:"policy-provenance-error".into(), class:ax_usage::ContextClass::HardRequired, text:message.clone() });
+            policy_error = Some(message);
+            (Vec::new(), Vec::new())
+        }
+    };
+    let mut sources = Vec::new();
+    for row in rule_rows
         .iter()
-        .filter(|b| !included.contains(&b.id.as_str()))
-        .map(|b| b.id.as_str())
-        .collect();
-    // Do not mark a block as delivered if the budget omitted it.
-    delivered.retain(|(key, _)| match key.as_str() {
-        "block:index" => included.contains(&"block:index"),
-        key if key.starts_with("reuse:") => included.contains(&"reuse"),
-        _ => true,
-    });
-    let mut inject = selected
-        .iter()
-        .map(|b| b.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    if !omitted.is_empty() {
-        inject.push_str("\n\nOptional context omitted to fit the budget. Retrieve index details with `ax_status`, decisions with `ax_recall`, history with `ax_history`, or rerun graph queries with `fresh: true`.");
+        .filter(|r| result.rules.iter().any(|m| m.id == r.id))
+    {
+        sources.push(json!({"kind":"rule","id":row.id,"scope":row.scope,"sourcePath":row.source_path,
+            "origin":row.source,"rootId":row.root_id,"bodyHash":ax_policy::revisions::content_hash(&row.body)}));
     }
-    let over_budget = budget.is_some_and(|limit| ax_usage::count_tokens(&inject) > limit as usize);
-    if over_budget {
-        inject.push_str(
-            "\n\nContext budget exceeded: required policy and working context are preserved.",
-        );
+    for row in skill_rows
+        .iter()
+        .filter(|s| result.skills.iter().any(|m| m.name == s.name))
+    {
+        sources.push(json!({"kind":"skill","id":row.name,"scope":row.scope,"sourcePath":row.source_path,
+            "origin":row.source,"rootId":row.root_id,"bodyHash":ax_policy::revisions::content_hash(&row.body)}));
     }
     let mut out = json!({
+        "policySources":sources,
         "project": { "path": ax_usage::project_scope(ax.project_root()) },
-        "session": { "id": chat_of(&params) },
-        "contextBudget": { "included": included, "omitted": omitted, "limit": budget, "overBudget": over_budget, "tokens": ax_usage::count_tokens(&inject), "measurement": if ax_usage::tokenizer_available() { "o200k_base" } else { "estimate" } },
+        "session": { "id": chat_of(&params), "contextEpoch": params.get("__axEpoch") },
         "policyStatus": meta.policy_status,
         "matchedRules": meta.matched_rules,
         "matchedSkills": meta.matched_skills,
@@ -1071,7 +1123,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "memories": memories,
         "indexStats": index_stats,
         "pendingFiles": pending,
-        "inject": inject,
+        "inject": "",
         "instruction": instruction,
     });
     if let Some(err) = policy_error {
@@ -1079,10 +1131,43 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             obj.insert("policyError".to_string(), Value::String(err));
         }
     }
+    out = crate::context_budget::finish(out, &blocks, budget)?;
+    let included: Vec<_> = out["contextBudget"]["included"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    delivered.retain(|(key, _)| match key.as_str() {
+        "block:index" => included.contains(&"block:index"),
+        k if k.starts_with("reuse:") => included.contains(&"reuse"),
+        k if policy_blocks_id(k, &blocks) => included.contains(&k),
+        _ => true,
+    });
     if !delivered.is_empty() {
         out[crate::server::DELIVERED_KEY] = json!(delivered);
     }
     Ok(out)
+}
+
+fn policy_blocks_id(key: &str, blocks: &[ax_usage::ContextBlock]) -> bool {
+    blocks
+        .iter()
+        .any(|b| b.class != ax_usage::ContextClass::HardRequired && b.id == key)
+}
+
+fn policy_block(
+    ax: &Ax,
+    session: Option<&Value>,
+    result: &MatchResult,
+) -> (String, Vec<(String, u64)>) {
+    match session {
+        Some(session) => session_policy_inject(ax, session, result),
+        None => (
+            ax_policy::format_inject_block(&result.rules, &result.skills, usize::MAX),
+            Vec::new(),
+        ),
+    }
 }
 
 /// Append `block` unless this session already received the identical text.
@@ -1106,14 +1191,6 @@ fn push_once(
     inject.push_str(block);
 }
 
-fn skill_inline_chars() -> usize {
-    let tokens = std::env::var("AX_POLICY_SKILL_INLINE_TOKENS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(1_500);
-    tokens.saturating_mul(4)
-}
-
 /// Private args key: the chat the server resolved for this call.
 pub(crate) const CHAT_ARG: &str = "__axChat";
 /// Private args key: preflight calls in this chat since its last `ax_session` write.
@@ -1122,7 +1199,9 @@ pub(crate) const TURNS_ARG: &str = "__axTurns";
 fn chat_of(params: &Value) -> String {
     match params.get(CHAT_ARG).and_then(Value::as_str) {
         Some(chat) => chat.to_string(),
-        None => ax_usage::conversation_key(ax_usage::read_active_cursor_session()),
+        None => {
+            ax_usage::session_from_args(params).unwrap_or_else(crate::chat_session::mint_session)
+        }
     }
 }
 
@@ -1150,7 +1229,12 @@ fn session_policy_inject(
         .and_then(|d| serde_json::from_value(d.clone()).ok())
         .unwrap_or_default();
     let client = session.get("client").and_then(|v| v.as_str()).unwrap_or("");
-    let client_loaded = if client.to_ascii_lowercase().contains("cursor") {
+    let client_loaded = if client.to_ascii_lowercase().contains("cursor")
+        && !session
+            .get("reset")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
         let mut roots = vec![ax.project_root().to_path_buf()];
         roots.extend(ax_utils::paths::home_dir());
         ax_policy::ide_loaded::ide_loaded_keys(&roots, &result.rules, &result.skills)
@@ -1160,11 +1244,11 @@ fn session_policy_inject(
     let out = ax_policy::format::format_inject_block_with(
         &result.rules,
         &result.skills,
-        ax_policy::matcher::max_inject_chars(),
+        usize::MAX,
         ax_policy::format::InjectOptions {
             delivered: Some(&delivered),
             client_loaded: Some(&client_loaded),
-            skill_inline_chars: Some(skill_inline_chars()),
+            skill_inline_chars: None,
             rule_inline_chars: None,
         },
     );
@@ -2054,6 +2138,21 @@ pub(crate) async fn indexed_hashes(
 
 fn advertise_fresh(tools: &mut [Value]) {
     for tool in tools.iter_mut() {
+        let preflight = tool["name"] == "ax_preflight";
+        if let Some(props) = tool["inputSchema"]["properties"].as_object_mut() {
+            props.insert(
+                "projectPath".into(),
+                json!({"type":"string", "description":"Must match this server's project"}),
+            );
+            if preflight {
+                props.insert("context_epoch".into(), json!({"type":"string", "description":"Change after compaction; echo session.contextEpoch"}));
+                props.insert("context_reset".into(), json!({"type":"boolean", "description":"Resend required policy and notes after context loss"}));
+                props.insert(
+                    "window_id".into(),
+                    json!({"type":"string", "description":"IDE window binding for session hooks"}),
+                );
+            }
+        }
         let cacheable = tool["name"].as_str().is_some_and(ax_usage::reuse_cacheable);
         if let (true, Some(props)) = (cacheable, tool["inputSchema"]["properties"].as_object_mut())
         {
@@ -2142,6 +2241,7 @@ fn extra_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "action": {"type":"string", "enum":["index","audit"], "description":"audit compares disk/SQLite hashes and provenance without changing either"},
                     "force": { "type": "boolean", "description": "Force re-import from filesystem into database mode" }
                 }
             }

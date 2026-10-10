@@ -92,6 +92,64 @@ pub fn expand_links(
     !linked.is_empty()
 }
 
+/// Resolve with the lightweight title catalog, then load only selected bodies.
+pub async fn expand_project_links(
+    pool: &sqlx::SqlitePool,
+    result: &mut MatchResult,
+    memories: &mut Vec<MemoryMatch>,
+    rules: &[PolicyRuleRow],
+    skills: &[PolicySkillRow],
+) -> Result<bool, String> {
+    let mut catalog = ax_memory::link_catalog(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let selected = {
+        let sources = sources(result, memories);
+        let index = index(rules, skills, &catalog);
+        let delivered = sources
+            .iter()
+            .map(|s| (s.item.kind, s.item.id.clone()))
+            .collect();
+        follow_links(
+            &sources,
+            &index,
+            &delivered,
+            |item| match item.kind {
+                LinkKind::Rule => rules.iter().any(|r| {
+                    r.id == item.id
+                        && r.enabled
+                        && ax_policy::matcher::is_approved_status(&r.status)
+                }),
+                LinkKind::Skill => skills.iter().any(|s| {
+                    s.name == item.id
+                        && s.enabled
+                        && ax_policy::matcher::is_approved_status(&s.status)
+                }),
+                LinkKind::Memory => catalog
+                    .iter()
+                    .any(|m| m.id == item.id && m.enabled && m.kind != ax_memory::TURN_KIND),
+            },
+            LINK_CAP,
+        )
+    };
+    for (target, _) in selected
+        .iter()
+        .filter(|(item, _)| item.kind == LinkKind::Memory)
+    {
+        let row = ax_memory::get(pool, &target.id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(slot) = catalog.iter_mut().find(|m| m.id == target.id) {
+            if let Some(row) = row {
+                *slot = row;
+            } else {
+                slot.enabled = false;
+            }
+        }
+    }
+    Ok(expand_links(result, memories, rules, skills, &catalog))
+}
+
 /// Cheap check before loading every rule, skill and memory.
 pub fn has_links(result: &MatchResult, memories: &[MemoryMatch]) -> bool {
     sources(result, memories)
@@ -120,6 +178,14 @@ fn sources<'a>(result: &'a MatchResult, memories: &'a [MemoryMatch]) -> Vec<Link
     rules.chain(skills).chain(memories).collect()
 }
 
+fn origin(scope: &str) -> LinkOrigin {
+    if matches!(scope, "company" | "global" | "private_user") {
+        LinkOrigin::Global
+    } else {
+        LinkOrigin::Project
+    }
+}
+
 fn index(
     rules: &[PolicyRuleRow],
     skills: &[PolicySkillRow],
@@ -131,10 +197,10 @@ fn index(
         .collect();
     let rules = rules
         .iter()
-        .map(|r| LinkItem::new(LinkKind::Rule, LinkOrigin::Project, &r.id, &r.id));
+        .map(|r| LinkItem::new(LinkKind::Rule, origin(&r.scope), &r.id, &r.id));
     let skills = skills
         .iter()
-        .map(|s| LinkItem::new(LinkKind::Skill, LinkOrigin::Project, &s.name, &s.name));
+        .map(|s| LinkItem::new(LinkKind::Skill, origin(&s.scope), &s.name, &s.name));
     let memories = ax_policy::links::unique_stems(&entries)
         .into_iter()
         .map(|(id, stem)| LinkItem::new(LinkKind::Memory, LinkOrigin::Project, &id, &stem));

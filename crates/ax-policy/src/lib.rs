@@ -1,4 +1,5 @@
 pub mod agents_share;
+pub mod audit;
 pub mod bootstrap;
 pub mod builtin_packs;
 pub mod capture;

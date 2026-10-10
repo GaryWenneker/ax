@@ -65,7 +65,13 @@ impl DedupReport {
                         format!("removed mirror (project {project_id})")
                     }
                 };
-                format!("{} {}: {what} — {}", a.kind, a.name, a.reason)
+                format!(
+                    "{} {}: {}{what} — {}",
+                    a.kind,
+                    a.name,
+                    if self.dry_run { "would be " } else { "" },
+                    a.reason
+                )
             })
             .collect();
         if let Some(error) = &self.error {

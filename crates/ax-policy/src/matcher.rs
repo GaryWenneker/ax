@@ -13,8 +13,8 @@ use crate::types::{
     MatchInput, MatchResult, MatchedRule, MatchedSkill, PolicyLevel, PolicyRuleRow, PolicySkillRow,
 };
 
-/// (max updated_at, count) per table — cheap staleness fingerprint.
-type PolicyGeneration = (i64, i64, i64, i64);
+/// Sorted metadata fingerprints also detect changes within one timestamp tick.
+type PolicyGeneration = (String, String);
 
 struct PolicyCacheEntry {
     generation: PolicyGeneration,
@@ -30,10 +30,9 @@ fn policy_cache() -> &'static Mutex<HashMap<String, PolicyCacheEntry>> {
 
 async fn policy_generation(pool: &SqlitePool) -> Result<PolicyGeneration, AxError> {
     sqlx::query_as(
-        "SELECT (SELECT COALESCE(MAX(updated_at), 0) FROM policy_rules),
-                (SELECT COUNT(*) FROM policy_rules),
-                (SELECT COALESCE(MAX(updated_at), 0) FROM policy_skills),
-                (SELECT COUNT(*) FROM policy_skills)",
+        "SELECT
+        (SELECT COALESCE(group_concat(id || ':' || content_hash || ':' || updated_at || ':' || enabled || ':' || status || ':' || scope || ':' || COALESCE(storage,'') || ':' || COALESCE(properties,'{}'), '|'), '') FROM (SELECT * FROM policy_rules ORDER BY id)),
+        (SELECT COALESCE(group_concat(name || ':' || content_hash || ':' || updated_at || ':' || enabled || ':' || status || ':' || scope || ':' || COALESCE(storage,'') || ':' || COALESCE(properties,'{}'), '|'), '') FROM (SELECT * FROM policy_skills ORDER BY name))"
     )
     .fetch_one(pool)
     .await
@@ -72,16 +71,16 @@ pub async fn cached_rules_and_skills(
     Ok((rules, skills))
 }
 
-/// Global rows (`extras`) win on the same `name`. Project rows fill names global does not have.
+/// Explicit project policy overrides global defaults on the same name.
 pub fn merge_skills(
     local: Vec<PolicySkillRow>,
     extras: Vec<PolicySkillRow>,
 ) -> Vec<PolicySkillRow> {
     let mut by_name = HashMap::new();
-    for skill in local {
+    for skill in extras {
         by_name.insert(skill.name.clone(), skill);
     }
-    for skill in extras {
+    for skill in local {
         by_name.insert(skill.name.clone(), skill);
     }
     let mut out: Vec<PolicySkillRow> = by_name.into_values().collect();
@@ -244,10 +243,14 @@ fn score_skill(skill: &crate::types::PolicySkillRow, prompt_lc: &str) -> Option<
         .split_whitespace()
         .filter(|w| w.len() > 3)
         .collect();
-    for w in words {
-        if desc_lc.contains(w) {
-            score += 5;
-        }
+    let description_matches: std::collections::HashSet<_> = words
+        .into_iter()
+        .filter(|w| contains_phrase(&desc_lc, w))
+        .collect();
+    // One generic word (such as "feature") is not applicability evidence.
+    if description_matches.len() >= 2 {
+        score += 5 * description_matches.len() as i32;
+        reasons.push("description:multiple-terms".into());
     }
 
     if score == 0 {
@@ -361,6 +364,15 @@ mod tests {
             group: String::new(),
             properties: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_generic_feature_word_cannot_select_an_unrelated_email_skill() {
+        let mut skill = skill_row("feature-information", false, &[], 50);
+        skill.description =
+            "Send feature announcement emails to Hoornaarpreventie members via Brevo".into();
+        assert!(score_skill(&skill, "implement the ax feature").is_none());
+        assert!(score_skill(&skill, "send announcement emails").is_some());
     }
 
     #[test]
@@ -483,15 +495,15 @@ mod tests {
     }
 
     #[test]
-    fn merge_skills_global_name_wins() {
+    fn merge_skills_project_override_wins() {
         let local = vec![skill_row("azdo-pr-review", false, &["local"], 1)];
         let mut extra = skill_row("azdo-pr-review", false, &["global"], 80);
         extra.body = "GLOBAL".into();
         extra.description = "from global.db".into();
         let merged = merge_skills(local, vec![extra]);
         assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].triggers, vec!["global".to_string()]);
-        assert_eq!(merged[0].body, "GLOBAL");
+        assert_eq!(merged[0].triggers, vec!["local".to_string()]);
+        assert_eq!(merged[0].body, "BODY");
     }
 
     #[test]

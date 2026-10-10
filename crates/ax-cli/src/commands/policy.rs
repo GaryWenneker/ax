@@ -325,7 +325,7 @@ pub(crate) fn dedup_global_blocking() -> Result<ax_core::policy_dedup::DedupRepo
             .enable_all()
             .build()
             .map_err(|e| e.to_string())
-            .map(|rt| rt.block_on(ax_core::policy_dedup::run_default(None, false)))
+            .map(|rt| rt.block_on(ax_core::policy_dedup::run_default(None, true)))
     })
     .join()
     .map_err(|_| "policy dedup thread panicked".to_string())?

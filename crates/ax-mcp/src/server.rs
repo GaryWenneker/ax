@@ -120,7 +120,7 @@ fn repair_hooks_at_startup(root: &std::path::Path) {
     }
 }
 
-fn resolve_request_project_root(engine: &McpEngine) -> Option<PathBuf> {
+pub(crate) fn resolve_request_project_root(engine: &McpEngine) -> Option<PathBuf> {
     engine
         .project_root()
         .cloned()
@@ -226,11 +226,11 @@ fn attach_policy_session(engine: &mut McpEngine, mut args: Value) -> Value {
     if !args.is_object() {
         args = json!({});
     }
-    args[SESSION_ARG] = json!({ "client": view.client_name, "delivered": view.delivered });
+    args[SESSION_ARG] = json!({ "client": view.client_name, "delivered": view.delivered, "reset": args.get("__axContextReset").and_then(Value::as_bool).unwrap_or(false) });
     args
 }
 
-fn record_policy_delivery(engine: &mut McpEngine, mut value: Value) -> Value {
+pub(crate) fn record_policy_delivery(engine: &mut McpEngine, mut value: Value) -> Value {
     let Some(delivered) = value
         .as_object_mut()
         .and_then(|obj| obj.remove(DELIVERED_KEY))
@@ -268,7 +268,10 @@ fn resolve_chat(engine: &mut McpEngine, name: &str, args: &Value) -> String {
     let chat = resolve_session(
         kind,
         ax_usage::session_from_args(args),
-        ax_usage::read_recent_cursor_session(ax_usage::HOOK_SESSION_MAX_AGE),
+        engine.project_root().and_then(|root| {
+            let window = args.get("window_id").and_then(Value::as_str)?;
+            ax_usage::read_bound_cursor_session(root, window, ax_usage::HOOK_SESSION_MAX_AGE)
+        }),
         engine.policy_sessions().connection_session().as_deref(),
         mint_session,
     );
@@ -284,6 +287,42 @@ fn with_chat(mut args: Value, chat: &str) -> Value {
     args
 }
 
+/// Shared transport/embedded context lifecycle after ownership validation.
+pub(crate) fn prepare_call_args(
+    engine: &mut McpEngine,
+    name: &str,
+    mut args: Value,
+) -> (Value, String, String) {
+    let conversation = resolve_chat(engine, name, &args);
+    let (epoch, reset) = engine.policy_sessions().observe_context(
+        args.get("context_epoch").and_then(Value::as_str),
+        args.get("context_reset")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    );
+    if !args.is_object() {
+        args = json!({});
+    }
+    if reset {
+        args.as_object_mut().map(|m| m.remove("known_context"));
+    }
+    let namespace = engine
+        .policy_sessions()
+        .context_namespace()
+        .unwrap_or_default();
+    let graph_conversation = format!("{conversation}:epoch:{epoch}:instance:{namespace}");
+    args["__axEpoch"] = json!(epoch);
+    args["__axContextReset"] = json!(reset);
+    args["__axGraphChat"] = json!(graph_conversation);
+    let args = with_chat(args, &conversation);
+    let args = if matches!(name, "ax_preflight" | "ax_skill") {
+        attach_policy_session(engine, args)
+    } else {
+        args
+    };
+    (args, conversation, graph_conversation)
+}
+
 /// Run one tool, wrap the reply for MCP, and log the call with its token
 /// savings estimate via `spawn_record_mcp_call`.
 async fn call_tool_and_wrap(
@@ -293,6 +332,10 @@ async fn call_tool_and_wrap(
     project_root: Option<&std::path::Path>,
     verbose: bool,
 ) -> Result<Value, String> {
+    let args = crate::request_context::public_args(args);
+    if let Some(root) = project_root {
+        crate::request_context::validate(root, &args)?;
+    }
     if is_policy_tool(name) {
         if let Err(e) = engine.ensure_policy_fresh().await {
             tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");
@@ -307,13 +350,7 @@ async fn call_tool_and_wrap(
         push_inbound(name, &args);
     }
     let started = std::time::Instant::now();
-    let conversation = resolve_chat(engine, name, &args);
-    let args = with_chat(args, &conversation);
-    let args = if matches!(name, "ax_preflight" | "ax_skill") {
-        attach_policy_session(engine, args)
-    } else {
-        args
-    };
+    let (args, conversation, graph_conversation) = prepare_call_args(engine, name, args);
     let session_write = name == "ax_session"
         && matches!(
             args.get("action").and_then(Value::as_str),
@@ -332,7 +369,8 @@ async fn call_tool_and_wrap(
     let reuse_root =
         project_root.filter(|_| ax_usage::reuse_enabled() && ax_usage::reuse_cacheable(name));
     if let Some(root) = reuse_root {
-        if let Some(hit) = confirmed_reuse_hit(engine, root, &conversation, name, &args).await {
+        if let Some(hit) = confirmed_reuse_hit(engine, root, &graph_conversation, name, &args).await
+        {
             let (wrapped, text, sent, avoided) = reuse_hit_reply(&hit);
             // A failed hit counter only under-reports savings; the reply is already decided.
             let _ = ax_usage::reuse_record_hit(&hit.key, avoided).await;
@@ -443,7 +481,7 @@ async fn call_tool_and_wrap(
                         // A failed store only costs a future hit; this reply is unaffected.
                         let _ = ax_usage::reuse_store(
                             root,
-                            &conversation,
+                            &graph_conversation,
                             name,
                             reuse_args,
                             &annotated,
@@ -665,7 +703,7 @@ fn wrap_call_tool_result_parts(
 
 /// Lean by default. Set `AX_MCP_FULL=1` (or `true`/`yes`) to restore the full
 /// structuredContent payload for clients that rely on it.
-fn render_full() -> bool {
+pub(crate) fn render_full() -> bool {
     std::env::var("AX_MCP_FULL")
         .map(|v| {
             let v = v.trim();
@@ -677,7 +715,7 @@ fn render_full() -> bool {
 /// Project a tool's full result down to a lean `structuredContent` payload that
 /// drops fields already carried verbatim in `content.text`. Returns `None` for
 /// text-authoritative data tools so `structuredContent` is omitted entirely.
-fn lean_structured(name: &str, value: &Value) -> Option<Value> {
+pub(crate) fn lean_structured(name: &str, value: &Value) -> Option<Value> {
     match name {
         // Numbered source, callers, and callees are already in content.text.
         // Keep only a compact entry index for programmatic use.
@@ -704,6 +742,7 @@ fn lean_structured(name: &str, value: &Value) -> Option<Value> {
             "project": value.get("project"),
             "session": value.get("session"),
             "contextBudget": value.get("contextBudget"),
+            "policySources": value.get("policySources"),
             "policyError": value.get("policyError"),
         })),
         // Summary text is in content.text; keep structured stats for scripts.
@@ -1371,7 +1410,8 @@ mod reuse_integration {
         )
     }
 
-    async fn call(engine: &mut McpEngine, name: &str, args: Value) -> Value {
+    async fn call(engine: &mut McpEngine, name: &str, mut args: Value) -> Value {
+        args["window_id"] = json!("test-window");
         handle_request(
             engine,
             "tools/call",
@@ -1436,11 +1476,8 @@ mod reuse_integration {
         }
     }
 
-    fn set_chat(id: &str) {
-        let home = ax_utils::paths::home_dir().expect("AX_HOME_DIR");
-        let dir = home.join(".ax");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("active-cursor-session"), format!("{id}\n")).unwrap();
+    fn set_chat(id: &str, root: &std::path::Path) {
+        ax_usage::write_bound_cursor_session(root, "test-window", id).unwrap();
     }
 
     /// A temp home, so the real `~/.ax/active-cursor-session` never leaks into a test.
@@ -1581,8 +1618,8 @@ mod reuse_integration {
             "{pre}"
         );
         assert!(
-            hit(&text(&call(&mut restarted, "ax_node", alpha).await)),
-            "the restarted daemon reuses the chat's answer"
+            !hit(&text(&call(&mut restarted, "ax_node", alpha).await)),
+            "a restarted context must retrieve the graph body even while durable notes survive"
         );
     }
 
@@ -1822,10 +1859,11 @@ mod reuse_integration {
         let pre = text(&call(&mut engine, "ax_preflight", json!({ "prompt": "v1" })).await);
         let chat = session_of(&pre);
         let v1 = graph_of(&pre);
-        let pool =
-            sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(root.join(".ax/ax.db")))
-                .await
-                .unwrap();
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(root.join(".ax/ax.db")),
+        )
+        .await
+        .unwrap();
         let expected =
             ax_usage::index_fingerprint(&crate::tools::indexed_hashes(&pool).await.unwrap());
         assert_eq!(v1, expected[..16], "{pre}");
@@ -1861,8 +1899,8 @@ mod reuse_integration {
     async fn the_session_argument_beats_the_hook_file() {
         let _guard = env_lock().await;
         let _home = isolated_home();
-        set_chat("hook-chat");
         let (_dir, mut engine) = fixture().await;
+        set_chat("hook-chat", _dir.path());
         let alpha = json!({ "name": "reuse_alpha_target" });
         call(
             &mut engine,
@@ -2427,7 +2465,7 @@ mod reuse_integration {
 
     async fn prompts_in_a_second_chat_start_cold(engine: &mut McpEngine, hash: &str) {
         let alpha = json!({ "name": "reuse_alpha_target" });
-        set_chat("prompt-chat-b");
+        set_chat("prompt-chat-b", engine.project_root().unwrap());
         let other = text(
             &call(
                 engine,
@@ -2448,7 +2486,7 @@ mod reuse_integration {
             hit(&text(&call(engine, "ax_node", alpha).await)),
             "chat B's own second call hits"
         );
-        set_chat("prompt-chat-a");
+        set_chat("prompt-chat-a", engine.project_root().unwrap());
         let back = working_block(&text(
             &call(
                 engine,
@@ -2470,8 +2508,8 @@ mod reuse_integration {
         let _guard = env_lock().await;
         let home = tempfile::tempdir().unwrap();
         let _home = HomeGuard::set(home.path());
-        set_chat("prompt-chat-a");
         let (dir, mut engine) = fixture().await;
+        set_chat("prompt-chat-a", dir.path());
         let hash = prompts_record_and_repeat(&mut engine).await;
         prompts_reuse_only_the_same_call(&mut engine, &hash).await;
         prompts_keep_the_hash_when_the_index_changes(&mut engine, dir.path(), &hash).await;
@@ -2505,13 +2543,15 @@ mod reuse_integration {
         let foreign = call(&mut b, "ax_expand", json!({"id":id})).await;
         assert_eq!(foreign["isError"], true);
         assert!(!text(&foreign).contains("PRIVATE-A"));
-        let override_reply = call(
+        let override_reply = handle_request(
             &mut a,
-            "ax_preflight",
-            json!({"prompt":"start","projectPath":dir_b.path()}),
+            "tools/call",
+            json!({
+                "name":"ax_preflight", "arguments":{"prompt":"start", "projectPath":dir_b.path()}
+            }),
         )
         .await;
-        assert_eq!(override_reply["isError"], true);
+        assert!(override_reply.result.unwrap_err().contains("projectPath"));
         let local = call(
             &mut a,
             "ax_preflight",

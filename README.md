@@ -539,3 +539,23 @@ See repository license file. ax is local intelligence for AI agents — knowledg
 
 <!-- ax = Aero Xecution -->
 <sub><abbr title="Aero Xecution">ax</abbr> · Aero Xecution</sub>
+
+### Project-safe minimal context
+
+MCP validates explicit project and session identities before accessing state. Each
+connection owns a context epoch independently of its durable chat session. After
+compaction, call `ax_preflight` with `context_reset: true` or a new `context_epoch`;
+required policy and working notes are rehydrated, while graph retrieval starts
+fresh. A reconnect also starts fresh even when the client repeats an epoch.
+
+Set `context.budgetTokens` in `ax.json` to select complete optional blocks. The
+reported budget includes text, structured metadata, separators and omission
+instructions. Required policy is preserved even below its minimum;
+`contextBudget.overBudget` and `requiredMinimum` explain that case. Use graph
+queries and `ax_expand` for additional source instead of enlarging every preflight.
+
+`ax_policy_index({ action: "audit" })` inventories policy and memory origins and
+compares disk/database hashes without changing their authority. Database policy
+is not overwritten by stale exports; explicit file-owned overrides still refresh.
+Background dedup reports candidates without promoting project content globally.
+See [the implementation contract](docs/specs/minimal-project-safe-context.md).

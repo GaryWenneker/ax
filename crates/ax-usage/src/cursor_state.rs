@@ -121,6 +121,9 @@ pub fn write_active_cursor_session(session_id: &str) -> Result<(), String> {
 pub fn read_active_cursor_session() -> Option<String> {
     let path = active_cursor_session_path()?;
     let text = std::fs::read_to_string(path).ok()?;
+    if let Ok(record) = serde_json::from_str::<CursorSessionRecord>(&text) {
+        return crate::reuse_cache::usable_session(&record.session_id);
+    }
     let id = text.lines().next()?.trim();
     if id.is_empty() {
         None
@@ -150,6 +153,112 @@ pub fn session_if_recent(
         return None;
     }
     crate::reuse_cache::usable_session(text.lines().next()?)
+}
+
+/// A versioned hook record binds a conversation to its project and IDE window.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct CursorSessionRecord {
+    pub version: u32,
+    pub project: String,
+    pub window_id: String,
+    pub session_id: String,
+    pub timestamp_ms: u64,
+}
+
+pub fn write_bound_cursor_session(root: &Path, window: &str, session: &str) -> Result<(), String> {
+    let session_id = crate::reuse_cache::usable_session(session).ok_or("invalid session_id")?;
+    let window_id = crate::reuse_cache::usable_session(window).ok_or("invalid window_id")?;
+    let record = CursorSessionRecord {
+        version: 1,
+        project: crate::project_scope(root),
+        window_id,
+        session_id,
+        timestamp_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_millis() as u64,
+    };
+    let path = active_cursor_session_path().ok_or("home directory not found")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        path,
+        serde_json::to_vec(&record).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn read_bound_cursor_session(
+    root: &Path,
+    window: &str,
+    max_age: std::time::Duration,
+) -> Option<String> {
+    let text = std::fs::read_to_string(active_cursor_session_path()?).ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    bound_session(&text, &crate::project_scope(root), window, now, max_age)
+}
+
+/// Legacy text records and malformed, future or mismatched bindings fail closed.
+pub fn bound_session(
+    text: &str,
+    project: &str,
+    window: &str,
+    now: u64,
+    max_age: std::time::Duration,
+) -> Option<String> {
+    let r: CursorSessionRecord = serde_json::from_str(text).ok()?;
+    if r.version != 1
+        || r.project != project
+        || r.window_id != window
+        || now.checked_sub(r.timestamp_ms)? > max_age.as_millis() as u64
+    {
+        return None;
+    }
+    crate::reuse_cache::usable_session(&r.session_id)
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    #[test]
+    fn hook_requires_matching_project_window_age_and_version() {
+        let text = serde_json::to_string(&CursorSessionRecord {
+            version: 1,
+            project: "a".into(),
+            window_id: "one".into(),
+            session_id: "chat".into(),
+            timestamp_ms: 100,
+        })
+        .unwrap();
+        let age = std::time::Duration::from_millis(100);
+        assert_eq!(
+            bound_session(&text, "a", "one", 150, age),
+            Some("chat".into())
+        );
+        for (project, window, now) in [
+            ("b", "one", 150),
+            ("a", "two", 150),
+            ("a", "one", 201),
+            ("a", "one", 99),
+        ] {
+            assert_eq!(bound_session(&text, project, window, now, age), None);
+        }
+        assert_eq!(bound_session("chat", "a", "one", 150, age), None);
+        assert_eq!(
+            bound_session(
+                &text.replace("\"version\":1", "\"version\":2"),
+                "a",
+                "one",
+                150,
+                age
+            ),
+            None
+        );
+    }
 }
 
 fn json_i64(v: &Value) -> Option<i64> {

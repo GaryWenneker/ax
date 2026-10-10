@@ -269,7 +269,11 @@ pub fn fts_query_from_text(text: &str) -> Option<String> {
 
 /// Hybrid recall: FTS5 (BM25) and vector similarity fused with Reciprocal
 /// Rank Fusion, then weighted by confidence decay.
-pub async fn recall(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<MemoryMatch>, AxError> {
+pub async fn recall(
+    pool: &SqlitePool,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<MemoryMatch>, AxError> {
     use std::collections::HashMap;
 
     let overfetch = (limit * 4).max(20);
@@ -395,14 +399,18 @@ fn drop_weak_term_matches(matches: &mut Vec<MemoryMatch>, query: &str) {
     });
 }
 
-pub async fn list(pool: &SqlitePool, limit: usize, offset: usize) -> Result<(Vec<MemoryRow>, i64), AxError> {
+pub async fn list(
+    pool: &SqlitePool,
+    limit: usize,
+    offset: usize,
+) -> Result<(Vec<MemoryRow>, i64), AxError> {
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
         .fetch_one(pool)
         .await
         .map_err(db_err)?;
-    let rows = sqlx::query_as::<_, MemoryDbRow>(
-        &format!("{MEMORY_SELECT} ORDER BY updated_at DESC LIMIT ? OFFSET ?"),
-    )
+    let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
+        "{MEMORY_SELECT} ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+    ))
     .bind(limit as i64)
     .bind(offset as i64)
     .fetch_all(pool)
@@ -412,12 +420,38 @@ pub async fn list(pool: &SqlitePool, limit: usize, offset: usize) -> Result<(Vec
     Ok((memories, total))
 }
 
+/// Lightweight title catalog for stable wiki-link disambiguation. Bodies, tags
+/// and file lists are fetched by ID only for selected targets.
+pub async fn link_catalog(pool: &SqlitePool) -> Result<Vec<MemoryRow>, AxError> {
+    let rows: Vec<(String, String, String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT id, kind, title, created_at, updated_at, enabled FROM memories ORDER BY created_at, id"
+    ).fetch_all(pool).await.map_err(db_err)?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, kind, title, created_at, updated_at, enabled)| MemoryRow {
+                id,
+                kind,
+                title,
+                body: String::new(),
+                tags: vec![],
+                files: vec![],
+                confidence: 1.0,
+                source: String::new(),
+                enabled: enabled != 0,
+                created_at,
+                updated_at,
+            },
+        )
+        .collect())
+}
+
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<MemoryRow>, AxError> {
     let row = sqlx::query_as::<_, MemoryDbRow>(&format!("{MEMORY_SELECT} WHERE id = ?"))
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(db_err)?;
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_err)?;
     Ok(row.map(row_from_db))
 }
 
@@ -490,7 +524,10 @@ pub async fn find_similar(
     let mut out = Vec::with_capacity(scored.len());
     for (id, sim) in scored {
         if let Some(memory) = get(pool, &id).await? {
-            out.push(MemoryMatch { memory, score: sim as f64 });
+            out.push(MemoryMatch {
+                memory,
+                score: sim as f64,
+            });
         }
     }
     Ok(out)

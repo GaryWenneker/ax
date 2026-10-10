@@ -34,6 +34,7 @@ pub use cache_status::{
     CacheStatusSnapshot,
 };
 pub use context_cache::{
+    cache_threshold,
     cache_enabled, cache_oversized_reply, cache_project_reply, expand_cached,
     expand_project_cached, format_catalog, format_session_ledger, ingest_jsonl_oversized,
     note_session_event, project_scope, recent_catalog, recent_session_catalog, session_ledger,
@@ -53,8 +54,9 @@ pub use cost_report::{
 pub use cursor_state::{
     active_cursor_session_path, cursor_state_vscdb_path, import_cursor_composer_state,
     normalize_cursor_model, parse_composer_data, parse_composer_input_tokens,
-    parse_composer_model_config, read_active_cursor_session, read_recent_cursor_session,
-    write_active_cursor_session, ComposerStateRow,
+    parse_composer_model_config, read_active_cursor_session, read_bound_cursor_session,
+    read_recent_cursor_session, write_active_cursor_session, write_bound_cursor_session,
+    ComposerStateRow,
 };
 pub use domain_log::{
     log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,

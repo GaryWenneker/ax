@@ -313,3 +313,32 @@ ax *is* the pre-built search index. For "how does X work?", architecture, a flow
 **Prefer MCP ops over shell CLI.** When the ax MCP server is connected, agents must call `ax_sync`, `ax_index`, `ax_lsp`, `ax_ship`, `ax_policy_index`, `ax_remember` / `ax_recall` instead of running the matching `ax …` commands in a terminal. Shell CLI is reserved for DEGRADED mode (MCP unreachable) or ops with no MCP tool (`install`, `upgrade`, `web`, `share`, `ship --watch`). IDE bootstrap files (`AGENTS.md`, `.cursor/rules/ax.mdc`, …) and the CRITICAL `prefer-mcp-ops` policy rule encode the same mapping.
 
 The MCP server delivers this guidance to the main agent automatically, in the MCP `initialize` response (`server_instructions`). Because subagents and non-MCP harnesses never see that response, the installer also writes a short marker-fenced section into each agent's instructions file. Re-sync with `ax policy sync --fix` after upgrading ax.
+
+## Project identity and context recovery
+
+All tool calls validate `projectPath` (or `project_path`) against the server's
+canonical initialized project before reading or writing state. Start a separate
+server for another project. Explicit `session`, `context_epoch` and `window_id`
+identifiers must be 1–128 ASCII letters, digits or `-_.:`. Private `__ax` transport
+fields are ignored when supplied by clients.
+
+The durable session and model context have separate lifetimes. Pass
+`context_reset: true` to `ax_preflight` after compaction, or change `context_epoch`.
+Required policy and working notes are resent; graph answers are retrieved afresh.
+Reconnects are cold even if an explicit epoch is repeated. Cursor hook continuity
+requires a matching canonical project, window and recent timestamp. A legacy
+unbound marker is diagnostic only.
+
+`context.budgetTokens` in `ax.json` applies to the final text plus structured
+metadata. Complete required blocks survive a budget smaller than their minimum;
+`contextBudget` reports `requestedBudget`, `requiredMinimum`, `finalTokens`,
+`overBudget`, and included/omitted block IDs. Optional blocks are never truncated
+or acknowledged when omitted. The token count uses `o200k_base` when available,
+and reports an estimate otherwise. It is not a provider billing measurement.
+
+`policySources` identifies matched policy scope, origin, source path and body
+hash. Call `ax_policy_index` with `action: "audit"` for the read-only inventory,
+disk/database differences and items needing origin review. This audit chooses no
+winning revision and does not share or delete imported content. Database mode
+bootstraps an empty database, then preserves its authority; file-owned overrides
+continue to refresh. Explicit import/index remains an intentional operation.

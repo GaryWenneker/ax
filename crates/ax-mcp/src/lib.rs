@@ -1,6 +1,7 @@
 //! MCP server for ax.
 
 pub mod chat_session;
+pub mod context_budget;
 pub mod daemon;
 pub mod daemon_conn;
 pub mod daemon_lock;
@@ -16,6 +17,7 @@ pub mod ppid_watchdog;
 pub mod proxy;
 pub mod proxy_pump;
 pub mod query_pool;
+pub mod request_context;
 pub mod server;
 pub mod smart_output;
 pub mod staleness;

@@ -68,11 +68,17 @@ pub struct Ax {
 impl Ax {
     pub async fn init(root: &Path) -> Result<Self, ax_utils::errors::AxError> {
         let root = root.canonicalize().map_err(|e| {
-            ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(e.to_string(), root.display().to_string()))
+            ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(
+                e.to_string(),
+                root.display().to_string(),
+            ))
         })?;
         let ax_dir = get_ax_dir(&root);
         std::fs::create_dir_all(&ax_dir).map_err(|e| {
-            ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(e.to_string(), ax_dir.display().to_string()))
+            ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(
+                e.to_string(),
+                ax_dir.display().to_string(),
+            ))
         })?;
         let db_path = ax_dir.join(DB_FILENAME);
         ax_policy::ensure_scaffold(&ax_dir).map_err(|e| {
@@ -87,7 +93,10 @@ impl Ax {
 
     pub async fn open(root: &Path) -> Result<Self, ax_utils::errors::AxError> {
         let root = root.canonicalize().map_err(|e| {
-            ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(e.to_string(), root.display().to_string()))
+            ax_utils::errors::AxError::File(ax_utils::errors::FileError::with_path(
+                e.to_string(),
+                root.display().to_string(),
+            ))
         })?;
         if !is_initialized(&root) {
             return Err(ax_utils::errors::AxError::Other(
@@ -99,7 +108,10 @@ impl Ax {
         Self::from_db(root, db).await
     }
 
-    async fn from_db(project_root: PathBuf, db: Database) -> Result<Self, ax_utils::errors::AxError> {
+    async fn from_db(
+        project_root: PathBuf,
+        db: Database,
+    ) -> Result<Self, ax_utils::errors::AxError> {
         let root = project_root.clone();
         let config = ProjectConfig::load(&root);
         let ax_dir = get_ax_dir(&root);
@@ -205,7 +217,7 @@ impl Ax {
         let _ = self.file_lock.release();
         if result.is_ok() {
             let _ = ax_policy::index_policy(self.db.pool(), &self.project_root, false).await;
-            self.dedup_policy(false).await;
+            self.dedup_policy(true).await;
         }
         result
     }
@@ -256,7 +268,7 @@ impl Ax {
         let _ = self.file_lock.release();
         if result.is_ok() {
             let _ = ax_policy::index_policy(self.db.pool(), &self.project_root, false).await;
-            self.dedup_policy(false).await;
+            self.dedup_policy(true).await;
         }
         result
     }
@@ -287,8 +299,13 @@ impl Ax {
         // `&mut self` available for the indexing call below.
         let mutex = Arc::clone(&self.index_mutex);
         let _guard = mutex.lock().await;
-        self.index_files_locked(paths, opts, on_progress, ax_utils::file_lock::DEFAULT_LOCK_WAIT)
-            .await
+        self.index_files_locked(
+            paths,
+            opts,
+            on_progress,
+            ax_utils::file_lock::DEFAULT_LOCK_WAIT,
+        )
+        .await
     }
 
     /// Re-index `paths`, assuming the caller already holds `index_mutex`.
@@ -500,7 +517,10 @@ impl Ax {
             .collect())
     }
 
-    pub async fn get_node(&self, id: &str) -> Result<Option<ax_types::Node>, ax_utils::errors::AxError> {
+    pub async fn get_node(
+        &self,
+        id: &str,
+    ) -> Result<Option<ax_types::Node>, ax_utils::errors::AxError> {
         self.queries.get_node_by_id(id).await
     }
 
@@ -772,24 +792,32 @@ impl Ax {
         self.db.pool()
     }
 
-    pub async fn index_policy(&self, force: bool) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {
+    pub async fn index_policy(
+        &self,
+        force: bool,
+    ) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {
         let result = ax_policy::index_policy(self.db.pool(), &self.project_root, force).await?;
-        self.dedup_policy(false).await;
+        self.dedup_policy(true).await;
         Ok(result)
     }
 
     /// Remove project copies of rules and skills that the global level already holds.
     pub async fn dedup_policy(&self, dry_run: bool) -> policy_dedup::DedupReport {
-        let report = policy_dedup::run_default(Some((self.db.pool(), &self.project_root)), dry_run).await;
+        let report =
+            policy_dedup::run_default(Some((self.db.pool(), &self.project_root)), dry_run).await;
         report.log();
         report
     }
 
-    pub async fn ensure_policy_ready(&self) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {
+    pub async fn ensure_policy_ready(
+        &self,
+    ) -> Result<ax_policy::PolicyIndexResult, ax_utils::errors::AxError> {
         ax_policy::ensure_policy_ready(self.db.pool(), &self.project_root).await
     }
 
-    pub async fn policy_status(&self) -> Result<ax_policy::PolicyStatus, ax_utils::errors::AxError> {
+    pub async fn policy_status(
+        &self,
+    ) -> Result<ax_policy::PolicyStatus, ax_utils::errors::AxError> {
         ax_policy::policy_status(self.db.pool(), &self.project_root).await
     }
 
@@ -825,18 +853,21 @@ impl Ax {
         &self,
         name: &str,
     ) -> Result<Option<ax_policy::types::PolicySkillRow>, ax_utils::errors::AxError> {
-        let extras = self.global_policy_skills().await;
-        if let Some(row) = ax_policy::find_skill(&extras, name) {
-            return Ok(Some(row.clone()));
+        if let Some(row) = ax_policy::get_skill(self.db.pool(), name).await? {
+            return Ok(Some(row));
         }
-        ax_policy::get_skill(self.db.pool(), name).await
+        let extras = self.global_policy_skills().await;
+        Ok(ax_policy::find_skill(&extras, name).cloned())
     }
 
     pub async fn list_policy_skills(
         &self,
     ) -> Result<Vec<ax_policy::types::PolicySkillRow>, ax_utils::errors::AxError> {
         let local = ax_policy::list_skills(self.db.pool()).await?;
-        Ok(ax_policy::merge_skills(local, self.global_policy_skills().await))
+        Ok(ax_policy::merge_skills(
+            local,
+            self.global_policy_skills().await,
+        ))
     }
 
     async fn global_policy_skills(&self) -> Vec<ax_policy::types::PolicySkillRow> {
@@ -892,10 +923,14 @@ fn skill_row_from_global_payload(
     mut value: serde_json::Value,
 ) -> Option<ax_policy::types::PolicySkillRow> {
     if let Some(obj) = value.as_object_mut() {
-        if !obj.contains_key("sourcePath") {
-            obj.insert("sourcePath".into(), serde_json::json!("global.db"));
-        }
-        if obj.get("name").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        obj.insert("sourcePath".into(), serde_json::json!("global.db"));
+        obj.insert("scope".into(), serde_json::json!("company"));
+        if obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .is_empty()
+        {
             obj.insert("name".into(), serde_json::json!(item_id));
         }
     }
@@ -954,10 +989,16 @@ async fn finalize_after_extract(
         .set_metadata("resolution_total", &resolution.stats.total.to_string())
         .await?;
     queries
-        .set_metadata("resolution_resolved", &resolution.stats.resolved.to_string())
+        .set_metadata(
+            "resolution_resolved",
+            &resolution.stats.resolved.to_string(),
+        )
         .await?;
     queries
-        .set_metadata("resolution_unresolved", &resolution.stats.unresolved.to_string())
+        .set_metadata(
+            "resolution_unresolved",
+            &resolution.stats.unresolved.to_string(),
+        )
         .await?;
     let docs_indexed =
         ax_extraction::markdown::index_markdown(project_root, queries, exclude).await?;
