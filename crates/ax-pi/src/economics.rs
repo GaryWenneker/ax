@@ -10,7 +10,7 @@ use ax_usage::{calculate, CostConfidence, CostUsage, ModelPricing};
 use serde_json::Value;
 
 use crate::types::{
-    BudgetSnapshot, Confidence, OptimizationMode, RepeatRecord, ToolAlternative, ToolCallAdvice,
+    AxModelUsage, BudgetSnapshot, Confidence, OptimizationMode, RepeatRecord, ToolAlternative, ToolCallAdvice,
     ToolCallObservation, GRAPH_EXPLORE_TOKEN_ESTIMATE,
 };
 
@@ -307,9 +307,7 @@ fn auto_allowed(alternative: &ToolAlternative) -> bool {
 pub fn model_cost(
     provider: Option<&str>,
     model: Option<&str>,
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    cached_input_tokens: Option<u64>,
+    usage: &AxModelUsage,
     session_id: &str,
     turn_id: Option<&str>,
     pricing: Option<ModelPricing>,
@@ -318,9 +316,9 @@ pub fn model_cost(
         &CostUsage {
             provider: provider.map(str::to_string),
             model: model.map(str::to_string),
-            input_tokens: input_tokens.map(|n| n as i64),
-            output_tokens: output_tokens.map(|n| n as i64),
-            cache_read_tokens: cached_input_tokens.map(|n| n as i64),
+            input_tokens: usage.input_tokens.map(|n| n as i64),
+            output_tokens: usage.output_tokens.map(|n| n as i64),
+            cache_read_tokens: usage.cached_input_tokens.map(|n| n as i64),
             cache_write_tokens: Some(0),
             timestamp_ms: None,
             session_id: Some(session_id.to_string()),
@@ -515,9 +513,12 @@ mod tests {
         let known = model_cost(
             Some("anthropic"),
             Some("claude"),
-            Some(1_000_000),
-            Some(0),
-            Some(0),
+            &AxModelUsage {
+                input_tokens: Some(1_000_000),
+                output_tokens: Some(0),
+                cached_input_tokens: Some(0),
+                total_tokens: None,
+            },
             "s",
             None,
             Some(pricing),
@@ -526,9 +527,12 @@ mod tests {
         let unknown = model_cost(
             Some("anthropic"),
             Some("claude"),
-            Some(10),
-            Some(1),
-            Some(0),
+            &AxModelUsage {
+                input_tokens: Some(10),
+                output_tokens: Some(1),
+                cached_input_tokens: Some(0),
+                total_tokens: None,
+            },
             "s",
             None,
             None,

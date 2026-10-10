@@ -140,23 +140,12 @@ pub struct AxModelUsage {
     pub total_tokens: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageSnapshot {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_input_tokens: u64,
     pub total_tokens: u64,
-}
-
-impl Default for UsageSnapshot {
-    fn default() -> Self {
-        Self {
-            input_tokens: 0,
-            output_tokens: 0,
-            cached_input_tokens: 0,
-            total_tokens: 0,
-        }
-    }
 }
 
 impl UsageSnapshot {

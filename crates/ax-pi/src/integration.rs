@@ -568,9 +568,7 @@ fn apply_event(state: &mut State, options: &PiOptions, event: AxAgentEvent, raw:
             let cost = model_cost(
                 model.provider.as_deref(),
                 model.model.as_deref(),
-                model.usage.input_tokens,
-                model.usage.output_tokens,
-                model.usage.cached_input_tokens,
+                &model.usage,
                 &model.base.session_id,
                 model.base.turn_id.as_deref().or_else(|| {
                     state

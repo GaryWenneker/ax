@@ -187,14 +187,17 @@ pub struct CycleEfficiency {
 pub fn cycle_efficiency(
     cycles: u64,
     spend_usd: f64,
-    input: i64,
-    input_known: bool,
-    output: i64,
-    output_known: bool,
-    cache_read: i64,
-    cache_read_known: bool,
+    input: Option<i64>,
+    output: Option<i64>,
+    cache_read: Option<i64>,
     tokens_avoided: i64,
 ) -> CycleEfficiency {
+    let input_known = input.is_some();
+    let output_known = output.is_some();
+    let cache_read_known = cache_read.is_some();
+    let input = input.unwrap_or(0);
+    let output = output.unwrap_or(0);
+    let cache_read = cache_read.unwrap_or(0);
     let per_cycle = |known: bool, total: i64| -> Option<i64> {
         if cycles == 0 || !known || total < 0 {
             None
@@ -334,7 +337,7 @@ mod tests {
 
     #[test]
     fn cycle_efficiency_uses_known_quotes_only() {
-        let row = cycle_efficiency(2, 4.0, 100, true, 40, true, 80, true, 600);
+        let row = cycle_efficiency(2, 4.0, Some(100), Some(40), Some(80), 600);
         assert_eq!(row.cycles, 2);
         assert!((row.cost_per_cycle_usd.unwrap() - 2.0).abs() < 1e-9);
         assert_eq!(row.input_per_cycle, Some(50));
@@ -345,10 +348,10 @@ mod tests {
 
     #[test]
     fn cycle_efficiency_stays_unknown_without_samples_or_cache_tokens() {
-        let empty = cycle_efficiency(0, 4.0, 10, true, 1, true, 1, true, 0);
+        let empty = cycle_efficiency(0, 4.0, Some(10), Some(1), Some(1), 0);
         assert_eq!(empty.cost_per_cycle_usd, None);
         assert_eq!(empty.input_per_cycle, None);
-        let missing_cache = cycle_efficiency(1, 1.0, 10, true, 1, false, 0, false, 3);
+        let missing_cache = cycle_efficiency(1, 1.0, Some(10), None, None, 3);
         assert_eq!(missing_cache.cache_hit_ratio, None);
         assert_eq!(missing_cache.output_per_cycle, None);
         assert!((missing_cache.cost_per_cycle_usd.unwrap() - 1.0).abs() < 1e-9);

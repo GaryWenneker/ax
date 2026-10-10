@@ -30,9 +30,11 @@ pub async fn pi_context_for_task(ax: &mut Ax, task: &str) -> Result<ContextResul
         .lock()
         .map_err(|err| format!("AX_PI_INTEGRATION_ERROR {err}"))?;
     let integration = guard.entry(key.clone()).or_insert_with(|| {
-        let mut options = PiOptions::default();
-        options.project_id = key;
-        options.repository_root = Some(ax.project_root().display().to_string());
+        let options = PiOptions {
+            project_id: key,
+            repository_root: Some(ax.project_root().display().to_string()),
+            ..PiOptions::default()
+        };
         create_pi_integration(options)
     });
     integration

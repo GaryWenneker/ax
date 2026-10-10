@@ -1438,9 +1438,13 @@ mod mcp_path_tests {
     #[test]
     fn c5_a_correct_hook_in_a_hand_formatted_file_keeps_its_formatting() {
         let path = temp_settings_path("hand-formatted-hook");
+        let command = serde_json::to_string(&format!(
+            "{} stop-hook",
+            crate::hooks::shell_bin(&ax_bin())
+        ))
+        .unwrap();
         let compact = format!(
-            r#"{{"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":"{} stop-hook"}}]}}]}}}}"#,
-            ax_bin()
+            r#"{{"hooks":{{"Stop":[{{"hooks":[{{"type":"command","command":{command}}}]}}]}}}}"#
         );
         fs::write(&path, &compact).unwrap();
         let result = install_claude_hook(&path, "Stop", "stop-hook").unwrap();
