@@ -308,7 +308,8 @@ pub fn link_cursor_skills_to_agents(project_root: &Path) -> Result<Vec<String>, 
         }
         let name = entry.file_name();
         let dest = cursor_skills.join(&name);
-        let target = PathBuf::from("../../")
+        let target = PathBuf::from("..")
+            .join("..")
             .join(AGENTS_DIR)
             .join(SKILLS_DIR)
             .join(&name);
