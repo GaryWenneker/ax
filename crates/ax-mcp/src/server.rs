@@ -1746,7 +1746,7 @@ mod reuse_integration {
 
     async fn stored_row(root: &std::path::Path, tool: &str) -> (i64, String) {
         let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
-        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}"))
+        let pool = sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&db))
             .await
             .unwrap();
         sqlx::query_as(
@@ -1823,7 +1823,7 @@ mod reuse_integration {
         let chat = session_of(&pre);
         let v1 = graph_of(&pre);
         let pool =
-            sqlx::SqlitePool::connect(&format!("sqlite://{}", root.join(".ax/ax.db").display()))
+            sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(root.join(".ax/ax.db")))
                 .await
                 .unwrap();
         let expected =
@@ -2115,7 +2115,7 @@ mod reuse_integration {
         assert_eq!(meta["tokensAvoided"].as_i64(), Some(original - sent));
 
         let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
-        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db}"))
+        let pool = sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&db))
             .await
             .unwrap();
         let (hits, avoided): (i64, i64) =

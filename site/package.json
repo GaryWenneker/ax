@@ -9,7 +9,7 @@
     "preview": "astro preview",
     "astro": "astro",
     "screenshots": "node scripts/capture-screenshots.mjs",
-    "test": "node scripts/write-latest-version.mjs && node --test tests/"
+    "test": "node scripts/write-latest-version.mjs && node --experimental-strip-types --test tests/*.test.ts"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.39.2",

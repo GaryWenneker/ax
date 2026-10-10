@@ -38,7 +38,7 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: Run tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
 
   lint:
     name: clippy

@@ -1,4 +1,4 @@
-name: Deploy site to GitHub Pages
+name: Build docs site
 
 on:
   push:
@@ -6,41 +6,44 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/deploy-site.yml'
+  pull_request:
+    paths:
+      - 'site/**'
+      - '.github/workflows/deploy-site.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
 
+# Netlify publishes the production site. This workflow only validates it.
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install dependencies
+        run: npm ci
       - name: Install Chrome for share-card screenshots
-        working-directory: site
-        run: |
-          npm ci
-          sudo npx puppeteer browsers install chrome --install-deps
-      - uses: withastro/action@v3
+        run: sudo npx puppeteer browsers install chrome --install-deps
+      - name: Build docs site
+        run: npm run build
+      - name: Test docs site
+        run: npm test
+      - name: Upload site build
+        uses: actions/upload-artifact@v4
         with:
-          path: site
-          node-version: 22
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          name: docs-site
+          path: site/dist
+          if-no-files-found: error

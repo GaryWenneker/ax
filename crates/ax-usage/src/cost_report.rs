@@ -457,12 +457,12 @@ pub fn format_summary(
     let cycle = crate::context_plan::cycle_efficiency(
         cycles,
         report.spend_usd,
-        report.tokens.input,
-        report.tokens.input_known,
-        report.tokens.output,
-        report.tokens.output_known,
-        report.tokens.cache_read,
-        report.tokens.cache_read_known,
+        report.tokens.input_known.then_some(report.tokens.input),
+        report.tokens.output_known.then_some(report.tokens.output),
+        report
+            .tokens
+            .cache_read_known
+            .then_some(report.tokens.cache_read),
         report.tokens_avoided,
     );
     out.push_str("\nCycle efficiency\n--------------------------------\n");
@@ -669,7 +669,7 @@ pub async fn budget_check(project: Option<&std::path::Path>) -> Result<(String, 
 
 pub async fn load_events(from_ms: i64, to_ms: i64) -> Result<Vec<RecordedUsage>, String> {
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    let rows: Vec<(
+    type UsageEventRow = (
         String,
         String,
         String,
@@ -681,7 +681,8 @@ pub async fn load_events(from_ms: i64, to_ms: i64) -> Result<Vec<RecordedUsage>,
         Option<i64>,
         Option<i64>,
         i64,
-    )> = sqlx::query_as(
+    );
+    let rows: Vec<UsageEventRow> = sqlx::query_as(
         "SELECT agent, session_id, turn_id, project, provider, model,
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, created_at
          FROM agent_usage_event

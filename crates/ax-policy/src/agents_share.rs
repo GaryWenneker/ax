@@ -308,7 +308,8 @@ pub fn link_cursor_skills_to_agents(project_root: &Path) -> Result<Vec<String>, 
         }
         let name = entry.file_name();
         let dest = cursor_skills.join(&name);
-        let target = PathBuf::from("../../")
+        let target = PathBuf::from("..")
+            .join("..")
             .join(AGENTS_DIR)
             .join(SKILLS_DIR)
             .join(&name);
@@ -329,10 +330,15 @@ pub fn link_cursor_skills_to_agents(project_root: &Path) -> Result<Vec<String>, 
             std::os::unix::fs::symlink(&target, &dest).map_err(|e| e.to_string())?;
             linked.push(name.to_string_lossy().into_owned());
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(&target, &dest).map_err(|e| e.to_string())?;
+            linked.push(name.to_string_lossy().into_owned());
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             return Err(format!(
-                "symlink {}.cursor/skills/{} -> {} failed: not unix",
+                "symlink {}.cursor/skills/{} -> {} failed: unsupported platform",
                 "",
                 name.to_string_lossy(),
                 target.display()
@@ -653,5 +659,10 @@ mod tests {
         assert!(linked.contains(&"foo".to_string()));
         let dest = p.join(".cursor/skills/foo");
         assert!(dest.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+            std::fs::read_to_string(skill.join("SKILL.md")).unwrap()
+        );
+        assert!(link_cursor_skills_to_agents(p).unwrap().is_empty());
     }
 }

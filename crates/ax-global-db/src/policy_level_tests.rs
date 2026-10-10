@@ -6,6 +6,50 @@ use sqlx::SqlitePool;
 use crate::policy::{self, PolicyKind};
 use crate::{open_and_init, open_pool, sync};
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_global_policy_saves_keep_every_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+    let pid = policy::ensure_project(&pool, &dir.path().join("machine"))
+        .await
+        .unwrap();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(12));
+    let mut tasks = Vec::new();
+    for i in 0..12 {
+        let pool = pool.clone();
+        let barrier = barrier.clone();
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            let name = format!("concurrent-{i}");
+            let value = json!({"name": name, "body": format!("saved-{i}")});
+            policy::upsert_policy_item(&pool, pid, PolicyKind::Skills, &name, &value).await
+        }));
+    }
+    let mut failures = Vec::new();
+    for task in tasks {
+        if let Err(error) = task.await.unwrap() {
+            failures.push(error.to_string());
+        }
+    }
+    assert!(failures.is_empty(), "concurrent saves failed: {failures:?}");
+    for i in 0..12 {
+        let name = format!("concurrent-{i}");
+        let item = policy::load_policy_item(&pool, pid, PolicyKind::Skills, &name)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(item["body"], format!("saved-{i}"));
+        assert_eq!(
+            policy::list_revisions(&pool, PolicyKind::Skills, &name)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    pool.close().await;
+}
+
 async fn project_with_skills(root: &Path, skills: &[(&str, &str)]) {
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let p = open_pool(&root.join(".ax").join("ax.db"), true)

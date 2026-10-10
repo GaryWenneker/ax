@@ -96,6 +96,16 @@ pub async fn run(
     Ok(())
 }
 
+fn query_label(query: &SavingsQuery) -> String {
+    match query.period {
+        UsagePeriod::MonthToDate => "Month to date".into(),
+        UsagePeriod::Month => "Month".into(),
+        UsagePeriod::Week => "Week".into(),
+        UsagePeriod::Year => "Year".into(),
+        UsagePeriod::Custom => query.from.clone().unwrap_or_else(|| "Custom".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::run;
@@ -151,15 +161,5 @@ mod tests {
         );
         assert_eq!(report.tokens.input, 42);
         assert!(report.tokens.input_known);
-    }
-}
-
-fn query_label(query: &SavingsQuery) -> String {
-    match query.period {
-        UsagePeriod::MonthToDate => "Month to date".into(),
-        UsagePeriod::Month => "Month".into(),
-        UsagePeriod::Week => "Week".into(),
-        UsagePeriod::Year => "Year".into(),
-        UsagePeriod::Custom => query.from.clone().unwrap_or_else(|| "Custom".into()),
     }
 }
