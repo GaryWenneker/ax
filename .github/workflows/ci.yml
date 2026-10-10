@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master, develop, feat/minimal-project-safe-context]
+    branches: [main, master, develop, feat/minimal-project-safe-context, feature/remote-mcp-oauth-complete]
   pull_request:
 
 permissions:
@@ -38,6 +38,8 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: Run tests
+        env:
+          AX_TEST_UNIX_SOCKETS: "1"
         run: cargo test --workspace --locked --no-fail-fast
 
   lint:
@@ -59,3 +61,33 @@ jobs:
 
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  remote-settings:
+    name: remote-settings-browser
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/ax-web/web-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/ax-web/web-ui/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build UI
+        run: npm run build
+      - name: Test Remote Settings
+        env:
+          AX_WEB_URL: http://127.0.0.1:5190
+        run: |
+          npm run dev -- --host 127.0.0.1 --port 5190 > /tmp/remote-vite.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID"' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "$AX_WEB_URL/settings" > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:e2e -- remote-mcp.spec.ts --project=desktop-chrome

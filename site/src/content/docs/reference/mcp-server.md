@@ -3,6 +3,9 @@ title: MCP Server
 description: The tools ax exposes to AI agents over MCP.
 ---
 
+For authenticated context access from ChatGPT or another IDE through your existing tunnel, see [Remote MCP and browser login](/guides/remote-mcp/). That guide covers browser OAuth, dynamic local ports, project grants and the stdio bridge. Remote transport uses the [Smart Output](/guides/smart-output/) contract.
+
+
 ax runs as a [Model Context Protocol](https://modelcontextprotocol.io/) server. Agents configured by the installer launch it automatically — you don't start it by hand:
 
 ```bash

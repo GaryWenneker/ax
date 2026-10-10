@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
+import RemoteMcpSettingsSection from '../components/RemoteMcpSettingsSection';
 import OkfSettingsSection from '../components/OkfSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
 import SharingSettingsSection from '../components/SharingSettingsSection';
@@ -510,6 +511,7 @@ export default function SettingsPage() {
           <div className="settings-card-body">
             <PolicySyncSettingsSection />
             <SharingSettingsSection />
+            <RemoteMcpSettingsSection />
           </div>
         </section>
 

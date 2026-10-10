@@ -5,6 +5,8 @@ description: Compact agent context, structured metadata, project-bound expansion
 
 Ax Smart Output is the default MCP response architecture. Ax chooses the representation; there is no XML/JSON/Markdown selector. Settings shows **MCP Output: Smart Output** as information, without claiming runtime cache status or token savings it cannot verify.
 
+The remote MCP HTTP connection reuses this same dispatcher and output contract. Authentication and project selection happen before the tool executes. See [Remote MCP and browser login](/guides/remote-mcp/) for running Ax on one computer and retrieving its context from ChatGPT or another IDE.
+
 ## Response contract
 
 The existing MCP envelope stays unchanged:
@@ -53,6 +55,16 @@ The existing `context.budgetTokens` in project `ax.json` or global config contro
 ```
 
 Only pass `known_context` when the snapshot is still in the model's context. After compaction, call `ax_rules`, `ax_skill`, `ax_recall` or `ax_expand` to recover missing context; graph queries support `fresh: true`. A new session or MCP initialize resets policy delivery. Earlier delivery alone is not proof the model still holds the information.
+
+### A normal agent turn
+
+1. Call `ax_preflight` with the current task prompt and the retained chat session, if any.
+2. Apply the mandatory policy and inspect freshness/budget warnings. Obtain the detailed index status with `ax_status` when needed.
+3. Query the relevant symbols using `ax_explore`, `ax_search` or `ax_node`, and retrieve full matched memories by ID only when their details matter.
+4. Expand cached results when the answer contains a cache handle. Keep the returned project/session ownership; foreign IDs cannot be used to switch projects.
+5. Record durable working context. After client-side compaction, recover omitted policy, memories or graph answers before relying on them again.
+
+Preflight skipping and client prompt caching are separate mechanisms. Ax omitting an unchanged body does not establish that an LLM provider bills a cached input rate, or that the client's compressed context retained that body.
 
 ## Project isolation and migration
 

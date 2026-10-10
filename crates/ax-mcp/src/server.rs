@@ -268,7 +268,7 @@ fn resolve_chat(engine: &mut McpEngine, name: &str, args: &Value) -> String {
     let chat = resolve_session(
         kind,
         ax_usage::session_from_args(args),
-        engine.project_root().and_then(|root| {
+        engine.project_root().filter(|_| !engine.is_remote()).and_then(|root| {
             let window = args.get("window_id").and_then(Value::as_str)?;
             ax_usage::read_bound_cursor_session(root, window, ax_usage::HOOK_SESSION_MAX_AGE)
         }),

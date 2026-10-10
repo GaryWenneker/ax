@@ -174,6 +174,7 @@ export default defineConfig({
 						{ label: 'Obsidian Vault', slug: 'guides/obsidian-vault' },
 						{ label: 'Token Savings', slug: 'guides/token-savings' },
 						{ label: 'Smart Output', slug: 'guides/smart-output' },
+						{ label: 'Remote MCP & OAuth', slug: 'guides/remote-mcp' },
 						{ label: 'Agent budget', slug: 'guides/budget' },
 						{ label: 'Pi integration', slug: 'guides/pi' },
 					],

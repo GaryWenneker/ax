@@ -246,6 +246,8 @@ The CLI uses **colored output**, **progress bars** (index/init), and **spinners*
 | `ax agent economics` | Pi session token and cost estimates (`--session`, `--json`) |
 | `ax agent optimize --report` | Estimated avoidable context from recorded Pi tool calls |
 | `ax mcp audit` | MCP quality audit (verbose log ↔ Cursor transcript; Quality slide-out engine) |
+| `ax mcp remote serve` | Authenticated project MCP over HTTP; dynamic loopback port and optional Unix socket |
+| `ax mcp remote login\|status\|logout\|proxy` | Browser OAuth login, secure credentials, and a stdio bridge for remote IDEs |
 | `ax cursor auth …` | Save/restore Cursor subscription sessions (`status`, `save`, `use`, `list`) |
 | `ax affected <files…>` | Tests affected by file changes |
 | `ax diff --base main` | Git diff symbol blast radius |
