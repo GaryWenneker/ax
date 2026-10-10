@@ -200,9 +200,13 @@ const APP_JSON: &str = "/dav/.obsidian/app.json";
 async fn n2_tests_use_a_temp_global_db() {
     let path = isolate();
     assert_eq!(ax_global_db::global_db_path().unwrap(), path);
-    let home = dirs::home_dir().unwrap();
+    let home = ax_utils::paths::home_dir().unwrap();
+    assert_eq!(home, HOME.get().unwrap().path());
     assert!(path.starts_with(&home), "{path:?} not under {home:?}");
-    assert!(home.starts_with(std::env::temp_dir()) || home.to_string_lossy().contains("tmp"));
+    assert!(home
+        .canonicalize()
+        .unwrap()
+        .starts_with(std::env::temp_dir().canonicalize().unwrap()));
 }
 
 #[tokio::test]
