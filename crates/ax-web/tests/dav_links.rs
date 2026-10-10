@@ -372,6 +372,8 @@ async fn g2_saving_a_global_page_updates_the_leader_in_global_db() {
         "Edited in Obsidian, see [[pr]].",
     );
     assert_ok(&put(&fx.app, "/dav/global/skills/g2-skill.md", &edited).await);
+    let drafts = get(&fx.app, "/dav/DRAFTS.md").await.body;
+    assert!(drafts.contains("No drafts."), "{drafts}");
     assert_eq!(
         body_of(&stored(b, PolicyKind::Skills, "g2-skill").await.unwrap()),
         "Edited in Obsidian, see [[pr]]."

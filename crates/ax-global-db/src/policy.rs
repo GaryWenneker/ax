@@ -137,7 +137,9 @@ pub async fn upsert_policy_item_from(
 ) -> Result<Option<i64>> {
     let table = table_for(kind);
     let text = payload.to_string();
-    let mut tx = global.begin().await?;
+    // Reserve the writer before reading the previous payload: upgrading a deferred
+    // WAL read transaction can fail immediately when another writer commits.
+    let mut tx = global.begin_with("BEGIN IMMEDIATE").await?;
     let current: Option<(String,)> =
         sqlx::query_as(&format!("SELECT payload FROM {table} WHERE project_id = ? AND item_id = ?"))
             .bind(project_id)
