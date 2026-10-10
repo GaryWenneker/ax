@@ -71,6 +71,10 @@ Test project changes, part deletion, policy/config changes and graph changes exp
 
 Preflight recalls memories, reads related turns and may enumerate up to 100,000 memory rows for policy link expansion before final budget selection. This does not prove poor latency on the user's machine. Measure database reads, serialization work and elapsed time separately from output tokens, then replace full enumeration with targeted linked-ID retrieval where justified.
 
+### F8 — Background dedup can promote project content to global policy
+
+crates/ax-core/src/policy_dedup.rs documents promotion of a more extensive project copy into a same-named global row. WebHub starts this dedup in the background. This is an intentional existing behavior, not automatically a bug, but it conflicts with a strict requirement that project-specific content never becomes global without an explicit sharing decision. Include this path in the provenance review and isolation fixtures; preserve existing data and revisions during any transition. Also test concurrent policy editing against dedup to prevent stale decisions or lost writes.
+
 ## 4. Required design
 
 ### 4.1 Project identity and provenance
