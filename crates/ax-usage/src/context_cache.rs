@@ -235,6 +235,22 @@ fn render_head_stub(
 }
 
 pub async fn cache_oversized_reply(tool: &str, body: &str) -> CacheOutcome {
+    cache_reply(None, tool, body).await
+}
+
+/// Project-bound variant used by MCP. Unknown roots never create references.
+pub async fn cache_project_reply(
+    root: Option<&std::path::Path>,
+    tool: &str,
+    body: &str,
+) -> CacheOutcome {
+    let Some(root) = root else {
+        return CacheOutcome::Passthrough;
+    };
+    cache_reply(Some(root), tool, body).await
+}
+
+async fn cache_reply(root: Option<&std::path::Path>, tool: &str, body: &str) -> CacheOutcome {
     if !cache_enabled() || exempt_from_cache(tool) {
         return CacheOutcome::Passthrough;
     }
@@ -243,7 +259,9 @@ pub async fn cache_oversized_reply(tool: &str, body: &str) -> CacheOutcome {
     if original < threshold {
         return CacheOutcome::Passthrough;
     }
-    let id = cache_id(body);
+    let id = root
+        .map(|r| project_cache_id(r, body))
+        .unwrap_or_else(|| cache_id(body));
     let (stub, sent, removed) = if keeps_graph_head(tool) {
         render_head_stub(tool, &id, body, original, threshold)
     } else {
@@ -254,7 +272,10 @@ pub async fn cache_oversized_reply(tool: &str, body: &str) -> CacheOutcome {
     }
     match open_pool().await {
         Ok(pool) => {
-            if store_body(&pool, &id, tool, body, original).await.is_err() {
+            if store_project_body(&pool, root, &id, tool, body, original)
+                .await
+                .is_err()
+            {
                 return CacheOutcome::Passthrough;
             }
         }
@@ -270,6 +291,22 @@ pub async fn cache_oversized_reply(tool: &str, body: &str) -> CacheOutcome {
 }
 
 pub async fn stash_text(label: Option<&str>, text: &str) -> Result<StashReceipt, String> {
+    stash(None, label, text).await
+}
+
+pub async fn stash_project_text(
+    root: &std::path::Path,
+    label: Option<&str>,
+    text: &str,
+) -> Result<StashReceipt, String> {
+    stash(Some(root), label, text).await
+}
+
+async fn stash(
+    root: Option<&std::path::Path>,
+    label: Option<&str>,
+    text: &str,
+) -> Result<StashReceipt, String> {
     if !cache_enabled() {
         return Err("context cache is off".to_string());
     }
@@ -281,10 +318,12 @@ pub async fn stash_text(label: Option<&str>, text: &str) -> Result<StashReceipt,
         .filter(|s| !s.is_empty())
         .unwrap_or("stash");
     let tool: String = tool.chars().filter(|c| !c.is_control()).take(64).collect();
-    let id = cache_id(text);
+    let id = root
+        .map(|r| project_cache_id(r, text))
+        .unwrap_or_else(|| cache_id(text));
     let original_tokens = count_tokens(text) as i64;
     let pool = open_pool().await.map_err(|e| e.to_string())?;
-    store_body(&pool, &id, &tool, text, original_tokens).await?;
+    store_project_body(&pool, root, &id, &tool, text, original_tokens).await?;
     Ok(StashReceipt {
         id,
         original_tokens,
@@ -418,6 +457,49 @@ pub async fn expand_cached(
     Ok(page_body(&body, offset, limit))
 }
 
+/// Canonical path is an existing project identity; never infer ownership from a body.
+pub fn project_scope(root: &std::path::Path) -> String {
+    root.canonicalize()
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub(crate) fn project_cache_id(root: &std::path::Path, body: &str) -> String {
+    cache_id(&format!("{}\0{body}", project_scope(root)))
+}
+
+pub(crate) async fn load_project_body(
+    pool: &SqlitePool,
+    root: &std::path::Path,
+    id: &str,
+) -> Result<String, String> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT body FROM mcp_context_cache WHERE id = ? AND project = ? AND expires_at >= ?",
+    )
+    .bind(id)
+    .bind(project_scope(root))
+    .bind(chrono::Utc::now().timestamp())
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    row.map(|r| r.0).ok_or_else(|| format!("No cached MCP reply for id {id} in this project (missing, expired, or legacy unscoped entry). Rerun the original tool."))
+}
+
+pub async fn expand_project_cached(
+    root: &std::path::Path,
+    id: &str,
+    offset: usize,
+    limit: Option<usize>,
+) -> Result<ExpandPage, String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let body = load_project_body(&pool, root, id).await?;
+    if offset > body.chars().count() {
+        return Err("offset is past the end of the cached reply".into());
+    }
+    Ok(page_body(&body, offset, limit))
+}
+
 pub fn page_body(body: &str, offset: usize, limit: Option<usize>) -> ExpandPage {
     let chars: Vec<char> = body.chars().collect();
     if offset > chars.len() {
@@ -429,7 +511,7 @@ pub fn page_body(body: &str, offset: usize, limit: Option<usize>) -> ExpandPage 
     let limit = limit
         .unwrap_or(EXPAND_DEFAULT_CHARS)
         .clamp(1, EXPAND_MAX_CHARS);
-    let end = (offset + limit).min(chars.len());
+    let end = offset.saturating_add(limit).min(chars.len());
     let text: String = chars[offset..end].iter().collect();
     let next_offset = if end < chars.len() { Some(end) } else { None };
     let mut out = text;
@@ -451,6 +533,17 @@ pub(crate) async fn store_body(
     body: &str,
     original_tokens: i64,
 ) -> Result<(), String> {
+    store_project_body(pool, None, id, tool, body, original_tokens).await
+}
+
+pub(crate) async fn store_project_body(
+    pool: &SqlitePool,
+    root: Option<&std::path::Path>,
+    id: &str,
+    tool: &str,
+    body: &str,
+    original_tokens: i64,
+) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp();
     let expires = now + TTL_SECS;
     sqlx::query("DELETE FROM mcp_context_cache WHERE expires_at < ?")
@@ -459,14 +552,15 @@ pub(crate) async fn store_body(
         .await
         .map_err(|e| e.to_string())?;
     sqlx::query(
-        "INSERT INTO mcp_context_cache (id, tool, body, original_tokens, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        "INSERT INTO mcp_context_cache (id, tool, body, original_tokens, created_at, expires_at, project)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            tool = excluded.tool,
            body = excluded.body,
            original_tokens = excluded.original_tokens,
            created_at = excluded.created_at,
-           expires_at = excluded.expires_at",
+           expires_at = excluded.expires_at,
+           project = excluded.project",
     )
     .bind(id)
     .bind(tool)
@@ -474,6 +568,7 @@ pub(crate) async fn store_body(
     .bind(original_tokens)
     .bind(now)
     .bind(expires)
+    .bind(root.map(project_scope))
     .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
@@ -921,7 +1016,8 @@ mod tests {
               body TEXT NOT NULL,
               original_tokens INTEGER NOT NULL,
               created_at INTEGER NOT NULL,
-              expires_at INTEGER NOT NULL
+              expires_at INTEGER NOT NULL,
+              project TEXT
             )",
         )
         .execute(&pool)
@@ -989,7 +1085,8 @@ mod tests {
               body TEXT NOT NULL,
               original_tokens INTEGER NOT NULL,
               created_at INTEGER NOT NULL,
-              expires_at INTEGER NOT NULL
+              expires_at INTEGER NOT NULL,
+              project TEXT
             )",
         )
         .execute(&pool)
@@ -1039,5 +1136,71 @@ mod tests {
         let rendered = format!("{counts:?}");
         assert!(!rendered.contains(secret));
         let _ = std::fs::remove_file(&path);
+    }
+    #[tokio::test]
+    async fn ownership_migration_preserves_legacy_rows_and_is_idempotent() {
+        let dir = std::env::temp_dir().join(format!("ax-scope-migration-{}", uuid_for_test()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("usage.db");
+        let old = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.display()))
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE mcp_context_cache (id TEXT PRIMARY KEY, tool TEXT NOT NULL, body TEXT NOT NULL, original_tokens INTEGER NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)").execute(&old).await.unwrap();
+        sqlx::query(
+            "INSERT INTO mcp_context_cache VALUES ('cc_legacy','ax_node','LEGACY',1,1,9999999999)",
+        )
+        .execute(&old)
+        .await
+        .unwrap();
+        old.close().await;
+        for _ in 0..2 {
+            let pool = crate::store::open_pool_at(&path).await.unwrap();
+            assert_eq!(load_body(&pool, "cc_legacy").await.unwrap(), "LEGACY");
+            assert!(load_project_body(&pool, &dir, "cc_legacy").await.is_err());
+            let a = dir.join("a");
+            let b = dir.join("b");
+            let id = project_cache_id(&a, "same body");
+            assert_ne!(id, project_cache_id(&b, "same body"));
+            assert_ne!(id, project_cache_id(&a, "changed body"));
+            store_project_body(&pool, Some(&a), &id, "ax_node", "same body", 2)
+                .await
+                .unwrap();
+            assert_eq!(
+                load_project_body(&pool, &a, &id).await.unwrap(),
+                "same body"
+            );
+            assert!(load_project_body(&pool, &b, &id).await.is_err());
+            sqlx::query("UPDATE mcp_context_cache SET expires_at = 1 WHERE id = ?")
+                .bind(&id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            assert!(load_project_body(&pool, &a, &id).await.is_err());
+            pool.close().await;
+        }
+    }
+
+    fn uuid_for_test() -> String {
+        format!(
+            "{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        )
+    }
+
+    #[test]
+    fn unicode_paging_preserves_every_character() {
+        let body = "café 🐝 café 🐝";
+        let mut offset = 0;
+        let mut rebuilt = String::new();
+        loop {
+            let page = page_body(body, offset, Some(3));
+            rebuilt.push_str(page.text.split("\n\n[ax context cache]").next().unwrap());
+            match page.next_offset {
+                Some(next) => offset = next,
+                None => break,
+            }
+        }
+        assert_eq!(rebuilt, body);
     }
 }

@@ -198,21 +198,24 @@ ax_session({ "action": "compact", "objective": "Understand authentication", "fac
 
 Every `tools/call` reply is `{ content: [{ type: "text", text }], structuredContent?, isError }`. The `content.text` block is what strict clients and Cursor feed the model; `structuredContent` is machine-readable metadata for clients that consume it.
 
-By default ax runs **lean**: it never ships the same data twice. The authoritative payload lives in `content.text`, and `structuredContent` is projected down to just the fields not already present in the text:
+By default ax uses **[Smart Output](/guides/smart-output/)**. Agent-facing bodies live in `content.text`; audited text tools project `structuredContent` down to metadata. Machine-first tools retain their existing contracts:
 
 | Tool | `content.text` | Lean `structuredContent` |
 |---|---|---|
 | `ax_explore` | Numbered source + caller/callee spine | `query`, `summary`, `blastRadius`, compact `entries` (name/file/lines/score) — no source or neighbor duplication |
-| `ax_preflight` | `inject` block: rule and skill bodies not yet sent on this connection (unchanged ones listed by id; large always-apply skills summarized), memory titles, index block | counts + `directiveDetected`, `captureProposal`, `guardRequired`, `mode`, `instruction`, `indexStats`, `pendingFiles` — no body duplication |
+| `ax_preflight` | Project-scoped Markdown, complete required rules, required working context and budget-selected memory/history/index blocks; directive proposal and questions visible in text | existing counts/action fields + `project`, `session`, `contextBudget`; no rule/skill/memory bodies |
 | `ax_status` | Markdown status summary + doc breakdown | `stats`, `lastIndexedAt`, `pendingFiles`, `policy` — no `text` duplication |
 | `ax_context` | Markdown task context | `query`, `summary`, `stats`, `relatedFiles` — no `subgraph`/`codeBlocks` duplication |
-| `ax_skill` | Skill body | metadata envelope (no `body`) |
+| `ax_skill` | Skill body | metadata envelope (no `body`, `text` or `inject`) |
+| `ax_recall` | Ranked IDs and summaries; `id` retrieves full content | IDs, kind, score, files and source, without memory bodies |
+| `ax_expand` / `ax_stash` | Scoped expansion or storage receipt | ID and pagination/receipt fields, without `text` |
+| `ax_session` / `ax_durable` / `ax_history` / `ax_report` | Snapshot, targeted history or report | Available non-text fields, without repeated body |
 | `ax_node` | Full numbered source (default up to 400 lines / 24000 chars per match, 3 matches) + direct callers and callees. `mode: "signature"` returns path, lines, and the declaration only. An exact qualified name or node id returns only that symbol | omitted (text is authoritative) |
 | `ax_search` / `ax_callers` / `ax_callees` / `ax_impact` / `ax_files` / `ax_affected` | Compact one-line-per-symbol list | omitted (text is authoritative) |
 
 Savings measurement (`ax savings`) always runs against the full pre-projection payload, so the leaner wire format never distorts the numbers.
 
-Set `AX_MCP_FULL=1` to restore the full `structuredContent` for every tool (for clients that read only structured data).
+Set `AX_MCP_FULL=1` to restore raw `structuredContent` for inline results (for clients that read only structured data). Existing oversized-reply stubs still return cache metadata. It does not bypass project isolation; legacy unscoped handles must be recreated. See [migration and compatibility](/guides/smart-output/#compatibility-and-release).
 
 ### Verbose MCP logging (Cursor Output)
 

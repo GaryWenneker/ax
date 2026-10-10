@@ -80,6 +80,13 @@ CREATE TABLE IF NOT EXISTS mcp_working_context (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ax_durable_scope (
+  project TEXT NOT NULL,
+  session TEXT NOT NULL,
+  conversation TEXT NOT NULL,
+  PRIMARY KEY (project, session)
+);
+
 CREATE TABLE IF NOT EXISTS ax_durable_conversation (
   id TEXT PRIMARY KEY,
   parent_id TEXT,
@@ -165,6 +172,7 @@ const MIGRATION_DROP_TOKEN_USAGE: &str = "DROP TABLE IF EXISTS token_usage";
 /// Additive columns for databases created before v2.2. Failures for
 /// already-existing columns are ignored.
 const MIGRATION_ADD_COLUMNS: &[&str] = &[
+    "ALTER TABLE mcp_context_cache ADD COLUMN project TEXT",
     "ALTER TABLE mcp_call_log ADD COLUMN counterfactual_exact_files INTEGER",
     "ALTER TABLE agent_session_log ADD COLUMN session_output_tokens INTEGER",
     "ALTER TABLE agent_session_log ADD COLUMN model TEXT",

@@ -6,23 +6,7 @@ use crate::engine::McpEngine;
 use crate::tools::ToolHandler;
 
 pub fn format_tool_result(value: &Value) -> String {
-    if let Some(inject) = value.get("inject").and_then(|v| v.as_str()) {
-        if !inject.is_empty() {
-            return inject.to_string();
-        }
-    }
-    if let Some(text) = value.get("text").and_then(|v| v.as_str()) {
-        if !text.is_empty() {
-            return text.to_string();
-        }
-    }
-    if let Some(body) = value.get("body").and_then(|v| v.as_str()) {
-        if !body.is_empty() {
-            return body.to_string();
-        }
-    }
-    // Compact (not pretty) JSON — parity with the stdio server's tool_result_text.
-    value.to_string()
+    crate::smart_output::model_text(value)
 }
 
 fn is_policy_tool(name: &str) -> bool {

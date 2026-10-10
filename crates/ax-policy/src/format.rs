@@ -180,7 +180,9 @@ pub fn format_inject_block_with(
         let mut omitted = Vec::new();
         for r in &contextual {
             let next = rule_block(r);
-            if budget(body.len(), next.len()) > max_chars {
+            if budget(body.len(), next.len()) > max_chars
+                && !r.level.eq_ignore_ascii_case("CRITICAL")
+            {
                 omitted.push(r.id.as_str());
                 continue;
             }
@@ -438,7 +440,11 @@ mod tests {
         assert!(inject.contains("always-b"), "missing always-b:\n{inject}");
         assert!(inject.contains("</ax_policy>"));
         assert!(!inject.contains("...(truncated"));
-        assert!(inject.contains("Contextual rules truncated"));
+        assert!(
+            inject.contains(&"C".repeat(5_000)),
+            "CRITICAL contextual rules must remain complete"
+        );
+        assert!(!inject.contains("Contextual rules truncated"));
     }
 
     fn skill(name: &str, body: &str) -> MatchedSkill {

@@ -37,6 +37,112 @@ pub async fn durable_apply(conversation: &str, request: &Value) -> Result<String
     apply_with(&pool, conversation, request).await
 }
 
+/// MCP conversations are namespaced by project, independently of hook session IDs.
+/// Unscoped legacy transcripts are retained but never silently assigned an owner.
+pub async fn durable_project_apply(
+    root: &std::path::Path,
+    session: &str,
+    request: &Value,
+) -> Result<String, String> {
+    let pool = crate::store::open_pool().await.map_err(|e| e.to_string())?;
+    project_apply_with(&pool, root, session, request).await
+}
+
+async fn project_conversation(
+    pool: &SqlitePool,
+    root: &std::path::Path,
+    session: &str,
+) -> Result<String, String> {
+    let project = crate::context_cache::project_scope(root);
+    let id = crate::context_cache::project_cache_id(root, session).replace("cc_", "dcp_");
+    sqlx::query(
+        "INSERT OR IGNORE INTO ax_durable_scope (project, session, conversation) VALUES (?, ?, ?)",
+    )
+    .bind(&project)
+    .bind(session)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    sqlx::query_scalar(
+        "SELECT conversation FROM ax_durable_scope WHERE project = ? AND session = ?",
+    )
+    .bind(project)
+    .bind(session)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn project_apply_with(
+    pool: &SqlitePool,
+    root: &std::path::Path,
+    session: &str,
+    request: &Value,
+) -> Result<String, String> {
+    let conversation = project_conversation(pool, root, session).await?;
+    let action = request
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("read");
+    if matches!(action, "task_checkpoint" | "task_resume" | "task_finish") {
+        let id = task_id(request)?;
+        let owner: Option<String> =
+            sqlx::query_scalar("SELECT conversation_id FROM ax_durable_task WHERE id = ?")
+                .bind(&id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        if owner.as_deref() != Some(&conversation) {
+            return Err("task not found in this project and session".into());
+        }
+    }
+    let text = apply_with(pool, &conversation, request).await?;
+    if matches!(action, "fork" | "handoff") {
+        if let Some(child) = text
+            .split("child=")
+            .nth(1)
+            .and_then(|s| s.split([' ', '>']).next())
+        {
+            sqlx::query("INSERT OR IGNORE INTO ax_durable_scope (project, session, conversation) VALUES (?, ?, ?)")
+                .bind(crate::context_cache::project_scope(root)).bind(child).bind(child)
+                .execute(pool).await.map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(text)
+}
+
+pub async fn note_project_tool_if_open(
+    root: &std::path::Path,
+    session: &str,
+    tool: &str,
+    summary: &str,
+) -> Result<(), String> {
+    let pool = crate::store::open_pool().await.map_err(|e| e.to_string())?;
+    let conversation: Option<String> = sqlx::query_scalar(
+        "SELECT conversation FROM ax_durable_scope WHERE project = ? AND session = ?",
+    )
+    .bind(crate::context_cache::project_scope(root))
+    .bind(session)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    if let Some(conversation) = conversation {
+        if conversation_exists(&pool, &conversation).await? {
+            append_entry(
+                &pool,
+                &conversation,
+                "tool",
+                &clip(&format!("{tool} {summary}")),
+                None,
+            )
+            .await?;
+            fire_hooks(&pool, &conversation, "tool").await?;
+        }
+    }
+    Ok(())
+}
+
 /// Record a tool call when this chat already has a durable conversation.
 pub async fn note_tool_if_open(
     conversation: &str,
@@ -847,5 +953,78 @@ mod tests {
             view.contains("hook") && view.contains("compact audit"),
             "{view}"
         );
+    }
+    #[tokio::test]
+    async fn projects_cannot_read_each_others_transcripts_forks_or_tasks() {
+        let pool = pool().await;
+        let a = std::path::Path::new("/project-a");
+        let b = std::path::Path::new("/project-b");
+        project_apply_with(
+            &pool,
+            a,
+            "same-session",
+            &json!({"action":"append","body":"PRIVATE-A"}),
+        )
+        .await
+        .unwrap();
+        let read = project_apply_with(&pool, b, "same-session", &json!({"action":"read"}))
+            .await
+            .unwrap();
+        assert!(!read.contains("PRIVATE-A"));
+        let fork = project_apply_with(&pool, a, "same-session", &json!({"action":"fork"}))
+            .await
+            .unwrap();
+        let child = fork
+            .split("child=")
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap();
+        assert!(
+            project_apply_with(&pool, a, child, &json!({"action":"read"}))
+                .await
+                .unwrap()
+                .contains("PRIVATE-A")
+        );
+        assert!(
+            !project_apply_with(&pool, b, child, &json!({"action":"read"}))
+                .await
+                .unwrap()
+                .contains("PRIVATE-A")
+        );
+        let task = project_apply_with(
+            &pool,
+            a,
+            "same-session",
+            &json!({"action":"task_start","kind":"test"}),
+        )
+        .await
+        .unwrap();
+        let id = task.split("id=").nth(1).unwrap().split(' ').next().unwrap();
+        assert!(project_apply_with(
+            &pool,
+            b,
+            "same-session",
+            &json!({"action":"task_resume","task":id})
+        )
+        .await
+        .is_err());
+        assert!(project_apply_with(
+            &pool,
+            a,
+            "other-session",
+            &json!({"action":"task_resume","task":id})
+        )
+        .await
+        .is_err());
+        assert!(project_apply_with(
+            &pool,
+            a,
+            "same-session",
+            &json!({"action":"task_resume","task":id})
+        )
+        .await
+        .is_ok());
     }
 }

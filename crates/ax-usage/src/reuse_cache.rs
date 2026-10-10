@@ -12,7 +12,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
-use crate::context_cache::{cache_id, load_body, store_body};
+use crate::context_cache::{load_project_body, project_cache_id, store_project_body};
 use crate::store::open_pool;
 use crate::tokenizer::count_tokens;
 
@@ -319,7 +319,10 @@ pub fn reuse_cap_bytes() -> i64 {
 
 /// Entries belong to one conversation in one project.
 fn scope(conversation: &str, root: &Path) -> String {
-    format!("{conversation}\u{1f}{}", root.display())
+    format!(
+        "{conversation}\u{1f}{}",
+        crate::context_cache::project_scope(root)
+    )
 }
 
 fn args_summary(args: &Value) -> String {
@@ -371,8 +374,8 @@ pub(crate) async fn store_reply(
     if tokens <= MIN_REUSE_TOKENS {
         return Ok(None);
     }
-    let id = cache_id(body);
-    store_body(pool, &id, tool, body, tokens).await?;
+    let id = project_cache_id(root, body);
+    store_project_body(pool, Some(root), &id, tool, body, tokens).await?;
     let turn = conversation_turn(pool, conversation).await?;
     let snapshot: Snapshot = snapshot
         .into_iter()
@@ -445,7 +448,7 @@ pub async fn lookup(
     .await
     .ok()??;
     let files = parse_snapshot(&files_json)?;
-    if !disk_unchanged(root, &files) || load_body(pool, &id).await.is_err() {
+    if !disk_unchanged(root, &files) || load_project_body(pool, root, &id).await.is_err() {
         return None;
     }
     Some(ReuseCandidate {
@@ -496,10 +499,13 @@ pub(crate) async fn session_entries(
 ) -> Option<Vec<ContextEntry>> {
     let current = index_fingerprint(index);
     let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT tool, args_summary, files_json, index_fingerprint, cache_id FROM mcp_reuse_cache
-         WHERE conversation = ? ORDER BY rowid DESC LIMIT ?",
+        "SELECT r.tool, r.args_summary, r.files_json, r.index_fingerprint, r.cache_id FROM mcp_reuse_cache r
+         JOIN mcp_context_cache c ON c.id = r.cache_id
+         WHERE r.conversation = ? AND c.project = ? AND c.expires_at >= ? ORDER BY r.rowid DESC LIMIT ?",
     )
     .bind(scope(conversation, root))
+    .bind(crate::context_cache::project_scope(root))
+    .bind(chrono::Utc::now().timestamp())
     .bind(CONTEXT_ROWS)
     .fetch_all(pool)
     .await
