@@ -132,22 +132,32 @@ pub async fn expand_project_links(
             LINK_CAP,
         )
     };
-    for (target, _) in selected
+    let ids: Vec<_> = selected
         .iter()
         .filter(|(item, _)| item.kind == LinkKind::Memory)
-    {
-        let row = ax_memory::get(pool, &target.id)
-            .await
-            .map_err(|e| e.to_string())?;
-        if let Some(slot) = catalog.iter_mut().find(|m| m.id == target.id) {
-            if let Some(row) = row {
+        .map(|(item, _)| item.id.as_str())
+        .collect();
+    hydrate_catalog(pool, &mut catalog, &ids).await?;
+    Ok(expand_links(result, memories, rules, skills, &catalog))
+}
+
+async fn hydrate_catalog(
+    pool: &sqlx::SqlitePool,
+    catalog: &mut [MemoryRow],
+    ids: &[&str],
+) -> Result<(), String> {
+    // Keep title disambiguation stable; unhydrated bodies never become fallback targets.
+    for row in catalog.iter_mut() {
+        row.enabled = false;
+    }
+    for id in ids {
+        if let Some(row) = ax_memory::get(pool, id).await.map_err(|e| e.to_string())? {
+            if let Some(slot) = catalog.iter_mut().find(|m| m.id == *id) {
                 *slot = row;
-            } else {
-                slot.enabled = false;
             }
         }
     }
-    Ok(expand_links(result, memories, rules, skills, &catalog))
+    Ok(())
 }
 
 /// Cheap check before loading every rule, skill and memory.
@@ -329,6 +339,53 @@ mod tests {
                     .map(|s| format!("skill/{} ({})", s.name, s.reason)),
             )
             .collect()
+    }
+
+    #[test]
+    fn explicit_global_scopes_remain_distinct_from_project_scope() {
+        for scope in ["company", "global", "private_user"] {
+            assert_eq!(origin(scope), LinkOrigin::Global);
+        }
+        assert_eq!(origin("project"), LinkOrigin::Project);
+    }
+
+    #[tokio::test]
+    async fn deletion_between_catalog_and_fetch_cannot_select_an_unhydrated_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let ax = ax_core::Ax::init(dir.path()).await.unwrap();
+        let first = ax_memory::remember(
+            ax.db_pool(),
+            ax_memory::RememberInput {
+                title: "First".into(),
+                body: "first body".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let second = ax_memory::remember(
+            ax.db_pool(),
+            ax_memory::RememberInput {
+                title: "Second".into(),
+                body: "second body".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut catalog = ax_memory::link_catalog(ax.db_pool()).await.unwrap();
+        sqlx::query("DELETE FROM memories WHERE id = ?")
+            .bind(&first.id)
+            .execute(ax.db_pool())
+            .await
+            .unwrap();
+        hydrate_catalog(ax.db_pool(), &mut catalog, &[&first.id])
+            .await
+            .unwrap();
+        assert!(catalog.iter().all(|m| !m.enabled));
+        assert!(catalog
+            .iter()
+            .any(|m| m.id == second.id && m.body.is_empty()));
     }
 
     #[test]

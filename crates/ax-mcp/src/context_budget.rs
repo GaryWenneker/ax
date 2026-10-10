@@ -3,8 +3,12 @@ use ax_usage::{count_tokens, ContextBlock, ContextClass};
 use serde_json::{json, Value};
 
 pub fn projection_tokens(value: &Value) -> usize {
+    projection_tokens_with_mode(value, crate::server::render_full())
+}
+
+fn projection_tokens_with_mode(value: &Value, full: bool) -> usize {
     let text = value.get("inject").and_then(Value::as_str).unwrap_or("");
-    let metadata = if crate::server::render_full() {
+    let metadata = if full {
         value.clone()
     } else {
         crate::server::lean_structured("ax_preflight", value).unwrap_or(Value::Null)
@@ -20,7 +24,32 @@ fn render(
     minimum: usize,
     overflow: bool,
 ) -> Result<Value, String> {
+    render_with_iterations(base, blocks, ids, limit, minimum, overflow, 16)
+}
+
+fn render_with_iterations(
+    base: &Value,
+    blocks: &[ContextBlock],
+    ids: &[String],
+    limit: Option<u32>,
+    minimum: usize,
+    overflow: bool,
+    iterations: usize,
+) -> Result<Value, String> {
     let mut out = base.clone();
+    if let Some(sources) = out.get_mut("policySources").and_then(Value::as_array_mut) {
+        sources.retain(|source| {
+            let key = format!(
+                "{}:{}",
+                source["kind"].as_str().unwrap_or_default(),
+                source["id"].as_str().unwrap_or_default()
+            );
+            !blocks
+                .iter()
+                .any(|b| b.id == key && b.class != ContextClass::HardRequired)
+                || ids.contains(&key)
+        });
+    }
     let omitted: Vec<_> = blocks
         .iter()
         .filter(|b| !ids.contains(&b.id))
@@ -47,7 +76,7 @@ fn render(
         "measurement":if ax_usage::tokenizer_available() {"o200k_base"} else {"estimate"},
         "projection":"content.text + structuredContent JSON"});
     // Self-describing token totals converge once their digit widths are stable.
-    for _ in 0..16 {
+    for _ in 0..iterations {
         let tokens = projection_tokens(&out);
         if out["contextBudget"]["tokens"].as_u64() == Some(tokens as u64) {
             return Ok(out);
@@ -59,6 +88,15 @@ fn render(
 }
 
 pub fn finish(base: Value, blocks: &[ContextBlock], limit: Option<u32>) -> Result<Value, String> {
+    finish_with_iterations(base, blocks, limit, 16)
+}
+
+fn finish_with_iterations(
+    base: Value,
+    blocks: &[ContextBlock],
+    limit: Option<u32>,
+    iterations: usize,
+) -> Result<Value, String> {
     let required: Vec<String> = blocks
         .iter()
         .filter(|b| b.class == ContextClass::HardRequired)
@@ -66,7 +104,7 @@ pub fn finish(base: Value, blocks: &[ContextBlock], limit: Option<u32>) -> Resul
         .collect();
     let mut minimum = 0;
     let mut converged = false;
-    for _ in 0..16 {
+    for _ in 0..iterations {
         let candidate = render(
             &base,
             blocks,
@@ -100,4 +138,31 @@ pub fn finish(base: Value, blocks: &[ContextBlock], limit: Option<u32>) -> Resul
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accounting_exhaustion_fails_instead_of_claiming_a_budget_fit() {
+        let base = json!({"inject":"required"});
+        assert!(
+            render_with_iterations(&base, &[], &[], Some(100), 0, false, 0)
+                .unwrap_err()
+                .contains("accounting did not converge")
+        );
+        assert!(finish_with_iterations(base, &[], Some(100), 0)
+            .unwrap_err()
+            .contains("required context token accounting did not converge"));
+    }
+
+    #[test]
+    fn full_projection_counts_both_text_and_raw_metadata() {
+        let base = json!({"inject":"required text","rules":[{"body":"raw body"}]});
+        assert_eq!(
+            projection_tokens_with_mode(&base, true),
+            count_tokens("required text") + count_tokens(&base.to_string())
+        );
+    }
 }

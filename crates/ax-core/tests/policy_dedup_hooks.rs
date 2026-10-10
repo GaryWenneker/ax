@@ -1,4 +1,4 @@
-//! The Ax facade cleans global duplicates after sync and after a policy index.
+//! Sync and policy indexing preserve project policy until dedup is explicitly requested.
 
 use std::path::Path;
 
@@ -55,7 +55,7 @@ async fn short_global(global: &SqlitePool, machine: i64, name: &str) {
 }
 
 #[tokio::test]
-async fn sync_and_policy_index_promote_and_remove_duplicates() {
+async fn sync_and_policy_index_preserve_distinct_project_policy() {
     let dir = tempfile::tempdir().unwrap();
     let global_path = dir.path().join("global.db");
     let global = ax_global_db::open_and_init(&global_path).await.unwrap();
@@ -77,19 +77,26 @@ async fn sync_and_policy_index_promote_and_remove_duplicates() {
     std::fs::write(root.join("src/app.ts"), "export const a = 2;\n").unwrap();
     ax.sync(quiet_opts(), None).await.unwrap();
     assert!(
-        !in_project(&ax, "probe-sync").await,
-        "sync leaves the duplicate"
+        in_project(&ax, "probe-sync").await,
+        "sync must retain project policy"
     );
-    assert!(global_body(&global_path, "probe-sync")
-        .await
-        .contains("LONG-MARKER"));
+    assert_eq!(global_body(&global_path, "probe-sync").await, "short");
 
     longer_skill_file(&root, "probe-index");
     ax.index_policy(false).await.unwrap();
     assert!(
-        !in_project(&ax, "probe-index").await,
-        "policy index leaves the duplicate"
+        in_project(&ax, "probe-index").await,
+        "policy index must retain project policy"
     );
+    assert_eq!(global_body(&global_path, "probe-index").await, "short");
+
+    let report = ax.dedup_policy(false).await;
+    assert!(report.error.is_none());
+    assert!(!in_project(&ax, "probe-sync").await);
+    assert!(!in_project(&ax, "probe-index").await);
+    assert!(global_body(&global_path, "probe-sync")
+        .await
+        .contains("LONG-MARKER"));
     assert!(global_body(&global_path, "probe-index")
         .await
         .contains("LONG-MARKER"));

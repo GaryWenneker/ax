@@ -40,6 +40,9 @@ async fn malformed_explicit_identity_is_rejected_instead_of_borrowing_a_chat() {
     for args in [
         json!({"session": "bad</ax_chat>"}),
         json!({"session": 2}),
+        json!([]),
+        json!({"projectPath":""}),
+        json!({"projectPath":"/not-an-initialized-project"}),
         json!({"projectPath": 4}),
         json!({"context_epoch": []}),
         json!({"context_reset": "yes"}),
@@ -221,6 +224,13 @@ async fn explicit_file_authority_refreshes_without_overwriting_database_authorit
     for (id, storage) in [("file-row", "files"), ("db-row", "database")] {
         std::fs::write(files.join(format!("{id}.mdc")), format!("---\nid: {id}\nlevel: INFO\nalwaysApply: true\nstorage: {storage}\n---\noriginal\n")).unwrap();
     }
+    let skill_file = dir.path().join(".agents/skills/file-skill/SKILL.md");
+    std::fs::create_dir_all(skill_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill_file,
+        "---\nname: file-skill\ndescription: File owned\nstorage: files\n---\noriginal\n",
+    )
+    .unwrap();
     ax_policy::index_policy(ax.db_pool(), dir.path(), true)
         .await
         .unwrap();
@@ -236,6 +246,22 @@ async fn explicit_file_authority_refreshes_without_overwriting_database_authorit
             .replace("original", "changed");
         std::fs::write(path, body).unwrap();
     }
+    std::fs::write(
+        &skill_file,
+        "---\nname: file-skill\ndescription: File owned\nstorage: files\n---\nchanged\n",
+    )
+    .unwrap();
+    ax_policy::ensure_policy_ready(ax.db_pool(), dir.path())
+        .await
+        .unwrap();
+    assert_eq!(
+        ax_policy::get_skill(ax.db_pool(), "file-skill")
+            .await
+            .unwrap()
+            .unwrap()
+            .body,
+        "changed"
+    );
     ax_policy::ensure_policy_ready(ax.db_pool(), dir.path())
         .await
         .unwrap();
@@ -355,4 +381,118 @@ async fn linked_memory_fetches_selected_bodies_from_a_large_lightweight_catalog(
         .iter()
         .all(|m| m.memory.body.starts_with("target ")));
     assert!(!memories.iter().any(|m| m.memory.id == "m782"));
+}
+
+#[test]
+fn initialized_client_identity_is_retained_for_delivery_protocol() {
+    let mut sessions = ax_mcp::policy_session::PolicySessions::default();
+    sessions.begin("cursor-vscode");
+    let view = sessions.view(
+        Some("chat"),
+        std::time::Instant::now(),
+        std::time::Duration::from_secs(60),
+    );
+    assert_eq!(view.client_name, "cursor-vscode");
+}
+
+#[tokio::test]
+async fn policy_provenance_is_delta_delivered_and_rehydrated_after_reset() {
+    let (dir, _ax) = fixture().await;
+    let file = dir.path().join(".agents/rules/provenance.mdc");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, "---\nid: provenance\nlevel: CRITICAL\nalwaysApply: true\n---\nRequired policy with attribution.\n").unwrap();
+    let mut engine = McpEngine::with_project_root(dir.path().to_path_buf());
+    let args = json!({"session":"same", "context_epoch":"one"});
+    let first = call(&mut engine, args.clone()).await;
+    assert!(first["structuredContent"]["policySources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["id"] == "provenance" && s["scope"] == "project"));
+    let second = call(&mut engine, args.clone()).await;
+    assert!(second["structuredContent"]["policySources"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let reset = call(&mut engine, json!({"session":"same", "context_reset":true})).await;
+    assert!(reset["structuredContent"]["policySources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["id"] == "provenance"));
+}
+
+#[tokio::test]
+async fn null_arguments_start_a_valid_bound_context() {
+    let (dir, _ax) = fixture().await;
+    let mut engine = McpEngine::with_project_root(dir.path().to_path_buf());
+    let reply = call(&mut engine, Value::Null).await;
+    assert_eq!(reply["isError"], false);
+    assert_eq!(
+        reply["structuredContent"]["project"]["path"],
+        ax_usage::project_scope(dir.path())
+    );
+}
+
+#[tokio::test]
+async fn closed_policy_database_is_reported_as_degraded_context() {
+    let (_dir, mut ax) = fixture().await;
+    ax.db_pool().close().await;
+    let out = ToolHandler::call_tool(&mut ax, "ax_preflight", json!({}))
+        .await
+        .unwrap();
+    assert!(out["policyError"].as_str().is_some());
+    assert!(out["inject"]
+        .as_str()
+        .unwrap()
+        .contains("Policy provenance unavailable"));
+}
+
+#[tokio::test]
+async fn audit_includes_invalid_files_and_memory_origins_without_mutation() {
+    let (dir, ax) = fixture().await;
+    let rules = dir.path().join(".agents/rules");
+    let skills = dir.path().join(".agents/skills/disk-only");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::create_dir_all(&skills).unwrap();
+    std::fs::write(
+        rules.join("invalid.mdc"),
+        "---\nid: broken\nlevel: INVALID\n---\ninvalid\n",
+    )
+    .unwrap();
+    std::fs::write(
+        skills.join("SKILL.md"),
+        "---\nname: disk-only\ndescription: Auditable disk skill\n---\nPrivate workflow\n",
+    )
+    .unwrap();
+    ax_memory::remember(
+        ax.db_pool(),
+        ax_memory::RememberInput {
+            title: "Imported item".into(),
+            body: "private memory body".into(),
+            source: Some("import".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let report = ax_policy::audit::inventory(ax.db_pool(), dir.path())
+        .await
+        .unwrap();
+    assert!(report["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["path"].as_str().unwrap().ends_with("invalid.mdc")));
+    assert!(report["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["id"] == "disk-only" && i["parity"] == "disk-only"));
+    assert!(report["memories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["origin"] == "import" && m["classificationRequired"] == true));
+    assert!(!report.to_string().contains("private memory body"));
 }

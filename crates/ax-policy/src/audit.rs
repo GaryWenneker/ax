@@ -121,7 +121,7 @@ pub async fn inventory(pool: &SqlitePool, root: &Path) -> Result<Value, AxError>
     })
     .collect::<Vec<_>>();
     Ok(
-        json!({"memories":memories,"project":root,"readOnly":true,"items":items.into_values().collect::<Vec<_>>(),"issues":issues,
+        json!({"diskChanged":crate::index::policy_disk_stale(pool,root).await?,"memories":memories,"project":root,"readOnly":true,"items":items.into_values().collect::<Vec<_>>(),"issues":issues,
         "instruction":"Review origin and scope before importing, sharing or deleting. Database authority is not overwritten automatically; hashes identify differences, not a winning revision."}),
     )
 }

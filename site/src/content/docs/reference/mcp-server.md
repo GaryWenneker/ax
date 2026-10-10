@@ -336,8 +336,9 @@ metadata. Complete required blocks survive a budget smaller than their minimum;
 or acknowledged when omitted. The token count uses `o200k_base` when available,
 and reports an estimate otherwise. It is not a provider billing measurement.
 
-`policySources` identifies matched policy scope, origin, source path and body
-hash. Call `ax_policy_index` with `action: "audit"` for the read-only inventory,
+`policySources` identifies delivered policy scope, origin, source path and body
+hash. Unchanged provenance is acknowledged within the context epoch; resets resend
+it and metadata changes invalidate its acknowledgement. Call `ax_policy_index` with `action: "audit"` for the read-only inventory,
 disk/database differences and items needing origin review. This audit chooses no
 winning revision and does not share or delete imported content. Database mode
 bootstraps an empty database, then preserves its authority; file-owned overrides

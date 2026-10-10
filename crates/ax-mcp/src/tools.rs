@@ -1092,19 +1092,19 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         }
     };
     let mut sources = Vec::new();
-    for row in rule_rows
-        .iter()
-        .filter(|r| result.rules.iter().any(|m| m.id == r.id))
-    {
-        sources.push(json!({"kind":"rule","id":row.id,"scope":row.scope,"sourcePath":row.source_path,
-            "origin":row.source,"rootId":row.root_id,"bodyHash":ax_policy::revisions::content_hash(&row.body)}));
-    }
-    for row in skill_rows
-        .iter()
-        .filter(|s| result.skills.iter().any(|m| m.name == s.name))
-    {
-        sources.push(json!({"kind":"skill","id":row.name,"scope":row.scope,"sourcePath":row.source_path,
-            "origin":row.source,"rootId":row.root_id,"bodyHash":ax_policy::revisions::content_hash(&row.body)}));
+    let source_candidates = rule_rows.iter().filter(|r| result.rules.iter().any(|m| m.id == r.id))
+        .map(|r| json!({"kind":"rule","id":r.id,"scope":r.scope,"sourcePath":r.source_path,
+            "origin":r.source,"rootId":r.root_id,"bodyHash":ax_policy::revisions::content_hash(&r.body)}))
+        .chain(skill_rows.iter().filter(|s| result.skills.iter().any(|m| m.name == s.name))
+        .map(|s| json!({"kind":"skill","id":s.name,"scope":s.scope,"sourcePath":s.source_path,
+            "origin":s.source,"rootId":s.root_id,"bodyHash":ax_policy::revisions::content_hash(&s.body)})));
+    for source in source_candidates {
+        let key = format!("source:{}:{}",source["kind"].as_str().unwrap_or_default(),source["id"].as_str().unwrap_or_default());
+        let hash = ax_policy::format::content_hash(&source.to_string());
+        if session_delivered.as_ref().and_then(|d| d.get(&key)) != Some(&hash) {
+            sources.push(source);
+            delivered.push((key,hash));
+        }
     }
     let mut out = json!({
         "policySources":sources,
@@ -1141,6 +1141,10 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     delivered.retain(|(key, _)| match key.as_str() {
         "block:index" => included.contains(&"block:index"),
         k if k.starts_with("reuse:") => included.contains(&"reuse"),
+        k if k.starts_with("source:") => {
+            let block = k.trim_start_matches("source:");
+            !policy_blocks_id(block, &blocks) || included.contains(&block)
+        }
         k if policy_blocks_id(k, &blocks) => included.contains(&k),
         _ => true,
     });
