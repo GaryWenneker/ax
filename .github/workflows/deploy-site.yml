@@ -2,7 +2,7 @@ name: Build docs site
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/minimal-project-safe-context]
     paths:
       - 'site/**'
       - '.github/workflows/deploy-site.yml'
@@ -11,6 +11,9 @@ on:
       - 'site/**'
       - '.github/workflows/deploy-site.yml'
   workflow_dispatch:
+
+env:
+  ASTRO_TELEMETRY_DISABLED: "1"
 
 permissions:
   contents: read

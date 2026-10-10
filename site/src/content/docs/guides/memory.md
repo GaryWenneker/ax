@@ -313,3 +313,17 @@ Images in the memory text render in the preview. An absolute local path such as 
 ## Folder docs
 
 Folders added under **Settings → Vault connection → Folders** with **Index into memory** on are imported as `doc` memories: one per `.md`, `.markdown`, or `.txt` file, tagged `folder:<name>`, with source `folder`. `ax_recall` finds them. Like turns, they are left out of preflight's memory titles and the git-shared memory export. See [Obsidian vault → Folders](/guides/obsidian-vault/#folders).
+
+## Project boundaries and linked context
+
+Working notes, durable transcripts and cached expansions belong to the active
+canonical project. Reusing a session ID in another project does not transfer
+those records. A context reset preserves durable notes while invalidating graph
+reuse acknowledgements.
+
+Preflight resolves wiki links using a lightweight ID/title catalog, then loads
+only selected memory bodies by ID, capped at five linked items. The catalog still
+scales with the number of titles; this is not a claim of constant-time lookup.
+Use `ax_policy_index({ action: "audit" })` to review memory origins and body hashes
+without exposing or altering their bodies. Background dedup is advisory: project
+content is not automatically promoted to global policy.

@@ -228,9 +228,9 @@ fn older_and_newer(dir: &Path) -> (PathBuf, PathBuf) {
     for (exe, mtime) in [(&older, now - Duration::from_secs(60)), (&newer, now)] {
         std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_ax"), exe).unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(exe)
+        // Setting timestamps only needs a read handle; a writable executable
+        // handle can fail with ETXTBSY on Linux.
+        std::fs::File::open(exe)
             .unwrap()
             .set_modified(mtime)
             .unwrap();

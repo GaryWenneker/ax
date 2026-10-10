@@ -16,6 +16,8 @@ struct Entry {
     delivered: HashMap<String, u64>,
     last_seen: Option<Instant>,
     chat_session: Option<String>,
+    context_epoch: Option<String>,
+    context_namespace: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -72,6 +74,31 @@ impl PolicySessions {
             .extend(delivered);
     }
 
+    /// A context epoch is independent of durable chat identity. Reset invalidates
+    /// delivery acknowledgements and graph reuse without deleting durable notes.
+    pub fn observe_context(&mut self, epoch: Option<&str>, reset: bool) -> (String, bool) {
+        let entry = self.entries.entry(self.active).or_default();
+        let changed = reset
+            || entry.context_epoch.is_none()
+            || epoch.is_some_and(|e| entry.context_epoch.as_deref() != Some(e));
+        if changed {
+            entry.delivered.clear();
+            entry.context_namespace = Some(crate::chat_session::mint_session());
+            entry.context_epoch = Some(if reset {
+                crate::chat_session::mint_session()
+            } else {
+                epoch
+                    .map(str::to_owned)
+                    .unwrap_or_else(crate::chat_session::mint_session)
+            });
+        }
+        (entry.context_epoch.clone().unwrap_or_default(), changed)
+    }
+
+    pub fn context_namespace(&self) -> Option<String> {
+        self.entries.get(&self.active)?.context_namespace.clone()
+    }
+
     /// The chat session this connection used last.
     pub fn connection_session(&self) -> Option<String> {
         self.entries.get(&self.active)?.chat_session.clone()
@@ -94,6 +121,19 @@ mod tests {
 
     fn delivered(pairs: &[(&str, u64)]) -> HashMap<String, u64> {
         pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn reconnect_does_not_reuse_an_explicit_epoch_namespace() {
+        let mut s = PolicySessions::default();
+        s.begin("cursor");
+        s.observe_context(Some("same-epoch"), false);
+        let old = s.context_namespace().unwrap();
+        s.observe_context(Some("same-epoch"), false);
+        assert_eq!(s.context_namespace().unwrap(), old);
+        s.begin("cursor");
+        s.observe_context(Some("same-epoch"), false);
+        assert_ne!(s.context_namespace().unwrap(), old);
     }
 
     #[test]

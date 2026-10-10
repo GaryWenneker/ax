@@ -118,9 +118,6 @@ pub fn compare_snapshots(
     previous: Option<&ContextSnapshot>,
     next: &ContextSnapshot,
 ) -> ContextChange {
-    if next.part_hashes.is_empty() && previous.map(|p| p.part_hashes.is_empty()).unwrap_or(true) {
-        return ContextChange::Empty;
-    }
     let Some(previous) = previous else {
         return if next.part_hashes.is_empty() {
             ContextChange::Empty
@@ -128,26 +125,25 @@ pub fn compare_snapshots(
             ContextChange::Changed
         };
     };
-    if previous.session_id == next.session_id && previous.content_hash == next.content_hash {
+    if previous.project_id != next.project_id
+        || previous.session_id != next.session_id
+        || previous.provider != next.provider
+        || previous.model != next.model
+    {
+        return ContextChange::Changed;
+    }
+    if previous.part_hashes.is_empty() && next.part_hashes.is_empty() {
+        return ContextChange::Empty;
+    }
+    if previous.content_hash == next.content_hash && previous.part_hashes == next.part_hashes {
         return ContextChange::Same;
     }
-    let overlap = next.part_hashes.iter().any(|(id, hash)| {
-        previous
-            .part_hashes
-            .iter()
-            .any(|(pid, phash)| pid == id && phash == hash)
-    });
-    let differ = next.part_hashes.iter().any(|(id, hash)| {
-        previous
-            .part_hashes
-            .iter()
-            .any(|(pid, phash)| pid == id && phash != hash)
-            || previous.part_hashes.iter().all(|(pid, _)| pid != id)
-    });
-    if overlap && differ {
+    if next
+        .part_hashes
+        .iter()
+        .any(|part| previous.part_hashes.contains(part))
+    {
         ContextChange::Partial
-    } else if overlap {
-        ContextChange::Same
     } else {
         ContextChange::Changed
     }
@@ -283,6 +279,31 @@ mod tests {
             compare_snapshots(Some(&first), &next),
             ContextChange::Partial
         );
+    }
+
+    #[test]
+    fn snapshot_identity_includes_project_and_session() {
+        let parts = vec![("a".into(), "same".into())];
+        let a = snapshot_from_parts("s", Some("a"), None, None, &parts);
+        for (chat, project) in [("s", "b"), ("other", "a")] {
+            let b = snapshot_from_parts(chat, Some(project), None, None, &parts);
+            assert_eq!(compare_snapshots(Some(&a), &b), ContextChange::Changed);
+        }
+    }
+
+    #[test]
+    fn removal_invalidates_snapshot_even_when_surviving_parts_match() {
+        let a = snapshot_from_parts(
+            "s",
+            Some("a"),
+            None,
+            None,
+            &[("a".into(), "one".into()), ("b".into(), "two".into())],
+        );
+        let b = snapshot_from_parts("s", Some("a"), None, None, &[("a".into(), "one".into())]);
+        assert_eq!(compare_snapshots(Some(&a), &b), ContextChange::Partial);
+        let empty = snapshot_from_parts("s", Some("a"), None, None, &[]);
+        assert_eq!(compare_snapshots(Some(&a), &empty), ContextChange::Changed);
     }
 
     #[test]

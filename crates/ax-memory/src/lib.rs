@@ -25,20 +25,20 @@ pub use history::{
     history_entry, is_history_question, parse_since, related_turns, HistoryEntry, HistoryQuery,
 };
 pub use store::{
-    delete, effective_confidence, find_similar, fts_query_from_text, get, list, recall, remember,
-    set_enabled, turn_rows, update,
+    delete, effective_confidence, find_similar, fts_query_from_text, get, link_catalog, list,
+    recall, remember, set_enabled, turn_rows, update,
 };
 pub use sync::{
     default_shared_path, export_shared, import_shared, memory_sync_enabled, MemoryExportResult,
     MemoryImportResult,
 };
 pub use turns::{
-    commit_revs, conversation_from_body, conversation_key, file_changes_from_body, git_web_file_url,
-    insert_conversation_line, link_turn_conversations, parse_git_name_status, parse_unified_diff,
-    prune_turns,
-    redact_secrets, request_id_from_body, safe_diff_path, save_turn, turn_outcome, DiffFile,
-    DiffHunk, DiffLine, DiffLineKind, FileChangeKind, ParsedDiff, TurnRecord, DIFF_LINE_CAP,
-    CONVERSATION_PREFIX, OUTCOME_MARKER, TURN_KIND, TURN_RETENTION_DAYS, TURN_SOURCE,
+    commit_revs, conversation_from_body, conversation_key, file_changes_from_body,
+    git_web_file_url, insert_conversation_line, link_turn_conversations, parse_git_name_status,
+    parse_unified_diff, prune_turns, redact_secrets, request_id_from_body, safe_diff_path,
+    save_turn, turn_outcome, DiffFile, DiffHunk, DiffLine, DiffLineKind, FileChangeKind,
+    ParsedDiff, TurnRecord, CONVERSATION_PREFIX, DIFF_LINE_CAP, OUTCOME_MARKER, TURN_KIND,
+    TURN_RETENTION_DAYS, TURN_SOURCE,
 };
 pub use types::{MemoryMatch, MemoryRow, RememberInput, MEMORY_KINDS};
 
@@ -96,11 +96,12 @@ pub async fn memories_for_preflight(
 pub async fn seed_from_graph(pool: &SqlitePool) -> Result<usize, AxError> {
     let db_err = |e: sqlx::Error| AxError::Database(DatabaseError::new(e.to_string()));
 
-    let lang_rows: Vec<(String, i64)> =
-        sqlx::query_as("SELECT language, COUNT(*) FROM files GROUP BY language ORDER BY COUNT(*) DESC LIMIT 10")
-            .fetch_all(pool)
-            .await
-            .map_err(db_err)?;
+    let lang_rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT language, COUNT(*) FROM files GROUP BY language ORDER BY COUNT(*) DESC LIMIT 10",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
     if lang_rows.is_empty() {
         return Ok(0);
     }

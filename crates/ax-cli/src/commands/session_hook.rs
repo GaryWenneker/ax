@@ -25,7 +25,21 @@ pub async fn run() -> Result<(), String> {
     // Always tag the active session id when present — even if Cursor omits model.
     // Without this, verbose lines lack `session=` and audit correlation collapses.
     if let Some(session_id) = parse_cursor_hook_session_id(&input) {
-        let _ = write_active_cursor_session(&session_id);
+        let root = input
+            .get("workspace_roots")
+            .and_then(|v| v.as_array())
+            .and_then(|roots| (roots.len() == 1).then(|| roots[0].as_str()).flatten())
+            .or_else(|| input.get("cwd").and_then(|v| v.as_str()));
+        let window = input.get("window_id").and_then(|v| v.as_str());
+        if let (Some(root), Some(window)) = (root, window) {
+            // Missing bindings stay diagnostic only; MCP never borrows that chat.
+            let path = std::path::Path::new(root);
+            if let Some(project) = ax_context::directory::find_nearest_ax_root(path) {
+                let _ = ax_usage::write_bound_cursor_session(&project, window, &session_id);
+            }
+        } else {
+            let _ = write_active_cursor_session(&session_id);
+        }
     }
 
     let event = input
@@ -41,8 +55,13 @@ pub async fn run() -> Result<(), String> {
             .to_string();
         if !prompt.is_empty() {
             let session = parse_cursor_hook_session_id(&input);
-            let _ = ax_usage::note_session_event(session.as_deref(), "user_prompt", &prompt, None)
-                .await;
+            if let (Some(session), Some(cwd)) = (session, input.get("cwd").and_then(|v| v.as_str())) {
+                if let Some(root) = ax_context::directory::find_nearest_ax_root(std::path::Path::new(cwd)) {
+                    if ax_usage::session_from_args(&serde_json::json!({"session":session})).is_some() {
+                        let _ = ax_usage::note_project_tool_if_open(&root, &session, "user_prompt", &prompt).await;
+                    }
+                }
+            }
         }
     }
 

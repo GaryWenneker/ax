@@ -34,20 +34,19 @@ pub async fn run() -> Result<(), String> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    if !prompt.is_empty() {
-        let session = input
-            .get("session_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(ax_usage::read_active_cursor_session);
-        let _ =
-            ax_usage::note_session_event(session.as_deref(), "user_prompt", &prompt, None).await;
-    }
     let cwd = input
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
+        .get("cwd").and_then(|v| v.as_str()).map(PathBuf::from)
         .unwrap_or_else(|| resolve_path(None));
+    if !prompt.is_empty() {
+        if let (Some(root), Some(session)) = (
+            ax_context::directory::find_nearest_ax_root(&cwd),
+            ax_usage::parse_cursor_hook_session_id(&input),
+        ) {
+            if ax_usage::session_from_args(&serde_json::json!({"session":session})).is_some() {
+                let _ = ax_usage::note_project_tool_if_open(&root, &session, "user_prompt", &prompt).await;
+            }
+        }
+    }
 
     let files: Vec<PathBuf> = input
         .get("files")

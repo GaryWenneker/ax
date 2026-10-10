@@ -125,9 +125,12 @@ async fn import_one_policy_dir(
     preserve_item_scope: bool,
     global: Option<&crate::global_level::GlobalLevel>,
 ) -> Result<(u32, u32, Vec<String>, Vec<String>), AxError> {
-    use crate::global_level::{file_changed_ms, Kind};
-    let shadowed = |kind: Kind, name: &str, body: &str, path: &Path| {
-        global.is_some_and(|g| g.shadows(kind, name, body, file_changed_ms(path)))
+    use crate::global_level::Kind;
+    let shadowed = |kind: Kind, name: &str, body: &str, _path: &Path| {
+        global.is_some_and(|g| {
+            g.leader(kind, name)
+                .is_some_and(|row| crate::global_level::same_text(body, &row.body))
+        })
     };
     let mut rules_indexed = 0u32;
     let mut skills_indexed = 0u32;
@@ -422,7 +425,7 @@ fn policy_dir_nonempty(policy_dir: &Path) -> bool {
     has_rules || has_skills
 }
 
-/// Load policy into SQLite when the DB is empty or disk files changed (database mode),
+/// Bootstrap an empty database from files; preserve database authority thereafter.
 /// or refresh from disk (files mode). Safe to call on every MCP policy tool invocation.
 pub async fn ensure_policy_ready(
     pool: &SqlitePool,
@@ -432,10 +435,72 @@ pub async fn ensure_policy_ready(
     match config.storage {
         PolicyStorage::Database => {
             let counts = db_counts(pool).await?;
-            let stale = policy_disk_stale(pool, project_root).await?;
-            if (counts.rules_indexed == 0 && policy_files_nonempty(project_root)) || stale {
+            if counts.rules_indexed == 0
+                && counts.skills_indexed == 0
+                && policy_files_nonempty(project_root)
+            {
                 import_policy_from_files(pool, project_root, ImportMode::Merge).await
             } else {
+                // Only rows explicitly authored in files may refresh in database mode.
+                // A stale export of a database-owned row is never imported here.
+                for row in list_rules(pool).await? {
+                    if effective_storage(config.storage, row.storage.as_deref())
+                        != PolicyStorage::Files
+                    {
+                        continue;
+                    }
+                    let path = Path::new(&row.source_path);
+                    let raw =
+                        std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
+                    let mut doc =
+                        parse_rule_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
+                    if doc.frontmatter.id != row.id {
+                        return Err(AxError::Other(
+                            "file-owned rule changed identity; explicitly re-index policy".into(),
+                        ));
+                    }
+                    doc.frontmatter.scope = row.scope;
+                    materialize_rule_stub(project_root, &mut doc).map_err(AxError::Other)?;
+                    let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
+                    let previous: String =
+                        sqlx::query_scalar("SELECT content_hash FROM policy_rules WHERE id = ?")
+                            .bind(&doc.frontmatter.id)
+                            .fetch_one(pool)
+                            .await
+                            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                    if hash != previous {
+                        upsert_rule(pool, &doc, &hash, now_ms()).await?;
+                    }
+                }
+                for row in list_skills(pool).await? {
+                    if effective_storage(config.storage, row.storage.as_deref())
+                        != PolicyStorage::Files
+                    {
+                        continue;
+                    }
+                    let path = Path::new(&row.source_path);
+                    let raw =
+                        std::fs::read_to_string(path).map_err(|e| AxError::Other(e.to_string()))?;
+                    let mut doc =
+                        parse_skill_file(path, &raw).map_err(|e| AxError::Other(e.error))?;
+                    if doc.frontmatter.name != row.name {
+                        return Err(AxError::Other(
+                            "file-owned skill changed identity; explicitly re-index policy".into(),
+                        ));
+                    }
+                    doc.frontmatter.scope = row.scope;
+                    materialize_skill_stub(project_root, &mut doc).map_err(AxError::Other)?;
+                    let hash = blake3::hash(doc.raw.as_bytes()).to_hex().to_string();
+                    let previous: String =
+                        sqlx::query_scalar("SELECT content_hash FROM policy_skills WHERE name = ?")
+                            .bind(&doc.frontmatter.name)
+                            .fetch_one(pool)
+                            .await
+                            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+                    if hash != previous {
+                        upsert_skill(pool, &doc, &hash, now_ms()).await?;
+                    }
+                }
                 Ok(counts)
             }
         }
@@ -445,7 +510,7 @@ pub async fn ensure_policy_ready(
     }
 }
 
-async fn policy_disk_stale(pool: &SqlitePool, project_root: &Path) -> Result<bool, AxError> {
+pub async fn policy_disk_stale(pool: &SqlitePool, project_root: &Path) -> Result<bool, AxError> {
     for layer in crate::hierarchy::policy_layers(project_root) {
         if policy_dir_disk_stale(pool, &layer.dir).await? {
             return Ok(true);
@@ -1245,6 +1310,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn database_authority_never_auto_imports_a_stale_disk_copy() {
+        let (dir, pool) = test_pool().await;
+        let root = dir.path();
+        std::fs::write(root.join("ax.json"), r#"{"policy":{"storage":"database"}}"#).unwrap();
+        let file = root.join(".agents/rules/authority.mdc");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            "---\nid: authority\nlevel: INFO\nalwaysApply: true\n---\nnew database body\n",
+        )
+        .unwrap();
+        ensure_policy_ready(&pool, root).await.unwrap();
+        std::fs::write(
+            &file,
+            "---\nid: authority\nlevel: INFO\nalwaysApply: true\n---\nstale disk body\n",
+        )
+        .unwrap();
+        ensure_policy_ready(&pool, root).await.unwrap();
+        assert_eq!(
+            get_rule(&pool, "authority").await.unwrap().unwrap().body,
+            "new database body"
+        );
+    }
+
+    #[tokio::test]
     async fn ensure_policy_ready_skips_cursor_files_when_checking_stale() {
         let (_dir, pool) = test_pool().await;
         let root = _dir.path();
@@ -1421,7 +1511,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn import_skips_names_at_the_global_level() {
+    async fn import_preserves_distinct_project_policy_despite_global_name_collision() {
         let (dir, pool) = test_pool().await;
         let root = dir.path();
         let global = root.join("global.db");
@@ -1471,10 +1561,10 @@ mod tests {
             .map(|r| r.id)
             .collect();
         crate::global_level::set_test_global_db(None);
-        assert!(!skills.contains(&"noti".to_string()), "{skills:?}");
+        assert!(skills.contains(&"noti".to_string()), "{skills:?}");
         assert!(skills.contains(&"extra".to_string()), "{skills:?}");
         assert!(skills.contains(&"solo".to_string()), "{skills:?}");
-        assert!(!rules.contains(&"utf8".to_string()), "{rules:?}");
+        assert!(rules.contains(&"utf8".to_string()), "{rules:?}");
         assert!(rules.contains(&"longrule".to_string()), "{rules:?}");
         assert!(root.join(".agents/skills/noti/SKILL.md").is_file());
     }

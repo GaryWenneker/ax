@@ -330,7 +330,7 @@ fn spawn_policy_dedup(
         let mut interval = tokio::time::interval(POLICY_DEDUP_EVERY);
         loop {
             interval.tick().await;
-            ax_core::policy_dedup::run(&global_path, Some((&pool, &root)), false)
+            ax_core::policy_dedup::run(&global_path, Some((&pool, &root)), true)
                 .await
                 .log();
         }
@@ -430,7 +430,7 @@ mod policy_dedup_tests {
     }
 
     #[tokio::test]
-    async fn writable_web_dedups_on_open() {
+    async fn writable_web_reports_dedup_without_mutating_project() {
         let dir = tempfile::tempdir().unwrap();
         let (pool, root, global_path) = fixture(dir.path()).await;
         let task = spawn_policy_dedup(pool.clone(), root, false, Some(global_path)).expect("task");
@@ -443,6 +443,6 @@ mod policy_dedup_tests {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         task.abort();
-        assert_eq!(remaining, 0);
+        assert_eq!(remaining, 1);
     }
 }

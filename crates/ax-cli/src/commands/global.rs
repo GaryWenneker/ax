@@ -22,7 +22,7 @@ pub async fn run_sync(path: Option<String>) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     pool.close().await;
     let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let dedup = ax.dedup_policy(false).await;
+    let dedup = ax.dedup_policy(true).await;
     println!("{}", ok_line(format!("synced {}", result.project_name)));
     println!("  {}", kv_line("dedup", dedup.actions.len().to_string()));
     if let Some(error) = &dedup.error {
