@@ -1,4 +1,7 @@
 # Rust
+# Ignore Cargo output in every workspace or nested crate.
+target/
+target-*/
 /target/
 /target-dev/
 /target-ui/

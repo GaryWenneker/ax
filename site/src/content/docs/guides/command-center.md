@@ -255,6 +255,8 @@ The body card has three views: **Markdown** (the source), **WYSIWYG** (rich text
 
 ![Settings — IDEs and coding agents found on this machine, with Connect and Disconnect](/screenshots/cc-settings.png)
 
+Settings also describes **MCP Output: Smart Output**. Output representation is chosen internally; there is no manual XML/JSON/Markdown selector. Cache status and measured savings are not claimed by this static description.
+
 Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.toml`:
 
 - **IDEs & agents** — connect ax to the IDEs and coding agents found on this machine (writes the ax MCP server and hooks into their config). **Connect** also puts the Command Center inside the IDE — see [Command Center inside your IDE](#command-center-inside-your-ide)

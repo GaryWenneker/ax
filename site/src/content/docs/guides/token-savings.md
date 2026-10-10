@@ -46,7 +46,7 @@ Beyond replacing file reads, ax keeps its **own** responses lean so the returned
 - **Markdown, not JSON dumps.** `ax_context` and the data tools (`ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`) return compact markdown / one-line-per-symbol text instead of pretty-printed object graphs.
 - **Strict source budgets.** `ax_explore` snippets default to 40 lines / 2000 chars each; `ax_context` to 6 blocks of 1200 chars. All four are tunable via env (see below), and explicit tool params still win per call.
 
-See the [MCP server reference](/reference/mcp-server/#lean-responses-token-savings) for the full per-tool projection table.
+See the [MCP server reference](/reference/mcp-server/#lean-responses-token-savings) for the per-tool projection table and [Smart Output](/guides/smart-output/) for project-bound expansion and budgets. Full mandatory rules can increase the first preflight compared with older shortened rule bodies; repeat-turn savings and task correctness must be measured separately.
 
 ### Policy sent once per session
 

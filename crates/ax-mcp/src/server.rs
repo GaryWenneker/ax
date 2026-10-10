@@ -50,6 +50,7 @@ pub fn resolve_mcp_project_root(explicit: Option<PathBuf>) -> Option<PathBuf> {
         if is_initialized(&p) {
             return Some(p);
         }
+        return None;
     }
     let cwd = std::env::current_dir().ok()?;
     find_nearest_ax_root(&cwd)
@@ -58,7 +59,11 @@ pub fn resolve_mcp_project_root(explicit: Option<PathBuf>) -> Option<PathBuf> {
 pub async fn run_stdio_server(
     explicit_root: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let explicit = explicit_root.is_some();
     let project_root = resolve_mcp_project_root(explicit_root);
+    if explicit && project_root.is_none() {
+        return Err("explicit MCP path does not identify an initialized project".into());
+    }
     if let Some(ref root) = project_root {
         repair_hooks_at_startup(root);
         if attach_or_spawn(root).await.is_ok() {
@@ -209,7 +214,10 @@ fn policy_session_ttl() -> std::time::Duration {
 }
 
 fn attach_policy_session(engine: &mut McpEngine, mut args: Value) -> Value {
-    let chat = ax_usage::read_active_cursor_session();
+    let chat = args
+        .get(crate::tools::CHAT_ARG)
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let view = engine.policy_sessions().view(
         chat.as_deref(),
         std::time::Instant::now(),
@@ -298,13 +306,14 @@ async fn call_tool_and_wrap(
     if verbose {
         push_inbound(name, &args);
     }
+    let started = std::time::Instant::now();
+    let conversation = resolve_chat(engine, name, &args);
+    let args = with_chat(args, &conversation);
     let args = if matches!(name, "ax_preflight" | "ax_skill") {
         attach_policy_session(engine, args)
     } else {
         args
     };
-    let started = std::time::Instant::now();
-    let conversation = resolve_chat(engine, name, &args);
     let session_write = name == "ax_session"
         && matches!(
             args.get("action").and_then(Value::as_str),
@@ -389,7 +398,11 @@ async fn call_tool_and_wrap(
     if let Ok(value) = result.as_ref() {
         if name != "ax_durable" && !conversation.is_empty() {
             let summary: String = tool_result_text(value).chars().take(160).collect();
-            let _ = ax_usage::note_tool_if_open(&conversation, name, &summary).await;
+            if let Some(root) = project_root {
+                // Recording failures only omit optional transcript diagnostics.
+                let _ =
+                    ax_usage::note_project_tool_if_open(root, &conversation, name, &summary).await;
+            }
         }
     }
     if let Ok(mut t) = telemetry().lock() {
@@ -440,7 +453,7 @@ async fn call_tool_and_wrap(
                     }
                 }
             }
-            let cached = ax_usage::cache_oversized_reply(name, &annotated).await;
+            let cached = ax_usage::cache_project_reply(project_root, name, &annotated).await;
             let (model_text, structured, hint, response_tokens, response_chars, tokens_saved) =
                 match &cached {
                     ax_usage::CacheOutcome::Stubbed {
@@ -471,6 +484,7 @@ async fn call_tool_and_wrap(
                                 "originalTokens": original_tokens,
                                 "sentTokens": sent_tokens,
                                 "removedTokens": removed_tokens,
+                                "tokenMeasurement": if ax_usage::tokenizer_available() { "o200k_base" } else { "estimate" },
                             })),
                             None,
                             *sent_tokens,
@@ -508,7 +522,7 @@ async fn call_tool_and_wrap(
                 ax_usage::CacheOutcome::Passthrough => None,
             };
             ax_usage::spawn_note_session_event(
-                ax_usage::read_active_cursor_session(),
+                Some(conversation.clone()),
                 name.to_string(),
                 annotated,
                 cache_id,
@@ -539,7 +553,7 @@ async fn call_tool_and_wrap(
                     None
                 },
                 duration_ms: Some(duration_ms),
-                ok: true,
+                ok: !is_error,
                 savings_eligible: est.savings_eligible,
                 response_preview: est.response_preview.clone(),
                 counterfactual_preview: est.counterfactual_preview.clone(),
@@ -638,8 +652,13 @@ fn wrap_call_tool_result_parts(
         "content": [{ "type": "text", "text": text }],
         "isError": is_error,
     });
-    if let Some(structured) = structured {
-        out["structuredContent"] = structured;
+    if let Some(mut structured) = structured {
+        if let Some(obj) = structured.as_object_mut() {
+            obj.retain(|_, value| !value.is_null());
+        }
+        if structured.as_object().is_none_or(|obj| !obj.is_empty()) {
+            out["structuredContent"] = structured;
+        }
     }
     out
 }
@@ -682,6 +701,10 @@ fn lean_structured(name: &str, value: &Value) -> Option<Value> {
             "instruction": value.get("instruction"),
             "indexStats": value.get("indexStats"),
             "pendingFiles": value.get("pendingFiles"),
+            "project": value.get("project"),
+            "session": value.get("session"),
+            "contextBudget": value.get("contextBudget"),
+            "policyError": value.get("policyError"),
         })),
         // Summary text is in content.text; keep structured stats for scripts.
         "ax_status" => Some(json!({
@@ -702,6 +725,8 @@ fn lean_structured(name: &str, value: &Value) -> Option<Value> {
             let mut trimmed = value.clone();
             if let Some(obj) = trimmed.as_object_mut() {
                 obj.remove("body");
+                obj.remove("text");
+                obj.remove("inject");
             }
             Some(trimmed)
         }
@@ -709,6 +734,17 @@ fn lean_structured(name: &str, value: &Value) -> Option<Value> {
         // duplicate it, so omit structuredContent.
         "ax_search" | "ax_node" | "ax_callers" | "ax_callees" | "ax_impact" | "ax_files"
         | "ax_affected" => None,
+        "ax_recall" => Some(crate::smart_output::recall_metadata(value)),
+        "ax_expand" | "ax_stash" | "ax_session" | "ax_durable" | "ax_cache_status"
+        | "ax_report" | "ax_history" => {
+            let mut meta = value.clone();
+            if let Some(obj) = meta.as_object_mut() {
+                obj.remove("text");
+                obj.remove("inject");
+                obj.remove("markdown");
+            }
+            Some(meta)
+        }
         // Everything else (status, index, rules, capture, remember, recall,
         // insights, report) is already compact or machine-first — keep it.
         _ => Some(value.clone()),
@@ -764,35 +800,7 @@ fn token_budget_hint(tool: &str, response_tokens: i64) -> Option<String> {
 }
 
 fn tool_result_text(value: &Value) -> String {
-    if let Some(inject) = value.get("inject").and_then(|v| v.as_str()) {
-        if !inject.is_empty() {
-            return inject.to_string();
-        }
-    }
-    if let Some(preview) = value.get("preview").and_then(|v| v.as_str()) {
-        if !preview.is_empty() {
-            return preview.to_string();
-        }
-    }
-    if let Some(proposal) = value.get("proposal") {
-        if let Some(preview) = proposal.get("preview").and_then(|v| v.as_str()) {
-            if !preview.is_empty() {
-                return preview.to_string();
-            }
-        }
-    }
-    if let Some(text) = value.get("text").and_then(|v| v.as_str()) {
-        if !text.is_empty() {
-            return text.to_string();
-        }
-    }
-    if let Some(body) = value.get("body").and_then(|v| v.as_str()) {
-        if !body.is_empty() {
-            return body.to_string();
-        }
-    }
-    // Compact (not pretty) JSON: no gain from indentation whitespace for a model.
-    value.to_string()
+    crate::smart_output::model_text(value)
 }
 
 fn is_policy_tool(name: &str) -> bool {
@@ -1032,7 +1040,7 @@ mod policy_integration {
             json!({ "clientInfo": { "name": "gauntlet" } }),
         )
         .await;
-        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
+        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug", "session": "policy-test-chat" } });
         let first = handle_request(&mut engine, "tools/call", call.clone())
             .await
             .result
@@ -1104,7 +1112,7 @@ mod policy_integration {
             json!({ "clientInfo": { "name": "gauntlet" } }),
         )
         .await;
-        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
+        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug", "session": "policy-test-chat" } });
         let first = reply_text(
             &handle_request(&mut engine, "tools/call", call.clone())
                 .await
@@ -1121,9 +1129,9 @@ mod policy_integration {
             !second.contains("<ax_memory_titles>"),
             "memory titles resent:\n{second}"
         );
-        assert!(first.contains("<ax_index"), "{first}");
+        assert!(first.contains("## Index"), "{first}");
         assert!(
-            !second.contains("<ax_index"),
+            !second.contains("## Index"),
             "unchanged index snapshot resent:\n{second}"
         );
         let catalog_ids = |text: &str| -> Vec<String> {
@@ -1146,8 +1154,8 @@ mod policy_integration {
             assert!(!first_ids.contains(&id), "catalog entry {id} resent");
         }
         assert!(
-            first.contains("<ax_memory_titles>"),
-            "fixture repo should have memories:\n{first}"
+            !first.contains("<ax_memory_titles>"),
+            "unrelated memory titles must not be injected:\n{first}"
         );
     }
 
@@ -1216,7 +1224,7 @@ mod policy_integration {
             return;
         };
         let mut engine = McpEngine::with_project_root(root);
-        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug" } });
+        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": "fix a bug", "session": "policy-test-chat" } });
         handle_request(
             &mut engine,
             "initialize",
@@ -2484,5 +2492,120 @@ mod reuse_integration {
         assert_eq!(avoided, 900 - sent);
         assert_eq!(wrapped["content"][0]["text"].as_str(), Some(text.as_str()));
         assert_eq!(wrapped["isError"].as_bool(), Some(false));
+    }
+    #[tokio::test]
+    async fn smart_output_isolates_cache_and_rejects_foreign_project_overrides() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (dir_a, mut a) = fixture().await;
+        let (dir_b, mut b) = fixture().await;
+        let receipt = call(&mut a, "ax_stash", json!({"text":"PRIVATE-A 🐝"})).await;
+        let id = receipt["structuredContent"]["id"].as_str().unwrap();
+        assert!(text(&call(&mut a, "ax_expand", json!({"id":id})).await).contains("PRIVATE-A"));
+        let foreign = call(&mut b, "ax_expand", json!({"id":id})).await;
+        assert_eq!(foreign["isError"], true);
+        assert!(!text(&foreign).contains("PRIVATE-A"));
+        let override_reply = call(
+            &mut a,
+            "ax_preflight",
+            json!({"prompt":"start","projectPath":dir_b.path()}),
+        )
+        .await;
+        assert_eq!(override_reply["isError"], true);
+        let local = call(
+            &mut a,
+            "ax_preflight",
+            json!({"prompt":"start","projectPath":dir_a.path()}),
+        )
+        .await;
+        assert_eq!(local["isError"], false);
+        assert!(text(&local).starts_with("# Ax context"));
+        assert!(local["structuredContent"].get("inject").is_none());
+        assert!(local["structuredContent"]["project"]["path"]
+            .as_str()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn memory_id_retrieval_returns_full_body_and_errors_on_missing_id() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (_dir, mut engine) = fixture().await;
+        let body = format!("{}TAIL-EXCEPTION", "Memory constraint. ".repeat(30));
+        let saved = call(
+            &mut engine,
+            "ax_remember",
+            json!({"title":"Long decision","body":body}),
+        )
+        .await;
+        let id = saved["structuredContent"]["id"].as_str().unwrap();
+        let full = call(&mut engine, "ax_recall", json!({"id":id})).await;
+        assert!(text(&full).contains("TAIL-EXCEPTION"));
+        assert!(!full["structuredContent"]
+            .to_string()
+            .contains("TAIL-EXCEPTION"));
+        let missing = call(&mut engine, "ax_recall", json!({"id":"foreign-memory"})).await;
+        assert_eq!(missing["isError"], true);
+    }
+
+    #[tokio::test]
+    async fn explicit_session_changes_resend_policy_and_text_contains_directive_questions() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (_dir, mut engine) = fixture().await;
+        let first = call(
+            &mut engine,
+            "ax_preflight",
+            json!({"prompt":"start","session":"same"}),
+        )
+        .await;
+        let second = call(
+            &mut engine,
+            "ax_preflight",
+            json!({"prompt":"start","session":"same"}),
+        )
+        .await;
+        assert!(text(&second).len() < text(&first).len());
+        let next = call(
+            &mut engine,
+            "ax_preflight",
+            json!({"prompt":"start","session":"different"}),
+        )
+        .await;
+        assert!(!text(&next).contains("Unchanged since earlier in this session"));
+        let directive = call(&mut engine,"ax_preflight",json!({"prompt":"Always validate project ownership before reading caches","session":"different"})).await;
+        assert_eq!(directive["structuredContent"]["directiveDetected"], true);
+        let questions = directive["structuredContent"]["captureProposal"]["questions"]
+            .as_array()
+            .unwrap();
+        assert!(!questions.is_empty());
+        for q in questions {
+            assert!(text(&directive).contains(q["question"].as_str().unwrap()));
+        }
+    }
+    #[tokio::test]
+    async fn tiny_context_budget_keeps_required_rules_and_reports_over_budget() {
+        let _guard = env_lock().await;
+        let _home = isolated_home();
+        let (dir, mut engine) = fixture().await;
+        std::fs::write(
+            dir.path().join("ax.json"),
+            r#"{"context":{"budgetTokens":1}}"#,
+        )
+        .unwrap();
+        let reply = call(
+            &mut engine,
+            "ax_preflight",
+            json!({"prompt":"start","session":"budget-test"}),
+        )
+        .await;
+        assert_eq!(reply["isError"], false);
+        assert_eq!(
+            reply["structuredContent"]["contextBudget"]["overBudget"],
+            true
+        );
+        assert!(text(&reply).contains("Context budget exceeded"));
+        assert!(text(&reply).contains("[CRITICAL]"));
+        assert!(!text(&reply).contains("<ax_memory_titles>"));
     }
 }

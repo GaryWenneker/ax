@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use ax_context::directory::{find_nearest_ax_root, is_initialized};
+use ax_context::directory::find_nearest_ax_root;
 use ax_context::{format_context_as_markdown, format_explore_text};
 use ax_core::Ax;
 use ax_extraction::orchestrator::IndexOptions;
@@ -116,7 +116,9 @@ impl ToolHandler {
             }
             "ax_durable" => {
                 let conversation = chat_of(&params);
-                let text = ax_usage::durable_apply(&conversation, &params).await?;
+                let text =
+                    ax_usage::durable_project_apply(ax.project_root(), &conversation, &params)
+                        .await?;
                 Ok(json!({ "text": text }))
             }
             "ax_tool_economics" => pi_economics_tool(ax, params).await,
@@ -358,8 +360,8 @@ impl ToolHandler {
             "ax_remember" => remember(ax, params).await,
             "ax_recall" => recall(ax, params).await,
             "ax_history" => history_tool(ax, params).await,
-            "ax_expand" => expand_tool(params).await,
-            "ax_stash" => stash_tool(params).await,
+            "ax_expand" => expand_tool(ax, params).await,
+            "ax_stash" => stash_tool(ax, params).await,
             "ax_cache_status" => cache_status_tool(params).await,
             "ax_insights" => insights(ax, params).await,
             "ax_report" => report(ax, params).await,
@@ -682,21 +684,19 @@ async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> 
     }))
 }
 
-fn resolve_preflight_cwd(ax: &Ax, params: &Value) -> PathBuf {
-    let override_path = params
+fn resolve_preflight_cwd(ax: &Ax, params: &Value) -> Result<PathBuf, String> {
+    if let Some(path) = params
         .get("projectPath")
         .or_else(|| params.get("project_path"))
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from);
-    if let Some(p) = override_path {
-        if let Some(root) = find_nearest_ax_root(&p) {
-            return root;
-        }
-        if is_initialized(&p) {
-            return p;
+        .and_then(Value::as_str)
+    {
+        let root = find_nearest_ax_root(&PathBuf::from(path))
+            .ok_or("projectPath does not identify an initialized project; connect MCP to the intended project")?;
+        if ax_usage::project_scope(&root) != ax_usage::project_scope(ax.project_root()) {
+            return Err("projectPath differs from this MCP server's project; connect a separate server to that project".into());
         }
     }
-    ax.project_root().to_path_buf()
+    Ok(ax.project_root().to_path_buf())
 }
 
 async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -706,7 +706,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .unwrap_or("")
         .to_string();
     let files = string_array(params.get("files"));
-    let cwd = resolve_preflight_cwd(ax, &params);
+    let cwd = resolve_preflight_cwd(ax, &params)?;
     let input = MatchInput {
         prompt: prompt.clone(),
         cwd,
@@ -788,17 +788,36 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let index_stats = ax.get_stats().await.ok();
     let pending = ax.get_pending_files().await;
 
-    let mut inject = policy_inject;
+    let mut optional_blocks: Vec<ax_usage::ContextBlock> = Vec::new();
+    let mut inject = format!(
+        "# Ax context\n\nProject: `{}`\n\n{}",
+        ax_usage::project_scope(ax.project_root()),
+        crate::smart_output::policy_markdown(&policy_inject)
+    );
     if let Some(ref stats) = index_stats {
-        let block = ax_core::stats_format::format_index_inject_block(stats, &pending);
+        let block = crate::smart_output::index_context(stats, &pending);
         if !block.is_empty() {
+            let mut index_text = String::new();
             push_once(
-                &mut inject,
+                &mut index_text,
                 "block:index",
                 &block,
                 session_delivered.as_ref(),
                 &mut delivered,
             );
+            if !index_text.is_empty() {
+                optional_blocks.push(ax_usage::ContextBlock {
+                    id: "block:index".into(),
+                    class: if pending.is_empty()
+                        && ax_core::stats_format::source_store_warning(stats).is_none()
+                    {
+                        ax_usage::ContextClass::Optional
+                    } else {
+                        ax_usage::ContextClass::HardRequired
+                    },
+                    text: index_text,
+                });
+            }
             crate::verbose::push_line(format!(
                 "enrich index block_chars={} pending_files={}",
                 block.len(),
@@ -813,10 +832,15 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     if !memories.is_empty() {
         let block = ax_memory::format_memory_match_titles(&memories);
         if !block.is_empty() {
-            if !inject.is_empty() {
-                inject.push('\n');
-            }
-            inject.push_str(&block);
+            optional_blocks.push(ax_usage::ContextBlock {
+                id: "memories".into(),
+                class: ax_usage::ContextClass::HighValue,
+                text: crate::smart_output::generated_markdown(
+                    &block,
+                    "ax_memories",
+                    "Relevant memories — ax_recall by ID for full content",
+                ),
+            });
             crate::verbose::push_line(format!(
                 "enrich memories count={} block_chars={}",
                 memories.len(),
@@ -832,10 +856,11 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .unwrap_or_default();
     let turn_block = ax_memory::format_turn_history_block(&turns, 1_200);
     if !turn_block.is_empty() {
-        if !inject.is_empty() {
-            inject.push('\n');
-        }
-        inject.push_str(&turn_block);
+        optional_blocks.push(ax_usage::ContextBlock {
+            id: "history".into(),
+            class: ax_usage::ContextClass::Optional,
+            text: turn_block.clone(),
+        });
         crate::verbose::push_line(format!(
             "enrich turn history count={} block_chars={}",
             turns.len(),
@@ -868,19 +893,18 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         if !inject.is_empty() {
             inject.push('\n');
         }
-        inject.push_str(CONTEXT_CACHE_LINE);
+        push_once(
+            &mut inject,
+            "block:cache_help",
+            CONTEXT_CACHE_LINE,
+            session_delivered.as_ref(),
+            &mut delivered,
+        );
         let conversation = chat_of(&params);
         let index = indexed_hashes(ax.db_pool()).await;
         let graph = index.as_ref().ok().map(ax_usage::index_fingerprint);
         inject.push('\n');
         inject.push_str(&chat_line(&conversation, graph.as_deref()));
-        let chat = chat_for_client(session_client(&params))
-            .then(ax_usage::read_active_cursor_session)
-            .flatten();
-        if let Ok(Some(ledger)) = ax_usage::session_ledger(chat.as_deref()).await {
-            inject.push('\n');
-            inject.push_str(&ledger);
-        }
         if let Ok(index) = index.as_ref() {
             let unseen: Vec<_> =
                 ax_usage::reuse_session_entries(ax.project_root(), &conversation, index)
@@ -902,8 +926,11 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
                             .map(|e| (format!("reuse:{}", e.id), 1)),
                     );
                 }
-                inject.push('\n');
-                inject.push_str(&known);
+                optional_blocks.push(ax_usage::ContextBlock {
+                    id: "reuse".into(),
+                    class: ax_usage::ContextClass::Optional,
+                    text: known,
+                });
             }
             let fingerprint = ax_usage::index_fingerprint(index);
             let known = params.get("known_context").and_then(Value::as_str);
@@ -926,52 +953,6 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             if let Some(nudge) = ax_usage::session_nudge(turns, stale) {
                 inject.push('\n');
                 inject.push_str(&ax_section("nudge", &nudge));
-            }
-        }
-        let context_budget = ax_usage::load_settings(Some(ax.project_root())).context_budget_tokens;
-        if let Ok(entries) = ax_usage::recent_session_catalog(chat.as_deref(), 20).await {
-            let room = ax_usage::optional_room(&inject, context_budget);
-            let unseen: Vec<_> = entries
-                .into_iter()
-                .filter(|e| {
-                    let key = format!("cache:{}", e.id);
-                    !session_delivered
-                        .as_ref()
-                        .is_some_and(|m| m.contains_key(&key))
-                })
-                .collect();
-            if room != Some(0) && !unseen.is_empty() {
-                let cap = match room {
-                    Some(n) => (n as i64).min(1_500),
-                    None => 1_500,
-                };
-                if !inject.is_empty() {
-                    inject.push('\n');
-                }
-                inject.push_str(&ax_usage::format_catalog(&unseen, cap));
-                if session_delivered.is_some() {
-                    for entry in &unseen {
-                        delivered.push((format!("cache:{}", entry.id), 1));
-                    }
-                }
-            }
-        }
-        // Recent turn memories are skipped below; fetch enough that they cannot crowd out the rest.
-        if let Ok((rows, _)) = ax_memory::list(ax.db_pool(), 200, 0).await {
-            let titles = format_memory_titles(&rows, memory_title_tokens());
-            let room = ax_usage::optional_room(&inject, context_budget);
-            let fits = match room {
-                None => true,
-                Some(n) => ax_usage::count_tokens(&titles) as u32 <= n,
-            };
-            if !titles.is_empty() && fits {
-                push_once(
-                    &mut inject,
-                    "block:memory_titles",
-                    &titles,
-                    session_delivered.as_ref(),
-                    &mut delivered,
-                );
             }
         }
     }
@@ -1025,7 +1006,58 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         has_directive
     ));
 
+    if let Some(proposal) = capture_proposal.as_ref() {
+        inject.push_str("\n\n## Directive proposal\n\n");
+        inject.push_str(&proposal.preview);
+        inject.push_str("\n\n");
+        inject.push_str(&proposal.interview_instruction);
+        for question in &proposal.questions {
+            inject.push_str(&format!(
+                "\n- {} (current: {}; options: {})",
+                question.question,
+                question.current,
+                question.options.join(", ")
+            ));
+        }
+    }
+    let budget = ax_usage::load_settings(Some(ax.project_root())).context_budget_tokens;
+    let mut blocks = vec![ax_usage::ContextBlock {
+        id: "required".into(),
+        class: ax_usage::ContextClass::HardRequired,
+        text: inject,
+    }];
+    blocks.extend(optional_blocks);
+    let selected = ax_usage::select_context(&blocks, budget);
+    let included: Vec<_> = selected.iter().map(|b| b.id.as_str()).collect();
+    let omitted: Vec<_> = blocks
+        .iter()
+        .filter(|b| !included.contains(&b.id.as_str()))
+        .map(|b| b.id.as_str())
+        .collect();
+    // Do not mark a block as delivered if the budget omitted it.
+    delivered.retain(|(key, _)| match key.as_str() {
+        "block:index" => included.contains(&"block:index"),
+        key if key.starts_with("reuse:") => included.contains(&"reuse"),
+        _ => true,
+    });
+    let mut inject = selected
+        .iter()
+        .map(|b| b.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if !omitted.is_empty() {
+        inject.push_str("\n\nOptional context omitted to fit the budget. Retrieve index details with `ax_status`, decisions with `ax_recall`, history with `ax_history`, or rerun graph queries with `fresh: true`.");
+    }
+    let over_budget = budget.is_some_and(|limit| ax_usage::count_tokens(&inject) > limit as usize);
+    if over_budget {
+        inject.push_str(
+            "\n\nContext budget exceeded: required policy and working context are preserved.",
+        );
+    }
     let mut out = json!({
+        "project": { "path": ax_usage::project_scope(ax.project_root()) },
+        "session": { "id": chat_of(&params) },
+        "contextBudget": { "included": included, "omitted": omitted, "limit": budget, "overBudget": over_budget, "tokens": ax_usage::count_tokens(&inject), "measurement": if ax_usage::tokenizer_available() { "o200k_base" } else { "estimate" } },
         "policyStatus": meta.policy_status,
         "matchedRules": meta.matched_rules,
         "matchedSkills": meta.matched_skills,
@@ -1051,13 +1083,6 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         out[crate::server::DELIVERED_KEY] = json!(delivered);
     }
     Ok(out)
-}
-
-fn memory_title_tokens() -> i64 {
-    std::env::var("AX_PREFLIGHT_MEMORY_TITLE_TOKENS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(200)
 }
 
 /// Append `block` unless this session already received the identical text.
@@ -1114,26 +1139,6 @@ fn chat_line(chat: &str, fingerprint: Option<&str>) -> String {
     )
 }
 
-fn session_client(params: &Value) -> Option<&str> {
-    params
-        .get(crate::server::SESSION_ARG)?
-        .get("client")?
-        .as_str()
-}
-
-/// The active Cursor chat belongs to Cursor clients (and to calls with no known client).
-fn chat_for_client(client: Option<&str>) -> bool {
-    client.is_none_or(|name| name.to_ascii_lowercase().contains("cursor"))
-}
-
-fn rule_inline_chars() -> usize {
-    let tokens = std::env::var("AX_POLICY_RULE_INLINE_TOKENS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(250);
-    tokens.saturating_mul(4)
-}
-
 /// Policy inject for one MCP connection: skip bodies the agent already holds.
 fn session_policy_inject(
     ax: &Ax,
@@ -1160,7 +1165,7 @@ fn session_policy_inject(
             delivered: Some(&delivered),
             client_loaded: Some(&client_loaded),
             skill_inline_chars: Some(skill_inline_chars()),
-            rule_inline_chars: Some(rule_inline_chars()),
+            rule_inline_chars: None,
         },
     );
     (out.text, out.delivered)
@@ -1217,6 +1222,16 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    if let Some(id) = params.get("id").and_then(Value::as_str) {
+        let memory = ax_memory::get(ax.db_pool(), id)
+            .await
+            .map_err(|e| e.to_string())?
+            .filter(|m| m.enabled)
+            .ok_or("memory ID not found in this project")?;
+        return Ok(
+            json!({ "text": format!("## {} [{}]\n\n{}\n\nFiles: {}", memory.title, memory.id, memory.body, memory.files.join(", ")), "matches": [{ "memory": memory }] }),
+        );
+    }
     let query = params
         .get("query")
         .and_then(|v| v.as_str())
@@ -1232,7 +1247,7 @@ async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
     let text = if matches.is_empty() {
         format!("No memories match '{query}'.")
     } else {
-        ax_memory::format_memories_inject_block(&matches, 12_000)
+        crate::smart_output::memory_results(&matches)
     };
     Ok(json!({
         "matches": matches,
@@ -1302,7 +1317,7 @@ async fn project_relative_files(root: &Path, files: &[String]) -> Vec<String> {
     out
 }
 
-async fn expand_tool(params: Value) -> Result<Value, String> {
+async fn expand_tool(ax: &Ax, params: Value) -> Result<Value, String> {
     let id = params
         .get("id")
         .and_then(|v| v.as_str())
@@ -1312,7 +1327,7 @@ async fn expand_tool(params: Value) -> Result<Value, String> {
         .get("limit")
         .and_then(|v| v.as_u64())
         .map(|n| n as usize);
-    match ax_usage::expand_cached(id, offset, limit).await {
+    match ax_usage::expand_project_cached(ax.project_root(), id, offset, limit).await {
         Ok(page) => Ok(json!({
             "text": page.text,
             "id": id,
@@ -1362,13 +1377,13 @@ async fn cache_status_tool(params: Value) -> Result<Value, String> {
     }))
 }
 
-async fn stash_tool(params: Value) -> Result<Value, String> {
+async fn stash_tool(ax: &Ax, params: Value) -> Result<Value, String> {
     let text = params
         .get("text")
         .and_then(|v| v.as_str())
         .ok_or("text required")?;
     let label = params.get("label").and_then(|v| v.as_str());
-    match ax_usage::stash_text(label, text).await {
+    match ax_usage::stash_project_text(ax.project_root(), label, text).await {
         Ok(receipt) => Ok(json!({
             "text": format!(
                 "Stashed {} tokens as {}. Call ax_expand with that id. The body is not repeated here.",
@@ -1379,29 +1394,6 @@ async fn stash_tool(params: Value) -> Result<Value, String> {
         })),
         Err(msg) => Ok(json!({ "text": msg, "isError": true })),
     }
-}
-
-fn format_memory_titles(rows: &[ax_memory::MemoryRow], max_tokens: i64) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let mut lines = vec!["<ax_memory_titles>Titles only. Call ax_recall for a body.".to_string()];
-    for row in rows {
-        if !row.enabled || ax_memory::is_recall_only(&row.kind) {
-            continue;
-        }
-        lines.push(format!("- {} {}", row.id, row.title.replace('\n', " ")));
-        let draft = lines.join("\n") + "\n</ax_memory_titles>";
-        if ax_usage::count_tokens(&draft) as i64 > max_tokens {
-            lines.pop();
-            break;
-        }
-    }
-    if lines.len() == 1 {
-        return String::new();
-    }
-    lines.push("</ax_memory_titles>".to_string());
-    lines.join("\n")
 }
 
 async fn insights(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -2361,14 +2353,15 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({
             "name": "ax_recall",
-            "description": "Search durable project memories (decisions, fixes, conventions) by free text. Fresh memories outrank stale ones via confidence decay.",
+            "description": "Search durable project memories by free text; returns ranked IDs and summaries. Use id to retrieve the complete memory. Fresh memories outrank stale ones via confidence decay.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
+                    "id": { "type": "string", "description": "Stable memory ID for a complete body" },
                     "limit": { "type": "number" }
                 },
-                "required": ["query"]
+                "anyOf": [{ "required": ["query"] }, { "required": ["id"] }]
             }
         }),
     ]
@@ -2474,7 +2467,7 @@ fn format_node_signatures(result: &ax_types::ExploreResult) -> String {
     out
 }
 
-const CONTEXT_CACHE_LINE: &str = "<ax_context_cache>Oversized MCP replies are stored locally. A cut graph reply or a stub ends with an id; call ax_expand with that id to read the rest, or ax_node for one symbol's full source. Do not Read or Grep files to fill the gap. Use ax_stash to store a chat slice or another tool result. Call ax_cache_status at any time for context-cache and file-token-cache counts (no bodies). A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context or in ax_expand with its id. Read <ax_session_context> before searching again; pass fresh: true to force a new query. Record a durable fact, file, symbol, decision, or open question with ax_session (actions add, update, compact, clear). Preflight shows <ax_working_context>; pass its hash as known_context and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; compact confirms the notes against the current index.</ax_context_cache>";
+const CONTEXT_CACHE_LINE: &str = "## Context tools\n\nUse `ax_expand` with a cache ID and optional character offset to recover large replies; `ax_node` returns one symbol. Use `fresh: true` to rerun graph queries after context loss. Record decisions with `ax_session`; pass `known_context` only if you still hold that snapshot. After compaction or reset, retrieve missing rules with `ax_rules` and skills with `ax_skill`. Never assume an earlier delivery is still in the client context.";
 
 pub fn server_instructions(has_policy: bool) -> String {
     let mut s = String::from("You have access to ax code intelligence tools (MCP).\n\n");
@@ -2505,7 +2498,7 @@ pub fn server_instructions(has_policy: bool) -> String {
          - ax_ship mode=evaluate|ci for the quality gate (never process::exit)\n\
          - ax_policy_index to refresh rules/skills from .ax/policy/\n\
          Shell CLI only when MCP is unreachable (DEGRADED) or for install/upgrade/web/share/ship --watch.\n\n\
-         Pass projectPath when cwd is not the indexed project root (monorepos). Prefer ax over grep/read for code structure.",
+         projectPath must identify this MCP server's project; connect a separate server for another monorepo project. Prefer ax over grep/read for code structure.",
     );
     s
 }
@@ -2513,45 +2506,6 @@ pub fn server_instructions(has_policy: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_cursor_clients_read_the_active_cursor_chat() {
-        assert!(chat_for_client(Some("cursor-vscode")));
-        assert!(chat_for_client(Some("Cursor")));
-        assert!(chat_for_client(None));
-        assert!(!chat_for_client(Some("gauntlet")));
-        assert!(!chat_for_client(Some("claude-code")));
-    }
-
-    fn memory_row(id: &str, kind: &str) -> ax_memory::MemoryRow {
-        ax_memory::MemoryRow {
-            id: id.into(),
-            kind: kind.into(),
-            title: format!("title of {id}"),
-            body: String::new(),
-            tags: vec![],
-            files: vec![],
-            confidence: 1.0,
-            source: "manual".into(),
-            enabled: true,
-            created_at: 0,
-            updated_at: 0,
-        }
-    }
-
-    #[test]
-    fn memory_titles_skip_turn_memories() {
-        let rows = [memory_row("turn-1", "turn"), memory_row("note-1", "note")];
-        let titles = format_memory_titles(&rows, 800);
-        assert!(titles.contains("note-1"), "{titles}");
-        assert!(!titles.contains("turn-1"), "{titles}");
-    }
-
-    #[test]
-    fn memory_titles_are_empty_when_only_turns_exist() {
-        let rows = [memory_row("turn-1", "turn")];
-        assert_eq!(format_memory_titles(&rows, 800), "");
-    }
 
     fn tool_names(v: &Value) -> Vec<String> {
         v["tools"]
@@ -2980,8 +2934,8 @@ mod tests {
             );
             assert!(text.contains("<ax_session_context>") && text.contains("fresh: true"));
         }
-        assert!(CONTEXT_CACHE_LINE.contains(ax_policy::CONVERSATION_CACHE_SENTENCE));
-        assert!(CONTEXT_CACHE_LINE.contains(ax_policy::SESSION_ID_SENTENCE));
+        assert!(CONTEXT_CACHE_LINE.contains("After compaction or reset"));
+        assert!(CONTEXT_CACHE_LINE.contains("ax_expand"));
         assert!(CONTEXT_CACHE_LINE.contains("known_context"));
         assert!(CONTEXT_CACHE_LINE.contains("fresh: true"));
     }

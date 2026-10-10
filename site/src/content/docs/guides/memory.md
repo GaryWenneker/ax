@@ -133,7 +133,7 @@ The agent treats these as established context — it never has to ask "have we d
 
 Besides automatic injection, agents can explicitly search memories when they need deeper history:
 
-- **MCP tool:** `ax_recall` with a `query` string and optional `limit` (up to 25, default 5). Returns scored matches plus a formatted inject block (up to 12,000 characters — double the preflight budget).
+- **MCP tool:** `ax_recall` with a `query` string and optional `limit` (up to 25, default 5) returns ranked IDs and summaries. Pass `id` from a result to retrieve its complete content. Metadata keeps provenance without duplicating bodies; `AX_MCP_FULL=1` preserves full structured matches. See [Smart Output](/guides/smart-output/).
 - **CLI:** `ax recall "query"` for interactive use.
 - **Command Center:** The search box in the Memory page runs the same hybrid search.
 

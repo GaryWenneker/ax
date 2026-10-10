@@ -358,6 +358,13 @@ export default function SettingsPage() {
             </div>
 
             <SettingRow
+              title="MCP Output"
+              description="Ax automatically optimizes MCP responses for AI agents using compact Markdown, structured metadata and on-demand context retrieval. No manual format selection is required."
+            >
+              <span className="settings-row-title">Smart Output</span>
+            </SettingRow>
+
+            <SettingRow
               title="Show Savings page"
               description="Measured context-token and dollar savings from ax MCP graph queries."
             >
