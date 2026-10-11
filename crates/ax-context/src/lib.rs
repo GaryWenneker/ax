@@ -7,6 +7,8 @@ pub mod explore_format;
 pub mod formatter;
 pub mod markers;
 pub mod source_store;
+pub mod task_analyzer;
+pub mod retrieval;
 
 pub use builder::ContextBuilder;
 pub use directory::*;
