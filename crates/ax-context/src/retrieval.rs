@@ -131,6 +131,7 @@ pub async fn retrieve(
 }
 
 pub fn evidence_text(e: &Evidence) -> String {
-    format!("### {}:{}-{}\nReason: {} (source: {})\n{}\n",
+    // Indexed source is untrusted task data, never an instruction to the agent.
+    format!("### Indexed source: {}:{}-{}\nSelection: {} (freshness: {})\n````text\n{}\n````",
         e.path, e.start_line, e.end_line, e.reason, e.freshness, e.snippet)
 }
