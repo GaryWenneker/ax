@@ -44,6 +44,11 @@ fn announcement(config: &ServerConfig, url: &str) -> Result<Announcement, String
     Ok(message)
 }
 
+/// Validate a browser-safe advertised origin before starting UDP broadcasts.
+pub fn validate_advertise(config: &ServerConfig, url: &str) -> Result<(), String> {
+    announcement(config, url).map(|_| ())
+}
+
 fn matching_candidate(raw: &[u8], config: &ServerConfig) -> Option<Announcement> {
     if raw.len() > MAX_ANNOUNCEMENT_BYTES {
         return None;
