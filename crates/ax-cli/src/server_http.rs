@@ -7,6 +7,7 @@ use crate::{
     server_cli,
     server_config::{NodeRole, ServerConfig},
     server_discovery,
+    server_push,
     server_snapshot,
 };
 use axum::{
@@ -90,6 +91,7 @@ pub async fn run(
     discovery_port: Option<u16>,
     advertise: Option<String>,
     sync_interval_seconds: Option<u64>,
+    push_port: u16,
 ) -> Result<(), String> {
     let config = server_cli::load(path)?;
     if let Some(seconds) = sync_interval_seconds {
@@ -118,9 +120,15 @@ pub async fn run(
             }
         })
     });
-    // Replicas poll the explicitly configured primary. They never elect a
-    // primary based on UDP discovery and never publish project snapshots.
-    let periodic_sync = sync_interval_seconds.map(|seconds| {
+    // UDP notifications can be lost. All replicas have periodic authenticated
+    // polling enabled as a fallback even if no --sync-interval-seconds is set.
+    // Discovery is never allowed to change the configured primary URL.
+    let polling_interval = if config.role == NodeRole::Replica {
+        Some(sync_interval_seconds.unwrap_or(60))
+    } else {
+        None
+    };
+    let periodic_sync = polling_interval.map(|seconds| {
         let config_path = path.to_path_buf();
         tokio::spawn(async move {
             loop {
@@ -131,6 +139,23 @@ pub async fn run(
             }
         })
     });
+    // A signed UDP registration records the replica's actual source socket.
+    // The primary sends signed change hints to live registrations only.
+    let push_task = if push_port == 0 {
+        None
+    } else {
+        let node = config.clone();
+        let config_path = path.to_path_buf();
+        Some(tokio::spawn(async move {
+            let result = match node.role {
+                NodeRole::Primary => server_push::primary(node, push_port).await,
+                NodeRole::Replica => server_push::replica(node, config_path, push_port).await,
+            };
+            if let Err(error) = result {
+                tracing::warn!("UDP push unavailable; HTTPS polling remains active: {}", error);
+            }
+        }))
+    };
     let state = Arc::new(StateData {
         config,
         tokens,
@@ -152,6 +177,9 @@ pub async fn run(
         task.abort();
     }
     if let Some(task) = periodic_sync {
+        task.abort();
+    }
+    if let Some(task) = push_task {
         task.abort();
     }
     result
