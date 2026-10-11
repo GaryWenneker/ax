@@ -221,7 +221,6 @@
  .story-section { grid-template-columns:1fr; gap:45px; }
  .final-section { grid-template-columns:1fr; gap:55px; }
  .capability { padding:19px 15px; }
- .terrain-art { opacity:.5; }
 }
 @media(max-width:600px) {
  .signal-header { height:64px; padding:0 20px; }
@@ -273,7 +272,6 @@
  .signal-footer { padding:26px 20px; flex-wrap:wrap; gap:14px; }
  .signal-footer > span { display:none; }
  .signal-footer nav { gap:15px; font-size:11px; }
- .terrain-art { inset:29% -50% 0; opacity:.44; }
 }
 @media(prefers-reduced-motion:reduce) {
  .signal-site { scroll-behavior:auto; }
