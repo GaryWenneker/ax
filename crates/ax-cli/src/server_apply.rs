@@ -8,8 +8,12 @@ use crate::{server_config::ServerConfig, server_snapshot::Snapshot};
 use ax_memory::{embed, types::MemoryRow};
 use sqlx::{Row, Sqlite, Transaction};
 use std::collections::HashSet;
+use ax_policy::types::{PolicyRuleRow, PolicySkillRow, RuleFrontmatter, SkillFrontmatter};
+use std::{fs, io::Write, path::Path};
 
 const MEMORY_PATH: &str = "state/memories.json";
+const RULE_PATH: &str = "state/rules.json";
+const SKILL_PATH: &str = "state/skills.json";
 
 fn stored_to_row(row: &sqlx::sqlite::SqliteRow) -> Result<MemoryRow, String> {
     let read = |name| -> Result<String, String> {
@@ -84,6 +88,7 @@ pub struct ApplyResult {
     pub updated: usize,
     pub unchanged: usize,
     pub removed: usize,
+    pub policy_queued: usize,
     pub conflicts: usize,
 }
 
@@ -212,7 +217,149 @@ pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyRe
             .map_err(|e| e.to_string())?;
     }
     tx.commit().await.map_err(|e| e.to_string())?;
+    // Policy files enter Ax's existing pending review queue. They are never
+    // approved or silently made active by a node synchronization operation.
+    let (queued, conflicts) = stage_policies(config, snapshot, &project.path)?;
+    report.policy_queued = queued;
+    report.conflicts += conflicts;
     Ok(report)
+}
+
+/// Present policy records to Ax's review queue only, under stable namespaced
+/// identifiers. Keep a hash ledger so approving an unchanged rule/skill does
+/// not cause it to reappear as pending on the next poll.
+fn stage_policies(
+    config: &ServerConfig,
+    snapshot: &Snapshot,
+    project_root: &Path,
+) -> Result<(usize, usize), String> {
+    let rules: Vec<PolicyRuleRow> = serde_json::from_str(
+        snapshot.files.get(RULE_PATH).ok_or("missing rules")?,
+    ).map_err(|e| e.to_string())?;
+    let skills: Vec<PolicySkillRow> = serde_json::from_str(
+        snapshot.files.get(SKILL_PATH).ok_or("missing skills")?,
+    ).map_err(|e| e.to_string())?;
+    let origin = format!(
+        "{}:{}:{}", config.cluster_id, snapshot.project_id, snapshot.primary_node_id
+    );
+    let ax_dir = project_root.join(".ax");
+    let ledger_dir = ax_dir.join("server/policy-review");
+    fs::create_dir_all(&ledger_dir).map_err(|e| e.to_string())?;
+    if fs::symlink_metadata(&ledger_dir).map_err(|e| e.to_string())?.file_type().is_symlink() {
+        return Err("unsafe replica policy ledger directory".into());
+    }
+    let ledger_path = ledger_dir.join(format!(
+        "{}.json", blake3::hash(origin.as_bytes()).to_hex()
+    ));
+    let mut ledger: std::collections::BTreeMap<String, String> =
+        fs::read_to_string(&ledger_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+    let mut queued = 0;
+    let mut conflicts = 0;
+    for rule in rules {
+        let item_key = format!("rule:{}", rule.id);
+        let id = format!(
+            "replica-{}",
+            blake3::hash(format!("{origin}|rule|{}", rule.id).as_bytes()).to_hex()
+        );
+        let frontmatter = RuleFrontmatter {
+            id: id.clone(),
+            level: rule.level,
+            always_apply: rule.always_apply,
+            globs: rule.globs,
+            triggers: rule.triggers,
+            tags: rule.tags,
+            priority: rule.priority,
+            enabled: rule.enabled,
+            status: "pending".into(),
+            share: false,
+            scope: rule.scope,
+            storage: None,
+            source: None,
+            root_id: None,
+            group: (!rule.group.is_empty()).then_some(rule.group),
+            properties: rule.properties,
+        };
+        let raw = ax_policy::parse::serialize_rule(&frontmatter, &rule.body);
+        let digest = blake3::hash(raw.as_bytes()).to_hex().to_string();
+        if ledger.get(&item_key) == Some(&digest) {
+            continue;
+        }
+        let output = ax_policy::paths::pending_rules_dir(&ax_dir).join(format!("{id}.mdc"));
+        match queue_policy(&output, &raw)? {
+            true => queued += 1,
+            false => conflicts += 1,
+        }
+        if output.is_file() && fs::read_to_string(&output).ok().as_deref() == Some(raw.as_str()) {
+            ledger.insert(item_key, digest);
+        }
+    }
+    for skill in skills {
+        let item_key = format!("skill:{}", skill.name);
+        let name = format!(
+            "replica-{}",
+            blake3::hash(format!("{origin}|skill|{}", skill.name).as_bytes()).to_hex()
+        );
+        let frontmatter = SkillFrontmatter {
+            name: name.clone(),
+            description: skill.description,
+            always_apply: skill.always_apply,
+            triggers: skill.triggers,
+            tags: skill.tags,
+            priority: skill.priority,
+            context_task: skill.context_task,
+            enabled: skill.enabled,
+            status: "pending".into(),
+            share: false,
+            scope: skill.scope,
+            storage: None,
+            source: None,
+            root_id: None,
+            group: (!skill.group.is_empty()).then_some(skill.group),
+            properties: skill.properties,
+        };
+        let raw = ax_policy::parse::serialize_skill(&frontmatter, &skill.body);
+        let digest = blake3::hash(raw.as_bytes()).to_hex().to_string();
+        if ledger.get(&item_key) == Some(&digest) {
+            continue;
+        }
+        let output = ax_policy::paths::pending_skills_dir(&ax_dir).join(name).join("SKILL.md");
+        match queue_policy(&output, &raw)? {
+            true => queued += 1,
+            false => conflicts += 1,
+        }
+        if output.is_file() && fs::read_to_string(&output).ok().as_deref() == Some(raw.as_str()) {
+            ledger.insert(item_key, digest);
+        }
+    }
+    let mut temp = tempfile::NamedTempFile::new_in(&ledger_dir).map_err(|e| e.to_string())?;
+    serde_json::to_writer_pretty(&mut temp, &ledger).map_err(|e| e.to_string())?;
+    temp.write_all(b"\n").map_err(|e| e.to_string())?;
+    temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    temp.persist(&ledger_path).map_err(|e| e.error.to_string())?;
+    Ok((queued, conflicts))
+}
+
+fn queue_policy(path: &Path, body: &str) -> Result<bool, String> {
+    let parent = path.parent().ok_or("invalid pending policy path")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    if fs::symlink_metadata(parent).map_err(|e| e.to_string())?.file_type().is_symlink() {
+        return Err("unsafe pending policy directory".into());
+    }
+    if path.exists() {
+        // A reviewer may have edited the pending item; never clobber it.
+        return Ok(false);
+    }
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
+    file.sync_all().map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 #[cfg(test)]
