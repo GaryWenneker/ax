@@ -49,6 +49,8 @@ export AX_SERVER_KNOWLEDGE_TOKEN="$(openssl rand -hex 32)"
 
 Store this secret securely. Provide the same token to the trusted replica through its environment or a secrets manager. Never commit the token to Git or place it inside the configuration JSON.
 
+A Replica does not require manual approval on the Primary. When its `primary_url`, cluster/project IDs and project credential are valid, it registers itself automatically with that Primary and synchronization begins. The Primary records the Replica in Settings so operators can see its endpoint, last-seen/sync state and revoke or block it later.
+
 To run on a single computer:
 
 ```sh
