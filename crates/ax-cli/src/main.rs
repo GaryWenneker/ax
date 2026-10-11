@@ -7,6 +7,9 @@ mod help_text;
 mod installer;
 mod server_config;
 mod server_cli;
+mod server_snapshot;
+mod server_http;
+mod server_replica;
 mod ui;
 mod version_check;
 
