@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
+import AccessSettingsSection from '../components/AccessSettingsSection';
 import RemoteMcpSettingsSection from '../components/RemoteMcpSettingsSection';
 import OkfSettingsSection from '../components/OkfSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
@@ -265,6 +266,7 @@ export default function SettingsPage() {
       {err && <div className="settings-toast settings-toast--err">{err}</div>}
 
       <div className="settings-stack">
+        <AccessSettingsSection />
         <IdeInstallCard />
 
         <section className="settings-card">
