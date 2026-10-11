@@ -34,6 +34,17 @@ pub(crate) fn keep_scan_entry_name(name: &str) -> bool {
     true
 }
 
+/// A narrow, explicit allowlist: these files have useful exact-source context
+/// but do not need to masquerade as Tree-sitter source code. Secrets and
+/// arbitrary JSON (including appsettings.json) are deliberately excluded.
+fn is_context_manifest(rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or("");
+    name == "package.json" || name == "Cargo.toml"
+        || name.ends_with(".csproj")
+        || name == "tsconfig.json"
+        || (name.starts_with("tsconfig.") && name.ends_with(".json"))
+}
+
 type ParseOutcome = (String, Result<ExtractionResult, String>);
 
 #[derive(Clone, Default)]
@@ -143,6 +154,30 @@ impl ExtractionOrchestrator {
                 .any(|e| e.eq_ignore_ascii_case(&dotted) || e.eq_ignore_ascii_case(ext))
     }
 
+    async fn index_manifest(
+        &self,
+        queries: &QueryBuilder,
+        rel: &str,
+        hash: &str,
+    ) -> Result<(), ax_utils::errors::AxError> {
+        // The source text is already stored with its hash before this is called.
+        // Clearing graph entities here must preserve file_contents.
+        queries.clear_file_for_reindex(rel).await?;
+        let full_path = self.project_root.join(rel);
+        let size = file_size(&full_path);
+        let modified_at = file_mtime_ms(&full_path).unwrap_or_else(now_ms);
+        queries.upsert_file(&FileRecord {
+            path: rel.to_string(),
+            content_hash: hash.to_string(),
+            language: Language::Unknown,
+            size,
+            modified_at,
+            indexed_at: now_ms(),
+            node_count: 0,
+            errors: None,
+        }).await
+    }
+
     pub async fn scan_files(&self, opts: &IndexOptions) -> Result<Vec<PathBuf>, ax_utils::errors::AxError> {
         let mut files = Vec::new();
         let exclude_matcher = build_exclude_matcher(&self.project_root, &opts.exclude);
@@ -173,7 +208,7 @@ impl ExtractionOrchestrator {
             let plugin_hit = plugin_exts.iter().any(|e| {
                 e.eq_ignore_ascii_case(&dotted) || e.eq_ignore_ascii_case(ext)
             });
-            if lang.is_some() || ext_map.contains_key(&dotted) || plugin_hit {
+            if is_context_manifest(&rel) || lang.is_some() || ext_map.contains_key(&dotted) || plugin_hit {
                 files.push(path.to_path_buf());
             }
         }
@@ -194,6 +229,7 @@ impl ExtractionOrchestrator {
         }
         let mut tasks = Vec::new();
         let mut content_hashes: HashMap<String, String> = HashMap::new();
+        let mut manifest_count = 0;
         for path in &files {
             let rel = path.strip_prefix(&self.project_root).unwrap_or(path).to_string_lossy().replace('\\', "/");
             let content = ax_utils::read_text_file(path)?;
@@ -204,6 +240,11 @@ impl ExtractionOrchestrator {
             // Store the text now, while we still own it — query-time snippets are
             // served from here so a graph read never touches the working tree.
             queries.upsert_file_content(&rel, &content_hash, &content).await?;
+            if is_context_manifest(&rel) {
+                self.index_manifest(queries, &rel, &content_hash).await?;
+                manifest_count += 1;
+                continue;
+            }
             content_hashes.insert(rel.clone(), content_hash);
             tasks.push(ParseTask { file_path: rel, content, language: lang });
         }
@@ -265,7 +306,7 @@ impl ExtractionOrchestrator {
                 }
             }
         }
-        Ok(IndexResult { files_indexed: parse_total, duration_ms: start.elapsed().as_millis() as u64 })
+        Ok(IndexResult { files_indexed: parse_total + manifest_count, duration_ms: start.elapsed().as_millis() as u64 })
     }
 
     /// Incremental sync — scan project, re-index only new/changed files, drop stale entries.
@@ -427,6 +468,7 @@ impl ExtractionOrchestrator {
         let start = Instant::now();
         let mut tasks = Vec::new();
         let mut content_hashes: HashMap<String, String> = HashMap::new();
+        let mut manifest_count = 0;
         let ext_map = extension_map();
         let plugin_exts = ax_plugins::load_plugins(&self.project_root).extensions();
         for file_path in file_paths {
@@ -452,8 +494,13 @@ impl ExtractionOrchestrator {
             // Only for files a parser claims: callers of index_files did not run
             // the scan filter, and storing build output would put megabytes of
             // object-file text in ax.db that no snippet could ever use.
-            if self.is_extractable(&full_path, opts, &ext_map, &plugin_exts) {
+            if is_context_manifest(&rel) || self.is_extractable(&full_path, opts, &ext_map, &plugin_exts) {
                 queries.upsert_file_content(&rel, &content_hash, &content).await?;
+            }
+            if is_context_manifest(&rel) {
+                self.index_manifest(queries, &rel, &content_hash).await?;
+                manifest_count += 1;
+                continue;
             }
             content_hashes.insert(rel.clone(), content_hash);
             tasks.push(ParseTask { file_path: rel, content, language: lang });
@@ -533,7 +580,7 @@ impl ExtractionOrchestrator {
                 }
             }
         }
-        Ok(IndexResult { files_indexed: batch_total, duration_ms: start.elapsed().as_millis() as u64 })
+        Ok(IndexResult { files_indexed: batch_total + manifest_count, duration_ms: start.elapsed().as_millis() as u64 })
     }
 }
 
@@ -611,6 +658,18 @@ fn should_skip_path(rel: &str, exclude: Option<&Gitignore>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_allowlist_excludes_sensitive_json() {
+        for path in ["package.json", "frontend/package.json", "Cargo.toml",
+            "backend/Auth.csproj", "tsconfig.build.json"] {
+            assert!(is_context_manifest(path), "{path}");
+        }
+        for path in ["appsettings.json", ".env", "credentials.json",
+            "package-lock.json", "arbitrary.json"] {
+            assert!(!is_context_manifest(path), "{path}");
+        }
+    }
 
     #[tokio::test]
     async fn scan_files_includes_scripts_dot_dir() {

@@ -95,15 +95,30 @@ impl ContextBuilder {
             }
         }
 
-        if let Some(first) = entry_points.first() {
-            if let Ok(sg) = self.traverser.get_impact_subgraph(&first.id, depth).await {
-                edge_count = sg.edges.len() as u32;
-                for n in sg.nodes.values() {
-                    related_files.insert(n.file_path.clone());
+        // Every high-ranking seed contributes its bounded impact neighborhood.
+        // The previous first-only walk lost independent relevant subsystems.
+        let mut edge_keys = HashSet::new();
+        for seed in entry_points.iter().take(8) {
+            if let Ok(sg) = self.traverser.get_impact_subgraph(&seed.id, depth).await {
+                subgraph.roots.push(seed.id.clone());
+                for (id, node) in sg.nodes {
+                    related_files.insert(node.file_path.clone());
+                    subgraph.nodes.insert(id, node);
                 }
-                subgraph = sg;
+                for edge in sg.edges {
+                    let key = (edge.source.clone(), edge.target.clone(), edge.kind.as_str().to_string());
+                    if edge_keys.insert(key) {
+                        subgraph.edges.push(edge);
+                    }
+                }
             }
         }
+        subgraph.roots.sort();
+        subgraph.roots.dedup();
+        subgraph.edges.sort_by(|a, b| a.source.cmp(&b.source)
+            .then_with(|| a.target.cmp(&b.target))
+            .then_with(|| a.kind.as_str().cmp(b.kind.as_str())));
+        edge_count = subgraph.edges.len() as u32;
 
         let summary = if entry_points.is_empty() {
             format!("No matching symbols for: {}", query)
@@ -120,7 +135,11 @@ impl ContextBuilder {
             subgraph,
             entry_points,
             code_blocks,
-            related_files: related_files.into_iter().collect(),
+            related_files: {
+                let mut paths: Vec<_> = related_files.into_iter().collect();
+                paths.sort();
+                paths
+            },
             summary,
             stats: TaskContextStats {
                 node_count: entry_count,
