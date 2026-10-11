@@ -1,0 +1,36 @@
+# First create configs on the host using 'ax server init', then provision
+# separate per-project tokens via a secrets manager or private .env file.
+# Do not commit passwords, real tokens or project data.
+services:
+  primary:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.standalone
+    image: ax/standalone:local
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    environment:
+      AX_SERVER_KNOWLEDGE_TOKEN: ${AX_SERVER_KNOWLEDGE_TOKEN:?Set a 32-character random secret}
+    volumes:
+      - ./primary.json:/config/server.json:ro
+      - ./primary-project:/data/project
+    ports:
+      - "127.0.0.1:9070:9070/tcp"
+      # Enable this line only on a trusted private LAN:
+      # - "9072:9072/udp"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9070/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    command:
+      - server
+      - run
+      - --config
+      - /config/server.json
+      - --bind
+      - 0.0.0.0:9070
+      - --allow-private-http
+      - --push-port
+      - "0"
