@@ -1,0 +1,182 @@
+---
+/** Decorative vector environment, not a raster screenshot.
+ * All geometry is emitted as inline SVG at build time and animated with CSS.
+ */
+const random = (seed: number) => {
+  const n = Math.sin(seed * 127.1 + 19.73) * 43758.5453;
+  return n - Math.floor(n);
+};
+const stars = Array.from({ length: 175 }, (_, i) => ({
+  x: 15 + random(i + 1) * 1570,
+  y: 12 + random(i + 251) * 590,
+  r: random(i + 591) > .86 ? 1.25 : .48,
+  opacity: .15 + random(i + 716) * .63,
+}));
+const summit = (x: number) => {
+  const ridge = 721 - 215 * Math.exp(-Math.pow((x - 752) / 159, 2));
+  const tributary = 50 * Math.exp(-Math.pow((x - 1070) / 145, 2));
+  const faceted = 16 * Math.sin(x / 23) + 9 * Math.sin(x / 11.5) + 7 * Math.sin(x / 5.3);
+  return ridge - tributary + faceted;
+};
+const mountainPoints = Array.from({ length: 81 }, (_, i) => {
+  const x = i * 20;
+  return { x, y: summit(x) };
+});
+const mountainShape = `M0 900 L${mountainPoints.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L')} L1600 900 Z`;
+const foregroundPoints = Array.from({ length: 101 }, (_, i) => {
+  const x = i * 16;
+  const y = 792 - 91 * Math.exp(-Math.pow((x - 290) / 156, 2)) - 74 * Math.exp(-Math.pow((x - 1395) / 198, 2)) + 17 * Math.sin(x / 32) + 10 * Math.sin(x / 13) + 6 * Math.sin(x / 6);
+  return { x, y };
+});
+const foregroundShape = `M0 900 L${foregroundPoints.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L')} L1600 900 Z`;
+const meshLines = Array.from({ length: 18 }, (_, row) => {
+  const t = row / 17;
+  const y = 572 + Math.pow(t, 1.35) * 305;
+  const points = Array.from({ length: 41 }, (_, j) => {
+    const x = j * 40;
+    const offset = Math.sin(j * .89 + row * .7) * (4 + 10 * t);
+    return `${x},${(y + offset).toFixed(1)}`;
+  });
+  return points.join(' ');
+});
+const meshStrands = Array.from({ length: 56 }, (_, i) => {
+  const x = i * (1600 / 55);
+  return `M${x.toFixed(1)},900 Q${(x - 130).toFixed(1)},735 760,535`;
+});
+const sparks = Array.from({ length: 82 }, (_, i) => {
+  const x = random(i + 3201) * 1600;
+  const y = 612 + random(i + 3401) * 283;
+  return { x, y, r: .8 + random(i + 3601) * 2.1, opacity: .25 + random(i + 3801) * .65 };
+});
+/** Explicit dot-grid overlay requested in the design reference.
+ * Dot sizes and contrast grow toward the lower/central-right portion.
+ * The SVG remains BELOW all readable page UI.
+ */
+const dots = Array.from({ length: 31 * 26 }, (_, i) => {
+  const c = i % 31;
+  const r = Math.floor(i / 31);
+  const x = 102 + c * 27;
+  const y = 141 + r * 28;
+  const bottom = Math.max(0, (y - 280) / 590);
+  const right = Math.max(.15, Math.min(1, (x - 190) / 450));
+  const gradient = Math.pow(bottom, 1.23) * (.22 + .78 * right);
+  return {
+    x, y,
+    size: (1.0 + 2.9 * gradient).toFixed(2),
+    opacity: (.15 + .78 * gradient).toFixed(2),
+  };
+});
+const spires = [
+  [700,535,5,52], [718,527,5,79], [736,520,4,121], [744,514,7,87],
+  [756,510,5,169], [767,522,7,111], [779,535,5,74], [791,544,4,92],
+  [805,550,5,60], [820,561,3,42], [827,565,3,31],
+];
+---
+<div class="signal-ambient ax-landscape" aria-hidden="true">
+  <div class="ax-sky-wash"></div>
+
+  <svg class="ax-vector ax-depth-stars" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" focusable="false">
+    <defs>
+      <radialGradient id="ax-night-halo"><stop offset="0" stop-color="#0c5599" stop-opacity=".46"/><stop offset=".35" stop-color="#082848" stop-opacity=".19"/><stop offset="1" stop-color="#02101d" stop-opacity="0"/></radialGradient>
+    </defs>
+    <ellipse cx="776" cy="412" rx="500" ry="460" fill="url(#ax-night-halo)"/>
+    <g class="ax-star-cluster">
+      {stars.map(star => <circle cx={star.x} cy={star.y} r={star.r} fill="#7fceff" opacity={star.opacity} />)}
+    </g>
+  </svg>
+
+  <svg class="ax-vector ax-depth-distant" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" focusable="false">
+    <defs>
+      <linearGradient id="ax-far-fill" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#11406a"/><stop offset="1" stop-color="#010a15"/></linearGradient>
+      <linearGradient id="ax-main-fill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0b3b60"/><stop offset=".31" stop-color="#071e34"/><stop offset="1" stop-color="#010912"/></linearGradient>
+      <linearGradient id="ax-front-fill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#071b31"/><stop offset=".65" stop-color="#020c16"/><stop offset="1" stop-color="#00060e"/></linearGradient>
+      <clipPath id="ax-mountain-clip"><path d={mountainShape}/></clipPath>
+      <clipPath id="ax-foreground-clip"><path d={foregroundShape}/></clipPath>
+      <radialGradient id="ax-mountain-light"><stop stop-color="#208bd3" stop-opacity=".5"/><stop offset="1" stop-color="#095797" stop-opacity="0"/></radialGradient>
+    </defs>
+    <path d="M0 690 L80 666 162 682 250 636 300 648 390 608 495 650 584 607 663 623 731 590 825 631 913 612 997 654 1056 630 1150 668 1290 622 1417 642 1498 603 1600 627 L1600 900 0 900 Z" fill="url(#ax-far-fill)" opacity=".46"/>
+    <path d={mountainShape} fill="url(#ax-main-fill)"/>
+    <ellipse cx="762" cy="603" rx="210" ry="160" fill="url(#ax-mountain-light)" opacity=".55"/>
+    <g clip-path="url(#ax-mountain-clip)" class="ax-mountain-mesh">
+      {meshLines.map(points => <polyline points={points} fill="none" stroke="#216eac" stroke-opacity=".38" stroke-width=".8"/>)}
+      {meshStrands.map(d => <path d={d} fill="none" stroke="#348fc3" stroke-opacity=".3" stroke-width=".75"/>)}
+    </g>
+    <g class="ax-faceted-spurs" clip-path="url(#ax-mountain-clip)" fill="none">
+      <path d="M756 508 L688 612 549 677 M747 530 L626 699 480 782 M770 522 L838 633 1033 727 M776 530 L874 682 1138 796" stroke="#367ead" stroke-opacity=".38" stroke-width="1.3"/>
+      <path d="M731 557 L585 734 M813 578 L954 753 M703 595 L523 762" stroke="#5aa4c7" stroke-opacity=".26" stroke-width=".8" />
+    </g>
+    <path d={foregroundShape} fill="url(#ax-front-fill)"/>
+    <g clip-path="url(#ax-foreground-clip)" class="ax-near-mesh">
+      {meshLines.slice(5).map(points => <polyline points={points} fill="none" stroke="#286eaf" stroke-opacity=".25" stroke-width=".7"/>)}
+      {meshStrands.filter((_,i)=>i % 2 === 0).map(d => <path d={d} fill="none" stroke="#3589bc" stroke-opacity=".19" stroke-width=".7"/>)}
+    </g>
+  </svg>
+
+  <svg class="ax-vector ax-depth-atmosphere" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" focusable="false">
+    <defs>
+      <radialGradient id="ax-fog-fill"><stop stop-color="#95caff" stop-opacity=".24"/><stop offset=".4" stop-color="#4b97c5" stop-opacity=".12"/><stop offset="1" stop-color="#4691c7" stop-opacity="0"/></radialGradient>
+      <filter id="ax-soft-fog" x="-30%" y="-80%" width="160%" height="260%"><feGaussianBlur stdDeviation="24"/></filter>
+    </defs>
+    <g class="ax-drifting-fog" filter="url(#ax-soft-fog)">
+      <ellipse cx="100" cy="687" rx="270" ry="54" fill="url(#ax-fog-fill)"/>
+      <ellipse cx="438" cy="703" rx="290" ry="59" fill="url(#ax-fog-fill)"/>
+      <ellipse cx="803" cy="678" rx="350" ry="56" fill="url(#ax-fog-fill)"/>
+      <ellipse cx="1240" cy="708" rx="380" ry="71" fill="url(#ax-fog-fill)"/>
+      <ellipse cx="1580" cy="680" rx="280" ry="54" fill="url(#ax-fog-fill)"/>
+    </g>
+  </svg>
+
+  <svg class="ax-vector ax-depth-spires" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" focusable="false">
+    <defs>
+      <linearGradient id="ax-shaft-light" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#c2fcff" stop-opacity=".9"/><stop offset=".18" stop-color="#35abff" stop-opacity=".67"/><stop offset="1" stop-color="#096ef0" stop-opacity="0"/></linearGradient>
+      <linearGradient id="ax-spire-light" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#f4fdff"/><stop offset=".36" stop-color="#4ecfff"/><stop offset="1" stop-color="#1c77c4" stop-opacity=".13"/></linearGradient>
+      <radialGradient id="ax-core-glow"><stop stop-color="#75d7ff" stop-opacity=".9"/><stop offset=".22" stop-color="#168ee9" stop-opacity=".34"/><stop offset="1" stop-color="#125a9e" stop-opacity="0"/></radialGradient>
+      <filter id="ax-spire-bloom"><feGaussianBlur stdDeviation="13"/></filter>
+    </defs>
+    <ellipse class="ax-breathing-core" cx="770" cy="563" rx="160" ry="170" fill="url(#ax-core-glow)" opacity=".65"/>
+    <g class="ax-beam-halo" filter="url(#ax-spire-bloom)">
+      <rect x="744" y="90" width="31" height="490" fill="url(#ax-shaft-light)" opacity=".6"/>
+      <rect x="783" y="38" width="15" height="538" fill="url(#ax-shaft-light)" opacity=".34"/>
+      <rect x="706" y="214" width="14" height="405" fill="url(#ax-shaft-light)" opacity=".28"/>
+    </g>
+    <g class="ax-shaft-edges">
+      <path d="M764 72 V554 M782 0 V570 M731 163 V578 M700 276 V589 M822 148 V590" stroke="url(#ax-shaft-light)" stroke-width="1.5"/>
+      <path d="M768 180 V550" stroke="#9cdbff" stroke-opacity=".66" stroke-width=".8"/>
+    </g>
+    <g class="ax-spire-city">
+      {spires.map(([x,y,w,h]) => <rect x={x} y={y-h} width={w} height={h} fill="url(#ax-spire-light)" opacity=".81" />)}
+      <path d="M697 561 Q752 533 844 594" stroke="#9bdcff" stroke-opacity=".64" fill="none" stroke-width="1.1"/>
+      <circle cx="761" cy="541" r="5" fill="#d0fbff"/>
+    </g>
+  </svg>
+
+  <svg class="ax-vector ax-depth-paths" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" focusable="false">
+    <defs>
+      <filter id="ax-path-bloom"><feGaussianBlur stdDeviation="5.5"/></filter>
+      <radialGradient id="ax-spark-glow"><stop stop-color="#d6feff"/><stop offset=".35" stop-color="#35b9ff" stop-opacity=".8"/><stop offset="1" stop-color="#1f83ee" stop-opacity="0"/></radialGradient>
+    </defs>
+    <g class="ax-network-grid">
+      {meshLines.slice(7).map(points => <polyline points={points} fill="none" stroke="#1379bc" stroke-opacity=".24" stroke-width=".8"/>)}
+      {meshStrands.map(d => <path d={d} fill="none" stroke="#147eb8" stroke-opacity=".21" stroke-width=".6"/>)}
+    </g>
+    <g class="ax-luminous-routes">
+      <path class="ax-route-glow" d="M0 748 C192 758 310 815 455 784 S638 782 727 748 898 786 1015 773 1350 750 1600 790"/>
+      <path class="ax-route-core" d="M0 748 C192 758 310 815 455 784 S638 782 727 748 898 786 1015 773 1350 750 1600 790"/>
+      <path class="ax-route-glow" d="M168 900 C230 831 323 852 404 810 S543 751 618 777 722 821 819 771 1060 821 1148 775 1361 791 1470 755"/>
+      <path class="ax-route-core ax-route-delayed" d="M168 900 C230 831 323 852 404 810 S543 751 618 777 722 821 819 771 1060 821 1148 775 1361 791 1470 755"/>
+      <path class="ax-route-core" d="M540 900 C589 859 685 827 729 800 S780 688 770 583"/>
+      <path class="ax-route-core ax-route-delayed" d="M940 900 C928 843 1004 814 1107 794 S1382 834 1600 777"/>
+    </g>
+    <g class="ax-road-nodes">
+      {sparks.map(p => <circle cx={p.x} cy={p.y} r={p.r} opacity={p.opacity} fill="url(#ax-spark-glow)" />)}
+      {[{x:310,y:810},{x:455,y:784},{x:620,y:776},{x:729,y:798},{x:875,y:769},{x:1107,y:794},{x:1360,y:780}].map(p => <g><circle cx={p.x} cy={p.y} r="14" fill="url(#ax-spark-glow)"/><circle cx={p.x} cy={p.y} r="2.6" fill="#d7fbff" /></g>)}
+    </g>
+  </svg>
+
+  <svg class="ax-vector ax-depth-dots" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" focusable="false">
+    <g class="ax-dots-pulse">
+      {dots.map(dot => <circle cx={dot.x} cy={dot.y} r={dot.size} fill="#2c89f8" opacity={dot.opacity} />)}
+    </g>
+  </svg>
+  <div class="ax-foreground-vignette"></div>
+</div>

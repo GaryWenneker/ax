@@ -1,0 +1,54 @@
+---
+/** The homepage replays illustrative Ax CLI/MCP events, not real workspace activity. */
+---
+<div class="integrated-console ax-live-console" data-ax-terminal aria-label="Illustrative animated Ax terminal demo">
+  <div class="console-heading">
+    <span>AX / CONTEXT ENGINE</span>
+    <span class="console-state"><i aria-hidden="true"></i> DEMO REPLAY <span class="ax-signal-pulse" aria-hidden="true"></span></span>
+  </div>
+  <div class="ax-terminal-meta">
+    <span>WORKSPACE <b>acme/web-app</b></span>
+    <span>SESSION <b>demo</b></span>
+    <span class="ax-terminal-event-counter">EVENTS <b data-ax-event-count>0000</b></span>
+  </div>
+  <div class="ax-terminal-columns">
+    <div class="ax-terminal-primary">
+      <div class="console-lines ax-terminal-stream" data-ax-log-lines role="log" aria-live="off" aria-label="Illustrative terminal activity">
+        <div class="ax-terminal-line is-info"><span class="ax-terminal-time">10:14:19</span><span class="ax-terminal-body">Initializing Ax context demo…</span></div>
+      </div>
+      <div class="console-tail">
+        <span class="tail-symbol">›</span>
+        <span class="replay-text" data-ax-terminal-status>Preparing activity stream…</span>
+        <span class="terminal-caret" aria-hidden="true"></span>
+      </div>
+    </div>
+    <aside class="ax-terminal-side" aria-label="Recent demo events">
+      <section class="ax-terminal-side-section">
+        <div class="ax-terminal-side-label">RECENT MCP CALLS</div>
+        <ol class="ax-terminal-history" data-ax-call-history>
+          <li><span>ax_preflight</span><small>context · demo</small></li>
+        </ol>
+      </section>
+      <section class="ax-terminal-side-section">
+        <div class="ax-terminal-side-label">COMMAND HISTORY</div>
+        <ol class="ax-terminal-history" data-ax-command-history>
+          <li><span>$ ax init</span><small>session restored</small></li>
+        </ol>
+      </section>
+      <section class="ax-terminal-side-section ax-terminal-health">
+        <div class="ax-terminal-side-label">ACTIVITY</div>
+        <div class="ax-terminal-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <span data-ax-activity>WAITING · ready</span>
+      </section>
+    </aside>
+  </div>
+  <div class="console-caption">Simulated, continuously replayed CLI & MCP workflow. No real repositories or sessions are accessed.</div>
+</div>
+
+<script>
+  import { mountLiveTerminal } from "../scripts/live-terminal.js";
+  const terminal = document.querySelector("[data-ax-terminal]");
+  if (terminal instanceof HTMLElement) {
+    mountLiveTerminal(terminal);
+  }
+</script>
