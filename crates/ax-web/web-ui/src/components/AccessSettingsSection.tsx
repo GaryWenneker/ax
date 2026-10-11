@@ -128,19 +128,6 @@ export default function AccessSettingsSection() {
     }
   }
 
-  async function approveNode(id: string) {
-    try {
-      const data = await json<{ credential: { token: string } }>(`/api/access/nodes/${id}/approve`, {
-        method: 'POST',
-        body: JSON.stringify({ projects: [] }),
-      });
-      setIssuedToken(data.credential.token);
-      await refresh();
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
   async function revokeNode(id: string) {
     try {
       await json(`/api/access/nodes/${id}/revoke`, { method: 'POST' });
@@ -258,7 +245,7 @@ export default function AccessSettingsSection() {
             <div className="settings-row">
               <div className="settings-row-label">
                 <span className="settings-row-title">No replicas discovered</span>
-                <span className="settings-row-desc">UDP discovery may add pending replicas here. Discovery alone never grants trust.</span>
+                <span className="settings-row-desc">A correctly configured Replica appears here automatically after authenticated registration.</span>
               </div>
             </div>
           )}
@@ -273,9 +260,7 @@ export default function AccessSettingsSection() {
                   {node.last_sync_at ? ` · synced ${node.last_sync_at}` : ''}
                 </span>
               </div>
-              <div className="settings-row-control">
-                {node.trust_state === 'pending' && (
-                  <button type="button" className="btn primary" onClick={() => void approveNode(node.id)}>Approve</button>
+              <div className="settings-row-control">>Approve</button>
                 )}
                 {node.trust_state === 'trusted' && (
                   <button type="button" className="btn" onClick={() => void revokeNode(node.id)}>Revoke</button>
