@@ -1,4 +1,4 @@
-//! Replica pull and staging. No local/private memory records are overwritten.
+//! Replica pull and staging. Local project records are never overwritten.
 //!
 //! Snapshots are verified in memory before disk I/O. The replica keeps each
 //! revision in a separate namespace, with a durable pointer to the selected
@@ -9,7 +9,7 @@ use crate::{
     server_config::{NodeRole, ProjectRegistration, ServerConfig},
     server_snapshot::{self, Snapshot},
 };
-use std::{fs, io::Write, path::Path, time::Duration};
+use std::{fs, io::Write, path::{Path, PathBuf}, time::Duration};
 
 const MAX_WIRE_BYTES: usize = server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024;
 
