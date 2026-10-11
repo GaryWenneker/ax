@@ -29,7 +29,7 @@ const root = path.resolve(__dirname, '../..');
 const outDir = path.join(root, 'site', 'public', 'screenshots');
 let baseUrl = (process.env.AX_WEB_URL || 'http://127.0.0.1:7070').replace(/\/$/, '');
 const demo = process.env.AX_SCREENSHOT_DEMO === '1';
-const theme = process.env.AX_THEME || 'azure-light';
+const theme = process.env.AX_THEME || 'azure-dark';
 const suffix = theme === 'azure-dark' ? '-dark' : '';
 
 const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 };
