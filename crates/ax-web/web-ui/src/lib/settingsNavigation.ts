@@ -24,3 +24,8 @@ export const SETTINGS_GROUPS: { label: string; items: { id: SettingsSectionId; l
     { id: 'embeddings', label: 'Embeddings', icon: 'symbol-array' },
   ] },
 ];
+
+export function readSettingsSection(): SettingsSectionId {
+  const requested = new URLSearchParams(window.location.search).get('section');
+  return SETTINGS_GROUPS.flatMap(group => group.items).find(item => item.id === requested)?.id ?? 'appearance';
+}

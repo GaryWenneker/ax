@@ -208,3 +208,54 @@ html[data-ax-layout="portal"] :is(.sv-tl-chart, .sv-quality-chip) { background: 
 html[data-ax-layout="portal"] .access-row-control { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 html[data-ax-layout="portal"] .access-row-control > :is(.settings-input, .settings-select) { min-width: 140px; flex: 1 1 140px; }
 html[data-ax-layout="portal"] .access-row-control > .btn { flex-shrink: 0; }
+
+/* Access management uses the same tokens in portal and legacy themes. */
+.access-settings { min-width: 0; }
+.access-settings .settings-row { margin-inline: 0; padding-inline: 0; }
+.access-header, .access-client-header, .access-subheader, .access-credential { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.access-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.access-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.access-note { color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+.access-empty { padding: 24px; border: 1px dashed var(--border-hi); color: var(--text-dim); line-height: 1.6; }
+.access-empty strong { color: var(--text); }
+.access-status { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 12px; font-weight: 400; white-space: nowrap; }
+.access-status > span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }
+.access-status--good > span { background: var(--ok); }
+.access-client { padding: 20px 0; border-top: 1px solid var(--border); min-width: 0; }
+.access-client-header h3, .access-node-local h3 { font-size: 15px; color: var(--text-hi); font-weight: 600; margin: 0; }
+.access-client-header p, .access-credential p { color: var(--text-dim); font-size: 12px; margin: 4px 0 0; line-height: 1.5; }
+.access-metadata { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 16px; margin: 16px 0; }
+.access-metadata dt { color: var(--text-dim); font-size: 11px; margin-bottom: 4px; }
+.access-metadata dd { color: var(--text); font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+.access-subheader { margin: 20px 0 12px; border-top: 1px solid var(--border); padding-top: 16px; }
+.access-subheader h4 { margin: 0; font-size: 13px; color: var(--text); }
+.access-subheader > span { font-size: 11px; color: var(--text-dim); }
+.access-scopes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 16px; margin-bottom: 16px; }
+.access-scope { display: flex; align-items: flex-start; gap: 8px; min-width: 0; color: var(--text); }
+.access-scope input { margin-top: 3px; accent-color: var(--accent); }
+.access-scope strong, .access-scope small, .access-scope code { display: block; font-size: 12px; line-height: 1.5; }
+.access-scope strong { font-weight: 500; }
+.access-scope small, .access-scope code { color: var(--text-dim); font-size: 11px; }
+.access-scope:has(input:disabled) { opacity: .65; }
+.access-credential { border-top: 1px solid var(--border); padding: 12px 0; }
+.access-credential code { font-size: 12px; }
+.access-client-footer { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 12px; }
+.access-token { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--accent); background: var(--bg-active); min-width: 0; }
+.access-token p { color: var(--text-dim); font-size: 12px; margin-top: 4px; }
+.access-token > code { display: block; user-select: all; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.access-role-guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 16px; border-top: 1px solid var(--border); padding-top: 20px; margin-top: 12px; }
+.access-role-guide dt { color: var(--text); font-size: 12px; font-weight: 600; }
+.access-role-guide dd { color: var(--text-dim); font-size: 12px; margin: 4px 0 0; line-height: 1.5; }
+.access-node-local { background: var(--bg-side); border: 1px solid var(--border); padding: 16px; }
+.access-form { display: grid; gap: 16px; }
+.access-form > label { display: grid; gap: 6px; font-size: 12px; color: var(--text); }
+.access-form .settings-input, .access-form .settings-select { width: 100%; max-width: none; }
+.access-form > .access-actions, .access-confirm-actions { justify-content: flex-end; margin-top: 16px; }
+.access-settings .settings-row-title { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.access-settings .settings-row-desc { overflow-wrap: anywhere; }
+.access-settings .settings-toast { margin: 0 !important; }
+@media (max-width: 639px) {
+  .access-header { align-items: flex-start; }
+  .access-scopes, .access-role-guide { grid-template-columns: minmax(0, 1fr); }
+  .access-actions .btn { min-height: 36px; }
+}
