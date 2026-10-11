@@ -133,6 +133,80 @@ CREATE TABLE IF NOT EXISTS global_policy_revisions (
 CREATE INDEX IF NOT EXISTS idx_global_policy_revisions_item
     ON global_policy_revisions(kind, item_id, version DESC);
 
+
+-- Team membership and authenticated clients are global installation concerns.
+CREATE TABLE IF NOT EXISTS team_members (
+    id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    email TEXT,
+    role TEXT NOT NULL CHECK(role IN ('owner', 'admin', 'member', 'readonly')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_active_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS clients (
+    id TEXT PRIMARY KEY,
+    member_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    client_type TEXT NOT NULL,
+    scopes TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'revoked')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP,
+    revoked_at TIMESTAMP,
+    FOREIGN KEY (member_id) REFERENCES team_members(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_clients_member ON clients(member_id);
+
+-- Only a verifier/hash is persisted. Plaintext tokens are returned once by the issuing layer.
+CREATE TABLE IF NOT EXISTS client_credentials (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    token_prefix TEXT NOT NULL UNIQUE,
+    verifier TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP,
+    expires_at TIMESTAMP,
+    revoked_at TIMESTAMP,
+    FOREIGN KEY (client_id) REFERENCES clients(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_client_credentials_client ON client_credentials(client_id);
+
+CREATE TABLE IF NOT EXISTS replication_nodes (
+    id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('primary', 'replica')),
+    endpoint TEXT,
+    trust_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(trust_state IN ('pending', 'trusted', 'revoked')),
+    credential_id TEXT,
+    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    approved_at TIMESTAMP,
+    revoked_at TIMESTAMP,
+    last_seen_at TIMESTAMP,
+    last_sync_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_replication_nodes_trust ON replication_nodes(trust_state);
+
+CREATE TABLE IF NOT EXISTS security_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_member_id TEXT,
+    actor_client_id TEXT,
+    event_type TEXT NOT NULL,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (actor_member_id) REFERENCES team_members(id),
+    FOREIGN KEY (actor_client_id) REFERENCES clients(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_audit_created ON security_audit_log(created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_sync_log_timestamp ON sync_log(synced_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cross_project_refs_source ON cross_project_refs(source_project, source_node_name);
 
