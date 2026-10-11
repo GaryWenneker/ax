@@ -54,10 +54,7 @@ fn content_revision(snapshot: &Snapshot) -> Result<String, String> {
 }
 
 fn shared_memory(row: &MemoryRow) -> bool {
-    row.enabled
-        && !matches!(row.kind.as_str(), "turn")
-        && row.tags.iter().any(|t| t.eq_ignore_ascii_case("shared"))
-        && !row.tags.iter().any(|t| t.eq_ignore_ascii_case("local") || t.eq_ignore_ascii_case("noshare"))
+    ax_memory::sync::is_shared_export_candidate(row, "shared")
 }
 
 fn validate_memory_jsonl(raw: &str) -> Result<(), String> {
