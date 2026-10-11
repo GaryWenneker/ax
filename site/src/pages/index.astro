@@ -8,7 +8,7 @@ import '../styles/theme.css';
 import LogoMark from '../components/LogoMark.astro';
 import { agents, agentIcons, platforms, platformIcons } from '../lib/agent-icons';
 import HeaderWaves from '../components/HeaderWaves.astro';
-import BokehField from '../components/BokehField.astro';
+import PixelField from '../components/PixelField.astro';
 import MotionControl from '../components/MotionControl.astro';
 import { getStarsLabel } from '../lib/github';
 import { AX_VERSION, AX_RELEASE_VERSION } from '../lib/version';
@@ -141,7 +141,7 @@ const stats = [
 	<body>
 		{/* The quiet expansion of ax — hover the wordmark. */}
 		<!-- Aero Xecution -->
-		<BokehField />
+		<PixelField />
 
 		<header class="nav">
 			<div class="nav-bar">
