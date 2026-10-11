@@ -5,6 +5,7 @@ const _AX_SHIP_MARKER: &str = "ax-ship-marker-v1";
 mod commands;
 mod help_text;
 mod installer;
+mod server_config;
 mod ui;
 mod version_check;
 
