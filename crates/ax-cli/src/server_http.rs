@@ -97,10 +97,8 @@ pub async fn run(
     if let Some(url) = advertise.as_deref() {
         server_discovery::validate_advertise(&config, url)?;
     }
-    if !bind.ip().is_loopback() {
-        if !allow_private_http || !private_bind(bind.ip()) {
-            return Err("non-loopback bind requires --allow-private-http on a private network; terminate TLS at the reverse proxy".into());
-        }
+    if !bind.ip().is_loopback() && (!allow_private_http || !private_bind(bind.ip())) {
+        return Err("non-loopback bind requires --allow-private-http on a private network; terminate TLS at the reverse proxy".into());
     }
     let tokens = load_tokens(&config)?;
     let announcement = discovery_port.zip(advertise).map(|(port, url)| {
