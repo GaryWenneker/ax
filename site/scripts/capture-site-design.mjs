@@ -98,10 +98,24 @@ try {
   ]);
   for (const target of targets)
     await access(path.join(site, "dist", target, "index.html"));
+  // Streaming demo adds events, trims DOM, and obeys the shared motion toggle.
+  await page.waitForFunction(() => Number(document.querySelector("[data-ax-event-count]")?.textContent) >= 5, { timeout: 10000 });
+  const beforePause = await page.$eval("[data-ax-event-count]", el => Number(el.textContent));
+  const terminalCount = await page.$eval("[data-ax-log-lines] .ax-terminal-line", nodes => nodes.length);
+  if (terminalCount > 38) throw new Error("Terminal stream not bounded");
+  if ((await page.$eval("[data-ax-call-history] li", nodes => nodes.length)) < 1)
+    throw new Error("MCP call history missing");
   await page.evaluate(() => { document.documentElement.dataset.axMotion = "running"; });
   await page.click("[data-ax-motion-toggle]");
   if ((await page.$eval("html", (x) => x.dataset.axMotion)) !== "paused")
     throw new Error("Pause control failed");
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  const afterPause = await page.$eval("[data-ax-event-count]", el => Number(el.textContent));
+  if (afterPause !== beforePause)
+    throw new Error("Terminal events continued while paused");
+  await page.click("[data-ax-motion-toggle]");
+  await page.waitForFunction(expected => Number(document.querySelector("[data-ax-event-count]")?.textContent) > expected, { timeout: 5000 }, afterPause);
+  await page.click("[data-ax-motion-toggle]");
   const scene = await page.$$eval(".signal-ambient .ax-depth-spires", nodes => ({
     count: nodes.length,
     paused: nodes.every(x => x.getAnimations().every(a => a.playState === "paused")),
@@ -115,7 +129,7 @@ try {
   if (!respectsMotion) throw new Error("Reduced motion not respected");
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(
-    `Homepage links, pause control, ${scene.count} cinematic rays, seamless ticker and reduced motion passed.`,
+    `Homepage links, pause control, ${scene.count} cinematic rays, seamless ticker streaming terminal, pause/resume, and reduced motion passed.`,
   );
 } finally {
   await browser?.close();

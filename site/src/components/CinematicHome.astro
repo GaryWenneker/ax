@@ -1,6 +1,7 @@
 ---
 import LogoMark from "./LogoMark.astro";
 import VectorLandscape from "./VectorLandscape.astro";
+import LiveTerminal from "./LiveTerminal.astro";
 import MotionControl from "./MotionControl.astro";
 import { agents, agentIcons } from "../lib/agent-icons";
 import { AX_VERSION, AX_RELEASE_VERSION } from "../lib/version";
@@ -20,29 +21,6 @@ const capabilities = [
   { title: "Quality gates", caption: "Test before ship", href: "/guides/command-center/" },
   { title: "Command Center", caption: "See & control", href: "/guides/command-center/" },
   { title: "Primary / replica", caption: "Your infrastructure", href: "/guides/standalone-ax/" },
-];
-
-const sampleOutput = [
-  { time: "00:00:01", text: "$ ax init", type: "command" },
-  { time: "00:00:01", text: "  workspace discovered      ./acme-app" },
-  { time: "00:00:02", text: "  source index              ready", type: "success" },
-  { time: "00:00:02", text: "  symbols & call paths      resolved" },
-  { time: "00:00:03", text: "  memory vault              connected" },
-  { time: "00:00:03", text: "  policies & skills         loaded" },
-  { time: "00:00:03", text: "  mcp transport             available", type: "success" },
-  { time: "00:00:04", text: "$ ax index", type: "command" },
-  { time: "00:00:04", text: "  parsing TypeScript · Rust · C# …" },
-  { time: "00:00:05", text: "  resolving callers → callees → impact" },
-  { time: "00:00:05", text: "  knowledge graph           updated", type: "success" },
-  { time: "00:00:06", text: "mcp  ax_preflight", type: "command" },
-  { time: "00:00:06", text: "  selected project          ./acme-app" },
-  { time: "00:00:07", text: "  relevant context          gathered" },
-  { time: "00:00:07", text: "  required rules            preserved", type: "success" },
-  { time: "00:00:08", text: "  related memories          recalled" },
-  { time: "00:00:09", text: "$ ax ship --evaluate", type: "command" },
-  { time: "00:00:09", text: "  diff → affected tests → policies" },
-  { time: "00:00:10", text: "  quality gate              evaluated", type: "success" },
-  { time: "00:00:10", text: "  working context           ready for next turn", type: "success" },
 ];
 
 const detailStreams = [
@@ -126,22 +104,7 @@ const detailStreams = [
       )}
     </div>
 
-    <div class="integrated-console" aria-label="Illustrative Ax terminal workflow">
-      <div class="console-heading">
-        <span>AX / CONTEXT ENGINE</span>
-        <span class="console-state"><i></i> DEMO REPLAY</span>
-      </div>
-      <div class="console-lines" role="log" aria-live="off">
-        {sampleOutput.map((line, i) => (
-          <div class:list={["log-entry",line.type || ""]} style={"--line-order:"+i}>
-            <span class="log-time">{line.time}</span>
-            <span class="log-body">{line.text}</span>
-          </div>
-        ))}
-      </div>
-      <div class="console-tail"><span class="tail-symbol">›</span><span class="replay-text" data-replay>Context is ready for the next agent turn.</span><span class="terminal-caret" aria-hidden="true"></span></div>
-      <div class="console-caption">An illustrative workflow · output depends on your project and configuration.</div>
-    </div>
+    <LiveTerminal />
   </section>
 
   <nav class="capability-rail" aria-label="Ax capabilities">
@@ -247,23 +210,5 @@ const detailStreams = [
       if (status) status.textContent = "Select and copy the command above.";
     }
   });
-  const replay = document.querySelector<HTMLElement>("[data-replay]");
-  const replayLines = [
-    "Source relationships resolved.",
-    "Relevant memory restored.",
-    "Required policies selected.",
-    "Smart Output prepared for MCP.",
-    "Context is ready for the next agent turn."
-  ];
-  let replayIndex = 0;
-  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-  const replayLoop = window.setInterval(() => {
-    if (!replay || reduced.matches || document.hidden || document.documentElement.dataset.axMotion === "paused") return;
-    replayIndex = (replayIndex + 1) % replayLines.length;
-    replay.classList.remove("replay-update");
-    void replay.offsetWidth;
-    replay.textContent = replayLines[replayIndex];
-    replay.classList.add("replay-update");
-  }, 3600);
-  window.addEventListener("pagehide", () => window.clearInterval(replayLoop), { once: true });
+
 </script>
