@@ -196,6 +196,11 @@ async fn fetch_snapshot(
 }
 
 pub async fn sync(config_path: &Path) -> Result<(), String> {
+    sync_with_apply(config_path, false).await
+}
+
+/// Projection is opt-in; transport always stages a verified separate mirror.
+pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result<(), String> {
     let config = server_cli::load(config_path)?;
     if config.role != NodeRole::Replica {
         return Err("only replicas can run ax server sync".into());
@@ -209,8 +214,26 @@ pub async fn sync(config_path: &Path) -> Result<(), String> {
     for project in &config.projects {
         let result: Result<(String, String), String> =
             match fetch_snapshot(&client, &config, project).await {
-                Ok(snapshot) => stage(&config, project, &snapshot)
-                    .map(|status| (status, snapshot.revision)),
+                Ok(snapshot) => match stage(&config, project, &snapshot) {
+                    Ok(status) if apply_memories => {
+                        match crate::server_apply::apply(&config, &snapshot).await {
+                            Ok(report) if report.conflicts == 0 => Ok((
+                                format!(
+                                    "{status}; memories: +{} updated {} removed {} unchanged {}",
+                                    report.inserted, report.updated, report.removed, report.unchanged
+                                ),
+                                snapshot.revision,
+                            )),
+                            Ok(report) => Err(format!(
+                                "memory projection found {} locally edited/conflicting records; staged mirror is safe but must be reviewed",
+                                report.conflicts
+                            )),
+                            Err(error) => Err(error),
+                        }
+                    }
+                    Ok(status) => Ok((status, snapshot.revision)),
+                    Err(error) => Err(error),
+                },
                 Err(error) => Err(error),
             };
         let recorded = record_attempt(&config, project, &result);
