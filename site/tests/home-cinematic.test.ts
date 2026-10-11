@@ -8,7 +8,7 @@ const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const home = readFileSync(path.join(site, "src/components/CinematicHome.astro"), "utf8");
 const css = readFileSync(path.join(site, "src/styles/home-cinematic.css"), "utf8");
 const index = readFileSync(path.join(site, "src/pages/index.astro"), "utf8");
-const terrain = readFileSync(path.join(site, "public/signal-terrain.svg"), "utf8");
+const terrain = readFileSync(path.join(site, "src/styles/home-landscape.css"), "utf8");
 
 test("hero communicates the full Ax product, not just the graph", () => {
   assert.match(home, /Understand code/);
@@ -33,12 +33,12 @@ test("continuous ticker uses the existing agent logo paths", () => {
   assert.match(css, /ticker-travel/);
 });
 test("cinematic environment is animated and can be paused", () => {
-  assert.match(terrain, /<svg/);
-  assert.match(css, /@keyframes terrain-drift/);
-  assert.match(css, /@keyframes ray-pulse/);
-  assert.match(css, /@keyframes particle-drift/);
-  assert.match(css, /data-ax-motion="paused"/);
-  assert.match(css, /prefers-reduced-motion:reduce/);
+  assert.doesNotMatch(terrain, /url\s*\(/);
+  assert.match(terrain, /@keyframes ax-mountain-breathe/);
+  assert.match(terrain, /@keyframes ax-beam-throb/);
+  assert.match(terrain, /@keyframes ax-stars-drift/);
+  assert.match(terrain, /data-ax-motion="paused"/);
+  assert.match(terrain, /prefers-reduced-motion:reduce/);
 });
 test("terminal is integrated without a boxed card", () => {
   assert.match(css, /\.integrated-console\s*\{/);
