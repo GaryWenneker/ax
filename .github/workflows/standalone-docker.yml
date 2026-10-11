@@ -1,18 +1,7 @@
 name: Standalone Docker
 
 on:
-  push:
-    branches: [feature/standalone-ax]
-  pull_request:
-    paths:
-      - Dockerfile.standalone
-      - .dockerignore
-      - deploy/standalone/**
-      - '**/*.rs'
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - .cargo/**
-      - rust-toolchain*
+  workflow_dispatch:
 
 permissions:
   contents: read

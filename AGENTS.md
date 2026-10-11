@@ -29,3 +29,7 @@ Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreacha
 ## Website delivery
 
 Do not run Netlify builds or deployments. The owner deploys through a separate process. Continue updating website source, documentation, and current UI screenshots. Local frontend/documentation validation and GitHub CI are allowed. For frontend-only changes, run relevant frontend checks without Docker or backend builds.
+
+## Temporary pipeline suspension
+
+As requested by the owner on 2026-10-11, all GitHub Actions workflows are manual-only. Do not restore push, pull-request, workflow-run, schedule or reusable automatic triggers, dispatch workflows, publish releases, or deploy while code is being stabilized. Continue relevant local code and frontend validation. Resume automation only when the owner explicitly asks.
