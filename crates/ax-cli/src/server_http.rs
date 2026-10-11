@@ -18,12 +18,27 @@ use axum::{
 };
 use std::{net::{IpAddr, SocketAddr}, path::Path, sync::Arc};
 use sqlx::SqlitePool;
+use subtle::ConstantTimeEq;
 use tokio::sync::Semaphore;
 
 struct StateData {
     config: ServerConfig,
     access_db: SqlitePool,
     exports: Semaphore,
+}
+
+fn project_bootstrap_token(config: &ServerConfig, project_id: &str) -> Option<String> {
+    let project = config.projects.iter().find(|project| project.id == project_id)?;
+    let token = std::env::var(&project.token_env).ok()?;
+    if token.len() < 32 || !token.is_ascii() || token.bytes().any(|b| b.is_ascii_whitespace()) {
+        return None;
+    }
+    Some(token)
+}
+
+fn exact_secret(candidate: &str, expected: &str) -> bool {
+    candidate.len() == expected.len()
+        && bool::from(candidate.as_bytes().ct_eq(expected.as_bytes()))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -50,7 +65,12 @@ async fn snapshot(
         return Err(StatusCode::NOT_FOUND);
     }
     let token = bearer_token(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
-    let principal = ax_global_db::access::authenticate_node_token_for_project(
+    let node_id = headers
+        .get("x-ax-node-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty());
+
+    let trusted = ax_global_db::access::authenticate_node_token_for_project(
         &state.access_db,
         token,
         &id,
@@ -59,9 +79,31 @@ async fn snapshot(
     .map_err(|error| {
         tracing::warn!(project = %id, "node authentication failed: {}", error);
         StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    if principal.is_none() {
-        return Err(StatusCode::UNAUTHORIZED);
+    })?
+    .is_some();
+
+    if !trusted {
+        let Some(node_id) = node_id else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        let Some(expected) = project_bootstrap_token(&state.config, &id) else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        if !exact_secret(token, &expected) {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        ax_global_db::access::register_trusted_replica(
+            &state.access_db,
+            node_id,
+            node_id,
+            None,
+            &id,
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(project = %id, node = %node_id, "replica registration failed: {}", error);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     let _permit = state.exports.acquire().await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let result = server_snapshot::export(&state.config, &id).await
