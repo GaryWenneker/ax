@@ -16,7 +16,7 @@ import ThemeChooser from '../components/ThemeChooser';
 import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
 import { loadThemeId, THEME_CHANGED } from '../lib/themes';
-import { SETTINGS_GROUPS, type SettingsSectionId } from '../lib/settingsNavigation';
+import { SETTINGS_GROUPS, readSettingsSection, type SettingsSectionId } from '../lib/settingsNavigation';
 import { TIMEZONE_OPTIONS, browserTimeZone } from '../lib/timeZone';
 import {
   fetchReviewLanguage,
@@ -116,12 +116,18 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [themeId, setThemeId] = useState(loadThemeId);
-  const [section, setSection] = useState<SettingsSectionId>('appearance');
+  const [section, setSection] = useState<SettingsSectionId>(readSettingsSection);
   const [settingsFilter, setSettingsFilter] = useState('');
   const [reviewLanguage, setReviewLanguage] = useState('en');
   const [reviewLanguages, setReviewLanguages] = useState<ReviewLanguageChoice[]>(REVIEW_LANGUAGES);
 
   usePageContext('Settings', 'Command Center · pipeline & agents');
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('section', section);
+    window.history.replaceState(window.history.state, '', url);
+  }, [section]);
 
   useEffect(() => {
     const onTheme = () => setThemeId(loadThemeId());
@@ -282,7 +288,7 @@ export default function SettingsPage() {
               onChange={(event) => setSettingsFilter(event.target.value)} />
           </label>
           {SETTINGS_GROUPS.map((group) => {
-            const items = group.items.filter((item) => item.label.toLowerCase().includes(settingsFilter.trim().toLowerCase()));
+            const items = group.items.filter((item) => `${group.label} ${item.label}`.toLowerCase().includes(settingsFilter.trim().toLowerCase()));
             return items.length > 0 && <div className="settings-navigation-group" key={group.label}>
               <h2>{group.label}</h2>
               {items.map((item) => <button key={item.id} type="button"
@@ -293,7 +299,7 @@ export default function SettingsPage() {
               </button>)}
             </div>;
           })}
-          {!SETTINGS_GROUPS.some((group) => group.items.some((item) => item.label.toLowerCase().includes(settingsFilter.trim().toLowerCase()))) &&
+          {!SETTINGS_GROUPS.some((group) => group.items.some((item) => `${group.label} ${item.label}`.toLowerCase().includes(settingsFilter.trim().toLowerCase()))) &&
             <p className="settings-navigation-empty" role="status">No matching settings</p>}
         </nav>
         <div className="settings-hub-content">

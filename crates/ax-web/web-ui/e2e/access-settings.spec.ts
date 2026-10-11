@@ -8,6 +8,8 @@ test('access management sends CSRF and shows new tokens only until dismissed', a
   const mutations: { path: string; body: unknown }[] = [];
   const member = { id: 'm1', display_name: 'Demo member', role: 'member', status: 'active', created_at: '2026-10-11' };
   const client = { id: 'c1', member_id: 'm1', display_name: 'Demo client', client_type: 'cli', scopes: ['memory:read'], status: 'active', created_at: '2026-10-11' };
+  await page.route('**/api/**', route => route.fulfill({ status: 404, json: { error: 'Fixture endpoint not provided' } }));
+  await page.route('**/api/share/status', route => route.fulfill({ json: { readonly: false, sharing: false, port: 7070 } }));
   await page.route('**/api/access/**', async route => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -50,8 +52,10 @@ test('access management sends CSRF and shows new tokens only until dismissed', a
   await clients.getByRole('button', { name: 'Save scopes' }).click();
   await expect.poll(() => client.scopes).toContain('context:read');
   await clients.getByRole('button', { name: 'Rotate tokens' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Rotate tokens', exact: true }).click();
   await expect(page.getByText('axc_test_shown_once', { exact: true })).toBeVisible();
   await clients.getByRole('button', { name: 'Revoke token', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Revoke token', exact: true }).click();
   await expect.poll(() => mutations.some(m => m.path === '/api/access/credentials/cred1/revoke')).toBe(true);
   expect(mutations.some(m => m.path === '/api/access/clients/c1/rotate')).toBe(true);
 });
