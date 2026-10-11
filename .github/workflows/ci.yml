@@ -1,9 +1,7 @@
 name: CI
 
 on:
-  push:
-    branches: [main, master, develop, feat/minimal-project-safe-context, feature/remote-mcp-oauth-complete, feature/standalone-ax]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

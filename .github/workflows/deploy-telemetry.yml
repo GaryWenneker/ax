@@ -3,7 +3,7 @@ name: Deploy telemetry worker
 # Deploy ax telemetry ingest to Cloudflare Workers.
 # Secrets: CLOUDFLARE_API_TOKEN, POSTHOG_KEY (wrangler secret)
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
