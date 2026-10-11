@@ -1,5 +1,6 @@
 //! Global multi-tenant database (`~/.ax/global.db`).
 
+pub mod access;
 pub mod database;
 pub mod graph;
 pub mod policy;
@@ -162,6 +163,11 @@ mod tests {
             "shared_knowledge",
             "global_policy_rules",
             "global_policy_skills",
+            "team_members",
+            "clients",
+            "client_credentials",
+            "replication_nodes",
+            "security_audit_log",
         ] {
             assert!(set.iter().any(|n| n == need), "missing table {need}: {set:?}");
         }
