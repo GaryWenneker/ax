@@ -90,4 +90,4 @@ jobs:
             if curl --fail --silent "$AX_WEB_URL/settings" > /dev/null; then break; fi
             sleep 1
           done
-          npm run test:e2e -- remote-mcp.spec.ts --project=desktop-chrome
+          npm run test:e2e -- remote-mcp.spec.ts azure-portal.spec.ts --project=desktop-chrome

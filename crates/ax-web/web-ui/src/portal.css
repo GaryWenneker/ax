@@ -1,0 +1,194 @@
+/* Settings blades are shared by every preset. Only Azure presets change app chrome. */
+.settings-hub-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-height: 0; gap: 16px; align-items: start; }
+.settings-hub { flex: 1; min-height: 0; }
+.settings-navigation { background: var(--bg-side); border: 1px solid var(--border); padding: 12px 0; position: sticky; top: 0; }
+.settings-navigation-filter { display: flex; gap: 8px; align-items: center; margin: 0 12px 16px; padding: 6px 8px; background: var(--bg-input); border: 1px solid var(--border-hi); }
+.settings-navigation-filter input { width: 100%; min-width: 0; color: var(--text); background: transparent; border: 0; font: inherit; }
+.settings-navigation-group h2 { color: var(--text-dim); font-size: 11px; text-transform: uppercase; font-weight: 600; padding: 16px 16px 8px; }
+.settings-navigation-item { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; border-left: 3px solid transparent; color: var(--text); font: inherit; text-align: left; min-height: 36px; padding: 8px 14px; cursor: pointer; }
+.settings-navigation-item:hover { background: var(--bg-hover); }
+.settings-navigation-item.active { background: var(--bg-active); border-left-color: var(--accent); color: var(--text-hi); font-weight: 600; }
+.settings-navigation-item:focus-visible, .portal-settings-button:focus-visible, .portal-search button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -3px; }
+.settings-navigation-empty { padding: 12px; color: var(--text-dim); }
+.settings-hub-content { min-width: 0; }
+.settings-hub-content > [hidden] { display: none; }
+.settings-hub-content > div > .settings-card { margin: 0; }
+.settings-hub .settings-row { grid-template-columns: minmax(0, 1fr) minmax(140px, 40%); }
+.settings-hub .settings-row-control { min-width: 0; }
+.settings-hub .settings-input, .settings-hub .settings-select { max-width: 100%; }
+
+/* Full-width Azure Portal chrome, intentionally independent of private Azure CSS. */
+html[data-ax-layout="portal"] { --titlebar-h: 48px; --titlebar-wave-h: 0px; --statusbar-h: 28px; --content-pad-y: 20px; background: var(--bg); }
+html[data-ax-theme="azure-light"] { --portal-header: #0078d4; --portal-header-input: #e8f2fb; --portal-header-input-text: #323130; }
+html[data-ax-theme="azure-dark"] { --portal-header: #111111; --portal-header-input: #252525; --portal-header-input-text: #f0f0f0; }
+html[data-ax-layout="portal"] .app { grid-template-columns: var(--sidebar-w) 4px minmax(0, 1fr); grid-template-areas: "titlebar titlebar titlebar" "sidebar sizer workspace" "statusbar statusbar statusbar"; }
+html[data-ax-layout="portal"] .titlebar { background: var(--portal-header); border-bottom: 1px solid var(--border); }
+html[data-ax-layout="portal"] .titlebar-inner { width: 100%; max-width: none; padding-inline: 16px; gap: 24px; }
+html[data-ax-layout="portal"] .titlebar-brand { color: white; text-shadow: none; font-size: 15px; white-space: nowrap; }
+html[data-ax-layout="portal"] .titlebar-brand span { color: white; }
+html[data-ax-layout="portal"] .titlebar-logo { width: 28px; height: 28px; object-fit: contain; }
+.portal-search { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 620px; min-width: 100px; height: 32px; padding: 0 8px; background: var(--portal-header-input); color: var(--portal-header-input-text); border: 1px solid #8a8886; border-radius: 2px; }
+.portal-search:focus-within { outline: 2px solid white; outline-offset: 2px; }
+.portal-search input { color: inherit; background: transparent; border: 0; outline: 0; font: inherit; width: 100%; min-width: 0; }
+.portal-search input::placeholder { color: inherit; opacity: .85; }
+.portal-search button { cursor: pointer; color: inherit; background: transparent; border: 0; padding: 5px; }
+.portal-settings-button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; background: transparent; color: white; cursor: pointer; }
+html[data-ax-layout="portal"] .titlebar-tools { margin-left: auto; gap: 6px; }
+html[data-ax-layout="portal"] .titlebar .font-btn, html[data-ax-layout="portal"] .font-size-lbl, html[data-ax-layout="portal"] .logging-proj-switch--header .logging-proj-switch-btn { color: white; }
+html[data-ax-layout="portal"] .sidebar { border-right: 1px solid var(--border); background: var(--bg-side); }
+html[data-ax-layout="portal"] .nav-section { border-bottom: 1px solid var(--border); padding-block: 8px; }
+html[data-ax-layout="portal"] .nav-section .nav-section-label { color: var(--text-dim); font-weight: 600; letter-spacing: .04em; }
+html[data-ax-layout="portal"] .nav-item { border-radius: 0; border-left: 3px solid transparent; min-height: 34px; }
+html[data-ax-layout="portal"] .nav-item.active { border-left-color: var(--accent); background: var(--bg-active); color: var(--text-hi); }
+html[data-ax-layout="portal"] .sidebar-logo { display: none; }
+html[data-ax-layout="portal"] .settings-card { border-color: var(--border); border-radius: 0; background: var(--bg-panel); box-shadow: none; }
+html[data-ax-layout="portal"] .settings-card-header, html[data-ax-layout="portal"] .settings-card-footer { background: var(--bg-panel); }
+html[data-ax-layout="portal"] .settings-card-header h2 { font-size: 20px; font-weight: 600; }
+html[data-ax-layout="portal"] .settings-hero-title { font-size: 26px; font-weight: 600; }
+html[data-ax-layout="portal"] .btn, html[data-ax-layout="portal"] .settings-input, html[data-ax-layout="portal"] .settings-select, html[data-ax-layout="portal"] .theme-swatch { border-radius: 2px; }
+html[data-ax-layout="portal"] .theme-swatch { background: var(--bg-panel); }
+html[data-ax-layout="portal"] .theme-swatch--active { box-shadow: none; border-color: var(--accent); }
+html[data-ax-layout="portal"] .statusbar { background: var(--bg-side) !important; background-color: var(--bg-side) !important; color: var(--text); border-top: 1px solid var(--border); }
+html[data-ax-layout="portal"] .statusbar-inner { width: 100%; max-width: none; }
+html[data-ax-layout="portal"] .statusbar { --statusbar-fg: var(--text); --statusbar-fg-muted: var(--text-dim); --statusbar-fg-sep: var(--border-hi); --statusbar-hover-bg: var(--bg-hover); }
+html[data-ax-layout="portal"] .statusbar .status-warn { color: var(--warn); }
+html[data-ax-layout="portal"] .settings-hub-layout { gap: 0; }
+html[data-ax-layout="portal"] .settings-hub .settings-hero { padding: 0 24px 20px; }
+html[data-ax-layout="portal"] .workspace > .container:has(.settings-hub) { padding: 20px 0 0; }
+html[data-ax-layout="portal"] .settings-hub .settings-toast { margin-inline: 24px; }
+html[data-ax-layout="portal"] .settings-hub-content { padding: 0 24px 24px; }
+html[data-ax-layout="portal"] .settings-navigation { border-left: 0; border-bottom: 0; }
+html[data-ax-layout="portal"] .settings-hub-content > div > .settings-card { border: 0; }
+html[data-ax-layout="portal"] .settings-theme-block { padding-bottom: 20px; }
+html[data-ax-layout="portal"] .settings-theme-block .theme-chooser { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); max-width: 760px; }
+html[data-ax-layout="portal"] .settings-theme-block .theme-swatch { width: auto; }
+html[data-ax-layout="portal"] .settings-hub .settings-card-body { gap: 8px; }
+html[data-ax-layout="portal"] .settings-hub .settings-row { border-top: 1px solid var(--border); padding-block: 18px; }
+html[data-ax-layout="portal"] .settings-hub .settings-row-desc { max-width: 64ch; }
+html[data-ax-layout="portal"] .w-md-editor, html[data-ax-layout="portal"] .wmde-markdown { --color-canvas-default: var(--bg-panel); --color-fg-default: var(--text); --color-border-default: var(--border); }
+@media (max-width: 1100px) {
+  html[data-ax-layout="portal"] .font-ctrl { display: none; }
+  html[data-ax-layout="portal"] .titlebar-inner { gap: 12px; }
+}
+@media (max-width: 899px) {
+  html[data-ax-layout="portal"] .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "titlebar" "workspace" "statusbar"; }
+  html[data-ax-layout="portal"] .app > .sidebar { grid-area: unset; }
+  html[data-ax-layout="portal"] .titlebar-brand > span { display: none; }
+  .settings-hub-layout { grid-template-columns: 180px minmax(0, 1fr); gap: 8px; }
+  .settings-hub .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  html[data-ax-layout="portal"] .settings-hub-content { padding-inline: 12px; }
+}
+@media (max-width: 639px) {
+  html[data-ax-layout="portal"] { --statusbar-h: 52px; }
+  html[data-ax-layout="portal"] .titlebar-inner { padding-inline: 8px; gap: 8px; }
+  html[data-ax-layout="portal"] .titlebar-tools .logging-proj-switch--header { display: none; }
+  .settings-hub-layout { display: flex; flex-direction: column; }
+  .settings-navigation { width: 100%; position: static; padding: 8px; }
+  .settings-navigation-filter { margin: 0 0 8px; }
+  .settings-navigation-group { display: contents; }
+  .settings-navigation-group h2 { display: none; }
+  .settings-navigation-item { display: inline-flex; width: auto; min-height: 40px; border-left: 0; border-bottom: 3px solid transparent; padding: 8px; }
+  .settings-navigation-item.active { border-bottom-color: var(--accent); }
+  .settings-hub-content { width: 100%; }
+  html[data-ax-layout="portal"] .settings-hub .settings-hero { padding-inline: 16px; }
+}
+/* Embedded IDE windows keep their zero-height titlebar and native menu trigger. */
+html[data-ax-layout="portal"][data-ax-embed="1"] .app--embed { grid-template-rows: minmax(0, 1fr) var(--statusbar-h); grid-template-areas: "sidebar sizer workspace" "statusbar statusbar statusbar"; }
+@media (max-width: 899px) {
+  html[data-ax-layout="portal"][data-ax-embed="1"] .app--embed { grid-template-columns: var(--sidebar-w) 4px minmax(0, 1fr); grid-template-areas: "sidebar sizer workspace" "statusbar statusbar statusbar"; }
+  html[data-ax-layout="portal"][data-ax-embed="1"] .app--embed > .sidebar { grid-area: sidebar; }
+}
+
+/* Portal content system: command bars, data tables and docked blades on EVERY page. */
+html[data-ax-layout="portal"] .workspace > .container { padding: 0; gap: 0; background: var(--bg-panel); }
+html[data-ax-layout="portal"] .workspace > .container > .page { gap: 0; }
+html[data-ax-layout="portal"] .settings-hero, html[data-ax-layout="portal"] .page-header { padding: 20px 24px 16px; margin: 0; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+html[data-ax-layout="portal"] .settings-hero-title, html[data-ax-layout="portal"] .page-header h1 { color: var(--text-hi); font-size: 24px; font-weight: 600; }
+html[data-ax-layout="portal"] .settings-hero-sub { color: var(--text-dim); margin-top: 6px; }
+html[data-ax-layout="portal"] .settings-hero-actions { gap: 4px; }
+html[data-ax-layout="portal"] :is(.settings-hero-actions, .policy-toolbar-actions) > .btn:not(.primary):not(.danger) { background: transparent; border-color: transparent; color: var(--accent-text); }
+html[data-ax-layout="portal"] :is(.settings-hero-actions, .policy-toolbar-actions) > .btn:hover { background: var(--bg-hover); }
+html[data-ax-layout="portal"] .settings-stack { gap: 0; background: var(--bg-panel); }
+html[data-ax-layout="portal"] body .settings-card { background: var(--bg-panel); border: 0; border-bottom: 1px solid var(--border); border-radius: 0; box-shadow: none; }
+html[data-ax-layout="portal"] .settings-stack > .settings-card + .settings-card { margin-top: 0; }
+html[data-ax-layout="portal"] .settings-card-header { padding: 16px 24px 12px; }
+html[data-ax-layout="portal"] .settings-card-header h2 { font-size: 17px; }
+html[data-ax-layout="portal"] .settings-card-body { padding: 16px 24px; }
+html[data-ax-layout="portal"] :is(.page-filter-bar, .policy-toolbar, .graph-toolbar, .logging-filter-bar) { background: var(--bg-panel); border-block: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 12px 24px; box-shadow: none; }
+html[data-ax-layout="portal"] :is(.page-filter-bar, .policy-toolbar) :is(input, select) { background: var(--bg-input); color: var(--text); border-color: var(--border-hi); min-height: 30px; }
+html[data-ax-layout="portal"] :is(.btn, .btn-secondary, .btn-primary, .settings-input, .settings-select, .graph-search, .graph-limit select) { border-radius: 2px; font-family: var(--font-ui); }
+html[data-ax-layout="portal"] body .btn.primary { background: #0078d4; color: #fff; border-color: #0078d4; font-weight: 600; }
+html[data-ax-layout="portal"] body .btn.primary:hover:not(:disabled) { background: #0078d4; filter: brightness(.95); box-shadow: none; }
+html[data-ax-layout="portal"] :is(input, textarea, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+html[data-ax-layout="portal"] :is(.page-item, .list-item, .edge-item) { border-radius: 0; background: var(--bg-panel); border-bottom: 1px solid var(--border); box-shadow: none; color: var(--text); }
+html[data-ax-layout="portal"] :is(.page-item, .list-item, .edge-item):hover { background: var(--bg-hover); }
+html[data-ax-layout="portal"] :is(.page-item--selected, .list-item.active) { background: var(--bg-active); box-shadow: inset 3px 0 var(--accent); }
+html[data-ax-layout="portal"] :is(.page-item-title, .calm-group-header, .detail-title, .page-item-meta, .edge-name, .node-name) { color: var(--text); }
+html[data-ax-layout="portal"] :is(.page-item-sub, .muted, .detail-key) { color: var(--text-dim); }
+html[data-ax-layout="portal"] :is(.badge, .page-item-badge, .page-level-badge, .page-origin-badge, .mcp-kind-badge, .mcp-trace-filter-chip .mcp-trace-badge) { color: var(--text); border-radius: 2px; background: transparent; }
+html[data-ax-layout="portal"] .page-table { width: 100%; background: var(--bg-panel); color: var(--text); }
+html[data-ax-layout="portal"] .page-table :is(th, td) { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+html[data-ax-layout="portal"] .page-table th { color: var(--text-hi); background: var(--bg-side); font-weight: 600; }
+html[data-ax-layout="portal"] .page-table tr:hover td { background: var(--bg-hover); }
+html[data-ax-layout="portal"] :is(.page-pagination, .settings-card-footer) { background: var(--bg-panel); border-top: 1px solid var(--border); padding: 12px 24px; }
+html[data-ax-layout="portal"] :is(.detail-panel, .detail-panel--blade, .policy-inline-pane, .policy-inline-host, .graph-detail, .graph-settings, .mcp-quality-slideout, .files-preview) { background: var(--bg-panel); border-color: var(--border); border-radius: 0; box-shadow: none; }
+html[data-ax-layout="portal"] .detail-panel { border-left: 1px solid var(--border); }
+html[data-ax-layout="portal"] :is(.detail-header, .detail-section-title, .policy-inline-pane .settings-card-header) { background: var(--bg-panel); color: var(--text-hi); }
+html[data-ax-layout="portal"] .detail-section-title { border-bottom: 1px solid var(--border); padding-block: 12px; }
+html[data-ax-layout="portal"] :is(.detail-content, .detail-body, .policy-inline-pane .settings-card-body) { color: var(--text); }
+html[data-ax-layout="portal"] :is(.settings-status-pill, .savings-method-item, .savings-method, .agent-target-card, .policy-pack-col, .policy-pack-inspect) { border: 1px solid var(--border); border-radius: 0; background: var(--bg-panel); box-shadow: none; }
+html[data-ax-layout="portal"] .settings-status-grid { gap: 0; }
+html[data-ax-layout="portal"] .settings-status-pill { border: 0; border-right: 1px solid var(--border); padding: 12px 16px; }
+html[data-ax-layout="portal"] .settings-status-pill-value { color: var(--text-hi); font-family: var(--font-ui); font-size: 14px; }
+html[data-ax-layout="portal"] :is(.ship-gate, .ship-pipeline-step, .ship-pipeline-sonar-row) { border-radius: 2px !important; background: var(--bg-side); box-shadow: none; }
+html[data-ax-layout="portal"] .ship-gate--pass { background: color-mix(in srgb, var(--ok) 8%, var(--bg-panel)); }
+html[data-ax-layout="portal"] .ship-gate--fail { background: color-mix(in srgb, var(--danger) 8%, var(--bg-panel)); }
+html[data-ax-layout="portal"] :is(.ship-step-name, .ship-step-status, .settings-log-body) { color: var(--text); }
+html[data-ax-layout="portal"] :is(.settings-log-panel, .settings-log-body, .file-preview-code, .md-editor-source, .mcp-trace-payload pre) { background: var(--bg-input); border-color: var(--border); border-radius: 0; }
+html[data-ax-layout="portal"] :is(.ax-modal, .ax-modal-header, .ax-modal-footer, .ax-modal-body, .context-menu, .policy-context-menu, .hover-tip, .status-panel) { background: var(--bg-panel); color: var(--text); border-color: var(--border); border-radius: 2px; }
+html[data-ax-layout="portal"] .ax-modal { box-shadow: 0 8px 28px #0003; }
+html[data-ax-layout="portal"] :is(.graph-canvas-wrap, .graph-page, .graph-body) { background: var(--bg-panel); }
+html[data-ax-layout="portal"] :is(.graph-legend, .graph-zoom, .graph-settings, .graph-onboard) { background: var(--bg-panel); border: 1px solid var(--border); color: var(--text); border-radius: 2px; box-shadow: none; }
+html[data-ax-layout="portal"] :is(.graph-settings-heading, .graph-legend-title, .graph-limit, .graph-meta) { color: var(--text-dim); }
+html[data-ax-layout="portal"] :is(.memory-badge-legend, .memory-kind-legend) { padding-inline: 16px; color: var(--text-dim); }
+html[data-ax-layout="portal"] .calm-group-header { background: var(--bg-side); padding: 10px 16px; border-bottom: 1px solid var(--border); }
+html[data-ax-layout="portal"] :is(.calm-row-action, .calm-group-header):hover { color: var(--text-hi); background: var(--bg-hover); }
+html[data-ax-layout="portal"] .calm-row-action--remove:hover { color: var(--danger); }
+html[data-ax-layout="portal"] .portal-data-list { display: block; overflow-x: auto; }
+html[data-ax-layout="portal"] :is(.portal-data-row, .portal-data-header) { display: grid; grid-template-columns: minmax(240px, 1fr) 100px 105px 70px 175px; min-width: 720px; align-items: center; column-gap: 12px; padding: 10px 16px; min-height: 44px; }
+html[data-ax-layout="portal"] .portal-memory-list :is(.portal-data-row, .portal-data-header) { grid-template-columns: minmax(230px, 1fr) 105px 95px 85px 55px; min-width: 640px; }
+html[data-ax-layout="portal"] .portal-data-header { color: var(--text-hi); font-weight: 600; background: var(--bg-side); border-bottom: 1px solid var(--border-hi); position: sticky; top: 0; z-index: 1; }
+html[data-ax-layout="portal"] .portal-data-row::before, html[data-ax-layout="portal"] .portal-data-row::after { display: none; }
+html[data-ax-layout="portal"] .portal-data-name { min-width: 0; }
+html[data-ax-layout="portal"] .portal-data-name .page-item-title { color: var(--accent-text); font: 13px var(--font-ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-ax-layout="portal"] .portal-data-name .page-item-sub { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+html[data-ax-layout="portal"] .portal-data-tags { margin-top: 5px; flex-wrap: wrap; }
+html[data-ax-layout="portal"] .portal-data-tags :is(.page-level-badge, .page-scope-badge) { display: none; }
+html[data-ax-layout="portal"] .portal-data-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+html[data-ax-layout="portal"] .portal-data-actions { display: flex; justify-content: flex-end; align-items: center; }
+html[data-ax-layout="portal"] .portal-data-actions :is(.calm-row-action, .calm-row-check, .settings-toggle) { opacity: 1 !important; }
+html[data-ax-layout="portal"] .portal-data-row .calm-row-aside { gap: 4px; }
+html[data-ax-layout="portal"] :is(.memory-page, .policy-rules-page, .policy-skills-page) .settings-card-body:has(.portal-data-list) { padding: 0; }
+html[data-ax-layout="portal"] .mcp-trace-calm .page-item-badge.mcp-kind-badge { color: var(--text); }
+html[data-ax-layout="portal"] .page-empty { padding: 32px 24px; background: var(--bg-panel); color: var(--text-dim); }
+html[data-ax-layout="portal"] .agent-page { background: var(--bg-panel); }
+html[data-ax-layout="portal"] :is(.agent-toolbar, .agent-composer, .agent-chat, .agent-message) { background: var(--bg-panel); color: var(--text); border-color: var(--border); border-radius: 2px; }
+@media (max-width: 639px) {
+  html[data-ax-layout="portal"] :is(.settings-hero, .page-header, .page-filter-bar, .policy-toolbar, .graph-toolbar, .settings-card-header) { padding-inline: 12px; }
+  html[data-ax-layout="portal"] .settings-card-body { padding-inline: 12px; }
+}
+html[data-ax-layout="portal"] .portal-breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 24px 0; font-size: 12px; flex-shrink: 0; background: var(--bg-panel); color: var(--text-dim); }
+html[data-ax-layout="portal"] .portal-breadcrumbs button { background: transparent; border: 0; color: var(--accent-text); cursor: pointer; font: inherit; }
+html[data-ax-layout="portal"] .portal-breadcrumbs button:hover { text-decoration: underline; }
+html[data-ax-layout="portal"] .portal-breadcrumbs [aria-current] { color: var(--text); }
+html[data-ax-layout="portal"] .memory-page .mem-explainer { background: var(--bg-panel); border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+html[data-ax-layout="portal"] .mem-stats-strip { border-radius: 0; background: var(--bg-side); border-bottom: 1px solid var(--border); }
+html[data-ax-layout="portal"] .mem-stat-value { color: var(--text-hi); font-size: 20px; }
+html[data-ax-layout="portal"] .mem-stat-label { color: var(--text-dim); }
+html[data-ax-layout="portal"] .mem-overview { flex-direction: column; align-items: stretch; gap: 12px; padding: 16px 24px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+html[data-ax-layout="portal"] .mem-how-grid { max-width: 740px; }
+html[data-ax-layout="portal"] .mem-stats-strip { padding: 12px 0 0; gap: 16px 32px; background: transparent; border-bottom: 0; }
+html[data-ax-layout="portal"] .mem-stat { flex-direction: column; gap: 4px; }
+html[data-ax-layout="portal"] .portal-data-cell :is(.page-level-badge, .page-scope-badge) { color: var(--text); }
+html[data-ax-layout="portal"] .graph-page .graph-body { min-height: 0; }
+@media (max-width: 639px) { html[data-ax-layout="portal"] .portal-breadcrumbs { padding-inline: 12px; } }

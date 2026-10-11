@@ -29,7 +29,8 @@ import { initBladeWidth } from './components/BladeResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale } from './components/NavIcons';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { UiProvider } from './context/UiContext';
-import { initTheme } from './lib/themes';
+import { initTheme, loadThemeId, themeById, THEME_CHANGED } from './lib/themes';
+import { saveString } from './lib/uiStorage';
 import { AX_FULL_NAME } from './lib/brand';
 import {
   FULL_BLEED_PAGES,
@@ -67,6 +68,10 @@ function AppShell() {
   const [showSavings, setShowSavings] = useState(true);
   const [workspaceKey, setWorkspaceKey] = useState(0);
   const [embedMode] = useState(detectEmbedMode);
+  const [themeId, setThemeId] = useState(loadThemeId);
+  const [searchRequest, setSearchRequest] = useState(0);
+  const [portalQuery, setPortalQuery] = useState('');
+  const portalLayout = themeById(themeId).layout === 'portal';
   const [mcpReloadBusy, setMcpReloadBusy] = useState(false);
   const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -114,6 +119,12 @@ function AppShell() {
 
     refreshNavConfig();
   }, [embedMode]);
+
+  useEffect(() => {
+    const onTheme = () => setThemeId(loadThemeId());
+    window.addEventListener(THEME_CHANGED, onTheme);
+    return () => window.removeEventListener(THEME_CHANGED, onTheme);
+  }, []);
 
   useEffect(() => {
     function onWorkspaceSwitched() {
@@ -291,7 +302,12 @@ function AppShell() {
     }
   }
 
-  const navSections = visibleNav(showSavings);
+  const navSections = visibleNav(showSavings).map((section) => portalLayout && section.id === 'activity'
+    ? { ...section, items: [...section.items, { id: 'ship' as const, label: 'Quality gates' }] }
+    : section);
+  const activeSection = navSections.find((section) => section.items.some((item) => navItemActive(page, item.id)));
+  const activeLabel = activeSection?.items.find((item) => navItemActive(page, item.id))?.label
+    ?? (page === 'policy-rule-edit' ? 'Edit rule' : page === 'policy-skill-edit' ? 'Edit skill' : 'Command Center');
 
   const containerClass = FULL_BLEED_PAGES.has(page) ? 'container container--full' : 'container';
 
@@ -324,11 +340,31 @@ function AppShell() {
                 <abbr className="titlebar-brand-ax" title={AX_FULL_NAME}>
                   ax
                 </abbr>{' '}
-                <span>/ graph + policy</span>
+                <span>{portalLayout ? '| Command Center' : '/ graph + policy'}</span>
               </span>
             </div>
+            {portalLayout && (
+              <form className="portal-search" role="search" onSubmit={(event) => {
+                event.preventDefault();
+                const query = portalQuery.trim();
+                const item = navSections.flatMap((section) => section.items)
+                  .find((item) => item.label.toLowerCase() === query.toLowerCase());
+                if (item) navigate(item.id as Page);
+                else { saveString('search-q', query); setSearchRequest((n) => n + 1); navigate('search'); }
+                setPortalQuery('');
+              }}>
+                <i className="codicon codicon-search" aria-hidden="true" />
+                <input aria-label="Search code or open a page" placeholder="Search code or open a page" list="portal-pages"
+                  value={portalQuery} onChange={(event) => setPortalQuery(event.target.value)} />
+                <datalist id="portal-pages">{navSections.flatMap((section) => section.items).map((item) =>
+                  <option key={item.id} value={item.label} />)}</datalist>
+                <button type="submit" aria-label="Search"><i className="codicon codicon-arrow-right" aria-hidden="true" /></button>
+              </form>
+            )}
             <div className="titlebar-tools">
               <LoggingProjectSwitch variant="header" />
+              {portalLayout && <button type="button" className="portal-settings-button" aria-label="Open settings"
+                onClick={() => navigate('settings')}><i className="codicon codicon-settings-gear" aria-hidden="true" /></button>}
               <div className="font-ctrl">
                 <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">
                   <i className="codicon codicon-remove" aria-hidden="true" />
@@ -340,7 +376,7 @@ function AppShell() {
               </div>
             </div>
           </div>
-          <HeaderWaves />
+          {!portalLayout && <HeaderWaves />}
         </header>
         )}
         {embedMode && (
@@ -364,6 +400,7 @@ function AppShell() {
                   key={n.id}
                   type="button"
                   className={`nav-item${navItemActive(page, n.id) ? ' active' : ''}`}
+                  aria-current={navItemActive(page, n.id) ? 'page' : undefined}
                   onClick={() => navigate(n.id as Page)}
                 >
                   <NavIcon id={n.id} />
@@ -392,6 +429,12 @@ function AppShell() {
         <SidebarResizeHandle />
 
         <div className="workspace">
+          {portalLayout && <nav className="portal-breadcrumbs" aria-label="Breadcrumb">
+            <button type="button" onClick={() => navigate('stats')}>Home</button>
+            <span aria-hidden="true">›</span>
+            {activeSection && <><span>{activeSection.label}</span><span aria-hidden="true">›</span></>}
+            <span aria-current="page">{activeLabel}</span>
+          </nav>}
           {mcpToast && (
             <div
               className={`settings-toast settings-toast--${mcpToast.kind} mcp-reload-toast`}
@@ -414,7 +457,7 @@ function AppShell() {
             {page === 'nodes' && <NodesPage key={workspaceKey} />}
             {page === 'graph' && <GraphPage key={workspaceKey} />}
             {page === 'files' && <FilesPage key={workspaceKey} />}
-            {page === 'search' && <SearchPage key={workspaceKey} />}
+            {page === 'search' && <SearchPage key={`${workspaceKey}:${searchRequest}`} />}
             {page === 'memory' && <MemoryPage key={workspaceKey} />}
             {page === 'agent' && <AgentPage key={workspaceKey} />}
             {page === 'unresolved' && <UnresolvedPage key={workspaceKey} route={route} onRouteChange={applyRoute} />}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { THEME_CHANGED } from '../../lib/themes';
 import { AX_LOG_ICON } from '../../lib/mcpTrace';
 import '@xterm/xterm/css/xterm.css';
 
@@ -23,17 +24,23 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
     const host = hostRef.current;
     if (!host) return;
 
+    const terminalTheme = () => {
+      const root = document.documentElement;
+      if (root.dataset.axLayout !== 'portal') return { background: '#0d1117', foreground: '#e6edf3', cursor: '#58a6ff' };
+      const css = getComputedStyle(root);
+      return { background: css.getPropertyValue('--bg-panel').trim(), foreground: css.getPropertyValue('--text').trim(),
+        cursor: css.getPropertyValue('--accent').trim(), blue: css.getPropertyValue('--accent-text').trim(),
+        green: css.getPropertyValue('--ok').trim(), red: css.getPropertyValue('--danger').trim(), yellow: css.getPropertyValue('--warn').trim() };
+    };
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 14,
       fontFamily: "'Cascadia Code', 'Consolas', 'Courier New', monospace",
-      theme: {
-        background: '#0d1117',
-        foreground: '#e6edf3',
-        cursor: '#58a6ff',
-      },
+      theme: terminalTheme(),
       scrollback: 8000,
     });
+    const onTheme = () => { term.options.theme = terminalTheme(); };
+    window.addEventListener(THEME_CHANGED, onTheme);
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
@@ -113,6 +120,7 @@ export default function AgentPtyTerminal({ agent, profileId }: Props) {
       ro.disconnect();
       window.removeEventListener('resize', sendResize);
       ws?.close();
+      window.removeEventListener(THEME_CHANGED, onTheme);
       term.dispose();
     };
   }, [sessionKey, agent, profileId]);

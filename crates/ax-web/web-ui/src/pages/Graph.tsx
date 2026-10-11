@@ -28,6 +28,8 @@ import {
   type SimulationLinkDatum,
 } from 'd3-force';
 import GraphSettingsPanel from '../components/GraphSettingsPanel';
+import { useTheme } from '../hooks/useTheme';
+import { themeById, ensureTextContrast } from '../lib/themes';
 import { useLive } from '../lib/useLive';
 import { edgeMarker, planSparks, sparkPhase } from '../lib/live';
 import { ResizableBlade } from '../components/BladeResize';
@@ -62,10 +64,17 @@ const COMMUNITY_COLORS = [
   '#d7ba7d', '#4fc1ff', '#b5cea8', '#f48771', '#c8c8c8', '#e2c08d',
   '#6a9955', '#d16969', '#808080', '#7ca4cb',
 ];
+const communityPalettes = new Map<string, string[]>();
 
 function colorFor(communityId: number): string {
   if (communityId < 0) return '#666';
-  return COMMUNITY_COLORS[communityId % COMMUNITY_COLORS.length];
+  const theme = themeById(document.documentElement.dataset.axTheme ?? 'ax');
+  let palette = communityPalettes.get(theme.id);
+  if (!palette) {
+    palette = COMMUNITY_COLORS.map((base) => theme.colorScheme === 'light' ? ensureTextContrast(base, theme.bgPanel, 3) : base);
+    communityPalettes.set(theme.id, palette);
+  }
+  return palette[communityId % palette.length];
 }
 
 function dashFor(confidence?: string): number[] {
@@ -151,6 +160,9 @@ const MARKER_MS = 3000;
 const LIVE_SINCE_SLACK_MS = 2000;
 
 export default function GraphPage() {
+  const theme = useTheme();
+  const portal = theme.layout === 'portal';
+  useEffect(() => { requestDraw(); }, [theme.id]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const simNodesRef = useRef<SimNode[]>([]);
@@ -643,7 +655,7 @@ export default function GraphPage() {
     return Array.from(seen.entries())
       .slice(0, 16)
       .map(([id, label]) => ({ id, label, color: colorFor(id) }));
-  }, [legendNodes]);
+  }, [legendNodes, theme.id]);
 
   const kindOptions = useMemo(() => {
     return Array.from(new Set(legendNodes.map((n) => n.kind))).sort();
@@ -876,6 +888,8 @@ export default function GraphPage() {
     const { scale, offsetX, offsetY } = transformRef.current;
     const s = settingsRef.current;
     const accent = themeAccent();
+    const themeStyle = getComputedStyle(document.documentElement);
+    const highlightInk = themeStyle.getPropertyValue('--text-hi').trim() || '#fff';
 
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -961,12 +975,12 @@ export default function GraphPage() {
       }
       if (!dimmed && n.selected) {
         ctx.lineWidth = 2 / scale;
-        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.strokeStyle = highlightInk;
         ctx.stroke();
       }
       if (!dimmed && n.id === selectedRef.current) {
         ctx.lineWidth = 1.5 / scale;
-        ctx.strokeStyle = '#fff';
+        ctx.strokeStyle = highlightInk;
         ctx.stroke();
       }
       const labelFocus =
@@ -1033,7 +1047,7 @@ export default function GraphPage() {
     ctx.font = `${LABEL_PX}px var(--font-mono, monospace)`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = 'rgba(230,230,230,0.9)';
+    ctx.fillStyle = themeStyle.getPropertyValue('--text').trim() || '#e6e6e6';
     for (const i of placeLabels(labels)) {
       const l = labels[i];
       ctx.globalAlpha = l.alpha;
@@ -1310,6 +1324,7 @@ export default function GraphPage() {
 
   return (
     <div className="graph-page">
+      {portal && <header className="settings-hero"><h1 className="settings-hero-title">Graph</h1><p className="settings-hero-sub">Explore relationships across code and knowledge.</p></header>}
       <div className="graph-toolbar">
         <div className="graph-toolbar-left">
           <strong>Graph</strong>

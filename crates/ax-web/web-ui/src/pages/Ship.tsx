@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useTheme } from '../hooks/useTheme';
 import PipelineTrack from '../components/PipelineTrack';
 import {
   BusyLabel,
@@ -131,6 +132,7 @@ function RunLogPanel({
 }
 
 export default function ShipPage({ onOpenSonar }: Props) {
+  const portal = useTheme().layout === 'portal';
   const [report, setReport] = useState<ShipReport | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
   const [gitRoots, setGitRoots] = useState<string[]>([]);
@@ -673,7 +675,7 @@ export default function ShipPage({ onOpenSonar }: Props) {
   return (
     <PageShell>
       <PageHero
-        title="Command Center"
+        title={portal ? "Quality gates" : "Command Center"}
         subtitle="Git-aware quality gate with live pipeline updates via SSE."
         actions={
           <>

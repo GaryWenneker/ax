@@ -6,6 +6,7 @@ import '@uiw/react-markdown-preview/markdown.css';
 import './index.css';
 import './agent-terminal.css';
 import './greenVesselIntro.css';
+import './portal.css';
 import App from './App';
 import { installContextMenuGuard } from './lib/contextMenuGuard';
 import { startGreenVesselIntro, startWebAudioChime } from './greenVesselIntro';
