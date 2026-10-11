@@ -1,0 +1,38 @@
+name: Standalone Docker
+
+on:
+  push:
+    branches: [feature/standalone-ax]
+  pull_request:
+    paths:
+      - Dockerfile.standalone
+      - .dockerignore
+      - deploy/standalone/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/standalone-docker.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: standalone-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: build-and-check-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose specification
+        env:
+          AX_SERVER_KNOWLEDGE_TOKEN: 0123456789abcdef0123456789abcdef
+        run: docker compose -f deploy/standalone/compose.yaml config --quiet
+      - name: Build locked standalone runtime image
+        run: docker build --file Dockerfile.standalone --tag ax/standalone:ci .
+      - name: Check CLI entrypoint and non-root image user
+        run: |
+          test "$(docker image inspect ax/standalone:ci --format '{{.Config.User}}')" = "ax"
+          docker run --rm --entrypoint ax ax/standalone:ci version
