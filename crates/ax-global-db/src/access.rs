@@ -1,0 +1,424 @@
+use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemberRole {
+    Owner,
+    Admin,
+    Member,
+    Readonly,
+}
+
+impl MemberRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Admin => "admin",
+            Self::Member => "member",
+            Self::Readonly => "readonly",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "owner" => Ok(Self::Owner),
+            "admin" => Ok(Self::Admin),
+            "member" => Ok(Self::Member),
+            "readonly" => Ok(Self::Readonly),
+            other => bail!("unknown team member role: {other}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TeamMember {
+    pub id: String,
+    pub display_name: String,
+    pub email: Option<String>,
+    pub role: MemberRole,
+    pub status: String,
+    pub created_at: String,
+    pub last_active_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Client {
+    pub id: String,
+    pub member_id: String,
+    pub display_name: String,
+    pub client_type: String,
+    pub scopes: Vec<String>,
+    pub status: String,
+    pub created_at: String,
+    pub last_seen_at: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReplicationNode {
+    pub id: String,
+    pub display_name: String,
+    pub role: String,
+    pub endpoint: Option<String>,
+    pub trust_state: String,
+    pub credential_id: Option<String>,
+    pub discovered_at: String,
+    pub approved_at: Option<String>,
+    pub revoked_at: Option<String>,
+    pub last_seen_at: Option<String>,
+    pub last_sync_at: Option<String>,
+}
+
+pub async fn bootstrap_owner(
+    pool: &SqlitePool,
+    id: &str,
+    display_name: &str,
+    email: Option<&str>,
+) -> Result<bool> {
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM team_members")
+        .fetch_one(pool)
+        .await?;
+    if count.0 != 0 {
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO team_members (id, display_name, email, role, status)
+         VALUES (?, ?, ?, 'owner', 'active')",
+    )
+    .bind(id)
+    .bind(display_name)
+    .bind(email)
+    .execute(pool)
+    .await?;
+    Ok(true)
+}
+
+pub async fn create_member(
+    pool: &SqlitePool,
+    id: &str,
+    display_name: &str,
+    email: Option<&str>,
+    role: MemberRole,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO team_members (id, display_name, email, role, status)
+         VALUES (?, ?, ?, ?, 'active')",
+    )
+    .bind(id)
+    .bind(display_name)
+    .bind(email)
+    .bind(role.as_str())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_members(pool: &SqlitePool) -> Result<Vec<TeamMember>> {
+    let rows: Vec<(String, String, Option<String>, String, String, String, Option<String>)> =
+        sqlx::query_as(
+            "SELECT id, display_name, email, role, status, created_at, last_active_at
+             FROM team_members ORDER BY created_at, id",
+        )
+        .fetch_all(pool)
+        .await?;
+    rows.into_iter()
+        .map(|(id, display_name, email, role, status, created_at, last_active_at)| {
+            Ok(TeamMember {
+                id,
+                display_name,
+                email,
+                role: MemberRole::parse(&role)?,
+                status,
+                created_at,
+                last_active_at,
+            })
+        })
+        .collect()
+}
+
+pub async fn create_client(
+    pool: &SqlitePool,
+    id: &str,
+    member_id: &str,
+    display_name: &str,
+    client_type: &str,
+    scopes: &[String],
+) -> Result<()> {
+    let scopes = serde_json::to_string(scopes)?;
+    sqlx::query(
+        "INSERT INTO clients (id, member_id, display_name, client_type, scopes, status)
+         VALUES (?, ?, ?, ?, ?, 'active')",
+    )
+    .bind(id)
+    .bind(member_id)
+    .bind(display_name)
+    .bind(client_type)
+    .bind(scopes)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_clients(pool: &SqlitePool) -> Result<Vec<Client>> {
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, member_id, display_name, client_type, scopes, status,
+                created_at, last_seen_at, revoked_at
+         FROM clients ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(
+            |(
+                id,
+                member_id,
+                display_name,
+                client_type,
+                scopes,
+                status,
+                created_at,
+                last_seen_at,
+                revoked_at,
+            )| {
+                Ok(Client {
+                    id,
+                    member_id,
+                    display_name,
+                    client_type,
+                    scopes: serde_json::from_str(&scopes)?,
+                    status,
+                    created_at,
+                    last_seen_at,
+                    revoked_at,
+                })
+            },
+        )
+        .collect()
+}
+
+pub async fn add_client_credential(
+    pool: &SqlitePool,
+    id: &str,
+    client_id: &str,
+    token_prefix: &str,
+    verifier: &str,
+    expires_at: Option<&str>,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO client_credentials
+            (id, client_id, token_prefix, verifier, expires_at)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(client_id)
+    .bind(token_prefix)
+    .bind(verifier)
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn revoke_client(pool: &SqlitePool, client_id: &str) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        "UPDATE clients SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'active'",
+    )
+    .bind(client_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE client_credentials SET revoked_at = CURRENT_TIMESTAMP
+         WHERE client_id = ? AND revoked_at IS NULL",
+    )
+    .bind(client_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn discover_replica(
+    pool: &SqlitePool,
+    id: &str,
+    display_name: &str,
+    endpoint: Option<&str>,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO replication_nodes
+            (id, display_name, role, endpoint, trust_state, last_seen_at)
+         VALUES (?, ?, 'replica', ?, 'pending', CURRENT_TIMESTAMP)
+         ON CONFLICT(id) DO UPDATE SET
+            display_name = excluded.display_name,
+            endpoint = excluded.endpoint,
+            last_seen_at = CURRENT_TIMESTAMP",
+    )
+    .bind(id)
+    .bind(display_name)
+    .bind(endpoint)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn approve_node(
+    pool: &SqlitePool,
+    node_id: &str,
+    credential_id: &str,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "UPDATE replication_nodes
+         SET trust_state = 'trusted', credential_id = ?, approved_at = CURRENT_TIMESTAMP,
+             revoked_at = NULL
+         WHERE id = ? AND trust_state = 'pending'",
+    )
+    .bind(credential_id)
+    .bind(node_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn revoke_node(pool: &SqlitePool, node_id: &str) -> Result<bool> {
+    let result = sqlx::query(
+        "UPDATE replication_nodes
+         SET trust_state = 'revoked', revoked_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND trust_state != 'revoked'",
+    )
+    .bind(node_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn list_nodes(pool: &SqlitePool) -> Result<Vec<ReplicationNode>> {
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, display_name, role, endpoint, trust_state, credential_id,
+                discovered_at, approved_at, revoked_at, last_seen_at, last_sync_at
+         FROM replication_nodes ORDER BY discovered_at, id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                display_name,
+                role,
+                endpoint,
+                trust_state,
+                credential_id,
+                discovered_at,
+                approved_at,
+                revoked_at,
+                last_seen_at,
+                last_sync_at,
+            )| ReplicationNode {
+                id,
+                display_name,
+                role,
+                endpoint,
+                trust_state,
+                credential_id,
+                discovered_at,
+                approved_at,
+                revoked_at,
+                last_seen_at,
+                last_sync_at,
+            },
+        )
+        .collect())
+}
+
+pub async fn audit(
+    pool: &SqlitePool,
+    actor_member_id: Option<&str>,
+    actor_client_id: Option<&str>,
+    event_type: &str,
+    subject_type: &str,
+    subject_id: &str,
+    details: &serde_json::Value,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO security_audit_log
+            (actor_member_id, actor_client_id, event_type, subject_type, subject_id, details)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(actor_member_id)
+    .bind(actor_client_id)
+    .bind(event_type)
+    .bind(subject_type)
+    .bind(subject_id)
+    .bind(details.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::open_and_init;
+
+    #[tokio::test]
+    async fn access_lifecycle_persists_and_revokes() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+
+        assert!(bootstrap_owner(&pool, "u1", "Owner", Some("owner@example.test"))
+            .await
+            .unwrap());
+        assert!(!bootstrap_owner(&pool, "u2", "Other", None).await.unwrap());
+
+        create_client(
+            &pool,
+            "c1",
+            "u1",
+            "Cursor",
+            "cursor",
+            &["memory:read".into(), "memory:write".into()],
+        )
+        .await
+        .unwrap();
+        add_client_credential(&pool, "cred1", "c1", "axc_1234", "sha256:test", None)
+            .await
+            .unwrap();
+
+        assert_eq!(list_members(&pool).await.unwrap().len(), 1);
+        assert_eq!(list_clients(&pool).await.unwrap()[0].scopes.len(), 2);
+        assert!(revoke_client(&pool, "c1").await.unwrap());
+
+        discover_replica(&pool, "n1", "Replica 1", Some("http://10.0.0.2:7070"))
+            .await
+            .unwrap();
+        assert!(approve_node(&pool, "n1", "node-cred-1").await.unwrap());
+        assert!(revoke_node(&pool, "n1").await.unwrap());
+        assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "revoked");
+    }
+}
