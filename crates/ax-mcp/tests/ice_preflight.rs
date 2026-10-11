@@ -53,3 +53,26 @@ async fn irrelevant_prompt_never_injects_source() {
     })).await.unwrap();
     assert_eq!(result["sourceContext"]["status"], "disabled");
 }
+
+#[tokio::test]
+async fn approved_business_rule_supplies_search_terms_without_model() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("auth.ts"),
+        "export function refreshToken(): boolean {\n    return true;\n}\n").unwrap();
+    let mut ax = Ax::init(root).await.unwrap();
+    let rules = root.join(".agents/rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(rules.join("auth-context.mdc"),
+        "---\nid: auth-context\nlevel: INFO\ntriggers: [inloggen]\nproperties:\n  contextTerms: [refreshToken]\n---\nPrefer the indexed authentication implementation.\n").unwrap();
+    ax.index_all(IndexOptions::default(), None).await.unwrap();
+    ax_policy::index_policy(ax.db_pool(), root, true).await.unwrap();
+    let result = ToolHandler::call_tool(&mut ax, "ax_preflight", json!({
+        "prompt": "Waarom kan ik niet inloggen?",
+        "contextMode": "compact"
+    })).await.unwrap();
+    assert_eq!(result["sourceContext"]["status"], "matched");
+    assert_eq!(result["sourceContext"]["evidence"][0]["path"], "auth.ts");
+    assert!(result["sourceContext"]["evidence"][0]["reason"].as_str().unwrap()
+        .contains("configured policy term"));
+}
