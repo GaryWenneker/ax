@@ -177,9 +177,14 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
             .map_err(|e| format!("cannot bind UDP push listener: {e}"))?,
     );
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
+    let access_db_path = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
+    let access_db = ax_global_db::open_and_init(&access_db_path)
+        .await
+        .map_err(|e| e.to_string())?;
     let receive_socket = socket.clone();
     let receive_registry = registry.clone();
     let receive_config = config.clone();
+    let receive_access_db = access_db.clone();
     let _receiver = tokio::spawn(async move {
         let mut buf = [0u8; MAX_MESSAGE_BYTES + 1];
         loop {
@@ -199,6 +204,23 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
             else {
                 continue;
             };
+            if let Err(error) = ax_global_db::access::register_trusted_replica(
+                &receive_access_db,
+                &message.node_id,
+                &message.node_id,
+                Some(&sender.to_string()),
+                &message.project_id,
+            )
+            .await
+            {
+                tracing::warn!(
+                    node = %message.node_id,
+                    project = %message.project_id,
+                    "authenticated replica registration rejected: {}",
+                    error
+                );
+                continue;
+            }
             let mut peers = receive_registry.lock().await;
             peers.retain(|_, peer| {
                 now_seconds().saturating_sub(peer.last_seen) <= REGISTRATION_LIFETIME_SECS

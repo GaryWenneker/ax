@@ -36,6 +36,13 @@ const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 };
 
 /** @type {Array<{ name: string, path: string, waitMs?: number, ready?: string, after?: (page: import('puppeteer').Page) => Promise<void> }>} */
 const SHOTS = [
+  ...['team', 'clients', 'nodes'].map(section => ({
+    name: `cc-access-${section}.png`, path: '/settings', waitMs: 1200,
+    after: async (page) => {
+      await clickOrFail(page, `.settings-navigation-item[aria-controls="settings-panel-${section}"]`);
+      await page.waitForSelector(`#settings-panel-${section}`, { visible: true });
+    },
+  })),
 	{ name: 'cc-ship-full.png', path: '/ship', waitMs: 1800, ready: '.ship-page, .page-ship, main' },
 	{ name: 'cc-stats.png', path: '/stats', waitMs: 1200 },
 	{ name: 'cc-nodes.png', path: '/nodes', waitMs: 1500 },

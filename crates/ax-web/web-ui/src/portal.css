@@ -204,3 +204,7 @@ html[data-ax-layout="portal"] .mcp-q-strip :is(.mcp-q-strip-label, .mcp-q-strip-
 html[data-ax-layout="portal"] .mcp-q-strip .mcp-q-strip-score { color: var(--accent-text); text-shadow: none; }
 
 html[data-ax-layout="portal"] :is(.sv-tl-chart, .sv-quality-chip) { background: var(--bg-side); border-color: var(--border); border-radius: 2px; }
+
+html[data-ax-layout="portal"] .access-row-control { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+html[data-ax-layout="portal"] .access-row-control > :is(.settings-input, .settings-select) { min-width: 140px; flex: 1 1 140px; }
+html[data-ax-layout="portal"] .access-row-control > .btn { flex-shrink: 0; }

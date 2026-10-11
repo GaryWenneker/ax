@@ -1,5 +1,6 @@
 //! ax-web: local HTTP server exposing the ax code graph + policy editor.
 
+mod access_api;
 mod actions;
 mod changes;
 mod node_tracker;

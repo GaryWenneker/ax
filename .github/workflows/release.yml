@@ -205,7 +205,7 @@ jobs:
           done
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
-  deploy-docs:
+  build-docs:
     needs: [prepare, release]
     if: >-
       always() && needs.prepare.result == 'success' && needs.prepare.outputs.tag != '' &&
@@ -233,15 +233,9 @@ jobs:
           sudo npx puppeteer browsers install chrome --install-deps
           npm run build
           npm test
-      - name: Publish main documentation and functions to Netlify
-        working-directory: site
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ] || [ -z "${NETLIFY_SITE_ID:-}" ]; then
-            echo "::error::NETLIFY_AUTH_TOKEN and NETLIFY_SITE_ID secrets are required"
-            exit 1
-          fi
-          npx --yes netlify-cli deploy --prod --dir=dist --functions=netlify/functions --site="$NETLIFY_SITE_ID" --message="Main release $RELEASE_TAG (${{ needs.prepare.outputs.sha }})"
+      - name: Upload released documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: released-docs-site
+          path: site/dist
+          if-no-files-found: error

@@ -25,3 +25,7 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
 <!-- AX_END -->
+
+## Website delivery
+
+Do not run Netlify builds or deployments. The owner deploys through a separate process. Continue updating website source, documentation, and current UI screenshots. Local frontend/documentation validation and GitHub CI are allowed. For frontend-only changes, run relevant frontend checks without Docker or backend builds.

@@ -52,6 +52,18 @@ const savings = {
 };
 const recent = [{ path: project, label: 'Ax demo', initialized: true, last_opened: now }, { path: '/projects/sample-app', label: 'Sample app', initialized: true, last_opened: now }];
 const data = {
+  '/api/access/session': { csrf: 'demo-only' },
+  '/api/access/team': { members: [
+    { id: 'demo-owner', display_name: 'Demo owner', email: null, role: 'owner', status: 'active', created_at: '2026-10-01 09:00:00', last_active_at: '2026-10-11 12:00:00' },
+    { id: 'demo-member', display_name: 'Demo developer', email: null, role: 'member', status: 'active', created_at: '2026-10-02 09:00:00', last_active_at: '2026-10-11 11:55:00' },
+    { id: 'demo-reviewer', display_name: 'Demo reviewer', email: null, role: 'readonly', status: 'active', created_at: '2026-10-03 09:00:00', last_active_at: null },
+  ] },
+  '/api/access/clients': { clients: [
+    { id: 'demo-client', member_id: 'demo-member', display_name: 'Demo IDE client', client_type: 'cursor', scopes: ['memory:read', 'memory:write', 'preflight:read', 'context:read'], status: 'active', created_at: '2026-10-02 10:00:00', last_seen_at: '2026-10-11 11:55:00' },
+  ], credentials: [{ id: 'demo-credential', client_id: 'demo-client', token_prefix: 'axc_demo', created_at: '2026-10-02 10:00:00', last_used_at: '2026-10-11 11:55:00', revoked_at: null }] },
+  '/api/access/nodes': { local: { node_id: 'demo-primary', role: 'primary', primary_url: null, sync_state: 'configured', last_sync_at: null }, nodes: [
+    { id: 'demo-replica', display_name: 'Demo replica', role: 'replica', endpoint: 'https://replica.example.test', trust_state: 'trusted', last_seen_at: '2026-10-11 12:00:00', last_sync_at: '2026-10-11 12:00:00' },
+  ] },
   '/api/version': { version: '8.0.0' },
   '/api/stats': { node_count: 2450, edge_count: 7800, file_count: 312, languages: [{ language: 'Rust', count: 1500 }, { language: 'TypeScript', count: 950 }], last_indexed_at: now, unresolved_ref_count: 2, db_size_bytes: 2400000, policy_rules_count: 3, policy_skills_count: 3, readonly: false, project_name: 'Ax demo' },
   '/api/nodes': { nodes, total: nodes.length }, '/api/files': { files, total: files.length },

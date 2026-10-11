@@ -620,8 +620,8 @@ dependencies = [
  "ax-types",
  "ax-usage",
  "ax-utils",
- "axum",
  "ax-web",
+ "axum",
  "blake3",
  "clap",
  "console",
@@ -810,12 +810,14 @@ dependencies = [
  "anyhow",
  "ax-db",
  "ax-utils",
+ "blake3",
  "dirs",
  "serde",
  "serde_json",
  "sqlx",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -866,6 +868,7 @@ dependencies = [
  "ax-context",
  "ax-core",
  "ax-extraction",
+ "ax-global-db",
  "ax-lsp",
  "ax-memory",
  "ax-pi",

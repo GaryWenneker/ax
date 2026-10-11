@@ -1,3 +1,4 @@
+import AccessSettingsSection from '../components/AccessSettingsSection';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
@@ -296,6 +297,7 @@ export default function SettingsPage() {
             <p className="settings-navigation-empty" role="status">No matching settings</p>}
         </nav>
         <div className="settings-hub-content">
+        <AccessSettingsSection section={section} />
         <div id="settings-panel-appearance" hidden={section !== 'appearance'}>
           <section className="settings-card">
             <div className="settings-card-header"><h2>Appearance</h2><p>Theme and display preferences.</p></div>
