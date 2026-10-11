@@ -11,7 +11,7 @@ use crate::{
     server_snapshot,
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path as AxumPath, State},
     http::{header, HeaderMap, StatusCode},
     routing::get,
     Json, Router,
@@ -55,7 +55,7 @@ async fn health() -> Json<serde_json::Value> {
 
 async fn snapshot(
     State(state): State<Arc<StateData>>,
-    Path(id): Path<String>,
+    AxumPath(id): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<Json<server_snapshot::Snapshot>, StatusCode> {
     if state.config.role != NodeRole::Primary {
