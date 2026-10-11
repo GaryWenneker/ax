@@ -102,16 +102,16 @@ try {
   await page.click("[data-ax-motion-toggle]");
   if ((await page.$eval("html", (x) => x.dataset.axMotion)) !== "paused")
     throw new Error("Pause control failed");
-  const scene = await page.$eval(".signal-ambient .ax-depth-spires", nodes => ({
+  const scene = await page.$$eval(".signal-ambient .ax-depth-spires", nodes => ({
     count: nodes.length,
     paused: nodes.every(x => x.getAnimations().every(a => a.playState === "paused")),
   }));
   if (scene.count !== 1 || !scene.paused)
     throw new Error(`Cinematic ray pause failed: ${JSON.stringify(scene)}`);
-  const ticker = await page.$eval(".ticker-group", nodes => nodes.length);
+  const ticker = await page.$$eval(".ticker-group", nodes => nodes.length);
   if (ticker !== 2) throw new Error("The seamless integration ticker must render two matching halves");
   await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
-  const respectsMotion = await page.$eval(".signal-ambient .ax-depth-spires", nodes => nodes.every(x => x.getAnimations().every(a => a.playState === "paused")));
+  const respectsMotion = await page.$$eval(".signal-ambient .ax-depth-spires", nodes => nodes.every(x => x.getAnimations().every(a => a.playState === "paused")));
   if (!respectsMotion) throw new Error("Reduced motion not respected");
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(
