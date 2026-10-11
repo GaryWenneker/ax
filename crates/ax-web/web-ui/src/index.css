@@ -15698,3 +15698,12 @@ html[data-ax-theme="macos"] :is(
 .replication-data-safety { padding: 16px; border: 1px solid var(--border); border-left: 3px solid var(--accent); margin: 16px 0; }
 .replication-data-safety p { margin: 8px 0; line-height: 1.5; }
 .replication-data-safety small { color: var(--text-dim); line-height: 1.5; }
+.replication-secret-control { display: flex; align-items: stretch; gap: 4px; width: 100%; }
+.replication-secret-control .settings-input { flex: 1; min-width: 0; }
+.replication-secret-control .btn { flex-shrink: 0; }
+.replication-config-details { display: grid; gap: 12px; margin: 16px 0; }
+.replication-config-details > div { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(0, 2fr); gap: 12px; }
+.replication-config-details dt { color: var(--text-dim); }
+.replication-config-details dd { margin: 0; overflow-wrap: anywhere; }
+.replication-config-details code { white-space: normal; }
+@media (max-width: 700px) { .replication-config-details > div { grid-template-columns: 1fr; gap: 4px; } }

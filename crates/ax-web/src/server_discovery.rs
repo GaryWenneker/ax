@@ -57,7 +57,7 @@ fn matching_candidate(raw: &[u8], config: &ServerConfig) -> Option<Announcement>
     }
     let item: Announcement = serde_json::from_slice(raw).ok()?;
     if item.protocol_version != PROTOCOL_VERSION
-        || item.cluster_id != config.cluster_id
+        || (!config.cluster_id.is_empty() && item.cluster_id != config.cluster_id)
         || item.node_id == config.node_id
         || item.node_id.is_empty()
         || !item
@@ -100,12 +100,12 @@ pub async fn discover_candidates(
         if let Some(candidate) = matching_candidate(&buf[..len], config) {
             if peers.len() < 64 {
                 peers.insert(
-                    (candidate.node_id.clone(), source.ip()),
+                    (candidate.node_id.clone(), candidate.advertised_url.clone()),
                     (
                         candidate.protocol_version,
                         candidate.cluster_id,
                         candidate.role,
-                        candidate.advertised_url,
+                        source.ip(),
                     ),
                 );
             }
@@ -113,7 +113,7 @@ pub async fn discover_candidates(
     }
     let peers = peers
         .into_iter()
-        .map(|((node_id, sender_ip), (protocol, cluster, role, url))| {
+        .map(|((node_id, url), (protocol, cluster, role, sender_ip))| {
             serde_json::json!({
                 "protocol_version": protocol,
                 "cluster_id": cluster,
@@ -139,6 +139,8 @@ pub async fn announce(config: ServerConfig, url: String, port: u16) -> Result<()
     socket.set_broadcast(true).map_err(|e| e.to_string())?;
     let target = SocketAddr::from(([255, 255, 255, 255], port));
     loop {
+        // Same-machine discovery must also work without a LAN broadcast route.
+        let _ = socket.send_to(&encoded, ("127.0.0.1", port)).await;
         if let Err(error) = socket.send_to(&encoded, target).await {
             tracing::warn!("LAN discovery broadcast failed: {}", error);
         }
@@ -149,6 +151,29 @@ pub async fn announce(config: ServerConfig, url: String, port: u16) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn announces_to_local_discovery_without_a_lan_route() {
+        let receiver = tokio::net::UdpSocket::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = receiver.local_addr().unwrap().port();
+        let config = ServerConfig {
+            schema_version: 1,
+            cluster_id: "cluster".into(),
+            node_id: "primary".into(),
+            role: NodeRole::Primary,
+            primary_url: None,
+            projects: vec![],
+        };
+        let task = tokio::spawn(announce(config, "http://127.0.0.1:9070".into(), port));
+        let mut bytes = [0; MAX_ANNOUNCEMENT_BYTES];
+        let (len, _) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        let peer: Announcement = serde_json::from_slice(&bytes[..len]).unwrap();
+        task.abort();
+        assert_eq!(peer.node_id, "primary");
+        assert_eq!(peer.advertised_url, "http://127.0.0.1:9070");
+    }
     #[test]
     fn filters_by_cluster_and_never_trusts_announcements() {
         let config = ServerConfig {
@@ -165,6 +190,9 @@ mod tests {
         assert!(matching_candidate(&encoded, &config).is_some());
         peer.cluster_id = "other".into();
         assert!(matching_candidate(&serde_json::to_vec(&peer).unwrap(), &config).is_none());
+        let mut all_clusters = config.clone();
+        all_clusters.cluster_id.clear();
+        assert!(matching_candidate(&serde_json::to_vec(&peer).unwrap(), &all_clusters).is_some());
     }
 
     #[test]

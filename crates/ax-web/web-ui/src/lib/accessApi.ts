@@ -1,7 +1,7 @@
 export async function accessJson<T>(url: string, init?: RequestInit): Promise<T> {
   let csrf: string | null = null;
   if (init?.method && init.method !== 'GET') {
-    const session = await fetch('/api/access/session', { cache: 'no-store' });
+    const session = await fetch('/api/access/session', { cache: 'no-store', signal: init.signal });
     if (!session.ok) throw new Error('A local owner session is required to change access.');
     csrf = (await session.json()).csrf;
   }

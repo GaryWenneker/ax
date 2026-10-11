@@ -1,15 +1,14 @@
 //! ax-web: local HTTP server exposing the ax code graph + policy editor.
 
+pub mod replication_setup;
 pub mod server_config;
 pub mod server_discovery;
-mod replication_setup;
 
 mod access_api;
 mod actions;
-mod changes;
-mod node_tracker;
 mod agent;
 mod agent_pty;
+mod changes;
 mod dav;
 mod docs_catalog;
 mod domain_graph;
@@ -22,6 +21,7 @@ mod mcp_ops;
 mod mcp_quality;
 mod mcp_trace;
 mod memory;
+mod node_tracker;
 mod okf_api;
 mod plugins_api;
 mod policy;
@@ -466,9 +466,16 @@ async fn handle_graph_recent(
     Query(p): Query<RecentGraphQuery>,
 ) -> impl IntoResponse {
     let Some(since) = p.since.as_deref().and_then(|s| s.parse::<i64>().ok()) else {
-        return (StatusCode::BAD_REQUEST, api_err("`since` must be a unix time in milliseconds").1).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            api_err("`since` must be a unix time in milliseconds").1,
+        )
+            .into_response();
     };
-    let limit = p.limit.unwrap_or(RECENT_GRAPH_MAX).clamp(1, RECENT_GRAPH_MAX);
+    let limit = p
+        .limit
+        .unwrap_or(RECENT_GRAPH_MAX)
+        .clamp(1, RECENT_GRAPH_MAX);
     let ws = hub.read().await;
     if let Err(e) = node_tracker::observe(&ws.graph_pool, &ws.db_path).await {
         return api_err(e.to_string()).into_response();
@@ -773,6 +780,11 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     let readonly =
         std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1") || opts.share_token.is_some();
     let hub = WebHub::open(opts.root.clone(), readonly, opts.port).await?;
+    if !readonly {
+        if let Err(error) = replication_setup::auto_start(&opts.root).await {
+            tracing::warn!("replication automatic startup failed: {error}");
+        }
+    }
     let _ = ax_agent::config::touch_recent_project(&opts.root, true);
 
     let cors = CorsLayer::new()

@@ -82,6 +82,9 @@ impl WebHub {
             old.close().await;
             let _ = ax_agent::config::touch_recent_project(&new_root, true);
             self.sonar_proxy.lock().await.invalidate();
+            if let Err(error) = crate::replication_setup::auto_start(&new_root).await {
+                tracing::warn!("replication automatic startup failed: {error}");
+            }
             let info = SwitchInfo {
                 path: crate::workspace::display_path(&new_root),
                 label: new_root

@@ -1211,6 +1211,7 @@ dependencies = [
  "clap",
  "dav-server",
  "dirs",
+ "fs2",
  "futures-util",
  "include_dir",
  "mime_guess",
