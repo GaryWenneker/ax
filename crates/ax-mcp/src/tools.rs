@@ -1075,6 +1075,23 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             ));
         }
     }
+    // ICE is opt-in until retrieval quality and budget gates are verified.
+    // It cannot call ax_reasoning, an external model, or read the working tree.
+    let context_mode = params.get("contextMode").and_then(Value::as_str).unwrap_or("auto");
+    let ice_enabled = context_mode != "off" &&
+        (params.get("contextMode").and_then(Value::as_str).is_some()
+            || std::env::var("AX_ICE_ENABLE").ok().as_deref() == Some("1"));
+    let mut ice_context = None;
+    let mut ice_error: Option<String> = None;
+    if ice_enabled && !prompt.trim().is_empty() {
+        let max_blocks = if context_mode == "expanded" { 6 } else { 3 };
+        let max_chars = if context_mode == "expanded" { 3000 } else { 1500 };
+        let queries = ax_db::queries::QueryBuilder::new(ax.db_pool().clone());
+        match ax_context::retrieval::retrieve(&queries, &prompt, max_blocks, max_chars).await {
+            Ok(found) => ice_context = Some(found),
+            Err(err) => ice_error = Some(err.to_string()),
+        }
+    }
     let budget = ax_usage::load_settings(Some(ax.project_root())).context_budget_tokens;
     let mut blocks = vec![ax_usage::ContextBlock {
         id: "required".into(),
@@ -1082,6 +1099,22 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         text: inject,
     }];
     blocks.extend(optional_blocks);
+    if let Some(context) = &ice_context {
+        for (i, source) in context.evidence.iter().enumerate() {
+            blocks.push(ax_usage::ContextBlock {
+                id: format!("source:{i}"),
+                class: ax_usage::ContextClass::HighValue,
+                text: ax_context::retrieval::evidence_text(source),
+            });
+        }
+        if !context.warnings.is_empty() {
+            blocks.push(ax_usage::ContextBlock {
+                id: "source:warnings".into(),
+                class: ax_usage::ContextClass::Optional,
+                text: context.warnings.join("\n"),
+            });
+        }
+    }
     let (rule_rows, skill_rows) = match ax.policy_rows().await {
         Ok(rows) => rows,
         Err(error) => {
@@ -1123,6 +1156,17 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         "memories": memories,
         "indexStats": index_stats,
         "pendingFiles": pending,
+        "sourceContext": ice_context.as_ref().map(|c| serde_json::json!({
+            "status": c.status,
+            "selectionVersion": c.selection_version,
+            "evidence": c.evidence.iter().enumerate().map(|(i, e)| serde_json::json!({
+                "blockId": format!("source:{i}"),
+                "path": e.path, "startLine": e.start_line, "endLine": e.end_line,
+                "reason": e.reason, "freshness": e.freshness
+            })).collect::<Vec<_>>(),
+            "warnings": c.warnings,
+        })),
+        "retrievalError": ice_error,
         "inject": "",
         "instruction": instruction,
     });
@@ -2047,6 +2091,11 @@ fn preflight_tool() -> Value {
                 "known_context": {
                     "type": "string",
                     "description": "The <ax_working_context> hash you already have; when it is still current, preflight sends one unchanged line instead of the notes"
+                },
+                "contextMode": {
+                    "type": "string",
+                    "enum": ["auto", "off", "compact", "expanded"],
+                    "description": "Opt in to deterministic source retrieval during preflight; no model is called"
                 }
             }
         }
