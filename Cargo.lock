@@ -810,12 +810,14 @@ dependencies = [
  "anyhow",
  "ax-db",
  "ax-utils",
+ "blake3",
  "dirs",
  "serde",
  "serde_json",
  "sqlx",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
