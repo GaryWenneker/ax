@@ -8,10 +8,11 @@ on:
       - Dockerfile.standalone
       - .dockerignore
       - deploy/standalone/**
-      - crates/**
-      - Cargo.toml
-      - Cargo.lock
-      - .github/workflows/standalone-docker.yml
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - .cargo/**
+      - rust-toolchain*
 
 permissions:
   contents: read

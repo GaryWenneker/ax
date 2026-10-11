@@ -34,3 +34,8 @@ Demo API fixtures, captured from the implemented UI:
 - [Graph light](../design/azure-portal/azure-light-graph.png) · [Graph dark](../design/azure-portal/azure-dark-graph.png)
 - [Stats light](../design/azure-portal/azure-light-stats.png) · [Stats dark](../design/azure-portal/azure-dark-stats.png)
 - [Phone settings](../design/azure-portal/azure-light-phone.png)
+
+## Frontend validation and documentation capture
+Frontend-only source or embedded asset changes run the frontend build, contrast and browser checks. Rust workspace and Clippy jobs run for backend/Rust/dependency changes; standalone Docker uses backend-specific path filters. Classifier regressions are checked by `scripts/test_ci_changes.py`.
+
+Website screenshots are captured from the production UI with Puppeteer and public synthetic fixtures (`AX_SCREENSHOT_DEMO=1`) in both portal themes; no backend build is needed for this capture.

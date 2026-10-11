@@ -7,6 +7,8 @@
  *   AX_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" node site/scripts/capture-screenshots.mjs
  *
  *   AX_SHOTS=cc-graph.png,cc-memory-vault.png node site/scripts/capture-screenshots.mjs
+ *   AX_SCREENSHOT_DEMO=1 AX_THEME=azure-light node site/scripts/capture-screenshots.mjs
+ *   AX_SCREENSHOT_DEMO=1 AX_THEME=azure-dark AX_SHOTS=cc-graph.png node site/scripts/capture-screenshots.mjs
  *
  * Requires: ax web running, and `npx puppeteer` (downloads Chromium on first run).
  *
@@ -25,9 +27,12 @@ import { mkdirSync, existsSync, readFileSync } from 'node:fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
 const outDir = path.join(root, 'site', 'public', 'screenshots');
-const baseUrl = (process.env.AX_WEB_URL || 'http://127.0.0.1:7070').replace(/\/$/, '');
+let baseUrl = (process.env.AX_WEB_URL || 'http://127.0.0.1:7070').replace(/\/$/, '');
+const demo = process.env.AX_SCREENSHOT_DEMO === '1';
+const theme = process.env.AX_THEME || 'azure-light';
+const suffix = theme === 'azure-dark' ? '-dark' : '';
 
-const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 2 };
+const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 };
 
 /** @type {Array<{ name: string, path: string, waitMs?: number, ready?: string, after?: (page: import('puppeteer').Page) => Promise<void> }>} */
 const SHOTS = [
@@ -91,7 +96,10 @@ const SHOTS = [
 			}
 		},
 	},
-	{ name: 'cc-settings.png', path: '/settings', waitMs: 1500, ready: '.settings-card, main' },
+  { name: 'cc-settings.png', path: '/settings', waitMs: 1500, ready: '.settings-card, main', after: async (page) => {
+    await clickOrFail(page, '.settings-navigation-item[aria-controls="settings-panel-agents"]');
+  } },
+  { name: 'cc-settings-appearance.png', path: '/settings', waitMs: 1500, ready: '.settings-card' },
 	{ name: 'cc-policy-sync.png', path: '/policy/sync', waitMs: 1500, ready: 'main' },
 	{ name: 'cc-prices.png', path: '/prices', waitMs: 2000, ready: 'main' },
 	{ name: 'cc-unresolved.png', path: '/unresolved', waitMs: 1500 },
@@ -254,7 +262,13 @@ async function waitReady(page, selector, timeoutMs = 15000) {
 }
 
 async function main() {
-	const terms = loadRedactTerms();
+  const terms = demo ? ['confidential-project', 'private-client'] : loadRedactTerms();
+  let demoServer;
+  if (demo) {
+    const { startScreenshotServer } = await import('./screenshot-fixtures.mjs');
+    demoServer = await startScreenshotServer(path.join(root, 'crates/ax-web/web-ui/dist'));
+    baseUrl = demoServer.url;
+  }
 	const only = (process.env.AX_SHOTS || '')
 		.split(',')
 		.map((s) => s.trim())
@@ -278,6 +292,14 @@ async function main() {
 
 	const page = await browser.newPage();
 	await page.setViewport(VIEWPORT);
+  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+  await page.evaluateOnNewDocument((theme) => {
+    localStorage.setItem('ax-theme', theme);
+    localStorage.setItem('ax-theme-mint-v2', '1');
+    localStorage.setItem('ax-web-search-q', 'Settings');
+  }, theme);
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
 
 	// Probe server
 	try {
@@ -314,12 +336,14 @@ async function main() {
 			);
 		}
 
-		const out = path.join(outDir, shot.name);
+    if (pageErrors.length) throw new Error(`${shot.name}: uncaught UI errors: ${pageErrors.join('; ')}`);
+    const out = path.join(outDir, shot.name.replace('.png', `${suffix}.png`));
 		await page.screenshot({ path: out, type: 'png', fullPage: false });
 		console.log(existsSync(out) ? `ok (${removed} redacted)` : 'MISSING');
 	}
 
 	await browser.close();
+  if (demoServer) await new Promise(resolve => demoServer.server.close(resolve));
 	console.log(`\nDone. ${shots.length} screenshots in ${outDir}`);
 }
 
