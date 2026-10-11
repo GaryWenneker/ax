@@ -92,8 +92,12 @@ pub async fn run(
     advertise: Option<String>,
     sync_interval_seconds: Option<u64>,
     push_port: u16,
+    auto_apply_memories: bool,
 ) -> Result<(), String> {
     let config = server_cli::load(path)?;
+    if auto_apply_memories && config.role != NodeRole::Replica {
+        return Err("--auto-apply-memories is only valid for replicas".into());
+    }
     if let Some(seconds) = sync_interval_seconds {
         if config.role != NodeRole::Replica {
             return Err("--sync-interval-seconds is only valid for replicas".into());
@@ -132,7 +136,7 @@ pub async fn run(
         let config_path = path.to_path_buf();
         tokio::spawn(async move {
             loop {
-                if let Err(error) = crate::server_replica::sync(&config_path).await {
+                if let Err(error) = crate::server_replica::sync_with_apply(&config_path, auto_apply_memories).await {
                     tracing::warn!("periodic replica synchronization failed: {}", error);
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
@@ -149,7 +153,7 @@ pub async fn run(
         Some(tokio::spawn(async move {
             let result = match node.role {
                 NodeRole::Primary => server_push::primary(node, push_port).await,
-                NodeRole::Replica => server_push::replica(node, config_path, push_port).await,
+                NodeRole::Replica => server_push::replica(node, config_path, push_port, auto_apply_memories).await,
             };
             if let Err(error) = result {
                 tracing::warn!("UDP push unavailable; HTTPS polling remains active: {}", error);
