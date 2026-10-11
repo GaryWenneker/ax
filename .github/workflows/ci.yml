@@ -2,8 +2,6 @@ name: CI
 
 on:
   workflow_dispatch:
-  push:
-    branches: [feat/ice-deterministic-preflight]
 
 permissions:
   contents: read
@@ -32,7 +30,7 @@ jobs:
       - name: Classify changed paths
         id: paths
         env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || '715596b3f141bfca80a2815c55ce8ea5d3d44966' }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python scripts/ci-changes.py
 
