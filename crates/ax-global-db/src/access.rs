@@ -686,6 +686,29 @@ pub async fn authenticate_node_token(
     Ok(Some(NodePrincipal { node_id }))
 }
 
+pub async fn authenticate_node_token_for_project(
+    pool: &SqlitePool,
+    token: &str,
+    project_id: &str,
+) -> Result<Option<NodePrincipal>> {
+    let Some(principal) = authenticate_node_token(pool, token).await? else {
+        return Ok(None);
+    };
+    let access: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM node_project_access
+         WHERE node_id = ? AND project_id = ? AND revoked_at IS NULL
+         LIMIT 1",
+    )
+    .bind(&principal.node_id)
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await?;
+    if access.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(principal))
+}
+
 pub async fn revoke_node(pool: &SqlitePool, node_id: &str) -> Result<bool> {
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
