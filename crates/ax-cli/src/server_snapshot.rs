@@ -41,7 +41,7 @@ fn valid_id(id: &str) -> bool {
 }
 
 fn valid_record_key(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 512 && !id.contains(['\0', '\n', '\r'])
+    !id.is_empty() && id.len() <= 512 && id.bytes().all(|b| b != 0 && b != b'\n' && b != b'\r')
 }
 
 fn revision(snapshot: &Snapshot) -> Result<String, String> {
