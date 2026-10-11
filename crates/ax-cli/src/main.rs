@@ -10,6 +10,7 @@ mod server_cli;
 mod server_snapshot;
 mod server_http;
 mod server_replica;
+mod server_apply;
 mod server_discovery;
 mod server_push;
 mod ui;
@@ -633,6 +634,8 @@ enum ServerAction {
         sync_interval_seconds: Option<u64>,
         #[arg(long, default_value_t = 9072, help = "Authenticated UDP registration/change notification port; 0 disables push")]
         push_port: u16,
+        #[arg(long, help = "Project staged replica memories under conflict-safe local IDs")]
+        auto_apply_memories: bool,
     },
     /// List nearby cluster nodes without automatically trusting them
     Discover {
@@ -645,6 +648,11 @@ enum ServerAction {
     },
     /// Pull and stage a verified snapshot from the primary
     Sync {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
+    /// Pull and project replica memories once; policies remain staged for review
+    Apply {
         #[arg(long)]
         config: std::path::PathBuf,
     },
@@ -2152,7 +2160,7 @@ async fn async_main() {
             } => server_cli::init(&config, role, cluster, project, path, primary),
             ServerAction::Status { config } => server_cli::status(&config),
             ServerAction::Run {
-                config, bind, allow_private_http, discovery_port, advertise, sync_interval_seconds, push_port
+                config, bind, allow_private_http, discovery_port, advertise, sync_interval_seconds, push_port, auto_apply_memories
             } => server_http::run(
                 &config,
                 bind,
@@ -2161,6 +2169,7 @@ async fn async_main() {
                 advertise,
                 sync_interval_seconds,
                 push_port,
+                auto_apply_memories,
             ).await,
             ServerAction::Discover { config, port, seconds } =>
                 match server_cli::load(&config) {
@@ -2168,6 +2177,7 @@ async fn async_main() {
                     Err(error) => Err(error),
                 },
             ServerAction::Sync { config } => server_replica::sync(&config).await,
+            ServerAction::Apply { config } => server_replica::sync_with_apply(&config, true).await,
         },
         Some(Commands::Global { action }) => match action {
             GlobalAction::Init => commands::global::run_init().await,
