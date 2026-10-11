@@ -624,6 +624,19 @@ enum ServerAction {
         bind: std::net::SocketAddr,
         #[arg(long)]
         allow_private_http: bool,
+        #[arg(long, help = "Opt in to UDP LAN announcement on this port")]
+        discovery_port: Option<u16>,
+        #[arg(long, help = "Publicly advertised HTTP(S) origin, without credentials")]
+        advertise: Option<String>,
+    },
+    /// List nearby cluster nodes without automatically trusting them
+    Discover {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long, default_value_t = 9071)]
+        port: u16,
+        #[arg(long, default_value_t = 5)]
+        seconds: u64,
     },
     /// Pull and stage a verified snapshot from the primary
     Sync {
@@ -2133,8 +2146,13 @@ async fn async_main() {
                 primary,
             } => server_cli::init(&config, role, cluster, project, path, primary),
             ServerAction::Status { config } => server_cli::status(&config),
-            ServerAction::Run { config, bind, allow_private_http } =>
-                server_http::run(&config, bind, allow_private_http).await,
+            ServerAction::Run {
+                config, bind, allow_private_http, discovery_port, advertise
+            } => server_http::run(&config, bind, allow_private_http, discovery_port, advertise).await,
+            ServerAction::Discover { config, port, seconds } => {
+                let config = server_cli::load(&config)?;
+                server_discovery::discover(&config, port, seconds).await
+            },
             ServerAction::Sync { config } => server_replica::sync(&config).await,
         },
         Some(Commands::Global { action }) => match action {
