@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import { useTheme } from '../hooks/useTheme';
 import MDEditor from '@uiw/react-md-editor';
 
 interface Props {
@@ -19,6 +20,7 @@ export default function MarkdownPreview({
   onImageClick,
   onClick,
 }: Props) {
+  const colorMode = useTheme().colorScheme ?? 'dark';
   const handleClick = onImageClick || onClick
     ? (e: MouseEvent<HTMLDivElement>) => {
         onClick?.(e);
@@ -30,7 +32,7 @@ export default function MarkdownPreview({
   return (
     <div
       className={`md-preview-wrap${onImageClick ? ' md-preview-wrap--zoomable' : ''}${className ? ` ${className}` : ''}`}
-      data-color-mode="dark"
+      data-color-mode={colorMode}
       onClick={handleClick}
     >
       <MDEditor.Markdown

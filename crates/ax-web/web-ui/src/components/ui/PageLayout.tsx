@@ -278,6 +278,7 @@ export function ItemRow({
   metaTitle,
   badges,
   aside,
+  portalColumns,
   selected,
   static: isStatic,
   variant,
@@ -297,6 +298,8 @@ export function ItemRow({
   metaTitle?: string;
   badges?: ReactNode;
   aside?: ReactNode;
+  /** Portal table cells between Name and existing row actions. */
+  portalColumns?: ReactNode[];
   selected?: boolean;
   static?: boolean;
   variant?: 'graph';
@@ -312,7 +315,7 @@ export function ItemRow({
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
       {...rowProps}
-      className={`page-item${graph ? ' page-item--graph' : ''}${selected ? ' page-item--selected' : ''}${disabled ? ' page-item--disabled' : ''}${interactive ? '' : ' page-item--static'}${className ? ` ${className}` : ''}`}
+      className={`page-item${graph ? ' page-item--graph' : ''}${selected ? ' page-item--selected' : ''}${disabled ? ' page-item--disabled' : ''}${interactive ? '' : ' page-item--static'}${portalColumns ? ' portal-data-row' : ''}${className ? ` ${className}` : ''}`}
       style={style}
       onClick={onClick}
       onContextMenu={onContextMenu}
@@ -324,6 +327,17 @@ export function ItemRow({
           : undefined
       }
     >
+      {portalColumns ? (
+        <>
+          <div className="portal-data-name">
+            <div className="page-item-title" title={title}>{title}</div>
+            {subtitle && <div className="page-item-sub">{subtitle}</div>}
+            {badges && <div className="page-item-badges portal-data-tags">{badges}</div>}
+          </div>
+          {portalColumns.map((cell, index) => <div className="portal-data-cell" key={index}>{cell}</div>)}
+          <div className="portal-data-actions">{aside}</div>
+        </>
+      ) : (<>
       {graph ? <span className="page-item-node" aria-hidden="true" /> : icon && <span className="page-item-icon">{icon}</span>}
       <div className="page-item-body">
         {graph ? (
@@ -346,6 +360,7 @@ export function ItemRow({
       )}
       {graph && aside}
       {!graph && badges && <div className="page-item-badges">{badges}</div>}
+      </>)}
     </div>
   );
 }

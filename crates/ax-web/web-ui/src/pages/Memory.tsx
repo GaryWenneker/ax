@@ -49,6 +49,7 @@ import {
 import { memoryRowAge, memoryRowCounts, memoryRowHeadline } from '../memoryHeadline';
 import { wikiLinksToMarkdown, type ItemLinks } from '../wikilinks';
 import { MEMORY_CATEGORIES, memoryCategory } from '../memoryCategory';
+import { useTheme } from '../hooks/useTheme';
 import { usePageContext } from '../context/UiContext';
 import { formatInstantInZone, browserTimeZone } from '../lib/timeZone';
 
@@ -76,6 +77,7 @@ function rowTagLabels(source: string | undefined, tags: string[]): { shown: stri
 }
 
 export default function MemoryPage() {
+  const portal = useTheme().layout === 'portal';
   const [memories, setMemories] = useState<MemoryRow[]>([]);
   const [matches, setMatches] = useState<MemoryMatch[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -491,7 +493,8 @@ export default function MemoryPage() {
                   </span>
                 ))}
               </div>
-              <ItemList className="memory-vault-list">
+              <ItemList className={`memory-vault-list${portal ? ' portal-data-list portal-memory-list' : ''}`}>
+                    {portal && <div className="portal-data-header"><span>Title</span><span>Kind</span><span>Source</span><span>Updated</span><span>Enabled</span></div>}
                     {shown.map((m, i) => {
                       const tags = rowTagLabels(m.source, m.tags);
                       const age = memoryRowAge(m.updated_at, Date.now());
@@ -516,6 +519,7 @@ export default function MemoryPage() {
                         ]
                           .filter(Boolean)
                           .join(' · ')}
+                        portalColumns={portal ? [m.kind.replace(/_/g, ' '), m.source || '—', age] : undefined}
                         meta={age}
                         metaTitle={fmtMemoryTime(m.updated_at)}
                         selected={selectedId === m.id}

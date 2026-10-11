@@ -1,4 +1,5 @@
 import type { CSSProperties, MouseEvent } from 'react';
+import { useTheme } from '../../hooks/useTheme';
 import Codicon from '../Codicon';
 import { OriginDbBadge, TagList } from '../PolicyMetaView';
 import { ItemGroupHeader, ItemList, ItemRow, LevelBadge, ScopeBadge } from './PageLayout';
@@ -60,6 +61,7 @@ function isControl(e: MouseEvent) {
 }
 
 export function PolicyCalmList(props: Props) {
+  const portal = useTheme().layout === 'portal';
   return (
     <div className="calm-groups">
       {props.groups.map((g) => {
@@ -68,7 +70,8 @@ export function PolicyCalmList(props: Props) {
           <section key={g.id} className="calm-group">
             <ItemGroupHeader label={g.label} count={g.items.length} open={open} onToggle={() => props.onToggleGroup(g.id)} />
             {open && (
-              <ItemList className="calm-list">
+              <ItemList className={`calm-list${portal ? ' portal-data-list portal-policy-list' : ''}`}>
+                {portal && <div className="portal-data-header"><span>Name</span><span>Level</span><span>Scope</span><span>Priority</span><span>Enabled / actions</span></div>}
                 {g.items.map((item) => (
                   <PolicyCalmRow key={item.key} item={item} {...props} />
                 ))}
@@ -82,6 +85,7 @@ export function PolicyCalmList(props: Props) {
 }
 
 function PolicyCalmRow({ item, ...p }: Props & { item: PolicyCalmItem }) {
+  const portal = useTheme().layout === 'portal';
   const selected = p.selectedIds.has(item.id);
   const shownTags = item.tags.slice(0, SHOWN_TAGS);
   const hiddenTags = item.tags.slice(SHOWN_TAGS);
@@ -92,6 +96,11 @@ function PolicyCalmRow({ item, ...p }: Props & { item: PolicyCalmItem }) {
       title={item.id}
       subtitle={item.subtitle}
       meta={item.meta}
+      portalColumns={portal ? [
+        item.level ? <LevelBadge level={item.level} onClick={p.filters.onLevel ? () => p.filters.onLevel?.(item.level ?? '') : undefined} active={p.filters.level === item.level} /> : '—',
+        <ScopeBadge scope={item.scope} onClick={() => p.filters.onScope(item.scope)} active={p.filters.scope === normalizePolicyScope(item.scope)} />,
+        item.meta,
+      ] : undefined}
       metaTitle="Priority"
       selected={selected}
       disabled={!item.enabled}

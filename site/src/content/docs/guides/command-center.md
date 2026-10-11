@@ -325,3 +325,12 @@ See also [Share Command Center](/guides/share/) for LAN/PWA collaboration.
 - `AZDO_PAT` (or custom `token_env`) with Code (read & write) scope
 
 Draft PRs call the AzDO REST API; the local git remote can be GitHub or AzDO — the remote provider only affects where PRs are created.
+
+
+### Azure Portal layout
+
+Open **Settings → Appearance** and choose **Azure Portal Light** or **Azure Portal Dark**. The choice is saved in this browser and applied immediately. Other presets remain available.
+
+The Azure presets use a full-width search header, compact main navigation, flat panels and blue accents. Enter a page name such as `Rules` in the header to open it, or enter a symbol name to search indexed code.
+
+Settings now has a filterable second menu beside the main navigation. **General** contains Appearance and Command Center; **Connections** contains IDEs & agents, Remote MCP and Plugins; **Data** contains policy sync, sharing, vault connection, knowledge export and embeddings. Select a section to open its panel. Draft changes remain when switching sections. On phones the settings menu appears above the panel.
