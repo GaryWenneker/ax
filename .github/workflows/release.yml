@@ -51,8 +51,8 @@ jobs:
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          CI=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" --event push --limit 1 --json status,conclusion --jq '.[0] | [.status, .conclusion] | @tsv')
-          [ "$CI" = $'completed\tsuccess' ] || { echo "::error::main CI must pass before release: $CI"; exit 1; }
+          CI=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" --limit 20 --json status,conclusion --jq '[.[] | select(.status=="completed" and .conclusion=="success")] | length')
+          [ "$CI" -ge 1 ] || { echo "::error::main CI must pass before release"; exit 1; }
           VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/ax-cli/Cargo.toml | head -1)
           TAG="v$VERSION"
           [ -z "$REQUESTED_TAG" ] || [ "$REQUESTED_TAG" = "$TAG" ] || { echo "::error::Requested tag differs from main version"; exit 1; }

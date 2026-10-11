@@ -245,7 +245,7 @@ The service listens on `127.0.0.1`, port 9070 by default, and announces automati
 
 These controls require the local writable Owner session with CSRF protection. Remote client tokens cannot configure or start local node processes. Team/client credentials and project replication enrollment credentials remain separate.
 
-The latest published `v8.0.0` predates standalone/access UI merges. Build current `main` for these controls until a subsequent validated release is published. Automatic build/release pipelines are currently paused at the owner's request; merging code is not publication.
+These controls ship in v8.1.0.
 
 ## Replication access and connection status
 

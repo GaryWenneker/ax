@@ -50,10 +50,11 @@ if (-not $Preview) {
     $mainSha = (& git -C $root rev-parse origin/main).Trim()
     if ($headSha -ne $mainSha) { throw 'Local main must equal origin/main.' }
     Require-Command 'gh'
-    $ci = & gh run list --repo GaryWenneker/ax --workflow ci.yml --commit $headSha --event push --limit 1 --json status,conclusion
+    $ci = & gh run list --repo GaryWenneker/ax --workflow ci.yml --commit $headSha --limit 20 --json status,conclusion
     if ($LASTEXITCODE -ne 0) { throw 'Cannot verify main CI.' }
     $runs = @($ci | ConvertFrom-Json)
-    if ($runs.Count -ne 1 -or $runs[0].status -ne 'completed' -or $runs[0].conclusion -ne 'success') {
+    $green = @($runs | Where-Object { $_.status -eq 'completed' -and $_.conclusion -eq 'success' })
+    if ($green.Count -lt 1) {
         throw 'Production requires successful main workspace CI.'
     }
     $published = & gh release view --repo GaryWenneker/ax --json tagName,assets

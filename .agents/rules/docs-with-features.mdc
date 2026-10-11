@@ -2,10 +2,16 @@
 id: docs-with-features
 level: CRITICAL
 alwaysApply: true
-triggers: ["new feature", "new command", "MCP tool", "ax web", "CLI", "release", "document", "docs", "website", "homepage"]
-tags: ["docs", "site", "release"]
+globs: []
+triggers: ["new feature","new command","MCP tool","ax web","CLI","release","document","docs","website","homepage"]
+tags: ["docs","site","release"]
 priority: 95
+enabled: true
+status: approved
+scope: project
+group: documentation
 ---
+
 # Ship docs and site with every new feature
 
 > **ABSOLUTE**: User-facing functionality is not done until it is documented on [getax.wenneker.io](https://getax.wenneker.io) and in the repo README. Agents must update docs in the **same change** as the feature — not as a follow-up.
