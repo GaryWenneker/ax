@@ -11,6 +11,7 @@ mod server_snapshot;
 mod server_http;
 mod server_replica;
 mod server_discovery;
+mod server_push;
 mod ui;
 mod version_check;
 
@@ -630,6 +631,8 @@ enum ServerAction {
         advertise: Option<String>,
         #[arg(long, help = "On a replica, continuously pull updates every N seconds (5-86400)")]
         sync_interval_seconds: Option<u64>,
+        #[arg(long, default_value_t = 9072, help = "Authenticated UDP registration/change notification port; 0 disables push")]
+        push_port: u16,
     },
     /// List nearby cluster nodes without automatically trusting them
     Discover {
@@ -2149,7 +2152,7 @@ async fn async_main() {
             } => server_cli::init(&config, role, cluster, project, path, primary),
             ServerAction::Status { config } => server_cli::status(&config),
             ServerAction::Run {
-                config, bind, allow_private_http, discovery_port, advertise, sync_interval_seconds
+                config, bind, allow_private_http, discovery_port, advertise, sync_interval_seconds, push_port
             } => server_http::run(
                 &config,
                 bind,
@@ -2157,6 +2160,7 @@ async fn async_main() {
                 discovery_port,
                 advertise,
                 sync_interval_seconds,
+                push_port,
             ).await,
             ServerAction::Discover { config, port, seconds } =>
                 match server_cli::load(&config) {
