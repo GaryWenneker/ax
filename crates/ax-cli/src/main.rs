@@ -615,6 +615,20 @@ enum ServerAction {
         #[arg(long)]
         primary: Option<String>,
     },
+    /// Start the authenticated standalone server
+    Run {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long, default_value = "127.0.0.1:9070")]
+        bind: std::net::SocketAddr,
+        #[arg(long)]
+        allow_private_http: bool,
+    },
+    /// Pull and stage a verified snapshot from the primary
+    Sync {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
     /// Inspect registered projects without printing secret token values
     Status {
         #[arg(long)]
