@@ -192,6 +192,21 @@ CREATE TABLE IF NOT EXISTS replication_nodes (
 
 CREATE INDEX IF NOT EXISTS idx_replication_nodes_trust ON replication_nodes(trust_state);
 
+-- Replication credentials are deliberately separate from client credentials.
+CREATE TABLE IF NOT EXISTS node_credentials (
+    id TEXT PRIMARY KEY,
+    node_id TEXT NOT NULL,
+    token_prefix TEXT NOT NULL UNIQUE,
+    verifier TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP,
+    expires_at TIMESTAMP,
+    revoked_at TIMESTAMP,
+    FOREIGN KEY (node_id) REFERENCES replication_nodes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_credentials_node ON node_credentials(node_id);
+
 CREATE TABLE IF NOT EXISTS security_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor_member_id TEXT,
