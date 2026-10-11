@@ -1,0 +1,17 @@
+.git
+.github
+target
+**/target
+node_modules
+**/node_modules
+site/dist
+site/.astro
+**/.DS_Store
+**/.ax
+**/ax.db
+**/ax.db-*
+.env
+.env.*
+!**/.env.example
+*.pem
+*.key
