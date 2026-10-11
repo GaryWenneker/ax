@@ -90,8 +90,7 @@ pub fn status(config_path: &Path) -> Result<(), String> {
                 "id": project.id,
                 "path": project.path,
                 "token_env": project.token_env,
-                "last_sync": null,
-                "sync_status": "not_yet_implemented",
+                "replication": crate::server_replica::status(&config, project),
             })
         })
         .collect();
