@@ -6,7 +6,7 @@ import LogoMark from '../../components/LogoMark.astro';
 ---
 
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -124,7 +124,7 @@ import LogoMark from '../../components/LogoMark.astro';
       // Chart.js is loaded from CDN — declare the global to satisfy TS.
       declare const Chart: typeof import('chart.js').Chart;
 
-      const PALETTE = ['#0969da', '#1a7f37', '#8250df', '#9a6700', '#cf222e', '#bc4c00', '#0969da88', '#1a7f3788'];
+      const PALETTE = ['#88a6af', '#93a995', '#9b9ba8', '#c3a487', '#d59790', '#b79a7b', '#88a6af88', '#93a99588'];
       const FETCH_TIMEOUT_MS = 22_000;
       const chartInstances: Array<InstanceType<typeof Chart>> = [];
 
@@ -190,10 +190,10 @@ import LogoMark from '../../components/LogoMark.astro';
           options: {
             responsive: true,
             maintainAspectRatio: true,
-            plugins: { legend: { labels: { color: '#59636e' } } },
+            plugins: { legend: { labels: { color: '#a8b3b7' } } },
             scales: {
-              x: { ticks: { color: '#818b98', maxTicksLimit: 8 }, grid: { color: '#d1d9e0' } },
-              y: { ticks: { color: '#818b98' }, grid: { color: '#d1d9e0' }, beginAtZero: true },
+              x: { ticks: { color: '#8e9da4', maxTicksLimit: 8 }, grid: { color: '#303b41' } },
+              y: { ticks: { color: '#8e9da4' }, grid: { color: '#303b41' }, beginAtZero: true },
             },
           },
         }),
@@ -210,7 +210,7 @@ import LogoMark from '../../components/LogoMark.astro';
           type: 'bar',
           data: {
             labels: items.map((i) => i.name),
-            datasets: [{ data: items.map((i) => i.count), backgroundColor: '#0969da22', borderColor: '#0969da', borderWidth: 1 }],
+            datasets: [{ data: items.map((i) => i.count), backgroundColor: '#88a6af22', borderColor: '#88a6af', borderWidth: 1 }],
           },
           options: {
             indexAxis: 'y' as const,
@@ -218,8 +218,8 @@ import LogoMark from '../../components/LogoMark.astro';
             maintainAspectRatio: true,
             plugins: { legend: { display: false } },
             scales: {
-              x: { ticks: { color: '#818b98' }, grid: { color: '#d1d9e0' }, beginAtZero: true },
-              y: { ticks: { color: '#59636e', font: { family: "'IBM Plex Mono', monospace", size: 11 } }, grid: { display: false } },
+              x: { ticks: { color: '#8e9da4' }, grid: { color: '#303b41' }, beginAtZero: true },
+              y: { ticks: { color: '#a8b3b7', font: { family: "'IBM Plex Mono', monospace", size: 11 } }, grid: { display: false } },
             },
           },
         }),
@@ -236,13 +236,13 @@ import LogoMark from '../../components/LogoMark.astro';
           type: 'doughnut',
           data: {
             labels: items.map((i) => i.name),
-            datasets: [{ data: items.map((i) => i.count), backgroundColor: PALETTE, borderColor: '#ffffff', borderWidth: 2 }],
+            datasets: [{ data: items.map((i) => i.count), backgroundColor: PALETTE, borderColor: '#101417', borderWidth: 2 }],
           },
           options: {
             responsive: true,
             maintainAspectRatio: true,
             plugins: {
-              legend: { position: 'right', labels: { color: '#59636e', padding: 12, font: { size: 12 } } },
+              legend: { position: 'right', labels: { color: '#a8b3b7', padding: 12, font: { size: 12 } } },
             },
           },
         }),
@@ -298,8 +298,8 @@ import LogoMark from '../../components/LogoMark.astro';
           try {
             const tl = data.timeline;
             buildLineChart('chart-timeline', tl.installs.map((d) => d.date), [
-              { label: 'Installs', data: tl.installs.map((d) => d.count), color: '#f3f1ea' },
-              { label: 'Indexes', data: tl.indexes.map((d) => d.count), color: '#87847a' },
+              { label: 'Installs', data: tl.installs.map((d) => d.count), color: '#edf0ee' },
+              { label: 'Indexes', data: tl.indexes.map((d) => d.count), color: '#a8b3b7' },
             ]);
 
             const t = data.tools;
@@ -366,8 +366,8 @@ import LogoMark from '../../components/LogoMark.astro';
         align-items: center;
         justify-content: space-between;
         padding: 0.85rem 1.5rem;
-        background: #24292f;
-        border-bottom: 1px solid #30363d;
+        background: #101417;
+        border-bottom: 1px solid #303b41;
         flex-wrap: wrap;
         gap: 0.75rem;
       }
@@ -383,13 +383,13 @@ import LogoMark from '../../components/LogoMark.astro';
         line-height: 0;
       }
       .top-sep {
-        color: #8b949e;
+        color: #a8b3b7;
         font-size: 1.1rem;
       }
       .top-label {
         font-size: 0.9rem;
         font-weight: 600;
-        color: #e6edf3;
+        color: #edf0ee;
       }
       .top-right {
         display: flex;
@@ -398,9 +398,9 @@ import LogoMark from '../../components/LogoMark.astro';
       }
 
       .days-select {
-        background: #30363d;
-        border: 1px solid #484f58;
-        color: #e6edf3;
+        background: #303b41;
+        border: 1px solid #4e6069;
+        color: #edf0ee;
         font-family: var(--sl-font);
         font-size: 0.875rem;
         padding: 0.4rem 0.65rem;
@@ -410,15 +410,15 @@ import LogoMark from '../../components/LogoMark.astro';
 
       .btn-ghost {
         background: transparent;
-        border: 1px solid #484f58;
-        color: #8b949e;
+        border: 1px solid #4e6069;
+        color: #a8b3b7;
         font-family: var(--sl-font);
         font-size: 0.875rem;
         padding: 0.4rem 0.85rem;
         cursor: pointer;
         min-height: 44px;
       }
-      .btn-ghost:hover { color: #e6edf3; border-color: #8b949e; }
+      .btn-ghost:hover { color: #edf0ee; border-color: #a8b3b7; }
 
       /* ---- Main ---- */
       .main { flex: 1; padding: 1.5rem; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; }

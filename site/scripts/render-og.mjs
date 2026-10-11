@@ -128,7 +128,8 @@ function systemChrome() {
 async function launchBrowser(puppeteer) {
 	const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--allow-file-access-from-files'];
 	const system = systemChrome();
-	const bundled = { headless: true, args };
+	// Headless shell avoids desktop singleton sockets in restricted Linux runners.
+	const bundled = { headless: process.platform === 'linux' ? 'shell' : true, pipe: true, args };
 	const installed = system && existsSync(system) ? { headless: true, executablePath: system, args } : null;
 	// On a Mac, Chrome for Testing in the Puppeteer cache is often incomplete.
 	// The installed browser is the one that can take the screenshots.

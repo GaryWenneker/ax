@@ -228,11 +228,11 @@ To watch what each tool receives, how preflight enrichment builds the inject blo
 2. Reconnect / restart the ax MCP server in Cursor.
 3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI).
 
-![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging.png)
+![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging-dark.png)
 
 4. Open the status-bar **Q** (Quality) chip for the metrics slide-out (correlation, enrichment, findings, **Copy fixpack**). CLI: `ax mcp audit`. Install `ax savings hook install` for `session=` tags.
 
-![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality.png)
+![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality-dark.png)
 
 5. Optionally also use **View → Output → ax / MCP Logs**, or open the log file directly.
 

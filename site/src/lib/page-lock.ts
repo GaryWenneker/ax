@@ -6,7 +6,7 @@ export function pageLockScript(): string {
     }, true);
     document.addEventListener("selectstart", function(event) {
       var target = event.target;
-      if (target && target.closest && target.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (target && target.closest && target.closest("input, textarea, select, [contenteditable='true'], pre, code")) return;
       event.preventDefault();
     }, true);
   })();`;

@@ -619,7 +619,7 @@ Selecting a row opens a master-detail blade (slides in once). Switching to anoth
 
 In the rule/skill editor, drag the handle between **Metadata** and the markdown panel to resize the meta column (persisted in the browser). In edit mode, drag the bar between the markdown source and the live preview to resize those panes. Double-click the meta handle to reset its width.
 
-![Policy Rules — sortable table with level badges, globs, triggers, capture and match testing](/screenshots/cc-policy-rules.png)
+![Policy Rules — sortable table with level badges, globs, triggers, capture and match testing](/screenshots/cc-policy-rules-dark.png)
 
 ![Policy Skills — task-specific instructions agents load on demand via ax_skill](/screenshots/cc-policy-skills.png)
 

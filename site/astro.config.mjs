@@ -114,12 +114,12 @@ export default defineConfig({
 				'@fontsource/ibm-plex-mono/400.css',
 				'@fontsource/ibm-plex-mono/500.css',
 				'@fontsource/ibm-plex-mono/600.css',
-				'@fontsource/bebas-neue',
-				'./src/styles/theme.css',
+								'./src/styles/theme.css',
 			],
 				components: {
 					Head: './src/components/Head.astro',
 					Header: './src/components/Header.astro',
+					ThemeSelect: './src/components/ThemeSelect.astro',
 					SiteTitle: './src/components/SiteTitle.astro',
 					SocialIcons: './src/components/SocialIcons.astro',
 				},
@@ -130,7 +130,7 @@ export default defineConfig({
 					borderColor: 'transparent',
 					borderWidth: '0px',
 					codeFontFamily: "'IBM Plex Mono', ui-monospace, monospace",
-					codeBackground: '#1a1814',
+					codeBackground: '#171d21',
 				},
 			},
 			sidebar: [

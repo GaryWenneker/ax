@@ -5,7 +5,7 @@ description: Run Ax as a long-lived primary or replica, with authenticated UDP c
 
 Ax can run independently of an IDE. A **primary** maintains an enrolled Ax project; one or more **replicas** keep an isolated, read-only mirror of its knowledge. The optional LAN notification channel makes synchronization responsive, while HTTPS polling catches missed notifications.
 
-> **Availability:** Standalone server mode is under development. Build the CLI from the `feature/standalone-ax` branch until the feature is released. A staged mirror is not automatically activated in the replica's local Ax database.
+> **Availability:** Standalone server mode is available in the current `main` source. [Build the CLI from main](/getting-started/installation/#build-from-main) until downloadable releases include it. A staged mirror is not automatically activated in the replica's local Ax database.
 
 ## Choose your setup
 
@@ -136,7 +136,7 @@ Primary Ax project     Replica Ax project
 
 The replicas keep their own Command Center. With opt-in memory application, imported notes are available in the existing Memory Vault, with independent namespaced IDs. The screenshot below shows the **actual Ax Memory Vault interface**, not simulated replica network activity.
 
-![Ax Command Center Memory Vault interface](/screenshots/cc-memory-vault.png)
+![Ax Command Center Memory Vault interface](/screenshots/cc-memory-vault-dark.png)
 
 Policy changes received by a replica are staged separately and are **not active by default**. Use the existing Policy Review workflow when you decide to import and approve them. The image below is an actual capture of Ax's review UI, not a claim that a live LAN synchronization was captured.
 
@@ -213,9 +213,9 @@ Client credentials can call explicitly scoped HTTP APIs using `Authorization: Be
 
 For [Remote MCP](/guides/remote-mcp/), add the member's stable ID to the desired project's `subjects` in the remote config and to `write_subjects` when writes are allowed. Both the project's explicit grant and the client's effective tool scope are required. Revoked tokens and role/scope changes are checked on every request, including existing MCP sessions. OAuth and configured API-key access remain supported.
 
-![Team roles and member status in Azure Portal Light](/screenshots/cc-access-team.png)
+![Team roles and member status in Azure Portal Light](/screenshots/cc-access-team-dark.png)
 
-![Clients, effective scopes and credential metadata](/screenshots/cc-access-clients.png)
+![Clients, effective scopes and credential metadata](/screenshots/cc-access-clients-dark.png)
 
 ## Replication access and connection status
 
@@ -225,7 +225,7 @@ A Replica must explicitly configure its Primary and project credential. Successf
 
 Disabling or revoking access does not delete a team member's existing data. These controls govern authorization; export/import and shared/non-shared or active/inactive data selection retain their existing rules.
 
-![Primary/Replica management in Azure Portal Light](/screenshots/cc-access-nodes.png)
+![Primary/Replica management in Azure Portal Light](/screenshots/cc-access-nodes-dark.png)
 
 ![Primary/Replica management in Azure Portal Dark](/screenshots/cc-access-nodes-dark.png)
 
