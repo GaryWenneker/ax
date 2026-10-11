@@ -180,7 +180,7 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
     let receive_socket = socket.clone();
     let receive_registry = registry.clone();
     let receive_config = config.clone();
-    let receiver = tokio::spawn(async move {
+    let _receiver = tokio::spawn(async move {
         let mut buf = [0u8; MAX_MESSAGE_BYTES + 1];
         loop {
             let Ok((length, sender)) = receive_socket.recv_from(&mut buf).await else {
@@ -265,11 +265,6 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
         }
         tokio::time::sleep(Duration::from_secs(CHANGE_CHECK_SECS)).await;
     }
-    #[allow(unreachable_code)]
-    {
-        receiver.abort();
-        Ok(())
-    }
 }
 
 /// Replica: send signed UDP registrations from its receive socket and pull
@@ -304,7 +299,7 @@ pub async fn replica(
     );
     let heartbeat_socket = socket.clone();
     let heartbeat_config = config.clone();
-    let registration_task = tokio::spawn(async move {
+    let _registration_task = tokio::spawn(async move {
         loop {
             for project in &heartbeat_config.projects {
                 let Some(token) = token_for(&heartbeat_config, &project.id) else {
@@ -352,11 +347,6 @@ pub async fn replica(
             // should also be able to retry, so forget the failed revision.
             previous_change.clear();
         }
-    }
-    #[allow(unreachable_code)]
-    {
-        registration_task.abort();
-        Ok(())
     }
 }
 
