@@ -26,13 +26,6 @@ struct CreateClient {
     scopes: Vec<String>,
 }
 
-#[derive(Deserialize)]
-struct ApproveNode {
-    #[serde(default)]
-    projects: Vec<String>,
-    expires_at: Option<String>,
-}
-
 async fn pool() -> Result<sqlx::SqlitePool, String> {
     let path = global_db_path().map_err(|e| e.to_string())?;
     let pool = open_and_init(&path).await.map_err(|e| e.to_string())?;
@@ -160,25 +153,6 @@ async fn list_nodes() -> impl IntoResponse {
     }
 }
 
-async fn approve_node(State(hub): State<WebHub>, Path(id): Path<String>, Json(body): Json<ApproveNode>) -> impl IntoResponse {
-    if let Err(resp) = writable(&hub) { return resp; }
-    let pool = match pool().await {
-        Ok(pool) => pool,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":e}))),
-    };
-    let credential = match access::issue_node_credential(&pool, &id, body.expires_at.as_deref()).await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":e.to_string()}))),
-    };
-    for project in &body.projects {
-        if let Err(e) = access::grant_node_project(&pool, &id, project).await {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":e.to_string()})));
-        }
-    }
-    let _ = access::audit(&pool, Some("local-owner"), None, "node.approved", "node", &id, &serde_json::json!({"projects":body.projects,"credential_id":credential.credential_id})).await;
-    (StatusCode::CREATED, Json(serde_json::json!({"credential":credential})))
-}
-
 async fn revoke_node(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
     if let Err(resp) = writable(&hub) { return resp; }
     let pool = match pool().await {
@@ -202,7 +176,6 @@ pub fn router(hub: WebHub) -> Router {
         .route("/clients/{id}/token", post(issue_client_token))
         .route("/clients/{id}/revoke", post(revoke_client))
         .route("/nodes", get(list_nodes))
-        .route("/nodes/{id}/approve", post(approve_node))
         .route("/nodes/{id}/revoke", post(revoke_node))
         .with_state(hub)
 }
