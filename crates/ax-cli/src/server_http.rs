@@ -9,9 +9,9 @@ use crate::{
     server_discovery, server_push, server_snapshot,
 };
 use axum::{
-    extract::{Path as AxumPath, State},
+    extract::{DefaultBodyLimit, Path as AxumPath, State},
     http::{header, HeaderMap, StatusCode},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use sqlx::SqlitePool;
@@ -54,21 +54,23 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 async fn health(State(state): State<Arc<StateData>>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status":"ok", "node_id":state.config.node_id, "role":state.config.role}))
+    Json(
+        serde_json::json!({"status":"ok", "node_id":state.config.node_id, "role":state.config.role}),
+    )
 }
 
-async fn snapshot(
-    State(state): State<Arc<StateData>>,
-    AxumPath(id): AxumPath<String>,
-    headers: HeaderMap,
-) -> Result<Json<server_snapshot::Snapshot>, StatusCode> {
+async fn authorize_project(
+    state: &StateData,
+    id: &str,
+    headers: &HeaderMap,
+) -> Result<String, StatusCode> {
     if state.config.role != NodeRole::Primary {
         return Err(StatusCode::NOT_FOUND);
     }
     if !state.config.projects.iter().any(|project| project.id == id) {
         return Err(StatusCode::NOT_FOUND);
     }
-    let token = bearer_token(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let token = bearer_token(headers).ok_or(StatusCode::UNAUTHORIZED)?;
     let node_id = headers
         .get("x-ax-node-id")
         .and_then(|value| value.to_str().ok())
@@ -81,7 +83,7 @@ async fn snapshot(
         });
 
     let principal =
-        ax_global_db::access::authenticate_node_token_for_project(&state.access_db, token, &id)
+        ax_global_db::access::authenticate_node_token_for_project(&state.access_db, token, id)
             .await
             .map_err(|error| {
                 tracing::warn!(project = %id, "node authentication failed: {}", error);
@@ -97,7 +99,7 @@ async fn snapshot(
         let Some(node_id) = node_id else {
             return Err(StatusCode::UNAUTHORIZED);
         };
-        let Some(expected) = project_bootstrap_token(&state.config, &id) else {
+        let Some(expected) = project_bootstrap_token(&state.config, id) else {
             return Err(StatusCode::UNAUTHORIZED);
         };
         if !exact_secret(token, &expected) {
@@ -108,7 +110,7 @@ async fn snapshot(
             node_id,
             node_id,
             None,
-            &id,
+            id,
         )
         .await
         .map_err(|error| {
@@ -116,6 +118,19 @@ async fn snapshot(
             if error.to_string() == "replica is blocked" { StatusCode::FORBIDDEN } else { StatusCode::INTERNAL_SERVER_ERROR }
         })?;
     }
+    Ok(principal
+        .as_ref()
+        .map(|p| p.node_id.clone())
+        .or_else(|| node_id.map(str::to_owned))
+        .ok_or(StatusCode::UNAUTHORIZED)?)
+}
+
+async fn snapshot(
+    State(state): State<Arc<StateData>>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<Json<server_snapshot::Snapshot>, StatusCode> {
+    let node_id = authorize_project(&state, &id, &headers).await?;
     let _permit = state
         .exports
         .acquire()
@@ -127,11 +142,44 @@ async fn snapshot(
             tracing::warn!(project = %id, "snapshot export failed: {}", error);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    if let Some(node_id) = principal.as_ref().map(|p| p.node_id.as_str()).or(node_id) {
-        sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP, last_sync_at = CURRENT_TIMESTAMP WHERE id = ? AND trust_state = 'trusted'")
-            .bind(node_id).execute(&state.access_db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
+    sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP, last_sync_at = CURRENT_TIMESTAMP WHERE id = ? AND trust_state = 'trusted'")
+        .bind(node_id).execute(&state.access_db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(result))
+}
+
+async fn exchange(
+    State(state): State<Arc<StateData>>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(incoming): Json<server_snapshot::Snapshot>,
+) -> Result<Json<crate::server_exchange::ExchangeReply>, StatusCode> {
+    let node_id = authorize_project(&state, &id, &headers).await?;
+    if incoming.primary_node_id != node_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    server_snapshot::validate(&incoming, &state.config.cluster_id, &id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let _permit = state
+        .exports
+        .acquire()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let snapshot = crate::server_exchange::publish(&state.config, &id, Some(&incoming))
+        .await
+        .map_err(|error| {
+            tracing::warn!(project = %id, "node contribution was not accepted: {}", error);
+            StatusCode::CONFLICT
+        })?;
+    // Received memory is available under separate IDs; native Primary data is
+    // untouched. Policy enters pending review, never automatic activation.
+    let report = crate::server_apply::apply(&state.config, &snapshot).await.map_err(|error| {
+        tracing::warn!(project = %id, "cluster projection failed; durable contribution retained: {}", error); StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(crate::server_exchange::ExchangeReply {
+        snapshot,
+        contributed_revision: incoming.revision,
+        memory_conflicts: report.conflicts,
+    }))
 }
 
 fn private_bind(ip: IpAddr) -> bool {
@@ -258,6 +306,10 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/projects/{id}/snapshot", get(snapshot))
+        .route("/v1/projects/{id}/exchange", post(exchange))
+        .layer(DefaultBodyLimit::max(
+            server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024,
+        ))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(bind)
         .await
@@ -302,5 +354,87 @@ mod tests {
         assert!(!private_bind("8.8.8.8".parse().unwrap()));
         assert!(private_bind("192.168.1.5".parse().unwrap()));
         assert!(private_bind("fd00::1".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn exchange_binds_authenticated_node_and_project_before_retaining_data() {
+        use crate::server_config::ProjectRegistration;
+        let dir = tempfile::tempdir().unwrap();
+        let ax = ax_core::Ax::init(dir.path()).await.unwrap();
+        let config = ServerConfig {
+            schema_version: 1,
+            cluster_id: "team".into(),
+            node_id: "primary".into(),
+            role: NodeRole::Primary,
+            primary_url: None,
+            projects: vec![ProjectRegistration {
+                id: "project".into(),
+                path: dir.path().into(),
+                token_env: "AX_TEST_UNUSED_ENROLLMENT".into(),
+            }],
+        };
+        let db = ax_global_db::open_and_init(&dir.path().join("access.db"))
+            .await
+            .unwrap();
+        ax_global_db::access::register_trusted_replica(&db, "replica", "Replica", None, "project")
+            .await
+            .unwrap();
+        let credential = ax_global_db::access::issue_node_credential(&db, "replica", None)
+            .await
+            .unwrap();
+        let state = Arc::new(StateData {
+            config: config.clone(),
+            access_db: db.clone(),
+            exports: Semaphore::new(4),
+        });
+        let mut other = config.clone();
+        other.role = NodeRole::Replica;
+        other.node_id = "other".into();
+        let incoming = server_snapshot::export_native(&other, "project")
+            .await
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {}", credential.token).parse().unwrap(),
+        );
+        headers.insert("x-ax-node-id", "replica".parse().unwrap());
+        let forged = exchange(
+            State(state.clone()),
+            AxumPath("project".into()),
+            headers.clone(),
+            Json(incoming.clone()),
+        )
+        .await;
+        assert!(matches!(forged, Err(StatusCode::FORBIDDEN)));
+        let wrong_project = exchange(
+            State(state.clone()),
+            AxumPath("other-project".into()),
+            headers.clone(),
+            Json(incoming.clone()),
+        )
+        .await;
+        assert!(matches!(wrong_project, Err(StatusCode::NOT_FOUND)));
+        ax_global_db::access::revoke_node(&db, "replica")
+            .await
+            .unwrap();
+        let blocked = exchange(
+            State(state),
+            AxumPath("project".into()),
+            headers,
+            Json(incoming),
+        )
+        .await;
+        assert!(matches!(
+            blocked,
+            Err(StatusCode::UNAUTHORIZED) | Err(StatusCode::FORBIDDEN)
+        ));
+        let created: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='ax_node_contributions')",
+        )
+        .fetch_one(ax.db_pool())
+        .await
+        .unwrap();
+        assert!(!created);
     }
 }

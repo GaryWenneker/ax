@@ -6,9 +6,9 @@
 
 use crate::{server_config::ServerConfig, server_snapshot::Snapshot};
 use ax_memory::{embed, types::MemoryRow};
+use ax_policy::types::{PolicyRuleRow, PolicySkillRow, RuleFrontmatter, SkillFrontmatter};
 use sqlx::{Row, Sqlite, Transaction};
 use std::collections::HashSet;
-use ax_policy::types::{PolicyRuleRow, PolicySkillRow, RuleFrontmatter, SkillFrontmatter};
 use std::{fs, io::Write, path::Path};
 
 const MEMORY_PATH: &str = "state/memories.json";
@@ -28,7 +28,10 @@ fn stored_to_row(row: &sqlx::sqlite::SqliteRow) -> Result<MemoryRow, String> {
         files: serde_json::from_str(&read("files")?).map_err(|e| e.to_string())?,
         confidence: row.try_get("confidence").map_err(|e| e.to_string())?,
         source: read("source")?,
-        enabled: row.try_get::<i64, _>("enabled").map_err(|e| e.to_string())? != 0,
+        enabled: row
+            .try_get::<i64, _>("enabled")
+            .map_err(|e| e.to_string())?
+            != 0,
         created_at: row.try_get("created_at").map_err(|e| e.to_string())?,
         updated_at: row.try_get("updated_at").map_err(|e| e.to_string())?,
     })
@@ -55,9 +58,12 @@ async fn write_memory(
 ) -> Result<(), String> {
     let tags = serde_json::to_string(&memory.tags).map_err(|e| e.to_string())?;
     let files = serde_json::to_string(&memory.files).map_err(|e| e.to_string())?;
-    let embedding = embed::embedding_to_blob(&embed::embed_text(
-        &format!("{} {} {}", memory.title, memory.body, memory.tags.join(" ")),
-    ));
+    let embedding = embed::embedding_to_blob(&embed::embed_text(&format!(
+        "{} {} {}",
+        memory.title,
+        memory.body,
+        memory.tags.join(" ")
+    )));
     let statement = if exists {
         "UPDATE memories SET kind=?, title=?, body=?, tags=?, files=?, confidence=?, source=?, created_at=?, updated_at=?, embedding=?, enabled=? WHERE id=?"
     } else {
@@ -87,15 +93,14 @@ pub struct ApplyResult {
     pub inserted: usize,
     pub updated: usize,
     pub unchanged: usize,
-    pub removed: usize,
+    pub retained: usize,
     pub policy_queued: usize,
     pub conflicts: usize,
 }
 
 /// Project a validated mirror into the local memory vault. The exact last
 /// applied version is recorded in a ledger; locally edited records are never
-/// overwritten by subsequent automatic syncs. Withdrawal deletes only a
-/// record that still matches the last imported version.
+/// overwritten by subsequent automatic syncs. A missing remote record never deletes a local record.
 pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyResult, String> {
     crate::server_snapshot::validate(snapshot, &config.cluster_id, &snapshot.project_id)?;
     let project = config
@@ -104,10 +109,15 @@ pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyRe
         .find(|p| p.id == snapshot.project_id)
         .ok_or("project not registered")?;
     let rows: Vec<MemoryRow> = serde_json::from_str(
-        snapshot.files.get(MEMORY_PATH).ok_or("snapshot has no memories")?,
+        snapshot
+            .files
+            .get(MEMORY_PATH)
+            .ok_or("snapshot has no memories")?,
     )
     .map_err(|e| e.to_string())?;
-    let ax = ax_core::Ax::open(&project.path).await.map_err(|e| e.to_string())?;
+    let ax = ax_core::Ax::open(&project.path)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut tx = ax.db_pool().begin().await.map_err(|e| e.to_string())?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS ax_replica_memory_ledger (source TEXT NOT NULL, remote_id TEXT NOT NULL, local_id TEXT NOT NULL, last_applied TEXT NOT NULL, PRIMARY KEY(source, remote_id))",
@@ -124,6 +134,10 @@ pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyRe
     let mut remote_ids = HashSet::new();
 
     for row in &rows {
+        if row.source == format!("ax-cluster:{}", config.node_id) {
+            report.unchanged += 1;
+            continue;
+        }
         remote_ids.insert(row.id.clone());
         let local_id = format!(
             "replica:{}",
@@ -131,7 +145,11 @@ pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyRe
         );
         let mut local = row.clone();
         local.id = local_id.clone();
-        local.source = source.clone();
+        local.source = if row.source.starts_with("ax-cluster:") {
+            format!("{}; {}", source, row.source)
+        } else {
+            source.clone()
+        };
 
         let previous: Option<(String, String)> = sqlx::query_as(
             "SELECT local_id, last_applied FROM ax_replica_memory_ledger WHERE source=? AND remote_id=?",
@@ -148,8 +166,8 @@ pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyRe
                 report.conflicts += 1;
                 continue;
             }
-            let before: MemoryRow = serde_json::from_str(stored)
-                .map_err(|e| format!("invalid replica ledger: {e}"))?;
+            let before: MemoryRow =
+                serde_json::from_str(stored).map_err(|e| format!("invalid replica ledger: {e}"))?;
             if current.as_ref().is_none_or(|actual| {
                 serde_json::to_value(actual).ok() != serde_json::to_value(&before).ok()
             }) {
@@ -193,35 +211,65 @@ pub async fn apply(config: &ServerConfig, snapshot: &Snapshot) -> Result<ApplyRe
         if remote_ids.contains(&remote_id) {
             continue;
         }
-        let previous: MemoryRow = serde_json::from_str(&previous)
-            .map_err(|e| format!("invalid replica ledger: {e}"))?;
-        let current = current_memory(&mut tx, &local_id).await?;
-        if current.as_ref().is_some_and(|actual| {
-            serde_json::to_value(actual).ok() == serde_json::to_value(&previous).ok()
-        }) {
-            sqlx::query("DELETE FROM memories WHERE id=?")
-                .bind(&local_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-            report.removed += 1;
-        } else {
-            report.conflicts += 1;
-            continue;
+        // Absence is not an authenticated deletion. Preserve both unchanged
+        // imports and local edits when a peer is empty or has been reset.
+        let _ = previous;
+        if current_memory(&mut tx, &local_id).await?.is_some() {
+            report.retained += 1;
         }
-        sqlx::query("DELETE FROM ax_replica_memory_ledger WHERE source=? AND remote_id=?")
-            .bind(&source)
-            .bind(&remote_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
     }
     tx.commit().await.map_err(|e| e.to_string())?;
     // Policy files enter Ax's existing pending review queue. They are never
     // approved or silently made active by a node synchronization operation.
-    let (queued, conflicts) = stage_policies(config, snapshot, &project.path)?;
+    let files_config = config.clone();
+    let files_snapshot = snapshot.clone();
+    let files_root = project.path.clone();
+    // Finish accepted pending files even if a client disconnects; this job only
+    // creates review copies and never replaces an existing file.
+    let (queued, conflicts) = tokio::task::spawn_blocking(move || {
+        stage_policies(&files_config, &files_snapshot, &files_root)
+    })
+    .await
+    .map_err(|e| format!("policy staging task failed: {e}"))??;
     report.policy_queued = queued;
     report.conflicts += conflicts;
+    let mut ledger = ax.db_pool().begin().await.map_err(|e| e.to_string())?;
+    sqlx::query("CREATE TABLE IF NOT EXISTS ax_replica_policy_imports (kind TEXT NOT NULL,record_key TEXT NOT NULL,PRIMARY KEY(kind,record_key))").execute(&mut *ledger).await.map_err(|e| e.to_string())?;
+    for (kind, path, key) in [("rule", RULE_PATH, "id"), ("skill", SKILL_PATH, "name")] {
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&snapshot.files[path]).map_err(|e| e.to_string())?;
+        for row in rows {
+            if row
+                .get("properties")
+                .and_then(|p| p.get(crate::server_exchange::ORIGIN))
+                .and_then(|v| v.as_str())
+                == Some(config.node_id.as_str())
+            {
+                continue;
+            }
+            let remote = row
+                .get(key)
+                .and_then(|v| v.as_str())
+                .ok_or("invalid policy key")?;
+            let origin = format!(
+                "{}:{}:{}",
+                config.cluster_id, snapshot.project_id, snapshot.primary_node_id
+            );
+            let local = format!(
+                "replica-{}",
+                blake3::hash(format!("{origin}|{kind}|{remote}").as_bytes()).to_hex()
+            );
+            sqlx::query(
+                "INSERT OR IGNORE INTO ax_replica_policy_imports (kind,record_key) VALUES (?,?)",
+            )
+            .bind(kind)
+            .bind(local)
+            .execute(&mut *ledger)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    ledger.commit().await.map_err(|e| e.to_string())?;
     Ok(report)
 }
 
@@ -233,32 +281,42 @@ fn stage_policies(
     snapshot: &Snapshot,
     project_root: &Path,
 ) -> Result<(usize, usize), String> {
-    let rules: Vec<PolicyRuleRow> = serde_json::from_str(
-        snapshot.files.get(RULE_PATH).ok_or("missing rules")?,
-    ).map_err(|e| e.to_string())?;
-    let skills: Vec<PolicySkillRow> = serde_json::from_str(
-        snapshot.files.get(SKILL_PATH).ok_or("missing skills")?,
-    ).map_err(|e| e.to_string())?;
+    let rules: Vec<PolicyRuleRow> =
+        serde_json::from_str(snapshot.files.get(RULE_PATH).ok_or("missing rules")?)
+            .map_err(|e| e.to_string())?;
+    let skills: Vec<PolicySkillRow> =
+        serde_json::from_str(snapshot.files.get(SKILL_PATH).ok_or("missing skills")?)
+            .map_err(|e| e.to_string())?;
     let origin = format!(
-        "{}:{}:{}", config.cluster_id, snapshot.project_id, snapshot.primary_node_id
+        "{}:{}:{}",
+        config.cluster_id, snapshot.project_id, snapshot.primary_node_id
     );
     let ax_dir = project_root.join(".ax");
     let ledger_dir = ax_dir.join("server/policy-review");
     fs::create_dir_all(&ledger_dir).map_err(|e| e.to_string())?;
-    if fs::symlink_metadata(&ledger_dir).map_err(|e| e.to_string())?.file_type().is_symlink() {
+    if fs::symlink_metadata(&ledger_dir)
+        .map_err(|e| e.to_string())?
+        .file_type()
+        .is_symlink()
+    {
         return Err("unsafe replica policy ledger directory".into());
     }
-    let ledger_path = ledger_dir.join(format!(
-        "{}.json", blake3::hash(origin.as_bytes()).to_hex()
-    ));
-    let mut ledger: std::collections::BTreeMap<String, String> =
-        fs::read_to_string(&ledger_path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default();
+    let ledger_path = ledger_dir.join(format!("{}.json", blake3::hash(origin.as_bytes()).to_hex()));
+    let mut ledger: std::collections::BTreeMap<String, String> = fs::read_to_string(&ledger_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
     let mut queued = 0;
     let mut conflicts = 0;
     for rule in rules {
+        if rule
+            .properties
+            .get(crate::server_exchange::ORIGIN)
+            .and_then(|v| v.as_str())
+            == Some(config.node_id.as_str())
+        {
+            continue;
+        }
         let item_key = format!("rule:{}", rule.id);
         let id = format!(
             "replica-{}",
@@ -297,6 +355,14 @@ fn stage_policies(
         }
     }
     for skill in skills {
+        if skill
+            .properties
+            .get(crate::server_exchange::ORIGIN)
+            .and_then(|v| v.as_str())
+            == Some(config.node_id.as_str())
+        {
+            continue;
+        }
         let item_key = format!("skill:{}", skill.name);
         let name = format!(
             "replica-{}",
@@ -325,7 +391,9 @@ fn stage_policies(
         if ledger.get(&item_key) == Some(&digest) {
             continue;
         }
-        let output = ax_policy::paths::pending_skills_dir(&ax_dir).join(name).join("SKILL.md");
+        let output = ax_policy::paths::pending_skills_dir(&ax_dir)
+            .join(name)
+            .join("SKILL.md");
         match queue_policy(&output, &raw)? {
             true => queued += 1,
             false => conflicts += 1,
@@ -338,14 +406,19 @@ fn stage_policies(
     serde_json::to_writer_pretty(&mut temp, &ledger).map_err(|e| e.to_string())?;
     temp.write_all(b"\n").map_err(|e| e.to_string())?;
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
-    temp.persist(&ledger_path).map_err(|e| e.error.to_string())?;
+    temp.persist(&ledger_path)
+        .map_err(|e| e.error.to_string())?;
     Ok((queued, conflicts))
 }
 
 fn queue_policy(path: &Path, body: &str) -> Result<bool, String> {
     let parent = path.parent().ok_or("invalid pending policy path")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    if fs::symlink_metadata(parent).map_err(|e| e.to_string())?.file_type().is_symlink() {
+    if fs::symlink_metadata(parent)
+        .map_err(|e| e.to_string())?
+        .file_type()
+        .is_symlink()
+    {
         return Err("unsafe pending policy directory".into());
     }
     if path.exists() {

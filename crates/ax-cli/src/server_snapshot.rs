@@ -44,7 +44,7 @@ fn valid_record_key(id: &str) -> bool {
     !id.is_empty() && id.len() <= 512 && id.bytes().all(|b| b != 0 && b != b'\n' && b != b'\r')
 }
 
-fn revision(snapshot: &Snapshot) -> Result<String, String> {
+pub(crate) fn revision(snapshot: &Snapshot) -> Result<String, String> {
     let bytes = serde_json::to_vec(&(
         snapshot.schema_version,
         &snapshot.cluster_id,
@@ -60,11 +60,11 @@ fn serialize<T: Serialize>(records: &[T]) -> Result<String, String> {
     serde_json::to_string(records).map_err(|e| e.to_string())
 }
 
-fn decode<T: for<'de> Deserialize<'de>>(
-    snapshot: &Snapshot,
-    path: &str,
-) -> Result<Vec<T>, String> {
-    let body = snapshot.files.get(path).ok_or_else(|| format!("missing {path}"))?;
+fn decode<T: for<'de> Deserialize<'de>>(snapshot: &Snapshot, path: &str) -> Result<Vec<T>, String> {
+    let body = snapshot
+        .files
+        .get(path)
+        .ok_or_else(|| format!("missing {path}"))?;
     serde_json::from_str(body).map_err(|e| format!("invalid {path}: {e}"))
 }
 
@@ -84,16 +84,18 @@ pub fn validate(
         return Err("snapshot identity or protocol version mismatch".into());
     }
     if snapshot.files.len() != MAX_SNAPSHOT_FILES
-        || snapshot.files.keys().any(|p| !matches!(
-            p.as_str(),
-            MEMORY_PATH | RULE_PATH | SKILL_PATH
-        ))
+        || snapshot
+            .files
+            .keys()
+            .any(|p| !matches!(p.as_str(), MEMORY_PATH | RULE_PATH | SKILL_PATH))
     {
         return Err("snapshot contains missing or undeclared paths".into());
     }
     let mut total = 0usize;
     for body in snapshot.files.values() {
-        total = total.checked_add(body.len()).ok_or("snapshot size overflow")?;
+        total = total
+            .checked_add(body.len())
+            .ok_or("snapshot size overflow")?;
         if total > MAX_SNAPSHOT_BYTES {
             return Err("snapshot exceeds size limit".into());
         }
@@ -116,7 +118,11 @@ pub fn validate(
         if !valid_record_key(&item.id) || !ids.insert(&item.id) {
             return Err("duplicate or invalid memory ID".into());
         }
-        if item.files.iter().any(|f| std::path::Path::new(f).is_absolute()) {
+        if item
+            .files
+            .iter()
+            .any(|f| std::path::Path::new(f).is_absolute())
+        {
             return Err("memory file references must be relative".into());
         }
     }
@@ -148,6 +154,13 @@ pub async fn export(config: &ServerConfig, project_id: &str) -> Result<Snapshot,
     if config.role != NodeRole::Primary {
         return Err("only primaries may publish node synchronization snapshots".into());
     }
+    crate::server_exchange::publish(config, project_id, None).await
+}
+
+/// Export native and locally edited knowledge for contribution. Unmodified
+/// imported copies are excluded using the exact projection ledger, preventing
+/// replicas from feeding received records back around the cluster.
+pub async fn export_native(config: &ServerConfig, project_id: &str) -> Result<Snapshot, String> {
     let project = config
         .projects
         .iter()
@@ -164,17 +177,61 @@ pub async fn export(config: &ServerConfig, project_id: &str) -> Result<Snapshot,
     if count > MAX_RECORDS_PER_KIND as i64 {
         return Err("too many memories for one snapshot".into());
     }
+    let memory_ledger: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ax_replica_memory_ledger')").fetch_one(pool).await.map_err(|e| e.to_string())?;
+    if memory_ledger {
+        let imported: Vec<(String, String)> =
+            sqlx::query_as("SELECT local_id,last_applied FROM ax_replica_memory_ledger")
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        let imported: BTreeMap<_, _> = imported.into_iter().collect();
+        memories.retain(|row| {
+            imported.get(&row.id).is_none_or(|old| {
+                serde_json::from_str::<MemoryRow>(old)
+                    .ok()
+                    .is_none_or(|before| {
+                        serde_json::to_value(&before).ok() != serde_json::to_value(row).ok()
+                    })
+            })
+        });
+    }
     memories.sort_by(|a, b| a.id.cmp(&b.id));
     // Never transmit host-absolute file paths, even if an imported memory
     // contains them. The memory body is data controlled by the enrolled owner.
     for item in &mut memories {
-        item.files.retain(|f| !std::path::Path::new(f).is_absolute());
+        item.files
+            .retain(|f| !std::path::Path::new(f).is_absolute());
     }
 
-    let mut rules = ax_policy::list_rules(pool).await.map_err(|e| e.to_string())?;
-    let mut skills = ax_policy::list_skills(pool).await.map_err(|e| e.to_string())?;
+    let mut rules = ax_policy::list_rules(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut skills = ax_policy::list_skills(pool)
+        .await
+        .map_err(|e| e.to_string())?;
     if rules.len() > MAX_RECORDS_PER_KIND || skills.len() > MAX_RECORDS_PER_KIND {
         return Err("too many policy records for one snapshot".into());
+    }
+    let policy_ledger: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ax_replica_policy_imports')").fetch_one(pool).await.map_err(|e| e.to_string())?;
+    if policy_ledger {
+        let imported: Vec<(String, String)> =
+            sqlx::query_as("SELECT kind,record_key FROM ax_replica_policy_imports")
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        let imported: HashSet<_> = imported.into_iter().collect();
+        rules.retain(|row| {
+            !imported.contains(&("rule".into(), row.id.clone()))
+                || !crate::server_exchange::unedited_policy_import(
+                    &serde_json::to_value(row).expect("rule serializes"),
+                )
+        });
+        skills.retain(|row| {
+            !imported.contains(&("skill".into(), row.name.clone()))
+                || !crate::server_exchange::unedited_policy_import(
+                    &serde_json::to_value(row).expect("skill serializes"),
+                )
+        });
     }
     rules.sort_by(|a, b| a.id.cmp(&b.id));
     skills.sort_by(|a, b| a.name.cmp(&b.name));
@@ -263,7 +320,8 @@ mod tests {
     fn reject_unexpected_export_pack_format() {
         let mut item = empty_snapshot();
         item.files.remove(MEMORY_PATH);
-        item.files.insert("memory/shared.jsonl".into(), String::new());
+        item.files
+            .insert("memory/shared.jsonl".into(), String::new());
         item.revision = revision(&item).unwrap();
         assert!(validate(&item, "cluster", "project").is_err());
     }
@@ -284,7 +342,8 @@ mod tests {
             created_at: 1,
             updated_at: 1,
         }];
-        item.files.insert(MEMORY_PATH.into(), serialize(&rows).unwrap());
+        item.files
+            .insert(MEMORY_PATH.into(), serialize(&rows).unwrap());
         item.revision = revision(&item).unwrap();
         validate(&item, "cluster", "project").unwrap();
         let decoded: Vec<MemoryRow> = decode(&item, MEMORY_PATH).unwrap();

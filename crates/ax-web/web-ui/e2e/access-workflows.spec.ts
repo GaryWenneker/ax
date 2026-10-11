@@ -35,6 +35,7 @@ async function accessFixture(page: Page, options: { readonly?: boolean; failScop
     else if (path === '/api/access/session') data = { csrf: 'fixture-csrf' };
     else if (path === '/api/access/team') data = { members };
     else if (path === '/api/access/clients') data = { clients, credentials: [{ id: 'credential', client_id: 'cli', token_prefix: 'axc_demo', created_at: '2026-10-10 10:00:00' }] };
+    else if (path === '/api/access/nodes/local') data = { settings: null, running: false, active_project: false, safety: { mode: 'preserve_and_exchange', memories: 0, rules: 0, skills: 0, review_required: false, sync_failed: false } };
     else if (path === '/api/access/nodes') data = { nodes, local: { node_id: 'primary-local', role: 'primary', sync_state: 'running' } };
     else if (path === '/api/ship/config') data = { config: { ship: { target_branch: 'main', web_port: 7070 }, remote: { provider: 'github' }, quality_gate: { steps: [], tests: { runner: 'cargo test' } }, sonar: {}, ui: {} } };
     else if (path === '/api/stats') data = { readonly: options.readonly ?? false, project_name: 'Demo project', node_count: 0, edge_count: 0, file_count: 0, db_size_bytes: 0, languages: [] };
@@ -130,7 +131,9 @@ test('access panels fit light, dark and mobile and refresh documentation screens
   page.on('pageerror', error => errors.push(error.message));
   for (const theme of ['azure-light', 'azure-dark']) {
     await page.goto('/settings');
-    if (theme === 'azure-dark') await page.getByRole('button', { name: 'Azure Portal Dark', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Settings navigation' }).locator('[aria-controls="settings-panel-appearance"]').click();
+    await page.getByTitle(theme === 'azure-dark' ? 'Azure Portal Dark' : 'Azure Portal Light', { exact: true }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-ax-theme', theme);
     await page.setViewportSize({ width: 1440, height: 1100 });
     for (const section of ['team', 'clients', 'nodes']) {
       await page.getByRole('navigation', { name: 'Settings navigation' }).locator(`[aria-controls="settings-panel-${section}"]`).click();
@@ -138,7 +141,10 @@ test('access panels fit light, dark and mobile and refresh documentation screens
       await expect(panel.locator('.access-note').first()).not.toContainText('Loading');
       await expect(panel).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-      if (process.env.AX_ACCESS_SCREENSHOTS) await page.screenshot({ path: `../../../site/public/screenshots/cc-access-${section}${theme === 'azure-dark' ? '-dark' : ''}.png` });
+      if (process.env.AX_ACCESS_SCREENSHOTS) {
+        if (section === 'nodes') await panel.getByRole('heading', { name: 'Office replica', exact: true }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `../../../site/public/screenshots/cc-access-${section}${theme === 'azure-dark' ? '-dark' : ''}.png` });
+      }
       await page.setViewportSize({ width: 393, height: 851 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);

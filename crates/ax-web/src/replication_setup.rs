@@ -162,13 +162,40 @@ pub(crate) async fn status(
             "Open the local owner Command Center to configure this node",
         );
     }
-    let root = hub.read().await.project_root.clone();
+    let (root, pool) = {
+        let state = hub.read().await;
+        (state.project_root.clone(), state.graph_pool.clone())
+    };
+    let counts: (i64,i64,i64) = match sqlx::query_as("SELECT (SELECT COUNT(*) FROM memories),(SELECT COUNT(*) FROM policy_rules),(SELECT COUNT(*) FROM policy_skills)").fetch_one(&pool).await {
+        Ok(counts)=>counts, Err(_)=>return fail(StatusCode::INTERNAL_SERVER_ERROR,"Cannot verify existing project data"),
+    };
     let mut managed = hub.replication.lock().await;
     let active = running(&mut managed).await;
-    match read_saved(&root) {
-        Ok(saved) => Json(serde_json::json!({"settings":saved, "running":active, "active_project":managed.root.as_ref().map(|p| p == &root).unwrap_or(false)})).into_response(),
-        Err(error) => fail(StatusCode::BAD_REQUEST, &error),
-    }
+    let saved = match read_saved(&root) {
+        Ok(saved) => saved,
+        Err(error) => return fail(StatusCode::BAD_REQUEST, &error),
+    };
+    let sync = saved.as_ref().and_then(|node| {
+        if node.config.validate().is_err() {
+            return None;
+        }
+        let path = root
+            .join(".ax/server/sync-status")
+            .join(&node.config.cluster_id)
+            .join(format!("{}.json", node.config.projects.first()?.id));
+        let meta = std::fs::symlink_metadata(&path).ok()?;
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 32768 {
+            return None;
+        }
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).ok()?).ok()
+    });
+    let sync_status = sync
+        .as_ref()
+        .and_then(|v| v.get("status"))
+        .and_then(|v| v.as_str());
+    let review = sync_status.is_some_and(|s| s.contains("review_required"));
+    let failed = sync_status == Some("failed");
+    Json(serde_json::json!({"settings":saved,"running":active,"active_project":managed.root.as_ref().map(|p|p==&root).unwrap_or(false),"safety":{"mode":"preserve_and_exchange","memories":counts.0,"rules":counts.1,"skills":counts.2,"review_required":review,"sync_failed":failed}})).into_response()
 }
 
 pub(crate) async fn start(
@@ -243,7 +270,7 @@ pub(crate) async fn start(
         let sync = tokio::time::timeout(
             Duration::from_secs(35),
             Command::new(&exe)
-                .args(["server", "sync", "--config"])
+                .args(["server", "apply", "--config"])
                 .arg(file.path())
                 .env(TOKEN_ENV, &token)
                 .stdout(Stdio::null())
@@ -253,7 +280,7 @@ pub(crate) async fn start(
         )
         .await;
         if !matches!(sync, Ok(Ok(result)) if result.success()) {
-            return fail(StatusCode::BAD_REQUEST, "Primary connection failed. Check its URL, cluster, project ID and replication credential. Previous settings were kept.");
+            return fail(StatusCode::BAD_REQUEST, "Primary connection failed. Check its URL, cluster, project ID and replication credential; both nodes must support preserve-and-exchange. Existing local data and previous settings were kept.");
         }
     }
     drop(probe);
@@ -271,6 +298,9 @@ pub(crate) async fn start(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    if saved.config.role == NodeRole::Replica {
+        command.arg("--auto-apply-memories");
+    }
     if let Some(url) = saved.advertise.as_deref() {
         command.args(["--discovery-port", "9071", "--advertise", url]);
     }
