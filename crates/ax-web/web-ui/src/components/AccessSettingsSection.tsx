@@ -260,8 +260,7 @@ export default function AccessSettingsSection() {
                   {node.last_sync_at ? ` · synced ${node.last_sync_at}` : ''}
                 </span>
               </div>
-              <div className="settings-row-control">>Approve</button>
-                )}
+              <div className="settings-row-control">
                 {node.trust_state === 'trusted' && (
                   <button type="button" className="btn" onClick={() => void revokeNode(node.id)}>Revoke</button>
                 )}
