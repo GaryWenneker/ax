@@ -517,6 +517,15 @@ pub async fn register_trusted_replica(
     endpoint: Option<&str>,
     project_id: &str,
 ) -> Result<()> {
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT trust_state FROM replication_nodes WHERE id = ?")
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?;
+    if matches!(existing.as_ref(), Some((state,)) if state == "revoked") {
+        bail!("replica is blocked");
+    }
+
     let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO replication_nodes
@@ -527,7 +536,6 @@ pub async fn register_trusted_replica(
             endpoint = COALESCE(excluded.endpoint, replication_nodes.endpoint),
             trust_state = 'trusted',
             approved_at = COALESCE(replication_nodes.approved_at, CURRENT_TIMESTAMP),
-            revoked_at = NULL,
             last_seen_at = CURRENT_TIMESTAMP",
     )
     .bind(node_id)
