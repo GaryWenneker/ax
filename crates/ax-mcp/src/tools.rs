@@ -1086,7 +1086,31 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     if ice_enabled && !prompt.trim().is_empty() {
         let max_blocks = if context_mode == "expanded" { 6 } else { 3 };
         let max_chars = if context_mode == "expanded" { 3000 } else { 1500 };
-        match ax_context::retrieval::retrieve(ax.queries(), &prompt, max_blocks, max_chars).await {
+        let mut hints = ax_context::retrieval::RetrievalHints::default();
+        hints.paths = files.iter().filter_map(|f|
+            ax_context::task_analyzer::safe_relative_path(f)).collect();
+        // Approved/matched rules may supply optional retrieval preferences.
+        // Rule bodies remain policy, never assertions of code relationships.
+        for rule in &result.rules {
+            if let Some(values) = rule.properties.get("contextTerms").and_then(Value::as_array) {
+                for value in values.iter().filter_map(Value::as_str).take(12) {
+                    if value.len() <= 100 { hints.terms.push(value.to_string()); }
+                }
+            }
+            if let Some(values) = rule.properties.get("contextPaths").and_then(Value::as_array) {
+                for value in values.iter().filter_map(Value::as_str).take(12) {
+                    if let Some(path) = ax_context::task_analyzer::safe_relative_path(value) {
+                        hints.paths.push(path);
+                    }
+                }
+            }
+        }
+        hints.terms.truncate(20);
+        hints.paths.sort();
+        hints.paths.dedup();
+        match ax_context::retrieval::retrieve_with_hints(
+            ax.queries(), &prompt, max_blocks, max_chars, &hints
+        ).await {
             Ok(found) => ice_context = Some(found),
             Err(err) => ice_error = Some(err.to_string()),
         }
