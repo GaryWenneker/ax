@@ -10,6 +10,7 @@ mod server_cli;
 mod server_snapshot;
 mod server_http;
 mod server_replica;
+mod server_discovery;
 mod ui;
 mod version_check;
 
