@@ -1,0 +1,57 @@
+  <div class="ax-ares-shield" aria-hidden="true"></div>
+  <svg class="ax-vector ax-ares-architecture" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="ares-red-shaft" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#ffdbd7" stop-opacity=".87"/><stop offset=".18" stop-color="#fb3f50" stop-opacity=".7"/><stop offset="1" stop-color="#ed243d" stop-opacity="0"/></linearGradient>
+      <linearGradient id="ares-blue-shaft" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#d5f9ff" stop-opacity=".9"/><stop offset=".22" stop-color="#35b5ff" stop-opacity=".67"/><stop offset="1" stop-color="#2e89ff" stop-opacity="0"/></linearGradient>
+      <linearGradient id="ares-gateway-fill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#162437" stop-opacity=".28"/><stop offset="1" stop-color="#01050b" stop-opacity=".91"/></linearGradient>
+      <linearGradient id="ares-signal-sweep" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#29a4ff" stop-opacity="0"/><stop offset=".35" stop-color="#38c5ff" stop-opacity=".8"/><stop offset=".55" stop-color="#ecf9ff" stop-opacity=".8"/><stop offset=".72" stop-color="#ff424d" stop-opacity=".8"/><stop offset="1" stop-color="#f7273f" stop-opacity="0"/></linearGradient>
+      <filter id="ares-laser-glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="7"/></filter>
+      <filter id="ares-wide-glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="23"/></filter>
+      <radialGradient id="ares-portal-aura"><stop stop-color="#e0f3ff" stop-opacity=".32"/><stop offset=".26" stop-color="#438ab9" stop-opacity=".18"/><stop offset="1" stop-color="#050814" stop-opacity="0"/></radialGradient>
+    </defs>
+    <ellipse class="ares-portal-aura" cx="817" cy="534" rx="265" ry="255" fill="url(#ares-portal-aura)"/>
+    <!-- Angular black planes make the scene closer to cinematic hard-surface sets. -->
+    <g class="ares-hard-surfaces" fill="url(#ares-gateway-fill)" stroke-width="1">
+      <path d="M928 550 L1034 460 1222 529 1148 603 1067 578 1014 620Z" stroke="#95283c" stroke-opacity=".52"/>
+      <path d="M1136 535 L1254 420 1330 450 1266 602 1194 610Z" stroke="#f2444f" stroke-opacity=".33"/>
+      <path d="M1310 570 L1430 472 1550 535 1540 683 1408 624Z" stroke="#f2444f" stroke-opacity=".35"/>
+      <path d="M180 531 L310 454 380 486 443 597 310 579Z" stroke="#38baff" stroke-opacity=".32"/>
+      <path d="M58 630 L154 526 260 583 245 697 113 702Z" stroke="#35baff" stroke-opacity=".39"/>
+    </g>
+    <g class="ares-conduits" fill="none" stroke-width="1.6">
+      <path class="ares-blue-track" d="M0 814 L170 788 283 815 415 774 539 790 702 745 786 639" stroke="#48ceff"/>
+      <path class="ares-red-track" d="M1600 816 L1450 781 1328 807 1180 751 1043 771 916 703 805 638" stroke="#ff4456"/>
+      <path class="ares-red-track ares-shifted" d="M1584 669 L1430 677 1332 645 1198 658 1109 622 1058 586 992 557" stroke="#fa3949" stroke-opacity=".75"/>
+      <path class="ares-blue-track ares-shifted" d="M10 679 L184 696 298 668 397 688 515 642 598 601 688 560" stroke="#2fbfff" stroke-opacity=".75"/>
+    </g>
+    <g class="ares-conduit-blur" filter="url(#ares-laser-glow)" fill="none" stroke-width="7" opacity=".6">
+      <path d="M0 814 L170 788 283 815 415 774 539 790 702 745 786 639" stroke="#207eff"/>
+      <path d="M1600 816 L1450 781 1328 807 1180 751 1043 771 916 703 805 638" stroke="#ff182b"/>
+    </g>
+    <g class="ares-gateway">
+      <path d="M753 576 L788 494 846 494 873 580" stroke="#d5e8fc" stroke-opacity=".5" fill="none" stroke-width="1.4" />
+      <path d="M763 574 L793 497 810 497" stroke="#3ebcff" fill="none" stroke-width="4" stroke-opacity=".78"/>
+      <path d="M812 497 L844 497 864 575" stroke="#ff4355" fill="none" stroke-width="4" stroke-opacity=".85"/>
+      <path d="M788 494 L804 480 828 480 846 494" fill="none" stroke="url(#ares-signal-sweep)" stroke-width="2.5"/>
+      <path class="ares-gate-scan" d="M786 570 L795 502 L846 502 L859 570" fill="none" stroke="url(#ares-signal-sweep)" stroke-width="4" filter="url(#ares-laser-glow)" />
+    </g>
+    <g class="ares-light-pylons" opacity=".8">
+      <rect x="1124" y="100" width="2" height="490" fill="url(#ares-red-shaft)"/>
+      <rect x="1308" y="185" width="2" height="414" fill="url(#ares-red-shaft)"/>
+      <rect x="1536" y="271" width="2" height="432" fill="url(#ares-red-shaft)"/>
+      <rect x="280" y="145" width="2" height="530" fill="url(#ares-blue-shaft)"/>
+      <rect x="499" y="241" width="2" height="344" fill="url(#ares-blue-shaft)"/>
+      <rect class="ares-beam-soft" x="1120" y="236" width="12" height="382" fill="url(#ares-red-shaft)" opacity=".43" filter="url(#ares-laser-glow)"/>
+      <rect class="ares-beam-soft" x="272" y="260" width="13" height="423" fill="url(#ares-blue-shaft)" opacity=".43" filter="url(#ares-laser-glow)"/>
+    </g>
+    <g class="ares-red-network"><path d="M852 570 Q1100 637 1600 625" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.13" fill="none"/><path d="M852 594 Q1100 661 1600 651" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.16" fill="none"/><path d="M852 618 Q1100 685 1600 677" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.18" fill="none"/><path d="M852 642 Q1100 709 1600 703" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.21" fill="none"/><path d="M852 666 Q1100 733 1600 729" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.24" fill="none"/><path d="M852 690 Q1100 757 1600 755" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.27" fill="none"/><path d="M852 714 Q1100 781 1600 781" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.29" fill="none"/><path d="M852 738 Q1100 805 1600 807" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.32" fill="none"/><path d="M852 762 Q1100 829 1600 833" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.35" fill="none"/><path d="M852 786 Q1100 853 1600 859" stroke="#ff435d" stroke-width=".85" stroke-opacity="0.37" fill="none"/><path d="M802 575 Q960 709 860 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q984 709 905 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1008 709 950 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1032 709 995 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1056 709 1040 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1080 709 1085 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1104 709 1130 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1128 709 1175 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1152 709 1220 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1176 709 1265 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1200 709 1310 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1224 709 1355 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1248 709 1400 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1272 709 1445 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1296 709 1490 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1320 709 1535 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><path d="M802 575 Q1344 709 1580 900" stroke="#e92b49" stroke-width=".75" stroke-opacity=".24" fill="none"/><circle cx="920" cy="680" r="1.0" fill="#ff5069" opacity="0.25"/><circle cx="1043" cy="741" r="1.7" fill="#ff5069" opacity="0.38"/><circle cx="1166" cy="802" r="2.4" fill="#ff5069" opacity="0.51"/><circle cx="1289" cy="863" r="1.0" fill="#ff5069" opacity="0.64"/><circle cx="1412" cy="739" r="1.7" fill="#ff5069" opacity="0.25"/><circle cx="1535" cy="800" r="2.4" fill="#ff5069" opacity="0.38"/><circle cx="978" cy="861" r="1.0" fill="#ff5069" opacity="0.51"/><circle cx="1101" cy="737" r="1.7" fill="#ff5069" opacity="0.64"/><circle cx="1224" cy="798" r="2.4" fill="#ff5069" opacity="0.25"/><circle cx="1347" cy="859" r="1.0" fill="#ff5069" opacity="0.38"/><circle cx="1470" cy="735" r="1.7" fill="#ff5069" opacity="0.51"/><circle cx="1593" cy="796" r="2.4" fill="#ff5069" opacity="0.64"/><circle cx="1036" cy="857" r="1.0" fill="#ff5069" opacity="0.25"/><circle cx="1159" cy="733" r="1.7" fill="#ff5069" opacity="0.38"/><circle cx="1282" cy="794" r="2.4" fill="#ff5069" opacity="0.51"/><circle cx="1405" cy="855" r="1.0" fill="#ff5069" opacity="0.64"/><circle cx="1528" cy="731" r="1.7" fill="#ff5069" opacity="0.25"/><circle cx="971" cy="792" r="2.4" fill="#ff5069" opacity="0.38"/><circle cx="1094" cy="853" r="1.0" fill="#ff5069" opacity="0.51"/><circle cx="1217" cy="729" r="1.7" fill="#ff5069" opacity="0.64"/><circle cx="1340" cy="790" r="2.4" fill="#ff5069" opacity="0.25"/><circle cx="1463" cy="851" r="1.0" fill="#ff5069" opacity="0.38"/><circle cx="1586" cy="727" r="1.7" fill="#ff5069" opacity="0.51"/><circle cx="1029" cy="788" r="2.4" fill="#ff5069" opacity="0.64"/></g>
+    <g class="ares-red-sparks" fill="#ff5264">
+      <circle cx="1125" cy="602" r="3.5"/><circle cx="1309" cy="609" r="2.7"/><circle cx="1537" cy="704" r="3"/>
+      <circle cx="1450" cy="781" r="3"/><circle cx="1180" cy="751" r="3.5"/><circle cx="1043" cy="771" r="2.4"/>
+    </g>
+    <g class="ares-blue-sparks" fill="#57d9ff">
+      <circle cx="281" cy="686" r="3.5"/><circle cx="500" cy="601" r="3"/>
+      <circle cx="170" cy="788" r="2.5"/><circle cx="415" cy="774" r="3"/><circle cx="702" cy="745" r="3"/>
+    </g>
+  </svg>
+  <div class="ares-spectrum-haze" aria-hidden="true"></div>

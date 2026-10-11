@@ -317,3 +317,26 @@ code {
   user-select: text;
   -webkit-touch-callout: default;
 }
+
+/* Public documentation: red/blue lighting accents; Command Center skin stays untouched. */
+:root,:root[data-theme="dark"],:root[data-theme="light"]{
+  --cg-dual-red:#ff6175;
+  --cg-dual-blue:#64cfff;
+}
+.header::after{
+  content:"";
+  position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:linear-gradient(90deg,transparent 0%,rgba(74,184,255,.52) 24%,transparent 49%,rgba(255,69,91,.52) 75%,transparent 100%);
+  pointer-events:none;
+}
+.sidebar-content a[aria-current="page"]{
+  border-left-color:var(--cg-dual-red);
+  background:rgba(39,19,34,.42);
+}
+.sl-markdown-content a:hover{color:#ff8b9a}
+.sl-markdown-content hr{
+  border-top:1px solid transparent;
+  border-image:linear-gradient(90deg,rgba(82,189,255,.32),rgba(255,75,95,.32),transparent) 1;
+}
+.sl-markdown-content strong{color:#f2f5ff}
+.card:hover,.pagination-links a:hover{border-color:rgba(253,83,106,.4)}

@@ -69,3 +69,22 @@ test("terminal is integrated without a boxed card", () => {
   assert.match(css, /\.integrated-console\s*\{/);
   assert.doesNotMatch(css, /\.integrated-console\s*\{[^}]*border-radius/);
 });
+
+test("dual-spectrum identity layers use only SVG and CSS, respecting accessibility", () => {
+  const overlay = readFileSync(path.join(site, "src/components/AresOverlay.astro"), "utf8");
+  const ares = readFileSync(path.join(site, "src/styles/ares-identity.css"), "utf8");
+  assert.match(index, /ares-identity\.css/);
+  assert.match(vector, /AresOverlay/);
+  assert.match(overlay, /ax-ares-architecture/);
+  assert.match(overlay, /ares-blue-track/);
+  assert.match(overlay, /ares-red-track/);
+  assert.match(overlay, /ares-gateway/);
+  assert.match(ares, /ares-red-flow/);
+  assert.match(ares, /ares-blue-flow/);
+  assert.match(ares, /ax-depth-dots/);
+  assert.match(ares, /prefers-reduced-motion:reduce/);
+  assert.match(ares, /data-ax-motion="paused"/);
+  assert.doesNotMatch(ares, /background-image:\s*url\(/);
+  assert.doesNotMatch(overlay, /<image[\s>]/);
+  assert.doesNotMatch(overlay, /<canvas[\s>]/);
+});
