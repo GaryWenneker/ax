@@ -510,6 +510,48 @@ pub async fn discover_replica(
     Ok(())
 }
 
+pub async fn register_trusted_replica(
+    pool: &SqlitePool,
+    node_id: &str,
+    display_name: &str,
+    endpoint: Option<&str>,
+    project_id: &str,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO replication_nodes
+            (id, display_name, role, endpoint, trust_state, approved_at, last_seen_at)
+         VALUES (?, ?, 'replica', ?, 'trusted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(id) DO UPDATE SET
+            display_name = excluded.display_name,
+            endpoint = COALESCE(excluded.endpoint, replication_nodes.endpoint),
+            trust_state = 'trusted',
+            approved_at = COALESCE(replication_nodes.approved_at, CURRENT_TIMESTAMP),
+            revoked_at = NULL,
+            last_seen_at = CURRENT_TIMESTAMP",
+    )
+    .bind(node_id)
+    .bind(display_name)
+    .bind(endpoint)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO node_project_access (node_id, project_id, revoked_at)
+         VALUES (?, ?, NULL)
+         ON CONFLICT(node_id, project_id) DO UPDATE SET
+            revoked_at = NULL,
+            granted_at = CURRENT_TIMESTAMP",
+    )
+    .bind(node_id)
+    .bind(project_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn approve_node(
     pool: &SqlitePool,
     node_id: &str,
