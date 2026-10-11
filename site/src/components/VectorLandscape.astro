@@ -169,7 +169,7 @@ const spires = [
     </g>
     <g class="ax-road-nodes">
       {sparks.map(p => <circle cx={p.x} cy={p.y} r={p.r} opacity={p.opacity} fill="url(#ax-spark-glow)" />)}
-      {[{x:310,y:810},{x:455,y:784},{x:620,y:776},{x:729,y:798},{x:875,y:769},{x:1107,y:794},{x:1360,y:780}].map(p => <><circle cx={p.x} cy={p.y} r="14" fill="url(#ax-spark-glow)"/><circle cx={p.x} cy={p.y} r="2.6" fill="#d7fbff" /></>)}
+      {[{x:310,y:810},{x:455,y:784},{x:620,y:776},{x:729,y:798},{x:875,y:769},{x:1107,y:794},{x:1360,y:780}].map(p => <g><circle cx={p.x} cy={p.y} r="14" fill="url(#ax-spark-glow)"/><circle cx={p.x} cy={p.y} r="2.6" fill="#d7fbff" /></g>)}
     </g>
   </svg>
 
