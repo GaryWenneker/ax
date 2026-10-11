@@ -106,8 +106,8 @@ pub async fn retrieve_with_hints(
                 let exact = hit.node.name.eq_ignore_ascii_case(term)
                     || hit.node.qualified_name.eq_ignore_ascii_case(term);
                 let path_preferred = hints.paths.iter().any(|p| p == &hit.node.file_path);
-                let boost = if exact { 20.0 } else { 0.0 }
-                    + if path_preferred { 10.0 } else { 0.0 };
+                let boost = (if exact { 20.0 } else { 0.0 })
+                    + (if path_preferred { 10.0 } else { 0.0 });
                 let reason = if configured {
                     format!("configured policy term: {term}")
                 } else {
