@@ -1,6 +1,6 @@
 # Settings: Primary setup and explicit Replica pairing
 
-Status: implemented and locally verified; merge to main pending.
+Status: completed — implemented, locally verified and merged to main in [PR #23](https://github.com/GaryWenneker/ax/pull/23), commit `80fd1533232371c869adcda494c7c5434ed2eb1b`.
 Owner request: 2026-10-11, following PR #14. Automatic pipelines are suspended; validation is local until the owner resumes Actions.
 
 ## Required behavior

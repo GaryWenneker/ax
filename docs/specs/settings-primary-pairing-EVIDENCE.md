@@ -1,6 +1,6 @@
 # Primary setup and pairing — verification
 
-Verified locally on 2026-10-11. Merge pending; no Actions, releases or website deployments were dispatched.
+Verified locally on 2026-10-11. Implementation merged to main in [PR #23](https://github.com/GaryWenneker/ax/pull/23), commit `80fd1533232371c869adcda494c7c5434ed2eb1b`. No Actions, releases or website deployments were dispatched.
 
 - Rust `ax-web --lib`: 89 passed, including authorization, configuration, persistence, discovery filtering and credential bounds.
 - Command Center: production TypeScript/Vite build; 283 existing unit tests passed.
