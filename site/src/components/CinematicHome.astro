@@ -1,0 +1,278 @@
+---
+import LogoMark from "./LogoMark.astro";
+import MotionControl from "./MotionControl.astro";
+import { agents, agentIcons } from "../lib/agent-icons";
+import { AX_VERSION, AX_RELEASE_VERSION } from "../lib/version";
+import { getStarsLabel } from "../lib/github";
+import { INSTALL_UNIX, installBootScript } from "../lib/install-command";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const repo = "https://github.com/GaryWenneker/ax";
+const stars = await getStarsLabel();
+
+const capabilities = [
+  { title: "Code intelligence", caption: "Symbols & impact", href: "/core-concepts/knowledge-graph/" },
+  { title: "Persistent memory", caption: "Decisions that stay", href: "/guides/memory/" },
+  { title: "Smart Output", caption: "Relevant context", href: "/guides/smart-output/" },
+  { title: "Policies & skills", caption: "Consistent agents", href: "/guides/policy-engine/" },
+  { title: "Remote MCP", caption: "Context over HTTPS", href: "/guides/remote-mcp/" },
+  { title: "Quality gates", caption: "Test before ship", href: "/guides/command-center/" },
+  { title: "Command Center", caption: "See & control", href: "/guides/command-center/" },
+  { title: "Primary / replica", caption: "Your infrastructure", href: "/guides/standalone-ax/" },
+];
+
+const sampleOutput = [
+  { time: "00:00:01", text: "$ ax init", type: "command" },
+  { time: "00:00:01", text: "  workspace discovered      ./acme-app" },
+  { time: "00:00:02", text: "  source index              ready", type: "success" },
+  { time: "00:00:02", text: "  symbols & call paths      resolved" },
+  { time: "00:00:03", text: "  memory vault              connected" },
+  { time: "00:00:03", text: "  policies & skills         loaded" },
+  { time: "00:00:03", text: "  mcp transport             available", type: "success" },
+  { time: "00:00:04", text: "$ ax index", type: "command" },
+  { time: "00:00:04", text: "  parsing TypeScript · Rust · C# …" },
+  { time: "00:00:05", text: "  resolving callers → callees → impact" },
+  { time: "00:00:05", text: "  knowledge graph           updated", type: "success" },
+  { time: "00:00:06", text: "mcp  ax_preflight", type: "command" },
+  { time: "00:00:06", text: "  selected project          ./acme-app" },
+  { time: "00:00:07", text: "  relevant context          gathered" },
+  { time: "00:00:07", text: "  required rules            preserved", type: "success" },
+  { time: "00:00:08", text: "  related memories          recalled" },
+  { time: "00:00:09", text: "$ ax ship --evaluate", type: "command" },
+  { time: "00:00:09", text: "  diff → affected tests → policies" },
+  { time: "00:00:10", text: "  quality gate              evaluated", type: "success" },
+  { time: "00:00:10", text: "  working context           ready for next turn", type: "success" },
+];
+
+const detailStreams = [
+  { heading: "CODE / EXPLORE", lines: [
+    "mcp  ax_preflight { task: 'change auth flow' }",
+    "  project       ./acme-app",
+    "  rules         applicable scope selected",
+    "mcp  ax_explore { query: 'authentication' }",
+    "  symbols       references + relationships",
+    "  impact        callers → callees → tests",
+  ]},
+  { heading: "CONTEXT / MEMORY", lines: [
+    "mcp  ax_recall { query: 'auth decisions' }",
+    "  matches       previous decisions and fixes",
+    "  provenance    source · date · project",
+    "mcp  ax_preflight",
+    "  output        compact, actionable context",
+    "  expansion     on demand via ax_expand",
+  ]},
+  { heading: "RULES / DELIVERY", lines: [
+    "mcp  ax_rules",
+    "  required      policy applied to this task",
+    "  skills        context-matched, on demand",
+    "$ ax ship --evaluate",
+    "  diff          affected tests resolved",
+    "  result        quality-gate report",
+  ]},
+];
+---
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="signal-ambient" aria-hidden="true">
+  <div class="terrain-art"></div>
+  <div class="signal-grid"></div>
+  <div class="atmospheric-haze"></div>
+  <i class="light-ray ray-a"></i>
+  <i class="light-ray ray-b"></i>
+  <i class="light-ray ray-c"></i>
+  <i class="light-ray ray-d"></i>
+  <i class="light-ray ray-e"></i>
+  <div class="signal-particles"></div>
+</div>
+<header class="signal-header">
+  <a class="signal-brand" href={base + "/"} aria-label="Ax home">
+    <LogoMark size="md" alt="Ax" />
+  </a>
+  <nav class="main-links" aria-label="Primary navigation">
+    <a href="#features">Platform</a>
+    <a href="#workflow">How it works</a>
+    <a href="#deployment">Deployment</a>
+    <a href={base + "/getting-started/introduction/"}>Docs</a>
+    <a href={repo} target="_blank" rel="noopener noreferrer">GitHub{stars ? " · " + stars + " ★" : ""}</a>
+  </nav>
+  <div class="header-actions">
+    <MotionControl />
+    <a href={base + "/getting-started/quickstart/"} class="header-cta">Get started <span aria-hidden="true">↗</span></a>
+  </div>
+</header>
+
+<div class="integration-ticker" aria-label="Works with Cursor, Claude Code, Codex CLI, Gemini CLI, OpenCode, VS Code, Windsurf, Zed and other MCP clients">
+  <span class="ticker-label">WORKS WITH</span>
+  <div class="ticker-viewport">
+    <div class="ticker-track">
+      {[0,1].map((copy) => (
+        <div class="ticker-group" aria-hidden={copy === 1 ? "true" : undefined}>
+          {agents.map((name) => (
+            <span class="ticker-agent" data-agent={name}>
+              <span class="ticker-icon" set:html={agentIcons[name]} />
+              <span>{name}</span>
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  </div>
+  <a class="ticker-more" href={base + "/reference/integrations/"} aria-label="View all supported integrations">↗</a>
+</div>
+
+<main id="main">
+  <section class="signal-hero" aria-labelledby="hero-heading">
+    <div class="hero-copy">
+      <p class="signal-eyebrow"><span class="tiny-led"></span> THE CONTEXT LAYER FOR AI DEVELOPMENT</p>
+      <h1 id="hero-heading">Understand code.<br />Preserve context.<br /><span>Guide every agent.</span></h1>
+      <p class="hero-summary">Ax gives developers one context layer for code intelligence, durable memory, policy enforcement, MCP access, quality gates and self-hosted workflows.</p>
+      <div class="hero-actions">
+        <a class="signal-btn primary" href={base + "/getting-started/quickstart/"}>Get started <span aria-hidden="true">→</span></a>
+        <a class="signal-btn ghost" href={base + "/getting-started/introduction/"}>Read the docs <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="hero-footnote"><span>{AX_VERSION}</span><span>Open source · MIT</span><span>macOS / Linux / Windows</span></div>
+      {AX_VERSION !== AX_RELEASE_VERSION && (
+        <p class="release-clarification">Latest published download: <a href={repo + "/releases/latest"}>{AX_RELEASE_VERSION}</a>. <a href={base + "/getting-started/installation/#build-from-main"}>Build from main</a>.</p>
+      )}
+    </div>
+
+    <div class="integrated-console" aria-label="Illustrative Ax terminal workflow">
+      <div class="console-heading">
+        <span>AX / CONTEXT ENGINE</span>
+        <span class="console-state"><i></i> DEMO REPLAY</span>
+      </div>
+      <div class="console-lines" role="log" aria-live="off">
+        {sampleOutput.map((line, i) => (
+          <div class:list={["log-entry",line.type || ""]} style={"--line-order:"+i}>
+            <span class="log-time">{line.time}</span>
+            <span class="log-body">{line.text}</span>
+          </div>
+        ))}
+      </div>
+      <div class="console-tail"><span class="tail-symbol">›</span><span class="replay-text" data-replay>Context is ready for the next agent turn.</span><span class="terminal-caret" aria-hidden="true"></span></div>
+      <div class="console-caption">An illustrative workflow · output depends on your project and configuration.</div>
+    </div>
+  </section>
+
+  <nav class="capability-rail" aria-label="Ax capabilities">
+    {capabilities.map((capability, i) => (
+      <a href={base + capability.href} class="capability">
+        <span class="cap-index">{String(i + 1).padStart(2, "0")}</span>
+        <span class="cap-name">{capability.title}</span>
+        <span class="cap-caption">{capability.caption}</span>
+      </a>
+    ))}
+  </nav>
+
+  <section class="story-section" id="features" aria-labelledby="features-heading">
+    <div class="story-intro">
+      <p class="signal-eyebrow">01 / THE PLATFORM</p>
+      <h2 id="features-heading">More than a graph.<br /><span>A shared context layer.</span></h2>
+      <p>Index what your code does. Keep the decisions behind it. Apply the right rules before an agent acts. Ax makes that context available through MCP, without starting from scratch every turn.</p>
+      <a class="inline-arrow" href={base + "/core-concepts/how-it-works/"}>Explore how Ax works ↗</a>
+    </div>
+    <div class="story-stream">
+      <div class="stream-head"><span>AX / CONTEXT PIPELINE</span><span>01 : 03</span></div>
+      {detailStreams.map((stream, i) => (
+        <div class="stream-cluster">
+          <div class="stream-cluster-heading"><span class="stream-number">{String(i+1).padStart(2, "0")}</span> {stream.heading}</div>
+          {stream.lines.map((line, j) => (
+            <div class:list={["stream-line",j === 0 || j === 3 ? "stream-command" : ""]}>{line}</div>
+          ))}
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="story-section workflow-section" id="workflow" aria-labelledby="workflow-heading">
+    <div class="story-intro">
+      <p class="signal-eyebrow">02 / DEVELOPMENT FLOW</p>
+      <h2 id="workflow-heading">From first prompt.<br /><span>To confident change.</span></h2>
+      <p>Context, memory and guardrails belong in the workflow itself, not in another dashboard developers have to remember to open.</p>
+    </div>
+    <div class="workflow-list">
+      <div class="workflow-row"><span>01</span><div><code>ax init</code><h3>Know the project</h3><p>Index files and symbols, resolve relationships and connect your IDE or MCP client.</p></div><a href={base + "/guides/indexing/"} aria-label="Read indexing guide">↗</a></div>
+      <div class="workflow-row"><span>02</span><div><code>ax_preflight · ax_recall</code><h3>Keep the context</h3><p>Recall previous decisions, select relevant rules and deliver compact Smart Output.</p></div><a href={base + "/guides/smart-output/"} aria-label="Read Smart Output guide">↗</a></div>
+      <div class="workflow-row"><span>03</span><div><code>ax ship --evaluate</code><h3>Check the change</h3><p>Use test impact, policies and quality gates before handing changes off.</p></div><a href={base + "/guides/command-center/"} aria-label="Read quality gate guide">↗</a></div>
+    </div>
+  </section>
+
+  <section class="story-section product-section" id="command-center" aria-labelledby="product-heading">
+    <div class="story-intro">
+      <p class="signal-eyebrow">03 / COMMAND CENTER</p>
+      <h2 id="product-heading">All the context.<br /><span>Under your control.</span></h2>
+      <p>Inspect memory, rules and skills, MCP activity, project access, code relationships and quality signals. The actual application uses Azure Portal Dark as its screenshot theme.</p>
+      <a class="inline-arrow" href={base + "/guides/command-center/"}>See the Command Center walkthrough ↗</a>
+    </div>
+    <figure class="product-figure">
+      <img src={base + "/screenshots/cc-policy-rules-dark.png"} width="1440" height="900" loading="lazy" alt="Ax Command Center showing rules in the Azure Portal Dark interface" />
+      <figcaption><span>COMMAND CENTER / AZURE PORTAL DARK</span><span>Product UI · synthetic demonstration data</span></figcaption>
+    </figure>
+  </section>
+
+  <section class="story-section deployment-section" id="deployment" aria-labelledby="deployment-heading">
+    <div class="story-intro">
+      <p class="signal-eyebrow">04 / RUN IT YOUR WAY</p>
+      <h2 id="deployment-heading">On your machine.<br /><span>On your infrastructure.</span></h2>
+      <p>Start with a local binary and MCP. Add authenticated remote clients, teams and primary/replica synchronization when you need them.</p>
+    </div>
+    <div class="deployment-rows">
+      <a href={base + "/getting-started/installation/"}><span class="deployment-index">LOCAL / 01</span><div><h3>One developer, one binary.</h3><p>Index your repo and connect supported IDEs through the local MCP server.</p></div><span aria-hidden="true">↗</span></a>
+      <a href={base + "/guides/remote-mcp/"}><span class="deployment-index">REMOTE / 02</span><div><h3>Connect from elsewhere.</h3><p>Expose selected project context over authenticated HTTPS, OAuth and scoped access.</p></div><span aria-hidden="true">↗</span></a>
+      <a href={base + "/guides/standalone-ax/"}><span class="deployment-index">SERVER / 03</span><div><h3>Primary and replicas.</h3><p>Self-host, discover and synchronize authorized project state between Ax nodes.</p></div><span aria-hidden="true">↗</span></a>
+    </div>
+  </section>
+
+  <section class="final-section" id="start" aria-labelledby="start-heading">
+    <div>
+      <p class="signal-eyebrow">05 / START BUILDING</p>
+      <h2 id="start-heading">Your next agent session<br /><span>starts with context.</span></h2>
+      <p>Install Ax, initialize your project, connect your agent.</p>
+      <a class="inline-arrow" href={base + "/getting-started/quickstart/"}>Follow the quickstart ↗</a>
+    </div>
+    <div class="install-block">
+      <div class="install-heading"><span>TERMINAL / INSTALL</span><span>↳ COPY & RUN</span></div>
+      <div class="install" data-install={INSTALL_UNIX}><span class="prompt">$</span><code>{INSTALL_UNIX}</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div>
+      <p class="copy-status" aria-live="polite" role="status"></p>
+      <p class="install-note">The install command is selected for your operating system. <a href={base + "/getting-started/installation/"}>Other installation options ↗</a></p>
+    </div>
+    <script is:inline set:html={installBootScript()} />
+  </section>
+</main>
+<footer class="signal-footer">
+  <a href={base + "/"} aria-label="Ax home"><LogoMark size="sm" alt="Ax"/></a>
+  <span>Understand code. Preserve context. Guide every agent.</span>
+  <nav aria-label="Footer links"><a href={base + "/getting-started/introduction/"}>Documentation</a><a href={repo}>GitHub</a><a href={repo + "/blob/main/LICENSE"}>MIT license</a></nav>
+</footer>
+
+<script>
+  const wrap = document.querySelector<HTMLElement>(".install");
+  const button = wrap?.querySelector<HTMLButtonElement>(".copy");
+  const status = document.querySelector<HTMLElement>(".copy-status");
+  button?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(wrap?.dataset.install || "");
+      if (status) status.textContent = "Install command copied.";
+    } catch {
+      if (status) status.textContent = "Select and copy the command above.";
+    }
+  });
+  const replay = document.querySelector<HTMLElement>("[data-replay]");
+  const replayLines = [
+    "Source relationships resolved.",
+    "Relevant memory restored.",
+    "Required policies selected.",
+    "Smart Output prepared for MCP.",
+    "Context is ready for the next agent turn."
+  ];
+  let replayIndex = 0;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const replayLoop = window.setInterval(() => {
+    if (!replay || reduced.matches || document.hidden || document.documentElement.dataset.axMotion === "paused") return;
+    replayIndex = (replayIndex + 1) % replayLines.length;
+    replay.classList.remove("replay-update");
+    void replay.offsetWidth;
+    replay.textContent = replayLines[replayIndex];
+    replay.classList.add("replay-update");
+  }, 3600);
+  window.addEventListener("pagehide", () => window.clearInterval(replayLoop), { once: true });
+</script>
