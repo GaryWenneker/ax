@@ -1086,8 +1086,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     if ice_enabled && !prompt.trim().is_empty() {
         let max_blocks = if context_mode == "expanded" { 6 } else { 3 };
         let max_chars = if context_mode == "expanded" { 3000 } else { 1500 };
-        let queries = ax_db::queries::QueryBuilder::new(ax.db_pool().clone());
-        match ax_context::retrieval::retrieve(&queries, &prompt, max_blocks, max_chars).await {
+        match ax_context::retrieval::retrieve(ax.queries(), &prompt, max_blocks, max_chars).await {
             Ok(found) => ice_context = Some(found),
             Err(err) => ice_error = Some(err.to_string()),
         }
