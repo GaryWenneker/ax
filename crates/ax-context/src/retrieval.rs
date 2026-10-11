@@ -9,6 +9,13 @@ use serde::Serialize;
 use crate::source_store::{numbered_slice, resolve_source, ResolvedSource};
 use crate::task_analyzer::analyze;
 
+/// Deterministic preferences supplied only by explicitly matched project policy.
+#[derive(Debug, Clone, Default)]
+pub struct RetrievalHints {
+    pub terms: Vec<String>,
+    pub paths: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Evidence {
@@ -39,6 +46,13 @@ impl RetrievedContext {
 
 pub async fn retrieve(
     queries: &QueryBuilder, prompt: &str, max_blocks: usize, max_chars: usize,
+) -> Result<RetrievedContext, ax_utils::errors::AxError> {
+    retrieve_with_hints(queries, prompt, max_blocks, max_chars, &RetrievalHints::default()).await
+}
+
+pub async fn retrieve_with_hints(
+    queries: &QueryBuilder, prompt: &str, max_blocks: usize, max_chars: usize,
+    hints: &RetrievalHints,
 ) -> Result<RetrievedContext, ax_utils::errors::AxError> {
     let task = analyze(prompt);
     if !task.is_code_related || max_blocks == 0 || max_chars == 0 {
@@ -78,7 +92,12 @@ pub async fn retrieve(
     // Independent lexical retrieval legs: each relevant query term can seed symbols.
     let mut candidates: Vec<(f64, Node, String)> = Vec::new();
     let mut ids = HashSet::new();
-    for term in task.terms.iter().take(6) {
+    let mut searched = HashSet::new();
+    for (term, configured) in hints.terms.iter().map(|s| (s, true))
+        .chain(task.terms.iter().map(|s| (s, false))).take(20)
+    {
+        let term = term.trim();
+        if term.len() < 2 || !searched.insert(term.to_lowercase()) { continue; }
         let matches = queries.search_nodes(term, &SearchOptions {
             limit: Some(12), ..Default::default()
         }).await?;
@@ -86,8 +105,15 @@ pub async fn retrieve(
             if ids.insert(hit.node.id.clone()) {
                 let exact = hit.node.name.eq_ignore_ascii_case(term)
                     || hit.node.qualified_name.eq_ignore_ascii_case(term);
-                candidates.push((hit.score + if exact { 20.0 } else { 0.0 },
-                    hit.node, format!("lexical symbol: {term}")));
+                let path_preferred = hints.paths.iter().any(|p| p == &hit.node.file_path);
+                let boost = if exact { 20.0 } else { 0.0 }
+                    + if path_preferred { 10.0 } else { 0.0 };
+                let reason = if configured {
+                    format!("configured policy term: {term}")
+                } else {
+                    format!("lexical symbol: {term}")
+                };
+                candidates.push((hit.score + boost, hit.node, reason));
             }
         }
     }
