@@ -2132,6 +2132,9 @@ async fn async_main() {
                 primary,
             } => server_cli::init(&config, role, cluster, project, path, primary),
             ServerAction::Status { config } => server_cli::status(&config),
+            ServerAction::Run { config, bind, allow_private_http } =>
+                server_http::run(&config, bind, allow_private_http).await,
+            ServerAction::Sync { config } => server_replica::sync(&config).await,
         },
         Some(Commands::Global { action }) => match action {
             GlobalAction::Init => commands::global::run_init().await,
