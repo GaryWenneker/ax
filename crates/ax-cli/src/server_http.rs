@@ -89,8 +89,17 @@ pub async fn run(
     allow_private_http: bool,
     discovery_port: Option<u16>,
     advertise: Option<String>,
+    sync_interval_seconds: Option<u64>,
 ) -> Result<(), String> {
     let config = server_cli::load(path)?;
+    if let Some(seconds) = sync_interval_seconds {
+        if config.role != NodeRole::Replica {
+            return Err("--sync-interval-seconds is only valid for replicas".into());
+        }
+        if !(5..=86_400).contains(&seconds) {
+            return Err("--sync-interval-seconds must be between 5 and 86400".into());
+        }
+    }
     if discovery_port.is_some() != advertise.is_some() {
         return Err("LAN discovery requires both --discovery-port and --advertise".into());
     }
@@ -106,6 +115,19 @@ pub async fn run(
         tokio::spawn(async move {
             if let Err(error) = server_discovery::announce(node, url, port).await {
                 tracing::warn!("discovery announcement stopped: {}", error);
+            }
+        })
+    });
+    // Replicas poll the explicitly configured primary. They never elect a
+    // primary based on UDP discovery and never publish project snapshots.
+    let periodic_sync = sync_interval_seconds.map(|seconds| {
+        let config_path = path.to_path_buf();
+        tokio::spawn(async move {
+            loop {
+                if let Err(error) = crate::server_replica::sync(&config_path).await {
+                    tracing::warn!("periodic replica synchronization failed: {}", error);
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
             }
         })
     });
@@ -127,6 +149,9 @@ pub async fn run(
         .await
         .map_err(|e| e.to_string());
     if let Some(task) = announcement {
+        task.abort();
+    }
+    if let Some(task) = periodic_sync {
         task.abort();
     }
     result
