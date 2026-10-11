@@ -1,6 +1,6 @@
 # Team, Client Access & Node Management
 
-Status: implementation specification
+Status: implemented — verification and merge pending
 Branch: `feature/team-client-access-management`
 
 ## Goal
