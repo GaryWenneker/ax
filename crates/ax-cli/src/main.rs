@@ -2149,10 +2149,11 @@ async fn async_main() {
             ServerAction::Run {
                 config, bind, allow_private_http, discovery_port, advertise
             } => server_http::run(&config, bind, allow_private_http, discovery_port, advertise).await,
-            ServerAction::Discover { config, port, seconds } => {
-                let config = server_cli::load(&config)?;
-                server_discovery::discover(&config, port, seconds).await
-            },
+            ServerAction::Discover { config, port, seconds } =>
+                match server_cli::load(&config) {
+                    Ok(config) => server_discovery::discover(&config, port, seconds).await,
+                    Err(error) => Err(error),
+                },
             ServerAction::Sync { config } => server_replica::sync(&config).await,
         },
         Some(Commands::Global { action }) => match action {
