@@ -192,3 +192,15 @@ html[data-ax-layout="portal"] .mem-stat { flex-direction: column; gap: 4px; }
 html[data-ax-layout="portal"] .portal-data-cell :is(.page-level-badge, .page-scope-badge) { color: var(--text); }
 html[data-ax-layout="portal"] .graph-page .graph-body { min-height: 0; }
 @media (max-width: 639px) { html[data-ax-layout="portal"] .portal-breadcrumbs { padding-inline: 12px; } }
+
+/* Logging, savings and quality panels use the active portal surfaces. */
+html[data-ax-layout="portal"] :is(.mcp-trace-shell, .mcp-trace-chrome, .mcp-trace-toolbar, .mcp-trace-scroller, .mcp-trace-project-banner, .mcp-trace-filters, .settings-status-panel, .sv-hero-strip, .sv-insights, .mcp-q-blade, .mcp-q-blade-header, .mcp-q-blade-body) { background: var(--bg-panel); color: var(--text); border-color: var(--border); border-radius: 0; box-shadow: none; }
+html[data-ax-layout="portal"] :is(.sv-hero-stat, .sv-insight, .mcp-q-metric, .mcp-q-finding) { background: var(--bg-panel); border-color: var(--border); border-radius: 0; box-shadow: none; }
+html[data-ax-layout="portal"] .mcp-trace-calm .mcp-trace-row .page-item-title { color: var(--text); }
+html[data-ax-layout="portal"] :is(.mcp-trace-project-banner-name, .mcp-trace-project-chip-name, .mcp-q-metric-val, .sv-hero-value, .sv-insight-value) { color: var(--text-hi); }
+html[data-ax-layout="portal"] :is(.mcp-trace-project-banner-root, .mcp-trace-project-banner-file, .mcp-trace-project-banner-meta, .sv-hero-label, .sv-insight-label, .sv-insight-detail, .mcp-q-metric-label) { color: var(--text-dim); }
+html[data-ax-layout="portal"] .mcp-q-strip { background: var(--bg-side); border-color: var(--border); color: var(--text); box-shadow: none; border-radius: 2px; font-family: var(--font-ui); }
+html[data-ax-layout="portal"] .mcp-q-strip :is(.mcp-q-strip-label, .mcp-q-strip-meta) { color: var(--text-dim); }
+html[data-ax-layout="portal"] .mcp-q-strip .mcp-q-strip-score { color: var(--accent-text); text-shadow: none; }
+
+html[data-ax-layout="portal"] :is(.sv-tl-chart, .sv-quality-chip) { background: var(--bg-side); border-color: var(--border); border-radius: 2px; }
