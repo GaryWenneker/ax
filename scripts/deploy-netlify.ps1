@@ -38,6 +38,33 @@ if (-not (Test-Path $siteDir)) {
     throw "Site directory not found: $siteDir"
 }
 
+# Production is reproducible only from the clean, merged main commit.
+if (-not $Preview) {
+    if ($SkipBuild) { throw 'Production requires a fresh build from main; -SkipBuild is preview-only.' }
+    $branch = (& git -C $root branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { throw 'Production deploys must run from main.' }
+    if (& git -C $root status --porcelain) { throw 'Production requires a clean checkout.' }
+    & git -C $root fetch origin main
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot fetch origin/main.' }
+    $headSha = (& git -C $root rev-parse HEAD).Trim()
+    $mainSha = (& git -C $root rev-parse origin/main).Trim()
+    if ($headSha -ne $mainSha) { throw 'Local main must equal origin/main.' }
+    Require-Command 'gh'
+    $ci = & gh run list --repo GaryWenneker/ax --workflow ci.yml --commit $headSha --event push --limit 1 --json status,conclusion
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot verify main CI.' }
+    $runs = @($ci | ConvertFrom-Json)
+    if ($runs.Count -ne 1 -or $runs[0].status -ne 'completed' -or $runs[0].conclusion -ne 'success') {
+        throw 'Production requires successful main workspace CI.'
+    }
+    $published = & gh release view --repo GaryWenneker/ax --json tagName,assets
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve published downloads.' }
+    $release = $published | ConvertFrom-Json
+    foreach ($asset in @('ax-win32-x64.zip', 'ax-win32-arm64.zip', 'ax-linux-x64.tar.gz', 'ax-linux-arm64.tar.gz', 'ax-darwin-x64.tar.gz', 'ax-darwin-arm64.tar.gz')) {
+        if ($asset -notin $release.assets.name) { throw "Published release is missing $asset." }
+    }
+    [System.IO.File]::WriteAllText((Join-Path $siteDir 'public/releases/latest.txt'), "$($release.tagName)`n", (New-Object System.Text.UTF8Encoding $false))
+}
+
 Push-Location $siteDir
 try {
     Write-Step "Checking Netlify link"
@@ -62,6 +89,9 @@ From $siteDir run once:
 
         Write-Step "Building Astro site"
         npm run build
+        if ($LASTEXITCODE -ne 0) { throw 'Site build failed.' }
+        npm test
+        if ($LASTEXITCODE -ne 0) { throw 'Site tests failed.' }
     } elseif (-not (Test-Path $distDir)) {
         throw "dist/ not found - run without -SkipBuild first"
     }

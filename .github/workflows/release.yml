@@ -1,30 +1,90 @@
 name: Release
-run-name: Release ${{ github.ref_name }}
+run-name: Release from main
 
-# Creates GitHub Release binaries for ax upgrade + install.ps1/install.sh.
-# Publishes all six platforms (Windows, macOS, Linux/WSL2) — partial releases fail verify step.
-# Trigger: push tag v* or manual workflow_dispatch.
 on:
-  push:
-    tags: ["v*"]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0). Required for manual runs."
+        description: "Optional tag; must match main's CLI version."
         required: false
 
 permissions:
   contents: write
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-main
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      tag: ${{ steps.source.outputs.tag }}
+      publish: ${{ steps.source.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Validate main source and successful CI
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          if [ -n "$VALIDATED_SHA" ] && [ "$VALIDATED_SHA" != "$SHA" ]; then
+            echo "A newer main commit exists; its CI will handle the release."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CI=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" --event push --limit 1 --json status,conclusion --jq '.[0] | [.status, .conclusion] | @tsv')
+          [ "$CI" = $'completed\tsuccess' ] || { echo "::error::main CI must pass before release: $CI"; exit 1; }
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/ax-cli/Cargo.toml | head -1)
+          TAG="v$VERSION"
+          [ -z "$REQUESTED_TAG" ] || [ "$REQUESTED_TAG" = "$TAG" ] || { echo "::error::Requested tag differs from main version"; exit 1; }
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            git merge-base --is-ancestor "$TAG^{commit}" origin/main || { echo "::error::Tag is not from main"; exit 1; }
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' > /tmp/release-draft 2>/dev/null; then
+            if [ "$(cat /tmp/release-draft)" = false ]; then
+              gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > /tmp/release-assets
+              for asset in ax-win32-x64.zip ax-win32-arm64.zip ax-linux-x64.tar.gz ax-linux-arm64.tar.gz ax-darwin-x64.tar.gz ax-darwin-arm64.tar.gz SHA256SUMS; do
+                grep -Fxq "$asset" /tmp/release-assets || { echo "::error::Published release is incomplete: $asset"; exit 1; }
+              done
+              echo "Release $TAG is already published; published releases are immutable."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            [ "$(git rev-parse "$TAG^{commit}")" = "$SHA" ] || { echo "::error::Draft tag differs from main HEAD"; exit 1; }
+          fi
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            [ "$(git rev-parse "$TAG^{commit}")" = "$SHA" ] || { echo "::error::Unpublished tag differs from validated main HEAD"; exit 1; }
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
     name: build-${{ matrix.bundle }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -52,17 +112,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Verify Cargo version matches release tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VER="$(grep -E '^version = ' crates/ax-cli/Cargo.toml | head -1 | sed -E 's/version = "(.*)"/\1/')"
-          if [ "$VER" != "$TAG" ]; then
-            echo "::error::crates/ax-cli/Cargo.toml version is ${VER} but tag is v${TAG}. Bump Cargo.toml before tagging."
-            exit 1
-          fi
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -88,7 +139,7 @@ jobs:
       - name: Build ax
         run: |
           cargo clean -p ax-cli
-          cargo build --release -p ax-cli --target ${{ matrix.target }}
+          cargo build --release --locked -p ax-cli --target ${{ matrix.target }}
 
       - name: Package archive
         if: runner.os != 'Windows'
@@ -106,73 +157,33 @@ jobs:
           path: dist/ax-${{ matrix.bundle }}.*
 
   release:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: ax-*
           merge-multiple: true
-
-      - name: Resolve tag
-        id: tag
-        shell: bash
+      - name: Verify all six platform assets and checksums
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [ -n "${{ github.ref_name }}" ] && [[ "${{ github.ref_name }}" == v* ]]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::No release tag. Push v* tag or set workflow input tag."
-            exit 1
-          fi
-
-      - name: Verify all platform assets
-        run: bash scripts/verify-release-assets.sh dist
-
-      - name: SHA256SUMS
-        run: |
+          bash scripts/verify-release-assets.sh dist
           cd dist
           sha256sum ax-* > SHA256SUMS
-          cat SHA256SUMS
-          ls -la
-
-      - name: Remove stale GitHub release (keep tag)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Deleting stale release ${TAG} before re-upload..."
-            gh release delete "$TAG" --repo "${{ github.repository }}" --yes --cleanup-tag=false
-          fi
-
-      - name: Create GitHub Release
+      - name: Stage complete release from validated main commit
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
-          make_latest: true
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.sha }}
+          name: ${{ needs.prepare.outputs.tag }}
+          draft: true
           fail_on_unmatched_files: true
           body: |
-            ## ax ${{ steps.tag.outputs.tag }}
-
-            Native binaries for **install.ps1** / **install.sh** / `ax upgrade`.
-
-            ### Platforms (all six required)
-            - Windows x64 / arm64 — `irm https://getax.wenneker.io/install.ps1 | iex`
-            - macOS Intel / Apple Silicon — `curl -fsSL https://getax.wenneker.io/install.sh | sh`
-            - Linux / WSL2 — same `install.sh`
-
-            Downloads resolve from GitHub Releases; getax.wenneker.io/releases/* redirects to GitHub.
-
-            ### Policy engine
-            - `policy.storage: "database"` in ax.json — SQLite source of truth, .mdc export only
-            - `ax policy import` / `ax policy export`
+            Ax built from main commit ${{ needs.prepare.outputs.sha }} after successful workspace CI.
+            Native binaries for Windows x64/arm64, Linux and WSL2 x64/arm64, and macOS Intel/Apple Silicon.
           files: |
             dist/ax-darwin-arm64.tar.gz
             dist/ax-darwin-x64.tar.gz
@@ -181,58 +192,43 @@ jobs:
             dist/ax-win32-arm64.zip
             dist/ax-win32-x64.zip
             dist/SHA256SUMS
-
-      - name: Verify GitHub release published
+      - name: Verify uploaded assets before publishing
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          REPO="${{ github.repository }}"
-          for attempt in $(seq 1 30); do
-            if gh release view "$TAG" --repo "$REPO" --json tagName,assets --jq '.assets | length' 2>/dev/null | grep -qE '^[6-9]|^[1-9][0-9]+$'; then
-              echo "Release ${TAG} visible with assets (attempt ${attempt})"
-              exit 0
-            fi
-            echo "Waiting for GitHub release metadata (attempt ${attempt}/30)..."
-            sleep 5
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > /tmp/release-assets
+          for asset in ax-win32-x64.zip ax-win32-arm64.zip ax-linux-x64.tar.gz ax-linux-arm64.tar.gz ax-darwin-x64.tar.gz ax-darwin-arm64.tar.gz SHA256SUMS; do
+            grep -Fxq "$asset" /tmp/release-assets || { echo "::error::Missing uploaded asset: $asset"; exit 1; }
           done
-          echo "::error::Release ${TAG} not visible with assets after 150s"
-          gh release list --repo "$REPO" --limit 5 || true
-          exit 1
-
-      - name: Verify GitHub download URL (smoke)
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+      - name: Update download pointer after complete release
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          URL="https://github.com/GaryWenneker/ax/releases/download/${TAG}/ax-linux-x64.tar.gz"
-          for attempt in $(seq 1 30); do
-            code="$(curl -sL -o /dev/null -w '%{http_code}' "$URL")"
-            if [ "$code" = "200" ]; then
-              echo "OK: $URL (attempt ${attempt})"
-              exit 0
-            fi
-            echo "Waiting for GitHub CDN (HTTP ${code}), attempt ${attempt}/30..."
-            sleep 5
-          done
-          echo "::error::GitHub asset not reachable after 150s: $URL"
-          exit 1
-
-      - name: Update site version pointer and install scripts
-        run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          echo "${TAG}" > site/public/releases/latest.txt
+          echo "$RELEASE_TAG" > site/public/releases/latest.txt
           cp install.sh install.ps1 site/public/
-
-      - name: Deploy docs site to Netlify
-        continue-on-error: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Build and test released documentation
+        working-directory: site
+        run: |
+          npm ci
+          sudo npx puppeteer browsers install chrome --install-deps
+          npm run build
+          npm test
+      - name: Publish main documentation and functions to Netlify
+        working-directory: site
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           if [ -z "${NETLIFY_AUTH_TOKEN:-}" ] || [ -z "${NETLIFY_SITE_ID:-}" ]; then
-            echo "Skipping Netlify deploy (set NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID repo secrets)."
-            exit 0
+            echo "::error::NETLIFY_AUTH_TOKEN and NETLIFY_SITE_ID secrets are required"
+            exit 1
           fi
-          cd site
-          npm ci
-          npm run build
-          npx netlify-cli deploy --prod --dir=dist --site="$NETLIFY_SITE_ID" --message="Release ${{ steps.tag.outputs.tag }} docs"
+          npx --yes netlify-cli deploy --prod --dir=dist --functions=netlify/functions --site="$NETLIFY_SITE_ID" --message="Main release $RELEASE_TAG (${{ needs.prepare.outputs.sha }})"

@@ -2,7 +2,7 @@ name: Build docs site
 
 on:
   push:
-    branches: [main, feat/minimal-project-safe-context, feature/remote-mcp-oauth-complete, fix/site-main-version]
+    branches: [main]
     paths:
       - 'site/**'
       - '.github/workflows/deploy-site.yml'
@@ -41,6 +41,16 @@ jobs:
         run: npm ci
       - name: Install Chrome for share-card screenshots
         run: sudo npx puppeteer browsers install chrome --install-deps
+      - name: Resolve complete published release for production downloads
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view --repo "$GITHUB_REPOSITORY" --json tagName,assets > /tmp/published-release.json
+          for asset in ax-win32-x64.zip ax-win32-arm64.zip ax-linux-x64.tar.gz ax-linux-arm64.tar.gz ax-darwin-x64.tar.gz ax-darwin-arm64.tar.gz; do
+            jq -e --arg asset "$asset" '.assets | any(.name == $asset)' /tmp/published-release.json > /dev/null
+          done
+          jq -r '.tagName' /tmp/published-release.json > public/releases/latest.txt
       - name: Build docs site
         run: npm run build
       - name: Test docs site

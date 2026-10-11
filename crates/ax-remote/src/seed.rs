@@ -38,14 +38,23 @@ pub fn seed_ship_config(ax_dir: &Path, project_name: Option<&str>) -> std::io::R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_ax_dir() -> std::path::PathBuf {
+        static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
         let n = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("ax-ship-seed-{n}"))
+        std::env::temp_dir().join(format!("ax-ship-seed-{}-{n}-{id}", std::process::id()))
+    }
+
+    #[test]
+    fn temporary_seed_directories_are_unique() {
+        let dirs: std::collections::HashSet<_> = (0..1000).map(|_| temp_ax_dir()).collect();
+        assert_eq!(dirs.len(), 1000);
     }
 
     #[test]
