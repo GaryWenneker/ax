@@ -258,3 +258,13 @@ SELECT
     sk.name as node_name,
     sk.projects as project_names
 FROM shared_knowledge sk;
+
+-- Current local standalone identity; no token or environment-secret values.
+CREATE TABLE IF NOT EXISTS local_replication_status (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    node_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('primary', 'replica')),
+    primary_url TEXT,
+    last_sync_at TIMESTAMP,
+    sync_state TEXT NOT NULL DEFAULT 'configured'
+);

@@ -6,9 +6,7 @@
 use crate::{
     server_cli,
     server_config::{NodeRole, ServerConfig},
-    server_discovery,
-    server_push,
-    server_snapshot,
+    server_discovery, server_push, server_snapshot,
 };
 use axum::{
     extract::{Path as AxumPath, State},
@@ -16,8 +14,12 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use std::{net::{IpAddr, SocketAddr}, path::Path, sync::Arc};
 use sqlx::SqlitePool;
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::Path,
+    sync::Arc,
+};
 use subtle::ConstantTimeEq;
 use tokio::sync::Semaphore;
 
@@ -28,7 +30,10 @@ struct StateData {
 }
 
 fn project_bootstrap_token(config: &ServerConfig, project_id: &str) -> Option<String> {
-    let project = config.projects.iter().find(|project| project.id == project_id)?;
+    let project = config
+        .projects
+        .iter()
+        .find(|project| project.id == project_id)?;
     let token = std::env::var(&project.token_env).ok()?;
     if token.len() < 32 || !token.is_ascii() || token.bytes().any(|b| b.is_ascii_whitespace()) {
         return None;
@@ -37,8 +42,7 @@ fn project_bootstrap_token(config: &ServerConfig, project_id: &str) -> Option<St
 }
 
 fn exact_secret(candidate: &str, expected: &str) -> bool {
-    candidate.len() == expected.len()
-        && bool::from(candidate.as_bytes().ct_eq(expected.as_bytes()))
+    candidate.len() == expected.len() && bool::from(candidate.as_bytes().ct_eq(expected.as_bytes()))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -68,21 +72,28 @@ async fn snapshot(
     let node_id = headers
         .get("x-ax-node-id")
         .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty());
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        });
 
-    let trusted = ax_global_db::access::authenticate_node_token_for_project(
-        &state.access_db,
-        token,
-        &id,
-    )
-    .await
-    .map_err(|error| {
-        tracing::warn!(project = %id, "node authentication failed: {}", error);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .is_some();
+    let principal =
+        ax_global_db::access::authenticate_node_token_for_project(&state.access_db, token, &id)
+            .await
+            .map_err(|error| {
+                tracing::warn!(project = %id, "node authentication failed: {}", error);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
 
-    if !trusted {
+    if let Some(principal) = &principal {
+        if node_id.is_some_and(|id| id != principal.node_id) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+    if principal.is_none() {
         let Some(node_id) = node_id else {
             return Err(StatusCode::UNAUTHORIZED);
         };
@@ -102,15 +113,24 @@ async fn snapshot(
         .await
         .map_err(|error| {
             tracing::warn!(project = %id, node = %node_id, "replica registration failed: {}", error);
-            StatusCode::INTERNAL_SERVER_ERROR
+            if error.to_string() == "replica is blocked" { StatusCode::FORBIDDEN } else { StatusCode::INTERNAL_SERVER_ERROR }
         })?;
     }
-    let _permit = state.exports.acquire().await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let result = server_snapshot::export(&state.config, &id).await
+    let _permit = state
+        .exports
+        .acquire()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let result = server_snapshot::export(&state.config, &id)
+        .await
         .map_err(|error| {
             tracing::warn!(project = %id, "snapshot export failed: {}", error);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+    if let Some(node_id) = principal.as_ref().map(|p| p.node_id.as_str()).or(node_id) {
+        sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP, last_sync_at = CURRENT_TIMESTAMP WHERE id = ? AND trust_state = 'trusted'")
+            .bind(node_id).execute(&state.access_db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
     Ok(Json(result))
 }
 
@@ -167,6 +187,18 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
     let access_db = ax_global_db::open_and_init(&access_db_path)
         .await
         .map_err(|e| e.to_string())?;
+    ax_global_db::access::record_local_node(
+        &access_db,
+        &config.node_id,
+        if config.role == NodeRole::Primary {
+            "primary"
+        } else {
+            "replica"
+        },
+        config.primary_url.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let announcement = discovery_port.zip(advertise).map(|(port, url)| {
         let node = config.clone();
         tokio::spawn(async move {
@@ -187,7 +219,9 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         let config_path = path.to_path_buf();
         tokio::spawn(async move {
             loop {
-                if let Err(error) = crate::server_replica::sync_with_apply(&config_path, auto_apply_memories).await {
+                if let Err(error) =
+                    crate::server_replica::sync_with_apply(&config_path, auto_apply_memories).await
+                {
                     tracing::warn!("periodic replica synchronization failed: {}", error);
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
@@ -204,10 +238,15 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         Some(tokio::spawn(async move {
             let result = match node.role {
                 NodeRole::Primary => server_push::primary(node, push_port).await,
-                NodeRole::Replica => server_push::replica(node, config_path, push_port, auto_apply_memories).await,
+                NodeRole::Replica => {
+                    server_push::replica(node, config_path, push_port, auto_apply_memories).await
+                }
             };
             if let Err(error) = result {
-                tracing::warn!("UDP push unavailable; HTTPS polling remains active: {}", error);
+                tracing::warn!(
+                    "UDP push unavailable; HTTPS polling remains active: {}",
+                    error
+                );
             }
         }))
     };
@@ -220,8 +259,13 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         .route("/health", get(health))
         .route("/v1/projects/{id}/snapshot", get(snapshot))
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind(bind).await.map_err(|e| e.to_string())?;
-    println!("Ax standalone server listening on {}", listener.local_addr().map_err(|e| e.to_string())?);
+    let listener = tokio::net::TcpListener::bind(bind)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!(
+        "Ax standalone server listening on {}",
+        listener.local_addr().map_err(|e| e.to_string())?
+    );
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

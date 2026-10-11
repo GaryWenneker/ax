@@ -17,7 +17,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: detect-changed-components
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.paths.outputs.backend }}
+      frontend: ${{ steps.paths.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify change classification
+        run: python -m unittest discover -s scripts -p 'test_ci_changes.py'
+      - name: Classify changed paths
+        id: paths
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python scripts/ci-changes.py
+
   test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     name: test-${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -43,6 +64,8 @@ jobs:
         run: cargo test --workspace --locked --no-fail-fast
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     name: clippy
     runs-on: ubuntu-latest
     steps:
@@ -63,7 +86,9 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   remote-settings:
-    name: remote-settings-browser
+    name: frontend-build-and-browser
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -79,7 +104,9 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Build UI
         run: npm run build
-      - name: Test Remote Settings
+      - name: Theme contrast tests
+        run: node --experimental-strip-types --test src/lib/themes.test.ts
+      - name: Test Remote Settings and portal pages
         env:
           AX_WEB_URL: http://127.0.0.1:5190
         run: |
@@ -90,4 +117,4 @@ jobs:
             if curl --fail --silent "$AX_WEB_URL/settings" > /dev/null; then break; fi
             sleep 1
           done
-          npm run test:e2e -- remote-mcp.spec.ts --project=desktop-chrome
+          npm run test:e2e -- remote-mcp.spec.ts azure-portal.spec.ts access-settings.spec.ts --project=desktop-chrome

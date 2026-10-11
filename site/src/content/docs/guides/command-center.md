@@ -15,6 +15,18 @@ Each full page load and hard refresh plays a short green edge glow (Green Vessel
 
 ![Command Center — Rules page with the Policy, Code, Activity, and System sidebar groups](/screenshots/cc-policy-rules.png)
 
+## Azure Portal appearance
+
+Open **Settings → Appearance** and choose **Azure Portal Light** or **Azure Portal Dark**. The selection is saved in this browser. Both modes apply across pages, editors, Logging, quality panels and dialogs. The header search opens pages or searches code; Settings has its own grouped, filterable navigation.
+
+![Azure Portal Light — theme selection](/screenshots/cc-settings-appearance.png)
+
+![Azure Portal Dark — Rules](/screenshots/cc-policy-rules-dark.png)
+
+![Azure Portal Dark — code graph](/screenshots/cc-graph-dark.png)
+
+The screenshots use synthetic public example data, not a real team's activity or measured savings.
+
 ## Quick start
 
 ```bash
@@ -117,7 +129,7 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
 ## Command Center pages (`ax web`)
 
-Settings-style pages sit in a **centered stage** (nav flush against the article column). **Title bar and status bar paint the full viewport**; only their inner labels/chips stay inside `--stage-w`. Article width is **1100px**, **1320px** from 1920px, **1480px** from 2560px.
+The Azure Portal themes use the full viewport with a fixed sidebar, blue header, breadcrumbs and a content area that grows with the window. Other themes retain their centered stage.
 
 **Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging table scrolls horizontally instead of crushing columns, project browser does not autofocus the filter, modals become bottom sheets. Graph is still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
 
@@ -325,3 +337,19 @@ See also [Share Command Center](/guides/share/) for LAN/PWA collaboration.
 - `AZDO_PAT` (or custom `token_env`) with Code (read & write) scope
 
 Draft PRs call the AzDO REST API; the local git remote can be GitHub or AzDO — the remote provider only affects where PRs are created.
+
+
+## Recreate documentation screenshots
+
+Build the UI and capture its production pages with Puppeteer and synthetic API responses. This mode does not require a Rust, backend or Docker build:
+
+```bash
+cd crates/ax-web/web-ui
+npm ci
+npm run build
+cd ../../../..
+AX_SCREENSHOT_DEMO=1 AX_THEME=azure-light node site/scripts/capture-screenshots.mjs
+AX_SCREENSHOT_DEMO=1 AX_THEME=azure-dark AX_SHOTS=cc-policy-rules.png,cc-graph.png node site/scripts/capture-screenshots.mjs
+```
+
+Dark captures receive a `-dark` suffix. Set `AX_CHROME_PATH` to an installed Chromium browser when needed. Capturing a live environment still requires a redaction terms file and a visual privacy check.

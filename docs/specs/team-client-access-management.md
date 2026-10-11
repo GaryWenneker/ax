@@ -173,3 +173,9 @@ Audit records contain actor, target, action and timestamp, never secret material
 7. Audit events.
 8. Documentation and upgrade notes.
 9. Build/CI, PR, then merge after green checks.
+
+## Completion and verification record
+
+The initial draft was missing effective client-token integration, member edits, scope edits, per-token controls and local node status. These have now been implemented, including last-owner protection, immediate atomic rotation, authenticated/CSRF-protected management, per-request HTTP/MCP scope enforcement, explicit Remote MCP project grants and replica revocation that automatic registration cannot undo. Settings integrates three separate Access entries with the Azure Portal navigation. Client token issuance and credential lists are non-cacheable.
+
+Local verification: targeted database lifecycle/security tests, MCP/web tests, workspace Clippy with warnings denied, production UI build and browser controls. Final CI and merge remain required. No secrets are used in documentation screenshots.

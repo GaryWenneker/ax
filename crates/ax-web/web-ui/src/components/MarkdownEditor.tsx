@@ -7,6 +7,7 @@ import LinkPickerList, { optionId, stepIndex, useLinkSearch, type PickerRow } fr
 import WysiwygEditor from './WysiwygEditor';
 import { wikiLinksToMarkdown, type ItemLinks } from '../wikilinks';
 import { linkText, openLinkQuery } from '../lib/linkPicker';
+import { useTheme } from '../hooks/useTheme';
 import type { BodyView } from '../lib/policyBodyView';
 
 interface Props {
@@ -29,6 +30,7 @@ interface Props {
  * (uiw's visibleDragbar only resizes editor height, and is disabled when height is %.)
  */
 export default function MarkdownEditor({ value, onChange, height = 520, fill = false, links, view, selfKey }: Props) {
+  const colorMode = useTheme().colorScheme ?? 'dark';
   const splitRef = useRef<HTMLDivElement>(null);
   const pct = loadMdEditPct();
   const preview = links ? wikiLinksToMarkdown(value, links.outgoing) : value;
@@ -39,7 +41,7 @@ export default function MarkdownEditor({ value, onChange, height = 520, fill = f
     <div
       ref={splitRef}
       className={`md-editor-wrap md-editor-split${view ? ' md-editor-split--single' : ''}${fill ? ' md-editor-wrap--fill' : ''}`}
-      data-color-mode="dark"
+      data-color-mode={colorMode}
       style={{ ['--md-edit-pct' as string]: `${pct}%`, height: fill ? undefined : height }}
     >
       {showEdit && <SourceEditor value={value} onChange={onChange} selfKey={selfKey} />}

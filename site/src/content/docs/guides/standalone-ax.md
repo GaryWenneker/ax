@@ -197,3 +197,34 @@ For backups, stop the service and back up the complete `primary-project/.ax` sta
 - **Different projects seem to cross over:** stop using the service and check project IDs, cluster IDs and tokens. Each project must have its own independent secret.
 
 See the implementation [in the public repository](https://github.com/GaryWenneker/ax/tree/feature/standalone-ax). This is a development branch, not an announcement that CI, releases or production deployment have passed.
+
+
+## Team members, clients and tokens
+
+Open **Settings → Team** in the local Command Center. An existing standalone installation gets an initial local Owner automatically; its project data and current local access remain available. Add members as Admin, Member or Read-only. Change their role with the role selector or use Disable/Enable. Ax refuses to disable or demote the last active Owner; only an Owner can assign or change ownership. Disabled members' tokens stop working, and a lower role takes effect on the next authenticated request.
+
+Open **Settings → Clients & tokens**. Add an application for a member, select its type, then issue a token. Copy the token before dismissing it: Ax stores a verifier, never its plaintext, and cannot show it again. Tokens use the `axc_` namespace.
+
+Use the scope checkboxes and **Save scopes** to choose permissions. The member role remains the maximum: choosing an admin or write scope for a Read-only member is rejected. **Revoke token** disables a single credential; **Revoke client** disables that client's credentials without affecting the member's other clients. **Rotate tokens** issues a replacement and immediately invalidates all older credentials for that client. Keep the replacement before closing the one-time notice.
+
+Client credentials can call explicitly scoped HTTP APIs using `Authorization: Bearer <token>`. Management endpoints require `admin:team`, `admin:clients` or `admin:nodes`. A client credential cannot invoke the terminal, run arbitrary Command Center actions or act as a replica. Local browser management requires the local owner session and a CSRF token; shared read-only Command Center cannot change access records.
+
+For [Remote MCP](/guides/remote-mcp/), add the member's stable ID to the desired project's `subjects` in the remote config and to `write_subjects` when writes are allowed. Both the project's explicit grant and the client's effective tool scope are required. Revoked tokens and role/scope changes are checked on every request, including existing MCP sessions. OAuth and configured API-key access remain supported.
+
+![Team roles and member status in Azure Portal Light](/screenshots/cc-access-team.png)
+
+![Clients, effective scopes and credential metadata](/screenshots/cc-access-clients.png)
+
+## Replication access and connection status
+
+Open **Settings → Replication** for the local node ID, Primary/Replica role, the Replica's configured Primary URL, and its last sync state. Start or synchronize the server with its configuration to populate this status. Primary lists authenticated replicas with endpoint, last seen and last successful snapshot. Online means seen within two minutes; older records are marked not seen recently.
+
+A Replica must explicitly configure its Primary and project credential. Successful authenticated registration adds it automatically; no manual approval is needed. **Revoke** blocks future snapshots and registration for that node ID. **Allow re-enrollment** explicitly clears that block, but keeps previous node credentials revoked; the Replica must authenticate again with its project enrollment credential. UDP presence never chooses or changes the configured Primary. Client tokens (`axc_`) and node credentials (`axn_`) cannot be used interchangeably. Shared project credentials remain the automatic enrollment mechanism for existing standalone deployments; treat them as enrollment secrets.
+
+Disabling or revoking access does not delete a team member's existing data. These controls govern authorization; export/import and shared/non-shared or active/inactive data selection retain their existing rules.
+
+![Primary/Replica management in Azure Portal Light](/screenshots/cc-access-nodes.png)
+
+![Primary/Replica management in Azure Portal Dark](/screenshots/cc-access-nodes-dark.png)
+
+These screenshots use synthetic public example identities and contain no working credentials.

@@ -17,6 +17,8 @@ export interface ThemePreset {
   textDim: string;
   textHi: string;
   statusbarBg: string;
+  layout?: 'portal';
+  colorScheme?: 'light' | 'dark';
 }
 
 export const THEMES: ThemePreset[] = [
@@ -200,6 +202,20 @@ export const THEMES: ThemePreset[] = [
     textHi: '#f4f4f4',
     statusbarBg: '#d0d0d0',
   },
+  {
+    id: 'azure-light', label: 'Azure Portal Light', layout: 'portal', colorScheme: 'light',
+    accent: '#0078d4', ok: '#107c10', danger: '#a4262c', warn: '#865d00',
+    bg: '#f5f5f5', bgSide: '#fafafa', bgInput: '#ffffff', bgHover: '#eeeeee',
+    bgActive: '#deecf9', bgPanel: '#ffffff', border: '#d6d6d6', borderHi: '#8a8886',
+    text: '#323130', textDim: '#605e5c', textHi: '#201f1e', statusbarBg: '#0078d4',
+  },
+  {
+    id: 'azure-dark', label: 'Azure Portal Dark', layout: 'portal', colorScheme: 'dark',
+    accent: '#2899f5', ok: '#6ccb5f', danger: '#ff8585', warn: '#f2c661',
+    bg: '#1b1b1b', bgSide: '#202020', bgInput: '#252525', bgHover: '#333333',
+    bgActive: '#163b59', bgPanel: '#252525', border: '#444444', borderHi: '#797775',
+    text: '#f0f0f0', textDim: '#bdbdbd', textHi: '#ffffff', statusbarBg: '#2899f5',
+  },
 ];
 
 const STORAGE_KEY = 'ax-theme';
@@ -356,6 +372,8 @@ export function statusbarInk(accentHex: string): {
 
 export function applyTheme(theme: ThemePreset): void {
   const root = document.documentElement;
+  root.dataset.axLayout = theme.layout ?? 'workbench';
+  root.style.colorScheme = theme.colorScheme ?? 'dark';
   const accentText = ensureTextContrast(theme.accent, theme.bg);
   const fill = themeAccentFill(theme);
   const onFill = ensureTextContrast('#ffffff', fill, WCAG_AA);

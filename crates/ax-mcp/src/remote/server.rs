@@ -149,7 +149,14 @@ async fn authorize(
     state: &RemoteState,
     headers: &HeaderMap,
     project: &str,
-) -> Result<(Principal, Project), Box<Response>> {
+) -> Result<
+    (
+        Principal,
+        Project,
+        Option<ax_global_db::access::ClientPrincipal>,
+    ),
+    Box<Response>,
+> {
     if let Some(origin) = headers.get("origin") {
         let origin = origin
             .to_str()
@@ -172,11 +179,50 @@ async fn authorize(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .ok_or_else(|| Box::new(challenge(state, StatusCode::UNAUTHORIZED, CONTEXT_SCOPE)))?;
-    let principal = state
-        .verifier
-        .verify(token)
-        .await
-        .map_err(|_| Box::new(challenge(state, StatusCode::UNAUTHORIZED, CONTEXT_SCOPE)))?;
+    let client = if token.starts_with("axc_") {
+        let db_path = ax_global_db::global_db_path().map_err(|_| {
+            Box::new(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Access database unavailable",
+            ))
+        })?;
+        let db = ax_global_db::open_and_init(&db_path).await.map_err(|_| {
+            Box::new(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Access database unavailable",
+            ))
+        })?;
+        Some(
+            ax_global_db::access::authenticate_client_token(&db, token)
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(|| {
+                    Box::new(challenge(state, StatusCode::UNAUTHORIZED, CONTEXT_SCOPE))
+                })?,
+        )
+    } else {
+        None
+    };
+    let principal = if let Some(client) = &client {
+        let mut scopes = HashSet::from([CONTEXT_SCOPE.to_string()]);
+        if client.allows("memory:write") || client.allows("share:write") {
+            scopes.insert(WRITE_SCOPE.to_string());
+        }
+        Principal {
+            id: format!("client:{}", client.client_id),
+            subject: Some(client.member_id.clone()),
+            scopes,
+            key_projects: Vec::new(),
+            key_write: false,
+        }
+    } else {
+        state
+            .verifier
+            .verify(token)
+            .await
+            .map_err(|_| Box::new(challenge(state, StatusCode::UNAUTHORIZED, CONTEXT_SCOPE)))?
+    };
     let project = state
         .config
         .projects
@@ -191,7 +237,7 @@ async fn authorize(
             CONTEXT_SCOPE,
         )));
     }
-    Ok((principal, project))
+    Ok((principal, project, client))
 }
 
 pub fn tool_permitted(name: &str, args: &Value, write: bool) -> bool {
@@ -201,13 +247,34 @@ pub fn tool_permitted(name: &str, args: &Value, write: bool) -> bool {
     CONTEXT_TOOLS.contains(&name) || (write && WRITE_TOOLS.contains(&name))
 }
 
+fn client_tool_permitted(
+    client: Option<&ax_global_db::access::ClientPrincipal>,
+    name: &str,
+    args: &Value,
+) -> bool {
+    let Some(client) = client else {
+        return true;
+    };
+    let scope = match name {
+        "ax_preflight" => "preflight:read",
+        "ax_recall" | "ax_history" => "memory:read",
+        "ax_remember" => "memory:write",
+        "ax_policy_capture" if args.get("action").and_then(Value::as_str) == Some("save") => {
+            "share:write"
+        }
+        "ax_rules" | "ax_skill" | "ax_guard" | "ax_policy_capture" => "share:read",
+        _ => "context:read",
+    };
+    client.allows(scope)
+}
+
 async fn post(
     State(state): State<RemoteState>,
     Path(project_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let (principal, project) = match authorize(&state, &headers, &project_id).await {
+    let (principal, project, client) = match authorize(&state, &headers, &project_id).await {
         Ok(v) => v,
         Err(e) => return *e,
     };
@@ -365,6 +432,9 @@ async fn post(
             .get("arguments")
             .cloned()
             .unwrap_or_else(|| json!({}));
+        if !client_tool_permitted(client.as_ref(), &name, &args) {
+            return error(StatusCode::FORBIDDEN, "Insufficient client scope");
+        }
         if !tool_permitted(&name, &args, write) {
             if WRITE_TOOLS.contains(&name.as_str()) || name == "ax_policy_capture" {
                 let auth = format!("Bearer resource_metadata=\"{}\", scope=\"{} {}\", error=\"insufficient_scope\"",
@@ -515,7 +585,14 @@ async fn post(
     };
     if request.method == "tools/list" {
         if let Some(tools) = value.get_mut("tools").and_then(Value::as_array_mut) {
-            tools.retain(|t| tool_permitted(t["name"].as_str().unwrap_or(""), &Value::Null, write));
+            tools.retain(|t| {
+                tool_permitted(t["name"].as_str().unwrap_or(""), &Value::Null, write)
+                    && client_tool_permitted(
+                        client.as_ref(),
+                        t["name"].as_str().unwrap_or(""),
+                        &Value::Null,
+                    )
+            });
             for tool in tools {
                 let name = tool["name"].as_str().unwrap_or("").to_owned();
                 let requires_write =
@@ -608,7 +685,7 @@ async fn delete(
     Path(project_id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    let (principal, project) = match authorize(&state, &headers, &project_id).await {
+    let (principal, project, _client) = match authorize(&state, &headers, &project_id).await {
         Ok(v) => v,
         Err(e) => return *e,
     };
@@ -777,5 +854,45 @@ mod socket_tests {
         assert!(response.ends_with("ready"), "{response}");
         bridge.abort();
         upstream.abort();
+    }
+}
+
+#[cfg(test)]
+mod client_scope_tests {
+    use super::*;
+    #[test]
+    fn client_scopes_apply_to_each_tool_and_policy_action() {
+        let client = ax_global_db::access::ClientPrincipal {
+            member_id: "m1".into(),
+            client_id: "c1".into(),
+            role: ax_global_db::access::MemberRole::Readonly,
+            scopes: vec!["context:read".into(), "preflight:read".into()],
+        };
+        assert!(client_tool_permitted(
+            Some(&client),
+            "ax_preflight",
+            &Value::Null
+        ));
+        assert!(client_tool_permitted(
+            Some(&client),
+            "ax_explore",
+            &Value::Null
+        ));
+        assert!(!client_tool_permitted(
+            Some(&client),
+            "ax_recall",
+            &Value::Null
+        ));
+        assert!(!client_tool_permitted(
+            Some(&client),
+            "ax_remember",
+            &Value::Null
+        ));
+        assert!(!client_tool_permitted(
+            Some(&client),
+            "ax_policy_capture",
+            &json!({"action":"save"})
+        ));
+        assert!(client_tool_permitted(None, "ax_recall", &Value::Null));
     }
 }

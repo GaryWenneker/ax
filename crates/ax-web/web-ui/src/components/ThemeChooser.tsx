@@ -5,8 +5,8 @@ export default function ThemeChooser({ activeId, onSelect }: { activeId: string;
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   function select(theme: ThemePreset) {
-    applyTheme(theme);
     saveThemeId(theme.id);
+    applyTheme(theme);
     onSelect(theme.id);
   }
 

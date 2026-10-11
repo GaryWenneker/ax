@@ -347,9 +347,13 @@ const PROCESS_CWD: &str = ".";
 fn mcp_path_token(target: &str) -> &'static str {
     match target {
         "claude" => CLAUDE_WORKSPACE,
-        // Continue project MCP files run with workspace cwd; no ${workspaceFolder} expansion.
-        "codex" | "hermes" | "continue" => PROCESS_CWD,
-        _ => VS_WORKSPACE,
+        // VS Code expands ${workspaceFolder} in workspace-local `.vscode/mcp.json`.
+        "vscode" => VS_WORKSPACE,
+        // User-global configs (Cursor, Windsurf, …) spawn with the open workspace as process
+        // cwd but do not expand ${workspaceFolder} in args — use "." so ax walks up from cwd.
+        "codex" | "hermes" | "continue" | "cursor" | "windsurf" | "kiro" | "gemini"
+        | "antigravity" | "opencode" | "zed" => PROCESS_CWD,
+        _ => PROCESS_CWD,
     }
 }
 
@@ -1311,15 +1315,16 @@ mod mcp_path_tests {
     use super::*;
 
     #[test]
-    fn global_targets_use_workspace_tokens_not_fixed_paths() {
-        assert_eq!(mcp_path_token("cursor"), VS_WORKSPACE);
-        assert_eq!(mcp_path_token("kiro"), VS_WORKSPACE);
-        assert_eq!(mcp_path_token("gemini"), VS_WORKSPACE);
-        assert_eq!(mcp_path_token("antigravity"), VS_WORKSPACE);
-        assert_eq!(mcp_path_token("opencode"), VS_WORKSPACE);
+    fn global_targets_use_process_cwd_not_unexpanded_workspace_folder() {
+        assert_eq!(mcp_path_token("cursor"), PROCESS_CWD);
+        assert_eq!(mcp_path_token("kiro"), PROCESS_CWD);
+        assert_eq!(mcp_path_token("gemini"), PROCESS_CWD);
+        assert_eq!(mcp_path_token("antigravity"), PROCESS_CWD);
+        assert_eq!(mcp_path_token("opencode"), PROCESS_CWD);
         assert_eq!(mcp_path_token("claude"), CLAUDE_WORKSPACE);
         assert_eq!(mcp_path_token("codex"), PROCESS_CWD);
         assert_eq!(mcp_path_token("hermes"), PROCESS_CWD);
+        assert_eq!(mcp_path_token("vscode"), VS_WORKSPACE);
     }
 
     #[test]
@@ -1327,8 +1332,8 @@ mod mcp_path_tests {
         let entry = mcp_config_entry("cursor");
         let args = entry["args"].as_array().expect("args");
         assert_eq!(args[2], "--path");
-        assert_eq!(args[3], VS_WORKSPACE);
-        assert_eq!(entry["cwd"], VS_WORKSPACE);
+        assert_eq!(args[3], PROCESS_CWD);
+        assert_eq!(entry["cwd"], PROCESS_CWD);
         let serialized = serde_json::to_string(&entry).unwrap();
         assert!(!serialized.contains("Temp"));
         assert!(!serialized.contains("continue-smoke"));
@@ -1356,10 +1361,10 @@ mod mcp_path_tests {
     }
 
     #[test]
-    fn new_ide_targets_default_to_workspace_token() {
+    fn vscode_uses_workspace_token_others_use_process_cwd() {
         assert_eq!(mcp_path_token("vscode"), VS_WORKSPACE);
-        assert_eq!(mcp_path_token("windsurf"), VS_WORKSPACE);
-        assert_eq!(mcp_path_token("zed"), VS_WORKSPACE);
+        assert_eq!(mcp_path_token("windsurf"), PROCESS_CWD);
+        assert_eq!(mcp_path_token("zed"), PROCESS_CWD);
         assert_eq!(mcp_path_token("continue"), PROCESS_CWD);
     }
 

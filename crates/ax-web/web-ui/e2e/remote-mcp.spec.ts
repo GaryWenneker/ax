@@ -30,6 +30,7 @@ test('remote Settings sends CSRF, shows the browser fallback, and disconnects sa
   });
   await page.addInitScript(() => { window.open = () => null; });
   await page.goto('/settings');
+  await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Remote MCP', exact: true }).click();
   const section = page.locator('.remote-mcp-settings');
   await expect(section.getByRole('heading', { name: 'Remote Ax connections' })).toBeVisible();
   await section.getByLabel('Project MCP URL').fill('https://ax.example/projects/demo/mcp');
@@ -53,6 +54,7 @@ test('remote Settings shows a denied login without claiming a connection', async
       : route.fulfill({ json: { csrf: 'test-csrf', connections: [] } });
   });
   await page.goto('/settings');
+  await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Remote MCP', exact: true }).click();
   const section = page.locator('.remote-mcp-settings');
   await section.getByLabel('Project MCP URL').fill('https://ax.example/projects/demo/mcp');
   await section.getByLabel('OAuth client ID').fill('native');
@@ -80,6 +82,7 @@ test('remote Settings cancels a pending browser login with CSRF', async ({ page 
   });
   await page.addInitScript(() => { window.open = () => null; });
   await page.goto('/settings');
+  await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Remote MCP', exact: true }).click();
   const section = page.locator('.remote-mcp-settings');
   await section.getByLabel('Project MCP URL').fill('https://ax.example/projects/demo/mcp');
   await section.getByLabel('OAuth client ID').fill('native');

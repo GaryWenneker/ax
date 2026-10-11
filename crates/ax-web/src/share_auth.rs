@@ -1,11 +1,61 @@
 //! Optional share-token gate for `ax share` / LAN exposure.
 
 use axum::extract::Request;
-use axum::http::header;
+use axum::http::{header, StatusCode};
 use axum::middleware::Next;
+use axum::response::IntoResponse;
 use axum::response::Response;
 
 pub async fn share_token_middleware(req: Request, next: Next) -> Response {
+    let client_token = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    if let Some(token) =
+        client_token.filter(|token| token.starts_with("axc_") || token.starts_with("axn_"))
+    {
+        let db_path = match ax_global_db::global_db_path() {
+            Ok(p) => p,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        let db = match ax_global_db::open_and_init(&db_path).await {
+            Ok(db) => db,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        let principal = match ax_global_db::access::authenticate_client_token(&db, token).await {
+            Ok(Some(p)) => p,
+            _ => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({"error":"Invalid client credential"})),
+                )
+                    .into_response()
+            }
+        };
+        // Only explicitly scoped APIs are available to client credentials.
+        // Access management performs its more specific role checks inside its router.
+        let path = req.uri().path();
+        let scope = http_scope(path, req.method() == axum::http::Method::GET);
+        if scope.is_none_or(|scope| !principal.allows(scope)) {
+            let _ = ax_global_db::access::audit(
+                &db,
+                Some(&principal.member_id),
+                Some(&principal.client_id),
+                "authorization.denied",
+                "http",
+                path,
+                &serde_json::json!({}),
+            )
+            .await;
+            return (
+                StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({"error":"Insufficient client scope"})),
+            )
+                .into_response();
+        }
+        return next.run(req).await;
+    }
     let Some(expected) = std::env::var("AX_SHARE_TOKEN")
         .ok()
         .filter(|t| !t.is_empty())
@@ -93,4 +143,58 @@ fn urlencoding_decode(s: &str) -> String {
         }
     }
     out
+}
+
+fn http_scope(path: &str, read: bool) -> Option<&'static str> {
+    if path == "/api/access/team" || path.starts_with("/api/access/team/") {
+        return Some("admin:team");
+    }
+    if path == "/api/access/nodes" || path.starts_with("/api/access/nodes/") {
+        return Some("admin:nodes");
+    }
+    if path.starts_with("/api/access/") {
+        return Some("admin:clients");
+    }
+    if path == "/api/memory" || path.starts_with("/api/memory/") {
+        return Some(if read { "memory:read" } else { "memory:write" });
+    }
+    if path.starts_with("/api/policy/share/") {
+        return Some(if read { "share:read" } else { "share:write" });
+    }
+    if read
+        && [
+            "/api/stats",
+            "/api/nodes",
+            "/api/edges",
+            "/api/files",
+            "/api/search",
+            "/api/graph",
+            "/api/insights",
+        ]
+        .iter()
+        .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
+    {
+        return Some("context:read");
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn clients_only_reach_scoped_api_paths() {
+        assert_eq!(http_scope("/api/memory/entries", true), Some("memory:read"));
+        assert_eq!(
+            http_scope("/api/memory/entries", false),
+            Some("memory:write")
+        );
+        assert_eq!(http_scope("/api/access/team/u1", false), Some("admin:team"));
+        assert_eq!(
+            http_scope("/api/access/credentials/c1/revoke", false),
+            Some("admin:clients")
+        );
+        assert_eq!(http_scope("/api/agent/terminal", false), None);
+        assert_eq!(http_scope("/api/nodes", false), None);
+    }
 }

@@ -152,28 +152,69 @@ pub struct ReplicationNode {
     pub last_sync_at: Option<String>,
 }
 
+// SQL row shapes are kept separate from the serialized domain models.
+type MemberRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+type ClientRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+);
+type ClientAuthRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+type NodeRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 pub async fn bootstrap_owner(
     pool: &SqlitePool,
     id: &str,
     display_name: &str,
     email: Option<&str>,
 ) -> Result<bool> {
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM team_members")
-        .fetch_one(pool)
-        .await?;
-    if count.0 != 0 {
-        return Ok(false);
-    }
-    sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO team_members (id, display_name, email, role, status)
-         VALUES (?, ?, ?, 'owner', 'active')",
+         SELECT ?, ?, ?, 'owner', 'active'
+         WHERE NOT EXISTS (SELECT 1 FROM team_members)",
     )
     .bind(id)
     .bind(display_name)
     .bind(email)
     .execute(pool)
     .await?;
-    Ok(true)
+    Ok(result.rows_affected() == 1)
 }
 
 pub async fn create_member(
@@ -196,26 +237,152 @@ pub async fn create_member(
     Ok(())
 }
 
-pub async fn list_members(pool: &SqlitePool) -> Result<Vec<TeamMember>> {
-    let rows: Vec<(String, String, Option<String>, String, String, String, Option<String>)> =
-        sqlx::query_as(
-            "SELECT id, display_name, email, role, status, created_at, last_active_at
-             FROM team_members ORDER BY created_at, id",
-        )
-        .fetch_all(pool)
+/// Keep at least one active owner, including when simultaneous edits occur.
+pub async fn update_member(
+    pool: &SqlitePool,
+    id: &str,
+    role: MemberRole,
+    status: &str,
+) -> Result<()> {
+    if !["active", "disabled"].contains(&status) {
+        bail!("invalid member status");
+    }
+    let result = sqlx::query(
+        "UPDATE team_members SET role = ?, status = ? WHERE id = ?
+         AND (role != 'owner' OR status != 'active' OR (? = 'owner' AND ? = 'active')
+              OR EXISTS (SELECT 1 FROM team_members other
+                         WHERE other.id != team_members.id AND other.role = 'owner' AND other.status = 'active'))",
+    ).bind(role.as_str()).bind(status).bind(id).bind(role.as_str()).bind(status).execute(pool).await?;
+    if result.rows_affected() != 1 {
+        bail!("member not found or last active owner cannot be changed");
+    }
+    Ok(())
+}
+
+pub async fn update_client_scopes(pool: &SqlitePool, id: &str, scopes: &[String]) -> Result<()> {
+    let (role,): (String,) = sqlx::query_as(
+        "SELECT tm.role FROM clients c JOIN team_members tm ON tm.id = c.member_id
+         WHERE c.id = ? AND c.status = 'active' AND tm.status = 'active'",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    validate_client_scopes(MemberRole::parse(&role)?, scopes)?;
+    sqlx::query("UPDATE clients SET scopes = ? WHERE id = ?")
+        .bind(serde_json::to_string(scopes)?)
+        .bind(id)
+        .execute(pool)
         .await?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ClientCredential {
+    pub id: String,
+    pub client_id: String,
+    pub token_prefix: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub last_used_at: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
+type CredentialRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+pub async fn list_client_credentials(pool: &SqlitePool) -> Result<Vec<ClientCredential>> {
+    let rows: Vec<CredentialRow> = sqlx::query_as(
+        "SELECT id, client_id, token_prefix, created_at, expires_at, last_used_at, revoked_at
+         FROM client_credentials ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, client_id, token_prefix, created_at, expires_at, last_used_at, revoked_at)| {
+                ClientCredential {
+                    id,
+                    client_id,
+                    token_prefix,
+                    created_at,
+                    expires_at,
+                    last_used_at,
+                    revoked_at,
+                }
+            },
+        )
+        .collect())
+}
+
+/// Immediate rotation: invalidate every previous credential atomically.
+pub async fn rotate_client_credential(
+    pool: &SqlitePool,
+    client_id: &str,
+) -> Result<IssuedClientCredential> {
+    let credential_id = Uuid::new_v4().to_string();
+    let token = format!("axc_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let token_prefix = token.chars().take(12).collect::<String>();
+    let verifier = token_verifier(&token);
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        "INSERT INTO client_credentials (id, client_id, token_prefix, verifier)
+        SELECT ?, c.id, ?, ? FROM clients c JOIN team_members tm ON tm.id = c.member_id
+        WHERE c.id = ? AND c.status = 'active' AND tm.status = 'active'",
+    )
+    .bind(&credential_id)
+    .bind(&token_prefix)
+    .bind(verifier)
+    .bind(client_id)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() != 1 {
+        bail!("client or member is not active");
+    }
+    sqlx::query(
+        "UPDATE client_credentials SET revoked_at = CURRENT_TIMESTAMP
+        WHERE client_id = ? AND id != ? AND revoked_at IS NULL",
+    )
+    .bind(client_id)
+    .bind(&credential_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(IssuedClientCredential {
+        credential_id,
+        token,
+        token_prefix,
+    })
+}
+
+pub async fn list_members(pool: &SqlitePool) -> Result<Vec<TeamMember>> {
+    let rows: Vec<MemberRow> = sqlx::query_as(
+        "SELECT id, display_name, email, role, status, created_at, last_active_at
+             FROM team_members ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await?;
     rows.into_iter()
-        .map(|(id, display_name, email, role, status, created_at, last_active_at)| {
-            Ok(TeamMember {
-                id,
-                display_name,
-                email,
-                role: MemberRole::parse(&role)?,
-                status,
-                created_at,
-                last_active_at,
-            })
-        })
+        .map(
+            |(id, display_name, email, role, status, created_at, last_active_at)| {
+                Ok(TeamMember {
+                    id,
+                    display_name,
+                    email,
+                    role: MemberRole::parse(&role)?,
+                    status,
+                    created_at,
+                    last_active_at,
+                })
+            },
+        )
         .collect()
 }
 
@@ -227,12 +394,11 @@ pub async fn create_client(
     client_type: &str,
     scopes: &[String],
 ) -> Result<()> {
-    let (role, status): (String, String) = sqlx::query_as(
-        "SELECT role, status FROM team_members WHERE id = ?",
-    )
-    .bind(member_id)
-    .fetch_one(pool)
-    .await?;
+    let (role, status): (String, String) =
+        sqlx::query_as("SELECT role, status FROM team_members WHERE id = ?")
+            .bind(member_id)
+            .fetch_one(pool)
+            .await?;
     if status != "active" {
         bail!("team member is not active");
     }
@@ -254,20 +420,10 @@ pub async fn create_client(
 }
 
 pub async fn list_clients(pool: &SqlitePool) -> Result<Vec<Client>> {
-    let rows: Vec<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-    )> = sqlx::query_as(
-        "SELECT id, member_id, display_name, client_type, scopes, status,
-                created_at, last_seen_at, revoked_at
-         FROM clients ORDER BY created_at, id",
+    let rows: Vec<ClientRow> = sqlx::query_as(
+        "SELECT c.id, c.member_id, c.display_name, c.client_type, c.scopes, c.status,
+                c.created_at, c.last_seen_at, c.revoked_at, tm.role, tm.status
+         FROM clients c JOIN team_members tm ON tm.id = c.member_id ORDER BY c.created_at, c.id",
     )
     .fetch_all(pool)
     .await?;
@@ -283,13 +439,23 @@ pub async fn list_clients(pool: &SqlitePool) -> Result<Vec<Client>> {
                 created_at,
                 last_seen_at,
                 revoked_at,
+                role,
+                member_status,
             )| {
+                let role = MemberRole::parse(&role)?;
+                let requested: Vec<String> = serde_json::from_str(&scopes)?;
+                let scopes = requested
+                    .into_iter()
+                    .filter(|scope| {
+                        status == "active" && member_status == "active" && role.permits(scope)
+                    })
+                    .collect();
                 Ok(Client {
                     id,
                     member_id,
                     display_name,
                     client_type,
-                    scopes: serde_json::from_str(&scopes)?,
+                    scopes,
                     status,
                     created_at,
                     last_seen_at,
@@ -299,7 +465,6 @@ pub async fn list_clients(pool: &SqlitePool) -> Result<Vec<Client>> {
         )
         .collect()
 }
-
 
 pub fn validate_client_scopes(role: MemberRole, scopes: &[String]) -> Result<()> {
     for scope in scopes {
@@ -323,7 +488,7 @@ pub async fn issue_client_credential(
     expires_at: Option<&str>,
 ) -> Result<IssuedClientCredential> {
     let status: Option<(String,)> =
-        sqlx::query_as("SELECT status FROM clients WHERE id = ?")
+        sqlx::query_as("SELECT c.status FROM clients c JOIN team_members tm ON tm.id = c.member_id WHERE c.id = ? AND tm.status = 'active'")
             .bind(client_id)
             .fetch_optional(pool)
             .await?;
@@ -364,20 +529,19 @@ pub async fn authenticate_client_token(
     }
     let prefix = token.chars().take(12).collect::<String>();
     let verifier = token_verifier(token);
-    let row: Option<(String, String, String, String, String, String, Option<String>)> =
-        sqlx::query_as(
-            "SELECT c.member_id, c.id, tm.role, tm.status, c.status, c.scopes, cc.expires_at
+    let row: Option<ClientAuthRow> = sqlx::query_as(
+        "SELECT c.member_id, c.id, tm.role, tm.status, c.status, c.scopes, cc.expires_at
              FROM client_credentials cc
              JOIN clients c ON c.id = cc.client_id
              JOIN team_members tm ON tm.id = c.member_id
              WHERE cc.token_prefix = ?
                AND cc.verifier = ?
                AND cc.revoked_at IS NULL",
-        )
-        .bind(&prefix)
-        .bind(&verifier)
-        .fetch_optional(pool)
-        .await?;
+    )
+    .bind(&prefix)
+    .bind(&verifier)
+    .fetch_optional(pool)
+    .await?;
 
     let Some((member_id, client_id, role, member_status, client_status, scopes, expires_at)) = row
     else {
@@ -387,12 +551,11 @@ pub async fn authenticate_client_token(
         return Ok(None);
     }
     if let Some(expires_at) = expires_at {
-        let valid: (i64,) = sqlx::query_as(
-            "SELECT CASE WHEN datetime(?) > CURRENT_TIMESTAMP THEN 1 ELSE 0 END",
-        )
-        .bind(expires_at)
-        .fetch_one(pool)
-        .await?;
+        let valid: (i64,) =
+            sqlx::query_as("SELECT CASE WHEN datetime(?) > CURRENT_TIMESTAMP THEN 1 ELSE 0 END")
+                .bind(expires_at)
+                .fetch_one(pool)
+                .await?;
         if valid.0 != 1 {
             return Ok(None);
         }
@@ -411,18 +574,14 @@ pub async fn authenticate_client_token(
     .bind(&prefix)
     .execute(pool)
     .await?;
-    sqlx::query(
-        "UPDATE clients SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?",
-    )
-    .bind(&client_id)
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "UPDATE team_members SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?",
-    )
-    .bind(&member_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE clients SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(&client_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("UPDATE team_members SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(&member_id)
+        .execute(pool)
+        .await?;
 
     Ok(Some(ClientPrincipal {
         member_id,
@@ -500,7 +659,8 @@ pub async fn discover_replica(
          ON CONFLICT(id) DO UPDATE SET
             display_name = excluded.display_name,
             endpoint = excluded.endpoint,
-            last_seen_at = CURRENT_TIMESTAMP",
+            last_seen_at = CURRENT_TIMESTAMP
+         WHERE replication_nodes.trust_state != 'revoked'",
     )
     .bind(id)
     .bind(display_name)
@@ -517,17 +677,8 @@ pub async fn register_trusted_replica(
     endpoint: Option<&str>,
     project_id: &str,
 ) -> Result<()> {
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT trust_state FROM replication_nodes WHERE id = ?")
-            .bind(node_id)
-            .fetch_optional(pool)
-            .await?;
-    if matches!(existing.as_ref(), Some((state,)) if state == "revoked") {
-        bail!("replica is blocked");
-    }
-
     let mut tx = pool.begin().await?;
-    sqlx::query(
+    let registration = sqlx::query(
         "INSERT INTO replication_nodes
             (id, display_name, role, endpoint, trust_state, approved_at, last_seen_at)
          VALUES (?, ?, 'replica', ?, 'trusted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -536,13 +687,18 @@ pub async fn register_trusted_replica(
             endpoint = COALESCE(excluded.endpoint, replication_nodes.endpoint),
             trust_state = 'trusted',
             approved_at = COALESCE(replication_nodes.approved_at, CURRENT_TIMESTAMP),
-            last_seen_at = CURRENT_TIMESTAMP",
+            last_seen_at = CURRENT_TIMESTAMP
+         WHERE replication_nodes.trust_state != 'revoked'",
     )
     .bind(node_id)
     .bind(display_name)
     .bind(endpoint)
     .execute(&mut *tx)
     .await?;
+
+    if registration.rows_affected() != 1 {
+        bail!("replica is blocked");
+    }
 
     sqlx::query(
         "INSERT INTO node_project_access (node_id, project_id, revoked_at)
@@ -556,15 +712,19 @@ pub async fn register_trusted_replica(
     .execute(&mut *tx)
     .await?;
 
+    sqlx::query(
+        "INSERT INTO security_audit_log (event_type, subject_type, subject_id, details)
+        VALUES ('node.registered', 'node', ?, ?)",
+    )
+    .bind(node_id)
+    .bind(serde_json::json!({"project_id":project_id}).to_string())
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
 
-pub async fn approve_node(
-    pool: &SqlitePool,
-    node_id: &str,
-    credential_id: &str,
-) -> Result<bool> {
+pub async fn approve_node(pool: &SqlitePool, node_id: &str, credential_id: &str) -> Result<bool> {
     let result = sqlx::query(
         "UPDATE replication_nodes
          SET trust_state = 'trusted', credential_id = ?, approved_at = CURRENT_TIMESTAMP,
@@ -577,7 +737,6 @@ pub async fn approve_node(
     .await?;
     Ok(result.rows_affected() == 1)
 }
-
 
 pub async fn issue_node_credential(
     pool: &SqlitePool,
@@ -636,11 +795,7 @@ pub async fn issue_node_credential(
     })
 }
 
-pub async fn grant_node_project(
-    pool: &SqlitePool,
-    node_id: &str,
-    project_id: &str,
-) -> Result<()> {
+pub async fn grant_node_project(pool: &SqlitePool, node_id: &str, project_id: &str) -> Result<()> {
     let trust: Option<(String,)> =
         sqlx::query_as("SELECT trust_state FROM replication_nodes WHERE id = ?")
             .bind(node_id)
@@ -709,12 +864,11 @@ pub async fn authenticate_node_token(
         return Ok(None);
     }
     if let Some(expires_at) = expires_at {
-        let valid: (i64,) = sqlx::query_as(
-            "SELECT CASE WHEN datetime(?) > CURRENT_TIMESTAMP THEN 1 ELSE 0 END",
-        )
-        .bind(expires_at)
-        .fetch_one(pool)
-        .await?;
+        let valid: (i64,) =
+            sqlx::query_as("SELECT CASE WHEN datetime(?) > CURRENT_TIMESTAMP THEN 1 ELSE 0 END")
+                .bind(expires_at)
+                .fetch_one(pool)
+                .await?;
         if valid.0 != 1 {
             return Ok(None);
         }
@@ -726,12 +880,10 @@ pub async fn authenticate_node_token(
     .bind(&prefix)
     .execute(pool)
     .await?;
-    sqlx::query(
-        "UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?",
-    )
-    .bind(&node_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(&node_id)
+        .execute(pool)
+        .await?;
 
     Ok(Some(NodePrincipal { node_id }))
 }
@@ -781,20 +933,19 @@ pub async fn revoke_node(pool: &SqlitePool, node_id: &str) -> Result<bool> {
     Ok(result.rows_affected() == 1)
 }
 
+pub async fn allow_node_reenrollment(pool: &SqlitePool, node_id: &str) -> Result<bool> {
+    let result = sqlx::query(
+        "UPDATE replication_nodes SET trust_state = 'pending', revoked_at = NULL,
+        credential_id = NULL WHERE id = ? AND trust_state = 'revoked'",
+    )
+    .bind(node_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 pub async fn list_nodes(pool: &SqlitePool) -> Result<Vec<ReplicationNode>> {
-    let rows: Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    )> = sqlx::query_as(
+    let rows: Vec<NodeRow> = sqlx::query_as(
         "SELECT id, display_name, role, endpoint, trust_state, credential_id,
                 discovered_at, approved_at, revoked_at, last_seen_at, last_sync_at
          FROM replication_nodes ORDER BY discovered_at, id",
@@ -833,6 +984,54 @@ pub async fn list_nodes(pool: &SqlitePool) -> Result<Vec<ReplicationNode>> {
         .collect())
 }
 
+type LocalStatusRow = (String, String, Option<String>, Option<String>, String);
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalReplicationStatus {
+    pub node_id: String,
+    pub role: String,
+    pub primary_url: Option<String>,
+    pub last_sync_at: Option<String>,
+    pub sync_state: String,
+}
+
+pub async fn record_local_node(
+    pool: &SqlitePool,
+    node_id: &str,
+    role: &str,
+    primary_url: Option<&str>,
+) -> Result<()> {
+    sqlx::query("INSERT INTO local_replication_status (singleton, node_id, role, primary_url)
+        VALUES (1, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET
+        last_sync_at = CASE WHEN local_replication_status.node_id = excluded.node_id THEN local_replication_status.last_sync_at ELSE NULL END,
+        sync_state = CASE WHEN local_replication_status.node_id = excluded.node_id THEN local_replication_status.sync_state ELSE 'configured' END,
+        node_id = excluded.node_id, role = excluded.role, primary_url = excluded.primary_url")
+        .bind(node_id).bind(role).bind(primary_url).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn record_local_sync(pool: &SqlitePool, successful: bool) -> Result<()> {
+    sqlx::query("UPDATE local_replication_status SET sync_state = ?,
+        last_sync_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_sync_at END WHERE singleton = 1")
+        .bind(if successful { "synced" } else { "degraded" }).bind(successful).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn local_replication_status(pool: &SqlitePool) -> Result<Option<LocalReplicationStatus>> {
+    let row: Option<LocalStatusRow> = sqlx::query_as(
+        "SELECT node_id, role, primary_url, last_sync_at, sync_state FROM local_replication_status WHERE singleton = 1"
+    ).fetch_optional(pool).await?;
+    Ok(row.map(
+        |(node_id, role, primary_url, last_sync_at, sync_state)| LocalReplicationStatus {
+            node_id,
+            role,
+            primary_url,
+            last_sync_at,
+            sync_state,
+        },
+    ))
+}
+
 pub async fn audit(
     pool: &SqlitePool,
     actor_member_id: Option<&str>,
@@ -864,13 +1063,170 @@ mod tests {
     use crate::open_and_init;
 
     #[tokio::test]
+    async fn member_safety_and_effective_scopes() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        assert!(update_member(&pool, "owner", MemberRole::Member, "active")
+            .await
+            .is_err());
+        assert!(update_member(&pool, "owner", MemberRole::Owner, "disabled")
+            .await
+            .is_err());
+        create_member(&pool, "member", "Member", None, MemberRole::Member)
+            .await
+            .unwrap();
+        assert!(
+            create_client(&pool, "bad", "member", "Bad", "cli", &["admin:team".into()])
+                .await
+                .is_err()
+        );
+        create_client(
+            &pool,
+            "client",
+            "member",
+            "Client",
+            "cli",
+            &["memory:read".into(), "memory:write".into()],
+        )
+        .await
+        .unwrap();
+        let token = issue_client_credential(&pool, "client", None)
+            .await
+            .unwrap();
+        update_member(&pool, "member", MemberRole::Readonly, "active")
+            .await
+            .unwrap();
+        let principal = authenticate_client_token(&pool, &token.token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(principal.allows("memory:read"));
+        assert!(!principal.allows("memory:write"));
+        assert!(
+            update_client_scopes(&pool, "client", &["memory:write".into()])
+                .await
+                .is_err()
+        );
+        update_client_scopes(&pool, "client", &["context:read".into()])
+            .await
+            .unwrap();
+        let principal = authenticate_client_token(&pool, &token.token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(principal.allows("context:read"));
+        assert!(!principal.allows("memory:read"));
+        update_member(&pool, "member", MemberRole::Readonly, "disabled")
+            .await
+            .unwrap();
+        assert!(authenticate_client_token(&pool, &token.token)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(issue_client_credential(&pool, "client", None)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn tokens_rotate_atomically_and_revoke_independently() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        for id in ["c1", "c2"] {
+            create_client(&pool, id, "owner", id, "cli", &["memory:read".into()])
+                .await
+                .unwrap();
+        }
+        let first = issue_client_credential(&pool, "c1", None).await.unwrap();
+        let second = issue_client_credential(&pool, "c1", None).await.unwrap();
+        let other = issue_client_credential(&pool, "c2", None).await.unwrap();
+        revoke_client_credential(&pool, &first.credential_id)
+            .await
+            .unwrap();
+        assert!(authenticate_client_token(&pool, &first.token)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(authenticate_client_token(&pool, &second.token)
+            .await
+            .unwrap()
+            .is_some());
+        let replacement = rotate_client_credential(&pool, "c1").await.unwrap();
+        assert!(authenticate_client_token(&pool, &second.token)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(authenticate_client_token(&pool, &replacement.token)
+            .await
+            .unwrap()
+            .is_some());
+        revoke_client(&pool, "c1").await.unwrap();
+        assert!(authenticate_client_token(&pool, &replacement.token)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(authenticate_client_token(&pool, &other.token)
+            .await
+            .unwrap()
+            .is_some());
+        assert!(rotate_client_credential(&pool, "c1").await.is_err());
+        let expired = issue_client_credential(&pool, "c2", Some("2000-01-01"))
+            .await
+            .unwrap();
+        assert!(authenticate_client_token(&pool, &expired.token)
+            .await
+            .unwrap()
+            .is_none());
+        let credentials =
+            serde_json::to_string(&list_client_credentials(&pool).await.unwrap()).unwrap();
+        assert!(!credentials.contains(&other.token));
+        assert!(!credentials.contains("verifier"));
+        let stored: (String,) =
+            sqlx::query_as("SELECT verifier FROM client_credentials WHERE id = ?")
+                .bind(other.credential_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_ne!(stored.0, other.token);
+    }
+
+    #[tokio::test]
+    async fn authenticated_registration_cannot_restore_blocked_replica() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        register_trusted_replica(&pool, "n1", "Replica", Some("http://127.0.0.1:7070"), "p1")
+            .await
+            .unwrap();
+        assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "trusted");
+        revoke_node(&pool, "n1").await.unwrap();
+        assert!(register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .is_err());
+        assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "revoked");
+        assert!(allow_node_reenrollment(&pool, "n1").await.unwrap());
+        assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "pending");
+        register_trusted_replica(&pool, "n1", "Replica", None, "p1")
+            .await
+            .unwrap();
+        assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "trusted");
+    }
+
+    #[tokio::test]
     async fn access_lifecycle_persists_and_revokes() {
         let dir = tempfile::tempdir().unwrap();
         let pool = open_and_init(&dir.path().join("global.db")).await.unwrap();
 
-        assert!(bootstrap_owner(&pool, "u1", "Owner", Some("owner@example.test"))
-            .await
-            .unwrap());
+        assert!(
+            bootstrap_owner(&pool, "u1", "Owner", Some("owner@example.test"))
+                .await
+                .unwrap()
+        );
         assert!(!bootstrap_owner(&pool, "u2", "Other", None).await.unwrap());
 
         create_client(
@@ -916,10 +1272,12 @@ mod tests {
                 .node_id,
             "n1"
         );
-        assert!(authenticate_node_token_for_project(&pool, &node_credential.token, "project-b")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            authenticate_node_token_for_project(&pool, &node_credential.token, "project-b")
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(authenticate_client_token(&pool, &node_credential.token)
             .await
             .unwrap()

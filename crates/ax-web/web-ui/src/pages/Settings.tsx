@@ -1,7 +1,7 @@
+import AccessSettingsSection from '../components/AccessSettingsSection';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
-import AccessSettingsSection from '../components/AccessSettingsSection';
 import RemoteMcpSettingsSection from '../components/RemoteMcpSettingsSection';
 import OkfSettingsSection from '../components/OkfSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
@@ -15,7 +15,8 @@ import { BusyLabel } from '../components/ui/PageLayout';
 import ThemeChooser from '../components/ThemeChooser';
 import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
-import { loadThemeId } from '../lib/themes';
+import { loadThemeId, THEME_CHANGED } from '../lib/themes';
+import { SETTINGS_GROUPS, type SettingsSectionId } from '../lib/settingsNavigation';
 import { TIMEZONE_OPTIONS, browserTimeZone } from '../lib/timeZone';
 import {
   fetchReviewLanguage,
@@ -115,10 +116,18 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [themeId, setThemeId] = useState(loadThemeId);
+  const [section, setSection] = useState<SettingsSectionId>('appearance');
+  const [settingsFilter, setSettingsFilter] = useState('');
   const [reviewLanguage, setReviewLanguage] = useState('en');
   const [reviewLanguages, setReviewLanguages] = useState<ReviewLanguageChoice[]>(REVIEW_LANGUAGES);
 
   usePageContext('Settings', 'Command Center · pipeline & agents');
+
+  useEffect(() => {
+    const onTheme = () => setThemeId(loadThemeId());
+    window.addEventListener(THEME_CHANGED, onTheme);
+    return () => window.removeEventListener(THEME_CHANGED, onTheme);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -254,21 +263,103 @@ export default function SettingsPage() {
       (!window.location.port && config.ship.web_port === 80));
 
   return (
-    <div className="page settings-page">
+    <div className="page settings-page settings-hub">
       <header className="settings-hero">
         <h1 className="settings-hero-title">Settings</h1>
         <p className="settings-hero-sub">
-          Command Center pipeline, pull requests, and agents — stored in <code>.ax/ship.toml</code>.
+          Workspace configuration, connections, and appearance.
         </p>
       </header>
 
       {msg && <div className="settings-toast settings-toast--ok">{msg}</div>}
       {err && <div className="settings-toast settings-toast--err">{err}</div>}
 
-      <div className="settings-stack">
-        <AccessSettingsSection />
-        <IdeInstallCard />
+      <div className="settings-hub-layout">
+        <nav className="settings-navigation" aria-label="Settings navigation">
+          <label className="settings-navigation-filter">
+            <i className="codicon codicon-search" aria-hidden="true" />
+            <input aria-label="Filter settings" placeholder="Filter settings" value={settingsFilter}
+              onChange={(event) => setSettingsFilter(event.target.value)} />
+          </label>
+          {SETTINGS_GROUPS.map((group) => {
+            const items = group.items.filter((item) => item.label.toLowerCase().includes(settingsFilter.trim().toLowerCase()));
+            return items.length > 0 && <div className="settings-navigation-group" key={group.label}>
+              <h2>{group.label}</h2>
+              {items.map((item) => <button key={item.id} type="button"
+                className={`settings-navigation-item${section === item.id ? ' active' : ''}`}
+                aria-current={section === item.id ? 'page' : undefined} aria-controls={`settings-panel-${item.id}`}
+                onClick={() => setSection(item.id)}>
+                <i className={`codicon codicon-${item.icon}`} aria-hidden="true" />{item.label}
+              </button>)}
+            </div>;
+          })}
+          {!SETTINGS_GROUPS.some((group) => group.items.some((item) => item.label.toLowerCase().includes(settingsFilter.trim().toLowerCase()))) &&
+            <p className="settings-navigation-empty" role="status">No matching settings</p>}
+        </nav>
+        <div className="settings-hub-content">
+        <AccessSettingsSection section={section} />
+        <div id="settings-panel-appearance" hidden={section !== 'appearance'}>
+          <section className="settings-card">
+            <div className="settings-card-header"><h2>Appearance</h2><p>Theme and display preferences.</p></div>
+            <div className="settings-card-body">
 
+            <div className="settings-theme-block">
+              <span className="settings-row-title">Theme</span>
+              <span className="settings-row-desc">
+                Choose a workspace style. Azure Portal Light and Dark use the portal layout. Theme changes are saved automatically in this browser.
+              </span>
+              <ThemeChooser activeId={themeId} onSelect={setThemeId} />
+            </div>
+
+            <SettingRow
+              title="MCP Output"
+              description="Ax automatically optimizes MCP responses for AI agents using compact Markdown, structured metadata and on-demand context retrieval. No manual format selection is required."
+            >
+              <span className="settings-row-title">Smart Output</span>
+            </SettingRow>
+
+            <SettingRow
+              title="Show Savings page"
+              description="Measured context-token and dollar savings from ax MCP graph queries."
+            >
+              <Toggle
+                label="Show Savings page"
+                checked={config.ui?.show_savings ?? config.ui?.show_tokens ?? true}
+                onChange={setUiSavings}
+              />
+            </SettingRow>
+
+            <SettingRow
+              title="Timezone"
+              description={`Display Logging Date/time in this zone and rotate daily log files at midnight here. Line timestamps in files stay UTC. Browser local is currently ${browserTimeZone()}.`}
+            >
+              <select
+                className="settings-select"
+                value={config.ui?.timezone ?? ''}
+                disabled={!!busy || !configLoaded}
+                aria-label="Timezone for Logging timestamps"
+                onChange={(e) => void setUiTimezone(e.target.value)}
+              >
+                {TIMEZONE_OPTIONS.map((opt) => (
+                  <option key={opt.value || 'local'} value={opt.value}>
+                    {opt.value === ''
+                      ? `${opt.label} (${browserTimeZone()})`
+                      : opt.label}
+                  </option>
+                ))}
+                {config.ui?.timezone &&
+                  !TIMEZONE_OPTIONS.some((o) => o.value === config.ui?.timezone) && (
+                    <option value={config.ui.timezone}>{config.ui.timezone}</option>
+                  )}
+              </select>
+            </SettingRow>
+
+
+            </div>
+          </section>
+        </div>
+        <div id="settings-panel-agents" hidden={section !== 'agents'}><IdeInstallCard /></div>
+        <div id="settings-panel-command-center" hidden={section !== 'command-center'}>
         <section className="settings-card">
           <div className="settings-card-header">
             <h2>Command Center</h2>
@@ -346,60 +437,6 @@ export default function SettingsPage() {
               >
                 <option value="incremental">Incremental (sync)</option>
                 <option value="full">Full codebase</option>
-              </select>
-            </SettingRow>
-
-            <div className="settings-divider" />
-            <div className="settings-subsection-label">Interface</div>
-
-            <div className="settings-theme-block">
-              <span className="settings-row-title">Theme</span>
-              <span className="settings-row-desc">
-                Accent and palette for Command Center. Mono is grayscale chrome with WCAG AA status-bar ink.
-              </span>
-              <ThemeChooser activeId={themeId} onSelect={setThemeId} />
-            </div>
-
-            <SettingRow
-              title="MCP Output"
-              description="Ax automatically optimizes MCP responses for AI agents using compact Markdown, structured metadata and on-demand context retrieval. No manual format selection is required."
-            >
-              <span className="settings-row-title">Smart Output</span>
-            </SettingRow>
-
-            <SettingRow
-              title="Show Savings page"
-              description="Measured context-token and dollar savings from ax MCP graph queries."
-            >
-              <Toggle
-                label="Show Savings page"
-                checked={config.ui?.show_savings ?? config.ui?.show_tokens ?? true}
-                onChange={setUiSavings}
-              />
-            </SettingRow>
-
-            <SettingRow
-              title="Timezone"
-              description={`Display Logging Date/time in this zone and rotate daily log files at midnight here. Line timestamps in files stay UTC. Browser local is currently ${browserTimeZone()}.`}
-            >
-              <select
-                className="settings-select"
-                value={config.ui?.timezone ?? ''}
-                disabled={!!busy || !configLoaded}
-                aria-label="Timezone for Logging timestamps"
-                onChange={(e) => void setUiTimezone(e.target.value)}
-              >
-                {TIMEZONE_OPTIONS.map((opt) => (
-                  <option key={opt.value || 'local'} value={opt.value}>
-                    {opt.value === ''
-                      ? `${opt.label} (${browserTimeZone()})`
-                      : opt.label}
-                  </option>
-                ))}
-                {config.ui?.timezone &&
-                  !TIMEZONE_OPTIONS.some((o) => o.value === config.ui?.timezone) && (
-                    <option value={config.ui.timezone}>{config.ui.timezone}</option>
-                  )}
               </select>
             </SettingRow>
 
@@ -505,18 +542,32 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        </div>
+        <div id="settings-panel-sharing" hidden={section !== 'sharing'}>
         <section className="settings-card">
           <div className="settings-card-header">
             <h2>Sharing</h2>
             <p>LAN share session, token gate, and optional PWA install.</p>
           </div>
           <div className="settings-card-body">
-            <PolicySyncSettingsSection />
             <SharingSettingsSection />
-            <RemoteMcpSettingsSection />
           </div>
         </section>
 
+        </div>
+        <div id="settings-panel-replication" hidden={section !== 'replication'}>
+          <section className="settings-card">
+            <div className="settings-card-header"><h2>Policy sync</h2><p>Configure synchronization between Ax instances.</p></div>
+            <div className="settings-card-body"><PolicySyncSettingsSection /></div>
+          </section>
+        </div>
+        <div id="settings-panel-remote" hidden={section !== 'remote'}>
+          <section className="settings-card">
+            <div className="settings-card-header"><h2>Remote MCP</h2><p>Connect external agents to Ax.</p></div>
+            <div className="settings-card-body"><RemoteMcpSettingsSection /></div>
+          </section>
+        </div>
+        <div id="settings-panel-vault" hidden={section !== 'vault'}>
         <section className="settings-card">
           <div className="settings-card-header">
             <h2>Vault connection</h2>
@@ -528,6 +579,8 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        </div>
+        <div id="settings-panel-export" hidden={section !== 'export'}>
         <section className="settings-card">
           <div className="settings-card-header">
             <h2>Open Knowledge Format (OKF)</h2>
@@ -541,6 +594,8 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        </div>
+        <div id="settings-panel-plugins" hidden={section !== 'plugins'}>
         <section className="settings-card">
           <div className="settings-card-header">
             <h2>Plugins</h2>
@@ -551,6 +606,8 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        </div>
+        <div id="settings-panel-embeddings" hidden={section !== 'embeddings'}>
         <section className="settings-card">
           <div className="settings-card-header">
             <h2>Embeddings</h2>
@@ -561,7 +618,9 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <PolicyShareSettingsSection />
+        </div>
+        <div id="settings-panel-policy-sharing" hidden={section !== 'policy-sharing'}><PolicyShareSettingsSection /></div>
+        </div>
       </div>
     </div>
   );
