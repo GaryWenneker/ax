@@ -29,9 +29,24 @@ try {
     $releaseArgs = @('workflow', 'run', 'release.yml', '--repo', $Repo, '--ref', 'main')
     if ($Tag) { $releaseArgs += @('-f', "tag=$Tag") }
     if ($DryRun) { Write-Host "gh $($releaseArgs -join ' ')"; return }
+    $requestedAt = (Get-Date).ToUniversalTime().AddSeconds(-5)
     & gh @releaseArgs
     if ($LASTEXITCODE -ne 0) { throw 'Release workflow dispatch failed.' }
     if ($Wait) {
-        Write-Host "Follow the validated main release: https://github.com/$Repo/actions/workflows/release.yml"
+        $deadline = (Get-Date).AddMinutes($WaitTimeoutMinutes)
+        while ((Get-Date) -lt $deadline) {
+            $result = & gh run list --repo $Repo --workflow release.yml --branch main --event workflow_dispatch --limit 10 --json databaseId,createdAt,status,conclusion,headSha
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot query release workflow.' }
+            $run = @($result | ConvertFrom-Json) | Where-Object {
+                $_.headSha -eq $headSha -and [datetime]$_.createdAt -ge $requestedAt
+            } | Select-Object -First 1
+            if ($run -and $run.status -eq 'completed') {
+                if ($run.conclusion -ne 'success') { throw "Release workflow failed: https://github.com/$Repo/actions/runs/$($run.databaseId)" }
+                Write-Host "Release succeeded: https://github.com/$Repo/actions/runs/$($run.databaseId)"
+                return
+            }
+            Start-Sleep -Seconds 15
+        }
+        throw "Timed out waiting for release: https://github.com/$Repo/actions/workflows/release.yml"
     }
 } finally { Pop-Location }

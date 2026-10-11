@@ -60,6 +60,8 @@ jobs:
           VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/ax-cli/Cargo.toml | head -1)
           TAG="v$VERSION"
           [ -z "$REQUESTED_TAG" ] || [ "$REQUESTED_TAG" = "$TAG" ] || { echo "::error::Requested tag differs from main version"; exit 1; }
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
             git merge-base --is-ancestor "$TAG^{commit}" origin/main || { echo "::error::Tag is not from main"; exit 1; }
           fi
@@ -202,6 +204,17 @@ jobs:
             grep -Fxq "$asset" /tmp/release-assets || { echo "::error::Missing uploaded asset: $asset"; exit 1; }
           done
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  deploy-docs:
+    needs: [prepare, release]
+    if: >-
+      always() && needs.prepare.result == 'success' && needs.prepare.outputs.tag != '' &&
+      (needs.release.result == 'success' || needs.prepare.outputs.publish == 'false')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - name: Update download pointer after complete release
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
