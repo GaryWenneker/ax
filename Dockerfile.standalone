@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.7
+# Build Ax and its embedded Command Center using reproducible lockfiles.
+FROM node:22-bookworm AS node
+FROM rust:1-bookworm AS builder
+
+COPY --from=node /usr/local/ /usr/local/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates pkg-config cmake clang git \
+    libssl-dev libudev-dev libasound2-dev libfontconfig1-dev \
+    libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev \
+    libxrandr-dev libxi-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY . .
+RUN cargo build --release --locked -p ax-cli
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl libssl3 libudev1 libasound2 libfontconfig1 \
+    libx11-6 libxkbcommon0 libwayland-client0 libgl1 libvulkan1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 ax \
+    && useradd --system --uid 10001 --gid ax --home-dir /home/ax --create-home ax \
+    && mkdir -p /data /config && chown ax:ax /data /config
+COPY --from=builder /build/target/release/ax /usr/local/bin/ax
+USER ax
+WORKDIR /data
+ENV HOME=/home/ax
+EXPOSE 9070/tcp 9072/udp
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:9070/health >/dev/null || exit 1
+ENTRYPOINT ["/usr/local/bin/ax"]
+CMD ["server", "run", "--config", "/config/server.json", "--bind", "0.0.0.0:9070", "--allow-private-http"]
