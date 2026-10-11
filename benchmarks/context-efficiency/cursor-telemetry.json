@@ -1,0 +1,225 @@
+{
+  "generated_at": "2026-10-05T13:19:54.305311+00:00",
+  "new_composer_ids": [
+    "505b2ee1-7799-4004-8385-b4b2f8d85429",
+    "8f157815-324f-4943-8e9d-900e9021104f"
+  ],
+  "markers": {
+    "BENCH-MARKER-OFF-7f3a": [
+      {
+        "composer": "3004d3a8-08fb-4be4-af23-d7172049bc5f",
+        "model": "grok-4.7",
+        "parameters": [
+          {
+            "id": "context",
+            "value": "256k"
+          },
+          {
+            "id": "reasoning_effort",
+            "value": "high"
+          },
+          {
+            "id": "fast",
+            "value": "false"
+          }
+        ],
+        "contextTokensUsed": 177186,
+        "contextTokenLimit": 256000,
+        "totalUsedTokens": 177186,
+        "categories": {
+          "system_prompt": 1648,
+          "tools": 3913,
+          "rules": 20724,
+          "skills": 5226,
+          "mcp": 3873,
+          "subagents": 1127,
+          "summarized_conversation": 0,
+          "conversation": 140675
+        },
+        "bubble_count": 140,
+        "bubble_input_sum": 0,
+        "bubble_output_sum": 0,
+        "bubble_types": {
+          "1": 3,
+          "2": 137
+        },
+        "first_bubble": "2026-10-05T13:00:18.435Z",
+        "last_bubble": "2026-10-05T13:19:51.418Z",
+        "usageData_empty": true
+      },
+      {
+        "composer": "505b2ee1-7799-4004-8385-b4b2f8d85429",
+        "model": "grok-4.7",
+        "parameters": [
+          {
+            "id": "context",
+            "value": "256k"
+          },
+          {
+            "id": "reasoning_effort",
+            "value": "high"
+          },
+          {
+            "id": "fast",
+            "value": "false"
+          }
+        ],
+        "contextTokensUsed": null,
+        "contextTokenLimit": null,
+        "totalUsedTokens": null,
+        "categories": {},
+        "bubble_count": 48,
+        "bubble_input_sum": 0,
+        "bubble_output_sum": 0,
+        "bubble_types": {
+          "2": 47,
+          "1": 1
+        },
+        "first_bubble": "2026-10-05T13:14:09.406Z",
+        "last_bubble": "2026-10-05T13:16:30.646Z",
+        "usageData_empty": true
+      }
+    ],
+    "BENCH-MARKER-ON-7f3a": [
+      {
+        "composer": "3004d3a8-08fb-4be4-af23-d7172049bc5f",
+        "model": "grok-4.7",
+        "parameters": [
+          {
+            "id": "context",
+            "value": "256k"
+          },
+          {
+            "id": "reasoning_effort",
+            "value": "high"
+          },
+          {
+            "id": "fast",
+            "value": "false"
+          }
+        ],
+        "contextTokensUsed": 177186,
+        "contextTokenLimit": 256000,
+        "totalUsedTokens": 177186,
+        "categories": {
+          "system_prompt": 1648,
+          "tools": 3913,
+          "rules": 20724,
+          "skills": 5226,
+          "mcp": 3873,
+          "subagents": 1127,
+          "summarized_conversation": 0,
+          "conversation": 140675
+        },
+        "bubble_count": 140,
+        "bubble_input_sum": 0,
+        "bubble_output_sum": 0,
+        "bubble_types": {
+          "1": 3,
+          "2": 137
+        },
+        "first_bubble": "2026-10-05T13:00:18.435Z",
+        "last_bubble": "2026-10-05T13:19:51.418Z",
+        "usageData_empty": true
+      },
+      {
+        "composer": "8f157815-324f-4943-8e9d-900e9021104f",
+        "model": "grok-4.7",
+        "parameters": [
+          {
+            "id": "context",
+            "value": "256k"
+          },
+          {
+            "id": "reasoning_effort",
+            "value": "high"
+          },
+          {
+            "id": "fast",
+            "value": "false"
+          }
+        ],
+        "contextTokensUsed": null,
+        "contextTokenLimit": null,
+        "totalUsedTokens": null,
+        "categories": {},
+        "bubble_count": 78,
+        "bubble_input_sum": 0,
+        "bubble_output_sum": 0,
+        "bubble_types": {
+          "2": 77,
+          "1": 1
+        },
+        "first_bubble": "2026-10-05T13:14:12.717Z",
+        "last_bubble": "2026-10-05T13:19:30.003Z",
+        "usageData_empty": true
+      }
+    ]
+  },
+  "new_composers": [
+    {
+      "composer": "505b2ee1-7799-4004-8385-b4b2f8d85429",
+      "model": "grok-4.7",
+      "parameters": [
+        {
+          "id": "context",
+          "value": "256k"
+        },
+        {
+          "id": "reasoning_effort",
+          "value": "high"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "contextTokensUsed": null,
+      "contextTokenLimit": null,
+      "totalUsedTokens": null,
+      "categories": {},
+      "bubble_count": 48,
+      "bubble_input_sum": 0,
+      "bubble_output_sum": 0,
+      "bubble_types": {
+        "2": 47,
+        "1": 1
+      },
+      "first_bubble": "2026-10-05T13:14:09.406Z",
+      "last_bubble": "2026-10-05T13:16:30.646Z",
+      "usageData_empty": true
+    },
+    {
+      "composer": "8f157815-324f-4943-8e9d-900e9021104f",
+      "model": "grok-4.7",
+      "parameters": [
+        {
+          "id": "context",
+          "value": "256k"
+        },
+        {
+          "id": "reasoning_effort",
+          "value": "high"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "contextTokensUsed": null,
+      "contextTokenLimit": null,
+      "totalUsedTokens": null,
+      "categories": {},
+      "bubble_count": 78,
+      "bubble_input_sum": 0,
+      "bubble_output_sum": 0,
+      "bubble_types": {
+        "2": 77,
+        "1": 1
+      },
+      "first_bubble": "2026-10-05T13:14:12.717Z",
+      "last_bubble": "2026-10-05T13:19:30.003Z",
+      "usageData_empty": true
+    }
+  ]
+}

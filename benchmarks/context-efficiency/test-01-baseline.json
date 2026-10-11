@@ -1,0 +1,50 @@
+{
+  "test_id": "test-01",
+  "variant": "no-ax",
+  "status": "completed",
+  "agent_id": "505b2ee1-7799-4004-8385-b4b2f8d85429",
+  "marker": "BENCH-MARKER-OFF-7f3a",
+  "workdir": "benchmarks/context-efficiency/run-01",
+  "model": "grok-4.7",
+  "model_configuration": {
+    "maxMode": false,
+    "context": "256k",
+    "reasoning_effort": "high",
+    "fast": false,
+    "source": "cursor composerData.modelConfig"
+  },
+  "started_at": "2026-10-05T13:14:09.406Z",
+  "ended_at": "2026-10-05T13:16:30.646Z",
+  "duration_ms": 141240,
+  "input_tokens": null,
+  "output_tokens": null,
+  "total_tokens": null,
+  "cursor_bubble_input_sum": 0,
+  "cursor_bubble_output_sum": 0,
+  "cursor_context_tokens": null,
+  "token_source": "cursor state.vscdb bubbleId.tokenCount and composerData.promptTokenBreakdown; subagent transcript has no usage object",
+  "tool_calls": {
+    "Read": 12,
+    "Shell": 6,
+    "UpdateCurrentStep": 4,
+    "StrReplace": 4,
+    "Glob": 1,
+    "Write": 1,
+    "Grep": 1,
+    "ax": 0
+  },
+  "files_read": ["Cargo.toml", "TASK.md", "apply.rs", "config.toml", "entry.rs", "ledger.rs", "lib.rs", "void.rs"],
+  "files_changed": ["Cargo.toml", "src/ledger.rs", "src/lib.rs", "tests/void.rs", "Cargo.lock"],
+  "tests_passed": 4,
+  "tests_failed": 0,
+  "tests_command": "cargo test --manifest-path benchmarks/context-efficiency/run-01/Cargo.toml --offline",
+  "quality_score": 9,
+  "quality_breakdown": {
+    "functional": 4,
+    "tests": 2,
+    "code": 1,
+    "context_retention": 2
+  },
+  "failure_reason": null,
+  "telemetry_gap": "Provider input and output tokens are 0 on all 48 bubbles. promptTokenBreakdown is absent on this composer. No savings ratio was computed."
+}

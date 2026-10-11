@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/gary/io/ax/.codex/hooks/ax-session-model.ps1'"
+          }
+        ]
+      }
+    ]
+  }
+}

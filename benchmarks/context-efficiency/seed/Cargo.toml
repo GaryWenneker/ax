@@ -1,0 +1,10 @@
+[workspace]
+
+[package]
+name = "bench-ledger"
+version = "0.1.0"
+edition = "2021"
+
+[[test]]
+name = "apply"
+path = "tests/apply.rs"

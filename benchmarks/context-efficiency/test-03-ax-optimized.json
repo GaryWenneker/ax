@@ -1,0 +1,28 @@
+{
+  "test_id": "test-03",
+  "variant": "ax-optimized",
+  "status": "not_run",
+  "model": "grok-4.7",
+  "model_configuration": {
+    "maxMode": false,
+    "context": "256k",
+    "reasoning_effort": "high",
+    "fast": false
+  },
+  "started_at": null,
+  "ended_at": null,
+  "input_tokens": null,
+  "output_tokens": null,
+  "total_tokens": null,
+  "duration_ms": null,
+  "tool_calls": null,
+  "files_read": null,
+  "files_changed": null,
+  "tests_passed": null,
+  "tests_failed": null,
+  "final_git_diff": null,
+  "quality_score": null,
+  "turns": [],
+  "token_source": "cursor state.vscdb",
+  "failure_reason": "Not started. After test-01 and test-02, both new composers had bubble inputTokens 0, outputTokens 0, and no promptTokenBreakdown. A longer multi-turn run would not have produced per-turn input tokens to compare."
+}
