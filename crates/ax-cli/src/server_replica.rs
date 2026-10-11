@@ -40,7 +40,7 @@ fn mirror_directory(config: &ServerConfig, project: &ProjectRegistration, snapsh
 fn save_selected(root: &Path, revision: &str, staged: bool) -> Result<(), String> {
     let selected = serde_json::json!({
         "revision": revision,
-        "status": if staged { "staged_pending_review" } else { "unchanged" },
+        "status": if staged { "mirrored_not_applied" } else { "unchanged" },
         "last_sync_unix_seconds": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| e.to_string())?
@@ -54,19 +54,42 @@ fn save_selected(root: &Path, revision: &str, staged: bool) -> Result<(), String
     Ok(())
 }
 
+/// Never trust an on-disk revision just because its directory name matches
+/// the incoming digest. Symlinks and tampered files must not be treated as
+/// synchronized content.
+fn verify_staged_revision(directory: &Path, snapshot: &Snapshot) -> Result<(), String> {
+    let meta = fs::symlink_metadata(directory).map_err(|e| e.to_string())?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err("existing revision path is not a real directory".into());
+    }
+    for (path, expected) in &snapshot.files {
+        let target = directory.join(path);
+        let meta = fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+        if !meta.file_type().is_file() || meta.len() != expected.len() as u64 {
+            return Err(format!("staged revision file is missing or unsafe: {path}"));
+        }
+        let actual = fs::read_to_string(&target).map_err(|e| e.to_string())?;
+        if actual != *expected {
+            return Err(format!("staged revision content is inconsistent: {path}"));
+        }
+    }
+    Ok(())
+}
+
 fn stage(config: &ServerConfig, project: &ProjectRegistration, snapshot: &Snapshot) -> Result<String, String> {
     server_snapshot::validate(snapshot, &config.cluster_id, &project.id)?;
     let root = mirror_directory(config, project, snapshot)?;
     let current = root.join("current.json");
+    let revision_path = root.join(&snapshot.revision);
     if let Ok(selected) = fs::read_to_string(&current) {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&selected) {
-            if value.get("revision").and_then(|x| x.as_str()) == Some(&snapshot.revision) {
+            if value.get("revision").and_then(|x| x.as_str()) == Some(snapshot.revision.as_str()) {
+                verify_staged_revision(&revision_path, snapshot)?;
                 save_selected(&root, &snapshot.revision, false)?;
                 return Ok("unchanged".into());
             }
         }
     }
-    let revision_path = root.join(&snapshot.revision);
     if !revision_path.exists() {
         let temp = tempfile::Builder::new().prefix(".staging-").tempdir_in(&root).map_err(|e| e.to_string())?;
         for (relative, contents) in &snapshot.files {
@@ -79,11 +102,65 @@ fn stage(config: &ServerConfig, project: &ProjectRegistration, snapshot: &Snapsh
             file.sync_all().map_err(|e| e.to_string())?;
         }
         fs::rename(temp.path(), &revision_path).map_err(|e| e.to_string())?;
-    } else if fs::symlink_metadata(&revision_path).map_err(|e| e.to_string())?.file_type().is_symlink() {
-        return Err("replica revision directory cannot be a symlink".into());
     }
+    verify_staged_revision(&revision_path, snapshot)?;
     save_selected(&root, &snapshot.revision, true)?;
-    Ok("staged_pending_review".into())
+    Ok("mirrored_not_applied".into())
+}
+
+fn attempt_file(config: &ServerConfig, project: &ProjectRegistration) -> std::path::PathBuf {
+    project.path.join(".ax/server/sync-status")
+        .join(&config.cluster_id)
+        .join(format!("{}.json", project.id))
+}
+
+/// Retain successful sync metadata when a subsequent network attempt fails.
+/// Status must describe the current attempt, not claim the listener is running.
+fn record_attempt(
+    config: &ServerConfig,
+    project: &ProjectRegistration,
+    outcome: &Result<(String, String), String>,
+) -> Result<(), String> {
+    let dir = project.path.join(".ax");
+    safe_dir(&dir)?;
+    let dir = dir.join("server");
+    safe_dir(&dir)?;
+    let dir = dir.join("sync-status");
+    safe_dir(&dir)?;
+    let dir = dir.join(&config.cluster_id);
+    safe_dir(&dir)?;
+    let file_path = attempt_file(config, project);
+    let previous: serde_json::Value = fs::read_to_string(&file_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let mut state = serde_json::json!({
+        "last_attempt_unix_seconds": now,
+        "last_success_revision": previous.get("last_success_revision").cloned(),
+        "last_success_unix_seconds": previous.get("last_success_unix_seconds").cloned(),
+        "last_error": serde_json::Value::Null,
+    });
+    match outcome {
+        Ok((status, revision)) => {
+            state["status"] = serde_json::json!(status);
+            state["last_success_revision"] = serde_json::json!(revision);
+            state["last_success_unix_seconds"] = serde_json::json!(now);
+        }
+        Err(error) => {
+            state["status"] = serde_json::json!("failed");
+            state["last_error"] = serde_json::json!(error);
+        }
+    }
+    let mut temp = tempfile::NamedTempFile::new_in(&dir).map_err(|e| e.to_string())?;
+    serde_json::to_writer_pretty(&mut temp, &state).map_err(|e| e.to_string())?;
+    temp.write_all(b"\n").map_err(|e| e.to_string())?;
+    temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    temp.persist(&file_path).map_err(|e| e.error.to_string())?;
+    Ok(())
 }
 
 async fn fetch_snapshot(
@@ -130,13 +207,16 @@ pub async fn sync(config_path: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let mut errors = Vec::new();
     for project in &config.projects {
-        let result = match fetch_snapshot(&client, &config, project).await {
-            Ok(snapshot) => stage(&config, project, &snapshot),
-            Err(err) => Err(err),
-        };
-        match result {
-            Ok(status) => println!("Project {}: {}", project.id, status),
-            Err(error) => {
+        let result: Result<(String, String), String> =
+            match fetch_snapshot(&client, &config, project).await {
+                Ok(snapshot) => stage(&config, project, &snapshot)
+                    .map(|status| (status, snapshot.revision)),
+                Err(error) => Err(error),
+            };
+        let recorded = record_attempt(&config, project, &result);
+        match (result, recorded) {
+            (Ok((status, _)), Ok(())) => println!("Project {}: {}", project.id, status),
+            (Err(error), _) | (_, Err(error)) => {
                 eprintln!("Project {}: sync failed: {}", project.id, error);
                 errors.push(project.id.clone());
             }
@@ -150,13 +230,10 @@ pub async fn sync(config_path: &Path) -> Result<(), String> {
 }
 
 pub fn status(config: &ServerConfig, project: &ProjectRegistration) -> serde_json::Value {
-    let base = project.path.join(".ax/server/replicas").join(&config.cluster_id).join(&project.id);
-    let latest = fs::read_dir(base).ok().into_iter().flatten()
-        .filter_map(Result::ok)
-        .filter_map(|entry| fs::read_to_string(entry.path().join("current.json")).ok())
-        .filter_map(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .max_by_key(|value| value.get("last_sync_unix_seconds").and_then(|v| v.as_u64()).unwrap_or(0));
-    latest.unwrap_or_else(|| serde_json::json!({"status": "never_synced"}))
+    fs::read_to_string(attempt_file(config, project))
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!({"status": "never_synced"}))
 }
 
 #[cfg(test)]
