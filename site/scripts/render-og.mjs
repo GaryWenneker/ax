@@ -1,6 +1,6 @@
 /**
  * After `astro build`, screenshot every page that publishes an og:image and
- * write a 1200×630 card. The release label comes from public/releases/latest.txt.
+ * write a 1200×630 card. The version label comes from the built CLI source.
  *
  * Fails the build if any published image is missing or the wrong size.
  */
@@ -9,6 +9,7 @@ import http from 'node:http';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSourceVersion } from '../src/lib/source-version.mjs';
 import {
 	cardHtml,
 	clipBox,
@@ -147,7 +148,7 @@ async function launchBrowser(puppeteer) {
 
 async function main() {
 	if (!existsSync(distDir)) throw new Error('dist/ is missing — run astro build first');
-	const version = releaseLabel(readFileSync(path.join(siteDir, 'public', 'releases', 'latest.txt'), 'utf8'));
+	const version = releaseLabel(readSourceVersion(siteDir));
 	const logo = readFileSync(path.join(siteDir, 'public', 'logo.png'));
 	const logoUrl = `data:image/png;base64,${logo.toString('base64')}`;
 	const pages = pagesToRender();

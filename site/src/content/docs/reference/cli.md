@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Complete reference for every ax command, argument, and flag (v7.1.0).
+description: Reference for ax commands, arguments, and flags in the current main source.
 ---
 
 Run `ax <command> --help` for the same information from the installed binary. Global help: `ax --help`.

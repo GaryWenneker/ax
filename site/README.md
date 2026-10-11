@@ -1,6 +1,6 @@
 # ax docs site (getax.wenneker.io)
 
-Starlight + Astro site for [ax](https://github.com/GaryWenneker/ax) documentation. The **current ax version** shown in the header and landing page is read from `public/releases/latest.txt` (e.g. `v2.0.0`).
+Starlight + Astro site for [ax](https://github.com/GaryWenneker/ax) documentation. The header, landing page, and generated share cards read the **source version** from `../crates/ax-cli/Cargo.toml`. Production documentation is built from `main`. Download links and the latest-release function use `public/releases/latest.txt`, which changes only when binary assets are published. The landing page explains any difference between the two versions.
 
 ## Commands
 

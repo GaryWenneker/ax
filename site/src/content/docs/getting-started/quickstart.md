@@ -1,9 +1,9 @@
 ---
 title: Get Started
-description: Get up and running with ax v7.1.0 in seconds.
+description: Get up and running with ax using a published download or the current main source.
 ---
 
-Install **ax v7.1.0** (or newer from [latest.txt](https://getax.wenneker.io/releases/latest.txt)) — knowledge graph, memory vault, policy engine, MCP Logging / Quality, and Command Center in one binary.
+Install the [latest published binary](https://getax.wenneker.io/releases/latest.txt), or [build the current main source](/getting-started/installation/#build-from-main) for the version shown on this site. Knowledge graph, memory vault, policy engine, MCP Logging / Quality, and Command Center run in one binary.
 
 ## 1. Install the CLI
 

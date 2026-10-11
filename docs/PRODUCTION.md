@@ -9,7 +9,7 @@ cd C:\gary\ax
 .\scripts\bootstrap-ops.ps1
 ```
 
-Creates git repo (if needed), pushes to `GaryWenneker/ax`, tags `v2.0.0`, and triggers the Release workflow.
+Legacy bootstrap for repository setup only. For production releases use the trunk-based flow below.
 
 ## Prerequisites
 
@@ -45,27 +45,24 @@ bash scripts/verify-release-assets.sh dist/
 
 Partial uploads (e.g. Windows-only) break Mac/Linux/WSL installs — **never** bump `site/public/releases/latest.txt` until all six pass verification.
 
-### Automated (recommended)
+### Trunk-based releases
 
-1. Push this repo to GitHub as `GaryWenneker/ax` (or update `AX_GITHUB_REPO` everywhere).
-2. Create and push a tag:
+Production source must be merged into `main` through a PR. Feature branches validate and preview only; never publish production from them.
 
-```powershell
-git tag v2.0.0
-git push origin v2.0.0
+1. Update source and documentation in the same PR. Keep the download pointer at the last complete published release.
+2. Merge only after Linux, Windows, macOS, Clippy, browser tests, and the docs build pass.
+3. Successful push CI on `main` starts the Release workflow automatically when its CLI version has not been published yet.
+4. The workflow checks out the exact validated main commit, builds all six bundles, uploads a draft, verifies every asset and checksum file, then publishes the release.
+5. Only after that does it advance the deployed download pointer and publish the main documentation and Netlify functions. Set repository secrets `NETLIFY_AUTH_TOKEN` and `NETLIFY_SITE_ID` for production deployment; missing secrets fail visibly.
+6. Published releases are immutable. Fix a published binary through a new version and PR.
+
+For a retry, run the Release workflow on `main`, optionally supplying the matching version tag:
+
+```bash
+gh workflow run release.yml --ref main -f tag=v8.0.0
 ```
 
-3. GitHub Actions workflow `.github/workflows/release.yml` builds all six platform bundles, verifies them, creates the GitHub release, and (when Netlify secrets are set) mirrors to getax:
-
-   - `ax-win32-x64.zip`, `ax-win32-arm64.zip`
-   - `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz` (WSL2 uses these)
-   - `ax-darwin-x64.tar.gz`, `ax-darwin-arm64.tar.gz`
-
-4. Update docs in the **same** release: `site/src/content/docs/getting-started/installation.md`, this file, `README.md`, and `docs/npm/*` if install URLs or platform lists changed.
-
-### Manual trigger
-
-GitHub → Actions → **Release** → Run workflow → set tag `v2.0.0`.
+The maintainer wrapper `scripts/release-tag.ps1` dispatches this guarded workflow. It rejects feature branches, dirty checkouts, local commits outside origin/main, direct version bumps and force-retagging. Production `scripts/deploy-netlify.ps1` likewise requires clean validated main and a fresh build; previews remain available.
 
 ### User install (after release exists)
 
@@ -230,7 +227,7 @@ Deploy `site/dist` to Netlify, Cloudflare Pages, or GitHub Pages.
 | Step | Command / action |
 |------|------------------|
 | Tests green | `cargo test --workspace` |
-| Tag release | `git tag v2.0.0 && git push origin v2.0.0` |
+| Release validated main | Automatic after main CI; retry with `gh workflow run release.yml --ref main` |
 | Verify all 6 assets | `bash scripts/verify-release-assets.sh dist/` |
 | Verify GH + getax URLs | Each `https://getax.wenneker.io/releases/<tag>/ax-*` returns 200 |
 | Docs updated | installation.md, PRODUCTION.md, README, npm docs |

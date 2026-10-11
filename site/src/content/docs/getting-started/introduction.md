@@ -18,6 +18,14 @@ Four layers work together in every project:
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 
+## What's new in v8.0.0 on main
+
+The documentation follows the current `main` source. Binary downloads have their own published release version; see [Installation](/getting-started/installation/#build-from-main) to build the current source locally.
+
+- **[Smart Output](/guides/smart-output/).** Readable agent text with lean metadata replaces repeated large MCP replies. Required policy stays complete, and full memory or cached context can be retrieved on demand.
+- **Project isolation and compaction recovery.** Cached and durable context belongs to its project and session. Required policy and working notes are restored after a context reset or reconnect.
+- **[Remote MCP with OAuth](/guides/remote-mcp/).** Connect ChatGPT and another IDE through an HTTPS tunnel, with browser login, project grants, and scoped access. Follow the guide to register the actual OAuth clients and callbacks.
+
 ## What's new in v7.1.0
 
 v7.1.0 is a minor release. New projects get a broader default policy, the cost report can use sessions you already imported, and Command Center plays a short intro on a full page load.
@@ -324,7 +332,7 @@ No data leaves your machine. No API keys, no cloud index — just SQLite in `.ax
 
 ## Link previews
 
-Sharing a page URL uses a preview of that page. The site build screenshots the page, paints the release from `latest.txt` on the card, and points `og:image` at that file. The version on the card is the same release the site is shipping.
+Sharing a page URL uses a preview of that page. The site build screenshots the page, paints the CLI source version from `Cargo.toml` on the card, and points `og:image` at that file. The version on the card matches the documentation; binary downloads use the separate published-release pointer.
 
 Ready to try it? Head to the [Quickstart](/getting-started/quickstart/).
 

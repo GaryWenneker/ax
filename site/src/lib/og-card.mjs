@@ -1,6 +1,6 @@
 /**
  * Share-card paths and HTML. The production build screenshots each page and
- * paints the release from public/releases/latest.txt onto a 1200×630 card.
+ * paints the CLI source version onto a 1200×630 card.
  */
 import path from 'node:path';
 
@@ -27,7 +27,7 @@ export function ogImagePath(pathname) {
 export function kickerFor(pathname) {
 	const raw = String(pathname ?? '/').split('?')[0].split('#')[0];
 	const parts = raw.split('/').filter(Boolean);
-	if (parts.length === 0) return 'Current release';
+	if (parts.length === 0) return 'Current version';
 	return KICKERS[parts[0]] ?? 'ax';
 }
 
