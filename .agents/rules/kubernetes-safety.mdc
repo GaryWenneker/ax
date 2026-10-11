@@ -1,0 +1,35 @@
+---
+id: kubernetes-safety
+level: CRITICAL
+alwaysApply: false
+globs: ["**/k8s/**", "**/kubernetes/**", "**/charts/**", "**/helm/**", "**/kustomization.yaml", "**/values*.yaml"]
+triggers: ["kubernetes", "k8s", "kubectl", "helm", "cluster", "namespace", "rollout", "ingress", "kustomize"]
+tags: ["kubernetes", "safety"]
+priority: 95
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Kubernetes and Helm safety gates
+
+Before running any cluster or package-manager command against a cluster, classify it. A command that is not in the table is destructive until it is classified.
+
+| Class | Gate |
+| --- | --- |
+| Read-only | Run it. Never print Secret data. |
+| Local config | Allowed when the task needs it. Announce every context switch. |
+| Remote write | Only when the user asked for this action and named the context and namespace. Preview first, summarize, then run. |
+| Destructive or production | Show the exact command and the preview, then wait for an explicit yes to this command in this turn. |
+
+Also:
+
+- Writes name the context and namespace on the command. Do not trust the current context.
+- If the context or namespace looks like production, or the user says it is production, treat it as destructive.
+- Preview with a diff or a server dry-run before apply or upgrade.
+- If a GitOps controller owns the resource, change the manifest repository instead of the cluster.
+- Deny an image tag of `latest` or an untagged image. Use a commit id, a version, or a digest.
+- An upgrade waits and rolls back itself on failure.
+- After a write, report the command with secrets redacted, the context, the namespace, the rollout result, and the undo command.
+- Do not delete with `--all`, all namespaces, or an unpreviewed label selector. Do not edit production resources in place. Do not pass secret literals on the command line.

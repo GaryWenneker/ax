@@ -1,0 +1,17 @@
+---
+id: css-layers
+level: WARNING
+alwaysApply: false
+globs: ["**/*.module.css", "**/*.css"]
+triggers: ["css", "cascade", "layer", "design system"]
+tags: ["css"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# CSS cascade layers
+
+Declare the library's cascade layers in one place, ordered so later library layers override earlier ones. Put component modules in the component layer. Put tokens in the token layer via a layered import, not a layer block inside the token file. Keep resets in the reset layer. Leave font-face rules unlayered, because the spec does not allow them inside a layer. Application CSS stays unlayered, so it wins over the library without `!important`. Do not add a new top-level layer without updating the single declaration.

@@ -22,7 +22,6 @@ import MemoryPage from './pages/Memory';
 import AgentPage from './pages/Agent';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
-import HeaderWaves from './components/HeaderWaves';
 import LoggingProjectSwitch from './components/LoggingProjectSwitch';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
 import { initBladeWidth } from './components/BladeResize';
@@ -376,7 +375,6 @@ function AppShell() {
               </div>
             </div>
           </div>
-          {!portalLayout && <HeaderWaves />}
         </header>
         )}
         {embedMode && (

@@ -32,6 +32,7 @@ members = [
     "crates/ax-lsp",
     "crates/ax-docs-catalog",
     "crates/ax-global-db",
+    "crates/ratatouille",
 ]
 resolver = "2"
 

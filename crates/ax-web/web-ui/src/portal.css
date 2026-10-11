@@ -193,6 +193,46 @@ html[data-ax-layout="portal"] .portal-data-cell :is(.page-level-badge, .page-sco
 html[data-ax-layout="portal"] .graph-page .graph-body { min-height: 0; }
 @media (max-width: 639px) { html[data-ax-layout="portal"] .portal-breadcrumbs { padding-inline: 12px; } }
 
+/* Savings portal — charts and the token path follow Azure accent, not mint/GitHub green. */
+html[data-ax-layout="portal"] :is(.sv-tl-bar, .sv-tl-bar--peak, .sv-hour-bar, .sv-hour-bar--peak, .sv-daily-bars-bar--with, .sv-daily-bars-swatch--with, .sv-comparison-bar--with, .savings-compare-bar--with, .sv-token-ribbon--with .sv-token-ribbon-seg) {
+  background: var(--accent);
+  box-shadow: none;
+}
+html[data-ax-layout="portal"] .sv-tl-bar { background: var(--accent); box-shadow: none; }
+html[data-ax-layout="portal"] :is(.sv-daily-bars-bar--without, .sv-daily-bars-swatch--without, .sv-comparison-bar--without, .savings-compare-bar--without, .sv-token-ribbon--without .sv-token-ribbon-seg) {
+  background: var(--border-hi);
+}
+html[data-ax-layout="portal"] .sv-comparison-bar--without { background: var(--border-hi); }
+html[data-ax-layout="portal"] .sv-hm-cell--0 { background: color-mix(in srgb, var(--text) 8%, transparent); }
+html[data-ax-layout="portal"] .sv-hm-cell--1 { background: color-mix(in srgb, var(--accent) 28%, var(--bg-panel)); }
+html[data-ax-layout="portal"] .sv-hm-cell--2 { background: color-mix(in srgb, var(--accent) 48%, var(--bg-panel)); }
+html[data-ax-layout="portal"] .sv-hm-cell--3 { background: color-mix(in srgb, var(--accent) 72%, var(--bg-panel)); }
+html[data-ax-layout="portal"] .sv-hm-cell--4 { background: var(--accent); }
+html[data-ax-layout="portal"] :is(.sv-hm-cell--out, .sv-hm-cell--pad, .sv-hm-cell--future) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+html[data-ax-layout="portal"] .sv-hm-cell:not(:disabled):hover,
+html[data-ax-layout="portal"] .sv-hm-cell:not(:disabled):focus-visible { outline-color: var(--accent); }
+html[data-ax-layout="portal"] .tv-graph-canvas-wrap { background: var(--bg-input); border: 1px solid var(--border); border-radius: 2px; }
+html[data-ax-layout="portal"] #tvPlotFade stop { stop-color: var(--bg-input); }
+html[data-ax-layout="portal"] .tv-graph-matched { stroke: var(--accent); }
+html[data-ax-layout="portal"] .tv-graph-matched-glow { stroke: transparent; }
+html[data-ax-layout="portal"] .tv-graph-node { fill: var(--accent); stroke: var(--bg-panel); }
+html[data-ax-layout="portal"] .tv-graph-node:hover,
+html[data-ax-layout="portal"] .tv-graph-node--active { fill: var(--text-hi); stroke: var(--accent); }
+html[data-ax-layout="portal"] .tv-legend-item--matched::before { background: var(--accent); box-shadow: none; }
+html[data-ax-layout="portal"] .tv-graph-grid { stroke: color-mix(in srgb, var(--text) 14%, transparent); }
+html[data-ax-layout="portal"] .tv-graph-grid--v { stroke: color-mix(in srgb, var(--text) 8%, transparent); }
+html[data-ax-layout="portal"] .tv-graph-axis-label { fill: var(--text-dim); }
+html[data-ax-layout="portal"] .tv-graph-alt { stroke: var(--text-dim); }
+html[data-ax-layout="portal"] .tv-graph-ctrl input[type='range'] { accent-color: var(--accent); }
+html[data-ax-layout="portal"] .tv-kpi--accent { border-color: var(--border); background: var(--bg-active); }
+html[data-ax-layout="portal"] .tv-kpi--accent .tv-kpi-value { color: var(--accent-text); }
+html[data-ax-layout="portal"] .sv-hero-stat-value--ok { color: var(--text-hi); }
+html[data-ax-layout="portal"] .sv-hero-stat-value--accent,
+html[data-ax-layout="portal"] .sv-comparison-saved,
+html[data-ax-layout="portal"] .savings-compare-saved { color: var(--accent-text); }
+html[data-ax-layout="portal"] .sv-tl-win--active { color: var(--text-hi); border-color: var(--accent); background: var(--bg-active); }
+html[data-ax-layout="portal"] :is(.sv-hero-strip, .sv-insight, .tv-kpi, .sv-token-chips) { border-radius: 2px; }
+
 /* Logging, savings and quality panels use the active portal surfaces. */
 html[data-ax-layout="portal"] :is(.mcp-trace-shell, .mcp-trace-chrome, .mcp-trace-toolbar, .mcp-trace-scroller, .mcp-trace-project-banner, .mcp-trace-filters, .settings-status-panel, .sv-hero-strip, .sv-insights, .mcp-q-blade, .mcp-q-blade-header, .mcp-q-blade-body) { background: var(--bg-panel); color: var(--text); border-color: var(--border); border-radius: 0; box-shadow: none; }
 html[data-ax-layout="portal"] :is(.sv-hero-stat, .sv-insight, .mcp-q-metric, .mcp-q-finding) { background: var(--bg-panel); border-color: var(--border); border-radius: 0; box-shadow: none; }
@@ -258,4 +298,19 @@ html[data-ax-layout="portal"] .access-row-control > .btn { flex-shrink: 0; }
   .access-header { align-items: flex-start; }
   .access-scopes, .access-role-guide { grid-template-columns: minmax(0, 1fr); }
   .access-actions .btn { min-height: 36px; }
+}
+
+/* Edge glow stays off: no titlebar wave, no orbiting dots on a selected row. */
+html[data-ax-layout="portal"] .cc-waves { display: none; }
+html[data-ax-layout="portal"] :is(.cc-waves__motion, .cc-waves__parallax > use) { animation: none; }
+html[data-ax-layout="portal"] :is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node::before,
+html[data-ax-layout="portal"] :is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph .page-item-node::after {
+  animation: none;
+  content: none;
+}
+
+/* A group list fits its own records. The page scroller owns vertical and horizontal wheel. */
+html[data-ax-layout="portal"] .page-split-main :is(.page-item-list, .portal-data-list) {
+  overflow: visible;
+  overscroll-behavior: auto;
 }

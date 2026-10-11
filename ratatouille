@@ -1,0 +1,4 @@
+#!/bin/sh
+# Open the ax kitchen menu from the repo root.
+cd "$(dirname "$0")" || exit 1
+exec cargo run -q -p ratatouille --manifest-path Cargo.toml

@@ -1,0 +1,21 @@
+---
+id: design-tokens
+level: WARNING
+alwaysApply: false
+globs: ["**/*.css", "**/*.scss", "**/*.module.scss", "**/*.module.css"]
+triggers: ["css", "scss", "styling", "design tokens", "theme"]
+tags: ["css", "styling"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Design tokens and styling
+
+Prefer design tokens (color, space, type, breakpoints) over raw values when a token exists. Tokens live in one place and are exposed so every styling system in the app can use them. If no token fits, say why, or add a token when the value repeats.
+
+Use one styling system per component. Do not mix utility classes and a CSS module in the same component. Component styles stay next to the component. Global styles are imported once from the root layout.
+
+Do not use `!important` unless there is no practical alternative, such as a third-party rule you cannot change. When you use it, say why and what you considered. Avoid deep nesting and id selectors.

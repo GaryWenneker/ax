@@ -1085,14 +1085,14 @@ export default function SavingsPage() {
             title="Token path graph"
             description={
               callDetail
-                ? `Matched path for ${callDetail.tool} — green = with ax, grey = alternate context paths.`
+                ? `Matched path for ${callDetail.tool} — accent line = with ax, grey = alternate context paths.`
                 : 'Token-position illustration (not a timeline). Hover Alt / Matched for what those controls do.'
             }
             info={
               <InfoHover label="About the path graph">
                 X is token index in the response stream — <strong>not</strong> clock time. Use{' '}
                 <strong>Savings over time</strong> above for dates and hours. Alt = how many grey
-                counterfactual paths to draw; Matched toggles the green path. Y scale fits the green
+                counterfactual paths to draw; Matched toggles the accent path. Y scale fits the accent
                 path only.
               </InfoHover>
             }
@@ -1152,7 +1152,7 @@ export default function SavingsPage() {
               </div>
               <PageCardBody>
                 {dailyView === 'saved' && (
-                  <AreaChart data={dailySavingsData} height={160} color="var(--ok)" />
+                  <AreaChart data={dailySavingsData} height={160} color="var(--accent)" />
                 )}
                 {dailyView === 'reduction' && (
                   <AreaChart data={dailyReductionData} height={160} color="var(--accent)" />

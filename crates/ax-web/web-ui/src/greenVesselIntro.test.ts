@@ -154,12 +154,9 @@ test('the page stays covered until halfway, then the veil fades', () => {
   assert.match(veil, /100%\s*\{[^}]*background-color:\s*transparent/);
 });
 
-test('index.html mounts a full-screen overlay', () => {
+test('index.html does not mount the mint splash overlay', () => {
   const html = readFileSync(htmlUrl, 'utf8');
-  assert.match(html, /id="ax-green-vessel"/);
-  assert.match(html, /position:\s*fixed/);
-  assert.match(html, /z-index:\s*9999/);
-  assert.match(html, /pointer-events:\s*none/);
+  assert.equal(html.includes('ax-green-vessel'), false);
 });
 
 test('start adds the playing class and does not touch storage', () => {
