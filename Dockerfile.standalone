@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd --system --gid 10001 ax \
     && useradd --system --uid 10001 --gid ax --home-dir /home/ax --create-home ax \
     && mkdir -p /data /config && chown ax:ax /data /config
-COPY --from=builder /build/target/release/ax /usr/local/bin/ax
+COPY --from=builder /build/target-dev/release/ax /usr/local/bin/ax
 USER ax
 WORKDIR /data
 ENV HOME=/home/ax
