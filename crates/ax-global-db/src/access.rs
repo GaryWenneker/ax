@@ -45,6 +45,18 @@ pub struct IssuedClientCredential {
     pub token_prefix: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct IssuedNodeCredential {
+    pub credential_id: String,
+    pub token: String,
+    pub token_prefix: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NodePrincipal {
+    pub node_id: String,
+}
+
 impl MemberRole {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -516,15 +528,139 @@ pub async fn approve_node(
     Ok(result.rows_affected() == 1)
 }
 
+
+pub async fn issue_node_credential(
+    pool: &SqlitePool,
+    node_id: &str,
+    expires_at: Option<&str>,
+) -> Result<IssuedNodeCredential> {
+    let trust: Option<(String,)> =
+        sqlx::query_as("SELECT trust_state FROM replication_nodes WHERE id = ?")
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?;
+    match trust {
+        Some((state,)) if state == "pending" || state == "trusted" => {}
+        Some(_) => bail!("node is revoked"),
+        None => bail!("node does not exist"),
+    }
+
+    let credential_id = Uuid::new_v4().to_string();
+    let secret = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let token = format!("axn_{secret}");
+    let token_prefix = token.chars().take(12).collect::<String>();
+    let verifier = token_verifier(&token);
+
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO node_credentials
+            (id, node_id, token_prefix, verifier, expires_at)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&credential_id)
+    .bind(node_id)
+    .bind(&token_prefix)
+    .bind(&verifier)
+    .bind(expires_at)
+    .execute(&mut *tx)
+    .await?;
+    let result = sqlx::query(
+        "UPDATE replication_nodes
+         SET trust_state = 'trusted', credential_id = ?, approved_at = CURRENT_TIMESTAMP,
+             revoked_at = NULL
+         WHERE id = ? AND trust_state IN ('pending', 'trusted')",
+    )
+    .bind(&credential_id)
+    .bind(node_id)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() != 1 {
+        bail!("node cannot be approved");
+    }
+    tx.commit().await?;
+
+    Ok(IssuedNodeCredential {
+        credential_id,
+        token,
+        token_prefix,
+    })
+}
+
+pub async fn authenticate_node_token(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<NodePrincipal>> {
+    if !token.starts_with("axn_") || token.len() < 40 {
+        return Ok(None);
+    }
+    let prefix = token.chars().take(12).collect::<String>();
+    let verifier = token_verifier(token);
+    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT nc.node_id, rn.trust_state, nc.expires_at
+         FROM node_credentials nc
+         JOIN replication_nodes rn ON rn.id = nc.node_id
+         WHERE nc.token_prefix = ?
+           AND nc.verifier = ?
+           AND nc.revoked_at IS NULL",
+    )
+    .bind(&prefix)
+    .bind(&verifier)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some((node_id, trust_state, expires_at)) = row else {
+        return Ok(None);
+    };
+    if trust_state != "trusted" {
+        return Ok(None);
+    }
+    if let Some(expires_at) = expires_at {
+        let valid: (i64,) = sqlx::query_as(
+            "SELECT CASE WHEN datetime(?) > CURRENT_TIMESTAMP THEN 1 ELSE 0 END",
+        )
+        .bind(expires_at)
+        .fetch_one(pool)
+        .await?;
+        if valid.0 != 1 {
+            return Ok(None);
+        }
+    }
+
+    sqlx::query(
+        "UPDATE node_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE token_prefix = ?",
+    )
+    .bind(&prefix)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(&node_id)
+    .execute(pool)
+    .await?;
+
+    Ok(Some(NodePrincipal { node_id }))
+}
+
 pub async fn revoke_node(pool: &SqlitePool, node_id: &str) -> Result<bool> {
+    let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "UPDATE replication_nodes
          SET trust_state = 'revoked', revoked_at = CURRENT_TIMESTAMP
          WHERE id = ? AND trust_state != 'revoked'",
     )
     .bind(node_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    sqlx::query(
+        "UPDATE node_credentials
+         SET revoked_at = CURRENT_TIMESTAMP
+         WHERE node_id = ? AND revoked_at IS NULL",
+    )
+    .bind(node_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -652,8 +788,25 @@ mod tests {
         discover_replica(&pool, "n1", "Replica 1", Some("http://10.0.0.2:7070"))
             .await
             .unwrap();
-        assert!(approve_node(&pool, "n1", "node-cred-1").await.unwrap());
+        let node_credential = issue_node_credential(&pool, "n1", None).await.unwrap();
+        assert!(node_credential.token.starts_with("axn_"));
+        assert_eq!(
+            authenticate_node_token(&pool, &node_credential.token)
+                .await
+                .unwrap()
+                .unwrap()
+                .node_id,
+            "n1"
+        );
+        assert!(authenticate_client_token(&pool, &node_credential.token)
+            .await
+            .unwrap()
+            .is_none());
         assert!(revoke_node(&pool, "n1").await.unwrap());
+        assert!(authenticate_node_token(&pool, &node_credential.token)
+            .await
+            .unwrap()
+            .is_none());
         assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "revoked");
     }
 }
