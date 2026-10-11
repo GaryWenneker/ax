@@ -197,7 +197,7 @@ async fn fetch_snapshot(
     client: &reqwest::Client,
     config: &ServerConfig,
     project: &ProjectRegistration,
-) -> Result<Snapshot, String> {
+) -> Result<(Snapshot, usize), String> {
     let token = std::env::var(&project.token_env).map_err(|_| {
         format!(
             "missing project token in environment variable {}",
@@ -218,9 +218,9 @@ async fn fetch_snapshot(
         .map_err(|e| e.to_string())?
         .join(&format!("/v1/projects/{}/snapshot", project.id))
         .map_err(|e| e.to_string())?;
-    let mut response = client
+    let response = client
         .get(url)
-        .bearer_auth(token)
+        .bearer_auth(&token)
         .header("x-ax-node-id", &config.node_id)
         .send()
         .await
@@ -237,6 +237,50 @@ async fn fetch_snapshot(
     {
         return Err("snapshot response too large".into());
     }
+    let snapshot: Snapshot = read_response(response).await?;
+    server_snapshot::validate(&snapshot, &config.cluster_id, &project.id)?;
+    let local = server_snapshot::export_native(config, &project.id).await?;
+    let exchange_url = reqwest::Url::parse(base)
+        .map_err(|e| e.to_string())?
+        .join(&format!("/v1/projects/{}/exchange", project.id))
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .post(exchange_url)
+        .bearer_auth(&token)
+        .header("x-ax-node-id", &config.node_id)
+        .json(&local)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if matches!(response.status().as_u16(), 404 | 405) {
+        return Err("Primary does not support preserve-and-exchange synchronization; update both nodes. Local records were preserved.".into());
+    }
+    if !response.status().is_success() {
+        return Err(format!(
+            "node exchange returned HTTP {}; local data was preserved",
+            response.status()
+        ));
+    }
+    let reply: crate::server_exchange::ExchangeReply = read_response(response).await?;
+    if reply.contributed_revision != local.revision {
+        return Err("Primary did not acknowledge the exact contributed revision".into());
+    }
+    if reply.snapshot.primary_node_id != snapshot.primary_node_id {
+        return Err("Primary identity changed during node exchange".into());
+    }
+    server_snapshot::validate(&reply.snapshot, &config.cluster_id, &project.id)?;
+    Ok((reply.snapshot, reply.memory_conflicts))
+}
+
+async fn read_response<T: serde::de::DeserializeOwned>(
+    mut response: reqwest::Response,
+) -> Result<T, String> {
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_WIRE_BYTES as u64)
+    {
+        return Err("node response too large".into());
+    }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         if bytes
@@ -244,14 +288,11 @@ async fn fetch_snapshot(
             .checked_add(chunk.len())
             .is_none_or(|n| n > MAX_WIRE_BYTES)
         {
-            return Err("snapshot response exceeded wire limit".into());
+            return Err("node response exceeded wire limit".into());
         }
         bytes.extend_from_slice(&chunk);
     }
-    let snapshot: Snapshot =
-        serde_json::from_slice(&bytes).map_err(|e| format!("invalid snapshot JSON: {e}"))?;
-    server_snapshot::validate(&snapshot, &config.cluster_id, &project.id)?;
-    Ok(snapshot)
+    serde_json::from_slice(&bytes).map_err(|e| format!("invalid node response: {e}"))
 }
 
 pub async fn sync(config_path: &Path) -> Result<(), String> {
@@ -288,24 +329,29 @@ pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result
         )
         .await
         {
-            Ok(snapshot) => match stage(&config, project, &snapshot) {
+            Ok((snapshot, primary_conflicts)) => match stage(&config, project, &snapshot) {
                 Ok(status) if apply_memories => {
                     match crate::server_apply::apply(&config, &snapshot).await {
-                            Ok(report) if report.conflicts == 0 => Ok((
-                                format!(
-                                    "{status}; memories: +{} updated {} removed {} unchanged {}",
-                                    report.inserted, report.updated, report.removed, report.unchanged
-                                ),
+                            Ok(report) => Ok((
+                                format!("two_way_preserved; {status}; memories: +{} updated {} retained {} unchanged {}; {}",
+                                    report.inserted,report.updated,report.retained,report.unchanged,
+                                    if report.conflicts+primary_conflicts>0 { format!("review_required: {} conflicts preserved",report.conflicts+primary_conflicts) } else { "no conflicts".into() }),
                                 snapshot.revision,
-                            )),
-                            Ok(report) => Err(format!(
-                                "memory projection found {} locally edited/conflicting records; staged mirror is safe but must be reviewed",
-                                report.conflicts
                             )),
                             Err(error) => Err(error),
                         }
                 }
-                Ok(status) => Ok((status, snapshot.revision)),
+                Ok(status) => Ok((
+                    format!(
+                        "two_way_preserved; {status}; {}",
+                        if primary_conflicts > 0 {
+                            format!("review_required: {primary_conflicts} conflicts preserved")
+                        } else {
+                            "no conflicts".into()
+                        }
+                    ),
+                    snapshot.revision,
+                )),
                 Err(error) => Err(error),
             },
             Err(error) => Err(error),

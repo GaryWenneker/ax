@@ -8,6 +8,7 @@ mod installer;
 use ax_web::server_config;
 mod server_cli;
 mod server_snapshot;
+mod server_exchange;
 mod server_http;
 mod server_replica;
 mod server_apply;
@@ -646,7 +647,7 @@ enum ServerAction {
         #[arg(long, default_value_t = 5)]
         seconds: u64,
     },
-    /// Pull and stage a verified snapshot from the primary
+    /// Exchange local knowledge and stage a verified cluster snapshot
     Sync {
         #[arg(long)]
         config: std::path::PathBuf,

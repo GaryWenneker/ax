@@ -3,9 +3,9 @@ title: Standalone server and replicas
 description: Run Ax as a long-lived primary or replica, with authenticated UDP change notifications and resilient HTTPS synchronization.
 ---
 
-Ax can run independently of an IDE. A **primary** maintains an enrolled Ax project; one or more **replicas** keep an isolated, read-only mirror of its knowledge. The optional LAN notification channel makes synchronization responsive, while HTTPS polling catches missed notifications.
+Ax can run independently of an IDE. A **primary** maintains an enrolled Ax project; one or more **replicas** contribute their existing knowledge and receive the combined cluster state. Native records remain intact, and received policy stays in review. The optional LAN notification channel makes synchronization responsive, while HTTPS polling catches missed notifications.
 
-> **Availability:** Standalone server mode is available in the current `main` source. [Build the CLI from main](/getting-started/installation/#build-from-main) until downloadable releases include it. A staged mirror is not automatically activated in the replica's local Ax database.
+> **Availability:** Standalone server mode is available in the current `main` source. [Build the CLI from main](/getting-started/installation/#build-from-main) until downloadable releases include it. CLI `sync` stages a mirror; Settings pairing and CLI `apply` safely import received memories. Policies require separate review.
 
 ## Choose your setup
 
@@ -18,9 +18,9 @@ Ax can run independently of an IDE. A **primary** maintains an enrolled Ax proje
 
 This guide covers **node replication**, not sharing an individual memory or exporting a policy pack. An authorized replica receives all enrolled project's memory and policy records, including inactive and not-shared items. **Only join machines that you trust with the full project state.** Export and sharing flags remain unchanged and still govern their separate workflows.
 
-## 1. Initialize a project on both machines
+## 1. Use an existing project or initialize a new one
 
-Run these on the primary and separately on the replica, replacing the directories with your own:
+Keep an existing initialized Ax project, including its `.ax/ax.db`. For a new project only, run this on the primary and separately on the replica, replacing the directories with your own:
 
 ```sh
 ax init /absolute/path/to/project
@@ -85,7 +85,7 @@ ax server init \
 
 The URL must resolve to the actual authenticated Ax primary and be an HTTPS **origin** without a path, query or user credentials. For a same-machine trial, `http://127.0.0.1:9070` is allowed instead.
 
-Set the same `AX_SERVER_KNOWLEDGE_TOKEN` as on the primary. Make an initial one-time pull:
+Set the same `AX_SERVER_KNOWLEDGE_TOKEN` as on the primary. Make an initial authenticated exchange (local knowledge is contributed first, then the combined snapshot is staged):
 
 ```sh
 ax server sync --config ./ax-replica.json
@@ -115,7 +115,7 @@ The replica uses its own transient UDP socket, so it can run on the same host as
 2. The primary tracks connected project/node IDs and their real UDP source addresses. Missing heartbeats expire after 45 seconds.
 3. Every three seconds the primary compares snapshot revisions of enrolled projects.
 4. On a new revision, it sends a **signed UDP change notification** to registered replicas.
-5. The replica verifies the message and pulls the complete changed state using the project-specific secret over HTTP(S).
+5. The replica verifies the message and exchanges local knowledge and receives the combined state using the project-specific secret over HTTP(S).
 6. If UDP is dropped or blocked, a scheduled HTTPS pull still converges the mirror.
 
 UDP sends **only change metadata**, not memories, rules, skills or project files. It does not replace HTTPS authentication and does not elect a new primary.
@@ -151,7 +151,19 @@ ax server sync --config ./ax-replica.json
 
 The status output reports the last attempt, last successful revision and failures for every enrolled project. If the primary goes offline, the replica keeps its last verified staged mirror. Once network connectivity returns, the next signed notification or HTTPS polling cycle can update it.
 
-A successful **mirror** does not overwrite the replica's local database. When you explicitly enable memory application, the replica imports copies using stable, namespaced IDs and a ledger recording the last applied version. If a user modifies an imported memory locally, subsequent syncs detect the conflict instead of replacing it. Remote deletions only remove records that still match the last imported copy. Policies are not activated automatically. The original revisioned mirror remains under `.ax/server/replicas/` for review.
+A successful **mirror** does not overwrite the replica's local database. When you explicitly enable memory application, the replica imports copies using stable, namespaced IDs and a ledger recording the last applied version. If a user modifies an imported memory locally, subsequent syncs detect the conflict instead of replacing it. Missing remote records never delete local records, including unchanged imports. Accepted source revisions are retained on the Primary; collisions from different nodes keep separate IDs. Policies are not activated automatically. The original revisioned mirror remains under `.ax/server/replicas/` for review.
+
+## Empty Primary, existing Replica and conflicts
+
+Pairing an Ax environment that contains months of work to an empty Primary does not reset that environment. Its native memories, rules and skills are contributed through authenticated project-scoped exchange. The Primary retains the contribution and makes the combined knowledge available to other replicas. Original IDs and records in the contributor's database are unchanged.
+
+Different nodes that use the same record ID retain separate copies. A locally edited imported memory is preserved and contributed as a local variant; an unchanged imported copy is not uploaded again. Received rules and skills remain pending until you approve them. An unchanged approved import is also excluded from uploads, preventing feedback loops.
+
+Absence is never a deletion instruction. Current copies and previous accepted source revisions remain available; ordinary local deletion does not broadcast deletion to the cluster. Source snapshots are retained as JSON in the project's `ax_node_contributions` table. Staged received revisions remain under `.ax/server/replicas/`. This exchanges enrolled knowledge, not source code, the graph, provider keys, client tokens or a live database file.
+
+Update **both Primary and Replica** to the current build. A Primary without the preserve-and-exchange endpoint is rejected; the client keeps its local data. Enrollment credentials now authorize contributing the enrolled project's full knowledge, including private records, so choose a Primary you trust with that data.
+
+Synchronization retains the existing 8 MiB state and 10,000-record-per-kind limits. The retention archive is capped at 64 MiB and 64 contributing nodes per project/cluster. Reaching a limit rejects the new contribution with an error; it never prunes accepted history to make room. Keep normal backups of your project state. Release and deployment remain paused.
 
 ## 6. LAN discovery versus registration
 
@@ -223,7 +235,7 @@ Open **Settings → Replication → Configure this Ax environment** in the local
 
 1. For a **Primary**, choose that role, enter a cluster ID and replication project ID, then select **Start Primary**. Only the project currently open in Command Center is enrolled. On first setup, leaving the credential empty generates one; copy it when shown, because Ax never saves it to disk.
 2. On another Ax environment, choose **Replica** and enter the same cluster and project IDs. Use **Find nearby Primaries** and explicitly select a candidate, or enter the Primary URL directly. Discovery is a hint, not approval or automatic pairing.
-3. Enter the Primary's project replication credential and select **Connect to Primary**. Ax authenticates and verifies a snapshot first. On failure, the saved configuration remains unchanged. Successful pulls stage a separate mirror for review; they do not activate policies or overwrite local memory.
+3. Enter the Primary's project replication credential and select **Connect to Primary**. Ax authenticates the Primary, contributes your existing knowledge, and verifies the combined state before saving configuration. An empty Primary cannot clear an existing Replica. Settings imports received memories under separate IDs and enables continued safe memory application; rules and skills enter pending review. Failed synchronization preserves local data and prior settings.
 4. To choose another Primary or change roles, select **Stop managed node**, confirm, edit the fields, then connect again. This stops only the node started by this Command Center; it does not terminate a separate CLI service.
 
 Node identity and configuration survive restarts. Replication credentials stay in request/process memory and the child environment, so enter the original credential again after restart (or provide `AX_COMMAND_CENTER_REPLICATION_TOKEN` in the Command Center environment). A saved configuration is shown as stopped until it is activated. The managed process ends on Stop or normal Command Center shutdown.
@@ -242,7 +254,7 @@ A Replica must explicitly configure its Primary and project credential. Successf
 
 Disabling or revoking access does not delete a team member's existing data. These controls govern authorization; export/import and shared/non-shared or active/inactive data selection retain their existing rules.
 
-![Primary/Replica management in Azure Portal Light](/screenshots/cc-access-nodes-dark.png)
+![Primary/Replica management in Azure Portal Light](/screenshots/cc-access-nodes.png)
 
 ![Primary/Replica management in Azure Portal Dark](/screenshots/cc-access-nodes-dark.png)
 

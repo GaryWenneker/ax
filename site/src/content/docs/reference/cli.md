@@ -1738,3 +1738,18 @@ ax auth microsoft status
 ax upgrade
 ax upgrade --local
 ```
+
+## `ax server sync`, `apply` and `run`
+
+An enrolled Replica contributes native and locally edited knowledge to the configured Primary and receives the combined cluster snapshot. Empty peers and omitted records cannot delete existing local data. Conflicting origins use separate IDs; prior accepted revisions remain retained. Both nodes must support preserve-and-exchange.
+
+```bash
+ax server sync --config ./ax-replica.json
+ax server status --config ./ax-replica.json
+# Also make received memories available in this node's vault.
+ax server apply --config ./ax-replica.json
+# Continue applying memory copies; rules/skills require review.
+ax server run --config ./ax-replica.json --auto-apply-memories
+```
+
+`sync` stages received state; `apply` and `run --auto-apply-memories` project memory under separate IDs. Settings pairing enables memory application automatically. Locally edited imports stay intact and are contributed as variants; received policy is not activated automatically. See [Standalone Ax](/guides/standalone-ax/#empty-primary-existing-replica-and-conflicts) for enrollment, limits and retained source history.

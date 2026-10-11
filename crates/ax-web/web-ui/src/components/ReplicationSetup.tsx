@@ -4,7 +4,7 @@ import ModalShell from './ModalShell';
 
 type Settings = { config: { node_id: string; role: 'primary' | 'replica'; cluster_id: string; primary_url?: string | null; projects: { id: string }[] }; port: number; advertise?: string | null };
 type Candidate = { node_id: string; role: string; advertised_url: string; cluster_id: string };
-type State = { settings: Settings | null; running: boolean; active_project: boolean };
+type State = { settings: Settings | null; running: boolean; active_project: boolean; safety?: { mode: string; memories: number; rules: number; skills: number; review_required?: boolean; sync_failed?: boolean } };
 
 export default function ReplicationSetup({ locked, onChanged }: { locked: boolean; onChanged: () => Promise<void> }) {
   const [state, setState] = useState<State | null>(null);
@@ -61,7 +61,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
       });
       if (!mounted.current) return;
       setToken(''); setIssued(result.credential?.token ?? null);
-      setMessage(role === 'primary' ? 'Primary is running.' : 'Replica is connected. Verified snapshots are staged for review.');
+      setMessage(role === 'primary' ? 'Primary is running.' : 'Replica connected. Existing data is preserved and knowledge is exchanged. Policies require review.');
       await load(); await onChanged();
     });
   }
@@ -77,7 +77,16 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
     <div className={`replication-connection${phase === 'connecting' ? ' is-connecting' : ''}${paired ? ' is-connected' : ''}`} aria-label="Replication connection">
       <div><span className="replication-node-mark" aria-hidden="true" /><strong>This Ax</strong><small>{role === 'primary' ? 'Primary' : 'Replica'}</small></div>
       <span className="replication-connection-line" aria-hidden="true" />
-      <div><span className="replication-node-mark" aria-hidden="true" /><strong>{role === 'primary' ? 'Authorized replicas' : primary || 'Choose a Primary'}</strong><small>{phase === 'connecting' ? 'Authenticating and verifying…' : paired ? 'Connected · polling active' : role === 'primary' ? 'Project enrollment required' : 'Explicit pairing required'}</small></div>
+      <div><span className="replication-node-mark" aria-hidden="true" /><strong>{role === 'primary' ? 'Authorized replicas' : primary || 'Choose a Primary'}</strong><small>{phase === 'connecting' ? 'Authenticating and verifying…' : paired ? 'Exchanging knowledge · local data preserved' : role === 'primary' ? 'Project enrollment required' : 'Explicit pairing required'}</small></div>
+    </div>
+    <div className="replication-data-safety" role="note" aria-label="Existing data protection">
+      <strong>Existing data is preserved</strong>
+      <p>An empty Primary cannot clear this Ax environment. Pairing contributes your existing knowledge and receives the cluster’s knowledge under separate IDs. Missing records never trigger deletion; conflicting local edits stay intact. Only pair with a Primary you trust with all this project’s knowledge, including private records.</p>
+      {state?.safety && <p><strong>{state.safety.memories}</strong> memories · <strong>{state.safety.rules}</strong> rules · <strong>{state.safety.skills}</strong> skills currently on this node</p>}
+      <small>Accepted source revisions are retained on the Primary. Received rules and skills require review before activation.</small>
+      {state?.safety?.review_required && <p role="status">Conflicting local edits were preserved. Review the received versions before resolving them.</p>}
+      {state?.safety?.sync_failed && <p role="alert">Synchronization needs attention. Existing local data remains intact.</p>}
+      {state?.running && <p><a href="/policy/review">Review received rules and skills</a></p>}
     </div>
     <form className="access-form" onSubmit={activate}>
       <label>Local node role<select className="settings-select" aria-label="Local node role" value={role} disabled={disabled} onChange={e => { setRole(e.target.value as 'primary' | 'replica'); setToken(''); setIssued(null); setMessage(null); }}><option value="primary">Primary — publish this project</option><option value="replica">Replica — connect to a Primary</option></select></label>

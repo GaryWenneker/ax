@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-async function fixture(page: Page, options: { readonly?: boolean; failPairing?: boolean } = {}) {
+async function fixture(page: Page, options: { readonly?: boolean; failPairing?: boolean; conflicts?: boolean; syncFailed?: boolean } = {}) {
   const calls: { path: string; body: any }[] = [];
   let settings: any = null;
   let running = false;
@@ -10,7 +10,7 @@ async function fixture(page: Page, options: { readonly?: boolean; failPairing?: 
     if (path === '/api/share/status') data = { readonly: options.readonly ?? false };
     else if (path === '/api/access/session') data = { csrf: 'csrf-test' };
     else if (path === '/api/access/nodes') data = { nodes: [], local: settings ? { node_id: 'stable', role: settings.config.role, sync_state: running ? 'running' : 'stopped' } : null };
-    else if (path === '/api/access/nodes/local' && req.method() === 'GET') data = { settings, running, active_project: running };
+    else if (path === '/api/access/nodes/local' && req.method() === 'GET') data = { settings, running, active_project: running, safety: {mode:"preserve_and_exchange",memories:412,rules:27,skills:8,review_required:options.conflicts,sync_failed:options.syncFailed} };
     else if (path.startsWith('/api/access/nodes/local') && req.method() === 'POST') {
       expect(req.headers()['x-ax-access-csrf']).toBe('csrf-test');
       const body = req.postData() ? req.postDataJSON() : null; calls.push({ path, body });
@@ -56,12 +56,14 @@ test('discovery lists distinct primaries and only an explicit selection and conn
   await expect(choices.getByRole('button')).toHaveCount(2);
   await expect(page.getByLabel('Primary URL', { exact: true })).toHaveValue('');
   expect(calls.some(c => c.path === '/api/access/nodes/local')).toBe(false);
+  await expect(page.getByRole('note',{name:'Existing data protection'})).toContainText('412');
+  await expect(page.getByRole('note',{name:'Existing data protection'})).toContainText('An empty Primary cannot clear');
   await choices.getByRole('button', {name:/secondary-primary/}).click();
   await expect(choices.getByRole('button', {name:/secondary-primary/})).toHaveAttribute('aria-pressed','true');
   if (process.env.AX_ACCESS_SCREENSHOTS) { await expect(page.locator('#ax-green-vessel')).toHaveCount(0); await page.setViewportSize({width:1440,height:1600}); await page.getByRole('heading',{name:'Configure this Ax environment'}).scrollIntoViewIfNeeded(); await page.screenshot({path:'../../../site/public/screenshots/cc-primary-pairing.png',fullPage:true}); }
   await page.getByLabel('Replication credential', { exact: true }).fill('a'.repeat(64));
   await page.getByRole('button', { name: 'Connect to Primary', exact: true }).click();
-  await expect(page.getByText('Replica is connected. Verified snapshots are staged for review.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Replica connected. Existing data is preserved and knowledge is exchanged. Policies require review.', { exact: true })).toBeVisible();
   expect(calls.find(c => c.path === '/api/access/nodes/local')?.body.primary_url).toBe('https://secondary.example.com');
 });
 test('manual hosted pairing failures remain editable and do not claim a connection', async ({ page }) => {
@@ -71,7 +73,7 @@ test('manual hosted pairing failures remain editable and do not claim a connecti
   await page.getByRole('button', { name: 'Connect to Primary', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Previous settings were kept');
   await expect(page.getByRole('button', { name: 'Connect to Primary', exact: true })).toBeEnabled();
-  await expect(page.getByText('Replica is connected.', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('Replica connected.', { exact: false })).toHaveCount(0);
 });
 test('read-only sessions cannot configure or discover nodes; setup fits a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -81,3 +83,11 @@ test('read-only sessions cannot configure or discover nodes; setup fits a phone'
   const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
   expect(fits).toBe(true);
 });
+
+ test('retained local edits and failed synchronization are visible without hiding existing counts', async ({ page }) => {
+  await fixture(page, {conflicts:true,syncFailed:true});
+  const safety=page.getByRole('note',{name:'Existing data protection'});
+  await expect(safety).toContainText('412');
+  await expect(safety).toContainText('Conflicting local edits were preserved');
+  await expect(safety.getByRole('alert')).toContainText('Existing local data remains intact');
+ });

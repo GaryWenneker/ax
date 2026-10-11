@@ -15694,3 +15694,7 @@ html[data-ax-theme="macos"] :is(
 @keyframes replication-appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 700px) { .replication-candidate { flex-wrap: wrap; } .replication-candidate-state { width: 100%; padding-left: 24px; } .replication-connection { gap: 10px; } }
 @media (prefers-reduced-motion: reduce) { .replication-candidate, .replication-discovery-progress > span, .replication-connection.is-connecting .replication-connection-line::after { animation: none; transition: none; } .replication-connection.is-connecting .replication-connection-line::after { left: 50%; } }
+
+.replication-data-safety { padding: 16px; border: 1px solid var(--border); border-left: 3px solid var(--accent); margin: 16px 0; }
+.replication-data-safety p { margin: 8px 0; line-height: 1.5; }
+.replication-data-safety small { color: var(--text-dim); line-height: 1.5; }
