@@ -1,6 +1,6 @@
 # Node data preservation — verification
 
-Verified on 2026-10-11 with the preservation changes applied to main `20c0c6e0c6aa0eefc371435f759c49e7a7ef1561`, including its menu and Command Center styling changes. Main merge is pending; downloadable releases and the public website have not been published.
+Verified on 2026-10-11 with the preservation changes applied to main `20c0c6e0c6aa0eefc371435f759c49e7a7ef1561`, including its menu and Command Center styling changes. Merged to main in [PR #25](https://github.com/GaryWenneker/ax/pull/25), commit `8c4693728296f7daebee21b20e2f626def6eccab`. The PR files were checked byte-for-byte against the verified working tree before merge. Downloadable releases and the public website have not been published.
 
 ## Results
 

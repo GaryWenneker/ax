@@ -1,6 +1,6 @@
 # Node synchronization without losing existing knowledge
 
-Status: implemented and locally verified; main merge pending.
+Status: completed, locally verified and merged to main in [PR #25](https://github.com/GaryWenneker/ax/pull/25), commit `8c4693728296f7daebee21b20e2f626def6eccab`.
 Owner request: 2026-10-11 — coupling an existing Ax environment to an empty Primary must retain its months of work and synchronize knowledge across nodes.
 
 ## Contract

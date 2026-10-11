@@ -2,7 +2,7 @@
 
 [Primary setup, discovery and Replica pairing](settings-primary-pairing.md) is completed and merged to main in [PR #23](https://github.com/GaryWenneker/ax/pull/23). A user can select an available Primary in Settings and explicitly connect, with clear connection states and motion. Verification and remaining environment/deployment limits are recorded in [the evidence](settings-primary-pairing-EVIDENCE.md).
 
-Active extension: [preserve existing node data during synchronization](node-data-preservation.md).
+The extension to [preserve existing node data during synchronization](node-data-preservation.md) is also completed and merged to main in [PR #25](https://github.com/GaryWenneker/ax/pull/25). Its [evidence](node-data-preservation-EVIDENCE.md) covers data retention, two-way exchange, conflicts, policy review, authentication and three actual Ax processes. Release and deployment remain paused.
 
 Related specifications from 2026-10-11:
 
