@@ -6,6 +6,7 @@
 use crate::{
     server_cli,
     server_config::{NodeRole, ServerConfig},
+    server_discovery,
     server_snapshot,
 };
 use axum::{
@@ -82,14 +83,34 @@ fn private_bind(ip: IpAddr) -> bool {
 }
 
 /// Start the listener and serve until the process receives shutdown.
-pub async fn run(path: &Path, bind: SocketAddr, allow_private_http: bool) -> Result<(), String> {
+pub async fn run(
+    path: &Path,
+    bind: SocketAddr,
+    allow_private_http: bool,
+    discovery_port: Option<u16>,
+    advertise: Option<String>,
+) -> Result<(), String> {
     let config = server_cli::load(path)?;
+    if discovery_port.is_some() != advertise.is_some() {
+        return Err("LAN discovery requires both --discovery-port and --advertise".into());
+    }
+    if let Some(url) = advertise.as_deref() {
+        server_discovery::validate_advertise(&config, url)?;
+    }
     if !bind.ip().is_loopback() {
         if !allow_private_http || !private_bind(bind.ip()) {
             return Err("non-loopback bind requires --allow-private-http on a private network; terminate TLS at the reverse proxy".into());
         }
     }
     let tokens = load_tokens(&config)?;
+    let announcement = discovery_port.zip(advertise).map(|(port, url)| {
+        let node = config.clone();
+        tokio::spawn(async move {
+            if let Err(error) = server_discovery::announce(node, url, port).await {
+                tracing::warn!("discovery announcement stopped: {}", error);
+            }
+        })
+    });
     let state = Arc::new(StateData {
         config,
         tokens,
@@ -101,12 +122,16 @@ pub async fn run(path: &Path, bind: SocketAddr, allow_private_http: bool) -> Res
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(bind).await.map_err(|e| e.to_string())?;
     println!("Ax standalone server listening on {}", listener.local_addr().map_err(|e| e.to_string())?);
-    axum::serve(listener, app)
+    let result = axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    if let Some(task) = announcement {
+        task.abort();
+    }
+    result
 }
 
 #[cfg(test)]
