@@ -2163,13 +2163,15 @@ async fn async_main() {
                 config, bind, allow_private_http, discovery_port, advertise, sync_interval_seconds, push_port, auto_apply_memories
             } => server_http::run(
                 &config,
-                bind,
-                allow_private_http,
-                discovery_port,
-                advertise,
-                sync_interval_seconds,
-                push_port,
-                auto_apply_memories,
+                server_http::RunOptions {
+                    bind,
+                    allow_private_http,
+                    discovery_port,
+                    advertise,
+                    sync_interval_seconds,
+                    push_port,
+                    auto_apply_memories,
+                },
             ).await,
             ServerAction::Discover { config, port, seconds } =>
                 match server_cli::load(&config) {
