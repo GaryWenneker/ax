@@ -11,7 +11,7 @@ export default defineConfig({
 		starlight({
 			title: 'ax',
 			description:
-				'Structured context for AI agents — entirely on your machine. Graph it. Remember it. Ship it.',
+				'Understand code. Preserve context. Guide every agent. Ax connects code intelligence, memory, policy and MCP.',
 			favicon: '/logo.png',
 				head: [
 					{

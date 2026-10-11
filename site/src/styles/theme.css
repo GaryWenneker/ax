@@ -1,4 +1,4 @@
-/* Shared public-site design system: graphite, quiet technical accents, readable type. */
+/* Shared public-site design system: cinematic Azure-dark, cool technical accents, readable docs. */
 :root,
 :root[data-theme="dark"],
 :root[data-theme="light"] {
@@ -6,43 +6,43 @@
     "Archivo Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --sl-font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --cg-paper: #101417;
-  --cg-paper-2: #171d21;
-  --cg-paper-press: #1d262b;
-  --cg-ink: #edf0ee;
-  --cg-ink-2: #a8b3b7;
-  --cg-ink-3: #8e9da4;
-  --cg-accent: #c3a487;
-  --cg-steel: #88a6af;
-  --cg-sage: #93a995;
-  --cg-rule: #303b41;
-  --cg-rule-soft: #253036;
-  --cg-card-bg: #171d21;
-  --cg-card-hover: #1d262b;
+  --cg-paper: #030c16;
+  --cg-paper-2: #081829;
+  --cg-paper-press: #102c43;
+  --cg-ink: #edf6ff;
+  --cg-ink-2: #a9c2d7;
+  --cg-ink-3: #829fb9;
+  --cg-accent: #58c9f3;
+  --cg-steel: #62c1e8;
+  --cg-sage: #66d2cc;
+  --cg-rule: #224057;
+  --cg-rule-soft: #1a3549;
+  --cg-card-bg: #081829;
+  --cg-card-hover: #102c43;
   --cg-glow: transparent;
-  --sl-color-accent-low: #302820;
-  --sl-color-accent: #c3a487;
-  --sl-color-accent-high: #dcc5ad;
-  --sl-color-white: #edf0ee;
-  --sl-color-gray-1: #dce2e2;
-  --sl-color-gray-2: #bcc6ca;
-  --sl-color-gray-3: #a8b3b7;
-  --sl-color-gray-4: #8e9da4;
-  --sl-color-gray-5: #4e6069;
-  --sl-color-gray-6: #303b41;
-  --sl-color-gray-7: #171d21;
-  --sl-color-black: #101417;
-  --sl-color-bg: #101417;
-  --sl-color-bg-nav: #101417;
-  --sl-color-bg-sidebar: #101417;
-  --sl-color-bg-inline-code: #171d21;
-  --sl-color-bg-accent: #c3a487;
-  --sl-color-text: #edf0ee;
-  --sl-color-text-accent: #c3a487;
-  --sl-color-text-invert: #101417;
-  --sl-color-hairline: #303b41;
-  --sl-color-hairline-light: #253036;
-  --sl-color-hairline-shade: #253036;
+  --sl-color-accent-low: #072f48;
+  --sl-color-accent: #58c9f3;
+  --sl-color-accent-high: #b7e9ff;
+  --sl-color-white: #edf6ff;
+  --sl-color-gray-1: #e2f0ff;
+  --sl-color-gray-2: #c3d6e8;
+  --sl-color-gray-3: #a9c2d7;
+  --sl-color-gray-4: #829fb9;
+  --sl-color-gray-5: #476780;
+  --sl-color-gray-6: #224057;
+  --sl-color-gray-7: #081829;
+  --sl-color-black: #030c16;
+  --sl-color-bg: #030c16;
+  --sl-color-bg-nav: #030c16;
+  --sl-color-bg-sidebar: #030c16;
+  --sl-color-bg-inline-code: #081829;
+  --sl-color-bg-accent: #58c9f3;
+  --sl-color-text: #edf6ff;
+  --sl-color-text-accent: #58c9f3;
+  --sl-color-text-invert: #030c16;
+  --sl-color-hairline: #224057;
+  --sl-color-hairline-light: #1a3549;
+  --sl-color-hairline-shade: #1a3549;
   --sl-shadow-sm: none;
   --sl-shadow-md: none;
   --sl-shadow-lg: none;
