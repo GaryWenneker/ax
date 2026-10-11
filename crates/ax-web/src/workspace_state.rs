@@ -25,6 +25,7 @@ pub struct WebHub {
     pub readonly: bool,
     pub port: u16,
     switching: Arc<AtomicBool>,
+    pub(crate) replication: Arc<Mutex<crate::replication_setup::ManagedNode>>,
     pub(crate) sonar_proxy: Arc<Mutex<SonarProxyCache>>,
 }
 
@@ -47,6 +48,7 @@ impl WebHub {
             readonly,
             port,
             switching: Arc::new(AtomicBool::new(false)),
+            replication: Arc::new(Mutex::new(crate::replication_setup::ManagedNode::default())),
             sonar_proxy: Arc::new(Mutex::new(SonarProxyCache::default())),
         })
     }

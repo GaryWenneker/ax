@@ -22,7 +22,7 @@ const installBoot = installBootScript();
 const pageLock = pageLockScript();
 
 const TAGLINE =
-  "Code context, persistent memory, and team policy. One local foundation for your agents.";
+  "Local code graph, persistent memory, policy, and quality gates for AI coding agents.";
 const ogImage = new URL(ogImagePath("/"), DOCS_SITE).href;
 
 const pipeline = [
@@ -64,7 +64,7 @@ const pillars = [
   },
   {
     title: "Knowledge graph",
-    body: "MCP tools replace hundreds of greps — explore call paths, impact, and architecture in one shot.",
+    body: "Query indexed symbols, callers, callees, call paths, and change impact through MCP.",
     href: "/core-concepts/knowledge-graph",
     icon: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="19" y="4" width="10" height="10"/><rect x="4" y="34" width="10" height="10"/><rect x="34" y="34" width="10" height="10"/><path d="M24 14v10M9 34v-10h30v10M24 24v10"/></svg>`,
   },
@@ -121,11 +121,11 @@ pillars.push({
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script is:inline set:html={pageLock} />
     <link rel="icon" href={`${base}/logo.png`} />
-    <title>ax — Context that stays with your work.</title>
+    <title>ax — Graph it. Remember it. Ship it.</title>
     <meta name="description" content={TAGLINE} />
     <meta
       property="og:title"
-      content="ax — Context that stays with your work."
+      content="ax — Graph it. Remember it. Ship it."
     />
     <meta property="og:description" content={TAGLINE} />
     <meta property="og:type" content="website" />
@@ -163,22 +163,19 @@ pillars.push({
         <PixelField variant="hero" />
         <div class="hero-content">
           <div class="eyebrow">
-            <span class="status-square" aria-hidden="true"></span> YOUR CODE.
-            YOUR CONTEXT. YOUR CONTROL.
+            <span class="status-square" aria-hidden="true"></span> CODE GRAPH / MEMORY / POLICY / MCP
           </div>
           <h1>
-            Context that stays
-            <br />
-            with your work<span class="accent">.</span>
+            Graph it. Remember it.<br />
+            Ship it<span class="accent">.</span>
           </h1>
           <p class="hero-lede">
-            Give every agent a shared understanding of your code, your
-            decisions, and the way your team works.
+            A local code graph, persistent memory, and project rules for your AI coding agents.
           </p>
           <p class="hero-detail">
-            Explore your codebase. Keep knowledge between sessions. Apply the
-            right rules before changes happen. Run it locally, or connect your
-            team to a server you control.
+            Ax indexes symbols and call relationships, recalls decisions across sessions,
+            and supplies applicable rules through MCP. Run quality gates before a PR.
+            Use one local binary, or connect replicas to your own Primary.
           </p>
           <div class="actions">
             <a class="btn primary" href={`${base}/getting-started/quickstart/`}>
@@ -224,13 +221,10 @@ pillars.push({
         <div class="section-heading">
           <p class="eyebrow">01 / THE PLATFORM</p>
           <h2>
-            A shared foundation.
-            <br />
-            From first question to final change.
+            What Ax does.
           </h2>
           <p>
-            Ax connects the information your agents need, so each session can
-            build on the last.
+            Code navigation, durable project knowledge, and policy enforcement through MCP.
           </p>
         </div>
         <div class="feature-grid">
@@ -253,8 +247,8 @@ pillars.push({
       <section class="workflow section" id="workflow">
         <div class="section-heading">
           <p class="eyebrow">02 / HOW IT FITS</p>
-          <h2>Understand. Remember. Deliver.</h2>
-          <p>A small set of commands. A lasting layer of project knowledge.</p>
+          <h2>Index. Remember. Ship.</h2>
+          <p>Three commands to index code, save knowledge, and run quality gates.</p>
         </div>
         <div class="workflow-grid">
           {pipeline.map((item) => (
@@ -271,9 +265,7 @@ pillars.push({
         <div class="section-heading">
           <p class="eyebrow">03 / COMMAND CENTER</p>
           <h2>
-            See the context.
-            <br />
-            Stay in control.
+            Inspect the graph, memory, and rules.
           </h2>
           <p>
             Browse code relationships, edit memory and policy, inspect agent
@@ -353,9 +345,7 @@ pillars.push({
         <div>
           <p class="eyebrow">GET STARTED</p>
           <h2>
-            Make the next session
-            <br />
-            start with context.
+            Install Ax and connect MCP.
           </h2>
           <p>Install Ax, index a project, and connect your agent.</p>
           <a class="btn primary" href={`${base}/getting-started/quickstart/`}>
@@ -392,7 +382,7 @@ pillars.push({
       <a href={`${base}/`} aria-label="ax home">
         <LogoMark size="sm" />
       </a>
-      <p>Local context. Lasting knowledge.</p>
+      <p>Code graph · Memory · Policy · MCP</p>
       <nav aria-label="Footer">
         <a href={`${base}/getting-started/introduction/`}>Documentation</a>
         <a href={repo}>GitHub</a>
@@ -459,8 +449,8 @@ pillars.push({
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    min-height: 740px;
-    padding: 100px max(24px, calc((100vw - 1200px) / 2)) 60px;
+    min-height: 590px;
+    padding: 70px max(24px, calc((100vw - 1200px) / 2)) 56px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -485,7 +475,7 @@ pillars.push({
     margin-right: 10px;
   }
   h1 {
-    font-size: clamp(46px, 6.5vw, 88px);
+    font-size: clamp(42px, 5.4vw, 72px);
     line-height: 1.06;
     letter-spacing: -0.055em;
     font-weight: 550;
@@ -882,7 +872,7 @@ pillars.push({
   }
   @media (min-width: 1500px) {
     .hero {
-      min-height: 820px;
+      min-height: 650px;
     }
   }
   @media (max-width: 1000px) {
