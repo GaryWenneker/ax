@@ -586,6 +586,50 @@ pub async fn issue_node_credential(
     })
 }
 
+pub async fn grant_node_project(
+    pool: &SqlitePool,
+    node_id: &str,
+    project_id: &str,
+) -> Result<()> {
+    let trust: Option<(String,)> =
+        sqlx::query_as("SELECT trust_state FROM replication_nodes WHERE id = ?")
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?;
+    if trust.is_none() {
+        bail!("node does not exist");
+    }
+    sqlx::query(
+        "INSERT INTO node_project_access (node_id, project_id, revoked_at)
+         VALUES (?, ?, NULL)
+         ON CONFLICT(node_id, project_id) DO UPDATE SET
+            revoked_at = NULL,
+            granted_at = CURRENT_TIMESTAMP",
+    )
+    .bind(node_id)
+    .bind(project_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn revoke_node_project(
+    pool: &SqlitePool,
+    node_id: &str,
+    project_id: &str,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "UPDATE node_project_access
+         SET revoked_at = CURRENT_TIMESTAMP
+         WHERE node_id = ? AND project_id = ? AND revoked_at IS NULL",
+    )
+    .bind(node_id)
+    .bind(project_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 pub async fn authenticate_node_token(
     pool: &SqlitePool,
     token: &str,
@@ -789,15 +833,20 @@ mod tests {
             .await
             .unwrap();
         let node_credential = issue_node_credential(&pool, "n1", None).await.unwrap();
+        grant_node_project(&pool, "n1", "project-a").await.unwrap();
         assert!(node_credential.token.starts_with("axn_"));
         assert_eq!(
-            authenticate_node_token(&pool, &node_credential.token)
+            authenticate_node_token_for_project(&pool, &node_credential.token, "project-a")
                 .await
                 .unwrap()
                 .unwrap()
                 .node_id,
             "n1"
         );
+        assert!(authenticate_node_token_for_project(&pool, &node_credential.token, "project-b")
+            .await
+            .unwrap()
+            .is_none());
         assert!(authenticate_client_token(&pool, &node_credential.token)
             .await
             .unwrap()
