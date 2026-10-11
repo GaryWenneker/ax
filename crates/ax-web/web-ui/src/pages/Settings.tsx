@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
+import SettingsSectionNav from '../components/SettingsSectionNav';
 import RemoteMcpSettingsSection from '../components/RemoteMcpSettingsSection';
 import OkfSettingsSection from '../components/OkfSettingsSection';
 import PluginsSettingsSection from '../components/PluginsSettingsSection';
@@ -254,6 +255,9 @@ export default function SettingsPage() {
 
   return (
     <div className="page settings-page">
+      <div className="settings-layout">
+        <SettingsSectionNav />
+        <div className="settings-content">
       <header className="settings-hero">
         <h1 className="settings-hero-title">Settings</h1>
         <p className="settings-hero-sub">
@@ -265,9 +269,9 @@ export default function SettingsPage() {
       {err && <div className="settings-toast settings-toast--err">{err}</div>}
 
       <div className="settings-stack">
-        <IdeInstallCard />
+        <section id="settings-ide-agents" className="settings-anchor-section"><IdeInstallCard /></section>
 
-        <section className="settings-card">
+        <section id="settings-command-center" className="settings-card settings-anchor-section">
           <div className="settings-card-header">
             <h2>Command Center</h2>
             <p>Ship pipeline, quality gate, and pull request integration.</p>
@@ -503,7 +507,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="settings-card">
+        <section id="settings-sharing" className="settings-card settings-anchor-section">
           <div className="settings-card-header">
             <h2>Sharing</h2>
             <p>LAN share session, token gate, and optional PWA install.</p>
@@ -515,7 +519,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="settings-card">
+        <section id="settings-vault" className="settings-card settings-anchor-section">
           <div className="settings-card-header">
             <h2>Vault connection</h2>
             <p>Connect rules, skills, and memories as a WebDAV drive (for Obsidian or any editor).</p>
@@ -526,7 +530,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="settings-card">
+        <section id="settings-okf" className="settings-card settings-anchor-section">
           <div className="settings-card-header">
             <h2>Open Knowledge Format (OKF)</h2>
             <p>
@@ -539,7 +543,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="settings-card">
+        <section id="settings-plugins" className="settings-card settings-anchor-section">
           <div className="settings-card-header">
             <h2>Plugins</h2>
             <p>Process / WASM extractors discovered under <code>.ax/plugins</code>.</p>
@@ -549,7 +553,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="settings-card">
+        <section id="settings-embeddings" className="settings-card settings-anchor-section">
           <div className="settings-card-header">
             <h2>Embeddings</h2>
             <p>Memory embed backend (feature-hash or ONNX dense vectors).</p>
@@ -559,7 +563,11 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <PolicyShareSettingsSection />
+        <section id="settings-policy-sharing" className="settings-anchor-section">
+          <PolicyShareSettingsSection />
+        </section>
+      </div>
+        </div>
       </div>
     </div>
   );
