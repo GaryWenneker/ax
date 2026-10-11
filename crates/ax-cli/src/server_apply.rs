@@ -364,7 +364,6 @@ fn queue_policy(path: &Path, body: &str) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[test]
     fn projections_use_deterministic_namespaces() {
         let a = format!("{}\\0{}", "ax-replica:one", "memory");
