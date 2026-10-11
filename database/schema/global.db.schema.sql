@@ -207,6 +207,18 @@ CREATE TABLE IF NOT EXISTS node_credentials (
 
 CREATE INDEX IF NOT EXISTS idx_node_credentials_node ON node_credentials(node_id);
 
+CREATE TABLE IF NOT EXISTS node_project_access (
+    node_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    revoked_at TIMESTAMP,
+    PRIMARY KEY (node_id, project_id),
+    FOREIGN KEY (node_id) REFERENCES replication_nodes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_project_access_project
+    ON node_project_access(project_id, revoked_at);
+
 CREATE TABLE IF NOT EXISTS security_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor_member_id TEXT,
