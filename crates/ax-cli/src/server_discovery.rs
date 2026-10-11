@@ -69,7 +69,7 @@ fn matching_candidate(raw: &[u8], config: &ServerConfig) -> Option<Announcement>
 /// Listen only for the requested duration and print all distinct candidates.
 /// No discovery response ever modifies the trusted primary_url in config.
 pub async fn discover(config: &ServerConfig, port: u16, seconds: u64) -> Result<(), String> {
-    if seconds == 0 || seconds > 60 {
+    if !(1..=60).contains(&seconds) {
         return Err("--seconds must be between 1 and 60".into());
     }
     let socket = tokio::net::UdpSocket::bind(("0.0.0.0", port)).await.map_err(|e| e.to_string())?;
