@@ -101,20 +101,20 @@ try {
   await page.click("[data-ax-motion-toggle]");
   if ((await page.$eval("html", (x) => x.dataset.axMotion)) !== "paused")
     throw new Error("Pause control failed");
-  const pixels = await page.$$eval(".pixel-field span", nodes => ({
+  const scene = await page.$eval(".signal-ambient .light-ray", nodes => ({
     count: nodes.length,
-    tiny: nodes.every(x => parseFloat(getComputedStyle(x).width) <= 3 && parseFloat(getComputedStyle(x).height) <= 3),
-    patches: new Set(nodes.map(x => x.dataset.patch)).size,
     paused: nodes.every(x => x.getAnimations().every(a => a.playState === "paused")),
   }));
-  if (!pixels.tiny || pixels.count < 100 || pixels.patches < 3 || !pixels.paused)
-    throw new Error(`Small independent pixel patches failed: ${JSON.stringify(pixels)}`);
+  if (scene.count < 3 || !scene.paused)
+    throw new Error(`Cinematic ray pause failed: ${JSON.stringify(scene)}`);
+  const ticker = await page.$eval(".ticker-group", nodes => nodes.length);
+  if (ticker !== 2) throw new Error("The seamless integration ticker must render two matching halves");
   await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
-  const respectsMotion = await page.$$eval(".pixel-field span", nodes => nodes.every(x => x.getAnimations().every(a => a.playState === "paused")));
+  const respectsMotion = await page.$eval(".signal-ambient .light-ray", nodes => nodes.every(x => x.getAnimations().every(a => a.playState === "paused")));
   if (!respectsMotion) throw new Error("Reduced motion not respected");
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(
-    `Homepage links, pause control, ${pixels.count} tiny pixels in ${pixels.patches} separated patches, and reduced motion passed.`,
+    `Homepage links, pause control, ${scene.count} cinematic rays, seamless ticker and reduced motion passed.`,
   );
 } finally {
   await browser?.close();
