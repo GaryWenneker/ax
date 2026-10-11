@@ -130,6 +130,16 @@ Primary Ax project     Replica Ax project
         |                       |
 ```
 
+## What you will see in Ax
+
+The replicas keep their own Command Center. With opt-in memory application, imported notes are available in the existing Memory Vault, with independent namespaced IDs. The screenshot below shows the **actual Ax Memory Vault interface**, not simulated replica network activity.
+
+![Ax Command Center Memory Vault interface](/screenshots/cc-memory-vault.png)
+
+Policy changes received by a replica are staged separately and are **not active by default**. Use the existing Policy Review workflow when you decide to import and approve them. The image below is an actual capture of Ax's review UI, not a claim that a live LAN synchronization was captured.
+
+![Ax Command Center policy review interface](/screenshots/cc-policy-review.png)
+
 ## 5. Check status and recover from outages
 
 ```sh
