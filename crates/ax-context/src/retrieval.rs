@@ -121,6 +121,45 @@ pub async fn retrieve_with_hints(
         .then_with(|| a.1.file_path.cmp(&b.1.file_path))
         .then_with(|| a.1.start_line.cmp(&b.1.start_line))
         .then_with(|| a.1.id.cmp(&b.1.id)));
+
+    // Walk proven graph relationships from up to four independent lexical seeds.
+    // No inferred link is upgraded to an exact fact; ambiguous edges are skipped.
+    // Both directions matter for interface implementors and calling sites.
+    let seeds: Vec<_> = candidates.iter().take(4)
+        .map(|(score, node, _)| (*score, node.clone())).collect();
+    for (seed_score, seed) in seeds {
+        let mut edges = queries.get_outgoing_edges(&seed.id, None).await?;
+        edges.extend(queries.get_incoming_edges(&seed.id).await?);
+        edges.retain(|edge| matches!(edge.kind,
+            ax_types::EdgeKind::Calls | ax_types::EdgeKind::Imports
+            | ax_types::EdgeKind::Exports | ax_types::EdgeKind::Implements
+            | ax_types::EdgeKind::Extends | ax_types::EdgeKind::References)
+            && !matches!(edge.effective_confidence(),
+                ax_types::EdgeConfidence::Ambiguous | ax_types::EdgeConfidence::Synthesized));
+        edges.sort_by(|a,b| a.kind.as_str().cmp(b.kind.as_str())
+            .then_with(|| a.source.cmp(&b.source))
+            .then_with(|| a.target.cmp(&b.target)));
+        let mut refs = std::collections::BTreeMap::new();
+        for edge in edges.into_iter().take(20) {
+            let id = if edge.source == seed.id { &edge.target } else { &edge.source };
+            if ids.contains(id) || id == &seed.id { continue; }
+            refs.entry(id.clone()).or_insert_with(|| format!(
+                "graph {} ({}) from {}",
+                edge.kind.as_str(), edge.effective_confidence().as_str(), seed.name));
+        }
+        if refs.is_empty() { continue; }
+        let keys: Vec<String> = refs.keys().cloned().collect();
+        for node in queries.get_nodes_by_ids(&keys).await? {
+            if ids.insert(node.id.clone()) {
+                let reason = refs.get(&node.id).cloned().unwrap_or_default();
+                candidates.push((seed_score * 0.5, node, reason));
+            }
+        }
+    }
+    candidates.sort_by(|a,b| b.0.total_cmp(&a.0)
+        .then_with(|| a.1.file_path.cmp(&b.1.file_path))
+        .then_with(|| a.1.start_line.cmp(&b.1.start_line))
+        .then_with(|| a.1.id.cmp(&b.1.id)));
     // Coverage: prefer distinct files before repeated symbols in one file.
     let mut ordered = Vec::new();
     let mut covered_files = HashSet::new();
