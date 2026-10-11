@@ -4576,6 +4576,123 @@ body.md-split-resizing .md-preview-resize-handle {
 
 .muted { color: var(--text-dim); }
 
+
+/* ---- Settings contextual navigation ---- */
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(172px, 214px) minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  min-width: 0;
+}
+
+.settings-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-section-nav {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  max-height: calc(100vh - 72px);
+  overflow-y: auto;
+  padding: 8px 8px 10px;
+  border-right: 1px solid var(--border);
+}
+
+.settings-section-nav-group + .settings-section-nav-group {
+  margin-top: 14px;
+}
+
+.settings-section-nav-label {
+  padding: 4px 8px 5px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-section-nav-item {
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-section-nav-item:hover {
+  color: var(--text-hi);
+  background: var(--bg-hover);
+}
+
+.settings-section-nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-section-nav-item.active {
+  color: var(--accent-text);
+  background: var(--bg-active);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.settings-section-mobile {
+  display: none;
+}
+
+.settings-anchor-section {
+  scroll-margin-top: 16px;
+}
+
+.settings-anchor-section > .settings-card {
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .settings-layout {
+    display: block;
+  }
+
+  .settings-section-nav {
+    display: none;
+  }
+
+  .settings-section-mobile {
+    display: grid;
+    gap: 5px;
+    margin-bottom: 10px;
+  }
+
+  .settings-section-mobile label {
+    color: var(--text-dim);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+  }
+
+  .settings-section-mobile .settings-select {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-anchor-section {
+    scroll-behavior: auto;
+  }
+}
+
 /* ---- Settings (Cursor-inspired) ---- */
 .settings-page {
   width: 100%;
