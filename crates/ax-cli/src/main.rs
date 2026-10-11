@@ -5,6 +5,14 @@ const _AX_SHIP_MARKER: &str = "ax-ship-marker-v1";
 mod commands;
 mod help_text;
 mod installer;
+mod server_config;
+mod server_cli;
+mod server_snapshot;
+mod server_http;
+mod server_replica;
+mod server_apply;
+mod server_discovery;
+mod server_push;
 mod ui;
 mod version_check;
 
@@ -507,6 +515,11 @@ enum Commands {
         #[command(subcommand)]
         action: DocsCatalogAction,
     },
+    /// Configure and inspect a standalone Ax node
+    Server {
+        #[command(subcommand)]
+        action: ServerAction,
+    },
     /// Aggregate this project's ax.db into ~/.ax/global.db
     #[command(long_about = help_text::GLOBAL_LONG)]
     Global {
@@ -585,6 +598,68 @@ enum DocsCatalogAction {
         dry_run: bool,
         #[arg(long, help = "JSON output")]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServerAction {
+    /// Create a standalone node configuration (will never overwrite)
+    Init {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long, value_enum)]
+        role: server_config::NodeRole,
+        #[arg(long)]
+        cluster: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        path: std::path::PathBuf,
+        #[arg(long)]
+        primary: Option<String>,
+    },
+    /// Start the authenticated standalone server
+    Run {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long, default_value = "127.0.0.1:9070")]
+        bind: std::net::SocketAddr,
+        #[arg(long)]
+        allow_private_http: bool,
+        #[arg(long, help = "Opt in to UDP LAN announcement on this port")]
+        discovery_port: Option<u16>,
+        #[arg(long, help = "Publicly advertised HTTP(S) origin, without credentials")]
+        advertise: Option<String>,
+        #[arg(long, help = "On a replica, continuously pull updates every N seconds (5-86400)")]
+        sync_interval_seconds: Option<u64>,
+        #[arg(long, default_value_t = 9072, help = "Authenticated UDP registration/change notification port; 0 disables push")]
+        push_port: u16,
+        #[arg(long, help = "Project staged replica memories under conflict-safe local IDs")]
+        auto_apply_memories: bool,
+    },
+    /// List nearby cluster nodes without automatically trusting them
+    Discover {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long, default_value_t = 9071)]
+        port: u16,
+        #[arg(long, default_value_t = 5)]
+        seconds: u64,
+    },
+    /// Pull and stage a verified snapshot from the primary
+    Sync {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
+    /// Pull and project replica memories once; policies remain staged for review
+    Apply {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
+    /// Inspect registered projects without printing secret token values
+    Status {
+        #[arg(long)]
+        config: std::path::PathBuf,
     },
 }
 
@@ -2074,6 +2149,38 @@ async fn async_main() {
                 json,
             } => commands::docs_catalog::run_sync(skip_wiki_pull, dry_run, json).await,
         },
+        Some(Commands::Server { action }) => match action {
+            ServerAction::Init {
+                config,
+                role,
+                cluster,
+                project,
+                path,
+                primary,
+            } => server_cli::init(&config, role, cluster, project, path, primary),
+            ServerAction::Status { config } => server_cli::status(&config),
+            ServerAction::Run {
+                config, bind, allow_private_http, discovery_port, advertise, sync_interval_seconds, push_port, auto_apply_memories
+            } => server_http::run(
+                &config,
+                server_http::RunOptions {
+                    bind,
+                    allow_private_http,
+                    discovery_port,
+                    advertise,
+                    sync_interval_seconds,
+                    push_port,
+                    auto_apply_memories,
+                },
+            ).await,
+            ServerAction::Discover { config, port, seconds } =>
+                match server_cli::load(&config) {
+                    Ok(config) => server_discovery::discover(&config, port, seconds).await,
+                    Err(error) => Err(error),
+                },
+            ServerAction::Sync { config } => server_replica::sync(&config).await,
+            ServerAction::Apply { config } => server_replica::sync_with_apply(&config, true).await,
+        },
         Some(Commands::Global { action }) => match action {
             GlobalAction::Init => commands::global::run_init().await,
             GlobalAction::Sync { path } => commands::global::run_sync(path).await,
@@ -2215,6 +2322,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Agent { .. }) => Some("agent".into()),
         Some(Commands::Bootstrap { .. }) => Some("bootstrap".into()),
         Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
+        Some(Commands::Server { .. }) => Some("server".into()),
         Some(Commands::Global { .. }) => Some("global".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),

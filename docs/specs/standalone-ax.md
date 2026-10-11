@@ -1,0 +1,47 @@
+# Standalone Ax: server, discovery and primary/replica synchronization
+
+Status: implementation in progress on `feature/standalone-ax`. No merge or production deployment is claimed by this document.
+
+## Goal and deployment modes
+
+Ax must run without an IDE, locally or as a long-running service. Keep the existing local stdio MCP and Command Center. Add an explicit `ax server` lifecycle for enrolled, authenticated project-state replication, with project registration, health, discovery and synchronization. External MCP clients use the existing OAuth-protected remote MCP service. Deliver native and Docker examples and a user walkthrough with real browser screenshots. Releases and production website deployment remain restricted to validated main.
+
+## Authority and storage
+
+Use **primary** (hoofdserver) and **replica** throughout code, commands and documentation. One configured primary publishes an enrolled project's state to authorized replicas. The replication transport is independent of user-facing export and sharing. Replicas pull bounded snapshots with enabled/disabled status and shared/unshared flags intact; they retain their own local source index and knowledge. Never copy a live SQLite database, credentials, sessions, provider keys or working-context caches between nodes. Authenticated node replication includes the private/unshared policy and memory records of the explicitly enrolled project. The graph remains local to each registered checkout; a server can index its own checkout with existing `ax init` / `ax index` commands.
+
+Node replication uses a dedicated protocol, not the existing policy-pack export or memory shared-export contracts. All enrolled project policies and memories, including inactive, private and unshared items, are in scope for the authenticated node cluster. Pairing a replica authorizes this transfer; do not enroll a project or share its token with a node that should not receive its private knowledge. It is not high-availability database replication. Downloaded snapshots are complete mirrors in a separate namespace. Pulling does not activate policies or overwrite memories in the local database; activation and conflict resolution require explicit, separate implementation/review. Local edits cannot become primary content automatically. A withdrawn primary item disappears from the next staged mirror; previously activated policy needs explicit local review/removal. Do not silently delete private or locally edited records.
+
+## CLI and configuration
+
+`ax server init --config FILE --role primary|replica --cluster ID --project ID --path DIR [--primary URL]` writes a new JSON config without overwriting an existing file. A stable node ID is generated once. Project roots must exist and be initialized; init does not scan unrelated directories. `ax server run --config FILE` runs the listener. Replicas automatically poll their configured primary every 60 seconds unless overridden by `--sync-interval-seconds N` (5–86400), even when UDP push is enabled. `--push-port N` (default UDP 9072; use 0 to disable) enables authenticated LAN notification; it is separate from the opt-in UDP discovery port. The primary starts the UDP registration receiver on that port and replicas connect from ephemeral UDP ports. `ax server sync --config FILE` performs one bounded replica pull. `ax server status --config FILE` reports local role, project registration and persisted last synchronization results. `ax server discover --config FILE --seconds N` searches the configured LAN discovery port.
+
+Per-project authentication uses separate environment variables containing random tokens (at least 32 characters). Configuration stores variable names, never token values. Static configuration of the primary URL is required before a replica trusts or contacts a publisher. HTTP is accepted only for loopback or when a private-network transport exception is explicitly configured; hosted deployments use a TLS reverse proxy. Refuse redirects when sending credentials. Bound payloads, file counts, timeouts and concurrent snapshot exports. Expose no shell, arbitrary-file or remote configuration mutation endpoint.
+
+## Discovery
+
+Opt-in UDP announcements carry protocol version, cluster ID, node ID, role and an advertised URL, but no credentials, project paths or project content. Send announcements periodically and expire them after a bounded observation period. Discovery helps locate candidates; an announcement never grants access, changes the primary or triggers automatic failover. Static URLs remain the Docker/cloud fallback because broadcast is generally limited to a LAN. Distinct configured primaries must be visible rather than resolved by last-response-wins.
+
+## Near-realtime update delivery (LAN)
+
+Replicas explicitly configure and trust the primary's HTTPS origin and a per-project random token. After startup, each replica sends an **authenticated UDP registration** to the primary's UDP push port every 10 seconds. The primary stores an in-memory table of registered node IDs, source socket addresses, project IDs and last-seen times. Registrations expire after 45 seconds without a heartbeat; at most 256 registrations are held.
+
+The primary checks each enrolled project's current snapshot revision every three seconds. When a revision changes, it sends a small **signed UDP change notification** to registered replicas of that project. The datagram contains metadata and the new revision, never the actual data. The replica verifies cluster, project, node identity, protocol version, short timestamp validity and a keyed message signature before initiating a regular **authenticated HTTP(S) snapshot pull**. Neither unauthenticated discovery advertisements nor spoofed UDP packets grant database access.
+
+The LAN UDP path is a latency optimization, not a guarantee of delivery. On packet loss, host sleep or after the primary restarts, replicas still poll over HTTP(S) every 60 seconds by default. No primary election, bidirectional conflict resolution or automatic activation of mirrored policies is implied. Hosted/WAN nodes use HTTPS polling when private-LAN UDP is unavailable; discovery alone must never rewrite the configured primary.
+
+## Snapshot protocol
+
+Authenticated GET `/v1/projects/{id}/snapshot` is available on a primary only. Enforce exact project registration and that project's token. Serialize policy rules, policy skills and project memory records directly, with their enabled, status, tags, scope and share attributes intact. Never invoke share/export or use its filters to decide what nodes receive. Include schema version, cluster ID, primary node ID, project ID, a content revision and a sorted file map. Verify the revision and every path before writing any files. Protocol version 2 allows only `state/memories.json`, `state/rules.json` and `state/skills.json`. Validate JSON records, duplicate IDs, content revision and bounded payloads before staging; never follow symlinks or trust received paths. Clear machine-local source paths and root IDs, and do not send credentials or entire SQLite databases.
+
+Replicas stage each validated revision in a fresh directory, persist the selected mirror and retain the previous revision until the new one is durable. Repeated revisions skip import after a successful import. Policy changes remain pending review. If and when records are applied to a replica database, use namespaced record IDs or an overlay to avoid overwriting local records, preserving enabled and share flags. Persist successful revision/time and failures per project. Offline failure keeps the last mirror and locally usable Ax. Replica polling retries with a bounded interval; no election or implicit role promotion.
+
+## Docker and hosted service
+
+Build the CLI and embedded Command Center from source in a multi-stage image. Run as a non-root user, keep configuration read-only and project/state volumes persistent. A Compose example binds the service to host loopback by default and accepts secrets through environment variables. Include initial indexing, server health, logs, backup, upgrade and shutdown commands. A container bind address is configurable; remote MCP must retain loopback as the native default and require an explicit non-loopback bind. Never expose the unauthenticated Command Center to the Internet.
+
+## Documentation and delivery gates
+
+Add a discoverable guide covering local use, primary/replica setup, OAuth MCP clients, Docker, TLS hosting, LAN discovery limitations, policy review, offline recovery and troubleshooting. Capture actual rendered guide/Command Center screens with Puppeteer; label documentation captures as documentation, without presenting mock state as a running cluster.
+
+Verify config rejection, token/project isolation, replica publication denial, unsafe snapshot paths, revision integrity, deterministic snapshots, inactive/unshared state parity, idempotent staging, preserved local memory, same-cluster discovery filtering and multiple-primary visibility. Build the workspace and docs and require Linux/Windows/macOS CI and strict Clippy before merge. Publish new binaries only from main with an appropriate version bump. Confirm website deployment independently from successful build/release; report any missing Netlify credentials explicitly.

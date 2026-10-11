@@ -22,6 +22,19 @@ pub fn default_shared_path(project_root: &Path) -> PathBuf {
     project_root.join(".ax").join("memory").join("shared.jsonl")
 }
 
+/// Export requires explicit consent via a matching tag and rejects all local,
+/// private, disabled and recall-only records even if they also carry that tag.
+pub fn is_shared_export_candidate(memory: &MemoryRow, tag: &str) -> bool {
+    memory.enabled
+        && !crate::folder_sync::is_recall_only(&memory.kind)
+        && memory.tags.iter().any(|t| t.eq_ignore_ascii_case(tag))
+        && !memory.tags.iter().any(|t| {
+            t.eq_ignore_ascii_case("local")
+                || t.eq_ignore_ascii_case("noshare")
+                || t.eq_ignore_ascii_case("private")
+        })
+}
+
 #[derive(Debug, Default)]
 pub struct MemoryExportResult {
     pub written: usize,
@@ -50,15 +63,9 @@ pub async fn export_shared(
     }
 
     let (rows, _) = list(pool, 10_000, 0).await?;
-    let tag_l = tag.to_ascii_lowercase();
     let selected: Vec<&MemoryRow> = rows
         .iter()
-        .filter(|m| !crate::folder_sync::is_recall_only(&m.kind))
-        .filter(|m| {
-            m.tags
-                .iter()
-                .any(|t| t.eq_ignore_ascii_case(&tag_l))
-        })
+        .filter(|memory| is_shared_export_candidate(memory, tag))
         .collect();
 
     let mut body = String::new();
@@ -186,4 +193,41 @@ pub async fn sync_shared_roundtrip(
     let exported = export_shared(pool, project_root, "shared", None).await?;
     let imported = import_shared(pool, &exported.path).await?;
     Ok((exported, imported))
+}
+#[cfg(test)]
+mod export_policy_tests {
+    use super::*;
+
+    fn row(kind: &str, tags: &[&str], enabled: bool) -> MemoryRow {
+        MemoryRow {
+            id: "id".into(),
+            kind: kind.into(),
+            title: "title".into(),
+            body: "body".into(),
+            tags: tags.iter().map(|s| (*s).to_owned()).collect(),
+            files: Vec::new(),
+            confidence: 1.0,
+            source: "manual".into(),
+            enabled,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn shared_tag_cannot_override_private_or_local_flags() {
+        for blocked in ["local", "noshare", "private", "LOCAL", "NoShare"] {
+            assert!(!is_shared_export_candidate(&row("note", &["shared", blocked], true), "shared"));
+        }
+        assert!(is_shared_export_candidate(&row("note", &["ShArEd"], true), "shared"));
+        assert!(!is_shared_export_candidate(&row("note", &["team"], true), "shared"));
+    }
+
+    #[test]
+    fn never_exports_disabled_or_recall_only_memories() {
+        assert!(!is_shared_export_candidate(&row("note", &["shared"], false), "shared"));
+        for kind in ["turn", "doc"] {
+            assert!(!is_shared_export_candidate(&row(kind, &["shared"], true), "shared"));
+        }
+    }
 }
