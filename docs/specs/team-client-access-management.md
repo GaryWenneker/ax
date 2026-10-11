@@ -70,18 +70,20 @@ Role defaults are translated into scopes, but per-client scopes may only narrow 
 7. Rotation creates a new credential and invalidates the old credential after the configured transition policy.
 
 ## Replication trust lifecycle
-UDP discovery is discovery only and never grants trust.
+The Replica configuration is the source of intent. A Replica must explicitly configure its Primary URL and valid project replication credentials. There is no manual approval step when that configuration authenticates successfully.
 
-1. Replica broadcasts/discovers Primary.
-2. Primary records the unknown node as `pending`.
-3. Settings shows the pending node for explicit approval.
-4. Owner/Admin approves it.
-5. Primary issues node-specific credentials.
-6. Node becomes `trusted` and may replicate.
-7. Primary can revoke the node at any time.
-8. Revoked nodes cannot synchronize even if they remain visible through UDP discovery.
+1. Replica is configured with an explicit `primary_url`, stable node ID and project credential.
+2. Replica contacts only that configured Primary.
+3. Primary validates the project credential / signed registration.
+4. On successful authentication, Primary automatically records or refreshes the Replica as `trusted` for that project.
+5. Synchronization starts immediately.
+6. Settings shows the connected Replica, endpoint, last seen, last sync and health.
+7. Owner/Admin may revoke/block the Replica at any time.
+8. A revoked Replica cannot synchronize again until it is explicitly unblocked or re-enrolled according to policy.
 
-Node credentials and client tokens use separate namespaces, storage and authorization paths.
+UDP discovery/registration never selects or changes the Primary. It only accelerates presence/change notification for a Primary already explicitly configured by the Replica.
+
+Node/replication credentials and client tokens use separate namespaces, storage and authorization paths.
 
 ## Settings UX
 
@@ -111,14 +113,13 @@ Never redisplay an existing plaintext token.
 Show local role (Primary/Replica) and node identity.
 
 For Primary, show:
-- Pending nodes requiring approval
-- Trusted replicas
+- Trusted/connected replicas
 - Online/offline state
 - address/endpoint
 - last seen
 - last successful sync
 - sync/health state
-- approve/revoke actions
+- revoke/block actions
 
 For Replica, show the paired Primary and connection/sync state.
 
@@ -152,8 +153,8 @@ Audit records contain actor, target, action and timestamp, never secret material
 - A member can own multiple clients.
 - Each client can have independently revocable credentials and narrowed scopes.
 - Revoking one client does not revoke the member's other clients.
-- A discovered replica cannot synchronize before explicit Primary approval.
-- Primary Settings lists pending/trusted replicas and useful live/sync metadata.
+- A correctly configured and authenticated Replica registers automatically with its configured Primary.
+- Primary Settings lists connected/trusted replicas and useful live/sync metadata.
 - Revoking a node blocks subsequent replication.
 - Client and node credentials cannot be used interchangeably.
 - Secrets are never returned after initial issuance or written to logs.
@@ -166,7 +167,7 @@ Audit records contain actor, target, action and timestamp, never secret material
 1. Persistence/domain types and migration/bootstrap.
 2. Principal resolution, roles/scopes and authorization middleware.
 3. Client credential issuance, hashing, rotation and revocation.
-4. Node trust/credential integration with existing replication.
+4. Automatic Replica registration/trust integration with existing replication.
 5. Management API.
 6. Settings UI: Team, Clients & tokens, Replication.
 7. Audit events.
