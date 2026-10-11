@@ -9,7 +9,7 @@ use crate::{
     server_config::{NodeRole, ProjectRegistration, ServerConfig},
     server_snapshot::{self, Snapshot},
 };
-use std::{fs, io::Write, path::{Path, PathBuf}, time::Duration};
+use std::{fs, io::Write, path::Path, time::Duration};
 
 const MAX_WIRE_BYTES: usize = server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024;
 
