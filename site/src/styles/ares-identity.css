@@ -1,0 +1,83 @@
+/* Ax / dual-spectrum vector identity: original layered SVG and CSS, no artwork assets. */
+.signal-site{--signal-blue:#59c8ff;--signal-cyan:#71ddff;--signal-red:#ff4658;--signal-line:rgba(121,177,222,.16);background:#03060d;color:#edf4fd}
+.signal-ambient.ax-landscape{background:radial-gradient(ellipse at 27% 41%,rgba(7,81,146,.25),transparent 46%),radial-gradient(ellipse at 77% 49%,rgba(184,14,48,.32),transparent 51%),linear-gradient(180deg,#02050c 0%,#050b17 50%,#03060b 100%)}
+.ax-landscape .ax-sky-wash{background:radial-gradient(ellipse at 25% 62%,rgba(13,129,210,.13),transparent 41%),radial-gradient(ellipse at 75% 66%,rgba(250,35,64,.21),transparent 44%),linear-gradient(180deg,rgba(1,3,8,.26),transparent 63%)}
+.ax-landscape .ax-depth-distant{opacity:.66;filter:saturate(.8)}
+.ax-landscape .ax-depth-spires{opacity:.82}
+.ax-landscape .ax-depth-paths{opacity:.75}
+.ax-landscape .ax-depth-dots{opacity:.56;mask-image:radial-gradient(ellipse 63% 56% at 50% 80%,black 10%,rgba(0,0,0,.6) 48%,transparent 100%)}
+.ax-landscape .ax-depth-dots circle:nth-child(3n){fill:#ff3950;opacity:.4}
+.ax-landscape .ax-depth-dots circle:nth-child(3n+1){fill:#3b9dff}
+.ax-ares-shield{position:absolute;inset:0;background:linear-gradient(90deg,rgba(1,6,17,.12),transparent 34%,transparent 55%,rgba(13,1,8,.14));mix-blend-mode:screen;pointer-events:none}
+.ax-ares-architecture{z-index:4;opacity:1;mix-blend-mode:screen;animation:ares-layer-depth 19s ease-in-out infinite alternate}
+.ax-ares-architecture .ares-red-track{stroke-dasharray:12 7 280 33;animation:ares-red-flow 15s linear infinite;filter:drop-shadow(0 0 5px rgba(255,41,64,.6))}
+.ax-ares-architecture .ares-blue-track{stroke-dasharray:12 7 280 33;animation:ares-blue-flow 17s linear infinite;filter:drop-shadow(0 0 5px rgba(65,186,255,.48))}
+.ax-ares-architecture .ares-shifted{animation-duration:22s;animation-direction:reverse}
+.ax-ares-architecture .ares-gateway{animation:ares-heartbeat 8s ease-in-out infinite alternate}
+.ax-ares-architecture .ares-gate-scan{animation:ares-scan-streak 7s ease-in-out infinite alternate}
+.ax-ares-architecture .ares-light-pylons{animation:ares-pylon-pulse 6.2s ease-in-out infinite alternate}
+.ax-ares-architecture .ares-blue-sparks,.ax-ares-architecture .ares-red-sparks{animation:ares-spark-flare 5.8s ease-in-out infinite alternate}
+.ax-ares-architecture .ares-red-sparks{animation-delay:-3s}
+.ares-spectrum-haze{position:absolute;inset:0;pointer-events:none;z-index:5;opacity:.75;mix-blend-mode:screen;background:radial-gradient(ellipse 30% 23% at 79% 70%,rgba(255,29,50,.18),transparent 75%),radial-gradient(ellipse 18% 16% at 23% 67%,rgba(39,148,255,.12),transparent 75%);animation:ares-haze-wave 14s ease-in-out infinite alternate}
+@keyframes ares-layer-depth{from{transform:translate3d(-.4%,0,0) scale(1)}to{transform:translate3d(.45%,-.35%,0) scale(1.017)}}
+@keyframes ares-red-flow{to{stroke-dashoffset:-1090}}
+@keyframes ares-blue-flow{to{stroke-dashoffset:1090}}
+@keyframes ares-heartbeat{from{opacity:.48}to{opacity:1}}
+@keyframes ares-scan-streak{from{opacity:.2;stroke-width:1}to{opacity:.86;stroke-width:7}}
+@keyframes ares-pylon-pulse{from{opacity:.35}to{opacity:.88}}
+@keyframes ares-spark-flare{from{opacity:.35;filter:drop-shadow(0 0 2px currentColor)}to{opacity:1;filter:drop-shadow(0 0 10px currentColor)}}
+@keyframes ares-haze-wave{from{opacity:.48;transform:translateY(.5%)}to{opacity:.95;transform:translateY(-1%)}}
+.signal-header{border-bottom:1px solid rgba(129,161,196,.18);background:rgba(2,5,13,.8)}
+.signal-header::after{content:"";position:absolute;bottom:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 4%,rgba(40,177,252,.62) 26%,transparent 49%,rgba(250,61,81,.68) 73%,transparent 97%);pointer-events:none}
+.header-cta{border-color:rgba(255,75,96,.62);color:#fff6f9;background:rgba(114,16,35,.23);box-shadow:inset 0 0 14px rgba(255,42,62,.06),0 0 17px rgba(248,34,60,.12)}
+.header-cta:hover{background:rgba(163,27,50,.34);box-shadow:0 0 24px rgba(255,47,68,.3)}
+.main-links a:hover{color:#ff7b8c}
+.integration-ticker{background:rgba(3,7,16,.77);border-bottom-color:rgba(100,139,183,.23)}
+.ticker-label{color:#6bd6ff}
+.ticker-agent:nth-child(even){border-left-color:rgba(255,64,82,.22)}
+.ticker-agent:nth-child(even) .ticker-icon{filter:drop-shadow(0 0 4px rgba(239,51,77,.16))}
+.ticker-more{color:#ff6477!important}
+.signal-eyebrow{color:#6bd5ff}
+.hero-copy h1 span,.story-intro h2 span,.final-section h2 span{color:#d5f5ff;background:linear-gradient(102deg,#a9f5ff 6%,#58c4fa 45%,#f7f6ff 56%,#ff6b7c 94%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-shadow:none}
+.tiny-led{background:#5bd9ff;box-shadow:0 0 11px #39c2ff}
+.signal-btn.primary{background:#f3f7ff;color:#030914;box-shadow:0 0 26px rgba(73,182,252,.17)}
+.signal-btn.primary:hover{box-shadow:0 0 29px rgba(245,62,83,.29)}
+.signal-btn.ghost{border-color:rgba(255,89,108,.46);background:rgba(38,10,24,.27)}
+.signal-btn.ghost:hover{background:rgba(86,14,30,.38)}
+.hero-footnote span:nth-child(2)::before{color:#ef556b}
+.capability-rail{background:rgba(2,7,16,.83);border-top-color:rgba(255,77,91,.2);border-bottom-color:rgba(70,164,240,.2)}
+.capability:nth-child(even) .cap-index{color:#f16b7b}
+.capability:nth-child(odd) .cap-index{color:#65c8fd}
+.capability:nth-child(even):hover{background:rgba(128,17,43,.12)}
+.capability:nth-child(odd):hover{background:rgba(12,82,149,.12)}
+.story-section:nth-of-type(even) .signal-eyebrow{color:#fb7185}
+.stream-cluster:nth-child(even) .stream-cluster-heading,.workflow-row:nth-child(even)>span,.deployment-rows>a:nth-child(even) .deployment-index{color:#fb7185}
+.workflow-row:nth-child(even) code{color:#ff8594}
+.inline-arrow{color:#7fcefa!important}
+.story-section:nth-of-type(even) .inline-arrow{color:#ff7185!important}
+.final-section{border-top:1px solid rgba(255,77,91,.19)}
+.install-heading span:last-child{color:#ff7585}
+.signal-footer{background:rgba(2,5,11,.85);border-top-color:rgba(255,69,91,.18)}
+/* Terminal keeps meaningful semantic colors; operations alternate red / cyan. */
+.ax-live-console{background:linear-gradient(90deg,rgba(3,7,18,.32),rgba(17,4,16,.09));border-left:1px solid rgba(247,73,91,.48)}
+.ax-live-console .console-heading{border-bottom:1px solid rgba(92,151,204,.22)}
+.ax-live-console .ax-signal-pulse{background:#ff5067;box-shadow:0 0 11px rgba(251,52,80,.6)}
+.ax-live-console .console-state i{background:#4ae3c7;box-shadow:0 0 10px #4ae3c7}
+.ax-terminal-line.is-policy .ax-terminal-body{color:#ff7c8f}
+.ax-terminal-line.is-tool .ax-terminal-body{color:#bfc7ff}
+.ax-terminal-line.is-metric .ax-terminal-body{color:#55c9ff}
+.ax-terminal-line.is-memory .ax-terminal-body{color:#a0deff}
+.ax-terminal-line.is-success .ax-terminal-body{color:#63e2ab}
+.ax-terminal-meta b:nth-child(2){color:#ff8090}
+.ax-terminal-side-label{color:#fb697d}
+.ax-terminal-side-section:nth-child(even) .ax-terminal-side-label{color:#62cfff}
+.ax-terminal-bars i:nth-child(2n){background:linear-gradient(#ff8292,#c81d3b)}
+.ax-terminal-bars i:nth-child(2n+1){background:linear-gradient(#7cddff,#1568b6)}
+.ax-terminal-history li:nth-child(2n){border-left-color:rgba(255,87,110,.5)}
+.ax-terminal-history li:nth-child(2n+1){border-left-color:rgba(73,170,235,.46)}
+@media(max-width:850px){.ax-ares-architecture{opacity:.62}.ax-landscape .ax-depth-dots{opacity:.3}.ares-spectrum-haze{opacity:.6}}
+@media(prefers-reduced-motion:reduce){.ax-ares-architecture *, .ax-ares-architecture, .ares-spectrum-haze{animation:none!important}}
+html[data-ax-motion="paused"] .ax-ares-architecture *,html[data-ax-motion="paused"] .ax-ares-architecture,html[data-ax-motion="paused"] .ares-spectrum-haze{animation-play-state:paused!important}
+
+.ax-landscape .ares-red-network{mix-blend-mode:screen;animation:ares-red-grid-breathe 11s ease-in-out infinite alternate;filter:drop-shadow(0 0 2px rgba(255,40,70,.38))}
+@keyframes ares-red-grid-breathe{from{opacity:.62}to{opacity:1}}

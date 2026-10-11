@@ -1,4 +1,5 @@
 ---
+import AresOverlay from "./AresOverlay.astro";
 /** Decorative vector environment, not a raster screenshot.
  * All geometry is emitted as inline SVG at build time and animated with CSS.
  */
@@ -178,5 +179,6 @@ const spires = [
       {dots.map(dot => <circle cx={dot.x} cy={dot.y} r={dot.size} fill="#2c89f8" opacity={dot.opacity} />)}
     </g>
   </svg>
+  <AresOverlay />
   <div class="ax-foreground-vignette"></div>
 </div>

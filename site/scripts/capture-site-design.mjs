@@ -122,7 +122,15 @@ try {
   }));
   if (scene.count !== 1 || !scene.paused)
     throw new Error(`Cinematic ray pause failed: ${JSON.stringify(scene)}`);
-  const ticker = await page.$$eval(".ticker-group", nodes => nodes.length);
+  const ares = await page.evaluate(() => ({
+    layer: document.querySelectorAll(".ax-ares-architecture").length,
+    red: document.querySelectorAll(".ares-red-track").length,
+    blue: document.querySelectorAll(".ares-blue-track").length,
+    paused: [...document.querySelectorAll(".ares-red-track")].every(x => x.getAnimations().every(a => a.playState === "paused")),
+  }));
+  if (ares.layer !== 1 || ares.red < 2 || ares.blue < 2 || !ares.paused)
+    throw new Error("Dual-spectrum SVG/CSS layers missing or still animating: " + JSON.stringify(ares));
+  const ticker = await page.$eval(".ticker-group", nodes => nodes.length);
   if (ticker !== 2) throw new Error("The seamless integration ticker must render two matching halves");
   await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
   const respectsMotion = await page.$$eval(".signal-ambient .ax-depth-spires", nodes => nodes.every(x => x.getAnimations().every(a => a.playState === "paused")));
