@@ -46,11 +46,14 @@ export default function SettingsSectionNav() {
     if (!elements.length || !('IntersectionObserver' in window)) return;
 
     const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        const next = visible[0]?.target.id;
+      () => {
+        const targetTop = Math.max(0, window.innerHeight * 0.12);
+        const next = elements
+          .map((element) => ({
+            id: element.id,
+            distance: Math.abs(element.getBoundingClientRect().top - targetTop),
+          }))
+          .sort((a, b) => a.distance - b.distance)[0]?.id;
         if (!next || !isSettingsSectionId(next)) return;
         setActiveId(next);
         if (window.location.hash !== '#' + next) {
