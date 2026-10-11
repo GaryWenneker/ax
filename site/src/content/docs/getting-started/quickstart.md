@@ -47,7 +47,7 @@ Creates `.ax/`, builds the knowledge graph, and installs git hooks (sync, ship e
 ax web --open
 ```
 
-![Command Center — Rules page](/screenshots/cc-policy-rules.png)
+![Command Center — Rules page](/screenshots/cc-policy-rules-dark.png)
 
 Browse the graph, edit policy, view token savings, and read MCP logs from the local dashboard.
 

@@ -3,7 +3,7 @@ title: Memory Vault
 description: Durable project memory for agents — decisions, fixes, and conventions with hybrid recall and automatic preflight injection.
 ---
 
-![Memory vault — browse, search, and inspect stored memories with hybrid recall](/screenshots/cc-memory-vault.png)
+![Memory vault — browse, search, and inspect stored memories with hybrid recall](/screenshots/cc-memory-vault-dark.png)
 
 ax keeps a persistent memory vault per project: decisions, bug fixes, architecture notes, and conventions that agents (and humans) should never re-discover from scratch. Memories live in `.ax/ax.db` next to the code graph, work fully offline, and are automatically injected into agent context.
 

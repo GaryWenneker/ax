@@ -13,13 +13,13 @@ Embedding Command Center in an IDE webview? Append `?embed=1` to hide the browse
 
 Each full page load and hard refresh plays a short green edge glow (Green Vessel) with a startup chime. The overlay is removed when that animation ends, so the dashboard is usable again. Moving between pages inside the app does not replay it. `prefers-reduced-motion: reduce` skips the glow. If the browser blocks the chime until a gesture, the first click or key plays it.
 
-![Command Center — Rules page with the Policy, Code, Activity, and System sidebar groups](/screenshots/cc-policy-rules.png)
+![Command Center — Rules page with the Policy, Code, Activity, and System sidebar groups](/screenshots/cc-policy-rules-dark.png)
 
 ## Azure Portal appearance
 
 Open **Settings → Appearance** and choose **Azure Portal Light** or **Azure Portal Dark**. The selection is saved in this browser. Both modes apply across pages, editors, Logging, quality panels and dialogs. The header search opens pages or searches code; Settings has its own grouped, filterable navigation.
 
-![Azure Portal Light — theme selection](/screenshots/cc-settings-appearance.png)
+![Azure Portal Light — theme selection](/screenshots/cc-settings-appearance-dark.png)
 
 ![Azure Portal Dark — Rules](/screenshots/cc-policy-rules-dark.png)
 
@@ -167,9 +167,9 @@ The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, s
 
 ![Prices — provider groups, jump legend, and input/output rate colors](/screenshots/cc-prices.png)
 
-![MCP Logging — live verbose stream with kind filters, project switcher, and Call Inspector](/screenshots/cc-logging.png)
+![MCP Logging — live verbose stream with kind filters, project switcher, and Call Inspector](/screenshots/cc-logging-dark.png)
 
-![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality.png)
+![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality-dark.png)
 
 Full walkthrough: [MCP Logging & Quality](/guides/mcp-quality/).
 

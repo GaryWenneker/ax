@@ -5,7 +5,7 @@ description: How ax cuts agent token usage with graph queries, plus a complete p
 
 ax measures how much context its graph queries save compared to blind file reads, and ships a dashboard to track it over time.
 
-![Context savings — tokens saved, cost reduction, graph call metrics, highlights, and daily activity heatmap](/screenshots/cc-savings-dashboard.png)
+![Context savings — tokens saved, cost reduction, graph call metrics, highlights, and daily activity heatmap](/screenshots/cc-savings-dashboard-dark.png)
 
 A single agent session can consume 50K-100K tokens. Most of that cost comes from reading entire files when the agent only needs a few symbols. ax replaces those broad reads with targeted graph queries and logs exactly how much context each call avoided.
 

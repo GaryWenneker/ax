@@ -3,7 +3,7 @@ title: Introduction
 description: What ax is — knowledge graph, memory vault, policy engine, and Command Center for AI coding agents.
 ---
 
-![ax Command Center — Rules page with the Policy, Code, Activity, and System sidebar](/screenshots/cc-policy-rules.png)
+![ax Command Center — Rules page with the Policy, Code, Activity, and System sidebar](/screenshots/cc-policy-rules-dark.png)
 
 **ax** is **local-first intelligence for AI coding agents** — written in Rust, installed as a single binary, with no cloud index and no API keys.
 
@@ -266,7 +266,7 @@ See [MCP Logging & Quality](/guides/mcp-quality/), [Command Center](/guides/comm
 - **Architecture Graph** — interactive Leiden communities, god nodes, confidence-tagged edges, and doc nodes in Command Center.
 - **Document inventory** — PDF, Office, Markdown, and other docs as `Doc` nodes; `<ax_index>` auto-injected on every `ax_preflight`.
 
-![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging.png)
+![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging-dark.png)
 
 See [Command Center](/guides/command-center/), [Token savings](/guides/token-savings/), and [MCP Server](/reference/mcp-server/).
 
