@@ -83,17 +83,27 @@ fn private_bind(ip: IpAddr) -> bool {
     }
 }
 
+pub struct RunOptions {
+    pub bind: SocketAddr,
+    pub allow_private_http: bool,
+    pub discovery_port: Option<u16>,
+    pub advertise: Option<String>,
+    pub sync_interval_seconds: Option<u64>,
+    pub push_port: u16,
+    pub auto_apply_memories: bool,
+}
+
 /// Start the listener and serve until the process receives shutdown.
-pub async fn run(
-    path: &Path,
-    bind: SocketAddr,
-    allow_private_http: bool,
-    discovery_port: Option<u16>,
-    advertise: Option<String>,
-    sync_interval_seconds: Option<u64>,
-    push_port: u16,
-    auto_apply_memories: bool,
-) -> Result<(), String> {
+pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
+    let RunOptions {
+        bind,
+        allow_private_http,
+        discovery_port,
+        advertise,
+        sync_interval_seconds,
+        push_port,
+        auto_apply_memories,
+    } = options;
     let config = server_cli::load(path)?;
     if auto_apply_memories && config.role != NodeRole::Replica {
         return Err("--auto-apply-memories is only valid for replicas".into());
