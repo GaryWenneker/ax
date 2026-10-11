@@ -48,11 +48,15 @@ fn validate_primary_url(value: &str) -> Result<(), String> {
         || url.fragment().is_some()
         || url.path() != "/"
     {
-        return Err("primary URL must be an origin without credentials, query, path or fragment".into());
+        return Err(
+            "primary URL must be an origin without credentials, query, path or fragment".into(),
+        );
     }
     let host = url.host_str().ok_or("primary URL must have a host")?;
     let local = host == "localhost"
-        || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
     if url.scheme() != "https" && !(url.scheme() == "http" && local) {
         return Err("primary URL must use HTTPS; HTTP is allowed only for loopback".into());
     }
@@ -65,7 +69,9 @@ impl ServerConfig {
             return Err("unsupported server configuration version".into());
         }
         if !valid_id(&self.cluster_id) || !valid_id(&self.node_id) {
-            return Err("cluster_id and node_id must contain only letters, digits, '-' or '_'".into());
+            return Err(
+                "cluster_id and node_id must contain only letters, digits, '-' or '_'".into(),
+            );
         }
         match (self.role, self.primary_url.as_deref()) {
             (NodeRole::Replica, Some(url)) => validate_primary_url(url)?,
@@ -158,6 +164,8 @@ mod tests {
 
     #[test]
     fn primary_cannot_point_to_another_primary() {
-        assert!(config(NodeRole::Primary, Some("https://example.com")).validate().is_err());
+        assert!(config(NodeRole::Primary, Some("https://example.com"))
+            .validate()
+            .is_err());
     }
 }

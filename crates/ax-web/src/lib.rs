@@ -1,5 +1,9 @@
 //! ax-web: local HTTP server exposing the ax code graph + policy editor.
 
+pub mod server_config;
+pub mod server_discovery;
+mod replication_setup;
+
 mod access_api;
 mod actions;
 mod changes;

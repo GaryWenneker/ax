@@ -53,8 +53,8 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status":"ok"}))
+async fn health(State(state): State<Arc<StateData>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status":"ok", "node_id":state.config.node_id, "role":state.config.role}))
 }
 
 async fn snapshot(

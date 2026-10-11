@@ -1,5 +1,7 @@
+import { accessJson } from '../lib/accessApi';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import Codicon from './Codicon';
+import ReplicationSetup from './ReplicationSetup';
 import ModalShell from './ModalShell';
 
 type Role = 'owner' | 'admin' | 'member' | 'readonly';
@@ -54,21 +56,6 @@ function Status({ label, good = false }: { label: string; good?: boolean }) {
   return <span className={`access-status${good ? ' access-status--good' : ''}`}><span aria-hidden="true" />{label}</span>;
 }
 
-async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  let csrf: string | null = null;
-  if (init?.method && init.method !== 'GET') {
-    const session = await fetch('/api/access/session', { cache: 'no-store' });
-    if (!session.ok) throw new Error('A local owner session is required to change access.');
-    csrf = (await session.json()).csrf;
-  }
-  const response = await fetch(url, {
-    ...init, cache: 'no-store',
-    headers: { 'Content-Type': 'application/json', ...(csrf ? { 'x-ax-access-csrf': csrf } : {}), ...init?.headers },
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
-  return body as T;
-}
 
 export default function AccessSettingsSection({ section }: { section: string }) {
   const active = ['team', 'clients', 'nodes'].includes(section);
@@ -102,24 +89,24 @@ export default function AccessSettingsSection({ section }: { section: string }) 
     const version = ++requestVersion.current;
     if (initial) setLoading(true);
     try {
-      const status = await json<{ readonly: boolean }>('/api/share/status');
+      const status = await accessJson<{ readonly: boolean }>('/api/share/status');
       if (version !== requestVersion.current) return;
       setReadonly(status.readonly !== false);
       if (target === 'team' || target === 'clients') {
-        const team = await json<{ members: Member[] }>('/api/access/team');
+        const team = await accessJson<{ members: Member[] }>('/api/access/team');
         if (version !== requestVersion.current) return;
         setMembers(team.members);
         setClientMember(current => team.members.some(member => member.id === current && member.status === 'active')
           ? current : team.members.find(member => member.status === 'active')?.id ?? '');
       }
       if (target === 'clients') {
-        const data = await json<{ clients: Client[]; credentials: Credential[] }>('/api/access/clients');
+        const data = await accessJson<{ clients: Client[]; credentials: Credential[] }>('/api/access/clients');
         if (version !== requestVersion.current) return;
         setClients(data.clients);
         setCredentials(data.credentials ?? []);
       }
       if (target === 'nodes') {
-        const data = await json<{ nodes: Node[]; local?: LocalNode }>('/api/access/nodes');
+        const data = await accessJson<{ nodes: Node[]; local?: LocalNode }>('/api/access/nodes');
         if (version !== requestVersion.current) return;
         setNodes(data.nodes);
         setLocalNode(data.local ?? null);
@@ -158,7 +145,7 @@ export default function AccessSettingsSection({ section }: { section: string }) 
     setIssuedToken(null);
     setCopied(false);
     try {
-      const data = await json<{ credential?: { token: string } }>(url, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+      const data = await accessJson<{ credential?: { token: string } }>(url, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
       if (target === currentSection.current) {
         if (data.credential && tokenClient) setIssuedToken({ value: data.credential.token, clientName: tokenClient });
         if (success) setMessage(success);
@@ -308,6 +295,7 @@ export default function AccessSettingsSection({ section }: { section: string }) 
         </>}
 
         {!loading && section === 'nodes' && <>
+          <ReplicationSetup locked={locked} onChanged={() => refresh('nodes')} />
           <div className="access-node-local"><h3>{localNode ? `Local ${localNode.role === 'primary' ? 'Primary' : 'Replica'}` : 'Standalone node not configured'}</h3>
             {localNode ? <dl className="access-metadata">
               <div><dt>Node identity</dt><dd><code>{localNode.node_id}</code></dd></div><div><dt>Sync state</dt><dd>{localNode.sync_state}</dd></div>
