@@ -1,6 +1,6 @@
 # Standalone Ax: server, discovery and primary/replica synchronization
 
-Status: implementation in progress on `feature/standalone-ax`. No merge or production deployment is claimed by this document.
+Status: server implementation merged to main in PR #13. Settings setup/pairing is tracked separately in [the current pairing spec](settings-primary-pairing.md). Release and production deployment are paused by the owner; they are not claimed complete.
 
 ## Goal and deployment modes
 

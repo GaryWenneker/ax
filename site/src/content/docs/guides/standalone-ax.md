@@ -217,9 +217,26 @@ For [Remote MCP](/guides/remote-mcp/), add the member's stable ID to the desired
 
 ![Clients, effective scopes and credential metadata](/screenshots/cc-access-clients-dark.png)
 
+## Configure nodes from Settings
+
+Open **Settings → Replication → Configure this Ax environment** in the local Owner Command Center.
+
+1. For a **Primary**, choose that role, enter a cluster ID and replication project ID, then select **Start Primary**. Only the project currently open in Command Center is enrolled. On first setup, leaving the credential empty generates one; copy it when shown, because Ax never saves it to disk.
+2. On another Ax environment, choose **Replica** and enter the same cluster and project IDs. Use **Find nearby Primaries** and explicitly select a candidate, or enter the Primary URL directly. Discovery is a hint, not approval or automatic pairing.
+3. Enter the Primary's project replication credential and select **Connect to Primary**. Ax authenticates and verifies a snapshot first. On failure, the saved configuration remains unchanged. Successful pulls stage a separate mirror for review; they do not activate policies or overwrite local memory.
+4. To choose another Primary or change roles, select **Stop managed node**, confirm, edit the fields, then connect again. This stops only the node started by this Command Center; it does not terminate a separate CLI service.
+
+Node identity and configuration survive restarts. Replication credentials stay in request/process memory and the child environment, so enter the original credential again after restart (or provide `AX_COMMAND_CENTER_REPLICATION_TOKEN` in the Command Center environment). A saved configuration is shown as stopped until it is activated. The managed process ends on Stop or normal Command Center shutdown.
+
+The service listens on `127.0.0.1`, port 9070 by default. For other machines, put a TLS reverse proxy in front of that port and enter its origin as **Advertised URL**. This enables LAN announcements on UDP 9071. A LAN announcement never replaces TLS or credentials. Hosted connections can use the URL field without discovery. If a port is occupied, Settings reports the conflict rather than killing another process. This managed path uses authenticated polling; the separate CLI setup below also supports signed UDP notifications.
+
+These controls require the local writable Owner session with CSRF protection. Remote client tokens cannot configure or start local node processes. Team/client credentials and project replication enrollment credentials remain separate.
+
+The latest published `v8.0.0` predates standalone/access UI merges. Build current `main` for these controls until a subsequent validated release is published. Automatic build/release pipelines are currently paused at the owner's request; merging code is not publication.
+
 ## Replication access and connection status
 
-Open **Settings → Replication** for the local node ID, Primary/Replica role, the Replica's configured Primary URL, and its last sync state. Start or synchronize the server with its configuration to populate this status. Primary lists authenticated replicas with endpoint, last seen and last successful snapshot. Online means seen within two minutes; older records are marked not seen recently.
+Open **Settings → Replication** for the local node ID, Primary/Replica role, the Replica's configured Primary URL, and its last sync state. Use the setup controls above, or start/synchronize a separately configured CLI server, to populate this status. Primary lists authenticated replicas with endpoint, last seen and last successful snapshot. Online means seen within two minutes; older records are marked not seen recently.
 
 A Replica must explicitly configure its Primary and project credential. Successful authenticated registration adds it automatically; no manual approval is needed. **Block node** asks for confirmation and blocks future snapshots and registration for that node ID. **Allow re-enrollment** explicitly clears that block, but keeps previous node credentials revoked; the Replica must authenticate again with its project enrollment credential. UDP presence never chooses or changes the configured Primary. Client tokens (`axc_`) and node credentials (`axn_`) cannot be used interchangeably. Shared project credentials remain the automatic enrollment mechanism for existing standalone deployments; treat them as enrollment secrets.
 
@@ -230,3 +247,9 @@ Disabling or revoking access does not delete a team member's existing data. Thes
 ![Primary/Replica management in Azure Portal Dark](/screenshots/cc-access-nodes-dark.png)
 
 These screenshots use synthetic public example identities and contain no working credentials.
+
+### Primary selection in Settings
+
+![Settings with two discovered Primary candidates and an explicit selection](/screenshots/cc-primary-pairing.png)
+
+Documentation capture with synthetic candidates; this screenshot illustrates selection before enrollment. A selected card requires the Primary’s project credential and **Connect to Primary**.

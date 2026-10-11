@@ -560,4 +560,8 @@ queries and `ax_expand` for additional source instead of enlarging every preflig
 compares disk/database hashes without changing their authority. Database policy
 is not overwritten by stale exports; explicit file-owned overrides still refresh.
 Background dedup reports candidates without promoting project content globally.
-See [the implementation contract](docs/specs/minimal-project-safe-context.md).
+See [the implementation contract](docs/archive/specs/minimal-project-safe-context.md).
+
+### Primary setup in Command Center
+
+Settings → Replication configures the open project as a Primary or pairs it as a Replica. Choose a discovered Primary or enter its HTTPS origin, then authenticate explicitly. Stop the managed node before changing roles or Primary; stored identity is preserved and credentials are never saved to disk. See the [standalone guide](site/src/content/docs/guides/standalone-ax.md#configure-nodes-from-settings). These controls require current main; the published v8.0.0 binary predates the standalone/access merges. Automatic Actions and releases are paused while code is stabilized.

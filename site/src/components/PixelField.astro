@@ -1,126 +1,77 @@
 ---
-/** Sparse, build-time mosaic. Mixed footprints share a lattice without overlaps. */
-interface Props {
-  variant?: "hero" | "deployment";
-}
+/** Small cells in broad separated patches. Every cell has its own stochastic clock. */
+interface Props { variant?: "hero" | "deployment"; }
 const { variant = "hero" } = Astro.props;
 const palette = ["#74949d", "#849b8b", "#b79a7b", "#a6b4b3"];
-const patches =
-  variant === "hero"
-    ? [
-        { x: 83, y: 24, cols: 12, rows: 10, unit: 22, seed: 7 },
-        { x: 94, y: 75, cols: 8, rows: 7, unit: 12, seed: 71 },
-        { x: 9, y: 86, cols: 11, rows: 5, unit: 9, seed: 137 },
-      ]
-    : [
-        { x: 12, y: 12, cols: 14, rows: 6, unit: 10, seed: 213 },
-        { x: 90, y: 29, cols: 10, rows: 9, unit: 26, seed: 319 },
-      ];
-function random(n: number) {
-  const v = Math.sin(n * 127.1 + 43.31) * 43758.5453;
-  return v - Math.floor(v);
-}
-const tiles = patches.flatMap((patch) => {
-  const occupied = new Set<string>();
-  const cells = [];
-  for (let row = 0; row < patch.rows; row++)
-    for (let col = 0; col < patch.cols; col++) {
-      const seed = patch.seed + row * patch.cols + col;
-      if (occupied.has(`${col},${row}`) || random(seed) > 0.43) continue;
-      const shape = random(seed + 921);
-      let w = shape > 0.8 ? 3 : shape > 0.5 ? 2 : 1;
-      let h = shape > 0.66 ? 2 : 1;
-      w = Math.min(w, patch.cols - col);
-      h = Math.min(h, patch.rows - row);
-      if (
-        Array.from({ length: w * h }, (_, i) =>
-          occupied.has(`${col + (i % w)},${row + Math.floor(i / w)}`),
-        ).some(Boolean)
-      ) {
-        w = 1;
-        h = 1;
-      }
-      for (let dy = 0; dy < h; dy++)
-        for (let dx = 0; dx < w; dx++) occupied.add(`${col + dx},${row + dy}`);
-      cells.push({
-        x: `calc(${patch.x}% + ${(col - patch.cols / 2) * patch.unit}px)`,
-        y: `calc(${patch.y}% + ${(row - patch.rows / 2) * patch.unit}px)`,
-        w: w * patch.unit - 3,
-        h: h * patch.unit - 3,
-        color: palette[Math.floor(random(seed + 51) * palette.length)],
-        peak: (0.12 + random(seed + 107) * 0.26).toFixed(2),
-        duration: (7 + random(seed + 401) * 10).toFixed(2),
-        delay: (-random(seed + 79) * 17).toFixed(2),
-      });
-    }
-  return cells;
-});
+const patches = variant === 'hero'
+  ? [{x:78,y:20,cols:54,rows:26,seed:7},{x:94,y:78,cols:36,rows:34,seed:701},{x:8,y:91,cols:48,rows:16,seed:1403}]
+  : [{x:13,y:16,cols:56,rows:22,seed:2113},{x:87,y:48,cols:48,rows:42,seed:3191}];
+function random(n: number) { const v=Math.sin(n*127.1+43.31)*43758.5453; return v-Math.floor(v); }
+const tiles = patches.flatMap(patch => Array.from({length:patch.cols*patch.rows}, (_,i) => {
+  const col=i%patch.cols,row=Math.floor(i/patch.cols),seed=patch.seed+i;
+  // Irregular holes make independent patches, rather than solid checkerboards.
+  const edge=Math.min(col,patch.cols-col-1,row,patch.rows-row-1);
+  if (random(seed) > (edge<3 ? .11 : .27)) return null;
+  return {x:`calc(${patch.x}% + ${(col-patch.cols/2)*5}px)`,y:`calc(${patch.y}% + ${(row-patch.rows/2)*5}px)`,
+    patch:patch.seed,color:palette[Math.floor(random(seed+51)*palette.length)],opacity:(.04+random(seed+107)*.15).toFixed(3)};
+}).filter((tile): tile is NonNullable<typeof tile> => tile !== null));
 ---
-
-<div class:list={["pixel-field", variant]} aria-hidden="true">
-  {tiles.map((tile) => (
-    <span
-      style={`--x:${tile.x};--y:${tile.y};--w:${tile.w}px;--h:${tile.h}px;--color:${tile.color};--peak:${tile.peak};--duration:${tile.duration}s;--delay:${tile.delay}s`}
-    />
-  ))}
+<div class:list={['pixel-field',variant]} aria-hidden="true">
+  {tiles.map(tile => <span data-patch={tile.patch} style={`--x:${tile.x};--y:${tile.y};--color:${tile.color};opacity:${tile.opacity}`} />)}
 </div>
+<script>
+  // Each tile independently picks its next hold, duration and opacity. There
+  // is no repeated shared keyframe, moving slab or synchronized patch clock.
+  const fields = document.querySelectorAll<HTMLElement>('.pixel-field');
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const animations = new Map<HTMLElement, Animation>();
+  let suspended = false;
+  let observer: IntersectionObserver;
+  const visible = new Set<HTMLElement>();
+  const paused = () => reduced.matches || document.hidden || document.documentElement.dataset.axMotion === 'paused';
+  function next(tile: HTMLElement) {
+    if (paused() || !tile.isConnected || !visible.has(tile.parentElement!)) return;
+    const current = getComputedStyle(tile).opacity;
+    const opacity = Math.random() < .38 ? .015 : .05 + Math.random() * .19;
+    const animation = tile.animate([{opacity:current},{opacity}], {duration:180+Math.random()*720,delay:1200+Math.random()*11000,fill:'forwards',easing:'steps(2,end)'});
+    animations.set(tile, animation);
+    animation.onfinish = () => { tile.style.opacity = String(opacity); animation.cancel(); animations.delete(tile); next(tile); };
+  }
+  function reconcile() {
+    const stopped = paused();
+    if (stopped) {
+      for (const animation of animations.values()) animation.pause();
+      suspended = true;
+      return;
+    }
+    for (const field of visible) for (const tile of field.querySelectorAll<HTMLElement>('span')) {
+      const animation=animations.get(tile);
+      if (animation) { if (suspended) animation.play(); }
+      else next(tile);
+    }
+    suspended=false;
+  }
+  observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const field=entry.target as HTMLElement;
+      if (entry.isIntersecting) visible.add(field);
+      else {
+        visible.delete(field);
+        for (const tile of field.querySelectorAll<HTMLElement>('span')) {
+          const animation=animations.get(tile);
+          if (animation) { const opacity=getComputedStyle(tile).opacity; animation.cancel(); tile.style.opacity=opacity; animations.delete(tile); }
+        }
+      }
+    }
+    reconcile();
+  });
+  for (const field of fields) observer.observe(field);
+  new MutationObserver(reconcile).observe(document.documentElement,{attributes:true,attributeFilter:['data-ax-motion']});
+  reduced.addEventListener('change',reconcile);
+  document.addEventListener('visibilitychange',reconcile);
+</script>
 <style>
-  .pixel-field {
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    overflow: hidden;
-    pointer-events: none;
-    mask-image: linear-gradient(
-      to bottom,
-      transparent,
-      #000 15%,
-      #000 82%,
-      transparent
-    );
-  }
-  span {
-    position: absolute;
-    left: var(--x);
-    top: var(--y);
-    width: var(--w);
-    height: var(--h);
-    background: var(--color);
-    opacity: 0.12;
-    animation: assemble var(--duration) steps(6, end) var(--delay) infinite;
-  }
-  @keyframes assemble {
-    0%,
-    100% {
-      opacity: 0.025;
-      transform: translateY(3px);
-    }
-    35%,
-    55% {
-      opacity: var(--peak);
-      transform: translateY(0);
-    }
-    80% {
-      opacity: 0.06;
-      transform: translateY(0);
-    }
-  }
-  :global(html[data-ax-motion="paused"]) span {
-    animation-play-state: paused;
-  }
-  @media (max-width: 700px) {
-    .hero {
-      opacity: 0.4;
-      mask-image: linear-gradient(90deg, transparent 35%, #000 100%);
-    }
-    .deployment {
-      opacity: 0.4;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    span {
-      animation: none;
-      opacity: 0.12;
-    }
-  }
+ .pixel-field {position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none;mask-image:linear-gradient(to bottom,transparent,#000 12%,#000 85%,transparent);}
+ span {position:absolute;left:var(--x);top:var(--y);width:3px;height:3px;background:var(--color);}
+ @media(max-width:700px) {.hero {opacity:.35;mask-image:linear-gradient(90deg,transparent 42%,#000);} .deployment {opacity:.4;}}
 </style>

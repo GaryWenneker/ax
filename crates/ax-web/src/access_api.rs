@@ -12,10 +12,10 @@ use std::sync::OnceLock;
 use uuid::Uuid;
 
 #[derive(Clone)]
-struct Actor {
-    member_id: String,
-    client_id: Option<String>,
-    role: access::MemberRole,
+pub(crate) struct Actor {
+    pub(crate) member_id: String,
+    pub(crate) client_id: Option<String>,
+    pub(crate) role: access::MemberRole,
 }
 
 fn csrf() -> &'static str {
@@ -681,6 +681,9 @@ pub fn router(hub: WebHub) -> Router {
         .route("/clients", get(list_clients).post(create_client))
         .route("/clients/{id}/token", post(issue_client_token))
         .route("/clients/{id}/revoke", post(revoke_client))
+        .route("/nodes/local", get(crate::replication_setup::status).post(crate::replication_setup::start))
+        .route("/nodes/local/stop", post(crate::replication_setup::stop))
+        .route("/nodes/local/discover", post(crate::replication_setup::discover))
         .route("/nodes", get(list_nodes))
         .route("/nodes/{id}/revoke", post(revoke_node))
         .route("/nodes/{id}/reenroll", post(allow_reenrollment))

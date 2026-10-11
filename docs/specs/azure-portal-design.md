@@ -1,6 +1,6 @@
 # Azure Portal layout for Command Center
 
-Status: implemented on `feature/azure-portal-design`; validation evidence is tracked separately.
+Status: completed on main through PR #16, #18 and #19; current layout/browser checks remain green (17 relevant browser tests on 2026-10-11).
 
 ## Goal
 Add selectable Azure Portal Light and Dark styles to Ax, based on the approved visual concepts. Preserve existing presets and actual Ax functionality. Use independent CSS and Ax components: Azure's deployed private stylesheets are not a stable component API.

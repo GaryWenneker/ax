@@ -1,7 +1,7 @@
 # Team, Client Access & Node Management
 
-Status: implemented — verification and merge pending
-Branch: `feature/team-client-access-management`
+Status: completed on main through PR #14 and the Settings workflow fixes in PR #19. Primary setup and pairing are tracked in [the current pairing spec](settings-primary-pairing.md).
+Merged implementation: [PR #14](https://github.com/GaryWenneker/ax/pull/14) and [PR #19](https://github.com/GaryWenneker/ax/pull/19).
 
 ## Goal
 Make a standalone Ax environment safely usable by teams, external AI clients, and replicated Ax nodes without conflating human identity, client credentials, and replication identity.

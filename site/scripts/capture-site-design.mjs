@@ -101,27 +101,20 @@ try {
   await page.click("[data-ax-motion-toggle]");
   if ((await page.$eval("html", (x) => x.dataset.axMotion)) !== "paused")
     throw new Error("Pause control failed");
-  const sizes = await page.$$eval(
-    ".pixel-field span",
-    (nodes) =>
-      new Set(
-        nodes.map(
-          (x) => getComputedStyle(x).width + "x" + getComputedStyle(x).height,
-        ),
-      ).size,
-  );
-  if (sizes < 5) throw new Error("Pixel field does not vary enough");
-  await page.emulateMediaFeatures([
-    { name: "prefers-reduced-motion", value: "reduce" },
-  ]);
-  const animation = await page.$eval(
-    ".pixel-field span",
-    (x) => getComputedStyle(x).animationName,
-  );
-  if (animation !== "none") throw new Error("Reduced motion not respected");
+  const pixels = await page.$$eval(".pixel-field span", nodes => ({
+    count: nodes.length,
+    tiny: nodes.every(x => parseFloat(getComputedStyle(x).width) <= 3 && parseFloat(getComputedStyle(x).height) <= 3),
+    patches: new Set(nodes.map(x => x.dataset.patch)).size,
+    paused: nodes.every(x => x.getAnimations().every(a => a.playState === "paused")),
+  }));
+  if (!pixels.tiny || pixels.count < 100 || pixels.patches < 3 || !pixels.paused)
+    throw new Error(`Small independent pixel patches failed: ${JSON.stringify(pixels)}`);
+  await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+  const respectsMotion = await page.$$eval(".pixel-field span", nodes => nodes.every(x => x.getAnimations().every(a => a.playState === "paused")));
+  if (!respectsMotion) throw new Error("Reduced motion not respected");
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(
-    `Homepage links, pause control, ${sizes} pixel footprints, and reduced motion passed.`,
+    `Homepage links, pause control, ${pixels.count} tiny pixels in ${pixels.patches} separated patches, and reduced motion passed.`,
   );
 } finally {
   await browser?.close();
