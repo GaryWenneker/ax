@@ -274,6 +274,7 @@ pub async fn replica(
     config: ServerConfig,
     config_path: PathBuf,
     udp_port: u16,
+    auto_apply_memories: bool,
 ) -> Result<(), String> {
     if config.role != NodeRole::Replica {
         return Err("UDP replica notification requires a replica node".into());
@@ -341,7 +342,7 @@ pub async fn replica(
             continue;
         }
         previous_change.insert(message.project_id, revision);
-        if let Err(error) = server_replica::sync(&config_path).await {
+        if let Err(error) = server_replica::sync_with_apply(&config_path, auto_apply_memories).await {
             tracing::warn!("UDP-triggered replica sync failed: {}", error);
             // Periodic polling will retry; an identical later notification
             // should also be able to retry, so forget the failed revision.
