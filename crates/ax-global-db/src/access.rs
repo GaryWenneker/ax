@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -9,6 +10,39 @@ pub enum MemberRole {
     Admin,
     Member,
     Readonly,
+}
+
+pub const VALID_SCOPES: &[&str] = &[
+    "memory:read",
+    "memory:write",
+    "preflight:read",
+    "context:read",
+    "share:read",
+    "share:write",
+    "admin:clients",
+    "admin:team",
+    "admin:nodes",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClientPrincipal {
+    pub member_id: String,
+    pub client_id: String,
+    pub role: MemberRole,
+    pub scopes: Vec<String>,
+}
+
+impl ClientPrincipal {
+    pub fn allows(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|candidate| candidate == scope)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IssuedClientCredential {
+    pub credential_id: String,
+    pub token: String,
+    pub token_prefix: String,
 }
 
 impl MemberRole {
@@ -29,6 +63,41 @@ impl MemberRole {
             "readonly" => Ok(Self::Readonly),
             other => bail!("unknown team member role: {other}"),
         }
+    }
+
+    pub fn default_scopes(self) -> &'static [&'static str] {
+        match self {
+            Self::Owner => VALID_SCOPES,
+            Self::Admin => &[
+                "memory:read",
+                "memory:write",
+                "preflight:read",
+                "context:read",
+                "share:read",
+                "share:write",
+                "admin:clients",
+                "admin:team",
+                "admin:nodes",
+            ],
+            Self::Member => &[
+                "memory:read",
+                "memory:write",
+                "preflight:read",
+                "context:read",
+                "share:read",
+                "share:write",
+            ],
+            Self::Readonly => &[
+                "memory:read",
+                "preflight:read",
+                "context:read",
+                "share:read",
+            ],
+        }
+    }
+
+    pub fn permits(self, scope: &str) -> bool {
+        self.default_scopes().contains(&scope)
     }
 }
 
@@ -146,6 +215,17 @@ pub async fn create_client(
     client_type: &str,
     scopes: &[String],
 ) -> Result<()> {
+    let (role, status): (String, String) = sqlx::query_as(
+        "SELECT role, status FROM team_members WHERE id = ?",
+    )
+    .bind(member_id)
+    .fetch_one(pool)
+    .await?;
+    if status != "active" {
+        bail!("team member is not active");
+    }
+    let role = MemberRole::parse(&role)?;
+    validate_client_scopes(role, scopes)?;
     let scopes = serde_json::to_string(scopes)?;
     sqlx::query(
         "INSERT INTO clients (id, member_id, display_name, client_type, scopes, status)
@@ -206,6 +286,150 @@ pub async fn list_clients(pool: &SqlitePool) -> Result<Vec<Client>> {
             },
         )
         .collect()
+}
+
+
+pub fn validate_client_scopes(role: MemberRole, scopes: &[String]) -> Result<()> {
+    for scope in scopes {
+        if !VALID_SCOPES.contains(&scope.as_str()) {
+            bail!("unknown client scope: {scope}");
+        }
+        if !role.permits(scope) {
+            bail!("scope {scope} exceeds the member role");
+        }
+    }
+    Ok(())
+}
+
+fn token_verifier(token: &str) -> String {
+    blake3::hash(token.as_bytes()).to_hex().to_string()
+}
+
+pub async fn issue_client_credential(
+    pool: &SqlitePool,
+    client_id: &str,
+    expires_at: Option<&str>,
+) -> Result<IssuedClientCredential> {
+    let status: Option<(String,)> =
+        sqlx::query_as("SELECT status FROM clients WHERE id = ?")
+            .bind(client_id)
+            .fetch_optional(pool)
+            .await?;
+    match status {
+        Some((status,)) if status == "active" => {}
+        Some(_) => bail!("client is revoked"),
+        None => bail!("client does not exist"),
+    }
+
+    let credential_id = Uuid::new_v4().to_string();
+    let secret = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let token = format!("axc_{secret}");
+    let token_prefix = token.chars().take(12).collect::<String>();
+    let verifier = token_verifier(&token);
+    add_client_credential(
+        pool,
+        &credential_id,
+        client_id,
+        &token_prefix,
+        &verifier,
+        expires_at,
+    )
+    .await?;
+
+    Ok(IssuedClientCredential {
+        credential_id,
+        token,
+        token_prefix,
+    })
+}
+
+pub async fn authenticate_client_token(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<ClientPrincipal>> {
+    if !token.starts_with("axc_") || token.len() < 40 {
+        return Ok(None);
+    }
+    let prefix = token.chars().take(12).collect::<String>();
+    let verifier = token_verifier(token);
+    let row: Option<(String, String, String, String, String, String, Option<String>)> =
+        sqlx::query_as(
+            "SELECT c.member_id, c.id, tm.role, tm.status, c.status, c.scopes, cc.expires_at
+             FROM client_credentials cc
+             JOIN clients c ON c.id = cc.client_id
+             JOIN team_members tm ON tm.id = c.member_id
+             WHERE cc.token_prefix = ?
+               AND cc.verifier = ?
+               AND cc.revoked_at IS NULL",
+        )
+        .bind(&prefix)
+        .bind(&verifier)
+        .fetch_optional(pool)
+        .await?;
+
+    let Some((member_id, client_id, role, member_status, client_status, scopes, expires_at)) = row
+    else {
+        return Ok(None);
+    };
+    if member_status != "active" || client_status != "active" {
+        return Ok(None);
+    }
+    if let Some(expires_at) = expires_at {
+        let valid: (i64,) = sqlx::query_as(
+            "SELECT CASE WHEN datetime(?) > CURRENT_TIMESTAMP THEN 1 ELSE 0 END",
+        )
+        .bind(expires_at)
+        .fetch_one(pool)
+        .await?;
+        if valid.0 != 1 {
+            return Ok(None);
+        }
+    }
+
+    let role = MemberRole::parse(&role)?;
+    let requested: Vec<String> = serde_json::from_str(&scopes)?;
+    let effective = requested
+        .into_iter()
+        .filter(|scope| role.permits(scope))
+        .collect::<Vec<_>>();
+
+    sqlx::query(
+        "UPDATE client_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE token_prefix = ?",
+    )
+    .bind(&prefix)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE clients SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(&client_id)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE team_members SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(&member_id)
+    .execute(pool)
+    .await?;
+
+    Ok(Some(ClientPrincipal {
+        member_id,
+        client_id,
+        role,
+        scopes: effective,
+    }))
+}
+
+pub async fn revoke_client_credential(pool: &SqlitePool, credential_id: &str) -> Result<bool> {
+    let result = sqlx::query(
+        "UPDATE client_credentials
+         SET revoked_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND revoked_at IS NULL",
+    )
+    .bind(credential_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 pub async fn add_client_credential(
@@ -406,13 +630,24 @@ mod tests {
         )
         .await
         .unwrap();
-        add_client_credential(&pool, "cred1", "c1", "axc_1234", "sha256:test", None)
+        let issued = issue_client_credential(&pool, "c1", None).await.unwrap();
+        assert!(issued.token.starts_with("axc_"));
+        let principal = authenticate_client_token(&pool, &issued.token)
             .await
+            .unwrap()
             .unwrap();
+        assert_eq!(principal.member_id, "u1");
+        assert!(principal.allows("memory:read"));
+        assert!(principal.allows("memory:write"));
+        assert!(!principal.allows("admin:team"));
 
         assert_eq!(list_members(&pool).await.unwrap().len(), 1);
         assert_eq!(list_clients(&pool).await.unwrap()[0].scopes.len(), 2);
         assert!(revoke_client(&pool, "c1").await.unwrap());
+        assert!(authenticate_client_token(&pool, &issued.token)
+            .await
+            .unwrap()
+            .is_none());
 
         discover_replica(&pool, "n1", "Replica 1", Some("http://10.0.0.2:7070"))
             .await
