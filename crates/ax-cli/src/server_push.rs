@@ -230,7 +230,7 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
                 }
             };
             let previous = last_revisions.insert(project.id.clone(), snapshot.revision.clone());
-            if previous.as_deref() == Some(&snapshot.revision) || previous.is_none() {
+            if previous.as_deref() == Some(snapshot.revision.as_str()) || previous.is_none() {
                 continue;
             }
             let Some(token) = token_for(&config, &project.id) else {
