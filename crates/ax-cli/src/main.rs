@@ -6,12 +6,12 @@ mod commands;
 mod help_text;
 mod installer;
 use ax_web::server_config;
+mod server_apply;
 mod server_cli;
-mod server_snapshot;
 mod server_exchange;
 mod server_http;
 mod server_replica;
-mod server_apply;
+mod server_snapshot;
 use ax_web::server_discovery;
 mod server_push;
 mod ui;
@@ -631,12 +631,24 @@ enum ServerAction {
         discovery_port: Option<u16>,
         #[arg(long, help = "Publicly advertised HTTP(S) origin, without credentials")]
         advertise: Option<String>,
-        #[arg(long, help = "On a replica, continuously pull updates every N seconds (5-86400)")]
+        #[arg(
+            long,
+            help = "On a replica, continuously pull updates every N seconds (5-86400)"
+        )]
         sync_interval_seconds: Option<u64>,
-        #[arg(long, default_value_t = 9072, help = "Authenticated UDP registration/change notification port; 0 disables push")]
+        #[arg(
+            long,
+            default_value_t = 9072,
+            help = "Authenticated UDP registration/change notification port; 0 disables push"
+        )]
         push_port: u16,
-        #[arg(long, help = "Project staged replica memories under conflict-safe local IDs")]
+        #[arg(
+            long,
+            help = "Project staged replica memories under conflict-safe local IDs"
+        )]
         auto_apply_memories: bool,
+        #[arg(long, hide = true)]
+        managed: bool,
     },
     /// List nearby cluster nodes without automatically trusting them
     Discover {
@@ -2161,7 +2173,7 @@ async fn async_main() {
             } => server_cli::init(&config, role, cluster, project, path, primary),
             ServerAction::Status { config } => server_cli::status(&config),
             ServerAction::Run {
-                config, bind, allow_private_http, discovery_port, advertise, sync_interval_seconds, push_port, auto_apply_memories
+                config, bind, allow_private_http, discovery_port, advertise, sync_interval_seconds, push_port, auto_apply_memories, managed
             } => server_http::run(
                 &config,
                 server_http::RunOptions {
@@ -2172,6 +2184,7 @@ async fn async_main() {
                     sync_interval_seconds,
                     push_port,
                     auto_apply_memories,
+                    managed,
                 },
             ).await,
             ServerAction::Discover { config, port, seconds } =>
@@ -2224,10 +2237,18 @@ async fn async_main() {
         },
         Some(Commands::Serve { mcp, daemon, path }) if mcp && daemon => {
             let root = commands::resolve_path(path);
+            if let Err(error) = ax_web::replication_setup::auto_start(&root).await {
+                tracing::warn!("replication automatic startup failed: {error}");
+            }
             ax_mcp::run_daemon(root).await.map_err(|e| e.to_string())
         }
         Some(Commands::Serve { mcp, path, .. }) if mcp => {
             let root = path.map(std::path::PathBuf::from);
+            if let Some(project) = ax_mcp::resolve_mcp_project_root(root.clone()) {
+                if let Err(error) = ax_web::replication_setup::auto_start(&project).await {
+                    tracing::warn!("replication automatic startup failed: {error}");
+                }
+            }
             ax_mcp::run_stdio_server(root)
                 .await
                 .map_err(|e| e.to_string())

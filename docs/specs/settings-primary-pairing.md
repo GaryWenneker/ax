@@ -1,29 +1,30 @@
 # Settings: Primary setup and explicit Replica pairing
 
-Status: completed — implemented, locally verified and merged to main in [PR #23](https://github.com/GaryWenneker/ax/pull/23), commit `80fd1533232371c869adcda494c7c5434ed2eb1b`.
+Status: implemented; the original setup landed in [PR #23](https://github.com/GaryWenneker/ax/pull/23). This revision completes saved configuration management and automatic service startup.
 Owner request: 2026-10-11, following PR #14. Automatic pipelines are suspended; validation is local until the owner resumes Actions.
 
 ## Required behavior
 
-- Settings → Replication can configure the currently open, initialized Ax project as a Primary, without editing JSON or running setup commands by hand.
-- A running Command Center can configure a Replica: discover nearby Primary candidates in the selected cluster, explicitly select one, or enter a hosted Primary URL.
-- Discovery never grants trust, silently selects a Primary or connects automatically. Different candidates remain visible.
-- Cluster and project IDs, an explicit Primary origin and its project enrollment credential are required for pairing. Authenticate and verify a bounded snapshot before persisting new intent. A failed connection must remain editable and must not claim success or replace saved settings.
-- Start a real supervised standalone process; show whether the managed process is running. Stop it explicitly before changing role/Primary. Cancellation must not stop anything. Stop only the owned child, never another CLI service.
-- Preserve node identity and non-secret settings across stop/restart. Credentials exist only in request/process memory and the child environment. First Primary creation can generate a credential shown once. Restart requires re-entering it (or setting the dedicated process environment variable).
-- Changes require the existing local Owner authorization, CSRF/Origin checks and writable Command Center. Client tokens cannot remotely start processes or rewrite configuration.
-- The service binds to loopback. A TLS reverse proxy and advertised origin are necessary for access from other machines. LAN discovery is optional; explicit URL configuration also works across hosted environments.
+- Settings → Replication shows a setup form only when the current initialized project has no replication configuration. A saved Primary or Replica shows its configuration and status instead, including after reload or while stopped.
+- Start Primary generates an empty cluster ID, replication project ID and enrollment credential automatically. Supplied values remain usable. A Replica uses the Primary's existing IDs and credential.
+- Replication credentials are masked by default. Eye and copy controls appear on the right, for entered credentials and saved configurations. Revealing or copying a saved credential requires the local Owner session.
+- Removing local configuration stops this project's managed service, removes its settings and stored credential, and returns the setup form. Memories, rules, skills and independent CLI servers are preserved. Cancellation changes nothing. Primary and Replica follow the same lifecycle.
+- A saved service starts automatically with `ax web` and `ax serve --mcp`, including IDE refreshes and daemon mode. Web and MCP reuse the same authenticated local service. Closing or refreshing either frontend does not terminate replication. Explicit Stop preserves intent; the next web/MCP startup starts it again. Remove prevents future startup.
+- Replica setup discovers nearby Primary services automatically, without a search button or a required cluster filter. A typed cluster ID filters the list. Candidates remain distinct; discovery does not select, authenticate or connect a node. Selection and Connect remain explicit.
+- Pairing requires the Primary's origin, cluster/project IDs and enrollment credential. Authenticate and verify a bounded exchange before saving intent. A failed connection remains editable and does not claim success or replace saved settings. Failed synchronization is not presented as a successful connection.
+- Local Owner authorization, writable mode, CSRF and Origin protection apply to configuration, credential access, discovery and lifecycle operations. Client tokens cannot control local processes. Non-secret status and configuration responses never contain credentials.
 - Existing Team, Clients & tokens, revocation, node trust and authenticated replication behavior remain available.
 
 ## Implementation boundaries
 
-The UI manages one node process per Command Center. Its project-local `command-center-node.json` contains settings, not tokens. Runtime configuration is staged in a temporary file held for the child lifetime. CLI configurations remain independent; an occupied port produces a conflict rather than terminating a separate service. The child closes on explicit Stop or normal Command Center shutdown. After process restart the UI loads saved intent but does not pretend it has restarted replication.
+Project-local `.ax/command-center-node.json` preserves identity and non-secret settings. `.ax/command-center-node-runtime.json` holds non-secret runtime configuration so detached services can continue periodic reads. The OS credential store holds enrollment and separate local-control credentials; there is no plaintext fallback. Locked or unavailable secure storage produces an actionable error and preserves existing settings. For a headless deployment, provide both `AX_COMMAND_CENTER_REPLICATION_TOKEN` and `AX_COMMAND_CENTER_NODE_CONTROL` securely in each starting process's environment. Environment values are managed externally, not removed by the UI.
 
-Snapshot pulls preserve the existing separate-mirror contract: they do not activate policies or overwrite local memories. Signed UDP push is disabled for this supervised path; authenticated HTTPS polling remains active. Advertisements use the existing opt-in discovery protocol on UDP 9071. An occupied discovery port is reported, with manual URL entry as the fallback.
+A project-local advisory lock serializes startup/removal across web and MCP processes. Readiness and reuse require authenticated local control plus matching node and cluster identity. Managed endpoints bind only to loopback and require a dedicated control secret, separate from replication enrollment. Ordinary CLI servers do not enable these controls. An occupied or unauthenticated service port produces a conflict; another service is never killed.
+
+Managed services announce automatically on UDP 9071, even without an advertised origin. The default URL is loopback and usable on the same machine. Other machines need a TLS reverse proxy and its explicit advertised origin. Announcements contain no project paths, knowledge or secrets and never grant trust. Replica setup listens repeatedly; manual URL entry remains available if LAN discovery cannot bind or broadcasts are blocked. This managed path uses authenticated polling; separate CLI configuration also supports signed UDP push.
+
+Exchange preserves native records and contributes existing knowledge even to an empty Primary. Received memories use separate IDs, conflicting local edits are retained, missing records never delete copies, and received policies require review. Pairing requires both nodes to support preserve-and-exchange.
 
 ## Verification
 
-- Adjacent Rust tests: local-only privilege boundary; explicit safe origin and initialized project; stable non-secret persistence; bounded credential validation.
-- Browser tests: Primary startup/Stop/cancellation, distinct discovery candidates and explicit selection, manual pairing failure, read-only controls and phone width.
-- Actual local subprocess lifecycle and paired snapshot checks are recorded in [verification evidence](settings-primary-pairing-EVIDENCE.md).
-- Production UI build, relevant Rust checks, current docs and screenshots are required. No GitHub workflow, release or deployment is dispatched during the suspension.
+See [verification evidence](settings-primary-pairing-EVIDENCE.md) for local checks of saved/empty form states, generated IDs, masked/revealed/copied credentials, cancellation/removal, automatic discovery, process reuse, web/MCP startup and data preservation. Production UI output and the embedded CLI are rebuilt together. No workflow, release or deployment is dispatched during the suspension.

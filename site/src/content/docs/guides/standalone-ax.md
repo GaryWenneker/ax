@@ -231,16 +231,17 @@ For [Remote MCP](/guides/remote-mcp/), add the member's stable ID to the desired
 
 ## Configure nodes from Settings
 
-Open **Settings → Replication → Configure this Ax environment** in the local Owner Command Center.
+Open **Settings → Replication** in the local Owner Command Center. Without a saved configuration, Ax shows **Configure this Ax environment**. With one, it shows the saved configuration and status; the setup form stays hidden even when replication is stopped.
 
-1. For a **Primary**, choose that role, enter a cluster ID and replication project ID, then select **Start Primary**. Only the project currently open in Command Center is enrolled. On first setup, leaving the credential empty generates one; copy it when shown, because Ax never saves it to disk.
-2. On another Ax environment, choose **Replica** and enter the same cluster and project IDs. Use **Find nearby Primaries** and explicitly select a candidate, or enter the Primary URL directly. Discovery is a hint, not approval or automatic pairing.
-3. Enter the Primary's project replication credential and select **Connect to Primary**. Ax authenticates the Primary, contributes your existing knowledge, and verifies the combined state before saving configuration. An empty Primary cannot clear an existing Replica. Settings imports received memories under separate IDs and enables continued safe memory application; rules and skills enter pending review. Failed synchronization preserves local data and prior settings.
-4. To choose another Primary or change roles, select **Stop managed node**, confirm, edit the fields, then connect again. This stops only the node started by this Command Center; it does not terminate a separate CLI service.
+1. For a **Primary**, select **Start Primary**. Empty cluster ID, replication project ID and credential fields are generated automatically; you can also supply values. Only the project currently open in Command Center is enrolled.
+2. Copy the cluster/project IDs and replication credential from the saved overview. The credential is masked by default, with eye and copy controls on the right. Ax keeps it in the OS credential store for automatic startup, never in the settings JSON.
+3. On another Ax environment, choose **Replica**. Available Primary services appear automatically through UDP discovery; there is no search button. Select a candidate or enter its URL directly, then use the same cluster/project IDs and credential. Selection does not connect automatically.
+4. Select **Connect to Primary**. Ax authenticates the Primary, contributes existing knowledge and verifies the combined state before saving configuration. An empty Primary cannot clear an existing Replica. Received memories use separate IDs; rules and skills require review. Failed synchronization preserves local data and prior settings.
+5. **Stop managed node** temporarily stops replication and preserves its configuration. **Remove local configuration** stops it, removes settings and the stored credential, and returns the setup form. Existing memories, rules and skills remain. Use removal to configure a different role or Primary. Both actions require confirmation; cancellation changes nothing.
 
-Node identity and configuration survive restarts. Replication credentials stay in request/process memory and the child environment, so enter the original credential again after restart (or provide `AX_COMMAND_CENTER_REPLICATION_TOKEN` in the Command Center environment). A saved configuration is shown as stopped until it is activated. The managed process ends on Stop or normal Command Center shutdown.
+A configured Primary or Replica starts automatically when `ax web` or `ax serve --mcp` starts, including an IDE refresh and MCP daemon mode. These processes reuse the same service. Replication continues when Command Center closes or the IDE refreshes; explicit Stop ends it, and the next web/MCP startup starts it again. Remove configuration prevents automatic restart. Restart controls are available while stopped and normally reuse the stored credential. Unlock an unavailable OS credential store or reconnect with the credential. Headless installations can supply both `AX_COMMAND_CENTER_REPLICATION_TOKEN` and `AX_COMMAND_CENTER_NODE_CONTROL` securely in each starting process's environment; these external values are not deleted by the UI.
 
-The service listens on `127.0.0.1`, port 9070 by default. For other machines, put a TLS reverse proxy in front of that port and enter its origin as **Advertised URL**. This enables LAN announcements on UDP 9071. A LAN announcement never replaces TLS or credentials. Hosted connections can use the URL field without discovery. If a port is occupied, Settings reports the conflict rather than killing another process. This managed path uses authenticated polling; the separate CLI setup below also supports signed UDP notifications.
+The service listens on `127.0.0.1`, port 9070 by default, and announces automatically on UDP 9071. Its default advertised URL works on the same machine. For other machines, configure a TLS reverse proxy and enter its origin as **Advertised URL**. Announcements never replace authentication. Hosted connections can use the URL field directly. An occupied port is reported rather than terminating another service. The managed path uses authenticated polling; separate CLI setup also supports signed UDP notifications.
 
 These controls require the local writable Owner session with CSRF protection. Remote client tokens cannot configure or start local node processes. Team/client credentials and project replication enrollment credentials remain separate.
 
@@ -260,8 +261,12 @@ Disabling or revoking access does not delete a team member's existing data. Thes
 
 These screenshots use synthetic public example identities and contain no working credentials.
 
-### Primary selection in Settings
+### Saved configuration and automatic discovery
 
-![Settings with two discovered Primary candidates and an explicit selection](/screenshots/cc-primary-pairing.png)
+![Saved Primary configuration with a masked credential and eye/copy controls](/screenshots/cc-replication-configured.png)
+
+The saved overview replaces setup. The credential remains masked until the Owner reveals it.
+
+![Settings with two automatically discovered Primary candidates and an explicit selection](/screenshots/cc-primary-pairing.png)
 
 Documentation capture with synthetic candidates; this screenshot illustrates selection before enrollment. A selected card requires the Primary’s project credential and **Connect to Primary**.

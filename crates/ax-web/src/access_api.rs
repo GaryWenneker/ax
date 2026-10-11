@@ -681,9 +681,23 @@ pub fn router(hub: WebHub) -> Router {
         .route("/clients", get(list_clients).post(create_client))
         .route("/clients/{id}/token", post(issue_client_token))
         .route("/clients/{id}/revoke", post(revoke_client))
-        .route("/nodes/local", get(crate::replication_setup::status).post(crate::replication_setup::start))
+        .route(
+            "/nodes/local",
+            get(crate::replication_setup::status).post(crate::replication_setup::start),
+        )
         .route("/nodes/local/stop", post(crate::replication_setup::stop))
-        .route("/nodes/local/discover", post(crate::replication_setup::discover))
+        .route(
+            "/nodes/local/credential",
+            post(crate::replication_setup::credential),
+        )
+        .route(
+            "/nodes/local/remove",
+            post(crate::replication_setup::remove),
+        )
+        .route(
+            "/nodes/local/discover",
+            post(crate::replication_setup::discover),
+        )
         .route("/nodes", get(list_nodes))
         .route("/nodes/{id}/revoke", post(revoke_node))
         .route("/nodes/{id}/reenroll", post(allow_reenrollment))

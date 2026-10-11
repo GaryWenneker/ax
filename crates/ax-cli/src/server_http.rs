@@ -27,6 +27,8 @@ struct StateData {
     config: ServerConfig,
     access_db: SqlitePool,
     exports: Semaphore,
+    control: Option<String>,
+    shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 fn project_bootstrap_token(config: &ServerConfig, project_id: &str) -> Option<String> {
@@ -57,6 +59,39 @@ async fn health(State(state): State<Arc<StateData>>) -> Json<serde_json::Value> 
     Json(
         serde_json::json!({"status":"ok", "node_id":state.config.node_id, "role":state.config.role}),
     )
+}
+
+fn authorize_control(state: &StateData, headers: &HeaderMap) -> Result<(), StatusCode> {
+    let expected = state.control.as_deref().ok_or(StatusCode::NOT_FOUND)?;
+    let candidate = bearer_token(headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    if !exact_secret(candidate, expected) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(())
+}
+
+async fn managed_status(
+    State(state): State<Arc<StateData>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    authorize_control(&state, &headers)?;
+    Ok(Json(
+        serde_json::json!({"node_id":state.config.node_id,"cluster_id":state.config.cluster_id,"role":state.config.role}),
+    ))
+}
+
+async fn managed_stop(
+    State(state): State<Arc<StateData>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    authorize_control(&state, &headers)?;
+    state
+        .shutdown
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?
+        .send(true)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"stopped":true})))
 }
 
 async fn authorize_project(
@@ -197,6 +232,7 @@ pub struct RunOptions {
     pub sync_interval_seconds: Option<u64>,
     pub push_port: u16,
     pub auto_apply_memories: bool,
+    pub managed: bool,
 }
 
 /// Start the listener and serve until the process receives shutdown.
@@ -209,8 +245,28 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         sync_interval_seconds,
         push_port,
         auto_apply_memories,
+        managed,
     } = options;
     let config = server_cli::load(path)?;
+    let control = if managed {
+        if !bind.ip().is_loopback() {
+            return Err("managed control requires loopback binding".into());
+        }
+        let token = std::env::var("AX_COMMAND_CENTER_NODE_CONTROL")
+            .map_err(|_| "managed node control credential is missing")?;
+        if token.len() < 32
+            || token.len() > 4096
+            || !token.is_ascii()
+            || token
+                .bytes()
+                .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+        {
+            return Err("managed node control credential is invalid".into());
+        }
+        Some(token)
+    } else {
+        None
+    };
     if auto_apply_memories && config.role != NodeRole::Replica {
         return Err("--auto-apply-memories is only valid for replicas".into());
     }
@@ -298,13 +354,18 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
             }
         }))
     };
+    let (shutdown, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let state = Arc::new(StateData {
         config,
         access_db,
         exports: Semaphore::new(4),
+        control,
+        shutdown: managed.then_some(shutdown),
     });
     let app = Router::new()
         .route("/health", get(health))
+        .route("/managed/status", post(managed_status))
+        .route("/managed/stop", post(managed_stop))
         .route("/v1/projects/{id}/snapshot", get(snapshot))
         .route("/v1/projects/{id}/exchange", post(exchange))
         .layer(DefaultBodyLimit::max(
@@ -319,8 +380,9 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         listener.local_addr().map_err(|e| e.to_string())?
     );
     let result = axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            if managed { tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = shutdown_rx.changed() => {} } }
+            else { let _ = tokio::signal::ctrl_c().await; }
         })
         .await
         .map_err(|e| e.to_string());
@@ -357,6 +419,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn managed_control_requires_its_own_secret_and_is_disabled_for_cli_servers() {
+        let (shutdown, mut receiver) = tokio::sync::watch::channel(false);
+        let mut state = StateData {
+            config: ServerConfig {
+                schema_version: 1,
+                cluster_id: "team".into(),
+                node_id: "primary".into(),
+                role: NodeRole::Primary,
+                primary_url: None,
+                projects: vec![],
+            },
+            access_db: sqlx::sqlite::SqlitePoolOptions::new()
+                .connect_lazy("sqlite::memory:")
+                .unwrap(),
+            exports: Semaphore::new(4),
+            control: Some("local-control-secret".into()),
+            shutdown: Some(shutdown),
+        };
+        let mut headers = HeaderMap::new();
+        assert_eq!(
+            authorize_control(&state, &headers),
+            Err(StatusCode::UNAUTHORIZED)
+        );
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer replication-credential".parse().unwrap(),
+        );
+        assert_eq!(
+            authorize_control(&state, &headers),
+            Err(StatusCode::UNAUTHORIZED)
+        );
+        assert!(!*receiver.borrow());
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer local-control-secret".parse().unwrap(),
+        );
+        let result = managed_stop(State(Arc::new(state)), headers.clone()).await;
+        assert!(result.is_ok());
+        receiver.changed().await.unwrap();
+        assert!(*receiver.borrow());
+        state = StateData {
+            config: ServerConfig {
+                schema_version: 1,
+                cluster_id: "team".into(),
+                node_id: "ordinary".into(),
+                role: NodeRole::Primary,
+                primary_url: None,
+                projects: vec![],
+            },
+            access_db: sqlx::sqlite::SqlitePoolOptions::new()
+                .connect_lazy("sqlite::memory:")
+                .unwrap(),
+            exports: Semaphore::new(4),
+            control: None,
+            shutdown: None,
+        };
+        assert_eq!(
+            authorize_control(&state, &headers),
+            Err(StatusCode::NOT_FOUND)
+        );
+    }
+
+    #[tokio::test]
     async fn exchange_binds_authenticated_node_and_project_before_retaining_data() {
         use crate::server_config::ProjectRegistration;
         let dir = tempfile::tempdir().unwrap();
@@ -386,6 +511,8 @@ mod tests {
             config: config.clone(),
             access_db: db.clone(),
             exports: Semaphore::new(4),
+            control: None,
+            shutdown: None,
         });
         let mut other = config.clone();
         other.role = NodeRole::Replica;
