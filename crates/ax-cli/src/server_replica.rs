@@ -176,7 +176,13 @@ async fn fetch_snapshot(
     let base = config.primary_url.as_deref().ok_or("replica requires primary_url")?;
     let url = reqwest::Url::parse(base).map_err(|e| e.to_string())?
         .join(&format!("/v1/projects/{}/snapshot", project.id)).map_err(|e| e.to_string())?;
-    let mut response = client.get(url).bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let mut response = client
+        .get(url)
+        .bearer_auth(token)
+        .header("x-ax-node-id", &config.node_id)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("snapshot request returned HTTP {}", response.status()));
     }
