@@ -148,6 +148,28 @@ For Docker, mount project data and the server JSON as persistent read-only input
 
 For browser login and AI clients such as ChatGPT, use the existing [Remote MCP and browser login](/guides/remote-mcp/) instructions. OAuth client connections, policy sharing, and standalone node replication are three **separate** concerns.
 
+## 8. Run the primary in Docker Compose
+
+A production-oriented starting point is available at [deploy/standalone/compose.yaml](https://github.com/GaryWenneker/ax/blob/feature/standalone-ax/deploy/standalone/compose.yaml). The image is built from the Rust workspace and contains the bundled Command Center, but it runs only the standalone authenticated server by default.
+
+1. Create `deploy/standalone/primary-project`, make the directory writable by Linux UID/GID **10001**, and initialize it with `ax init` (from the host if Ax is installed, or by using the container: `docker compose run --rm primary init /data/project`). It needs a writable `.ax` directory.
+2. Create a `primary.json` configuration using `ax server init`. When storing it for the container, set the registered project `path` to **`/data/project`**, not the host's absolute path. Do not change the stable generated node ID or the token environment-variable name.
+3. Provide `AX_SERVER_KNOWLEDGE_TOKEN` through a **private**, untracked environment file or secrets manager. The primary and trusted replicas use the same value for this particular project.
+4. Start the service:
+
+```sh
+cd deploy/standalone
+docker compose build
+docker compose up -d
+docker compose ps
+docker compose logs -f primary
+curl -fsS http://127.0.0.1:9070/health
+```
+
+The default Compose port binding is **host-loopback only**. Access from other machines requires a trusted HTTPS reverse proxy; do not expose the plaintext Ax listener directly. If the replicas are on a private LAN, explicitly enable the commented **UDP 9072** host port and start Ax with `--push-port 9072`. If they are on different networks or your host firewall blocks UDP, keep `--push-port 0`: periodic authenticated HTTPS polling is still supported.
+
+For backups, stop the service and back up the complete `primary-project/.ax` state and separately back up the server configuration. Keep credentials in your secret store, never in the backup of a public repository. Upgrades: rebuild the image from a tested main release, run `docker compose up -d --build`, and verify the health endpoint.
+
 ## Troubleshooting
 
 - **401 Unauthorized:** check that the project ID and token environment variable exactly match on both nodes.
