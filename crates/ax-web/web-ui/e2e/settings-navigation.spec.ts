@@ -35,7 +35,7 @@ test('Settings uses a compact section selector on narrow screens', async ({ page
   await page.goto('/settings');
 
   await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeHidden();
-  const selector = page.getByLabel('Settings section');
+  const selector = page.getByLabel('Settings section', { exact: true });
   await expect(selector).toBeVisible();
   await selector.selectOption('settings-okf');
   await expect(page).toHaveURL(/#settings-okf$/);
