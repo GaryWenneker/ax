@@ -1,0 +1,32 @@
+/* Layered inline vector background. No image URLs or canvas. */
+.signal-ambient.ax-landscape { position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:radial-gradient(ellipse at 47% 38%,#092a48 0%,#04172d 34%,#010914 74%,#01060d 100%);isolation:isolate; }
+.ax-landscape .ax-vector,.ax-landscape .ax-sky-wash,.ax-landscape .ax-foreground-vignette { position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none; }
+.ax-landscape .ax-vector { transform-origin:50% 75%; }
+.ax-landscape .ax-sky-wash { background:radial-gradient(ellipse at 47% 61%,rgba(9,118,203,.18),transparent 35%),linear-gradient(180deg,rgba(0,4,12,.25),transparent 57%,rgba(2,11,22,.15));animation:ax-vector-haze 13s ease-in-out infinite alternate; }
+.ax-landscape .ax-depth-stars { opacity:.65; animation:ax-vector-stars 34s ease-in-out infinite alternate; }
+.ax-landscape .ax-depth-distant { opacity:.92; animation:ax-vector-depth 28s ease-in-out infinite alternate; }
+.ax-landscape .ax-depth-atmosphere {opacity:.94;mix-blend-mode:screen;animation:ax-vector-fog 19s ease-in-out infinite alternate;}
+.ax-landscape .ax-depth-spires {mix-blend-mode:screen;animation:ax-vector-spire 13s ease-in-out infinite alternate;}
+.ax-landscape .ax-depth-paths {mix-blend-mode:screen;opacity:.92;animation:ax-vector-depth 24s ease-in-out infinite alternate-reverse;}
+.ax-landscape .ax-depth-dots {opacity:.82;mask-image:radial-gradient(ellipse 50% 57% at 45% 77%,#000 9%,rgba(0,0,0,.75) 49%,transparent 97%);-webkit-mask-image:radial-gradient(ellipse 50% 57% at 45% 77%,#000 9%,rgba(0,0,0,.75) 49%,transparent 97%);animation:ax-vector-dots 14s ease-in-out infinite alternate;}
+.ax-landscape .ax-dots-pulse {animation:ax-vector-dotbreath 9s ease-in-out infinite alternate;}
+.ax-landscape .ax-foreground-vignette {background:linear-gradient(90deg,rgba(0,6,15,.28) 0,transparent 39%,transparent 69%,rgba(0,8,18,.15)),linear-gradient(180deg,rgba(0,7,16,.02) 0%,transparent 64%,rgba(0,5,12,.55) 100%);}
+.ax-landscape .ax-beam-halo,.ax-landscape .ax-shaft-edges { transform-origin:47% 65%;animation:ax-vector-beam 8.8s ease-in-out infinite alternate; }
+.ax-landscape .ax-breathing-core {transform-origin:48% 64%;animation:ax-vector-core 7s ease-in-out infinite alternate;}
+.ax-landscape .ax-route-core {fill:none;stroke:#5acbff;stroke-width:1.5;stroke-linecap:round;stroke-opacity:.77;stroke-dasharray:180 28 26 18;animation:ax-vector-stream 22s linear infinite;}
+.ax-landscape .ax-route-glow {fill:none;stroke:#168dff;stroke-width:14;stroke-opacity:.47;filter:url(#ax-path-bloom);}
+.ax-landscape .ax-route-delayed {animation-duration:30s;animation-direction:reverse;}
+.ax-landscape .ax-road-nodes {animation:ax-vector-dotbreath 6.5s ease-in-out infinite alternate;}
+@keyframes ax-vector-stars {from{transform:translate3d(-.7%,.3%,0);opacity:.43}to{transform:translate3d(.9%,-.7%,0);opacity:.78}}
+@keyframes ax-vector-depth {from{transform:scale(1) translateY(0)}to{transform:scale(1.025) translateY(-.5%)}}
+@keyframes ax-vector-fog {from{transform:translateX(-2%) scale(1);opacity:.37}to{transform:translateX(2%) scale(1.06);opacity:.98}}
+@keyframes ax-vector-haze {from{opacity:.42}to{opacity:.9}}
+@keyframes ax-vector-spire {from{opacity:.56;transform:scale(1)}to{opacity:1;transform:scale(1.013)}}
+@keyframes ax-vector-beam {from{opacity:.34;transform:scaleX(.7)}to{opacity:.9;transform:scaleX(1.17)}}
+@keyframes ax-vector-core {from{opacity:.4;transform:scale(.9)}to{opacity:.85;transform:scale(1.13)}}
+@keyframes ax-vector-stream {to{stroke-dashoffset:-920}}
+@keyframes ax-vector-dotbreath {from{opacity:.49}to{opacity:.86}}
+@keyframes ax-vector-dots {from{opacity:.6;transform:translateY(1%)}to{opacity:.92;transform:translateY(-.5%)}}
+@media(max-width:850px){.ax-landscape .ax-depth-dots{opacity:.3;mask-image:linear-gradient(180deg,transparent 0%,rgba(0,0,0,.2) 55%,#000 100%)}.ax-landscape .ax-depth-spires{opacity:.6}.ax-landscape .ax-depth-distant{opacity:.75}}
+@media(prefers-reduced-motion:reduce){.ax-landscape *, .ax-landscape *::before,.ax-landscape *::after{animation:none!important;transition:none!important}}
+html[data-ax-motion="paused"] .ax-landscape *,html[data-ax-motion="paused"] .ax-landscape *::before,html[data-ax-motion="paused"] .ax-landscape *::after {animation-play-state:paused!important;}

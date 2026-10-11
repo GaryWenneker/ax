@@ -8,7 +8,8 @@ const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const home = readFileSync(path.join(site, "src/components/CinematicHome.astro"), "utf8");
 const css = readFileSync(path.join(site, "src/styles/home-cinematic.css"), "utf8");
 const index = readFileSync(path.join(site, "src/pages/index.astro"), "utf8");
-const terrain = readFileSync(path.join(site, "src/styles/home-landscape.css"), "utf8");
+const terrain = readFileSync(path.join(site, "src/styles/landscape-svg.css"), "utf8");
+const vector = readFileSync(path.join(site, "src/components/VectorLandscape.astro"), "utf8");
 
 test("hero communicates the full Ax product, not just the graph", () => {
   assert.match(home, /Understand code/);
@@ -33,10 +34,16 @@ test("continuous ticker uses the existing agent logo paths", () => {
   assert.match(css, /ticker-travel/);
 });
 test("cinematic environment is animated and can be paused", () => {
-  assert.doesNotMatch(terrain, /url\s*\(/);
-  assert.match(terrain, /@keyframes ax-mountain-breathe/);
-  assert.match(terrain, /@keyframes ax-beam-throb/);
-  assert.match(terrain, /@keyframes ax-stars-drift/);
+  assert.match(home, /VectorLandscape/);
+  assert.match(vector, /ax-depth-dots/);
+  assert.match(vector, /dots\.map/);
+  assert.match(vector, /ax-depth-distant/);
+  assert.match(vector, /ax-depth-spires/);
+  assert.match(vector, /ax-depth-atmosphere/);
+  assert.match(terrain, /@keyframes ax-vector-depth/);
+  assert.match(terrain, /@keyframes ax-vector-beam/);
+  assert.match(terrain, /@keyframes ax-vector-stars/);
+  assert.doesNotMatch(terrain, /background-image:\s*url\(/);
   assert.match(terrain, /data-ax-motion="paused"/);
   assert.match(terrain, /prefers-reduced-motion:reduce/);
 });
