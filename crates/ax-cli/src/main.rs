@@ -6,6 +6,7 @@ mod commands;
 mod help_text;
 mod installer;
 mod server_config;
+mod server_cli;
 mod ui;
 mod version_check;
 
@@ -508,6 +509,11 @@ enum Commands {
         #[command(subcommand)]
         action: DocsCatalogAction,
     },
+    /// Configure and inspect a standalone Ax node
+    Server {
+        #[command(subcommand)]
+        action: ServerAction,
+    },
     /// Aggregate this project's ax.db into ~/.ax/global.db
     #[command(long_about = help_text::GLOBAL_LONG)]
     Global {
@@ -586,6 +592,30 @@ enum DocsCatalogAction {
         dry_run: bool,
         #[arg(long, help = "JSON output")]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServerAction {
+    /// Create a standalone node configuration (will never overwrite)
+    Init {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long, value_enum)]
+        role: server_config::NodeRole,
+        #[arg(long)]
+        cluster: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        path: std::path::PathBuf,
+        #[arg(long)]
+        primary: Option<String>,
+    },
+    /// Inspect registered projects without printing secret token values
+    Status {
+        #[arg(long)]
+        config: std::path::PathBuf,
     },
 }
 
@@ -2075,6 +2105,17 @@ async fn async_main() {
                 json,
             } => commands::docs_catalog::run_sync(skip_wiki_pull, dry_run, json).await,
         },
+        Some(Commands::Server { action }) => match action {
+            ServerAction::Init {
+                config,
+                role,
+                cluster,
+                project,
+                path,
+                primary,
+            } => server_cli::init(&config, role, cluster, project, path, primary),
+            ServerAction::Status { config } => server_cli::status(&config),
+        },
         Some(Commands::Global { action }) => match action {
             GlobalAction::Init => commands::global::run_init().await,
             GlobalAction::Sync { path } => commands::global::run_sync(path).await,
@@ -2216,6 +2257,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Agent { .. }) => Some("agent".into()),
         Some(Commands::Bootstrap { .. }) => Some("bootstrap".into()),
         Some(Commands::DocsCatalog { .. }) => Some("docs-catalog".into()),
+        Some(Commands::Server { .. }) => Some("server".into()),
         Some(Commands::Global { .. }) => Some("global".into()),
         Some(Commands::Mcp { .. }) => Some("mcp".into()),
         Some(Commands::Offload { .. }) => Some("offload".into()),
