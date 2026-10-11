@@ -1,0 +1,78 @@
+---
+/**
+ * Distributed, CSS-only pixel mosaic for the marketing homepage.
+ * Multiple independent constellations keep the field balanced across the viewport.
+ * Seeded at build time: no runtime JS, layout reads, or animation libraries.
+ */
+const clusters = [
+  { x: 8, y: 18, cols: 13, rows: 8, scale: 0.82 },
+  { x: 37, y: 12, cols: 15, rows: 8, scale: 0.92 },
+  { x: 73, y: 19, cols: 15, rows: 10, scale: 1.05 },
+  { x: 19, y: 68, cols: 14, rows: 9, scale: 0.85 },
+  { x: 52, y: 65, cols: 17, rows: 10, scale: 1 },
+  { x: 85, y: 75, cols: 12, rows: 8, scale: 0.82 },
+];
+const palette = ['#648996', '#7a9692', '#a88e70', '#718494', '#879e89', '#b19b7d'];
+function random(seed: number) {
+  const n = Math.sin(seed * 127.1 + 43.31) * 43758.5453;
+  return n - Math.floor(n);
+}
+const tiles = clusters.flatMap((cluster, group) =>
+  Array.from({ length: cluster.cols * cluster.rows }, (_, i) => {
+    const col = i % cluster.cols;
+    const row = Math.floor(i / cluster.cols);
+    const density = random(i * 11 + group * 107);
+    if (density > 0.59) return null;
+    return {
+      left: `calc(${cluster.x}% + ${(col - cluster.cols / 2) * 16 * cluster.scale}px)`,
+      top: `calc(${cluster.y}% + ${(row - cluster.rows / 2) * 16 * cluster.scale}px)`,
+      size: `${Math.round(12 * cluster.scale)}px`,
+      color: palette[Math.floor(random(i * 7 + group * 89) * palette.length)],
+      peak: (0.08 + random(i * 23 + group * 13) * 0.32).toFixed(2),
+      duration: (5 + random(i * 31 + group * 67) * 8).toFixed(2),
+      delay: (-random(i * 43 + group * 47) * 13).toFixed(2),
+    };
+  }).filter((tile) => tile !== null)
+);
+---
+<div class="pixel-field" aria-hidden="true">
+  {tiles.map((tile) => (
+    <span class="pixel" style={`--x:${tile.left};--y:${tile.top};--size:${tile.size};--color:${tile.color};--peak:${tile.peak};--duration:${tile.duration}s;--delay:${tile.delay}s`} />
+  ))}
+</div>
+<style>
+  .pixel-field {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 0;
+    background-image: linear-gradient(rgba(146, 165, 168, .018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(146, 165, 168, .018) 1px, transparent 1px);
+    background-size: 32px 32px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 10%, #000 85%, transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 10%, #000 85%, transparent);
+  }
+  .pixel {
+    position: absolute;
+    left: var(--x);
+    top: var(--y);
+    width: var(--size);
+    height: var(--size);
+    background: var(--color);
+    opacity: .09;
+    animation: pixel-breathe var(--duration) ease-in-out var(--delay) infinite;
+  }
+  @keyframes pixel-breathe {
+    0%, 100% { opacity: .025; transform: scale(.7); }
+    42% { opacity: var(--peak); transform: scale(1); }
+    72% { opacity: .06; transform: scale(.88); }
+  }
+  :global(html[data-ax-motion='paused']) .pixel { animation-play-state: paused; }
+  @media (prefers-reduced-motion: reduce) {
+    .pixel { animation: none; opacity: .12; }
+  }
+  @media (max-width: 700px) {
+    .pixel-field { opacity: .55; }
+  }
+</style>
