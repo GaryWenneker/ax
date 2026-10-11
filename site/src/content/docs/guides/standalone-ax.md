@@ -88,6 +88,10 @@ Set the same `AX_SERVER_KNOWLEDGE_TOKEN` as on the primary. Make an initial one-
 ```sh
 ax server sync --config ./ax-replica.json
 ax server status --config ./ax-replica.json
+
+# After reviewing the mirror, optionally apply replica memories to the
+# local vault under deterministic non-conflicting IDs:
+ax server apply --config ./ax-replica.json
 ```
 
 Then start the replica's long-running service:
@@ -97,10 +101,11 @@ ax server run \
   --config ./ax-replica.json \
   --bind 127.0.0.1:9073 \
   --push-port 9072 \
-  --sync-interval-seconds 60
+  --sync-interval-seconds 60 \
+  --auto-apply-memories
 ```
 
-The replica uses its own transient UDP socket, so it can run on the same host as the primary. The 60-second timer is a **fallback**, not the normal expected LAN-update latency.
+The replica uses its own transient UDP socket, so it can run on the same host as the primary. The 60-second timer is a **fallback**, not the normal expected LAN-update latency. **With `--auto-apply-memories`**, newly arrived memories appear in the replica's own Ax vault and can be recalled, while preserving their enabled flags. Without it, they remain staged until you run `ax server apply`. Policy rules and skills remain staged for review; never activate new executable instructions automatically.
 
 ## 4. How near-realtime updates work
 
@@ -134,7 +139,7 @@ ax server sync --config ./ax-replica.json
 
 The status output reports the last attempt, last successful revision and failures for every enrolled project. If the primary goes offline, the replica keeps its last verified staged mirror. Once network connectivity returns, the next signed notification or HTTPS polling cycle can update it.
 
-A successful **mirror** does not mean the replica's existing local rules or memory database were overwritten. The replica keeps revisions under `.ax/server/replicas/` for review and possible future activation. This preserves local changes and prevents accidental conflicts.
+A successful **mirror** does not overwrite the replica's local database. When you explicitly enable memory application, the replica imports copies using stable, namespaced IDs and a ledger recording the last applied version. If a user modifies an imported memory locally, subsequent syncs detect the conflict instead of replacing it. Remote deletions only remove records that still match the last imported copy. Policies are not activated automatically. The original revisioned mirror remains under `.ax/server/replicas/` for review.
 
 ## 6. LAN discovery versus registration
 
@@ -175,7 +180,8 @@ For backups, stop the service and back up the complete `primary-project/.ax` sta
 - **401 Unauthorized:** check that the project ID and token environment variable exactly match on both nodes.
 - **Replica cannot contact the primary:** check the configured HTTPS origin, TLS termination and TCP port; no automatic discovery-based promotion occurs.
 - **No immediate LAN update:** verify UDP 9072 is allowed through both firewalls and the primary is still running. Manual sync and periodic polling remain available.
-- **Status shows mirrored, not applied:** this is the current safe behavior. The snapshot is isolated and has not overwritten local Ax state.
+- **Status shows mirrored, not applied:** default behavior stages snapshots without database modifications. Run `ax server apply --config ...` once or enable `--auto-apply-memories` for continuous memory projection. Policy still needs review.
+- **Memory projection reports conflicts:** an imported memory was edited locally or its ledger does not match. The local value is preserved; investigate the conflict before reapplying.
 - **Different projects seem to cross over:** stop using the service and check project IDs, cluster IDs and tokens. Each project must have its own independent secret.
 
 See the implementation [in the public repository](https://github.com/GaryWenneker/ax/tree/feature/standalone-ax). This is a development branch, not an announcement that CI, releases or production deployment have passed.
