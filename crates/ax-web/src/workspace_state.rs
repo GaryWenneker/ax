@@ -148,6 +148,7 @@ impl WebHub {
             .nest("/api/okf", crate::okf_api::router_hub(hub.clone()))
             .nest("/api/workspace", workspace::router_hub(hub.clone()))
             .nest("/api/agent", agent::router_hub(hub.clone()))
+            .nest("/api/access", crate::access_api::router(hub.clone()))
             .nest("/api/actions", crate::actions::router_hub(hub.clone()))
             .nest("/api/changes", crate::changes::router_hub(hub.clone()))
             .nest("/api/share", crate::share_api::router_hub(hub.clone()))
