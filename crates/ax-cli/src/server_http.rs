@@ -16,37 +16,22 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use std::{collections::HashMap, net::{IpAddr, SocketAddr}, path::Path, sync::Arc};
-use subtle::ConstantTimeEq;
+use std::{net::{IpAddr, SocketAddr}, path::Path, sync::Arc};
+use sqlx::SqlitePool;
 use tokio::sync::Semaphore;
 
 struct StateData {
     config: ServerConfig,
-    tokens: HashMap<String, String>,
+    access_db: SqlitePool,
     exports: Semaphore,
 }
 
-fn load_tokens(config: &ServerConfig) -> Result<HashMap<String, String>, String> {
-    config.projects.iter().map(|project| {
-        let token = std::env::var(&project.token_env)
-            .map_err(|_| format!("missing secret in environment variable {}", project.token_env))?;
-        if token.len() < 32 || !token.is_ascii() || token.bytes().any(|b| b.is_ascii_whitespace()) {
-            return Err(format!(
-                "{} must contain a random ASCII token of at least 32 non-whitespace characters",
-                project.token_env
-            ));
-        }
-        Ok((project.id.clone(), token))
-    }).collect()
-}
-
-fn authorized(headers: &HeaderMap, secret: &str) -> bool {
-    let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) else {
-        return false;
-    };
-    let Some(candidate) = value.strip_prefix("Bearer ") else { return false };
-    if candidate.len() != secret.len() { return false; }
-    bool::from(candidate.as_bytes().ct_eq(secret.as_bytes()))
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty())
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -61,10 +46,21 @@ async fn snapshot(
     if state.config.role != NodeRole::Primary {
         return Err(StatusCode::NOT_FOUND);
     }
-    let Some(token) = state.tokens.get(&id) else {
+    if !state.config.projects.iter().any(|project| project.id == id) {
         return Err(StatusCode::NOT_FOUND);
-    };
-    if !authorized(&headers, token) {
+    }
+    let token = bearer_token(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let principal = ax_global_db::access::authenticate_node_token_for_project(
+        &state.access_db,
+        token,
+        &id,
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(project = %id, "node authentication failed: {}", error);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    if principal.is_none() {
         return Err(StatusCode::UNAUTHORIZED);
     }
     let _permit = state.exports.acquire().await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
@@ -125,7 +121,10 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
     if !bind.ip().is_loopback() && (!allow_private_http || !private_bind(bind.ip())) {
         return Err("non-loopback bind requires --allow-private-http on a private network; terminate TLS at the reverse proxy".into());
     }
-    let tokens = load_tokens(&config)?;
+    let access_db_path = ax_global_db::global_db_path().map_err(|e| e.to_string())?;
+    let access_db = ax_global_db::open_and_init(&access_db_path)
+        .await
+        .map_err(|e| e.to_string())?;
     let announcement = discovery_port.zip(advertise).map(|(port, url)| {
         let node = config.clone();
         tokio::spawn(async move {
@@ -172,7 +171,7 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
     };
     let state = Arc::new(StateData {
         config,
-        tokens,
+        access_db,
         exports: Semaphore::new(4),
     });
     let app = Router::new()
@@ -204,14 +203,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bearer_auth_requires_exact_match() {
+    fn bearer_auth_extracts_only_bearer_tokens() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, "Bearer aaaaa".parse().unwrap());
-        assert!(authorized(&headers, "aaaaa"));
-        assert!(!authorized(&headers, "aaaab"));
-        assert!(!authorized(&headers, "aaaa"));
-        headers.insert(header::AUTHORIZATION, "Basic aaaaa".parse().unwrap());
-        assert!(!authorized(&headers, "aaaaa"));
+        headers.insert(header::AUTHORIZATION, "Bearer axn_test".parse().unwrap());
+        assert_eq!(bearer_token(&headers), Some("axn_test"));
+        headers.insert(header::AUTHORIZATION, "Basic axn_test".parse().unwrap());
+        assert_eq!(bearer_token(&headers), None);
     }
 
     #[test]
