@@ -29,13 +29,16 @@ test('Oxanium is bundled and used for the heading, not loaded from Google Fonts'
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
-test('registered halftone grid remains CSS-only, moving and accessible', () => {
+test('coarse circular print rosette remains CSS-only and respects reduced motion', () => {
   assert.match(home, /ax-halftone-grid/);
-  assert.match(home, /ax-halftone-highlight/);
-  assert.match(css, /26px 26px/);
-  assert.doesNotMatch(css, /ax-moire|mix-blend-mode|rotate\(/);
+  assert.match(home, /ax-halftone-screen-three/);
+  assert.match(css, /38px 38px/);
+  assert.match(css, /rotate\(30deg\)/);
+  assert.match(css, /rotate\(60deg\)/);
+  assert.match(css, /border-radius:50%/);
+  assert.doesNotMatch(css, /ax-moire|mix-blend-mode/);
   assert.match(css, /rgba\(185,255,106/);
-  assert.match(css, /@keyframes ax-halftone-light/);
+  assert.match(css, /@keyframes ax-halftone-rosette/);
   assert.match(css, /prefers-reduced-motion:reduce/);
   assert.match(css, /@media\(min-width:900px\)/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
