@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import RemoteMcpPublishSection from './RemoteMcpPublishSection';
 
 type Connection = { url: string; client_id: string; issuer: string; state: 'stored' | 'expired'; expires_at: number };
 async function request(path: string, body?: unknown, csrf?: string) {
@@ -71,8 +72,8 @@ export default function RemoteMcpSettingsSection() {
     finally { setBusy(false); }
   }
 
-  return <section className="remote-mcp-settings" aria-labelledby="remote-mcp-title">
-    <h3 id="remote-mcp-title">Remote Ax connections</h3>
+  return <><RemoteMcpPublishSection /><section className="remote-mcp-settings" aria-labelledby="remote-mcp-title">
+    <h3 id="remote-mcp-title">Connect to another Ax</h3>
     <p>Use the context from Ax running on another computer. Sign in through your browser; credentials stay in your operating system’s secure credential store.</p>
     <div className="settings-row">
       <label htmlFor="remote-mcp-url" className="settings-row-label">Project MCP URL</label>
@@ -92,5 +93,5 @@ export default function RemoteMcpSettingsSection() {
       <span>{connection.state === 'stored' ? 'Credentials saved' : 'Access token expired; the CLI can refresh it when a refresh token is available'} · {connection.issuer}</span>{' '}
       <button type="button" disabled={busy} onClick={() => disconnect(connection)}>Disconnect</button>
     </li>)}</ul>}
-  </section>;
+  </section></>;
 }

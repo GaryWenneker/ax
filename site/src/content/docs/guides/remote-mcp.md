@@ -113,6 +113,52 @@ https://ax.example.com/.well-known/oauth-protected-resource
 
 It advertises the canonical resource, configured authorization server and `ax:context`. Unauthenticated MCP requests receive `401` plus a `WWW-Authenticate` metadata challenge. Tokens are validated on every request, followed by project and tool permission checks. A token for GitHub, a Cloudflare Access cookie or a login ID token is not automatically an Ax access token.
 
+## Copy a project's remote configuration
+
+Open **Settings → Connections → Remote MCP → Share this project** in Command Center or its embedded IDE panel. The card uses the active project's canonical root and the remote project ID from your server configuration. It does not guess a public hostname from the browser URL or project folder name.
+
+`ax mcp remote serve` registers its validated public export metadata automatically. You can register it without starting a server, indexing a project or signing in:
+
+```bash
+ax mcp remote register --config /absolute/path/remote-mcp.json --name "Team Ax"
+```
+
+To include public client IDs you have already registered with your OAuth provider:
+
+```bash
+ax mcp remote register --config /absolute/path/remote-mcp.json \
+  --name "Team Ax" \
+  --native-client-id YOUR_NATIVE_PUBLIC_CLIENT_ID \
+  --cursor-client-id YOUR_CURSOR_PUBLIC_CLIENT_ID \
+  --vscode-client-id YOUR_VSCODE_PUBLIC_CLIENT_ID
+```
+
+These IDs are separate OAuth registrations. No client secret belongs in the export. Adding client ID flags replaces the stored public registration map; omit all three flags to preserve it. Starting the server preserves your stored label and client IDs.
+
+Alternatively, choose **Register server configuration** and select the private JSON file in the local owner session. This saves public metadata for the active project only. The CLI registers all explicitly configured projects and removes stale bindings omitted from a subsequent server snapshot. The catalogue retains canonical roots internally to match workspaces; exports exclude roots, subjects, grants, key hashes and tokens.
+
+Choose a publisher if the project is available on multiple servers, then choose your client:
+
+| Client | Destination and transport |
+|---|---|
+| Cursor | `.cursor/mcp.json`, `mcpServers`; direct HTTP or Ax proxy |
+| VS Code | `.vscode/mcp.json`, `servers`; `http` or `stdio` |
+| Claude Code | `.mcp.json`, `mcpServers`, `http` |
+| Cline | Cline MCP settings; Ax proxy by default, or verified direct `streamableHttp` |
+| ChatGPT | Copy the MCP URL and follow the OAuth custom app setup; no JSON file |
+| Other / Ax proxy | `mcpServers`, `ax` command with a JSON argument array |
+
+**Copy configuration** and **Download configuration** produce the displayed client configuration. Merge its server entry into your existing file. **Copy MCP URL** copies the registered project endpoint. If clipboard permission is denied, the card selects the text for manual copying and shows an error. For the proxy, sign in on the receiving computer first; a POSIX login command is available only when a native public client ID is registered. In PowerShell, double single quotes inside quoted arguments.
+
+A stopped server remains copyable. **Local server running** means Ax received a recent local heartbeat; it does not prove the public tunnel works or that the receiving user is authorized. **Verify endpoint** sends an unauthenticated, bounded initialization probe to the registered public HTTPS endpoint. The expected OAuth challenge and matching resource metadata produce **Endpoint reachable, sign-in required**. Private-network endpoints remain copyable but are excluded from this public probe. Redirects are not followed.
+
+Switching workspaces clears the previous preview and copy feedback. Every export rechecks the active project and configuration revision. A conflicting remote project ID cannot silently move to a different local root; remove the old **local registration** explicitly first. Stop a live server before replacing a different server snapshot. Removing a local registration does not change the running server, project permissions or saved login credentials.
+
+Publications are managed only by an active local owner, with loopback Host/Origin and CSRF checks. Remote bearer credentials and read-only/share sessions cannot inspect or export the catalogue. Copying configuration does not issue credentials, authorize additional users or grant writes. Direct OAuth compatibility depends on the actual client surface/version and provider registration; valid JSON alone does not prove a successful login.
+
+![Remote MCP project sharing on desktop](/screenshots/remote-mcp-project-desktop.png)
+![Remote MCP project sharing on mobile](/screenshots/remote-mcp-project-mobile.png)
+
 ## Browser login from CLI or Settings
 
 The interaction follows a familiar desktop account-connection flow:
@@ -135,7 +181,7 @@ ax mcp remote logout \
 
 Add `--write` to CLI login only when memory/policy writes are wanted and granted. The Settings connection requests context access by default.
 
-In Command Center, open **Settings → Sharing → Remote Ax connections**. The IDE's embedded Command Center uses this same component. Browser blocking has an explicit sign-in link fallback. Invalid state or issuer is rejected; cancellation, timeout, missing project permission and unavailable credential storage produce errors rather than a connected confirmation.
+In Command Center, open **Settings → Connections → Remote MCP → Connect to another Ax**. The IDE's embedded Command Center uses this same component. Browser blocking has an explicit sign-in link fallback. Invalid state or issuer is rejected; cancellation, timeout, missing project permission and unavailable credential storage produce errors rather than a connected confirmation.
 
 Access and refresh tokens are kept in the OS credential store, with no plaintext fallback. A local metadata file records connection URLs/client IDs/expiry, without tokens. “Credentials saved” is stored state, not a continuous network health check. Disconnect removes local credentials and attempts provider revocation when the provider publishes that endpoint.
 

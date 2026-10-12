@@ -866,6 +866,19 @@ enum McpAction {
 
 #[derive(Subcommand)]
 enum RemoteMcpAction {
+    /// Register public project export metadata without starting a server or signing in
+    Register {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        native_client_id: Option<String>,
+        #[arg(long)]
+        cursor_client_id: Option<String>,
+        #[arg(long)]
+        vscode_client_id: Option<String>,
+    },
     /// Serve registered projects behind an existing HTTPS tunnel
     Serve {
         #[arg(long)]
@@ -2202,6 +2215,19 @@ async fn async_main() {
         },
         Some(Commands::Mcp { action }) => match action {
             McpAction::Remote { action } => match action {
+                RemoteMcpAction::Register { config, name, native_client_id, cursor_client_id, vscode_client_id } => {
+                    match ax_mcp::remote::RemoteConfig::load(&config) {
+                        Ok(config) => {
+                            let clients = if native_client_id.is_some() || cursor_client_id.is_some() || vscode_client_id.is_some() {
+                                Some(ax_global_db::remote_mcp_publications::ClientRegistrations { ax_proxy: native_client_id, cursor: cursor_client_id, vscode: vscode_client_id })
+                            } else { None };
+                            ax_mcp::remote::publications::register(&config, name.as_deref(), clients).await.map(|snapshot| {
+                                println!("{}", serde_json::json!({"publisherId":snapshot.id,"projects":snapshot.projects.len(),"registered":true}));
+                            })
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
                 RemoteMcpAction::Serve { config, port, socket } => {
                     match ax_mcp::remote::RemoteConfig::load(&config) {
                         Ok(config) => {

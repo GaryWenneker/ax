@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
-fn csrf() -> &'static str {
+pub(crate) fn csrf() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
     TOKEN.get_or_init(|| uuid::Uuid::new_v4().to_string())
 }
@@ -22,7 +22,8 @@ pub fn router(hub: WebHub) -> Router {
         .route("/login/{id}", axum::routing::get(login_status))
         .route("/login/{id}/cancel", axum::routing::post(cancel))
         .route("/logout", axum::routing::post(logout))
-        .with_state(hub)
+        .with_state(hub.clone())
+        .nest("/publications", crate::remote_mcp_publications::router(hub))
 }
 
 fn check(headers: &HeaderMap, hub: &WebHub, mutation: bool) -> Result<(), &'static str> {

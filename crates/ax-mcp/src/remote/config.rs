@@ -72,7 +72,7 @@ impl RemoteConfig {
         if public.path() != "/" {
             return Err("public_url must be an HTTPS origin".into());
         }
-        self.public_url = self.public_url.trim_end_matches('/').to_owned();
+        self.public_url = public.origin().ascii_serialization();
         https_url(&self.oauth.issuer)?;
         https_url(&self.oauth.jwks_uri)?;
         if self.projects.is_empty() {
@@ -127,5 +127,21 @@ impl RemoteConfig {
 
     pub fn metadata_url(&self) -> String {
         format!("{}/.well-known/oauth-protected-resource", self.public_url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn public_origin_is_canonical_but_oauth_issuer_remains_exact() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".ax")).unwrap();
+        std::fs::write(temp.path().join(".ax/ax.db"), "").unwrap();
+        let mut config: RemoteConfig = serde_json::from_value(serde_json::json!({"public_url":"HTTPS://AX.example.com:443/","oauth":{"issuer":"https://Identity.Example/tenant/","jwks_uri":"https://Identity.Example/jwks"},"projects":[{"id":"demo","root":temp.path(),"subjects":["subject"]}]})).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.public_url, "https://ax.example.com");
+        assert_eq!(config.oauth.issuer, "https://Identity.Example/tenant/");
+        assert_eq!(config.projects[0].subjects, ["subject"]);
     }
 }

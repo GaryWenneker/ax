@@ -719,11 +719,48 @@ pub async fn serve(
     socket: Option<PathBuf>,
 ) -> Result<(), String> {
     config.validate()?;
+    // Register only validated public metadata, even if later network startup fails.
+    let snapshot = super::publications::register(&config, None, None).await?;
+    let catalogue =
+        ax_global_db::open_and_init(&ax_global_db::global_db_path().map_err(|e| e.to_string())?)
+            .await
+            .map_err(|e| e.to_string())?;
     let config = Arc::new(config);
     let verifier = TokenVerifier::discover(config.clone()).await?;
     let listener = bind(port).await?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
     let bridge = start_socket_bridge(socket.as_deref(), addr).await?;
+    let instance =
+        match ax_global_db::remote_mcp_publications::start_lease(&catalogue, &snapshot).await {
+            Ok(instance) => instance,
+            Err(error) => {
+                if let Some(task) = bridge {
+                    task.abort();
+                }
+                if let Some(path) = &socket {
+                    let _ = tokio::fs::remove_file(path).await;
+                }
+                return Err(error.to_string());
+            }
+        };
+    let heartbeat_pool = catalogue.clone();
+    let heartbeat_publisher = snapshot.id.clone();
+    let heartbeat_instance = instance.clone();
+    let heartbeat = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            if let Err(error) = ax_global_db::remote_mcp_publications::heartbeat(
+                &heartbeat_pool,
+                &heartbeat_publisher,
+                &heartbeat_instance,
+            )
+            .await
+            {
+                tracing::warn!("remote MCP runtime heartbeat failed: {error}");
+            }
+        }
+    });
     // Remote IDE/browser clients need a current graph without waiting for a
     // first tool call. Only explicitly registered projects are watched.
     let sync_tasks: Vec<_> = config
@@ -741,6 +778,12 @@ pub async fn serve(
         })
         .await
         .map_err(|e| e.to_string());
+    heartbeat.abort();
+    if let Err(error) =
+        ax_global_db::remote_mcp_publications::stop_lease(&catalogue, &snapshot.id, &instance).await
+    {
+        tracing::warn!("remote MCP runtime stop registration failed: {error}");
+    }
     if let Some(task) = bridge {
         task.abort();
     }
