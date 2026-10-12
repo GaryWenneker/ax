@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 pub const MAX_SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
-pub const MAX_SNAPSHOT_FILES: usize = 3;
+pub const MAX_SNAPSHOT_FILES: usize = 4;
 pub const MAX_RECORDS_PER_KIND: usize = 10_000;
 
 const MEMORY_PATH: &str = "state/memories.json";
@@ -76,18 +76,19 @@ pub fn validate(
     expected_cluster: &str,
     expected_project: &str,
 ) -> Result<(), String> {
-    if snapshot.schema_version != 2
+    if !matches!(snapshot.schema_version, 2 | 3)
         || snapshot.cluster_id != expected_cluster
         || snapshot.project_id != expected_project
         || !valid_id(&snapshot.primary_node_id)
     {
         return Err("snapshot identity or protocol version mismatch".into());
     }
-    if snapshot.files.len() != MAX_SNAPSHOT_FILES
+    let expected_files = if snapshot.schema_version == 3 { 4 } else { 3 };
+    if snapshot.files.len() != expected_files
         || snapshot
             .files
             .keys()
-            .any(|p| !matches!(p.as_str(), MEMORY_PATH | RULE_PATH | SKILL_PATH))
+            .any(|p| !matches!(p.as_str(), MEMORY_PATH | RULE_PATH | SKILL_PATH) && !(snapshot.schema_version == 3 && p == ax_db::replication::DATA_PATH))
     {
         return Err("snapshot contains missing or undeclared paths".into());
     }
@@ -104,6 +105,10 @@ pub fn validate(
         return Err("snapshot revision mismatch".into());
     }
 
+    if snapshot.schema_version == 3 {
+        let items = crate::server_data::manifests(snapshot)?;
+        if items.is_empty() { return Err("snapshot has no complete datasets".into()); }
+    }
     let memories: Vec<MemoryRow> = decode(snapshot, MEMORY_PATH)?;
     let rules: Vec<PolicyRuleRow> = decode(snapshot, RULE_PATH)?;
     let skills: Vec<PolicySkillRow> = decode(snapshot, SKILL_PATH)?;
@@ -252,13 +257,15 @@ pub async fn export_native(config: &ServerConfig, project_id: &str) -> Result<Sn
         item.storage_is_override = false;
     }
 
+    let dataset = ax_db::replication::export(&project.path, &config.node_id, pool).await.map_err(|e| e.to_string())?;
     let files = BTreeMap::from([
         (MEMORY_PATH.to_string(), serialize(&memories)?),
         (RULE_PATH.to_string(), serialize(&rules)?),
         (SKILL_PATH.to_string(), serialize(&skills)?),
+        (ax_db::replication::DATA_PATH.into(), serde_json::to_string(&vec![dataset]).map_err(|e| e.to_string())?),
     ]);
     let mut snapshot = Snapshot {
-        schema_version: 2,
+        schema_version: 3,
         cluster_id: config.cluster_id.clone(),
         primary_node_id: config.node_id.clone(),
         project_id: project_id.to_owned(),

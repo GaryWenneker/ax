@@ -9,6 +9,7 @@ use ax_web::server_config;
 mod server_apply;
 mod server_cli;
 mod server_exchange;
+mod server_data;
 mod server_http;
 mod server_replica;
 mod server_snapshot;

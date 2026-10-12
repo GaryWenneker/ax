@@ -167,7 +167,23 @@ fn merge(histories: &[Snapshot], config: &ServerConfig, project: &str) -> Result
     Ok(result)
 }
 
-async fn retain(tx: &mut Transaction<'_, Sqlite>, snapshot: &Snapshot) -> Result<(), String> {
+async fn retain(tx: &mut Transaction<'_, Sqlite>, root: &std::path::Path, snapshot: &Snapshot) -> Result<(), String> {
+    let mut knowledge = snapshot.clone();
+    if snapshot.schema_version == 3 {
+        for mut item in crate::server_data::manifests(snapshot)? {
+            let previous: Option<String> = sqlx::query_scalar("SELECT manifest FROM ax_node_datasets WHERE cluster_id=? AND project_id=? AND node_id=?")
+                .bind(&snapshot.cluster_id).bind(&snapshot.project_id).bind(&item.origin).fetch_optional(&mut **tx).await.map_err(|e|e.to_string())?;
+            if let Some(previous) = previous {
+                let old:ax_db::replication::Dataset=serde_json::from_str(&previous).map_err(|e|e.to_string())?;
+                ax_db::replication::retain_logs(root,&old,&mut item).map_err(|e|e.to_string())?;
+            }
+            ax_db::replication::pin(root,&item).map_err(|e|e.to_string())?;
+            sqlx::query("INSERT INTO ax_node_datasets VALUES (?,?,?,?) ON CONFLICT(cluster_id,project_id,node_id) DO UPDATE SET manifest=excluded.manifest")
+                .bind(&snapshot.cluster_id).bind(&snapshot.project_id).bind(&item.origin).bind(serde_json::to_string(&item).map_err(|e|e.to_string())?).execute(&mut **tx).await.map_err(|e|e.to_string())?;
+        }
+        knowledge.files.remove(ax_db::replication::DATA_PATH); knowledge.schema_version=2; knowledge.revision=server_snapshot::revision(&knowledge)?;
+    }
+    let snapshot=&knowledge;
     sqlx::query("INSERT OR IGNORE INTO ax_node_contributions (cluster_id,project_id,node_id,revision,snapshot) VALUES (?,?,?,?,?)")
         .bind(&snapshot.cluster_id).bind(&snapshot.project_id).bind(&snapshot.primary_node_id).bind(&snapshot.revision)
         .bind(serde_json::to_string(snapshot).map_err(|e| e.to_string())?)
@@ -199,6 +215,7 @@ pub async fn publish(
             return Err("a replica cannot contribute as the Primary".into());
         }
     }
+    if let Some(snapshot) = incoming.filter(|s|s.schema_version==3) { crate::server_data::verify_contribution(config,project_id,snapshot).await?; }
     let native = server_snapshot::export_native(config, project_id).await?;
     let project = config
         .projects
@@ -211,10 +228,11 @@ pub async fn publish(
     let pool = ax.db_pool();
     sqlx::query("CREATE TABLE IF NOT EXISTS ax_node_contributions (seq INTEGER PRIMARY KEY AUTOINCREMENT, cluster_id TEXT NOT NULL, project_id TEXT NOT NULL, node_id TEXT NOT NULL, revision TEXT NOT NULL, snapshot TEXT NOT NULL, UNIQUE(cluster_id,project_id,node_id,revision))")
         .execute(pool).await.map_err(|e| e.to_string())?;
+    sqlx::query("CREATE TABLE IF NOT EXISTS ax_node_datasets (cluster_id TEXT NOT NULL,project_id TEXT NOT NULL,node_id TEXT NOT NULL,manifest TEXT NOT NULL,PRIMARY KEY(cluster_id,project_id,node_id))").execute(pool).await.map_err(|e|e.to_string())?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    retain(&mut tx, &native).await?;
+    retain(&mut tx, &project.path, &native).await?;
     if let Some(snapshot) = incoming {
-        retain(&mut tx, snapshot).await?;
+        retain(&mut tx, &project.path, snapshot).await?;
     }
     let (bytes, nodes): (i64, i64) = sqlx::query_as("SELECT COALESCE(SUM(length(CAST(snapshot AS BLOB))),0), COUNT(DISTINCT node_id) FROM ax_node_contributions WHERE cluster_id=? AND project_id=?")
         .bind(&config.cluster_id).bind(project_id).fetch_one(&mut *tx).await.map_err(|e| e.to_string())?;
@@ -234,10 +252,14 @@ pub async fn publish(
     // old history to make space or acknowledge data that cannot be published.
     let merge_config = config.clone();
     let merge_project = project_id.to_owned();
-    let result =
+    let mut result =
         tokio::task::spawn_blocking(move || merge(&histories, &merge_config, &merge_project))
             .await
             .map_err(|e| format!("node merge task failed: {e}"))??;
+    let raw:Vec<String>=sqlx::query_scalar("SELECT manifest FROM ax_node_datasets WHERE cluster_id=? AND project_id=? ORDER BY node_id").bind(&config.cluster_id).bind(project_id).fetch_all(&mut *tx).await.map_err(|e|e.to_string())?;
+    let items:Vec<ax_db::replication::Dataset>=raw.iter().map(|s|serde_json::from_str(s).map_err(|e|e.to_string())).collect::<Result<_,_>>()?;
+    result.schema_version=3; result.files.insert(ax_db::replication::DATA_PATH.into(),serde_json::to_string(&items).map_err(|e|e.to_string())?);
+    result.revision=server_snapshot::revision(&result)?; server_snapshot::validate(&result,&config.cluster_id,project_id)?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(result)
 }

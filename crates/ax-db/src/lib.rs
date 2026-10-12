@@ -2,6 +2,7 @@
 
 pub mod migrations;
 pub mod queries;
+pub mod replication;
 pub mod schema;
 
 use std::path::Path;
