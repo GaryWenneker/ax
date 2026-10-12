@@ -58,6 +58,8 @@ body.ax-landing{--ax-bg:#080a09;--ax-ink:#f0f3ed;--ax-muted:#a3aaa2;--ax-dim:#6f
    moving screens produce large beat bands. Each loop moves exactly one grid tile. */
 .ax-landing .ax-halftone{position:absolute;z-index:1;inset:0 0 0 34%;overflow:hidden;pointer-events:none;opacity:.58;mask-image:linear-gradient(90deg,transparent 0%,rgba(0,0,0,.025) 15%,rgba(0,0,0,.16) 35%,rgba(0,0,0,.5) 57%,rgba(0,0,0,.85) 78%,#000 100%);-webkit-mask-image:linear-gradient(90deg,transparent 0%,rgba(0,0,0,.025) 15%,rgba(0,0,0,.16) 35%,rgba(0,0,0,.5) 57%,rgba(0,0,0,.85) 78%,#000 100%)}
 .ax-landing .ax-halftone-grid{position:absolute;inset:0;background:#fff;isolation:isolate}
+/* Blend right-side CMY interference toward the theme accent without changing its moving screens. */
+.ax-landing .ax-halftone-grid::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(90deg,transparent 27%,color-mix(in srgb,var(--ax-lime) 16%,transparent) 49%,color-mix(in srgb,var(--ax-lime) 48%,transparent) 75%,color-mix(in srgb,var(--ax-lime) 82%,transparent) 100%);mix-blend-mode:color}
 .ax-landing .ax-halftone-dots{position:absolute;inset:-30%;background-position:center;transform-origin:center;mix-blend-mode:multiply;will-change:transform}
 .ax-landing .ax-halftone-screen-one{background-image:radial-gradient(circle,#00ffff 0 10.8px,transparent 11.3px);background-size:26px 26px;transform:rotate(-3deg)}
 .ax-landing .ax-halftone-screen-two{background-image:radial-gradient(circle,#ff00ff 0 11.1px,transparent 11.6px);background-size:26.8px 26.8px;animation:ax-moire-magenta 16s linear infinite}
