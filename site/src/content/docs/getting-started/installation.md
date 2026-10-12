@@ -72,6 +72,12 @@ Run in Terminal on Apple Silicon or Intel Macs:
 curl -fsSL https://getax.wenneker.io/install.sh | sh
 ```
 
+If the website still serves an older installer, use the current repository copy. It selects a published release for your Mac; it does not build unreleased source:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
+```
+
 ### Linux
 
 Run in your Linux shell:

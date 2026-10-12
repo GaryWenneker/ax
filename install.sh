@@ -76,7 +76,7 @@ resolve_version_from_api() {
   asset="ax-${target}.tar.gz"
   json="$(curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: ax-install" \
     "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null)" || return 1
-  printf '%s' "$json" | python3 - "$asset" <<'PY' 2>/dev/null || return 1
+  printf '%s' "$json" | python3 -c '
 import json, re, sys
 asset = sys.argv[1]
 data = json.load(sys.stdin)
@@ -90,7 +90,7 @@ def key(t):
     return tuple(int(x) for x in re.sub(r"^v", "", t).split("."))
 if tags:
     print(max(tags, key=key))
-PY
+' "$asset" 2>/dev/null || return 1
 }
 
 clear_stale_ax_version_pin() {
@@ -108,7 +108,7 @@ clear_stale_ax_version_pin() {
     [ -n "$stored" ] || return 0
     case "$stored" in v*) sn="$stored" ;; *) sn="v$stored" ;; esac
     if [ "$sn" = "$tag" ]; then
-      powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('AX_VERSION', `$null, 'User')" 2>/dev/null || true
+      powershell.exe -NoProfile -Command '[Environment]::SetEnvironmentVariable("AX_VERSION", $null, "User")' 2>/dev/null || true
       echo "ax: cleared stale AX_VERSION=$stored from User environment." >&2
     fi
   fi
@@ -155,7 +155,7 @@ resolve_version() {
     case "$cand" in v*) tag="$cand" ;; *) tag="v$cand" ;; esac
     asset_url_ok "$tag" || continue
     num="${tag#v}"
-    if [ -z "$best" ] || [ "$(printf '%s\n' "$num" "${best#v}" | sort -V | tail -n1)" = "$num" ]; then
+    if [ -z "$best" ] || [ "$(printf '%s\n' "$num" "${best#v}" | sort -t . -k1,1n -k2,2n -k3,3n | tail -n1)" = "$num" ]; then
       best="$tag"
     fi
   done <<EOF
