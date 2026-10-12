@@ -49,7 +49,7 @@ test('CMY interference fades horizontally from the edge and uses continuous tile
   assert.match(css, /@keyframes ax-moire-yellow/);
   assert.match(css, /@keyframes ax-moire-magenta\{0%,100%\{/);
   assert.match(css, /@keyframes ax-moire-yellow\{0%,100%\{/);
-  assert.match(css, /max-width:600px[^}]*\.ax-halftone\{inset:0 0 0 20%;opacity:\.4\}/);
+  assert.match(css, /@media\(max-width:600px\)\{[^\n]*\.ax-halftone\{inset:0 0 0 20%;opacity:\.4\}/);
   assert.match(css, /prefers-reduced-motion:reduce/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
 });
