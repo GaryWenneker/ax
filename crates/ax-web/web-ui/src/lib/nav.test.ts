@@ -38,5 +38,5 @@ test('rule and skill editors keep their nav item active', () => {
   assert.equal(navItemActive('policy-rule-edit', 'policy-rules'), true);
   assert.equal(navItemActive('policy-skill-edit', 'policy-skills'), true);
   assert.equal(navItemActive('policy-rules', 'policy-skills'), false);
-  assert.equal(navItemActive('ship', 'settings'), false);
+  assert.equal(navItemActive('stats', 'settings'), false);
 });

@@ -12,3 +12,8 @@ test('Activity retains useful pages and excludes retired Agent', () => {
   assert.deepEqual(parsePathname('/agent'), { page: 'stats', valid: false });
   assert.equal(pageFromNavId('agent'), null);
 });
+test('Quality Gates page and navigation are retired', () => {
+  assert.deepEqual(parsePathname('/ship'), { page: 'stats', valid: false });
+  assert.equal(pageFromNavId('ship'), null);
+  for (const savings of [true, false]) assert.equal(visibleNav(savings).flatMap(s => s.items).some(i => String(i.id) === 'ship'), false);
+});

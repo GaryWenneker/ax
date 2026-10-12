@@ -1,15 +1,15 @@
 ---
 title: Command Center
-description: Local web UI for policy, memory, the code graph, MCP logging, and the ship quality gate.
+description: Local web UI for policy, memory, the code graph, MCP logging, and savings.
 ---
 
-ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, skills, memory), the code graph, MCP logging and savings, plus a git-aware quality gate with optional draft PRs (Azure DevOps or GitHub).
+ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, skills, memory), the code graph, MCP logging and savings, with CLI quality gates and optional draft PRs (Azure DevOps or GitHub).
 
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
 Page headers and filters share compact spacing so more rows fit on screen. Savings metrics use equal label rows and aligned numeric values, adapting to smaller screens.
 
-Quality Gates uses the full workspace width without the sidebar, including embedded views. **Home** in the breadcrumbs returns to the dashboard and restores the navigation.
+The header and sidebar use the public homepage’s Archivo/lime wordmark. Click either logo to return to the admin homepage. Quality Gates has been removed from the UI and navigation; old `/ship` and `#ship` bookmarks return to **Stats**. CLI quality gates and Settings configuration remain available.
 
 In **Settings → Appearance**, choose **Light** or **Dark**, then **Lime**, **Blue**, **Teal**, **Violet**, **Orange** or **Rose**. Lime is the default and matches the website in Dark. Each color uses a darker shade in Light and a brighter shade in Dark. The browser remembers your choice; header/footer backgrounds and semantic error/warning colors keep their existing meaning.
 
@@ -160,7 +160,7 @@ The sidebar has four groups, most-used first:
 | **Activity** | Logging, Stats, Savings (hidden when turned off in Settings), Unresolved |
 | **System** | Settings, Prices, and the **Reload MCP** action |
 
-The Agent terminal page and the SonarQube page have been removed. Old `/agent` and `/sonar` links open **Stats**. The quality-gate dashboard is still at `/ship`, but it is not in the sidebar.
+The Agent terminal and Quality Gates pages have been removed. Old `/agent` and `/ship` links open **Stats**. SonarQube remains available in the sidebar.
 
 | Page | Purpose |
 |---|---|
@@ -168,7 +168,6 @@ The Agent terminal page and the SonarQube page have been removed. Old `/agent` a
 | **Nodes** | Symbol table with kind/file filters and detail blade |
 | **Search** | FTS over indexed symbols |
 | **Stats** | Index overview for the active project |
-| **Ship** (`/ship`, not in sidebar) | Branch, changed files, impacted tests, quality gate, pipeline steps, breaking changes, business rules |
 | **Files** | Indexed file tree — folders expand lazily; root-level files (`README.md`, `Cargo.toml`, …) show as files, not folders |
 | **Memory** | Browse, search, compose memories (modal composer); capture from git |
 | **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
@@ -180,8 +179,6 @@ The Agent terminal page and the SonarQube page have been removed. Old `/agent` a
 The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, skills, and memories), **Auto-group**, **Test match**, **Package**, **Restore package**, **Capture**, and **New rule** / **New skill**. The **Default MD / DB** switch picks where new items are stored: Markdown files in the policy folder, or the project database.
 
 ![Review — staged policy imports waiting for Accept or Reject](/screenshots/cc-policy-review.png)
-
-![Ship — overview, quality gate, and pipeline steps at /ship](/screenshots/cc-ship-full.png)
 
 ![Prices — provider groups, jump legend, and input/output rate colors](/screenshots/cc-prices.png)
 
@@ -252,19 +249,19 @@ When you run `ax ship --evaluate` (or when git hooks trigger evaluation), ax run
 5. **sonar** — optional SonarQube scan + quality gate (when enabled). If SonarQube is offline but a Podman container already exists, the gate **always tries to start it** (up to **3** `podman start` retries, then waits for the API) before failing.
 6. **policy** — business-rule and breaking-change warnings
 
-Results stream to the dashboard via SSE (`/api/ship/events`).
+CLI quality-gate output remains available through `ax ship`; the shared event API is retained.
 
-## Dashboard
+## Admin homepage and CLI gates
 
-`ax ship --watch --open` serves the pipeline dashboard at `/ship`. That page is not in the sidebar.
+The admin homepage shows project statistics. Quality Gates is no longer a web page; use `ax ship` for the pipeline.
 
 The header project switcher lists every initialized ax project on this machine, not only the ones opened from Command Center. It keeps recently opened projects first, then adds any folder under your home directory (four levels deep) that contains `.ax/ax.db`. Hidden directories and build folders such as `node_modules` and `target` are skipped.
 
-The dashboard itself:
+The CLI pipeline reports:
 
 - **Overview** — branch, changed files, impacted tests
-- **Quality gate** summary and **Pipeline** step progress (live via SSE)
-- **Changed files**, **Test impact**, **Breaking changes**, and **Business rules** cards after a run
+- **Quality gate** summary and pipeline step progress
+- Changed files, test impact, breaking changes, and business rules after a run
 - Draft PR action (when remote is configured)
 
 SonarQube install, setup, and scan buttons are no longer in the dashboard. The `sonar` quality-gate step still runs when `[sonar] enabled = true` in `.ax/ship.toml`.

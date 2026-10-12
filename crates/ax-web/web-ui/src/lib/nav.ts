@@ -13,7 +13,7 @@ export type NavSection = {
  * Sidebar order follows MCP usage in ~/.ax/usage.db (2026-09-29):
  * policy tools (preflight, skill, guard) dwarf everything else, then
  * graph tools (node, explore, search). Reference and settings sit last.
- * The ship page stays reachable at /ship; it is not a nav item.
+ * The retired Quality Gates page redirects to the homepage.
  */
 export const NAV_SECTIONS: NavSection[] = [
   {
