@@ -38,8 +38,12 @@ test('CMY interference fades horizontally from the edge and uses continuous tile
   assert.match(css, /mask-image:linear-gradient\(90deg,transparent 0%/);
   assert.match(css, /#000 100%/);
   assert.doesNotMatch(css, /mask-image:radial-gradient|infinite alternate/);
-  assert.match(css, /16s linear infinite/);
-  assert.match(css, /21s linear infinite/);
+  assert.match(css, /animation:ax-moire-magenta 72s linear infinite/);
+  assert.match(css, /animation:ax-moire-yellow 96s linear infinite/);
+  assert.match(css, /animation:ax-moire-focus 64s ease-in-out infinite/);
+  assert.match(css, /@keyframes ax-moire-focus\{0%,43%,70%,100%\{filter:blur\(0\)\}53%,59%\{filter:blur\(1\.5px\)\}\}/);
+  assert.match(css, /prefers-reduced-motion:reduce\)\{\.ax-landing \.ax-halftone-dots,\.ax-landing \.ax-halftone-grid\{animation:none!important;filter:none!important/);
+  assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-halftone-grid\{animation-play-state:paused!important/);
   assert.doesNotMatch(css, /border-radius:50%|ax-halftone-rosette/);
   assert.match(css, /@keyframes ax-moire-magenta/);
   assert.match(css, /@keyframes ax-moire-yellow/);
