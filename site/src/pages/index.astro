@@ -2,13 +2,14 @@
 import '@fontsource-variable/archivo';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource-variable/oxanium/wght.css';
 import '../styles/minimal-home.css';
 import MinimalHome from '../components/MinimalHome.astro';
 import { DOCS_SITE } from '../lib/brand';
 import { ogImagePath } from '../lib/og-card.mjs';
 import { pageLockScript } from '../lib/page-lock';
 
-const description = 'Ax is a local-first Rust developer tool for code intelligence, persistent memory, MCP and enforceable project rules. Install for macOS, Linux or Windows.';
+const description = 'Ax is a local-first native developer tool for code intelligence, persistent memory, MCP integration and policy-driven development. Install for macOS, Linux, Windows or WSL2.';
 const ogImage = new URL(ogImagePath('/'), DOCS_SITE).href;
 const pageLock = pageLockScript();
 ---
@@ -19,12 +20,9 @@ const pageLock = pageLockScript();
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script is:inline set:html={pageLock} />
     <link rel="icon" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-    <title>Ax — Your codebase, understood.</title>
+    <title>Ax — Your context. Your rules. Your control.</title>
     <meta name="description" content={description} />
-    <meta property="og:title" content="Ax — Your codebase, understood." />
+    <meta property="og:title" content="Ax — Your context. Your rules. Your control." />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <meta property="og:image" content={ogImage} />

@@ -78,9 +78,26 @@ try {
   await page.setViewport({ width: 1440, height: 900 });
   await page.goto("http://127.0.0.1:4422/", { waitUntil: "networkidle0" });
   const text = await page.$eval("h1", el => el.textContent);
-  if (!text.includes("Your codebase") || !text.includes("understood.")) {
-    throw new Error("Expected minimal homepage headline is missing");
+  if (text.trim() !== "Your context.Your rules.Your control.") {
+    throw new Error("Approved homepage slogan is missing: " + text);
   }
+  const typography = await page.evaluate(() => {
+    const h1 = document.querySelector(".ax-headline");
+    const children = [...h1.querySelectorAll(":scope > span")];
+    const body = getComputedStyle(document.body);
+    const root = getComputedStyle(h1);
+    const styles = children.map(el => getComputedStyle(el).color);
+    const lime = body.getPropertyValue("--ax-lime").trim();
+    const loadedFont = [...document.fonts].some(face =>
+      face.family === "Oxanium Variable" && face.status === "loaded");
+    return { fontFamily: root.fontFamily, loadedFont, styles, lime,
+      childText: children.map(el => el.textContent) };
+  });
+  if (!typography.loadedFont || !typography.fontFamily.includes("Oxanium Variable"))
+    throw new Error("Bundled Oxanium Variable did not load: " + JSON.stringify(typography));
+  if (typography.styles.length !== 3 || typography.styles[0] !== typography.styles[1] ||
+      typography.styles[0] === typography.styles[2])
+    throw new Error("Only 'Your control.' should carry lime: " + JSON.stringify(typography));
   if ((await page.$$(".signal-ambient, .ax-ares-architecture, .integrated-console")).length) {
     throw new Error("Old cinematic layout is still rendered");
   }
