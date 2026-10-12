@@ -30,7 +30,9 @@ fn router_with_pool(hub: WebHub, pool: Option<SqlitePool>) -> Router {
     Router::new()
         .route("/", get(list))
         .route("/import", post(import))
+        .route("/local/export", post(local_export))
         .route("/{id}/export", post(export))
+        .route("/{id}/connection", post(connection))
         .route("/{id}/check", post(check))
         .route("/{id}", axum::routing::delete(remove))
         .layer(DefaultBodyLimit::max(256 * 1024))
@@ -136,6 +138,77 @@ async fn list(State(hub): State<WebHub>, Extension(pool): Extension<SqlitePool>)
 struct WorkspaceRequest {
     workspace_id: String,
     config_fingerprint: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LocalExportRequest {
+    workspace_id: String,
+    client: crate::local_mcp_export::LocalClient,
+    target: crate::local_mcp_export::Target,
+}
+
+async fn local_export(State(hub): State<WebHub>, Json(body): Json<LocalExportRequest>) -> Response {
+    let workspace = hub.read().await;
+    if let Err(error) = matches_workspace(&workspace.project_root, &body.workspace_id) {
+        return failure(StatusCode::CONFLICT, error);
+    }
+    let canonical = match workspace.project_root.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return failure(StatusCode::CONFLICT, "Active project is unavailable"),
+    };
+    let root = match canonical.to_str() {
+        Some(root) => root,
+        None => return failure(StatusCode::BAD_REQUEST, "Project path is not UTF-8"),
+    };
+    let executable = ax_installer::ax_command::current();
+    match crate::local_mcp_export::generate(
+        root,
+        &executable.path,
+        &body.workspace_id,
+        body.client,
+        body.target,
+    ) {
+        Ok(value) => response(StatusCode::OK, value),
+        Err(error) => failure(StatusCode::BAD_REQUEST, error),
+    }
+}
+
+async fn connection(
+    State(hub): State<WebHub>,
+    Extension(pool): Extension<SqlitePool>,
+    Path(id): Path<String>,
+    Json(body): Json<WorkspaceRequest>,
+) -> Response {
+    let workspace = hub.read().await;
+    if let Err(error) = matches_workspace(&workspace.project_root, &body.workspace_id) {
+        return failure(StatusCode::CONFLICT, error);
+    }
+    let p = match selected(
+        &pool,
+        &workspace.project_root,
+        &id,
+        &body.config_fingerprint,
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err((status, error)) => return failure(status, error),
+    };
+    let clients = match p.clients() {
+        Ok(clients) => clients,
+        Err(_) => {
+            return failure(
+                StatusCode::BAD_REQUEST,
+                "Cannot read public client registration",
+            )
+        }
+    };
+    let details = json!({"kind":"axRemoteConnection","version":1,"projectMcpUrl":p.endpoint_url,"nativeClientId":clients.ax_proxy});
+    response(
+        StatusCode::OK,
+        json!({"workspaceId":body.workspace_id,"publicationId":p.id,"configFingerprint":p.config_fingerprint,"content":details.to_string(),"containsSecrets":false,"requiresClientId":clients.ax_proxy.is_none()}),
+    )
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -475,6 +548,87 @@ mod tests {
         assert_eq!(
             call(&router, "GET", "/", Value::Null, false).await.0,
             StatusCode::FORBIDDEN
+        );
+    }
+    #[tokio::test]
+    async fn local_setup_is_available_without_remote_registration_and_rejects_stale_workspace() {
+        let (_temp, router, hub, _pool, b, _config) = fixture().await;
+        let root = hub.read().await.project_root.canonicalize().unwrap();
+        let id = catalog::workspace_id(&root).unwrap();
+        let body = json!({"workspaceId":id,"client":"cursor","target":"thisComputer"});
+        assert_eq!(
+            call(&router, "POST", "/local/export", body.clone(), false)
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+        let (status, result) = call(&router, "POST", "/local/export", body.clone(), true).await;
+        assert_eq!(status, StatusCode::OK);
+        let config: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            config["mcpServers"]["ax"]["args"][3],
+            root.to_str().unwrap()
+        );
+        let (_, shared) = call(
+            &router,
+            "POST",
+            "/local/export",
+            json!({"workspaceId":id,"client":"cursor","target":"projectFolder"}),
+            true,
+        )
+        .await;
+        assert!(!shared["content"]
+            .as_str()
+            .unwrap()
+            .contains(root.to_str().unwrap()));
+        assert_eq!(shared["portable"], true);
+        hub.switch(b).await.unwrap();
+        assert_eq!(
+            call(&router, "POST", "/local/export", body, true).await.0,
+            StatusCode::CONFLICT
+        );
+    }
+    #[tokio::test]
+    async fn remote_transfer_exports_native_public_id_without_credentials_or_host_paths() {
+        let (_temp, router, hub, pool, _b, config) = fixture().await;
+        let root = hub.read().await.project_root.clone();
+        let snapshot = ax_mcp::remote::publications::snapshot(
+            &config,
+            None,
+            Some(ClientRegistrations {
+                ax_proxy: Some("native-public".into()),
+                cursor: Some("different-cursor-id".into()),
+                vscode: None,
+            }),
+            Some(&root),
+        )
+        .unwrap();
+        catalog::register(&pool, &snapshot, false).await.unwrap();
+        let p = export_revision(
+            catalog::list_for_root(&pool, &root)
+                .await
+                .unwrap()
+                .remove(0),
+        );
+        let url = format!("/{}/connection", p.id);
+        let body = json!({"workspaceId":catalog::workspace_id(&root).unwrap(),"configFingerprint":p.config_fingerprint});
+        let (status, result) = call(&router, "POST", &url, body.clone(), true).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(result["requiresClientId"], false);
+        let details: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+        assert_eq!(details["nativeClientId"], "native-public");
+        assert_eq!(
+            details["projectMcpUrl"],
+            "https://ax.example/projects/remote-a/mcp"
+        );
+        assert!(!result.to_string().contains(root.to_str().unwrap()));
+        assert!(!result.to_string().contains("different-cursor-id"));
+        assert!(!result.to_string().contains("private-subject"));
+        let mut stale = body;
+        stale["configFingerprint"] = json!("stale");
+        assert_eq!(
+            call(&router, "POST", &url, stale, true).await.0,
+            StatusCode::CONFLICT
         );
     }
 }

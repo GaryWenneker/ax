@@ -20,7 +20,7 @@ The original research specification also covers credential/grant separation and 
 
 ## Implemented solution
 
-Settings → Connections → Remote MCP shows **Share this project**, followed by **Connect to another Ax**. The same React component is used in embedded IDE mode.
+Settings → Connections → Remote MCP shows **Use on this computer**, **Share this project**, and **Connect to another Ax**. Local copy/download works without registering a remote server; Cursor/VS Code can also export a project-folder configuration using verified `${workspaceFolder}` interpolation. Local machine exports deliberately contain the current executable/project paths, while project-folder and remote exports exclude those host paths. The same React component is used in embedded IDE mode.
 
 A local SQLite catalogue stores publishers, canonical project bindings and instance-scoped runtime leases. It never stores access/refresh tokens, API key hashes, OAuth subjects, client secrets or the complete server configuration. Canonical roots are internal matching metadata and are excluded from browser responses and client exports.
 
@@ -39,6 +39,8 @@ All publication routes require a writable loopback browser session and an active
 | GET `/publications/` | List only active canonical-root bindings, with workspace ID and CSRF |
 | POST `/publications/import` | Validate JSON; register active root only |
 | POST `/publications/{id}/export` | Generate an allowlisted client/transport configuration |
+| POST `/publications/local/export` | Generate owner-only local or shareable project setup; reject a stale workspace |
+| POST `/publications/{id}/connection` | Copy public native Ax connection details for the receiving machine |
 | POST `/publications/{id}/check` | Bounded unauthenticated public endpoint probe |
 | DELETE `/publications/{id}` | Remove local export registration only |
 
@@ -67,3 +69,11 @@ Actual external OAuth compatibility remains dependent on the receiving client su
 - Local runtime, public reachability and user authorization have distinct wording.
 - Documentation and desktop/mobile screenshots accompany the feature.
 - Frontend is rebuilt before the Ax binary; workflows/releases/deployments remain suspended.
+
+## Usability follow-up
+
+The initial import-only empty state required users to know a private server JSON file and several OAuth IDs before any copy action appeared. The local card now supplies direct copy/download actions. Its project sharing preset does not access the hosted computer; each recipient runs Ax against their own checkout.
+
+The remote card separately copies a versioned `axRemoteConnection` envelope containing the known project URL and native public client ID, with no token, grant or local path. **Paste connection details** parses it locally and fills the receiving computer's login form. It neither contacts the endpoint nor starts sign-in until the user selects **Connect with browser**. IDE-specific OAuth IDs are not reused as native Ax IDs. Missing native registration is explicit.
+
+The hosting-machine import dialog is named **Import existing remote server**, identifies the exact `remote-mcp.json` file from `ax mcp remote serve --config`, points local users back to the direct copy action, and hides optional OAuth registration fields under Advanced. It does not invent an HTTPS hostname or OAuth provider when no remote server is configured.

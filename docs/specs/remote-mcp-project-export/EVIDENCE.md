@@ -27,3 +27,9 @@ Browser tests cover exact clipboard/download bytes, URL-only ChatGPT output, exp
 No GitHub workflow was dispatched, no installer/release was published, and no Netlify build or deployment was run. Production client/provider logins outside the local fake-provider fixtures, native macOS/Windows builds and user-account availability in third-party clients are not claimed.
 
 To use a source checkout locally after merging, rebuild/reinstall Ax and restart Command Center. `git pull` alone does not replace an already installed binary. The source can be rebuilt using the repository's `scripts/reinstall-cli.sh` on macOS/Linux; use the documented local release workflow on Windows.
+
+## Usability follow-up validation
+
+From main `80d8ce9`: 101 ax-web library tests, 2 transfer-parser tests, strict web/CLI Clippy, TypeScript/Vite build, 26 desktop/mobile browser executions (including generated legacy login specs), 34 documentation tests and the local site build passed. Updated local/remote overview and import-dialog screenshots accompany the guide.
+
+The rebuilt release was installed into an isolated test prefix. Real API and embedded browser checks verified local pinned configuration, path-free portable project configuration, native public-ID remote transfer and the paste flow. The serving binary's HTML matched the current frontend build (`index-ttYnblpS.js`). A stale release artifact was detected by this runtime check, removed and rebuilt before publication. No installer release, workflow or deployment was triggered.

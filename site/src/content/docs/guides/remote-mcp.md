@@ -113,6 +113,16 @@ https://ax.example.com/.well-known/oauth-protected-resource
 
 It advertises the canonical resource, configured authorization server and `ax:context`. Unauthenticated MCP requests receive `401` plus a `WWW-Authenticate` metadata challenge. Tokens are validated on every request, followed by project and tool permission checks. A token for GitHub, a Cloudflare Access cookie or a login ID token is not automatically an Ax access token.
 
+## Use Ax on this computer, or share the setup
+
+Open **Settings → Connections → Remote MCP**. Start with **Use on this computer** if your app and the project are on this machine. Choose Cursor, VS Code, Cline, Claude Code or another local MCP app, then select **Copy for this computer** or **Download local configuration**. Ax supplies the active project path and its executable automatically. No remote server file, public hostname or OAuth ID is needed for this local connection.
+
+The card tells you where to paste the `ax` server entry. Keep existing servers in that file, then reload the app. **Open IDEs & agents** takes you to the existing automatic connection controls if you prefer Ax to write your installed app's settings.
+
+For Cursor and VS Code, **Copy to share with project** produces a configuration with `ax` on PATH and `${workspaceFolder}` in place of this computer's paths. Add it to `.cursor/mcp.json` or `.vscode/mcp.json` in the project. Each recipient installs Ax, opens their own project checkout and runs `ax init` there. This shares local setup; it does not give access to the project hosted on your Mac. For hosted project access, use the remote flow below.
+
+![Local and remote MCP setup choices](/screenshots/mcp-local-and-remote.png)
+
 ## Copy a project's remote configuration
 
 Open **Settings → Connections → Remote MCP → Share this project** in Command Center or its embedded IDE panel. The card uses the active project's canonical root and the remote project ID from your server configuration. It does not guess a public hostname from the browser URL or project folder name.
@@ -135,7 +145,7 @@ ax mcp remote register --config /absolute/path/remote-mcp.json \
 
 These IDs are separate OAuth registrations. No client secret belongs in the export. Adding client ID flags replaces the stored public registration map; omit all three flags to preserve it. Starting the server preserves your stored label and client IDs.
 
-Alternatively, choose **Register server configuration** and select the private JSON file in the local owner session. This saves public metadata for the active project only. The CLI registers all explicitly configured projects and removes stale bindings omitted from a subsequent server snapshot. The catalogue retains canonical roots internally to match workspaces; exports exclude roots, subjects, grants, key hashes and tokens.
+Alternatively, choose **Import existing server file** and select the `remote-mcp.json` used by `ax mcp remote serve --config` on the computer hosting this project. This is the remote server setup file, rather than a Cursor/VS Code client configuration. The dialog explains where it comes from and keeps optional public OAuth IDs under **Advanced**. If no HTTPS server is configured yet, follow the server setup section above; local copy actions remain available without one. This saves public metadata for the active project only. The CLI registers all explicitly configured projects and removes stale bindings omitted from a subsequent server snapshot. The catalogue retains canonical roots internally to match workspaces; exports exclude roots, subjects, grants, key hashes and tokens.
 
 Choose a publisher if the project is available on multiple servers, then choose your client:
 
@@ -148,7 +158,7 @@ Choose a publisher if the project is available on multiple servers, then choose 
 | ChatGPT | Copy the MCP URL and follow the OAuth custom app setup; no JSON file |
 | Other / Ax proxy | `mcpServers`, `ax` command with a JSON argument array |
 
-**Copy configuration** and **Download configuration** produce the displayed client configuration. Merge its server entry into your existing file. **Copy MCP URL** copies the registered project endpoint. If clipboard permission is denied, the card selects the text for manual copying and shows an error. For the proxy, sign in on the receiving computer first; a POSIX login command is available only when a native public client ID is registered. In PowerShell, double single quotes inside quoted arguments.
+**Copy configuration** and **Download configuration** produce the displayed remote client configuration. Merge its server entry into your existing file. **Copy MCP URL** copies the registered project endpoint. If clipboard permission is denied, the card selects the text for manual copying and shows an error. For the proxy, sign in on the receiving computer first; a POSIX login command is available only when a native public client ID is registered. In PowerShell, double single quotes inside quoted arguments.
 
 A stopped server remains copyable. **Local server running** means Ax received a recent local heartbeat; it does not prove the public tunnel works or that the receiving user is authorized. **Verify endpoint** sends an unauthenticated, bounded initialization probe to the registered public HTTPS endpoint. The expected OAuth challenge and matching resource metadata produce **Endpoint reachable, sign-in required**. Private-network endpoints remain copyable but are excluded from this public probe. Redirects are not followed.
 
@@ -158,6 +168,21 @@ Publications are managed only by an active local owner, with loopback Host/Origi
 
 ![Remote MCP project sharing on desktop](/screenshots/remote-mcp-project-desktop.png)
 ![Remote MCP project sharing on mobile](/screenshots/remote-mcp-project-mobile.png)
+
+## Send and receive an Ax remote connection
+
+On the computer hosting the project, select **Copy connection details** in **Share this project**. Send the copied text to the person connecting. It contains the project HTTPS address and the public native Ax sign-in app ID, when that ID is configured. It excludes local paths, API keys, access/refresh tokens and project grants. This is separate from a private server setup file and from an IDE-specific MCP configuration.
+
+On the receiving computer:
+
+1. Open **Settings → Connections → Remote MCP → Connect to another Ax**.
+2. Select **Paste connection details**, paste the text and choose **Use connection**.
+3. Review the populated project URL and public OAuth client ID, then select **Connect with browser**.
+4. Sign in with your own account and return to Ax.
+
+Pasting does not contact the server, sign in, store a token or grant project access. Each user must already be authorized for the remote project. If the copied details have no native Ax client ID, the UI explains that the server owner must supply it before browser sign-in. An IDE's public client ID is not substituted for the native Ax registration.
+
+![Importing an existing remote server](/screenshots/mcp-import-existing-server.png)
 
 ## Browser login from CLI or Settings
 

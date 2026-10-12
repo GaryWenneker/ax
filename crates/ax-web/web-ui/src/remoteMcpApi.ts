@@ -1,5 +1,8 @@
 export type RemoteClient = 'cursor' | 'vscode' | 'cline' | 'claudeCode' | 'chatgpt' | 'axProxy';
 export type RemoteTransport = 'direct' | 'proxy';
+export type LocalClient = 'cursor' | 'vscode' | 'cline' | 'claudeCode' | 'other';
+export interface LocalExport { workspaceId: string; client: LocalClient; target: 'thisComputer' | 'projectFolder'; content: string; fileName: string; destination: string; instructions: string[]; containsSecrets: false; containsLocalPaths: boolean; portable: boolean }
+export interface ConnectionExport { workspaceId: string; publicationId: string; configFingerprint: string; content: string; containsSecrets: false; requiresClientId: boolean }
 export interface Publication {
   id: string; publisherId: string; publisherLabel: string; projectLabel: string;
   endpointUrl: string; publicOrigin: string; oauthIssuer: string; resource: string;
@@ -22,6 +25,8 @@ function validPublication(value: unknown): value is Publication {
 function validResponse(path: string, value: unknown): boolean {
   if (!record(value)) return false;
   if (path === '/') return typeof value.workspaceId === 'string' && typeof value.csrf === 'string' && typeof value.projectLabel === 'string' && Array.isArray(value.publications) && value.publications.every(validPublication);
+  if (path === '/local/export') return ['workspaceId', 'content', 'fileName', 'destination'].every(k => typeof value[k] === 'string') && ['cursor', 'vscode', 'cline', 'claudeCode', 'other'].includes(String(value.client)) && ['thisComputer', 'projectFolder'].includes(String(value.target)) && strings(value.instructions) && value.containsSecrets === false && typeof value.containsLocalPaths === 'boolean' && typeof value.portable === 'boolean';
+  if (path.endsWith('/connection')) return ['workspaceId', 'publicationId', 'configFingerprint', 'content'].every(k => typeof value[k] === 'string') && value.containsSecrets === false && typeof value.requiresClientId === 'boolean';
   if (path.endsWith('/export')) return ['workspaceId', 'publicationId', 'configFingerprint', 'content'].every(k => typeof value[k] === 'string') && isRemoteClient(value.client)
     && ['json', 'url'].includes(String(value.format)) && (value.fileName === null || typeof value.fileName === 'string') && strings(value.instructions) && strings(value.requirements)
     && (value.loginCommand === null || typeof value.loginCommand === 'string') && value.containsSecrets === false;
