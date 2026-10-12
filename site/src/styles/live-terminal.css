@@ -123,9 +123,6 @@
  .ax-terminal-history li:nth-child(n+3){display:none;}
  .ax-live-console .console-caption {font-size:8px;}
 }
-@media(prefers-reduced-motion:reduce){
- .ax-terminal-line {opacity:1;transform:none;animation:none!important;}
- .ax-terminal-bars i,.ax-signal-pulse{animation:none!important;}
- .ax-live-console .ax-terminal-stream {scroll-behavior:auto;}
+@media(prefers-reduced-motion:reduce){html:not([data-ax-motion="running"]) .ax-terminal-line {opacity:1;transform:none;animation:none!important;}html:not([data-ax-motion="running"]) .ax-terminal-bars i,html:not([data-ax-motion="running"]) .ax-signal-pulse {animation:none!important;}html:not([data-ax-motion="running"]) .ax-live-console .ax-terminal-stream {scroll-behavior:auto;}
 }
 html[data-ax-motion="paused"] .ax-terminal-line {opacity:1;transform:none;}

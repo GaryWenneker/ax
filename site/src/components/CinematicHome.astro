@@ -6,7 +6,7 @@ import MotionControl from "./MotionControl.astro";
 import { agents, agentIcons } from "../lib/agent-icons";
 import { AX_VERSION, AX_RELEASE_VERSION } from "../lib/version";
 import { getStarsLabel } from "../lib/github";
-import { INSTALL_UNIX, installBootScript } from "../lib/install-command";
+import InstallPicker from "./InstallPicker.astro";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const repo = "https://github.com/GaryWenneker/ax";
@@ -95,10 +95,11 @@ const detailStreams = [
       <h1 id="hero-heading">Understand code.<br />Preserve context.<br /><span>Guide every agent.</span></h1>
       <p class="hero-summary">Ax gives developers one context layer for code intelligence, durable memory, policy enforcement, MCP access, quality gates and self-hosted workflows.</p>
       <div class="hero-actions">
-        <a class="signal-btn primary" href={base + "/getting-started/quickstart/"}>Get started <span aria-hidden="true">→</span></a>
+        <a class="signal-btn primary" data-install-primary href={base + "/getting-started/installation/"}>Install Ax <span aria-hidden="true">→</span></a>
         <a class="signal-btn ghost" href={base + "/getting-started/introduction/"}>Read the docs <span aria-hidden="true">↗</span></a>
       </div>
-      <div class="hero-footnote"><span>{AX_VERSION}</span><span>Open source · MIT</span><span>macOS / Linux / Windows</span></div>
+      <InstallPicker hero />
+      <div class="hero-footnote"><span>{AX_VERSION}</span><span>Open source · MIT</span><span>macOS / Linux / WSL2 / Windows</span></div>
       {AX_VERSION !== AX_RELEASE_VERSION && (
         <p class="release-clarification">Latest published download: <a href={repo + "/releases/latest"}>{AX_RELEASE_VERSION}</a>. <a href={base + "/getting-started/installation/#build-from-main"}>Build from main</a>.</p>
       )}
@@ -183,13 +184,7 @@ const detailStreams = [
       <p>Install Ax, initialize your project, connect your agent.</p>
       <a class="inline-arrow" href={base + "/getting-started/quickstart/"}>Follow the quickstart ↗</a>
     </div>
-    <div class="install-block">
-      <div class="install-heading"><span>TERMINAL / INSTALL</span><span>↳ COPY & RUN</span></div>
-      <div class="install" data-install={INSTALL_UNIX}><span class="prompt">$</span><code>{INSTALL_UNIX}</code><button class="copy" type="button" aria-label="Copy install command">Copy</button></div>
-      <p class="copy-status" aria-live="polite" role="status"></p>
-      <p class="install-note">The install command is selected for your operating system. <a href={base + "/getting-started/installation/"}>Other installation options ↗</a></p>
-    </div>
-    <script is:inline set:html={installBootScript()} />
+    <InstallPicker />
   </section>
 </main>
 <footer class="signal-footer">
@@ -197,18 +192,3 @@ const detailStreams = [
   <span>Understand code. Preserve context. Guide every agent.</span>
   <nav aria-label="Footer links"><a href={base + "/getting-started/introduction/"}>Documentation</a><a href={repo}>GitHub</a><a href={repo + "/blob/main/LICENSE"}>MIT license</a></nav>
 </footer>
-
-<script>
-  const wrap = document.querySelector<HTMLElement>(".install");
-  const button = wrap?.querySelector<HTMLButtonElement>(".copy");
-  const status = document.querySelector<HTMLElement>(".copy-status");
-  button?.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(wrap?.dataset.install || "");
-      if (status) status.textContent = "Install command copied.";
-    } catch {
-      if (status) status.textContent = "Select and copy the command above.";
-    }
-  });
-
-</script>

@@ -18,13 +18,15 @@
 <script>
 	(() => {
 		const KEY = 'ax-motion-choice';
+		const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+		let explicitChoice = false;
 
-		const apply = (paused) => {
+		const apply = (paused, save = false) => {
 			document.documentElement.dataset.axMotion = paused ? 'paused' : 'running';
-			try {
-				localStorage.setItem(KEY, paused ? 'paused' : 'running');
-			} catch {
-				/* private mode */
+			if (save) {
+				explicitChoice = true;
+				try { localStorage.setItem(KEY, paused ? 'paused' : 'running'); }
+				catch { /* private mode */ }
 			}
 			document.querySelectorAll('[data-ax-motion-toggle]').forEach((btn) => {
 				btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
@@ -39,11 +41,14 @@
 		const initial = () => {
 			try {
 				const stored = localStorage.getItem(KEY);
-				if (stored === 'paused' || stored === 'running') return stored === 'paused';
+				if (stored === 'paused' || stored === 'running') {
+					explicitChoice = true;
+					return stored === 'paused';
+				}
 			} catch {
 				/* ignore */
 			}
-			return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+			return preference.matches;
 		};
 
 		const bind = () => {
@@ -52,13 +57,14 @@
 				btn.dataset.bound = '1';
 				btn.addEventListener('click', () => {
 					const paused = document.documentElement.dataset.axMotion !== 'paused';
-					apply(paused);
+					apply(paused, true);
 				});
 			});
 		};
 
 		apply(initial());
 		bind();
+		preference.addEventListener('change', () => { if (!explicitChoice) apply(preference.matches); });
 		document.addEventListener('astro:page-load', () => {
 			apply(document.documentElement.dataset.axMotion === 'paused');
 			bind();

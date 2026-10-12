@@ -28,5 +28,5 @@
 @keyframes ax-vector-dotbreath {from{opacity:.49}to{opacity:.86}}
 @keyframes ax-vector-dots {from{opacity:.6;transform:translateY(1%)}to{opacity:.92;transform:translateY(-.5%)}}
 @media(max-width:850px){.ax-landscape .ax-depth-dots{opacity:.3;mask-image:linear-gradient(180deg,transparent 0%,rgba(0,0,0,.2) 55%,#000 100%)}.ax-landscape .ax-depth-spires{opacity:.6}.ax-landscape .ax-depth-distant{opacity:.75}}
-@media(prefers-reduced-motion:reduce){.ax-landscape *, .ax-landscape *::before,.ax-landscape *::after{animation:none!important;transition:none!important}}
+@media(prefers-reduced-motion:reduce){html:not([data-ax-motion="running"]) .ax-landscape *,html:not([data-ax-motion="running"]) .ax-landscape *::before,html:not([data-ax-motion="running"]) .ax-landscape *::after {animation:none!important;transition:none!important}}
 html[data-ax-motion="paused"] .ax-landscape *,html[data-ax-motion="paused"] .ax-landscape *::before,html[data-ax-motion="paused"] .ax-landscape *::after {animation-play-state:paused!important;}

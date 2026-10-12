@@ -48,6 +48,44 @@ async fn sync_without_changes_indexes_nothing() {
 }
 
 #[tokio::test]
+async fn background_sync_reconciles_offline_edits_and_watches_live_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ax = init_project(dir.path()).await;
+    write(
+        dir.path(),
+        "src/app.ts",
+        "export function offlineChange() { return 1; }\n",
+    );
+    let task = Ax::spawn_background_watch(dir.path().to_path_buf());
+    for symbol in ["offlineChange", "liveChange"] {
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                let hits = ax
+                    .search_nodes(symbol, &ax_types::SearchOptions::default())
+                    .await
+                    .unwrap();
+                if hits.iter().any(|r| r.node.name == symbol) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+        if symbol == "offlineChange" {
+            write(
+                dir.path(),
+                "src/app.ts",
+                "export function liveChange() { return 2; }\n",
+            );
+        }
+    }
+    task.abort();
+    let _ = task.await;
+    ax.destroy().await.unwrap();
+}
+
+#[tokio::test]
 async fn sync_reindexes_only_changed_file() {
     let dir = tempfile::tempdir().unwrap();
     let mut ax = init_project(dir.path()).await;

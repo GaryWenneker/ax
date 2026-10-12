@@ -1,0 +1,9 @@
+<script>
+  import { mountScrollReveal } from "../scripts/scroll-reveal.js";
+  let cleanup = () => {};
+  const mount = () => { cleanup(); cleanup = mountScrollReveal(); };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once: true });
+  else mount();
+  document.addEventListener("astro:page-load", mount);
+  document.addEventListener("astro:before-swap", () => cleanup());
+</script>

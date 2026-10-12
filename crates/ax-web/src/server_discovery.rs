@@ -148,6 +148,16 @@ pub async fn announce(config: ServerConfig, url: String, port: u16) -> Result<()
     }
 }
 
+/// CLI presentation of the same bounded discovery used by Settings.
+pub async fn discover(config: &ServerConfig, port: u16, seconds: u64) -> Result<(), String> {
+    let result = discover_candidates(config, port, seconds).await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,14 +218,4 @@ mod tests {
         assert!(announcement(&config, "https://user:secret@example.com").is_err());
         assert!(announcement(&config, "https://example.com/path").is_err());
     }
-}
-
-/// CLI presentation of the same bounded discovery used by Settings.
-pub async fn discover(config: &ServerConfig, port: u16, seconds: u64) -> Result<(), String> {
-    let result = discover_candidates(config, port, seconds).await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?
-    );
-    Ok(())
 }

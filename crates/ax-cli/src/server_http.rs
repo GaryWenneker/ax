@@ -153,11 +153,11 @@ async fn authorize_project(
             if error.to_string() == "replica is blocked" { StatusCode::FORBIDDEN } else { StatusCode::INTERNAL_SERVER_ERROR }
         })?;
     }
-    Ok(principal
+    principal
         .as_ref()
         .map(|p| p.node_id.clone())
         .or_else(|| node_id.map(str::to_owned))
-        .ok_or(StatusCode::UNAUTHORIZED)?)
+        .ok_or(StatusCode::UNAUTHORIZED)
 }
 
 async fn snapshot(
@@ -371,7 +371,7 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         .layer(DefaultBodyLimit::max(
             server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024,
         ))
-        .with_state(state);
+        .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|e| e.to_string())?;
@@ -379,6 +379,14 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         "Ax standalone server listening on {}",
         listener.local_addr().map_err(|e| e.to_string())?
     );
+    // The detached node outlives web/MCP, so it must keep each registered
+    // project's local index synchronized even after those frontends close.
+    let sync_tasks: Vec<_> = state
+        .config
+        .projects
+        .iter()
+        .map(|project| ax_core::Ax::spawn_background_watch(project.path.clone()))
+        .collect();
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             if managed { tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = shutdown_rx.changed() => {} } }
@@ -393,6 +401,9 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         task.abort();
     }
     if let Some(task) = push_task {
+        task.abort();
+    }
+    for task in sync_tasks {
         task.abort();
     }
     result

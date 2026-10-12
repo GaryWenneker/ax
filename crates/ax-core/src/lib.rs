@@ -401,6 +401,15 @@ impl Ax {
                 quiet: true,
                 ..IndexOptions::default()
             };
+            // Register before reconciling so edits during startup are queued too.
+            // Web and standalone nodes need the same catch-up as MCP sessions.
+            if let Err(e) = ax.watch().await {
+                tracing::warn!("background watch could not start: {}", e);
+                return;
+            }
+            if let Err(e) = ax.sync(opts.clone(), None).await {
+                tracing::warn!("background watch catch-up failed: {}", e);
+            }
             if let Err(e) = ax.watch_and_sync(opts, None).await {
                 tracing::warn!("background watch stopped: {}", e);
             }

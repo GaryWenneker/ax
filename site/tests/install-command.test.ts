@@ -3,8 +3,8 @@ import test from 'node:test';
 import {
 	INSTALL_UNIX,
 	INSTALL_WINDOWS,
-	installBootScript,
 	installCommandFor,
+	detectInstallOS,
 } from '../src/lib/install-command.ts';
 
 test('macOS visitors get the shell installer', () => {
@@ -33,10 +33,19 @@ test('Windows visitors get the PowerShell installer', () => {
 	);
 });
 
-test('the page boot script uses the same check and both commands', () => {
-	const boot = installBootScript();
-	assert.match(boot, /windows\|win32\|win64/i);
-	assert.ok(boot.includes(INSTALL_UNIX));
-	assert.ok(boot.includes(INSTALL_WINDOWS));
-	assert.match(boot, /data-install/);
+test('desktop platform detection distinguishes macOS, Linux, Windows and WSL2', () => {
+	assert.equal(detectInstallOS('macOS'), 'macos');
+	assert.equal(detectInstallOS('MacIntel'), 'macos');
+	assert.equal(detectInstallOS('Linux x86_64'), 'linux');
+	assert.equal(detectInstallOS('Windows'), 'windows');
+	assert.equal(detectInstallOS('Win32'), 'windows');
+	assert.equal(detectInstallOS('Linux', 'Microsoft WSL2'), 'wsl2');
+	assert.equal(installCommandFor('Linux', 'Microsoft WSL2'), INSTALL_UNIX);
+});
+
+test('mobile and unknown browsers ask for the development computer', () => {
+	assert.equal(detectInstallOS('Linux armv8l', 'Android 16'), null);
+	assert.equal(detectInstallOS('iPhone', 'iPhone OS 18'), null);
+	assert.equal(detectInstallOS('MacIntel', 'Macintosh', 5), null);
+	assert.equal(detectInstallOS('', ''), null);
 });

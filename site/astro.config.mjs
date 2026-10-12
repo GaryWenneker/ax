@@ -124,7 +124,7 @@ export default defineConfig({
 					SocialIcons: './src/components/SocialIcons.astro',
 				},
 			expressiveCode: {
-				themes: ['github-light', 'github-dark'],
+				themes: ['github-dark'],
 				styleOverrides: {
 					borderRadius: '0px',
 					borderColor: 'transparent',

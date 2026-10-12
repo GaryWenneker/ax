@@ -298,7 +298,8 @@ fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
 
     let first = daemon_info(&p.root).expect("the proxy runs through a daemon");
     let first_pid = first["pid"].as_u64().unwrap();
-    let socket = PathBuf::from(first["socket_path"].as_str().expect("unix socket daemon"));
+    let socket = first["socket_path"].as_str().map(PathBuf::from);
+    let port = first["port"].as_u64().expect("daemon port") as u16;
     kill(first_pid);
     // A call sent while the daemon is still dying is in flight and gets the retry error (D2);
     // this checks the call after it.
@@ -306,9 +307,11 @@ fn d7_a_proxy_keeps_serving_after_its_daemon_is_killed() {
         "the killed daemon to stop listening",
         Duration::from_secs(10),
         || {
-            std::os::unix::net::UnixStream::connect(&socket)
-                .is_err()
-                .then_some(())
+            let stopped = match &socket {
+                Some(path) => std::os::unix::net::UnixStream::connect(path).is_err(),
+                None => std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
+            };
+            stopped.then_some(())
         },
     );
 

@@ -1,0 +1,42 @@
+/* Keep foreground contrast independent of the animated red/blue lighting. */
+.hero-copy::before, .ax-live-console::before {
+  content:""; position:absolute; inset:-28px -22px; z-index:-1; pointer-events:none;
+  background:radial-gradient(ellipse at center,rgba(2,7,16,.96) 20%,rgba(2,7,16,.88) 58%,transparent 78%);
+}
+.story-section, .final-section { background:rgba(2,7,16,.92); }
+.hero-summary, .story-intro p:not(.signal-eyebrow), .final-section p:not(.signal-eyebrow) { color:#c4d5e6; }
+.hero-footnote, .cap-caption, .product-figure figcaption, .console-heading, .console-caption,
+.ax-live-console .console-caption, .ax-terminal-meta, .ax-terminal-time, .ax-terminal-history small { color:#acc4da; }
+.stream-line, .workflow-row p, .deployment-rows p { color:#b7cde0; }
+.signal-site a:focus-visible, .signal-site button:focus-visible { outline:2px solid #b1e9ff; outline-offset:4px; }
+.hero-install { margin-top:26px; padding:16px 0 12px; max-width:580px; }
+.install-heading { margin-bottom:12px; color:#a9dfff; }
+.install-platforms { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:15px; }
+.install-platforms button { border:1px solid #465c75; border-radius:5px; padding:8px 12px; background:#081323; color:#d3e4f5; cursor:pointer; font:11px "IBM Plex Mono",monospace; min-height:36px; }
+.install-platforms button:hover { border-color:#8bcced; }
+.install-platforms button[aria-pressed="true"] { background:#e6f2ff; color:#08121e; border-color:#e6f2ff; font-weight:600; }
+.install code { font-size:11px; line-height:1.7; color:#eef6ff; }
+.install-note { color:#c4d5e6; line-height:1.7; }
+.install-guide { display:inline-block; font-size:12px; color:#9bdfff!important; text-decoration:underline!important; text-underline-offset:3px; margin-top:9px; }
+.copy-status:empty { min-height:0; margin:0!important; }
+.install .copy { min-height:40px; }
+/* Touch devices must not keep the ticker paused after a tap. */
+@media(hover:none) { .integration-ticker:hover .ticker-track { animation-play-state:running; } }
+@media(max-width:850px) {
+ .ax-ares-architecture { opacity:.85; }
+ .ax-landscape .ax-depth-dots { opacity:.6; }
+ .ares-spectrum-haze { opacity:.75; }
+ .ax-landscape .ax-vector { width:180%; left:-40%; max-width:none; }
+ .ax-terminal-health { display:block; grid-column:1 / -1; }
+ .ax-terminal-bars { max-width:220px; height:23px; }
+ .ax-terminal-meta .ax-terminal-event-counter { display:inline; }
+}
+@media(max-width:600px) {
+ .signal-hero { padding-top:34px; }
+ .hero-summary { line-height:1.6; }
+ .hero-install { margin-top:22px; }
+ .install { font-size:10px; align-items:flex-start; }
+ .install code { font-size:10px; }
+ .install-platforms button { padding:9px 10px; }
+ .hero-footnote { margin-top:18px; }
+}

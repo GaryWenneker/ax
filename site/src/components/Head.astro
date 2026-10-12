@@ -1,5 +1,6 @@
 ---
 import Default from '@astrojs/starlight/components/Head.astro';
+import ScrollReveal from './ScrollReveal.astro';
 import { kickerFor, ogImagePath } from '../lib/og-card.mjs';
 
 const route = Astro.locals.starlightRoute;
@@ -12,6 +13,7 @@ const kicker = kickerFor(Astro.url.pathname);
 ---
 
 <Default {...Astro.props} />
+<ScrollReveal />
 <meta property="og:title" content={ogTitle} />
 <meta property="og:description" content={description} />
 <meta property="og:type" content="article" />

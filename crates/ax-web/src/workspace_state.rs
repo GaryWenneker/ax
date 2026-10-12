@@ -36,6 +36,7 @@ pub struct WorkspaceBundle {
     pub policy: PolicyApiState,
     pub ship: ShipApiState,
     _watch_task: Option<JoinHandle<()>>,
+    _sync_task: Option<JoinHandle<()>>,
     _cleanup_task: Option<JoinHandle<()>>,
     _dedup_task: Option<JoinHandle<()>>,
 }
@@ -117,6 +118,9 @@ impl WebHub {
             .unwrap_or_else(|_| guard.project_root.clone());
         if current != root {
             return false;
+        }
+        if let Some(task) = &guard._sync_task {
+            task.abort();
         }
         guard.graph_pool.close().await;
         true
@@ -245,6 +249,9 @@ impl WorkspaceBundle {
         let watch_task = tokio::spawn(async move {
             let _ = watch_daemon.run_watch().await;
         });
+        // Ship watches Git status; Ax Sync watches source changes and keeps the
+        // graph current. Tie its lifetime to the active writable workspace.
+        let sync_task = (!readonly).then(|| ax_core::Ax::spawn_background_watch(root.clone()));
 
         let cleanup_pool = graph_pool.clone();
         let cleanup_task = if readonly {
@@ -270,6 +277,7 @@ impl WorkspaceBundle {
             policy,
             ship,
             _watch_task: Some(watch_task),
+            _sync_task: sync_task,
             _cleanup_task: cleanup_task,
             _dedup_task: dedup_task,
         })
@@ -277,6 +285,9 @@ impl WorkspaceBundle {
 
     pub async fn close(self) {
         if let Some(h) = self._watch_task {
+            h.abort();
+        }
+        if let Some(h) = self._sync_task {
             h.abort();
         }
         if let Some(h) = self._cleanup_task {
