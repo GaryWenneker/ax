@@ -1,4 +1,4 @@
-import { detectInstallOS, type InstallOS } from '../lib/install-command';
+import { detectInstallOS, type InstallOS } from '../lib/install-command.ts';
 
 export type Arch = 'arm64' | 'x64';
 const release = 'https://github.com/GaryWenneker/ax/releases/latest/download/';
