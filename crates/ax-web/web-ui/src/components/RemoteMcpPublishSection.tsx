@@ -204,7 +204,7 @@ export default function RemoteMcpPublishSection() {
         await publicationRequest(`/${p.id}`, { method: 'DELETE', body: identity(p), csrf: data!.csrf, signal: controller.current.signal });
         if (epoch === generation.current) await load();
       })}>Remove local registration</button></div>
-      {checking && <p role="status">{checking}</p>}
+      {checking && <p className="remote-publish-check" role="status">{checking}</p>}
     </>}
     {data && <details><summary>Advanced: register an externally managed server</summary><div className="remote-publish-actions"><button className="btn" type="button" disabled={busy} onClick={() => setShowImport(!showImport)}>Import existing server file</button>
       <a href={guide} target="_blank" rel="noopener noreferrer">View setup guide</a></div></details>}
@@ -218,6 +218,6 @@ export default function RemoteMcpPublishSection() {
       </details><p>This imports settings for this project only. It does not start the server or sign anyone in. Private server settings are excluded from the configurations you share.</p>
       {error && <p role="alert">{error}</p>}</div></ModalShell>}
     {busy && <p role="status">Preparing project configuration…</p>}
-    {message && <p role="status">{message}</p>}{error && !showImport && <p role="alert">{error}</p>}
+    {message && <p className="remote-publish-feedback" role="status">{message}</p>}{error && !showImport && <p role="alert">{error}</p>}
   </section>;
 }

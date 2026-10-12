@@ -189,7 +189,8 @@ async fn handle_mcp_trace_events(
         let mut following_path = String::new();
         let mut seeded_path = String::new();
         let mut project_following = String::new();
-        let mut remote_seen=std::collections::BTreeSet::new();
+        let mut remote_seen=std::collections::BTreeMap::<String,usize>::new();
+        let mut remote_versions=std::collections::BTreeMap::new();
 
         loop {
             let (path, root, hub_root, fallback) = {
@@ -204,6 +205,7 @@ async fn handle_mcp_trace_events(
             if follow_key != project_following {
                 project_following = follow_key;
                 remote_seen.clear();
+                remote_versions.clear();
                 following_path.clear();
                 seeded_path.clear();
                 offset = 0;
@@ -249,12 +251,24 @@ async fn handle_mcp_trace_events(
             let today=ax_usage::rotation_calendar_date(Some(&root),Utc::now());
             for (day,remote_path) in ax_usage::replicated_log_files(&root) {
                 if day!=today {continue;}
+                let Ok(meta)=tokio::fs::metadata(&remote_path).await else {continue;};
+                let version=(meta.len(),meta.modified().ok());
+                if remote_versions.get(&remote_path)==Some(&version) {continue;}
+                remote_versions.insert(remote_path.clone(),version);
                 let origin=ax_usage::replicated_log_origin(&root,&remote_path);
                 if let Ok(text)=tokio::fs::read_to_string(&remote_path).await {
-                    let mut lines=Vec::new();
+                    let mut lines=Vec::new();let mut file_counts=std::collections::BTreeMap::<String,usize>::new();
                     for line in text.split_inclusive('\n') { if !line.ends_with('\n') {continue;}
                         let line=ax_usage::label_log_line(line.trim_end(),origin.as_deref());
-                        if !line.is_empty() && remote_seen.insert(line.clone()) {lines.push(line);}
+                        if !line.is_empty() {
+                            let count = file_counts.entry(line.clone()).or_default();
+                            *count += 1;
+                            let seen = remote_seen.entry(line.clone()).or_default();
+                            if *count > *seen {
+                                *seen = *count;
+                                lines.push(line);
+                            }
+                        }
                     }
                     for chunk in lines.chunks(BATCH_LINES) {let payload=serde_json::to_string(chunk).unwrap_or_else(|_|"[]".into()); yield Ok(Event::default().event("batch").data(payload));}
                 }

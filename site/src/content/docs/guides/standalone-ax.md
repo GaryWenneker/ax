@@ -24,7 +24,7 @@ Protocol 3 transfers memories, rules and skills together with the complete graph
 
 Each node contributes its native records. Received graph IDs and source paths use `ax-replica/<node>/`, so colliding IDs and filenames remain distinct and graph/source queries work without copying the other machine's working tree. Local re-indexing preserves received namespaces. Memory projection rebuilds its full-text and vector indexes. Received rules and skills still require review before activation.
 
-Graph/history databases and log files use verified 512 KiB content-addressed chunks. This allows indexes larger than the existing 8 MiB knowledge envelope. The Primary validates assembled databases, schemas, relationships and counts before accepting a contribution. Knowledge revisions and dataset heads are retained separately, so log/index changes do not repeatedly archive unchanged knowledge. Transfers reuse chunks. Received log history survives source rotation, truncation and removal. Logging history and live trace label remote lines by node.
+Graph/history databases and log files use verified 512 KiB content-addressed chunks. This allows indexes larger than the existing 8 MiB knowledge envelope. The Primary validates assembled databases, schemas, relationships and counts before accepting a contribution. Knowledge revisions and dataset heads are retained separately, so log/index changes do not repeatedly archive unchanged knowledge. Transfers reuse chunks. Received log history survives source rotation, truncation and removal. Accepted conversation history is retained when a native cache/context cleanup omits older rows, so later replicas can still retrieve it. Logging history and live trace label remote lines by node.
 
 Settings shows per-origin counts, last completed synchronization and actual service state: green running, orange waiting/review, red error and gray stopped/unconfigured. A complete sync is reported only after graph/history and memory/policy application finish. Graph replacement affects only that origin; missing knowledge never deletes an accepted memory, and local edits remain protected.
 
@@ -95,7 +95,7 @@ ax server init \
   --primary https://primary.example.com
 ```
 
-The URL must resolve to the actual authenticated Ax primary and be an HTTPS **origin** without a path, query or user credentials. For a same-machine trial, `http://127.0.0.1:9070` is allowed instead.
+The URL must resolve to the authenticated Ax Primary and be an **origin** without a path, query or user credentials. Use HTTPS for remote access. Explicit private or loopback IP addresses also support HTTP, for example `http://192.168.1.20:9070` on a trusted LAN or `http://127.0.0.1:9070` on the same computer.
 
 Set the same `AX_SERVER_KNOWLEDGE_TOKEN` as on the primary. Make an initial authenticated exchange (local knowledge is contributed first, then the combined snapshot is staged):
 
@@ -103,8 +103,8 @@ Set the same `AX_SERVER_KNOWLEDGE_TOKEN` as on the primary. Make an initial auth
 ax server sync --config ./ax-replica.json
 ax server status --config ./ax-replica.json
 
-# After reviewing the mirror, optionally apply replica memories to the
-# local vault under deterministic non-conflicting IDs:
+# Apply verified graph, source, logs, history and memory to this project
+# using separate identities for each contributing node:
 ax server apply --config ./ax-replica.json
 ```
 
@@ -119,7 +119,7 @@ ax server run \
   --auto-apply-memories
 ```
 
-The replica uses its own transient UDP socket, so it can run on the same host as the primary. The 60-second timer is a **fallback**, not the normal expected LAN-update latency. **With `--auto-apply-memories`**, newly arrived memories appear in the replica's own Ax vault and can be recalled, while preserving their enabled flags. Without it, they remain staged until you run `ax server apply`. Policy rules and skills remain staged for review; never activate new executable instructions automatically.
+The replica uses its own transient UDP socket, so it can run on the same host as the primary. The 60-second timer is a **fallback**, not the normal expected LAN-update latency. **With `--auto-apply-memories`**, verified graph, cached source, logs, conversations and memory are applied to the replica's project. Received memories can be recalled and keep their enabled flags. Without it, received data remains staged until you run `ax server apply`. Policy rules and skills remain staged for review; never activate new executable instructions automatically.
 
 ## 4. How near-realtime updates work
 
@@ -127,26 +127,16 @@ The replica uses its own transient UDP socket, so it can run on the same host as
 2. The primary tracks connected project/node IDs and their real UDP source addresses. Missing heartbeats expire after 45 seconds.
 3. Every three seconds the primary compares snapshot revisions of enrolled projects.
 4. On a new revision, it sends a **signed UDP change notification** to registered replicas.
-5. The replica verifies the message and exchanges local knowledge and receives the combined state using the project-specific secret over HTTP(S).
+5. The replica verifies the message, contributes its native project data, and receives the combined knowledge and chunked datasets using the project-specific secret over HTTP(S).
 6. If UDP is dropped or blocked, a scheduled HTTPS pull still converges the mirror.
 
 UDP sends **only change metadata**, not memories, rules, skills or project files. It does not replace HTTPS authentication and does not elect a new primary.
 
-```text
-Primary Ax project     Replica Ax project
-        |                       |
-        |<-- UDP register ------|  signed, repeated
-        |                       |
-   [state changes]              |
-        |-- UDP changed ------->|  signed hint, not data
-        |<-- HTTPS GET ---------|  authenticated
-        |--- snapshot --------->|  validated, staged
-        |                       |
-```
+
 
 ## What you will see in Ax
 
-The replicas keep their own Command Center. With opt-in memory application, imported notes are available in the existing Memory Vault, with independent namespaced IDs. The screenshot below shows the **actual Ax Memory Vault interface**, not simulated replica network activity.
+The replicas keep their own Command Center. After complete application, received graph and cached source are available to graph queries and file previews, conversations remain in the project history, and imported notes are available in the Memory Vault with independent namespaced IDs. The screenshot below shows the **actual Ax Memory Vault interface**, not simulated replica network activity.
 
 ![Ax Command Center Memory Vault interface](/screenshots/cc-memory-vault-dark.png)
 
@@ -163,7 +153,7 @@ ax server sync --config ./ax-replica.json
 
 The status output reports the last attempt, last successful revision and failures for every enrolled project. If the primary goes offline, the replica keeps its last verified staged mirror. Once network connectivity returns, the next signed notification or HTTPS polling cycle can update it.
 
-A successful **mirror** does not overwrite the replica's local database. When you explicitly enable memory application, the replica imports copies using stable, namespaced IDs and a ledger recording the last applied version. If a user modifies an imported memory locally, subsequent syncs detect the conflict instead of replacing it. Missing remote records never delete local records, including unchanged imports. Accepted source revisions are retained on the Primary; collisions from different nodes keep separate IDs. Policies are not activated automatically. The original revisioned mirror remains under `.ax/server/replicas/` for review.
+A successful **mirror** does not overwrite the replica's local database. When you enable complete application, received graph/source and conversation history are projected separately from native records. Memories use stable, namespaced IDs and a ledger recording the last applied version. If a user modifies an imported memory locally, subsequent syncs detect the conflict instead of replacing it. Missing remote records never delete local records, including unchanged imports. Accepted source revisions are retained on the Primary; collisions from different nodes keep separate IDs. Policies are not activated automatically. The original revisioned mirror remains under `.ax/server/replicas/` for review.
 
 ## Empty Primary, existing Replica and conflicts
 
@@ -171,11 +161,11 @@ Pairing an Ax environment that contains months of work to an empty Primary does 
 
 Different nodes that use the same record ID retain separate copies. A locally edited imported memory is preserved and contributed as a local variant; an unchanged imported copy is not uploaded again. Received rules and skills remain pending until you approve them. An unchanged approved import is also excluded from uploads, preventing feedback loops.
 
-Absence is never a deletion instruction. Current copies and previous accepted source revisions remain available; ordinary local deletion does not broadcast deletion to the cluster. Source snapshots are retained as JSON in the project's `ax_node_contributions` table. Staged received revisions remain under `.ax/server/replicas/`. This exchanges enrolled knowledge, not source code, the graph, provider keys, client tokens or a live database file.
+Missing knowledge records never delete accepted memories, rules or skills. Knowledge revisions remain in `ax_node_contributions`; the current graph/source dataset for an origin replaces only that origin's imported graph. Accepted conversation rows and log contents are retained even after native cleanup or log truncation, including for newly joined replicas. Staged revisions remain under `.ax/server/replicas/`. Source contents and graph records are included through verified, whitelisted database exports. Provider keys, client tokens and unrelated project data remain local.
 
 Update **both Primary and Replica** to the current build. A Primary without the preserve-and-exchange endpoint is rejected; the client keeps its local data. Enrollment credentials now authorize contributing the enrolled project's full knowledge, including private records, so choose a Primary you trust with that data.
 
-Synchronization retains the existing 8 MiB state and 10,000-record-per-kind limits. The retention archive is capped at 64 MiB and 64 contributing nodes per project/cluster. Reaching a limit rejects the new contribution with an error; it never prunes accepted history to make room. Keep normal backups of your project state. Release and deployment remain paused.
+The knowledge envelope retains its 8 MiB and 10,000-record-per-kind limits; its revision archive is capped at 64 MiB. Graph, source, history and logs use separate 512 KiB chunks, with an 8 GiB total dataset limit, up to 64 origins and 3,660 log files per origin. History exports and retained heads allow up to one million rows. Reaching a limit rejects the new contribution with an error; it never prunes accepted history to make room. Keep normal backups of your project state. Release and deployment remain paused.
 
 ## 6. LAN discovery versus registration
 
@@ -216,7 +206,7 @@ For backups, stop the service and back up the complete `primary-project/.ax` sta
 - **401 Unauthorized:** check that the project ID and token environment variable exactly match on both nodes.
 - **Replica cannot contact the primary:** check the configured HTTPS origin, TLS termination and TCP port; no automatic discovery-based promotion occurs.
 - **No immediate LAN update:** verify UDP 9072 is allowed through both firewalls and the primary is still running. Manual sync and periodic polling remain available.
-- **Status shows mirrored, not applied:** default behavior stages snapshots without database modifications. Run `ax server apply --config ...` once or enable `--auto-apply-memories` for continuous memory projection. Policy still needs review.
+- **Status shows mirrored, not applied:** default behavior stages snapshots without database modifications. Run `ax server apply --config ...` once or enable `--auto-apply-memories` for continuous graph/source, log, history and memory application. Policy still needs review.
 - **Memory projection reports conflicts:** an imported memory was edited locally or its ledger does not match. The local value is preserved; investigate the conflict before reapplying.
 - **Different projects seem to cross over:** stop using the service and check project IDs, cluster IDs and tokens. Each project must have its own independent secret.
 

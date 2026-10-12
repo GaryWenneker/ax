@@ -381,6 +381,101 @@ async fn project_with(
     Ok(())
 }
 
+/// Keep accepted history available to new replicas after native cache/context
+/// cleanup. Current values replace matching keys; omission cannot erase history.
+pub async fn retain(
+    root: &Path,
+    old: &ax_db::replication::Dataset,
+    new: &mut ax_db::replication::Dataset,
+) -> Result<(), String> {
+    let (Some(before), Some(after)) = (&old.history, &new.history) else {
+        return Err("Missing retained project history".into());
+    };
+    if before.digest == after.digest {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir_in(root.join(".ax/server/datasets")).map_err(err)?;
+    let old_path = directory.path().join("before.db");
+    let new_path = directory.path().join("after.db");
+    let output_path = directory.path().join("merged.db");
+    let input_root = root.to_owned();
+    let old_file = before.clone();
+    let new_file = after.clone();
+    let first = old_path.clone();
+    let last = new_path.clone();
+    tokio::task::spawn_blocking(move || {
+        ax_db::replication::assemble(&input_root, &old_file, &first)?;
+        ax_db::replication::assemble(&input_root, &new_file, &last)
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
+    verify(&old_path, old.history_rows).await?;
+    verify(&new_path, new.history_rows).await?;
+    let output = crate::store::open_pool_at(&output_path)
+        .await
+        .map_err(err)?;
+    let mut names = BTreeMap::new();
+    for table in TABLES {
+        names.insert(*table, columns(&output, table).await?);
+    }
+    let mut conn = output.acquire().await.map_err(err)?;
+    sqlx::query("ATTACH DATABASE ? AS previous")
+        .bind(old_path.to_string_lossy().as_ref())
+        .execute(&mut *conn)
+        .await
+        .map_err(err)?;
+    sqlx::query("ATTACH DATABASE ? AS current")
+        .bind(new_path.to_string_lossy().as_ref())
+        .execute(&mut *conn)
+        .await
+        .map_err(err)?;
+    let mut tx = conn.begin().await.map_err(err)?;
+    for source in ["previous", "current"] {
+        for table in TABLES {
+            let fields = names[table]
+                .iter()
+                .map(|n| format!("\"{n}\""))
+                .collect::<Vec<_>>()
+                .join(",");
+            sqlx::query(&format!("INSERT OR REPLACE INTO main.\"{table}\" ({fields}) SELECT {fields} FROM {source}.\"{table}\" ORDER BY rowid")).execute(&mut *tx).await.map_err(err)?;
+        }
+    }
+    tx.commit().await.map_err(err)?;
+    sqlx::query("DETACH DATABASE previous")
+        .execute(&mut *conn)
+        .await
+        .map_err(err)?;
+    sqlx::query("DETACH DATABASE current")
+        .execute(&mut *conn)
+        .await
+        .map_err(err)?;
+    sqlx::query("VACUUM")
+        .execute(&mut *conn)
+        .await
+        .map_err(err)?;
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&mut *conn)
+        .await
+        .map_err(err)?;
+    drop(conn);
+    let rows = row_count(&output).await?;
+    if rows > 1_000_000 {
+        return Err("Retained history capacity reached; previous history is preserved".into());
+    }
+    output.close().await;
+    let input_root = root.to_owned();
+    let path = output_path.clone();
+    let manifest =
+        tokio::task::spawn_blocking(move || ax_db::replication::file_manifest(&input_root, &path))
+            .await
+            .map_err(err)?
+            .map_err(err)?;
+    new.history = Some(manifest);
+    new.history_rows = rows;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,6 +553,28 @@ mod tests {
         assert_eq!(body, "Our project specification");
         let linked:i64=sqlx::query_scalar("SELECT COUNT(*) FROM ax_durable_entry a JOIN ax_durable_entry b ON a.head=b.id WHERE a.body='Summary' AND b.body='Existing transcript'").fetch_one(&received).await.unwrap();
         assert_eq!(linked, 1);
+        crate::working_context::apply_with(
+            &received,
+            target.path(),
+            "new-local-chat",
+            &serde_json::json!({"action":"add","facts":["New local fact"]}),
+            "fresh",
+            true,
+        )
+        .await
+        .unwrap();
+        let retained: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM mcp_working_context WHERE scope=?")
+                .bind(&key)
+                .fetch_one(&received)
+                .await
+                .unwrap();
+        assert_eq!(retained, 1);
+        // Remove the new native note before checking that received history is not fed back.
+        sqlx::query("DELETE FROM mcp_working_context WHERE scope NOT GLOB 'replica_*'")
+            .execute(&received)
+            .await
+            .unwrap();
         let echo = export_with(target.path(), &received, &destination)
             .await
             .unwrap();

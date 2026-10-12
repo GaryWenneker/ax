@@ -95,6 +95,14 @@ try {
           !hero.rows.every((top, i) => i === 0 || top > hero.rows[i - 1])) {
         throw new Error(name + ': incorrect slogan, font, accent or layout: ' + JSON.stringify(hero));
       }
+      // Capture a representative phase of the independently moving screens.
+      await page.evaluate(() => {
+        document.querySelectorAll('.ax-halftone-dots').forEach(el => {
+          el.getAnimations().forEach(animation => {
+            animation.currentTime = Number(animation.effect.getTiming().duration) / 2;
+          });
+        });
+      });
     }
     await page.screenshot({
       path: path.join(output, name + ".jpg"),
@@ -116,12 +124,25 @@ try {
   if ((await page.$$(".signal-ambient, .ax-ares-architecture, .integrated-console")).length) {
     throw new Error("Old cinematic layout is still rendered");
   }
-  const moire = await page.$$eval(".ax-moire-layer", elements => ({
-    count: elements.length,
-    moving: elements.some(el => el.getAnimations().some(a => a.playState === "running")),
-  }));
-  if (moire.count !== 2 || !moire.moving) {
-    throw new Error("Two animated moire layers required: " + JSON.stringify(moire));
+  const moire = await page.evaluate(() => {
+    const field = document.querySelector('.ax-halftone');
+    const screens = [...field.querySelectorAll('.ax-halftone-dots')];
+    const before = screens.map(el => getComputedStyle(el).transform);
+    screens.forEach(el => el.getAnimations().forEach(animation => { animation.currentTime += 8000; }));
+    const after = screens.map(el => getComputedStyle(el).transform);
+    return {
+      count: screens.length,
+      pitch: screens.map(el => getComputedStyle(el).backgroundSize),
+      blending: screens.every(el => getComputedStyle(el).mixBlendMode === 'multiply'),
+      mask: getComputedStyle(field).maskImage,
+      hardCircle: getComputedStyle(field.querySelector('.ax-halftone-grid')).borderRadius !== '0px',
+      changed: after.filter((transform, index) => transform !== before[index]).length,
+      moving: screens.filter(el => el.getAnimations().some(animation => animation.playState === 'running')).length,
+    };
+  });
+  if (moire.count !== 3 || new Set(moire.pitch).size !== 3 || !moire.blending || moire.hardCircle ||
+      moire.changed !== 2 || moire.moving !== 2 || !moire.mask.includes('closest-side') || !moire.mask.includes('100%')) {
+    throw new Error('Independent overprint interference and feathered edges required: ' + JSON.stringify(moire));
   }
   await page.click("[data-ax-platform-toggle]");
   await page.click('[data-ax-os="windows"]');
@@ -133,14 +154,14 @@ try {
   const macUrl = await page.$eval("[data-ax-download]", el => el.getAttribute("href"));
   if (!macUrl.endsWith("ax-darwin-x64.tar.gz")) throw new Error("Intel macOS asset mismatch");
   await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
-  const respectsMotion = await page.$$eval(".ax-moire-layer", elements =>
+  const respectsMotion = await page.$$eval(".ax-halftone-dots", elements =>
     elements.every(el => el.getAnimations().every(a => a.playState !== "running")));
   if (!respectsMotion) throw new Error("Reduced-motion preference ignored");
   const targets = await page.$$eval('a[href]', links =>
     [...new Set(links.map(x => x.getAttribute("href")).filter(x => x.startsWith("/") && !x.includes("#")))]);
   for (const target of targets) await access(path.join(site, "dist", target, "index.html"));
   if (errors.length) throw new Error(errors.join("\n"));
-  console.log("Minimal homepage checks passed: responsive viewport, moire, native download links, and reduced motion.");
+  console.log("Minimal homepage checks passed: responsive viewport, CMY interference and edge fade, native download links, and reduced motion.");
 } finally {
   await browser?.close();
   server.kill();

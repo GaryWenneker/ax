@@ -389,7 +389,7 @@ const MAX_AGE_SECS: i64 = 30 * 86_400;
 /// Age out old snapshots everywhere, then cap this project. `kept` is never evicted.
 async fn evict(pool: &SqlitePool, root: &Path, kept: &str) -> Result<(), String> {
     let cutoff = chrono::Utc::now().timestamp() - MAX_AGE_SECS;
-    sqlx::query("DELETE FROM mcp_working_context WHERE updated_at < ? AND scope != ?")
+    sqlx::query("DELETE FROM mcp_working_context WHERE updated_at < ? AND scope != ? AND scope NOT GLOB 'replica_*'")
         .bind(cutoff)
         .bind(kept)
         .execute(pool)
@@ -399,7 +399,7 @@ async fn evict(pool: &SqlitePool, root: &Path, kept: &str) -> Result<(), String>
     sqlx::query(
         "DELETE FROM mcp_working_context WHERE scope IN (
            SELECT scope FROM mcp_working_context
-           WHERE substr(scope, -length(?1)) = ?1 AND scope != ?2
+           WHERE substr(scope, -length(?1)) = ?1 AND scope != ?2 AND scope NOT GLOB 'replica_*'
            ORDER BY updated_at DESC, scope DESC LIMIT -1 OFFSET ?3)",
     )
     .bind(&project)

@@ -238,20 +238,29 @@ pub fn read_log_file_text(path: &Path) -> String {
 }
 
 pub fn read_log_for_day(project_root: &Path, day: NaiveDate) -> String {
-    let mut lines = Vec::new();
+    let mut merged = std::collections::BTreeMap::<String, usize>::new();
     for (date, path) in list_dated_log_files(project_root) {
         if date == day {
             let origin = replicated_log_origin(project_root, &path);
-            lines.extend(
-                read_log_file_text(&path)
-                    .lines()
-                    .map(|line| label_log_line(line, origin.as_deref())),
-            );
+            let mut file_counts = std::collections::BTreeMap::<String, usize>::new();
+            for line in read_log_file_text(&path).lines() {
+                *file_counts
+                    .entry(label_log_line(line, origin.as_deref()))
+                    .or_default() += 1;
+            }
+            // Retained segments may overlap a current file. Keep the maximum count
+            // across segments, preserving repeated events within each file.
+            for (line, count) in file_counts {
+                let existing = merged.entry(line).or_default();
+                *existing = (*existing).max(count);
+            }
         }
     }
-    lines.sort();
-    lines.dedup();
-    lines.join("\n")
+    merged
+        .into_iter()
+        .flat_map(|(line, count)| (0..count).map(move |_| line.clone()))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn previous_calendar_day(day: NaiveDate) -> NaiveDate {
@@ -439,6 +448,32 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn received_segments_preserve_repeated_events_without_duplicating_overlaps() {
+        let dir = tempfile_dir();
+        let remote = dir.join(".ax/server/replicated-logs/node");
+        fs::create_dir_all(&remote).unwrap();
+        let line = "2026-10-12T11:00:00.000Z [ax-mcp] same event\n";
+        fs::write(dir.join(".ax/mcp-verbose-2026-10-12.log"), line.repeat(2)).unwrap();
+        fs::write(remote.join("mcp-verbose-2026-10-12.log"), line.repeat(2)).unwrap();
+        fs::write(
+            remote.join(format!("mcp-verbose-2026-10-12.{}.log", "0".repeat(64))),
+            line,
+        )
+        .unwrap();
+        let day = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let text = read_log_for_day(&dir, day);
+        assert_eq!(text.lines().count(), 4);
+        assert_eq!(
+            text.lines().filter(|l| l.contains("[node:node]")).count(),
+            2
+        );
+        assert_eq!(
+            nearest_dated_log_before(&dir, day.succ_opt().unwrap()),
+            Some((day, false))
+        );
+    }
 
     #[test]
     fn verbose_enabled_always_on() {

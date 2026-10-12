@@ -176,7 +176,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
       </div>
     </div> : <button type="button" className="btn primary" disabled={locked || busy} onClick={() => { editing.current = true; setSetupOpen(true); }}>Set up replication</button>}
     {setupOpen && <ModalShell title="Set up replication" onClose={() => { if (!busy) { setSetupOpen(false); editing.current = false; } }}>
-      {error && <p role="alert">{error}</p>}
+      {error && !setupOpen && <p role="alert">{error}</p>}
 <form className="access-form" onSubmit={activate} aria-label="Replication setup">
       <label>Local node role<select className="settings-select" aria-label="Local node role" value={role} disabled={disabled} onChange={e => { setRole(e.target.value as 'primary' | 'replica'); setToken(''); setIssued(null); setMessage(null); }}><option value="primary">Primary — publish this project</option><option value="replica">Replica — connect to a Primary</option></select></label>
       <details><summary>Advanced options</summary><p className="access-note">IDs are generated for a Primary and returned by authenticated enrollment for a Replica. Override a project ID only when the Primary serves multiple projects.</p>

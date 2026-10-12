@@ -29,17 +29,18 @@ test('Oxanium is bundled and used for the heading, not loaded from Google Fonts'
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
-test('pop-art lime moire grid remains CSS-only, moving and accessible', () => {
-  assert.match(home, /ax-moire-layer one/);
-  assert.match(home, /ax-moire-layer two/);
-  assert.match(css, /17px 17px/);
-  assert.match(css, /18\.8px 18\.8px/);
-  assert.match(css, /rgba\(185,255,106/);
-  assert.match(css, /@keyframes ax-moire-interference/);
+test('CMY interference uses near-matched pitches, independent motion and feathered edges', () => {
+  assert.match(home, /ax-halftone-screen-three/);
+  for (const pitch of ['26px 26px', '26.8px 26.8px', '25.4px 25.4px']) assert.ok(css.includes(pitch));
+  for (const ink of ['#00ffff', '#ff00ff', '#ffff00']) assert.ok(css.includes(ink));
+  assert.match(css, /mix-blend-mode:multiply/);
+  assert.match(css, /ellipse closest-side/);
+  assert.match(css, /transparent 100%/);
+  assert.doesNotMatch(css, /border-radius:50%|ax-halftone-rosette/);
+  assert.match(css, /@keyframes ax-moire-magenta/);
+  assert.match(css, /@keyframes ax-moire-yellow/);
   assert.match(css, /prefers-reduced-motion:reduce/);
-  assert.match(css, /@media\(min-width:900px\)/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
-  assert.doesNotMatch(home, /VectorLandscape|AresOverlay|LiveTerminal|ScrollReveal/);
 });
 
 test('installer offers the six real release assets and manual OS and CPU selection', () => {

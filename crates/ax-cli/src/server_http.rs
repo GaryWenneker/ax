@@ -836,8 +836,10 @@ mod tests {
             assert!(memories.iter().any(|m| m.body == "Memory from primary"));
             assert!(memories.iter().any(|m| m.body == "Memory from a"));
             assert!(memories.iter().any(|m| m.body == "Memory from b"));
-            let matches=ax_memory::store::recall(ax.db_pool(),"Memory from b",10).await.unwrap();
-            assert!(matches.iter().any(|m|m.memory.body=="Memory from b"));
+            let matches = ax_memory::store::recall(ax.db_pool(), "Memory from b", 10)
+                .await
+                .unwrap();
+            assert!(matches.iter().any(|m| m.memory.body == "Memory from b"));
             let logs = ax_usage::read_merged_verbose_log(root);
             assert!(logs.contains("primary"));
             assert!(logs.contains("a"));
@@ -853,6 +855,21 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(source, "fn a() {}\n");
+        // Native cleanup must not erase accepted conversations from cluster heads.
+        let usage = ax_usage::open_pool().await.unwrap();
+        sqlx::query("DELETE FROM ax_durable_entry WHERE conversation_id IN (SELECT conversation FROM ax_durable_scope WHERE project=? AND session NOT GLOB 'replica_*')").bind(ax_usage::project_scope(a_root.path())).execute(&usage).await.unwrap();
+        sync(&client, &a).await;
+        sync(&client, &b).await;
+        let retained:i64=sqlx::query_scalar("SELECT COUNT(*) FROM ax_durable_entry e JOIN ax_durable_scope s ON s.conversation=e.conversation_id WHERE s.project=? AND e.body='Conversation from a'").bind(ax_usage::project_scope(b_root.path())).fetch_one(&usage).await.unwrap();
+        assert_eq!(retained, 1);
+        let late_root = tempfile::tempdir().unwrap();
+        let _late_ax = ax_core::Ax::init(late_root.path()).await.unwrap();
+        let mut late = b.clone();
+        late.node_id = "late".into();
+        late.projects[0].path = late_root.path().into();
+        sync(&client, &late).await;
+        let late_history:i64=sqlx::query_scalar("SELECT COUNT(*) FROM ax_durable_entry e JOIN ax_durable_scope s ON s.conversation=e.conversation_id WHERE s.project=? AND e.body='Conversation from a'").bind(ax_usage::project_scope(late_root.path())).fetch_one(&usage).await.unwrap();
+        assert_eq!(late_history, 1);
         let native = crate::server_snapshot::export_native(&a, "project")
             .await
             .unwrap();

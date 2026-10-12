@@ -106,9 +106,9 @@ Windows uses the TCP upstream path; Unix sockets in this feature are macOS/Linux
 
 The server does not rewrite your Cloudflare configuration or create another tunnel. OAuth discovery and authenticated MCP traffic must reach Ax through the route. If you also use Cloudflare Access, configure it so its separate browser login or custom service-token headers do not block the MCP OAuth client.
 
-## OAuth provider setup
+## External OAuth provider setup
 
-Use an established OAuth provider. Ax implements the resource server and native client; it does not provide its own account database or authorization server.
+A generated host uses Ax's built-in authorization server and project-scoped host approvals. The following steps apply only when selecting an existing configuration that uses an external provider. In that mode, the provider manages accounts and sign-in, while Ax validates its access tokens.
 
 Configure the provider to:
 

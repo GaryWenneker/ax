@@ -180,6 +180,7 @@ async fn retain(
             if let Some(previous) = previous {
                 let old: ax_db::replication::Dataset =
                     serde_json::from_str(&previous).map_err(|e| e.to_string())?;
+                ax_usage::replication::retain(root,&old,&mut item).await?;
                 ax_db::replication::retain_logs(root, &old, &mut item)
                     .map_err(|e| e.to_string())?;
             }

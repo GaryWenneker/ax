@@ -1,6 +1,6 @@
 # Autonomous remote hosting and complete project replication
 
-Status: implementation in progress. Merge is blocked until complete synchronization passes.
+Status: implementation and local verification complete. Ready to merge; releases and deployments remain paused.
 
 ## Goal
 
@@ -12,7 +12,7 @@ Replication transfers the registered project's memories, rules, skills, complete
 
 Protocol version 3 adds a manifest to the existing knowledge exchange. Graph and history are exported from a consistent SQLite read into a clean, whitelisted database; imported namespaces are excluded to prevent feedback. Files use content-addressed BLAKE3 chunks of at most 512 KiB, so graph size is independent of the existing 8 MiB knowledge envelope. Each chunk is authenticated per project and checked before publication. The assembled database must pass integrity, schema, reference and claimed-count checks before its contribution is accepted.
 
-The Primary retains knowledge revisions and current per-origin dataset heads separately. Graph changes therefore do not duplicate all unchanged knowledge history. Received graphs are projected under `ax-replica/<node>/` IDs and paths. This preserves native records and collisions between nodes, keeps imported source available to normal graph queries, and protects imported graph data from local re-indexing. A changed graph replaces only that origin's graph; it cannot overwrite another node's native graph. MCP logs retain origin labels, remain separate from native log files and are visible in history and live trace. Rotation, truncation and deleted native log files must preserve already synchronized history.
+The Primary retains knowledge revisions and current per-origin dataset heads separately. Graph changes therefore do not duplicate all unchanged knowledge history. Received graphs are projected under `ax-replica/<node>/` IDs and paths. This preserves native records and collisions between nodes, keeps imported source available to normal graph queries, and protects imported graph data from local re-indexing. A changed graph replaces only that origin's graph; it cannot overwrite another node's native graph. Accepted conversation rows remain in per-origin history heads after native cache cleanup; imported working context is protected from local expiry/cap eviction. MCP logs retain origin labels, remain separate from native log files and are visible in history and live trace. Rotation, truncation and deleted native log files must preserve already synchronized history.
 
 Sync success means verified chunks, graph/history projection and memory/policy application completed. Transfer errors or partial application must remain visible and must not display a successful synchronization. Status includes dataset counts and the last completed revision. Offline/restarted nodes reuse persisted settings, credentials, manifests and chunks.
 
@@ -41,4 +41,7 @@ Only Azure Portal Light and Dark themes remain, named Light and Dark. Migrate ol
 - Autonomous host, built-in OAuth, selected-interface setup and settings UI are reconstructed and saved on the feature branch.
 - Protocol 3 includes graph/source, logs, memory/policy and explicitly project-scoped usage/conversation data.
 - Complete three-node HTTP exchange and 603 backend unit tests passed, including restart reads, source availability, collision protection, no feedback, history retention and OAuth refresh replay/revocation.
-- Browser checks, strict lint, updated screenshots and installed-binary validation are still pending. No merge, release or deployment has occurred.
+- All 52 desktop/mobile browser checks, 35 website checks, frontend production build, theme/log parsing checks and strict Clippy passed. Current screenshots include a real installed-host capture.
+- The installed release binary exchanged graph, cached source, memory, logs and durable history through separate Primary/two-replica CLI processes, including a Primary restart. A late-joining replica also received accepted history after native cleanup in the HTTP integration test.
+- The installed host passed owner CSRF/stale-project guards, generated configuration/native identity, discovery, public registration, PKCE/host approval, token exchange, MCP initialization, refresh, revocation and persistent stop/start. The freshly embedded UI serves the generated bundle and displays one local configuration block with actual host state.
+- Tests use loopback services and controlled interface fixtures. Physical multi-machine LAN broadcast, OS credential-store availability and an externally routed HTTPS hostname require their deployment environment; no release, workflow dispatch or deployment was performed.
