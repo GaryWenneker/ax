@@ -27,7 +27,7 @@ Copy fixpack → paste into agent chat to improve policy / habits
 
 Traces **never** alter agent-facing tool responses (`content.text` / `structuredContent`). Logging is side-channel only.
 
-## v4 domain events
+## Domain events
 
 When Verbose MCP logging is on, the same daily log also receives domain lines for:
 
@@ -45,7 +45,7 @@ When Verbose MCP logging is on, the same daily log also receives domain lines fo
 | `embed` | memory embedding backend |
 | `action` | Command Center live activity bus |
 
-Domain lines are written only when Verbose MCP logging is on (`[ui].verbose_mcp` or `AX_MCP_VERBOSE`).
+Domain lines are always written to the project’s dated verbose log.
 
 Filter these on the Logging page kind chips (also via `/logging?kind=lsp`). Quality / `ax mcp audit` can raise:
 
@@ -59,16 +59,9 @@ Filter these on the Logging page kind chips (also via `/logging?kind=lsp`). Qual
 
 Activity StatusBar rows deep-link to Logging with the matching kind filter.
 
-## 1. Enable verbose logging
+## 1. Confirm the project log
 
-Pick one:
-
-| Method | Effect |
-|---|---|
-| **Settings → Interface → Verbose MCP logging** | Writes `[ui] verbose_mcp = true` to `.ax/ship.toml` for the **active** project |
-| `AX_MCP_VERBOSE=1` | Env on the MCP server process (Cursor MCP config) |
-
-Then **restart / reconnect** the ax MCP server in your agent.
+Verbose MCP logging is always enabled. Reconnect the MCP server after changing its project path so activity belongs to the intended project. `AX_MCP_VERBOSE=1` remains compatible with existing client configurations.
 
 Lines go to:
 
@@ -84,25 +77,25 @@ Open via the status-bar **Logging** chip, or navigate to `/logging`.
 | Control | Purpose |
 |---|---|
 | **Kind chips** | Filter Inbound / Outbound / Preview / Error / Internal / Enrich / plugin / lsp / ship / share / workspace / memory / policy / cli / embed / action |
-| **Has text chip** | Show only events with a human-readable text payload (`prompt`, `query`, `text`, `message`, or `q` — including nested JSON paths and flat `key=value` fields). Matching rows get a blue left edge + a key badge (`prompt` / `query` / …) in Summary; the Call Inspector opens with a **Prompt / text** hero section. URL alias: `?hasQuery=1` still works. |
+| **Has text chip** | Show only events with a human-readable text payload (`prompt`, `query`, `text`, `message`, or `q` — including nested JSON paths and flat `key=value` fields). Matching rows show direction markers and a key badge (`prompt` / `query` / …) in Context; the Call Inspector opens with a **Prompt / text** hero section. URL alias: `?hasQuery=1` still works. |
 | **Date dropdown** | Filter by calendar day (`YYYY-MM-DD` in the configured timezone); Time column shows date + clock |
-| **Timezone** | Set under **Settings → Interface → Timezone** (IANA, e.g. `Europe/Amsterdam`). Controls Logging Date/time display **and** daily log file rotation (midnight boundary). Timestamps inside log lines stay UTC. Default: browser local. |
+| **Timezone** | Set under **Settings → Appearance → Timezone** (IANA, e.g. `Europe/Amsterdam`). Controls Logging display and the configured daily rotation zone. Timestamps inside lines stay UTC. With an empty/local setting, display uses the browser timezone and file rotation uses the host timezone; these can differ when accessed remotely. |
 | **Tool dropdown** | Filter by tool name (`ax_preflight`, `ax_explore`, …). Domain/CLI lines also fill TOOL: `memory`, `policy`, `workspace`, `lsp`, `ship-ci`, `cli:explore`, … (from `tool=` on the log line or inferred from `[ax] …` / `cli cmd=`). |
 | **Text search** | Free-text over summary / meta |
-| **Project switcher** | Switch to another recent workspace’s verbose log |
+| **Project switcher** | Use the app header or status bar to switch workspace and its verbose log |
 | **Newest / Scroll to new** | Table is **newest-first**. Stay pinned to the top for live updates, or use **Scroll to new** (toolbar + floating chip) after scrolling into history |
 | **Older days** | Scroll toward the bottom to load previous dated log files |
 | **Status bar** | Live in / out / prev / err / event counts; muted danger tint when offline |
-| **Header waves** | Azure CSS waves under the title bar on every page (same language as the site nav) |
+| **Quality** | Opens the quality panel; the button includes the current score |
 | **Call Inspector** | Tap a row (or Enter) for pretty-printed JSON/XML and `key=value` fields |
 
 Keyboard: `↑↓` / `j` `k` to move (down = older), Home = newest, End = oldest, Enter to inspect, Esc / `b` to back.
 
-Offline / reconnecting: log text is **blurred** until the SSE stream is live again.
+Offline / reconnecting: existing log rows remain readable while Ax reconnects. The live indicator and status bar show connection state.
 
 ## 3. Quality slide-out (Q chip)
 
-The status-bar **Q** chip shows a live score (and a critical badge when needed). Click it (or the Logging quality strip) for:
+The status-bar **Q** chip shows a live score (and a critical badge when needed). Click it (or the Logging **Quality** button) for:
 
 | Section | Meaning |
 |---|---|
@@ -139,7 +132,7 @@ This installs hooks under `~/.cursor/hooks/` and merges `sessionStart` into `~/.
 - `ax savings import --all` keeps the tagged model for by-model rollups (when model is present)
 - `ax mcp audit` prefers the ax-heaviest transcript and aligns windows more accurately
 
-If correlation stays near 0%: confirm the hook ran (`type %USERPROFILE%\.ax\active-cursor-session`), reconnect ax MCP after enabling verbose, and pass `--session <uuid>` when auditing a specific chat.
+If correlation stays near 0%: confirm the hook ran (`type %USERPROFILE%\.ax\active-cursor-session`), reconnect ax MCP with the intended project path, and pass `--session <uuid>` when auditing a specific chat.
 
 Manual debug tag:
 
@@ -172,7 +165,7 @@ Auditor softens false positives when possible: recovered MCP errors (same-tool s
 ```bash
 # One-time
 ax savings hook install
-# Settings → Interface → Verbose MCP logging = on
+# Logging is always enabled; reconnect MCP to confirm the project path
 # Restart ax MCP in Cursor
 
 # During / after a session
@@ -185,7 +178,7 @@ Related surfaces:
 
 - [Token savings](/guides/token-savings/) — heatmap, TokenViz path graph, import, pricing
 - [Command Center](/guides/command-center/) — Logging page in the page table
-- [MCP Server](/reference/mcp-server/) — lean responses + verbose env vars
+- [MCP Server](/reference/mcp-server/) — lean responses + logging and stderr options
 - [CLI](/reference/cli/#ax-mcp-audit) — `ax mcp audit` flags
 - [Policy Engine](/guides/policy-engine/) — rules that raise Explore-before-Grep / guard scores
 
@@ -193,10 +186,10 @@ Related surfaces:
 
 | Symptom | Fix |
 |---|---|
-| Logging empty | Enable verbose logging; reconnect MCP; confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows |
+| Logging empty | Reconnect MCP with the intended project path; confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows |
 | Q score stuck / muted | Need inbound traffic + verbose file; open Logging and trigger a preflight |
 | ExploreBeforeGrep false alarm | Install session hook; prefer timed transcripts; re-run audit after a real ax-heavy chat; quiet/DEGRADED MCP should not flag this |
-| Correlation near 0% | Wrong project; verbose off; MCP disconnected; missing `session=` (reinstall hook / restart MCP); or audit without matching transcript — pass `--session` |
-| UncorrelatedTool (medium) while verbose is on | Usually ax MCP is offline after a reinstall — reconnect MCP; live rolling audits no longer score-penalize this when `verbose_mcp=true` |
+| Correlation near 0% | Wrong project; MCP disconnected; missing `session=` (reinstall hook / restart MCP); or audit without matching transcript — pass `--session` |
+| UncorrelatedTool (medium) despite a project log | Usually ax MCP is offline after a reinstall — reconnect MCP; live rolling audits no longer score-penalize this when `verbose_mcp=true` |
 | LspAvailableUnused | Run `ax lsp enrich` (or Unresolved → Enrich with LSP) while MCP is active; domain-only windows no longer false-flag |
 | Fixpack empty | No findings in window — widen `--window-minutes` or run a fuller agent turn first |

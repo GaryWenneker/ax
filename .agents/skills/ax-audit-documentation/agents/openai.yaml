@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ax Documentation Audit"
+  short_description: "Audit Ax features, guides and current screenshots"
+  default_prompt: "Use $ax-audit-documentation to compare Ax functionality with its website, refresh screenshots and run a second audit."

@@ -7,7 +7,7 @@ description: Every HTTP endpoint served by ax web / ax ship --watch, grouped by 
 
 - Requests from the local machine need no token. Through `ax share`, every `/api`, `/dav` and `/ax` request needs the share token (see [Share Command Center](/guides/share/)).
 - Endpoints ending in `/stream` or `/events` answer with Server-Sent Events (SSE).
-- Any other path that is not listed here returns the single-page app, so UI routes like `/policy/rules` or `/graph` work as bookmarks.
+- UI routes like `/policy/rules` or `/graph` return the single-page app and work as bookmarks. Unknown `/api/` routes return an error rather than the HTML application shell.
 
 ## Graph and index
 
@@ -191,3 +191,91 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | GET | `/api/actions/events` | Live action stream (SSE) |
 | POST | `/api/actions/publish` | Publish an action to the stream |
 | GET | `/api/reset-client-cache` | Clear a stale service worker / browser cache |
+
+## Team, clients and replication access
+
+These endpoints enforce the local-owner session or a client credential with the corresponding `admin:team`, `admin:clients` or `admin:nodes` scope. Mutations are rejected in read-only mode. Local browser mutations use the CSRF value from `/api/access/session` in `X-Ax-Access-Csrf`. Token values are returned only when created/revealed; keep them out of logs and screenshots.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/access/session` | Retrieve the local access-session CSRF value |
+| GET, POST | `/api/access/team` | List or add members |
+| PATCH | `/api/access/team/{id}` | Change a member's role/status |
+| GET, POST | `/api/access/clients` | List or add applications and scopes |
+| PATCH | `/api/access/clients/{id}/scopes` | Change application permissions |
+| POST | `/api/access/clients/{id}/token` | Issue a credential |
+| POST | `/api/access/clients/{id}/rotate` | Replace client credentials |
+| POST | `/api/access/clients/{id}/revoke` | Revoke the client |
+| POST | `/api/access/credentials/{id}/revoke` | Revoke one credential |
+| GET | `/api/access/nodes` | List peers and local role/status |
+| GET, POST | `/api/access/nodes/local` | Read or configure/start the local replication service |
+| GET | `/api/access/nodes/local/interfaces` | List local advertisement interfaces |
+| POST | `/api/access/nodes/local/stop` | Stop the local service |
+| POST | `/api/access/nodes/local/credential` | Reveal the saved local replication credential |
+| POST | `/api/access/nodes/local/remove` | Remove local configuration, preserving synchronized project data |
+| POST | `/api/access/nodes/local/discover` | Inspect discovered Primary candidates |
+| POST | `/api/access/nodes/{id}/revoke` | Block a peer |
+| POST | `/api/access/nodes/{id}/remove` | Remove a revoked peer record |
+| POST | `/api/access/nodes/{id}/reenroll` | Allow a blocked peer to enroll again |
+
+## Local remote-MCP connection login
+
+Use these on the hosting computer through local Command Center. They manage the local OAuth client connection, not public server access grants. Mutations require `X-Ax-Csrf` from the status response.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/remote-mcp` | Saved connections and CSRF value (the client uses the trailing-slash form) |
+| POST | `/api/remote-mcp/login` | Begin browser login for a project URL and public client ID |
+| GET | `/api/remote-mcp/login/{id}` | Poll the login attempt |
+| POST | `/api/remote-mcp/login/{id}/cancel` | Cancel a pending attempt |
+| POST | `/api/remote-mcp/logout` | Remove a saved connection and attempt provider revocation |
+
+## SonarQube service controls
+
+These are host operations, not passive documentation examples. Streaming variants return progress via SSE. Use the configured credentials and local host access for service administration.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/ship/sonar/discover` | Inspect runtimes, containers and reachability |
+| POST | `/api/ship/sonar/install` | Install the configured service |
+| POST | `/api/ship/sonar/install/stream` | Install with progress |
+| POST | `/api/ship/sonar/start` | Start the service |
+| POST | `/api/ship/sonar/start/stream` | Start with progress |
+| POST | `/api/ship/sonar/stop` | Stop the service |
+| POST | `/api/ship/sonar/stop/stream` | Stop with progress |
+| POST | `/api/ship/sonar/bootstrap` | Bootstrap project setup |
+| GET | `/api/ship/sonar/setup` | Read project, scanner and token setup status |
+| POST | `/api/ship/sonar/validate-login` | Validate configured login |
+| GET | `/api/ship/sonar/validate-token` | Validate the current token |
+| POST | `/api/ship/sonar/regenerate-token` | Replace the scanner token |
+| POST | `/api/ship/sonar/scan` | Run a scan |
+| POST | `/api/ship/sonar/scan/stream` | Scan with progress |
+| POST | `/api/ship/sonar/exclude` | Update scan exclusions |
+| GET | `/api/ship/sonar/ui/info` | Proxy connection information |
+| ANY | `/api/ship/sonar/ui/{*path}` | Proxy a SonarQube UI subpath |
+
+## Live data refresh
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/changes` | Shared SSE notifications for graph, memory, policy and usage changes |
+| GET | `/api/graph/recent` | Recently indexed nodes/edges for live graph updates |
+
+## Project publication and remote host setup
+
+These local-owner endpoints live under `/api/remote-mcp/publications`. They require local Command Center access; mutations use `X-Ax-Csrf`. Export requests bind the active workspace and configuration fingerprint, so switching projects or changing configuration can reject stale requests. Exports contain public connection metadata; local exports can contain this computer's paths. Host actions manage the hosted service, while deleting a publication removes only its export registration.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/remote-mcp/publications` | List this workspace's registered publications (client uses trailing slash) |
+| POST | `/api/remote-mcp/publications/import` | Register an existing server configuration |
+| GET | `/api/remote-mcp/publications/host` | Read managed host status |
+| POST | `/api/remote-mcp/publications/host/setup` | Generate/import managed host configuration |
+| POST | `/api/remote-mcp/publications/host/action` | Start, stop or remove managed host configuration |
+| GET | `/api/remote-mcp/publications/host/authorizations` | List project connection requests/grants |
+| POST | `/api/remote-mcp/publications/host/authorizations/{request_id}` | Decide, revoke or remove a request/grant |
+| POST | `/api/remote-mcp/publications/local/export` | Generate local app configuration for this computer or a portable project entry |
+| POST | `/api/remote-mcp/publications/{id}/export` | Generate configuration for the selected receiving app |
+| POST | `/api/remote-mcp/publications/{id}/connection` | Generate portable connection details |
+| POST | `/api/remote-mcp/publications/{id}/check` | Check endpoint reachability without claiming authenticated access |
+| DELETE | `/api/remote-mcp/publications/{id}` | Remove a publication's export registration |

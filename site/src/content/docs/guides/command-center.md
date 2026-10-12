@@ -5,6 +5,8 @@ description: Local web UI for policy, memory, the code graph, MCP logging, and s
 
 ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, skills, memory), the code graph, MCP logging and savings, with CLI quality gates and optional draft PRs (Azure DevOps or GitHub).
 
+Follow the [page-by-page walkthrough](/guides/command-center-walkthrough/) for every page and Settings group.
+
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
 Page headers and filters share compact spacing so more rows fit on screen. Rules, Skills, Memory and shared lists adapt to the width of their panel: wide rows place names, descriptions and tags together; smaller panels stack readable metadata with labels and wrap instead of forcing horizontal scrolling. Hover a shortened description or tag to see its full value, or open the item for complete content. Focused fields and keyboard controls use a soft accent glow; system high-contrast mode retains a thin focus outline. Savings metrics use equal label rows and aligned numeric values, adapting to smaller screens.
@@ -27,11 +29,11 @@ Embedding Command Center in an IDE webview? Append `?embed=1` to hide the browse
 
 Each full page load and hard refresh plays a short green edge glow (Green Vessel) with a startup chime. The overlay is removed when that animation ends, so the dashboard is usable again. Moving between pages inside the app does not replay it. `prefers-reduced-motion: reduce` skips the glow. If the browser blocks the chime until a gesture, the first click or key plays it.
 
-![Compact Rules rows on a wide screen](/screenshots/cc-responsive-policy-rules.png)
+![Compact Rules rows on a wide screen](/screenshots/cc-policy-rules-dark.png)
 
-![Memory metadata wraps on a narrow screen](/screenshots/cc-responsive-memory-mobile.png)
+![Memory metadata wraps on a narrow screen](/screenshots/cc-memory-vault-dark-mobile.png)
 
-![Soft accent focus glow](/screenshots/cc-focus-glow.png)
+![Soft accent focus glow](/screenshots/cc-focus-glow-dark.png)
 
 ### Adjust list columns
 
@@ -51,9 +53,9 @@ Open **Settings → Appearance** and choose **Light** or **Dark**. The selection
 
 Action rows have a clear gap from their explanatory text. Single-choice dropdowns use the same theme-colored chevron and reserve space for it; keyboard and touch selection remain native.
 
-![Local MCP controls with consistent spacing and dropdown chevron](/screenshots/cc-local-controls-azure-dark.png)
+![Local MCP controls with consistent spacing and dropdown chevron](/screenshots/cc-settings-remote-dark.png)
 
-![Azure Portal Light — theme selection](/screenshots/cc-settings-appearance-dark.png)
+![Dark appearance and accent selection](/screenshots/cc-settings-appearance-dark.png)
 
 ![Azure Portal Dark — Rules](/screenshots/cc-policy-rules-dark.png)
 
@@ -163,7 +165,7 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
 ## Command Center pages (`ax web`)
 
-Light and Dark use the full viewport with a fixed sidebar, blue header, breadcrumbs and a content area that grows with the window. These are the two available themes; legacy preferences migrate to Dark.
+Light and Dark use the full viewport with a fixed sidebar, a themed header, breadcrumbs and a content area that grows with the window. Choose one of six accent colors in either mode; legacy preferences migrate to Dark.
 
 **Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging events stack as cards, with sort/filter controls in the Columns menu, project browser does not autofocus the filter, modals become bottom sheets. Graph is still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
 
@@ -176,7 +178,7 @@ The sidebar has four groups, most-used first:
 | **Activity** | Logging, Stats, Savings (hidden when turned off in Settings), Unresolved |
 | **System** | Settings, Prices, and the **Reload MCP** action |
 
-The Agent terminal and Quality Gates pages have been removed. Old `/agent` and `/ship` links open **Stats**. SonarQube remains available in the sidebar.
+The Agent terminal and Quality Gates pages have been removed. Old `/agent` and `/ship` links open **Stats**. SonarQube is available through its `/sonar` route when configured; it is not a main sidebar item.
 
 | Page | Purpose |
 |---|---|
@@ -194,9 +196,9 @@ The Agent terminal and Quality Gates pages have been removed. Old `/agent` and `
 
 The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, skills, and memories), **Auto-group**, **Test match**, **Package**, **Restore package**, **Capture**, and **New rule** / **New skill**. The **Default MD / DB** switch picks where new items are stored: Markdown files in the policy folder, or the project database.
 
-![Review — staged policy imports waiting for Accept or Reject](/screenshots/cc-policy-review.png)
+![Review — staged policy imports waiting for Accept or Reject](/screenshots/cc-policy-review-dark.png)
 
-![Prices — provider groups, jump legend, and input/output rate colors](/screenshots/cc-prices.png)
+![Prices — provider groups, jump legend, and input/output rate colors](/screenshots/cc-prices-dark.png)
 
 ![MCP Logging — event, time and context columns with readable direction metadata](/screenshots/cc-logging-columns.png)
 
@@ -208,7 +210,7 @@ Open with `ax web --open` or `ax ship --watch --open`. If a newer GitHub release
 
 If pages render but stay empty / forever loading, close extra Command Center tabs and hard-refresh (`Ctrl+Shift+R`). Multiple long-lived SSE streams used to exhaust the browser’s ~6 HTTP/1.1 sockets per host; the UI now shares one EventSource per URL per tab. You can also hit `http://127.0.0.1:PORT/api/reset-client-cache` once if a stale service worker is involved.
 
-The title bar uses the same **azure CSS waves** as the marketing site (soft fade under the crest, matching the cinematic bokeh orbs). Waves sit in a reserved hang band under the chrome; the Logging overlay is portaled below that band so **Back / Newest · To new / Full / Clear** stay fully visible and clickable (never clipped under the titlebar).
+Logging uses one heading with the project, connection state and event count. **Quality** opens the metrics panel; the project label’s tooltip shows the source log path. Kind filters are quiet text chips; on narrow screens they scroll horizontally. Date, tool and search stay together below them. The full event payload remains in the side inspector.
 
 ```bash
 ax web --open
@@ -235,7 +237,7 @@ The graph shows the top nodes by degree (the **Density** slider), but newly inde
 
 ### Project browser
 
-![Project browser — browse your disk for indexed ax projects, filter, initialize, and switch workspace](/screenshots/cc-project-browser.png)
+![Project browser — browse your disk for indexed ax projects, filter, initialize, and switch workspace](/screenshots/cc-project-browser-dark.png)
 
 The workspace picker in the Command Center status bar opens a **project browser** modal. From there you can:
 
@@ -250,7 +252,7 @@ Browse is limited to configured `browse_roots` plus home, common project dirs, a
 
 ### Modal-based forms
 
-![New memory modal — centered modal with blurred backdrop, title, kind selector, body field, and save action](/screenshots/cc-modal-composer.png)
+![New memory modal — centered modal with blurred backdrop, title, kind selector, body field, and save action](/screenshots/cc-modal-composer-dark.png)
 
 Create and edit flows in the Command Center (new memory, new agent profile, folder picker, project purge) open as **centered modals with a blurred backdrop** — never as inline page sections. The shared `ModalShell` component handles Escape-to-close, backdrop click, and scroll lock.
 
@@ -296,7 +298,7 @@ The body card has three views: **Markdown** (the source), **WYSIWYG** (rich text
   - Quick search: plain words match the name, title and tags, and every word must match (`azure review`). `#tag` searches tags only, by exact tag or prefix (`#az` finds `azure` and `azdo`). `rule:`, `skill:`, `memory:` (or `r:`, `s:`, `m:`) set the kind from the keyboard, so `[[s:#azure` lists skills tagged azure. Exact name matches come first, then names that start with the word, then the rest. Up to three tags show on each row, with the matched tag highlighted.
   - Use the arrow keys to move, Enter (or Tab after `[[`) to insert, and Esc to close. The picker writes the shortest link that still resolves: a bare name when it is unique, otherwise the folder path (`global/rules/review`); memories always use `memories/<title>`. The list comes from `GET /api/links/graph`, whose nodes carry that link text in `target` and their tags in `tags`.
 
-![Settings — IDEs and coding agents found on this machine, with Connect and Disconnect](/screenshots/cc-settings.png)
+![Settings — IDEs and coding agents found on this machine, with Connect and Disconnect](/screenshots/cc-settings-dark.png)
 
 Settings also describes **MCP Output: Smart Output**. Output representation is chosen internally; there is no manual XML/JSON/Markdown selector. Cache status and measured savings are not claimed by this static description.
 
@@ -304,7 +306,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 - **IDEs & agents** — connect ax to the IDEs and coding agents found on this machine (writes the ax MCP server and hooks into their config). **Connect** also puts the Command Center inside the IDE — see [Command Center inside your IDE](#command-center-inside-your-ide)
 - **Command Center** — target branch, git repositories, dashboard port, test runner, index scope, **Review comment language**, and the PR provider (Azure DevOps organization / project / repository ID / token env var, or GitHub)
-- **Interface** — theme chooser (**Light** and **Dark**, using Azure Portal styling; removed theme preferences migrate to Dark). The **status bar** uses that accent fill with **WCAG AA** ink (`4.5:1`). **Show Savings page** toggle and **Timezone** for Logging Date/time and daily log rotation (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC). MCP verbose traces are always recorded to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; there is no on/off switch in the UI anymore
+- **Appearance** — choose Light/Dark and an accent; the browser remembers the selection. Header/footer backgrounds retain their theme; Dark is neutral and Light uses a blue header. Show Savings and log Timezone live here. Empty/local timezone uses browser-local display and host-local file rotation; line timestamps stay UTC. Verbose logging is always enabled.
 - **Sharing** — policy sync, live share status card (badge, port, copy URL), How to share, Enable PWA / Install
 - **Vault connection** — mount rules, skills, and memories as a WebDAV drive for Obsidian or any editor — see [Obsidian Vault](/guides/obsidian-vault/)
 - **Open Knowledge Format (OKF)** — **Generate OKF bundle** / **Validate** (and optional wiki publish) via `/api/okf/*`; writes Markdown under `okf.outDir` from `ax.json` — see [OKF](/guides/okf/)

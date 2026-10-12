@@ -79,7 +79,7 @@ test('copies and downloads the exact client JSON and distinguishes endpoint reac
   await section.getByLabel('MCP client').selectOption('chatgpt'); await expect(preview).toHaveValue(endpoint);
   await expect(section.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  if (process.env.AX_REMOTE_SCREENSHOTS) { await section.getByLabel('MCP client').selectOption('cursor'); await expect(preview).toContainText('mcpServers'); await page.setViewportSize({ width: info.project.name.startsWith('mobile') ? 393 : 1280, height: info.project.name.startsWith('mobile') ? 1700 : 1150 }); await page.evaluate(() => document.querySelectorAll('*').forEach(el => { if (el instanceof HTMLElement && el.scrollTop) el.scrollTop = 0; })); await page.screenshot({ scale: 'css', path: `/workspace/scratch/af878848d9ea/ax/site/public/screenshots/remote-mcp-project-${info.project.name.startsWith('mobile') ? 'mobile' : 'desktop'}.png`, fullPage: true }); }
+  if (process.env.AX_REMOTE_SCREENSHOTS) { await section.getByLabel('MCP client').selectOption('cursor'); await expect(preview).toContainText('mcpServers'); await page.setViewportSize({ width: info.project.name.startsWith('mobile') ? 393 : 1280, height: info.project.name.startsWith('mobile') ? 1700 : 1150 }); await page.evaluate(() => document.querySelectorAll('*').forEach(el => { if (el instanceof HTMLElement && el.scrollTop) el.scrollTop = 0; })); await page.screenshot({ scale: 'css', path: `../../../site/public/screenshots/remote-mcp-project-${info.project.name.startsWith('mobile') ? 'mobile' : 'desktop'}.png`, fullPage: true }); }
 });
 
 test('requires publisher selection and uses Cline proxy with no invented native login command', async ({ page }) => {
@@ -116,7 +116,7 @@ test('registration opens a modal, sends only a JSON object and removes only the 
   await page.getByRole('button', { name: 'Import existing server file' }).click(); const modal = page.getByRole('dialog', { name: 'Import existing remote server' });
   await expect(modal).toBeVisible();
   await expect(modal.getByLabel('Native Ax public client ID (optional)')).not.toBeVisible();
-  if (process.env.AX_REMOTE_SCREENSHOTS && info.project.name === 'desktop-chrome') await page.screenshot({ path: '/workspace/scratch/af878848d9ea/ax/site/public/screenshots/mcp-import-existing-server.png', scale: 'css' });
+  if (process.env.AX_REMOTE_SCREENSHOTS && info.project.name === 'desktop-chrome') await page.screenshot({ path: '../../../site/public/screenshots/mcp-import-existing-server.png', scale: 'css' });
   await modal.getByLabel('Server name (optional)').fill('Team Ax');
   await modal.getByLabel('Server configuration file').setInputFiles({ name: 'remote.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ public_url: 'https://ax.example.com', oauth: { issuer: 'https://issuer.example/', jwks_uri: 'https://issuer.example/jwks' }, projects: [{ id: 'remote-demo', root: '/demo', subjects: ['subject'] }] })) });
   await modal.getByRole('button', { name: 'Import for this project' }).click(); await expect(modal).toHaveCount(0);
@@ -131,7 +131,7 @@ test('local configuration is copyable without a remote server and project sharin
   await fixture(page, { empty: true }); await page.goto('/settings?section=remote');
   const local = page.locator('.local-mcp-config');
   await expect(local.getByRole('button', { name: 'Copy for this computer' })).toBeEnabled();
-  if (process.env.AX_REMOTE_SCREENSHOTS && info.project.name === 'desktop-chrome') { await page.setViewportSize({ width: 1280, height: 1150 }); await page.screenshot({ path: '/workspace/scratch/af878848d9ea/ax/site/public/screenshots/mcp-local-and-remote.png', scale: 'css' }); }
+  if (process.env.AX_REMOTE_SCREENSHOTS && info.project.name === 'desktop-chrome') { await page.setViewportSize({ width: 1280, height: 1150 }); await page.screenshot({ path: '../../../site/public/screenshots/mcp-local-and-remote.png', scale: 'css' }); }
   await local.getByRole('button', { name: 'Copy for this computer' }).click();
   await expect(local.getByRole('status')).toHaveText('Configuration for this computer copied.');
   expect(await page.evaluate(() => localStorage.getItem('fixture-copied'))).toContain('/demo');

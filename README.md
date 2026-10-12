@@ -497,3 +497,5 @@ Pairing preserves existing knowledge even when the Primary is empty: authenticat
 Review queues use compact rows with expandable Current/Incoming comparisons. If the serving Ax backend cannot provide a verified comparison, approval is blocked and the page asks you to update and restart that process. Replication reports peer app-version differences in Settings; compatible protocol 3 peers continue syncing with a warning, while incompatible protocols stop before applying data. No automatic server upgrade is performed.
 
 Command Center column-based lists share independent drag/keyboard resizing, remembered browser widths, heading sorting and per-column filters for loaded rows. Narrow layouts keep readable cards and a compact Columns menu. Logging retains stacked event details with Time/Context columns, live arrivals and keyboard navigation in visible order; full payloads open in its inspector. See the [Command Center guide](https://getax.wenneker.io/guides/command-center/).
+
+For current pages, Settings groups, logging controls and connection workflows, see the [Command Center walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/).

@@ -9,7 +9,11 @@ test('host setup generates configuration and client IDs, persists status and con
   await page.route('**/api/remote-mcp/publications**', async route => {
     const path = new URL(route.request().url()).pathname;
     let value: unknown;
-    if (path.endsWith('/host/setup')) {
+    if (path.endsWith('/local/export')) {
+      // Match the validated export contract so host screenshots include working local controls.
+      const body = route.request().postDataJSON() as {client:string;target:string};
+      value = {workspaceId,client:body.client,target:body.target,fileName:'mcp.json',destination:'.cursor/mcp.json',content:'{"mcpServers":{"ax":{"command":"ax"}}}',instructions:['Merge into the app MCP settings.'],containsSecrets:false,containsLocalPaths:body.target==='thisComputer',portable:body.target==='projectFolder'};
+    } else if (path.endsWith('/host/setup')) {
       expect(route.request().headers()['x-ax-csrf']).toBe('host-csrf');
       setup = route.request().postDataJSON() as unknown;
       configured = running = true;
@@ -55,6 +59,7 @@ test('host setup generates configuration and client IDs, persists status and con
   await host.getByRole('button', { name: 'Start host', exact: true }).click();
   await expect(host).toContainText('Remote MCP running');
   if (process.env.AX_ACCESS_SCREENSHOTS && test.info().project.name === 'desktop-chrome') {
+    await expect(page.getByText('Invalid project publication response. Refresh Settings.')).toHaveCount(0);
     await page.screenshot({ path: '../../../site/public/screenshots/cc-remote-host.png', fullPage: true });
   }
   await host.getByRole('button', { name: 'Remove host', exact: true }).click();

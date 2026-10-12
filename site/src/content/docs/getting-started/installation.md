@@ -139,7 +139,7 @@ The installer connects agents, then discovers projects under your home directory
 
 Run `ax web` and open **Settings → IDEs & agents**.
 
-![Settings — IDEs and coding agents found on this machine, with Connect and Disconnect](/screenshots/cc-settings.png)
+![Settings — IDEs and coding agents found on this machine, with Connect and Disconnect](/screenshots/cc-settings-dark.png)
 
 It lists every IDE and agent ax supports (Claude Code, Cursor, Codex CLI, opencode, Hermes, Gemini CLI, Antigravity, Kiro, VS Code, Windsurf, Zed, Continue) as **Connected**, **Found** (installed, ax not connected yet), or **Not found**. "Installed" means the CLI is on PATH or the app (or, for Continue, the extension) is present; a leftover config folder does not count.
 
