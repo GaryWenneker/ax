@@ -1,4 +1,6 @@
-import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode } from 'react';
+import {useContext, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode} from 'react';
+import {ItemColumnContext} from './ListColumns';
+import type {ColumnValue} from '../../lib/columnModel';
 
 import Codicon from '../Codicon';
 import { isLiveStatus, Spinner } from './Spinner';
@@ -185,13 +187,7 @@ export function PageLoading({ label = 'Loading…' }: { label?: string }) {
   );
 }
 
-export function DataTable({ children, dense }: { children: ReactNode; dense?: boolean }) {
-  return (
-    <div className="page-table-wrap">
-      <table className={`page-table${dense ? ' page-table--dense policy-table' : ''}`}>{children}</table>
-    </div>
-  );
-}
+export {DataTable} from './DataTable';
 
 export function LogPanel({
   title,
@@ -246,9 +242,7 @@ export function PagePagination({
   );
 }
 
-export function ItemList({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={`page-item-list${className ? ` ${className}` : ''}`}>{children}</div>;
-}
+export {ItemList} from './ItemList';
 
 export function ItemGroupHeader({
   label,
@@ -303,6 +297,8 @@ export function ItemRow({
   portalColumns?: ReactNode[];
   /** Metadata labels exposed on narrow stacked rows. */
   portalLabels?: readonly string[];
+  /** Raw values for shared column sorting/filtering; presentation text can be abbreviated. */
+  listValues?: readonly ColumnValue[];
   selected?: boolean;
   static?: boolean;
   variant?: 'graph';
@@ -313,12 +309,13 @@ export function ItemRow({
 }) {
   const interactive = !isStatic && onClick;
   const graph = variant === 'graph';
+  const columns = useContext(ItemColumnContext);
   return (
     <div
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
       {...rowProps}
-      className={`page-item${graph ? ' page-item--graph' : ''}${selected ? ' page-item--selected' : ''}${disabled ? ' page-item--disabled' : ''}${interactive ? '' : ' page-item--static'}${portalColumns ? ' portal-data-row' : ''}${className ? ` ${className}` : ''}`}
+      className={`page-item${graph ? ' page-item--graph' : ''}${selected ? ' page-item--selected' : ''}${disabled ? ' page-item--disabled' : ''}${interactive ? '' : ' page-item--static'}${portalColumns ? ' portal-data-row' : columns ? ' item-column-row' : ''}${className ? ` ${className}` : ''}`}
       style={style}
       onClick={onClick}
       onContextMenu={onContextMenu}
@@ -340,14 +337,18 @@ export function ItemRow({
           {portalColumns.map((cell, index) => <div className="portal-data-cell" data-label={portalLabels?.[index]} key={index}>{cell}</div>)}
           <div className="portal-data-actions">{aside}</div>
         </>
-      ) : (<>
+      ) : columns && !columns.trace ? (<>
+        <div className="item-column-name" data-label={columns.labels[0]}>{icon}<span className="page-item-title" title={title}>{title}</span></div>
+        <div className="item-column-detail" data-label={columns.labels[1]} title={subtitle}>{subtitle}</div>
+        <div className="item-column-context" data-label={columns.labels[2]}>{badges}{aside}</div>
+      </>) : (<>
       {graph ? <span className="page-item-node" aria-hidden="true" /> : icon && <span className="page-item-icon">{icon}</span>}
       <div className="page-item-body">
         {graph ? (
           <>
             <div className="page-item-title-line">
               <div className="page-item-title" title={title} data-chase={title}>{title}</div>
-              {badges && <div className="page-item-badges">{badges}</div>}
+              {!columns && badges && <div className="page-item-badges">{badges}</div>}
             </div>
             {subtitle && <div className="page-item-sub" data-chase={subtitle}>{subtitle}</div>}
           </>
@@ -361,6 +362,7 @@ export function ItemRow({
       {graph && meta && (
         <div className="page-item-meta" title={metaTitle}>{meta}</div>
       )}
+      {columns?.trace && <div className="item-column-context" data-label="Context">{badges}</div>}
       {graph && aside}
       {!graph && badges && <div className="page-item-badges">{badges}</div>}
       </>)}

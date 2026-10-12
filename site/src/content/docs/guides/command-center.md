@@ -33,6 +33,18 @@ Each full page load and hard refresh plays a short green edge glow (Green Vessel
 
 ![Soft accent focus glow](/screenshots/cc-focus-glow.png)
 
+### Adjust list columns
+
+Drag the divider beside a column heading to change that column's width. Use Left/Right arrow keys when the divider has keyboard focus. Widths are remembered in this browser per page and column layout. Double-click a divider or press Home to return to automatic widths.
+
+Click a heading to cycle through ascending, descending and original order. Open the heading's filter icon to match text in that column; multiple column filters intersect. **Columns** provides the same sort/filter controls on narrow screens and **Reset columns** clears the column settings. These controls sort and filter **loaded rows**, alongside the page's existing server filters and pagination; they do not search unseen pages. Action columns keep their existing controls.
+
+The shared controls apply to Rules, Skills, Memory, code lists, Logging, Review, Savings, Prices, Stats, plugin tables and policy-package previews. Policy groups retain their groups. Single links, graph edges and prose cards remain compact links/cards. Logging keeps the event headline and direction details together, with separate Time and Context columns. Incoming events honor active column sorting/filtering, and keyboard navigation follows the visible order. Opening an event still shows its full payload and call steps.
+
+![Logging event, time and context columns](/screenshots/cc-logging-columns.png)
+
+![Logging cards on a narrow screen](/screenshots/cc-logging-columns-mobile.png)
+
 ## Azure Portal appearance
 
 Open **Settings → Appearance** and choose **Light** or **Dark**. The selection is saved in this browser. Both modes apply across pages, editors, Logging, quality panels and dialogs. The header search opens pages or searches code; Settings has its own grouped, filterable navigation.
@@ -153,7 +165,7 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
 Light and Dark use the full viewport with a fixed sidebar, blue header, breadcrumbs and a content area that grows with the window. These are the two available themes; legacy preferences migrate to Dark.
 
-**Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging table scrolls horizontally instead of crushing columns, project browser does not autofocus the filter, modals become bottom sheets. Graph is still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
+**Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging events stack as cards, with sort/filter controls in the Columns menu, project browser does not autofocus the filter, modals become bottom sheets. Graph is still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
 
 The sidebar has four groups, most-used first:
 
@@ -177,7 +189,7 @@ The Agent terminal and Quality Gates pages have been removed. Old `/agent` and `
 | **Savings** | Token and dollar savings from graph queries; activity heatmap, trends, tool audit |
 | **Prices** | OpenRouter rates grouped by provider (jump legend), plus curated Cursor Composer rates OpenRouter does not list; chart legend uses distinct input/output colors |
 | **Unresolved** | Unresolved graph references with kind filters and a scrolling list |
-| **Logging** | Fullscreen table of the **active project** MCP verbose stream (**newest at top**; **Scroll to new** when you leave the top); **filters** by kind chips (Inbound/Outbound/Preview/Error/Internal/Enrich), **Has query** chip (JSON payloads with a top-level `query` — badge + blue row mark), **date** dropdown (`YYYY-MM-DD`), tool dropdown, and text search — also click status-bar in/out/prev/err or Buffer breakdown rows to toggle kinds; click a Kind badge or Tool cell in the table to filter; **Date / time** column shows full calendar day + clock; **fluid columns** (Date/time / Kind / Tool / Summary / Meta) that rebalance on narrow screens; **error rows** show the tool name in danger red; log text is **blurred while offline / reconnecting**; theme-colored status bar shows in/out/prev/err/event counts (muted danger tint when offline) and a **project switcher**; **Q** quality chip opens a metrics slide-out (correlation, enrichment, findings, token waste) with **Copy fixpack** for an agent-ready Markdown brief; auditor softens untimed whole-session Read/Grep and attaches enrich side-channels to preflight; keyboard nav (↑↓ Enter Esc, j/k, b back); tap or Enter for a fixed-size Call Inspector with pretty-printed VS-style JSON/XML and formatted key=value fields |
+| **Logging** | Live verbose log for the active project in the app chrome, newest first by default. Event keeps the headline and direction details together; Time and Context show timestamps, kinds and tools. Resize individual columns, sort headings and filter loaded rows. Incoming events honor those settings and keyboard navigation follows the visible order. Kind/tool/date/text filters and Scroll to new remain available. Narrow screens show cards with a Columns menu. Open an event for its full payload and call steps; Full expands the view. |
 | **Policy** | View-first rule/skill editors with **Scope** (company → private); master-detail blade (slide-in on open, content reveal when switching rows); resizable list / metadata / source / preview columns (drag grips; double-click resets); Rules/Skills list **label autocomplete** (tag chips, multi-label AND filter, click table tags to toggle); **Rules and Skills grouped** by a shared catalog (collapsible folders with **Collapse all** / **Expand all**; **Groups** multiselect filter; empty groups hidden on the list but still assignable in the editor); Markdown **source** overlay and textarea share font-size / line-height so caret and selection match visible glyphs; tags required on save; layer filters; **Database** column plus teal (this project `ax.db`) vs gold (`~/.ax/global.db`) row bars and badges; right-click **context menu** (move between project and global.db); **History** (hash-on-change revisions, Restore); **Package** / **Restore package** (compose stays large; restore starts compact with drag-and-drop zip, then a near-full-width preview: select all, skill descriptions, one-line compare (red Local newer, orange Package newer, green Identical) plus Reject/Accept or **per-change** hunks labeled **Old** / **New** above the code, blake3 content hashes; re-index skips Cursor-native files in `.agents`); **Sync** (pack export/import + `policySync` hooks); **Review** queue for staged imports |
 
 The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, skills, and memories), **Auto-group**, **Test match**, **Package**, **Restore package**, **Capture**, and **New rule** / **New skill**. The **Default MD / DB** switch picks where new items are stored: Markdown files in the policy folder, or the project database.
@@ -186,7 +198,7 @@ The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, s
 
 ![Prices — provider groups, jump legend, and input/output rate colors](/screenshots/cc-prices.png)
 
-![MCP Logging — live verbose stream with kind filters, project switcher, and Call Inspector](/screenshots/cc-logging-dark.png)
+![MCP Logging — event, time and context columns with readable direction metadata](/screenshots/cc-logging-columns.png)
 
 ![MCP Quality — correlation, enrichment, tool mix, findings, and Copy fixpack](/screenshots/cc-mcp-quality-dark.png)
 

@@ -511,6 +511,7 @@ export default function MemoryPage() {
                         }`}
                         style={conv ? ({ '--conv-hue': conv.hue } as CSSProperties) : undefined}
                         title={memoryRowHeadline(m)}
+                        listValues={[memoryRowHeadline(m), m.kind.replace(/_/g, ' '), m.source || '—', fmtMemoryTime(m.updated_at), m.enabled !== false ? 'enabled' : 'disabled']}
                         subtitle={[
                           m.kind,
                           fmtMemoryTime(m.updated_at),

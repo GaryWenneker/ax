@@ -1,3 +1,4 @@
+import {DataTable} from './ui/PageLayout';
 import { useCallback, useEffect, useState } from 'react';
 
 type PluginRow = {
@@ -94,7 +95,7 @@ export default function PluginsSettingsSection() {
 
       {plugins.length > 0 && (
         <div className="page-table-wrap settings-plugins-table-wrap">
-          <table className="page-table">
+          <DataTable>
             <thead>
               <tr>
                 <th>Name</th>
@@ -124,7 +125,7 @@ export default function PluginsSettingsSection() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         </div>
       )}
     </>

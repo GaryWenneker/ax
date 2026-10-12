@@ -3,6 +3,7 @@ import { useLive, useNewKeys } from '../lib/useLive';
 import { approvePolicyReview, fetchPolicyReview, rejectPolicyReview } from '../policyApi';
 import type { PendingPolicyItem } from '../policyTypes';
 import { PageCard, PageCardBody, PageEmpty, PageHero, PageLoading, PageShell, PageStack, PageToasts } from '../components/ui/PageLayout';
+import {ColumnHeader, ColumnTools, useListColumns} from '../components/ui/ListColumns';
 import ModalShell from '../components/ModalShell';
 import { usePageContext } from '../context/UiContext';
 
@@ -37,9 +38,11 @@ export default function PolicyReviewPage() {
   useEffect(() => { void reload(); }, []);
   useLive(['rules', 'skills'], () => { if (!busy && !confirmation) void reload(true); });
   const fresh = useNewKeys(loading ? null : items.map(keyOf));
-  const visible = items.filter(item => (kind === 'all' || item.kind === kind)
+  const columns = useListColumns([{label:'Select',header:'✓',sortable:false,filterable:false,minWidth:20},{label:'ID'},{label:'Type / scope'},{label:'Effect'},{label:'Actions',sortable:false,filterable:false}], 'review');
+  const filtered = items.filter(item => (kind === 'all' || item.kind === kind)
     && (effect === 'all' || item.effect === effect)
     && `${item.id} ${item.levelOrDescription}`.toLowerCase().includes(search.toLowerCase()));
+  const visible = columns.order(filtered.map(item => ({item, values:['',item.id,`${item.kind} ${item.scope ?? ''} ${item.levelOrDescription}`,canCompare(item) ? effectLabel(item) : 'Comparison unavailable','']}))).map(row => row.item);
   const chosen = visible.filter(item => selected.has(keyOf(item)));
   function toggle(item: PendingPolicyItem) {
     setSelected(prev => { const next = new Set(prev); const key = keyOf(item); if (next.has(key)) next.delete(key); else next.add(key); return next; });
@@ -79,7 +82,7 @@ export default function PolicyReviewPage() {
         <button className="btn" disabled={busy || !chosen.length} onClick={() => setConfirmation({ action: 'reject', items: chosen })}>Reject selected</button>
         <button className="btn" disabled={busy || !visible.length || visible.some(item => !canCompare(item))} onClick={() => setConfirmation({ action: 'approve', items: visible })}>Approve filtered type</button>
       </div>
-      {!visible.length ? <PageEmpty title={items.length ? 'No matching items' : 'Queue empty'}>No pending rules or skills in this filter.</PageEmpty> : <div className="review-list">{visible.map(item => <article key={keyOf(item)} className={`review-item${fresh.has(keyOf(item)) ? ' live-new' : ''}`}>
+      {!visible.length ? <PageEmpty title={items.length ? 'No matching items' : 'Queue empty'}>No pending rules or skills in this filter.</PageEmpty> : <div className="review-column-list" style={columns.style}><ColumnTools controls={columns} /><ColumnHeader controls={columns} className="review-item-heading" /><div className="review-list">{visible.map(item => <article key={keyOf(item)} className={`review-item${fresh.has(keyOf(item)) ? ' live-new' : ''}`}>
         <div className="review-item-heading"><input type="checkbox" aria-label={`Select ${item.kind} ${item.id}`} disabled={busy} checked={selected.has(keyOf(item))} onChange={() => toggle(item)} /><strong title={item.id}>{item.id}</strong><span>{item.kind} · {item.scope ?? 'Scope unavailable'}{item.kind === 'rule' && ['CRITICAL', 'WARNING', 'INFO'].includes(item.levelOrDescription) ? ` · ${item.levelOrDescription}` : ''}</span><span className="review-effect">{canCompare(item) ? effectLabel(item) : 'Comparison unavailable'}</span><div className="review-actions"><button className="btn primary" disabled={busy || !canCompare(item)} onClick={() => setConfirmation({ action: 'approve', items: [item] })}>Approve</button><button className="btn" disabled={busy} onClick={() => setConfirmation({ action: 'reject', items: [item] })}>Reject</button></div></div>
         <details><summary>Inspect content and source</summary>
         <p>{item.levelOrDescription}</p>
@@ -87,7 +90,7 @@ export default function PolicyReviewPage() {
         <p>{item.effect === 'new' ? 'No current item with this identity exists. Approval adds it.' : item.effect === 'duplicate' ? 'Active content and policy settings match, ignoring review status. Approval clears the pending copy.' : item.effect === 'replacement' ? 'An active item has this identity with different content or settings. Approval saves the incoming version in its configured scope and storage.' : 'The server has not supplied a verified comparison for this item.'}</p>
 <p>{item.origin ?? 'Origin was not recorded'} · Queue file: {item.path}</p><div className="review-comparison"><section><h3>Current</h3><pre>{item.currentContent ?? (canCompare(item) ? 'No current item' : 'Current content was not supplied by this server')}</pre></section><section><h3>Incoming</h3><pre>{item.incomingContent ?? `Preview only — full incoming content was not supplied.\n${item.preview}`}</pre></section></div></details>
 
-      </article>)}</div>}
+      </article>)}</div></div>}
     </PageCardBody></PageCard></PageStack>}
     {confirmation && <ModalShell title={`${confirmation.action === 'approve' ? 'Approve' : 'Reject'} ${confirmation.items.length} item${confirmation.items.length === 1 ? '' : 's'}?`} onClose={() => { if (!busy) setConfirmation(null); }} footer={<><button className="btn" disabled={busy} onClick={() => setConfirmation(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => void decide()}>{busy ? 'Processing…' : 'Confirm decision'}</button></>}>
       <p>{confirmation.action === 'approve' ? 'Incoming versions will become active. Review replacements carefully.' : 'Pending versions will be discarded. Current active content stays in place.'}</p><ul>{confirmation.items.map(item => <li key={keyOf(item)}>{item.kind}: {item.id} — {canCompare(item) ? effectLabel(item) : 'Comparison unavailable'}</li>)}</ul>

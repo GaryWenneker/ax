@@ -1,3 +1,4 @@
+import {DataTable} from './ui/PageLayout';
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import ModalShell from './ModalShell';
 import {
@@ -574,7 +575,7 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
         {items.length > 0 && (
           <div className={`policy-pack-split${activeKey ? ' policy-pack-split--with-diff' : ''}`}>
             <div className="page-table-wrap policy-pack-preview-wrap">
-              <table className="page-table policy-pack-preview">
+              <DataTable className="policy-pack-preview">
                 <thead>
                   <tr>
                     <th>Kind</th>
@@ -655,7 +656,7 @@ function RestoreModal({ onClose, onRestored }: { onClose: () => void; onRestored
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
             {activeKey ? (
               <aside className="policy-pack-inspect">
