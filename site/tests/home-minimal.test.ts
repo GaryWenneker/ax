@@ -72,3 +72,14 @@ test('installer offers the six real release assets and manual OS and CPU selecti
   assert.equal(getDefaultArch('macos'), 'arm64');
   assert.equal(getDefaultArch('windows'), 'x64');
 });
+
+test('phone landing fits the viewport and the platform menu overlays with a blur', () => {
+  const phone = css.split('\n').find((line) => line.includes('@media(max-width:600px)') && line.includes('.ax-main'));
+  assert.ok(phone, 'missing phone layout');
+  assert.match(phone, /\.ax-main\{[^}]*padding:8px 20px 4px/);
+  assert.match(phone, /\.ax-display-word\{[^}]*font-size:48px/);
+  assert.match(phone, /\.ax-platform-panel\{[^}]*position:absolute[^}]*bottom:calc\(100% \+ 8px\)/);
+  assert.doesNotMatch(phone, /position:relative;bottom:auto/);
+  assert.match(css, /\.ax-platform-panel\{[^}]*backdrop-filter:blur\(18px\)/);
+  assert.match(css, /\.ax-platform-panel\{[^}]*background:rgba\(18,23,19,\.62\)/);
+});
