@@ -111,6 +111,7 @@ export default defineConfig({
 			],
 			customCss: [
 				'@fontsource-variable/archivo',
+				'@fontsource-variable/oxanium/wght.css',
 				'@fontsource/ibm-plex-mono/400.css',
 				'@fontsource/ibm-plex-mono/500.css',
 				'@fontsource/ibm-plex-mono/600.css',
