@@ -75,6 +75,7 @@ function AppShell() {
   const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const { page, ruleId: editRuleId, skillName: editSkillName, sonarTab, ruleEditMode, skillEditMode, origin: routeOrigin, projectId: routeProjectId } = route;
+  const qualityGatesOnly = page === 'ship';
 
   function refreshNavConfig() {
     fetchShipConfig()
@@ -312,7 +313,7 @@ function AppShell() {
 
   return (
     <>
-      {sidebarOpen && !embedMode && (
+      {sidebarOpen && !embedMode && !qualityGatesOnly && (
         <div
           className="sidebar-overlay open"
           onClick={() => setSidebarOpen(false)}
@@ -320,12 +321,12 @@ function AppShell() {
         />
       )}
 
-      <div className={`app${embedMode ? ' app--embed' : ''}`}>
+      <div className={`app${embedMode ? ' app--embed' : ''}${qualityGatesOnly ? ' app--quality-gates' : ''}`}>
         {!embedMode && (
         <header className="titlebar">
           <div className="titlebar-inner">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <button
+              {!qualityGatesOnly && <button
                 className="hamburger"
                 type="button"
                 onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -333,7 +334,7 @@ function AppShell() {
                 aria-expanded={sidebarOpen}
               >
                 <i className="codicon codicon-menu" aria-hidden="true" />
-              </button>
+              </button>}
               <span className="titlebar-brand" title={AX_FULL_NAME}>
                 <span className="ax-app-wordmark" role="img" aria-label="Ax">Ax<span aria-hidden="true">_</span></span>
                 <span>{portalLayout ? '| Command Center' : '/ graph + policy'}</span>
@@ -374,7 +375,7 @@ function AppShell() {
           </div>
         </header>
         )}
-        {embedMode && (
+        {embedMode && !qualityGatesOnly && (
           <button
             className="hamburger embed-menu"
             type="button"
@@ -386,7 +387,7 @@ function AppShell() {
           </button>
         )}
 
-        <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
+        {!qualityGatesOnly && <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
           {navSections.map((section) => (
             <div key={section.id} className="nav-section" data-nav={section.id}>
               <div className="nav-section-label">{section.label}</div>
@@ -419,9 +420,9 @@ function AppShell() {
           <div className="sidebar-logo">
             <span className="ax-app-wordmark ax-app-wordmark--sidebar" role="img" aria-label="Ax">Ax<span aria-hidden="true">_</span></span>
           </div>
-        </nav>
+        </nav>}
 
-        <SidebarResizeHandle />
+        {!qualityGatesOnly && <SidebarResizeHandle />}
 
         <div className="workspace">
           {portalLayout && <nav className="portal-breadcrumbs" aria-label="Breadcrumb">

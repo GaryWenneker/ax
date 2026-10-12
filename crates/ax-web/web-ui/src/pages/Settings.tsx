@@ -312,7 +312,7 @@ export default function SettingsPage() {
             <div className="settings-theme-block">
               <span className="settings-row-title">Theme</span>
               <span className="settings-row-desc">
-                Choose a workspace style. Azure Portal Light and Dark use the portal layout. Theme changes are saved automatically in this browser.
+                Choose Light or Dark, then an accent color below. Appearance changes are saved automatically in this browser.
               </span>
               <ThemeChooser activeId={themeId} onSelect={setThemeId} />
             </div>

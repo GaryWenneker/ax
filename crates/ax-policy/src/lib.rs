@@ -88,8 +88,9 @@ pub use paths::{
     skills_dir, STUB_BODY_MARKER,
 };
 pub use review::{
-    approve_pending, ensure_pending_dirs, list_pending, pending_diff, reject_pending, show_pending,
-    PendingDiff, PendingItem, ReviewActionResult,
+    approve_pending, approve_pending_kind, ensure_pending_dirs, list_pending, pending_diff,
+    reject_pending, reject_pending_kind, show_pending, PendingDiff, PendingItem,
+    ReviewActionResult,
 };
 pub use revisions::{
     get_revision, list_revisions, record_if_changed, record_restore_writes, PolicyRevision,

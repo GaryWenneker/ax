@@ -76,10 +76,18 @@ impl OAuthStore {
         Ok(id)
     }
     pub async fn requests(&self, project: &str) -> Result<Vec<Value>, String> {
-        let rows=sqlx::query("SELECT r.id,c.name,r.scope,r.status,r.expires,r.revoked,r.redirect FROM remote_oauth_requests r JOIN remote_oauth_clients c ON c.origin=r.origin AND c.id=r.client_id WHERE r.origin=? AND r.project=? AND ((r.status='pending' AND r.expires>?) OR r.status IN ('approved','delivered')) ORDER BY r.expires DESC LIMIT 100").bind(&self.origin).bind(project).bind(now()).fetch_all(&self.pool).await.map_err(db)?;
-        Ok(rows.iter().map(|r|json!({"id":r.get::<String,_>("id"),"clientName":r.get::<String,_>("name"),"scope":r.get::<String,_>("scope"),"status":r.get::<String,_>("status"),"expires":r.get::<i64,_>("expires"),"revoked":r.get::<i64,_>("revoked")!=0,"redirectUri":r.get::<String,_>("redirect")})).collect())
+        let rows = sqlx::query("SELECT r.id,c.name,r.scope,r.status,r.expires,r.revoked,r.redirect, EXISTS(SELECT 1 FROM remote_oauth_tokens t WHERE t.origin=r.origin AND t.request_id=r.id AND (t.expires>? OR t.refresh_expires>?)) AS live FROM remote_oauth_requests r JOIN remote_oauth_clients c ON c.origin=r.origin AND c.id=r.client_id WHERE r.origin=? AND r.project=? ORDER BY r.expires DESC LIMIT 100")
+            .bind(now()).bind(now()).bind(&self.origin).bind(project).fetch_all(&self.pool).await.map_err(db)?;
+        Ok(rows.iter().map(|r| {
+            let status: String = r.get("status");
+            let expired = (matches!(status.as_str(), "pending" | "approved") && r.get::<i64,_>("expires") <= now()) || (status == "delivered" && r.get::<i64,_>("live") == 0);
+            json!({"id":r.get::<String,_>("id"),"clientName":r.get::<String,_>("name"),"scope":r.get::<String,_>("scope"),"status":if expired {"expired"} else {&status},"expires":r.get::<i64,_>("expires"),"revoked":r.get::<i64,_>("revoked")!=0,"redirectUri":r.get::<String,_>("redirect")})
+        }).collect())
     }
     pub async fn decide(&self, project: &str, id: &str, decision: &str) -> Result<(), String> {
+        if decision == "remove" {
+            return self.remove_inactive(project, id).await;
+        }
         let result=match decision {
             "approve"|"deny"=>sqlx::query("UPDATE remote_oauth_requests SET status=? WHERE origin=? AND project=? AND id=? AND status='pending' AND expires>? AND revoked=0").bind(if decision=="approve" {"approved"} else {"denied"}).bind(&self.origin).bind(project).bind(id).bind(now()).execute(&self.pool).await,
             "revoke"=>sqlx::query("UPDATE remote_oauth_requests SET revoked=1 WHERE origin=? AND project=? AND id=?").bind(&self.origin).bind(project).bind(id).execute(&self.pool).await,
@@ -90,6 +98,34 @@ impl OAuthStore {
         }
         Ok(())
     }
+    async fn remove_inactive(&self, project: &str, id: &str) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let removable: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests r WHERE r.origin=? AND r.project=? AND r.id=? AND (r.revoked=1 OR r.status='denied' OR (r.status IN ('pending','approved') AND r.expires<=?) OR (r.status='delivered' AND NOT EXISTS(SELECT 1 FROM remote_oauth_tokens t WHERE t.origin=r.origin AND t.request_id=r.id AND (t.expires>? OR t.refresh_expires>?))))")
+            .bind(&self.origin).bind(project).bind(id).bind(now()).bind(now()).bind(now()).fetch_one(&mut *tx).await.map_err(db)?;
+        if removable != 1 {
+            return Err("Only revoked, denied or expired connections can be removed".into());
+        }
+        for table in ["remote_oauth_tokens", "remote_oauth_used_refresh"] {
+            sqlx::query(&format!(
+                "DELETE FROM {table} WHERE origin=? AND request_id=?"
+            ))
+            .bind(&self.origin)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        }
+        sqlx::query("DELETE FROM remote_oauth_requests WHERE origin=? AND project=? AND id=?")
+            .bind(&self.origin)
+            .bind(project)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
+
     pub async fn revoke_project(&self, project: &str) -> Result<(), String> {
         sqlx::query("UPDATE remote_oauth_requests SET revoked=1 WHERE origin=? AND project=?")
             .bind(&self.origin)
@@ -485,6 +521,78 @@ mod tests {
         p.store.decide("project", &new_id, "revoke").await.unwrap();
         assert_ne!(id, new_id);
     }
+    #[tokio::test]
+    async fn inactive_connections_are_scoped_removed_and_cannot_refresh() {
+        let p = provider().await;
+        let client = p.store.native_client().await.unwrap();
+        let verifier = "v".repeat(48);
+        let (code, id) = grant(&p, &client, &verifier).await;
+        let issued = json_body(
+            token(
+                State(p.clone()),
+                Form(code_form(&p, &client, &verifier, &code)),
+            )
+            .await,
+        )
+        .await;
+        let access = issued["access_token"].as_str().unwrap();
+        assert!(p.store.decide("project", &id, "remove").await.is_err());
+        assert!(p.store.verify(access).await.is_ok());
+        p.store.decide("project", &id, "revoke").await.unwrap();
+        assert!(p
+            .store
+            .decide("another-project", &id, "remove")
+            .await
+            .is_err());
+        p.store.decide("project", &id, "remove").await.unwrap();
+        assert!(p.store.verify(access).await.is_err());
+        assert!(p.store.requests("project").await.unwrap().is_empty());
+        let refresh = BTreeMap::from([
+            ("grant_type".into(), "refresh_token".into()),
+            ("client_id".into(), client.clone()),
+            (
+                "refresh_token".into(),
+                issued["refresh_token"].as_str().unwrap().into(),
+            ),
+            ("resource".into(), p.store.origin.clone()),
+        ]);
+        assert_eq!(
+            token(State(p.clone()), Form(refresh)).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        let tokens: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_tokens WHERE request_id=?")
+                .bind(&id)
+                .fetch_one(&p.store.pool)
+                .await
+                .unwrap();
+        assert_eq!(tokens, 0);
+        let verifier = "w".repeat(48);
+        let (code, expired) = grant(&p, &client, &verifier).await;
+        assert_eq!(
+            token(
+                State(p.clone()),
+                Form(code_form(&p, &client, &verifier, &code))
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        sqlx::query(
+            "UPDATE remote_oauth_tokens SET expires=0,refresh_expires=0 WHERE request_id=?",
+        )
+        .bind(&expired)
+        .execute(&p.store.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            p.store.requests("project").await.unwrap()[0]["status"],
+            "expired"
+        );
+        p.store.decide("project", &expired, "remove").await.unwrap();
+        assert!(p.store.requests("project").await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn public_registration_rejects_unsafe_redirects_and_unknown_resources() {
         let p = provider().await;

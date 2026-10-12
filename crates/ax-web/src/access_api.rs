@@ -471,6 +471,38 @@ async fn revoke_node(
     }
 }
 
+async fn remove_node(
+    Extension(actor): Extension<Actor>,
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+) -> Response {
+    if let Err(response) = writable(&hub) {
+        return response.into_response();
+    }
+    let db = match pool().await {
+        Ok(db) => db,
+        Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &error),
+    };
+    match access::remove_revoked_node(&db, &id).await {
+        Ok(true) => {
+            // Removal has already succeeded; audit failure must not restore the record.
+            let _ = access::audit(
+                &db,
+                Some(&actor.member_id),
+                actor.client_id.as_deref(),
+                "node.removed",
+                "node",
+                &id,
+                &serde_json::json!({"revocation_preserved":true}),
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!({"removed":true}))).into_response()
+        }
+        Ok(false) => failure(StatusCode::CONFLICT, "Only a revoked node can be removed"),
+        Err(error) => failure(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
+}
+
 #[derive(Deserialize)]
 struct UpdateMember {
     role: String,
@@ -685,7 +717,10 @@ pub fn router(hub: WebHub) -> Router {
             "/nodes/local",
             get(crate::replication_setup::status).post(crate::replication_setup::start),
         )
-        .route("/nodes/local/interfaces",get(crate::replication_setup::interfaces))
+        .route(
+            "/nodes/local/interfaces",
+            get(crate::replication_setup::interfaces),
+        )
         .route("/nodes/local/stop", post(crate::replication_setup::stop))
         .route(
             "/nodes/local/credential",
@@ -701,6 +736,7 @@ pub fn router(hub: WebHub) -> Router {
         )
         .route("/nodes", get(list_nodes))
         .route("/nodes/{id}/revoke", post(revoke_node))
+        .route("/nodes/{id}/remove", post(remove_node))
         .route("/nodes/{id}/reenroll", post(allow_reenrollment))
         .layer(middleware::from_fn_with_state(hub.clone(), authorize))
         .with_state(hub)

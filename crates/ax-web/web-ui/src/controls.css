@@ -1,0 +1,104 @@
+/* Shared control rhythm for settings, forms, dialogs and page toolbars. */
+:root {
+  --control-action-gap: 12px;
+  --control-section-gap: 16px;
+  --control-chevron-gutter: 38px;
+}
+
+.accent-chooser { display: grid; gap: 8px; margin-block-start: 12px; }
+.accent-chooser p { margin: 0; }
+.accent-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.accent-option { display: inline-flex; align-items: center; gap: 8px; }
+.accent-option[aria-pressed="true"] { border-color: var(--accent-text); background: var(--bg-active); }
+.accent-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; border: 1px solid var(--border-hi); }
+
+html[data-ax-layout="portal"] .app.app--quality-gates { grid-template-columns: minmax(0, 1fr); grid-template-areas: "titlebar" "workspace" "statusbar"; }
+html[data-ax-layout="portal"][data-ax-embed="1"] .app.app--quality-gates { grid-template-areas: "workspace" "statusbar"; }
+
+html[data-ax-layout] select:not([multiple]):not([size]),
+html[data-ax-layout] select:not([multiple])[size="1"] {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-inline-end: var(--control-chevron-gutter);
+  background-image: var(--control-chevron);
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px 16px;
+  cursor: pointer;
+}
+
+html[dir="rtl"] select:not([multiple]):not([size]) {
+  background-position: left 12px center;
+}
+
+html[data-ax-layout] select:disabled { cursor: not-allowed; }
+
+:is(.access-actions, .remote-publish-actions, .form-actions, .settings-row-control--actions, .ax-modal-footer) {
+  column-gap: var(--control-action-gap);
+  row-gap: var(--control-action-gap);
+}
+
+:is(p, small, .access-note, .settings-row-desc, .settings-help) + :is(.access-actions, .remote-publish-actions, .form-actions) {
+  margin-block-start: var(--control-section-gap);
+}
+
+:is(.settings-card-body, .ax-modal-body, .form-panel) > :is(p, small) + :is(button.btn, a.btn) {
+  margin-block-start: var(--control-section-gap);
+}
+
+.settings-card-body > :is(p, small, .settings-help) + .settings-row {
+  margin-block-start: var(--control-action-gap);
+}
+
+.remote-mcp-settings > .remote-publish-actions { margin-block: var(--control-section-gap); }
+.remote-mcp-settings > ul { margin-block-start: var(--control-section-gap); }
+.remote-mcp-settings > ul > li { padding-block: var(--control-section-gap); }
+.remote-mcp-settings > ul > li > .access-actions { margin-block-start: var(--control-action-gap); }
+
+/* One compact header rhythm across every Command Center page. */
+html[data-ax-layout="portal"] .portal-breadcrumbs { padding-block-start: 8px; gap: 8px; }
+html[data-ax-layout="portal"] :is(.settings-hero, .page-header) { padding-block: 10px; }
+html[data-ax-layout="portal"] :is(.settings-hero-title, .page-header h1) { font-size: 22px; line-height: 1.25; margin: 0; }
+html[data-ax-layout="portal"] .settings-hero-sub { margin-block: 4px 0; line-height: 1.4; max-width: 90ch; }
+html[data-ax-layout="portal"] .settings-hero-actions { gap: var(--control-action-gap); }
+html[data-ax-layout="portal"] .settings-card-header { padding-block: 8px; }
+html[data-ax-layout="portal"] .settings-card-header h2 { margin: 0; font-size: 16px; line-height: 1.4; }
+html[data-ax-layout="portal"] .settings-card-header p { margin-block: 3px 0; line-height: 1.4; }
+html[data-ax-layout="portal"] :is(.page-filter-bar, .policy-toolbar, .graph-toolbar, .logging-filter-bar) { padding-block: 8px; }
+html[data-ax-layout="portal"] .mem-overview { flex-direction: row; flex-wrap: wrap; align-items: center; padding-block: 8px; gap: 8px 24px; }
+html[data-ax-layout="portal"] .mem-how-grid { flex: 1 1 440px; }
+html[data-ax-layout="portal"] .mem-stats-strip { padding: 0; gap: 8px 20px; }
+html[data-ax-layout="portal"] .mem-stat { flex-direction: row; align-items: baseline; gap: 6px; }
+html[data-ax-layout="portal"] .mem-stat-value { font-size: 16px; }
+
+.review-toolbar, .review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--control-action-gap); }
+.review-toolbar { margin-block-end: 12px; }
+.review-toolbar .settings-input { flex: 1 1 220px; width: auto; min-width: 0; }
+.review-toolbar .settings-select { flex: 0 1 160px; width: auto; min-width: 0; }
+.review-list { display: grid; gap: 12px; min-width: 0; }
+.review-item { min-width: 0; border: 1px solid var(--border); padding: 12px; background: var(--bg-panel); }
+.review-item-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.review-item-heading strong { overflow-wrap: anywhere; }
+.review-item p, .review-item summary { overflow-wrap: anywhere; }
+.review-item pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-sm); max-height: 360px; overflow-y: auto; background: var(--bg-input); padding: 12px; }
+.review-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.review-effect { color: var(--accent-text); font-weight: 600; }
+
+/* Equal metric rows keep values on a common baseline when labels wrap. */
+html[data-ax-layout] .sv-hero-strip { grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); }
+html[data-ax-layout] .sv-hero-stat { display: grid; grid-template-rows: 2.8em auto minmax(2.8em, auto); gap: 4px; min-width: 0; }
+html[data-ax-layout] .sv-hero-stat-label { align-self: end; align-items: center; font-size: 12px; line-height: 1.4; letter-spacing: .02em; }
+html[data-ax-layout] .sv-hero-stat-value { align-self: baseline; font-size: 22px; line-height: 1.25; white-space: nowrap; }
+html[data-ax-layout] .sv-hero-stat-sub { font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+:is(.sv-hero-stat-value, .sv-session-stat-value, .sv-insight-value, .ship-metric-value, .mcp-q-metric-value, .mem-stat-value, .settings-status-pill-value, .page-info) { font-variant-numeric: tabular-nums; }
+.review-actions { margin-block-start: 12px; }
+@media (max-width: 639px) { .review-comparison { grid-template-columns: 1fr; } }
+
+@media (forced-colors: active) {
+  html[data-ax-layout] select:not([multiple]):not([size]),
+  html[data-ax-layout] select:not([multiple])[size="1"] {
+    appearance: auto;
+    -webkit-appearance: auto;
+    background-image: none;
+  }
+}

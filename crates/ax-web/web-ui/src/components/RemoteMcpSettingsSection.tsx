@@ -104,15 +104,17 @@ export default function RemoteMcpSettingsSection() {
       <input id="remote-mcp-client" value={clientId} onChange={e => setClientId(e.target.value)} placeholder="Native Ax client registered with your provider" disabled={busy} />
     </div>
     <p>The OAuth client ID is the public native Ax app ID from the server owner. It is not your password or the Cursor app ID.</p>
-    <button className="btn" type="button" onClick={connect} disabled={busy || !url.trim() || !clientId.trim()}>{busy ? 'Waiting for browser sign-in…' : 'Connect with browser'}</button>
-    {attempt && <button type="button" onClick={cancel}>Cancel sign-in</button>}
+    <div className="access-actions">
+      <button className="btn" type="button" onClick={connect} disabled={busy || !url.trim() || !clientId.trim()}>{busy ? 'Waiting for browser sign-in…' : 'Connect with browser'}</button>
+      {attempt && <button className="btn" type="button" onClick={cancel}>Cancel sign-in</button>}
+    </div>
     {authorizationUrl && <p><a href={authorizationUrl} target="_blank" rel="noopener noreferrer">Open sign-in if your browser did not open</a>. Return here after authorizing Ax.</p>}
     {message && <p role="status">{message}</p>}
     {error && <p role="alert">{error}</p>}
     {connections.length > 0 && <ul>{connections.map(connection => <li key={connection.url}>
       <strong>{connection.url}</strong><br />
       <span>{connection.state === 'stored' ? 'Credentials saved' : 'Access token expired; the CLI can refresh it when a refresh token is available'} · {connection.issuer}</span>{' '}
-      <button type="button" disabled={busy} onClick={() => disconnect(connection)}>Disconnect</button>
+      <div className="access-actions"><button className="btn" type="button" disabled={busy} onClick={() => disconnect(connection)}>{connection.state === 'expired' ? 'Remove saved connection' : 'Disconnect'}</button></div>
     </li>)}</ul>}
   </section></>;
 }

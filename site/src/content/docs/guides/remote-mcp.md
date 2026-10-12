@@ -17,6 +17,8 @@ For another computer, choose **Copy connection details** under **Share this proj
 
 The host card reports actual local service state. **Stop host** disables automatic startup until **Start host** is used. **Remove host** stops it, revokes its built-in grants and removes its saved configuration. The setup button remains available on the hosting computer. Advanced registration of an externally managed server only adds export metadata; it does not manage that service.
 
+In **Connection approvals**, revoked, denied or expired entries offer **Remove connection**. Confirm to remove that grant and its token records. Live grants must first be revoked; an expired access token with a usable refresh token remains a live grant. Under **Connect to another Ax**, **Disconnect** or **Remove saved connection** clears the local credentials even when provider revocation cannot be confirmed.
+
 ![Remote MCP host status and project-scoped connection approval](/screenshots/cc-remote-host.png)
 
 The manual external-provider setup below remains available.

@@ -29,7 +29,11 @@ export default function LocalMcpConfigSection({ workspace, onStale }: Props) {
   const fail = useCallback((e: unknown, epoch: number) => {
     if (epoch !== current.current || (e instanceof DOMException && e.name === 'AbortError')) return;
     setError(e instanceof Error ? e.message : String(e));
-    if (e instanceof RemoteMcpError && [404, 409].includes(e.status)) { setOutput(null); onStale(); }
+    if (e instanceof RemoteMcpError && [404, 409].includes(e.status)) {
+      setOutput(null);
+      // A missing endpoint must stay visible, rather than repeatedly remounting this card.
+      if (e.status === 409) onStale();
+    }
   }, [onStale]);
   useEffect(() => {
     current.current++;

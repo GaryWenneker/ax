@@ -172,12 +172,12 @@ export function fetchPolicyReview(): Promise<{ items: import('./policyTypes').Pe
   return request('/review');
 }
 
-export function approvePolicyReview(id: string): Promise<{ ok: boolean }> {
-  return request(`/review/${encodeURIComponent(id)}/approve`, { method: 'POST', body: '{}' });
+export function approvePolicyReview(id: string, kind?: string, item?: import('./policyTypes').PendingPolicyItem): Promise<{ ok: boolean }> {
+  return request(`/review/${encodeURIComponent(id)}/approve${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`, { method: 'POST', body: JSON.stringify({expectedIncoming:item?.incomingContent,expectedCurrent:item?.currentContent}) });
 }
 
-export function rejectPolicyReview(id: string): Promise<{ ok: boolean }> {
-  return request(`/review/${encodeURIComponent(id)}/reject`, { method: 'POST', body: '{}' });
+export function rejectPolicyReview(id: string, kind?: string, item?: import('./policyTypes').PendingPolicyItem): Promise<{ ok: boolean }> {
+  return request(`/review/${encodeURIComponent(id)}/reject${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`, { method: 'POST', body: JSON.stringify({expectedIncoming:item?.incomingContent,expectedCurrent:item?.currentContent}) });
 }
 
 export function fetchPolicyPackStatus(): Promise<import('./policyTypes').PolicyPackStatus> {
