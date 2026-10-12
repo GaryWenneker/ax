@@ -31,13 +31,17 @@ try {
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
   const page = await browser.newPage();
+  await page.setCacheEnabled(false);
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const cases = [
     ["home-desktop", "/", 1440, 900],
     ["home-1280", "/", 1280, 720],
     ["home-1024", "/", 1024, 768],
+    ["home-900", "/", 900, 700],
+    ["home-tablet", "/", 768, 1024],
     ["home-mobile", "/", 390, 844],
+    ["home-small-mobile", "/", 320, 640],
     ["docs-desktop", "/getting-started/introduction/", 1440, 900],
     ["docs-mobile", "/getting-started/introduction/", 390, 844],
     ["replicas-desktop", "/guides/standalone-ax/", 1440, 900],
@@ -65,6 +69,33 @@ try {
     if (route === "/" && width >= 900 && check.verticalOverflow) {
       throw new Error(name + ": desktop homepage must fit the viewport");
     }
+    if (route === "/") {
+      const hero = await page.evaluate(() => {
+        const lines = [...document.querySelectorAll('h1 > span')];
+        const lime = getComputedStyle(document.body).getPropertyValue('--ax-lime').trim();
+        const probe = document.createElement('span');
+        probe.style.color = lime;
+        document.body.append(probe);
+        const accent = getComputedStyle(probe).color;
+        probe.remove();
+        return {
+          lines: lines.map(el => el.textContent),
+          colors: lines.map(el => getComputedStyle(el).color),
+          accent,
+          font: [...document.fonts].some(face => face.family === 'Oxanium Variable' && face.status === 'loaded') && getComputedStyle(document.querySelector('h1')).fontFamily.includes('Oxanium Variable'),
+          clipped: [...lines, ...document.querySelectorAll('.ax-download-row > *, .ax-footer')].some(el => {
+            const box = el.getBoundingClientRect();
+            return box.left < 0 || box.right > innerWidth + 1 || (innerWidth >= 900 && box.bottom > innerHeight + 1);
+          }),
+          rows: lines.map(el => el.getBoundingClientRect().top),
+        };
+      });
+      if (hero.lines.join(' ') !== 'Your context. Your rules. Your control.' || !hero.font || hero.clipped ||
+          hero.colors[2] !== hero.accent || hero.colors.slice(0, 2).some(color => color === hero.accent) ||
+          !hero.rows.every((top, i) => i === 0 || top > hero.rows[i - 1])) {
+        throw new Error(name + ': incorrect slogan, font, accent or layout: ' + JSON.stringify(hero));
+      }
+    }
     await page.screenshot({
       path: path.join(output, name + ".jpg"),
       fullPage: route === "/" && width < 900,
@@ -72,32 +103,16 @@ try {
     });
     if (name === "home-desktop" || name === "home-mobile") {
       await page.screenshot({ path: path.join(output, name + "-viewport.jpg"), quality: 85 });
+      await page.screenshot({ path: path.join(site, 'public/screenshots', name.replace('home-', 'home-install-') + '.png'), fullPage: width < 900 });
     }
     console.log(name, "pass", JSON.stringify(check));
   }
   await page.setViewport({ width: 1440, height: 900 });
   await page.goto("http://127.0.0.1:4422/", { waitUntil: "networkidle0" });
   const text = await page.$eval("h1", el => el.textContent);
-  if (text.trim() !== "Your context.Your rules.Your control.") {
-    throw new Error("Approved homepage slogan is missing: " + text);
+  if (!["Your context.", "Your rules.", "Your control."].every(line => text.includes(line))) {
+    throw new Error("Expected minimal homepage headline is missing");
   }
-  const typography = await page.evaluate(() => {
-    const h1 = document.querySelector(".ax-headline");
-    const children = [...h1.querySelectorAll(":scope > span")];
-    const body = getComputedStyle(document.body);
-    const root = getComputedStyle(h1);
-    const styles = children.map(el => getComputedStyle(el).color);
-    const lime = body.getPropertyValue("--ax-lime").trim();
-    const loadedFont = [...document.fonts].some(face =>
-      face.family === "Oxanium Variable" && face.status === "loaded");
-    return { fontFamily: root.fontFamily, loadedFont, styles, lime,
-      childText: children.map(el => el.textContent) };
-  });
-  if (!typography.loadedFont || !typography.fontFamily.includes("Oxanium Variable"))
-    throw new Error("Bundled Oxanium Variable did not load: " + JSON.stringify(typography));
-  if (typography.styles.length !== 3 || typography.styles[0] !== typography.styles[1] ||
-      typography.styles[0] === typography.styles[2])
-    throw new Error("Only 'Your control.' should carry lime: " + JSON.stringify(typography));
   if ((await page.$$(".signal-ambient, .ax-ares-architecture, .integrated-console")).length) {
     throw new Error("Old cinematic layout is still rendered");
   }
