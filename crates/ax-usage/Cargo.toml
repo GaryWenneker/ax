@@ -5,6 +5,9 @@ edition = "2021"
 description = "Context-token savings metrics for ax MCP graph queries"
 
 [dependencies]
+ax-db = { workspace = true }
+tempfile = "3"
+hex = "0.4"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

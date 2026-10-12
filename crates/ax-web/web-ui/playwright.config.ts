@@ -4,6 +4,7 @@ const baseURL = process.env.AX_WEB_URL ?? 'http://127.0.0.1:7070';
 
 export default defineConfig({
   testDir: './e2e',
+  testMatch: '**/*.spec.ts',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -12,6 +13,7 @@ export default defineConfig({
   outputDir: 'test-results',
   use: {
     baseURL,
+    launchOptions: process.env.AX_CHROME_EXECUTABLE ? { executablePath: process.env.AX_CHROME_EXECUTABLE } : {},
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

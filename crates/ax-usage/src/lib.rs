@@ -19,6 +19,7 @@ mod pricing_sync;
 mod reuse_cache;
 mod savings;
 mod store;
+pub mod replication;
 mod tokenizer;
 mod working_context;
 

@@ -42,6 +42,11 @@ struct SavedNode {
     config: ServerConfig,
     port: u16,
     advertise: Option<String>,
+    #[serde(default = "enabled_default")]
+    enabled: bool,
+}
+fn enabled_default() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -114,11 +119,23 @@ fn validate_request(
     config.validate()?;
     if let Some(url) = request.advertise.as_deref() {
         crate::server_discovery::validate_advertise(&config, url)?;
-        let parsed=reqwest::Url::parse(url).map_err(|_|"Invalid advertised address")?;
-        if parsed.scheme()=="http" {
-            let ip=parsed.host_str().ok_or("Missing advertised IP")?.trim_matches(['[',']']).parse::<std::net::IpAddr>().map_err(|_|"Select an explicit local interface IP")?;
-            if !crate::server_network::addresses()?.iter().any(|a|a.address==ip.to_string()) {return Err("Advertised IP is not a local private interface".into());}
-            if parsed.port_or_known_default()!=Some(request.port) {return Err("Advertised port must match the local service port".into());}
+        let parsed = reqwest::Url::parse(url).map_err(|_| "Invalid advertised address")?;
+        if parsed.scheme() == "http" {
+            let ip = parsed
+                .host_str()
+                .ok_or("Missing advertised IP")?
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| "Select an explicit local interface IP")?;
+            if !crate::server_network::addresses()?
+                .iter()
+                .any(|a| a.address == ip.to_string())
+            {
+                return Err("Advertised IP is not a local private interface".into());
+            }
+            if parsed.port_or_known_default() != Some(request.port) {
+                return Err("Advertised port must match the local service port".into());
+            }
         }
         // Advertised primaries must be usable by the existing trusted-origin policy.
         let mut as_replica = config.clone();
@@ -130,6 +147,7 @@ fn validate_request(
         config,
         port: request.port,
         advertise: request.advertise.clone(),
+        enabled: true,
     })
 }
 fn setup_id(value: &str, role: NodeRole, prefix: &str) -> String {
@@ -243,30 +261,92 @@ async fn service_running(saved: &SavedNode, credentials: &Credentials) -> bool {
         && body["cluster_id"].as_str() == Some(&saved.config.cluster_id)
 }
 
-fn bind_address(saved:&SavedNode)->std::net::SocketAddr {
-    let ip=saved.advertise.as_deref().and_then(|url|reqwest::Url::parse(url).ok()).filter(|url|url.scheme()=="http").and_then(|url|url.host_str().and_then(|h|h.trim_matches(['[',']']).parse().ok())).unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
-    std::net::SocketAddr::new(ip,saved.port)
+fn bind_address(saved: &SavedNode) -> std::net::SocketAddr {
+    let ip = saved
+        .advertise
+        .as_deref()
+        .and_then(|url| reqwest::Url::parse(url).ok())
+        .filter(|url| url.scheme() == "http")
+        .and_then(|url| {
+            url.host_str()
+                .and_then(|h| h.trim_matches(['[', ']']).parse().ok())
+        })
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    std::net::SocketAddr::new(ip, saved.port)
 }
-async fn enroll(request:&mut SetupRequest,node:&str,token:&str)->Result<(),String> {
-    let origin=request.primary_url.as_deref().ok_or("Enter the Primary URL")?;
+async fn enroll(request: &mut SetupRequest, node: &str, token: &str) -> Result<(), String> {
+    let origin = request
+        .primary_url
+        .as_deref()
+        .ok_or("Enter the Primary URL")?;
     crate::server_config::validate_primary_url(origin)?;
-    let url=reqwest::Url::parse(origin).map_err(|e|e.to_string())?.join("/v1/enrollment").map_err(|e|e.to_string())?;
-    let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(10)).build().map_err(|e|e.to_string())?;
-    let mut response=client.post(url).bearer_auth(token).header("x-ax-node-id",node).send().await.map_err(|e|format!("Cannot reach Primary: {e}"))?;
-    if !response.status().is_success() {return Err(format!("Primary enrollment failed: {}",response.status()));}
-    let mut bytes=Vec::new(); while let Some(chunk)=response.chunk().await.map_err(|e|e.to_string())? {if bytes.len()+chunk.len()>16384 {return Err("Enrollment response too large".into());} bytes.extend_from_slice(&chunk);}
-    let body:serde_json::Value=serde_json::from_slice(&bytes).map_err(|e|e.to_string())?;
-    if body["protocol_version"]!=3 {return Err("Complete replication requires updated Ax on both nodes".into());}
-    let cluster=body["cluster_id"].as_str().ok_or("Primary did not return a cluster ID")?;
-    if !request.cluster_id.is_empty() && request.cluster_id!=cluster {return Err("Primary cluster differs from the selected node".into());}
-    request.cluster_id=cluster.into();
-    let ids:Vec<_>=body["project_ids"].as_array().ok_or("Primary did not return project IDs")?.iter().filter_map(|v|v.as_str()).collect();
-    if request.project_id.is_empty() {if ids.len()!=1 {return Err("Primary has multiple projects; select its project ID in Advanced options".into());} request.project_id=ids[0].into();}
-    if !ids.contains(&request.project_id.as_str()) {return Err("Project is not authorized by this shared key".into());} Ok(())
+    let url = reqwest::Url::parse(origin)
+        .map_err(|e| e.to_string())?
+        .join("/v1/enrollment")
+        .map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut response = client
+        .post(url)
+        .bearer_auth(token)
+        .header("x-ax-node-id", node)
+        .send()
+        .await
+        .map_err(|e| format!("Cannot reach Primary: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Primary enrollment failed: {}", response.status()));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if bytes.len() + chunk.len() > 16384 {
+            return Err("Enrollment response too large".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let body: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    if body["protocol_version"] != 3 {
+        return Err("Complete replication requires updated Ax on both nodes".into());
+    }
+    let cluster = body["cluster_id"]
+        .as_str()
+        .ok_or("Primary did not return a cluster ID")?;
+    if !request.cluster_id.is_empty() && request.cluster_id != cluster {
+        return Err("Primary cluster differs from the selected node".into());
+    }
+    request.cluster_id = cluster.into();
+    let ids: Vec<_> = body["project_ids"]
+        .as_array()
+        .ok_or("Primary did not return project IDs")?
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    if request.project_id.is_empty() {
+        if ids.len() != 1 {
+            return Err(
+                "Primary has multiple projects; select its project ID in Advanced options".into(),
+            );
+        }
+        request.project_id = ids[0].into();
+    }
+    if !ids.contains(&request.project_id.as_str()) {
+        return Err("Project is not authorized by this shared key".into());
+    }
+    Ok(())
 }
-pub(crate) async fn interfaces(Extension(actor):Extension<Actor>)->Response {
-    if !local_owner(&actor) {return fail(StatusCode::FORBIDDEN,"Only the local Owner can select an interface");}
-    match crate::server_network::addresses() {Ok(addresses)=>Json(serde_json::json!({"interfaces":addresses})).into_response(),Err(error)=>fail(StatusCode::INTERNAL_SERVER_ERROR,&error)}
+pub(crate) async fn interfaces(Extension(actor): Extension<Actor>) -> Response {
+    if !local_owner(&actor) {
+        return fail(
+            StatusCode::FORBIDDEN,
+            "Only the local Owner can select an interface",
+        );
+    }
+    match crate::server_network::addresses() {
+        Ok(addresses) => Json(serde_json::json!({"interfaces":addresses})).into_response(),
+        Err(error) => fail(StatusCode::INTERNAL_SERVER_ERROR, &error),
+    }
 }
 
 fn node_command(
@@ -307,7 +387,9 @@ fn node_command(
     command.process_group(0);
     #[cfg(windows)]
     command.creation_flags(0x0000_0008 | 0x0000_0200); // Detached, new process group.
-    if !bind_address(saved).ip().is_loopback() {command.arg("--allow-private-http");}
+    if !bind_address(saved).ip().is_loopback() {
+        command.arg("--allow-private-http");
+    }
     if saved.config.role == NodeRole::Replica {
         command.arg("--auto-apply-memories");
     }
@@ -330,11 +412,16 @@ async fn wait_ready(child: &mut Child, saved: &SavedNode, credentials: &Credenti
 /// Reuse or start the saved service when web/MCP starts. Child lifetime is
 /// independent of IDE refreshes, with authenticated local stop from Settings.
 pub async fn auto_start(root: &Path) -> Result<(), String> {
-    if let Err(error)=crate::remote_host::auto_start(root).await {tracing::warn!("Remote host auto-start failed: {error}");}
+    if let Err(error) = crate::remote_host::auto_start(root).await {
+        tracing::warn!("Remote host auto-start failed: {error}");
+    }
     let Some(saved) = read_saved(root)? else {
         return Ok(());
     };
     saved.config.validate()?;
+    if !saved.enabled {
+        return Ok(());
+    }
     let _lock = operation_lock(root)?;
     let credentials = stored_credentials(root, &saved.config.node_id).await?;
     if service_running(&saved, &credentials).await {
@@ -394,10 +481,14 @@ pub(crate) async fn status(
         Ok(saved) => saved,
         Err(error) => return fail(StatusCode::BAD_REQUEST, &error),
     };
+    let mut runtime_error = None;
     let external_active = if let Some(saved) = &saved {
         match stored_credentials(&root, &saved.config.node_id).await {
             Ok(credentials) => service_running(saved, &credentials).await,
-            Err(_) => false,
+            Err(error) => {
+                runtime_error = Some(error);
+                false
+            }
         }
     } else {
         false
@@ -424,12 +515,25 @@ pub(crate) async fn status(
         .and_then(|v| v.as_str());
     let review = sync_status.is_some_and(|s| s.contains("review_required"));
     let failed = sync_status == Some("failed");
-    let dataset_counts=match ax_db::replication::counts(&pool).await {Ok(counts)=>counts,Err(_)=>return fail(StatusCode::INTERNAL_SERVER_ERROR,"Cannot verify replicated datasets")};
-    let access_db=match crate::access_api::pool().await {Ok(pool)=>pool,Err(error)=>return fail(StatusCode::INTERNAL_SERVER_ERROR,&error)};
-    let active_replicas:i64=if let Some(saved)=&saved {
+    let dataset_counts = match ax_db::replication::counts(&pool).await {
+        Ok(counts) => counts,
+        Err(_) => {
+            return fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Cannot verify replicated datasets",
+            )
+        }
+    };
+    let access_db = match crate::access_api::pool().await {
+        Ok(pool) => pool,
+        Err(error) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &error),
+    };
+    let active_replicas: i64 = if let Some(saved) = &saved {
         sqlx::query_scalar("SELECT COUNT(DISTINCT n.id) FROM replication_nodes n JOIN node_project_access a ON a.node_id=n.id WHERE a.project_id=? AND n.role='replica' AND n.trust_state='trusted' AND n.last_seen_at>=datetime('now','-120 seconds')").bind(&saved.config.projects[0].id).fetch_one(&access_db).await.unwrap_or(0)
-    } else {0};
-    Json(serde_json::json!({"settings":saved,"running":active,"active_project":active_project,"active_replicas":active_replicas,"sync":sync,"datasets":dataset_counts,"safety":{"mode":"preserve_and_exchange","memories":counts.0,"rules":counts.1,"skills":counts.2,"review_required":review,"sync_failed":failed}})).into_response()
+    } else {
+        0
+    };
+    Json(serde_json::json!({"settings":saved,"running":active,"active_project":active_project,"active_replicas":active_replicas,"sync":sync,"runtime_error":runtime_error,"datasets":dataset_counts,"safety":{"mode":"preserve_and_exchange","memories":counts.0,"rules":counts.1,"skills":counts.2,"review_required":review,"sync_failed":failed}})).into_response()
 }
 
 pub(crate) async fn start(
@@ -514,8 +618,15 @@ pub(crate) async fn start(
     if !valid_token(&token) {
         return fail(StatusCode::BAD_REQUEST, "Enter the project's replication credential (32–4096 ASCII characters). Saved settings never store this credential.");
     }
-    if request.role==NodeRole::Replica {if let Err(error)=enroll(&mut request,&node_id,&token).await {return fail(StatusCode::BAD_REQUEST,&error);}}
-    let mut saved=match validate_request(&request,&root,node_id) {Ok(saved)=>saved,Err(error)=>return fail(StatusCode::BAD_REQUEST,&error)};
+    if request.role == NodeRole::Replica {
+        if let Err(error) = enroll(&mut request, &node_id, &token).await {
+            return fail(StatusCode::BAD_REQUEST, &error);
+        }
+    }
+    let mut saved = match validate_request(&request, &root, node_id) {
+        Ok(saved) => saved,
+        Err(error) => return fail(StatusCode::BAD_REQUEST, &error),
+    };
     let exe = match executable() {
         Ok(v) => v,
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &e),
@@ -530,8 +641,23 @@ pub(crate) async fn start(
             )
         }
     };
-    saved.port=match probe.local_addr() {Ok(address)=>address.port(),Err(_)=>return fail(StatusCode::INTERNAL_SERVER_ERROR,"Cannot allocate local port")};
-    if let Some(advertise)=saved.advertise.as_mut() {if let Ok(mut url)=reqwest::Url::parse(advertise) {if url.scheme()=="http" && url.port()==Some(0) {let _=url.set_port(Some(saved.port));*advertise=url.to_string();}}}
+    saved.port = match probe.local_addr() {
+        Ok(address) => address.port(),
+        Err(_) => {
+            return fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Cannot allocate local port",
+            )
+        }
+    };
+    if let Some(advertise) = saved.advertise.as_mut() {
+        if let Ok(mut url) = reqwest::Url::parse(advertise) {
+            if url.scheme() == "http" && url.port() == Some(0) {
+                let _ = url.set_port(Some(saved.port));
+                *advertise = url.to_string();
+            }
+        }
+    }
     let file = match runtime_config(&root, &saved.config) {
         Ok(v) => v,
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &e),
@@ -635,6 +761,12 @@ pub(crate) async fn stop(
     let mut managed = hub.replication.lock().await;
     if let Err(error) = stop_service(&root, &mut managed).await {
         return fail(StatusCode::INTERNAL_SERVER_ERROR, &error);
+    }
+    if let Ok(Some(mut saved)) = read_saved(&root) {
+        saved.enabled = false;
+        if let Err(error) = write_saved(&root, &saved) {
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, &error);
+        }
     }
     Json(serde_json::json!({"stopped":true})).into_response()
 }
@@ -749,7 +881,16 @@ pub(crate) async fn remove(
         return fail(StatusCode::INTERNAL_SERVER_ERROR, &error);
     }
     if let Some(saved) = saved {
-        if let Err(error)=sqlx::query("DELETE FROM local_replication_status WHERE node_id=?").bind(&saved.config.node_id).execute(&match crate::access_api::pool().await {Ok(pool)=>pool,Err(error)=>return fail(StatusCode::INTERNAL_SERVER_ERROR,&error)}).await {return fail(StatusCode::INTERNAL_SERVER_ERROR,&error.to_string());}
+        if let Err(error) = sqlx::query("DELETE FROM local_replication_status WHERE node_id=?")
+            .bind(&saved.config.node_id)
+            .execute(&match crate::access_api::pool().await {
+                Ok(pool) => pool,
+                Err(error) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &error),
+            })
+            .await
+        {
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
+        }
         let env_credentials =
             std::env::var(TOKEN_ENV).is_ok() && std::env::var(CONTROL_ENV).is_ok();
         if !env_credentials {

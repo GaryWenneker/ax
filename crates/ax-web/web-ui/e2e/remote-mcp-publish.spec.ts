@@ -18,6 +18,8 @@ async function fixture(page: Page, options: { empty?: boolean; multiple?: boolea
     requests.push({ path, method, body });
     let value: unknown;
     if (path === '/api/remote-mcp/publications/') value = { workspaceId, projectLabel: 'Demo project', csrf: 'fixture-csrf', publications };
+    else if (path.endsWith('/host')) value = { workspaceId, host: null };
+    else if (path.endsWith('/host/authorizations')) value = { workspaceId, requests: [] };
     else if (path.endsWith('/local/export')) {
       const args = request.postDataJSON() as { client: string; target: string }; // Fixture mirrors validated local request fields.
       const shared = args.target === 'projectFolder';
@@ -110,6 +112,7 @@ test('workspace switch clears old configuration and ignores a late response in e
 
 test('registration opens a modal, sends only a JSON object and removes only the local registration', async ({ page }, info) => {
   const f = await fixture(page, { empty: true }); await page.goto('/settings?section=remote');
+  await page.getByText('Advanced: register an externally managed server', { exact: true }).click();
   await page.getByRole('button', { name: 'Import existing server file' }).click(); const modal = page.getByRole('dialog', { name: 'Import existing remote server' });
   await expect(modal).toBeVisible();
   await expect(modal.getByLabel('Native Ax public client ID (optional)')).not.toBeVisible();
@@ -136,6 +139,7 @@ test('local configuration is copyable without a remote server and project sharin
   await expect(local.getByRole('status')).toHaveText('Shareable project configuration copied.');
   const shared = await page.evaluate(() => localStorage.getItem('fixture-copied'));
   expect(shared).toContain('${workspaceFolder}'); expect(shared).not.toContain('/demo'); expect(shared).not.toContain('/tools/ax');
+  await page.getByText('Advanced: register an externally managed server', { exact: true }).click();
   await expect(page.getByRole('button', { name: 'Import existing server file' })).toBeVisible();
 });
 

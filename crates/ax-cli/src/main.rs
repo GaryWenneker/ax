@@ -645,7 +645,7 @@ enum ServerAction {
         push_port: u16,
         #[arg(
             long,
-            help = "Project staged replica memories under conflict-safe local IDs"
+            help = "Apply verified graph, source, logs, conversation history and memories under separate node identities"
         )]
         auto_apply_memories: bool,
         #[arg(long, hide = true)]

@@ -84,6 +84,7 @@ export default function FilePreview({ file, onClose, onNodeSelect, selectedNodeI
           />
           <div className="files-preview-header-text">
             <span className="files-preview-path" title={file.path}>{file.path}</span>
+            {file.path.startsWith('ax-replica/') && <p className="access-note">Replicated index and cached source · Node {file.path.split('/')[1]}</p>}
             <dl className="files-preview-meta files-preview-meta--inline">
               <div><dt>Language</dt><dd>{file.language}</dd></div>
               <div><dt>Size</dt><dd>{formatBytes(file.size)}</dd></div>

@@ -193,7 +193,9 @@ async fn exchange(
     if incoming.primary_node_id != node_id {
         return Err(StatusCode::FORBIDDEN);
     }
-    if incoming.schema_version!=3 { return Err(StatusCode::CONFLICT); }
+    if incoming.schema_version != 3 {
+        return Err(StatusCode::CONFLICT);
+    }
     server_snapshot::validate(&incoming, &state.config.cluster_id, &id)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let _permit = state
@@ -203,37 +205,102 @@ async fn exchange(
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let outcome = async {
         let snapshot = crate::server_exchange::publish(&state.config, &id, Some(&incoming)).await?;
-        crate::server_data::apply(&state.config,&snapshot).await?;
-        let report = crate::server_apply::apply(&state.config,&snapshot).await?;
-        Ok::<_,String>((snapshot,report))
-    }.await;
-    if let Some(project) = state.config.projects.iter().find(|p|p.id==id) {
-        let status=outcome.as_ref().map(|(snapshot,_)| ("full_data_synced; two_way_preserved".into(),snapshot.revision.clone())).map_err(Clone::clone);
-        crate::server_replica::record_attempt(&state.config,project,&status).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+        crate::server_data::apply(&state.config, &snapshot).await?;
+        let report = crate::server_apply::apply(&state.config, &snapshot).await?;
+        Ok::<_, String>((snapshot, report))
     }
-    let (snapshot,report)=outcome.map_err(|error| { tracing::warn!(project=%id,"complete node synchronization failed: {}",error); StatusCode::CONFLICT })?;
+    .await;
+    if let Some(project) = state.config.projects.iter().find(|p| p.id == id) {
+        let status = outcome
+            .as_ref()
+            .map(|(snapshot, _)| {
+                (
+                    "full_data_synced; two_way_preserved".into(),
+                    snapshot.revision.clone(),
+                )
+            })
+            .map_err(Clone::clone);
+        crate::server_replica::record_attempt(&state.config, project, &status)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let (snapshot, report) = outcome.map_err(|error| {
+        tracing::warn!(project=%id,"complete node synchronization failed: {}",error);
+        StatusCode::CONFLICT
+    })?;
     sqlx::query("UPDATE replication_nodes SET last_sync_at=CURRENT_TIMESTAMP,last_seen_at=CURRENT_TIMESTAMP WHERE id=? AND trust_state='trusted'").bind(&node_id).execute(&state.access_db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(crate::server_exchange::ExchangeReply { snapshot,contributed_revision:incoming.revision,memory_conflicts:report.conflicts }))
+    Ok(Json(crate::server_exchange::ExchangeReply {
+        snapshot,
+        contributed_revision: incoming.revision,
+        memory_conflicts: report.conflicts,
+    }))
 }
 
-async fn enrollment(State(state):State<Arc<StateData>>,headers:HeaderMap)->Result<Json<serde_json::Value>,StatusCode> {
-    let mut projects=Vec::new(); let mut node=None;
-    for project in &state.config.projects { if let Ok(id)=authorize_project(&state,&project.id,&headers).await { projects.push(project.id.clone()); node=Some(id); } }
-    if projects.is_empty() { return Err(StatusCode::FORBIDDEN); }
-    Ok(Json(serde_json::json!({"protocol_version":3,"node_id":node,"cluster_id":state.config.cluster_id,"project_ids":projects,"datasets":["graph","source","logs","agent_history","memories","rules","skills"]})))
+async fn enrollment(
+    State(state): State<Arc<StateData>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut projects = Vec::new();
+    let mut node = None;
+    for project in &state.config.projects {
+        if let Ok(id) = authorize_project(&state, &project.id, &headers).await {
+            projects.push(project.id.clone());
+            node = Some(id);
+        }
+    }
+    if projects.is_empty() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(Json(
+        serde_json::json!({"protocol_version":3,"node_id":node,"cluster_id":state.config.cluster_id,"project_ids":projects,"datasets":["graph","source","logs","agent_history","working_context","durable_sessions","structured_logs","memories","rules","skills"]}),
+    ))
 }
-async fn chunk_read(State(state):State<Arc<StateData>>,AxumPath((id,hash)):AxumPath<(String,String)>,headers:HeaderMap)->Result<Bytes,StatusCode> {
-    authorize_project(&state,&id,&headers).await?;
-    let root=state.config.projects.iter().find(|p|p.id==id).ok_or(StatusCode::NOT_FOUND)?.path.clone();
-    let bytes=tokio::task::spawn_blocking(move||ax_db::replication::read_chunk(&root,&hash)).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.map_err(|_|StatusCode::NOT_FOUND)?;
+async fn chunk_read(
+    State(state): State<Arc<StateData>>,
+    AxumPath((id, hash)): AxumPath<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Bytes, StatusCode> {
+    authorize_project(&state, &id, &headers).await?;
+    let root = state
+        .config
+        .projects
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?
+        .path
+        .clone();
+    let bytes = tokio::task::spawn_blocking(move || ax_db::replication::read_chunk(&root, &hash))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::NOT_FOUND)?;
     Ok(Bytes::from(bytes))
 }
-async fn chunk_write(State(state):State<Arc<StateData>>,AxumPath((id,hash)):AxumPath<(String,String)>,headers:HeaderMap,bytes:Bytes)->Result<StatusCode,StatusCode> {
-    authorize_project(&state,&id,&headers).await?;
-    if bytes.len()>ax_db::replication::CHUNK_BYTES {return Err(StatusCode::PAYLOAD_TOO_LARGE);}
-    let _permit=state.exports.acquire().await.map_err(|_|StatusCode::SERVICE_UNAVAILABLE)?;
-    let root=state.config.projects.iter().find(|p|p.id==id).ok_or(StatusCode::NOT_FOUND)?.path.clone();
-    tokio::task::spawn_blocking(move||ax_db::replication::store_chunk(&root,&hash,&bytes)).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.map_err(|_|StatusCode::BAD_REQUEST)?;
+async fn chunk_write(
+    State(state): State<Arc<StateData>>,
+    AxumPath((id, hash)): AxumPath<(String, String)>,
+    headers: HeaderMap,
+    bytes: Bytes,
+) -> Result<StatusCode, StatusCode> {
+    authorize_project(&state, &id, &headers).await?;
+    if bytes.len() > ax_db::replication::CHUNK_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    let _permit = state
+        .exports
+        .acquire()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let root = state
+        .config
+        .projects
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?
+        .path
+        .clone();
+    tokio::task::spawn_blocking(move || ax_db::replication::store_chunk(&root, &hash, &bytes))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(StatusCode::CREATED)
 }
 
@@ -242,6 +309,24 @@ fn private_bind(ip: IpAddr) -> bool {
         IpAddr::V4(ip) => ip.is_private() || ip.is_link_local() || ip.is_unspecified(),
         IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_unspecified(),
     }
+}
+
+fn public_routes() -> Router<Arc<StateData>> {
+    let chunks = Router::new()
+        .route(
+            "/v1/projects/{id}/chunks/{hash}",
+            get(chunk_read).put(chunk_write),
+        )
+        .layer(DefaultBodyLimit::max(ax_db::replication::CHUNK_BYTES));
+    Router::new()
+        .route("/health", get(health))
+        .route("/v1/enrollment", post(enrollment))
+        .route("/v1/projects/{id}/snapshot", get(snapshot))
+        .route("/v1/projects/{id}/exchange", post(exchange))
+        .layer(DefaultBodyLimit::max(
+            server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024,
+        ))
+        .merge(chunks)
 }
 
 pub struct RunOptions {
@@ -379,24 +464,34 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         control,
         shutdown: managed.then_some(shutdown.clone()),
     });
-    let public = Router::new()
-        .route("/health", get(health))
-        .route("/v1/enrollment",post(enrollment))
-        .route("/v1/projects/{id}/chunks/{hash}",get(chunk_read).put(chunk_write))
-        .route("/v1/projects/{id}/snapshot", get(snapshot))
-        .route("/v1/projects/{id}/exchange", post(exchange))
-        .layer(DefaultBodyLimit::max(
-            server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024,
-        ))
-        ;
-    let controlled=public.clone().route("/managed/status",post(managed_status)).route("/managed/stop",post(managed_stop));
-    let separate_control=managed && bind.ip()!=IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-    let app=if separate_control {public.clone()} else {controlled.clone()}.with_state(state.clone());
-    let control_task=if separate_control {
-        let listener=tokio::net::TcpListener::bind(("127.0.0.1",bind.port())).await.map_err(|e|format!("Cannot bind local control: {e}"))?;
-        let app=controlled.with_state(state.clone()); let mut receiver=shutdown.subscribe();
-        Some(tokio::spawn(async move {axum::serve(listener,app).with_graceful_shutdown(async move {let _=receiver.changed().await;}).await}))
-    } else {None};
+    let public = public_routes();
+    let controlled = public
+        .clone()
+        .route("/managed/status", post(managed_status))
+        .route("/managed/stop", post(managed_stop));
+    let separate_control = managed && bind.ip() != IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let app = if separate_control {
+        public.clone()
+    } else {
+        controlled.clone()
+    }
+    .with_state(state.clone());
+    let control_task = if separate_control {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", bind.port()))
+            .await
+            .map_err(|e| format!("Cannot bind local control: {e}"))?;
+        let app = controlled.with_state(state.clone());
+        let mut receiver = shutdown.subscribe();
+        Some(tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = receiver.changed().await;
+                })
+                .await
+        }))
+    } else {
+        None
+    };
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|e| e.to_string())?;
@@ -419,8 +514,10 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         })
         .await
         .map_err(|e| e.to_string());
-    let _=shutdown.send(true);
-    if let Some(task)=control_task {let _=task.await;}
+    let _ = shutdown.send(true);
+    if let Some(task) = control_task {
+        let _ = task.await;
+    }
     if let Some(task) = announcement {
         task.abort();
     }
@@ -601,5 +698,197 @@ mod tests {
         .await
         .unwrap();
         assert!(!created);
+    }
+    #[tokio::test]
+    async fn three_nodes_exchange_complete_graph_source_memory_logs_and_conversations_over_http() {
+        use crate::server_config::ProjectRegistration;
+        let primary_root = tempfile::tempdir().unwrap();
+        let a_root = tempfile::tempdir().unwrap();
+        let b_root = tempfile::tempdir().unwrap();
+        async fn seed(root: &std::path::Path, label: &str) -> ax_core::Ax {
+            let ax = ax_core::Ax::init(root).await.unwrap();
+            let pool = ax.db_pool();
+            sqlx::query("INSERT INTO nodes(id,kind,name,qualified_name,file_path,language,start_line,end_line,start_column,end_column,updated_at) VALUES ('same','function',?,?,'src/main.rs','rust',1,1,0,10,1)").bind(label).bind(label).execute(pool).await.unwrap();
+            sqlx::query("INSERT INTO files VALUES ('src/main.rs','hash','rust',1,1,1,1,NULL)")
+                .execute(pool)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO file_contents VALUES ('src/main.rs','hash',?,?,1)")
+                .bind(format!("fn {label}() {{}}\n"))
+                .bind(label.len() as i64 + 9)
+                .execute(pool)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO edges(source,target,kind) VALUES ('same','same','calls')")
+                .execute(pool)
+                .await
+                .unwrap();
+            ax_memory::store::remember(
+                pool,
+                ax_memory::types::RememberInput {
+                    title: label.into(),
+                    body: format!("Memory from {label}"),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            std::fs::write(root.join(".ax/mcp-verbose-2026-10-12.log"),format!("2026-10-12T00:00:00.000Z [ax-mcp] inbound tool=ax_node args={{\"node\":\"{label}\"}}\n")).unwrap();
+            ax_usage::durable_project_apply(root,"chat",&serde_json::json!({"action":"append","kind":"user","body":format!("Conversation from {label}")})).await.unwrap();
+            ax
+        }
+        let primary_ax = seed(primary_root.path(), "primary").await;
+        let a_ax = seed(a_root.path(), "a").await;
+        let b_ax = seed(b_root.path(), "b").await;
+        let token = "x".repeat(64);
+        std::env::set_var("AX_TEST_FULL_SYNC_CREDENTIAL", &token);
+        let primary = ServerConfig {
+            schema_version: 1,
+            cluster_id: "team".into(),
+            node_id: "primary".into(),
+            role: NodeRole::Primary,
+            primary_url: None,
+            projects: vec![ProjectRegistration {
+                id: "project".into(),
+                path: primary_root.path().into(),
+                token_env: "AX_TEST_FULL_SYNC_CREDENTIAL".into(),
+            }],
+        };
+        let db = ax_global_db::open_and_init(&primary_root.path().join("access.db"))
+            .await
+            .unwrap();
+        let state = Arc::new(StateData {
+            config: primary.clone(),
+            access_db: db.clone(),
+            exports: Semaphore::new(4),
+            control: None,
+            shutdown: None,
+        });
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, receiver) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, public_routes().with_state(state))
+                .with_graceful_shutdown(async move {
+                    let _ = receiver.await;
+                })
+                .await
+                .unwrap();
+        });
+        let mut a = primary.clone();
+        a.role = NodeRole::Replica;
+        a.node_id = "a_1".into();
+        a.primary_url = Some(format!("http://{address}"));
+        a.projects[0].path = a_root.path().into();
+        let mut b = a.clone();
+        b.node_id = "b".into();
+        b.projects[0].path = b_root.path().into();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap();
+        let unauthorized = client
+            .get(format!("http://{address}/v1/projects/project/snapshot"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+        let enroll = client
+            .post(format!("http://{address}/v1/enrollment"))
+            .bearer_auth(&token)
+            .header("x-ax-node-id", "a_1")
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        assert_eq!(enroll["protocol_version"], 3);
+        assert_eq!(enroll["project_ids"], serde_json::json!(["project"]));
+        async fn sync(client: &reqwest::Client, config: &ServerConfig) {
+            let (snapshot, _) =
+                crate::server_replica::fetch_snapshot(client, config, &config.projects[0])
+                    .await
+                    .unwrap();
+            crate::server_data::apply(config, &snapshot).await.unwrap();
+            crate::server_apply::apply(config, &snapshot).await.unwrap();
+        }
+        sync(&client, &a).await;
+        sync(&client, &b).await;
+        sync(&client, &a).await;
+        for (root, ax) in [
+            (primary_root.path(), &primary_ax),
+            (a_root.path(), &a_ax),
+            (b_root.path(), &b_ax),
+        ] {
+            let nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes")
+                .fetch_one(ax.db_pool())
+                .await
+                .unwrap();
+            assert_eq!(nodes, 3);
+            let memories = ax_memory::store::list(ax.db_pool(), 100, 0)
+                .await
+                .unwrap()
+                .0;
+            assert!(memories.iter().any(|m| m.body == "Memory from primary"));
+            assert!(memories.iter().any(|m| m.body == "Memory from a"));
+            assert!(memories.iter().any(|m| m.body == "Memory from b"));
+            let matches=ax_memory::store::recall(ax.db_pool(),"Memory from b",10).await.unwrap();
+            assert!(matches.iter().any(|m|m.memory.body=="Memory from b"));
+            let logs = ax_usage::read_merged_verbose_log(root);
+            assert!(logs.contains("primary"));
+            assert!(logs.contains("a"));
+            assert!(logs.contains("b"));
+            let counts = ax_db::replication::counts(ax.db_pool()).await.unwrap();
+            assert_eq!(counts.len(), 2);
+            assert!(counts.iter().all(|d| d.history_rows >= 3));
+        }
+        let source: String = sqlx::query_scalar(
+            "SELECT content FROM file_contents WHERE path='ax-replica/a_1/src/main.rs'",
+        )
+        .fetch_one(b_ax.db_pool())
+        .await
+        .unwrap();
+        assert_eq!(source, "fn a() {}\n");
+        let native = crate::server_snapshot::export_native(&a, "project")
+            .await
+            .unwrap();
+        let items = crate::server_data::manifests(&native).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].nodes, 1);
+        // Both restarted application reads and local re-index cleanup retain foreign graph rows.
+        let queries = ax_db::queries::QueryBuilder::new(a_ax.db_pool().clone());
+        queries.clear_all().await.unwrap();
+        let reopened = ax_core::Ax::open(a_root.path()).await.unwrap();
+        let foreign: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM nodes WHERE id GLOB 'ax-replica/*'")
+                .fetch_one(reopened.db_pool())
+                .await
+                .unwrap();
+        assert_eq!(foreign, 2);
+        let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ax_node_contributions")
+            .fetch_one(primary_ax.db_pool())
+            .await
+            .unwrap();
+        let bad = client
+            .post(format!("http://{address}/v1/projects/project/exchange"))
+            .bearer_auth(&token)
+            .header("x-ax-node-id", "b")
+            .json(&native)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(bad.status(), reqwest::StatusCode::FORBIDDEN);
+        let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ax_node_contributions")
+            .fetch_one(primary_ax.db_pool())
+            .await
+            .unwrap();
+        assert_eq!(before, after);
+        let _ = shutdown.send(());
+        server.await.unwrap();
+        std::env::remove_var("AX_TEST_FULL_SYNC_CREDENTIAL");
     }
 }

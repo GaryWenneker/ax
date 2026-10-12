@@ -83,12 +83,16 @@ pub fn validate(
     {
         return Err("snapshot identity or protocol version mismatch".into());
     }
-    let expected_files = if snapshot.schema_version == 3 { MAX_SNAPSHOT_FILES } else { 3 };
+    let expected_files = if snapshot.schema_version == 3 {
+        MAX_SNAPSHOT_FILES
+    } else {
+        3
+    };
     if snapshot.files.len() != expected_files
-        || snapshot
-            .files
-            .keys()
-            .any(|p| !matches!(p.as_str(), MEMORY_PATH | RULE_PATH | SKILL_PATH) && !(snapshot.schema_version == 3 && p == ax_db::replication::DATA_PATH))
+        || snapshot.files.keys().any(|p| {
+            !matches!(p.as_str(), MEMORY_PATH | RULE_PATH | SKILL_PATH)
+                && !(snapshot.schema_version == 3 && p == ax_db::replication::DATA_PATH)
+        })
     {
         return Err("snapshot contains missing or undeclared paths".into());
     }
@@ -107,7 +111,9 @@ pub fn validate(
 
     if snapshot.schema_version == 3 {
         let items = crate::server_data::manifests(snapshot)?;
-        if items.is_empty() { return Err("snapshot has no complete datasets".into()); }
+        if items.is_empty() {
+            return Err("snapshot has no complete datasets".into());
+        }
     }
     let memories: Vec<MemoryRow> = decode(snapshot, MEMORY_PATH)?;
     let rules: Vec<PolicyRuleRow> = decode(snapshot, RULE_PATH)?;
@@ -257,12 +263,29 @@ pub async fn export_native(config: &ServerConfig, project_id: &str) -> Result<Sn
         item.storage_is_override = false;
     }
 
-    let dataset = ax_db::replication::export(&project.path, &config.node_id, pool).await.map_err(|e| e.to_string())?;
+    ax_usage::migrate_legacy_log(Some(&project.path)).map_err(|e| e.to_string())?;
+    let mut dataset = ax_db::replication::export(&project.path, &config.node_id, pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let history = ax_usage::replication::export(&project.path).await?;
+    let root = project.path.clone();
+    let file = history.path.clone();
+    dataset.history = Some(
+        tokio::task::spawn_blocking(move || ax_db::replication::file_manifest(&root, &file))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?,
+    );
+    dataset.history_rows = history.rows;
+    ax_db::replication::pin(&project.path, &dataset).map_err(|e| e.to_string())?;
     let files = BTreeMap::from([
         (MEMORY_PATH.to_string(), serialize(&memories)?),
         (RULE_PATH.to_string(), serialize(&rules)?),
         (SKILL_PATH.to_string(), serialize(&skills)?),
-        (ax_db::replication::DATA_PATH.into(), serde_json::to_string(&vec![dataset]).map_err(|e| e.to_string())?),
+        (
+            ax_db::replication::DATA_PATH.into(),
+            serde_json::to_string(&vec![dataset]).map_err(|e| e.to_string())?,
+        ),
     ]);
     let mut snapshot = Snapshot {
         schema_version: 3,

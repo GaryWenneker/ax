@@ -11,20 +11,21 @@ async function fixture(page: Page, options: { readonly?: boolean; failPairing?: 
     if (path === '/api/share/status') data = { readonly: options.readonly ?? false };
     else if (path === '/api/access/session') data = { csrf: 'csrf-test' };
     else if (path === '/api/access/nodes') data = { nodes: [], local: settings ? { node_id: 'stable', role: settings.config.role, sync_state: running ? 'running' : 'stopped' } : null };
-    else if (path === '/api/access/nodes/local' && req.method() === 'GET') data = { settings, running, active_project: running, safety: {mode:"preserve_and_exchange",memories:412,rules:27,skills:8,review_required:options.conflicts,sync_failed:options.syncFailed} };
+    else if (path === '/api/access/nodes/local/interfaces') data = { interfaces: [{ name: 'Ethernet', address: '192.168.1.20', loopback: false }, { name: 'lo', address: '127.0.0.1', loopback: true }] };
+    else if (path === '/api/access/nodes/local' && req.method() === 'GET') data = { settings, running, active_project: running, active_replicas: running ? 2 : 0, sync: running ? {status: 'full_data_synced', last_success_unix_seconds: 1791800000} : null, safety: {mode:"preserve_and_exchange",memories:412,rules:27,skills:8,review_required:options.conflicts,sync_failed:options.syncFailed} };
     else if (path.startsWith('/api/access/nodes/local') && req.method() === 'POST') {
       expect(req.headers()['x-ax-access-csrf']).toBe('csrf-test');
       const body = req.postData() ? req.postDataJSON() : null; calls.push({ path, body });
       if (path.endsWith('/discover')) data = { candidates: [
-        { node_id: 'office-primary', cluster_id: 'office', role: 'primary', advertised_url: 'https://office.example.com' },
-        { node_id: 'secondary-primary', cluster_id: 'office', role: 'primary', advertised_url: 'https://secondary.example.com' },
+        { node_id: 'office-primary', cluster_id: 'office', role: 'primary', project_ids: ['knowledge'], advertised_url: 'https://office.example.com' },
+        { node_id: 'secondary-primary', cluster_id: 'office', role: 'primary', project_ids: ['knowledge'], advertised_url: 'https://secondary.example.com' },
         { node_id: 'replica', cluster_id: 'office', role: 'replica', advertised_url: 'https://replica.example.com' },
       ] };
       else if (path.endsWith('/credential')) data = { token: storedToken };
       else if (path.endsWith('/remove')) { running = false; settings = null; data = { removed: true }; }
       else if (path.endsWith('/stop')) { running = false; data = { stopped: true }; }
       else if (options.failPairing) { await route.fulfill({ status: 400, json: { error: 'Primary connection failed. Previous settings were kept.' } }); return; }
-      else { running = true; const generated = !settings && !body.token && body.role === 'primary'; storedToken = body.token || storedToken; settings = { config: { ...body, cluster_id: body.cluster_id || 'cluster_generated', node_id: 'stable', projects: [{ id: body.project_id || 'project_generated' }] }, port: body.port, advertise: body.advertise }; data = { started: true, credential: generated ? { token: storedToken } : null }; }
+      else { running = true; const generated = !settings && !body.token && body.role === 'primary'; storedToken = body.token || storedToken; settings = { config: { ...body, cluster_id: body.cluster_id || 'cluster_generated', node_id: 'stable', projects: [{ id: body.project_id || 'project_generated' }] }, port: body.port || 9877, advertise: body.advertise?.replace(':0', ':9877') }; data = { started: true, credential: generated ? { token: storedToken } : null }; }
     } else if (path === '/api/stats') data = { readonly: false, project_name: 'Fixture', node_count:0, edge_count:0, file_count:0, db_size_bytes:0, languages: [] };
     else if (path === '/api/ship/config') data = { config: { ship: {target_branch:'main',web_port:7070}, remote: {provider:'github'}, quality_gate: { steps: [], tests:{runner:'cargo test'} }, sonar: {}, ui: {} } };
     await route.fulfill({ status: data === undefined ? 404 : 200, json: data ?? {error:'Fixture endpoint not provided'} });
@@ -34,10 +35,13 @@ async function fixture(page: Page, options: { readonly?: boolean; failPairing?: 
   await expect(page.getByRole('heading', {name: options.configuredRole ? 'Replication configuration' : 'Configure this Ax environment', exact:true})).toBeVisible();
   return { calls };
 }
-async function ids(page: Page) { await page.getByLabel('Cluster ID', { exact: true }).fill('office'); await page.getByLabel('Replication project ID').fill('knowledge'); }
+async function ids(page: Page) {
+  await page.getByRole('button', {name:'Set up replication',exact:true}).click();
+  await page.getByText('Advanced options',{exact:true}).click(); await page.getByLabel('Cluster ID', { exact: true }).fill('office'); await page.getByLabel('Replication project ID').fill('knowledge'); }
 
 test('empty Primary setup generates IDs, hides the form, masks credentials and can be removed', async ({ page, context }) => {
   const { calls } = await fixture(page);
+  await page.getByRole('button', { name: 'Set up replication', exact: true }).click();
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.getByRole('button', { name: 'Start Primary', exact: true }).click();
   const saved = page.getByLabel('Saved replication configuration');
@@ -45,7 +49,7 @@ test('empty Primary setup generates IDs, hides the form, masks credentials and c
   await expect(page.getByRole('form', {name:'Replication setup'})).toHaveCount(0);
   await expect(saved).toContainText('cluster_generated');
   await expect(saved).toContainText('project_generated');
-  expect(calls[0].body).toMatchObject({ role: 'primary', primary_url: null, cluster_id: '', project_id: '', port: 9070 });
+  expect(calls[0].body).toMatchObject({ role: 'primary', primary_url: null, cluster_id: '', project_id: '', port: 0, advertise: 'http://192.168.1.20:0' });
   const credential = page.getByLabel('Replication credential', {exact:true});
   await expect(credential).toHaveAttribute('type','password');
   await page.getByRole('button',{name:'Show replication credential',exact:true}).click();
@@ -67,13 +71,16 @@ test('empty Primary setup generates IDs, hides the form, masks credentials and c
   expect(calls.some(c => c.path.endsWith('/remove'))).toBe(false);
   await page.getByRole('button', { name: 'Remove local configuration' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Remove configuration',exact:true }).click();
-  await expect(page.getByRole('form', {name:'Replication setup'})).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Set up replication', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Local Primary', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Set up replication', exact: true }).click();
+  await page.getByText('Advanced options', { exact: true }).click();
   await expect(page.getByLabel('Cluster ID',{exact:true})).toHaveValue('');
   await expect(page.getByLabel('Replication credential',{exact:true})).toHaveValue('');
 });
 
 test('discovery lists distinct primaries and only an explicit selection and connect sends pairing', async ({ page }) => {
-  const { calls } = await fixture(page); await ids(page);
+  const { calls } = await fixture(page); await page.getByRole('button', { name: 'Set up replication', exact: true }).click();
   await page.getByLabel('Local node role').selectOption('replica');
   await expect(page.getByRole('button', {name:'Find nearby Primaries'})).toHaveCount(0);
   const choices = page.getByRole('group', {name:'Available Primaries'});
@@ -87,11 +94,11 @@ test('discovery lists distinct primaries and only an explicit selection and conn
   if (process.env.AX_ACCESS_SCREENSHOTS && test.info().project.name === 'desktop-chrome') { await expect(page.locator('#ax-green-vessel')).toHaveCount(0); await page.setViewportSize({width:1440,height:1800}); await page.getByRole('heading',{name:'Configure this Ax environment'}).scrollIntoViewIfNeeded(); await page.screenshot({path:'../../../site/public/screenshots/cc-primary-pairing.png',fullPage:true}); }
   await page.getByLabel('Replication credential', { exact: true }).fill('a'.repeat(64));
   await page.getByRole('button', { name: 'Connect to Primary', exact: true }).click();
-  await expect(page.getByText('Replica connected. Existing data is preserved and knowledge is exchanged. Policies require review.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Replica connected. Graph, source, logs and memory are synchronized. Received policies require review.', { exact: true })).toBeVisible();
   expect(calls.find(c => c.path === '/api/access/nodes/local')?.body.primary_url).toBe('https://secondary.example.com');
 });
 test('manual hosted pairing failures remain editable and do not claim a connection', async ({ page }) => {
-  await fixture(page, { failPairing: true }); await ids(page); await page.getByLabel('Local node role').selectOption('replica');
+  await fixture(page, { failPairing: true }); await page.getByRole('button', { name: 'Set up replication', exact: true }).click(); await page.getByLabel('Local node role').selectOption('replica');
   await page.getByLabel('Primary URL', { exact: true }).fill('https://hosted.example.com');
   await page.getByLabel('Replication credential', { exact: true }).fill('b'.repeat(64));
   await page.getByRole('button', { name: 'Connect to Primary', exact: true }).click();
@@ -102,7 +109,7 @@ test('manual hosted pairing failures remain editable and do not claim a connecti
 test('read-only sessions cannot configure or discover nodes; setup fits a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { calls } = await fixture(page, { readonly: true });
-  await expect(page.getByRole('button', { name: 'Start Primary', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Set up replication', exact: true })).toBeDisabled();
   expect(calls).toEqual([]);
   const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
   expect(fits).toBe(true);

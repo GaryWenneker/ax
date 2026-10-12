@@ -62,7 +62,13 @@ impl TokenVerifier {
             .timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| e.to_string())?;
-        if config.oauth.built_in {let store=super::oauth::OAuthStore::open(&config.public_url).await?;store.native_client().await?;let mut verifier=Self::with_keys(config,JwkSet{keys:vec![]},client);verifier.built_in=Some(store);return Ok(verifier);}
+        if config.oauth.built_in {
+            let store = super::oauth::OAuthStore::open(&config.public_url).await?;
+            store.native_client().await?;
+            let mut verifier = Self::with_keys(config, JwkSet { keys: vec![] }, client);
+            verifier.built_in = Some(store);
+            return Ok(verifier);
+        }
         let keys = fetch_keys(&client, &config.oauth.jwks_uri).await?;
         Ok(Self::with_keys(config, keys, client))
     }
@@ -71,10 +77,12 @@ impl TokenVerifier {
             config,
             keys: Arc::new(RwLock::new((keys, Instant::now()))),
             client,
-            built_in:None,
+            built_in: None,
         }
     }
-    pub fn oauth_store(&self)->Option<super::oauth::OAuthStore> {self.built_in.clone()}
+    pub fn oauth_store(&self) -> Option<super::oauth::OAuthStore> {
+        self.built_in.clone()
+    }
     pub async fn verify(&self, token: &str) -> Result<Principal, String> {
         if token.is_empty() || token.len() > 16384 {
             return Err("Invalid access token".into());
@@ -96,7 +104,9 @@ impl TokenVerifier {
                 });
             }
         }
-        if let Some(store)=&self.built_in {return store.verify(token).await;}
+        if let Some(store) = &self.built_in {
+            return store.verify(token).await;
+        }
         // Never follow a token's jku/x5u or accept symmetric algorithms.
         let header = decode_header(token).map_err(|_| "Invalid access token")?;
         if header.alg != Algorithm::RS256 {

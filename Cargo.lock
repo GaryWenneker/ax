@@ -1152,15 +1152,18 @@ dependencies = [
 name = "ax-usage"
 version = "8.1.0"
 dependencies = [
+ "ax-db",
  "ax-utils",
  "chrono",
  "chrono-tz",
  "dirs",
+ "hex",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
+ "tempfile",
  "tiktoken-rs",
  "tokio",
  "toml",

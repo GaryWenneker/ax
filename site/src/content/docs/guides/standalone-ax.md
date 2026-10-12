@@ -5,7 +5,7 @@ description: Run Ax as a long-lived primary or replica, with authenticated UDP c
 
 Ax can run independently of an IDE. A **primary** maintains an enrolled Ax project; one or more **replicas** contribute their existing knowledge and receive the combined cluster state. Native records remain intact, and received policy stays in review. The optional LAN notification channel makes synchronization responsive, while HTTPS polling catches missed notifications.
 
-> **Availability:** Standalone server mode is available in the current `main` source. [Build the CLI from main](/getting-started/installation/#build-from-main) until downloadable releases include it. CLI `sync` stages a mirror; Settings pairing and CLI `apply` safely import received memories. Policies require separate review.
+> **Availability:** Standalone server mode is available in the current `main` source. [Build the CLI from main](/getting-started/installation/#build-from-main) until downloadable releases include it. CLI `sync` stages a mirror; Settings pairing and CLI `apply` apply the received graph, indexed source, logs, conversation history and memories. Policies require separate review.
 
 ## Choose your setup
 
@@ -16,7 +16,19 @@ Ax can run independently of an IDE. A **primary** maintains an enrolled Ax proje
 | Remote/cloud or separate networks | HTTPS reverse proxy | External desktop/server | HTTPS polling; UDP is optional and LAN-only |
 | Existing ChatGPT / IDE client | Existing [Remote MCP](/guides/remote-mcp/) endpoint | Not required | OAuth MCP is separate from node replication |
 
-This guide covers **node replication**, not sharing an individual memory or exporting a policy pack. An authorized replica receives all enrolled project's memory and policy records, including inactive and not-shared items. **Only join machines that you trust with the full project state.** Export and sharing flags remain unchanged and still govern their separate workflows.
+This guide covers **node replication**, not sharing an individual memory or exporting a policy pack. An authorized replica receives the enrolled project's graph, indexed source, logs, working context, durable conversations and memory/policy records, including inactive and not-shared items. **Only join machines that you trust with the full project state.** Export and sharing flags remain unchanged and still govern their separate workflows.
+
+## Complete project synchronization
+
+Protocol 3 transfers memories, rules and skills together with the complete graph: nodes, relationships, unresolved references, communities, metadata and stored source contents. It also transfers project agent metrics, daily MCP log files, structured MCP/agent usage records, working context, cached context, durable transcripts, documents, tasks and hooks. Global machine accounts, credentials and unrelated projects remain local.
+
+Each node contributes its native records. Received graph IDs and source paths use `ax-replica/<node>/`, so colliding IDs and filenames remain distinct and graph/source queries work without copying the other machine's working tree. Local re-indexing preserves received namespaces. Memory projection rebuilds its full-text and vector indexes. Received rules and skills still require review before activation.
+
+Graph/history databases and log files use verified 512 KiB content-addressed chunks. This allows indexes larger than the existing 8 MiB knowledge envelope. The Primary validates assembled databases, schemas, relationships and counts before accepting a contribution. Knowledge revisions and dataset heads are retained separately, so log/index changes do not repeatedly archive unchanged knowledge. Transfers reuse chunks. Received log history survives source rotation, truncation and removal. Logging history and live trace label remote lines by node.
+
+Settings shows per-origin counts, last completed synchronization and actual service state: green running, orange waiting/review, red error and gray stopped/unconfigured. A complete sync is reported only after graph/history and memory/policy application finish. Graph replacement affects only that origin; missing knowledge never deletes an accepted memory, and local edits remain protected.
+
+Both nodes need protocol 3; update and rebuild older installations together. The knowledge envelope remains bounded to 8 MiB and 10,000 records per kind; dataset manifests allow at most 64 origins, 3,660 log files per origin and 8 GiB of graph/history/log data. Conversation history is bounded to one million rows per origin. Capacity failures are explicit and cannot report a completed sync. Unreferenced chunks are reclaimed after a 24-hour grace period; current dataset heads remain pinned.
 
 ## 1. Use an existing project or initialize a new one
 
@@ -225,23 +237,23 @@ Client credentials can call explicitly scoped HTTP APIs using `Authorization: Be
 
 For [Remote MCP](/guides/remote-mcp/), add the member's stable ID to the desired project's `subjects` in the remote config and to `write_subjects` when writes are allowed. Both the project's explicit grant and the client's effective tool scope are required. Revoked tokens and role/scope changes are checked on every request, including existing MCP sessions. OAuth and configured API-key access remain supported.
 
-![Team roles and member status in Azure Portal Light](/screenshots/cc-access-team-dark.png)
+![Team roles and member status in Light](/screenshots/cc-access-team-dark.png)
 
 ![Clients, effective scopes and credential metadata](/screenshots/cc-access-clients-dark.png)
 
 ## Configure nodes from Settings
 
-Open **Settings → Replication** in the local Owner Command Center. Without a saved configuration, Ax shows **Configure this Ax environment**. With one, it shows the saved configuration and status; the setup form stays hidden even when replication is stopped.
+Open **Settings → Replication → Set up replication** in the local Owner Command Center. Setup opens in a centered modal. With a saved configuration, the overview displays actual service and sync state.
 
-1. For a **Primary**, select **Start Primary**. Empty cluster ID, replication project ID and credential fields are generated automatically; you can also supply values. Only the project currently open in Command Center is enrolled.
-2. Copy the cluster/project IDs and replication credential from the saved overview. The credential is masked by default, with eye and copy controls on the right. Ax keeps it in the OS credential store for automatic startup, never in the settings JSON.
-3. On another Ax environment, choose **Replica**. Available Primary services appear automatically through UDP discovery; there is no search button. Select a candidate or enter its URL directly, then use the same cluster/project IDs and credential. Selection does not connect automatically.
-4. Select **Connect to Primary**. Ax authenticates the Primary, contributes existing knowledge and verifies the combined state before saving configuration. An empty Primary cannot clear an existing Replica. Received memories use separate IDs; rules and skills require review. Failed synchronization preserves local data and prior settings.
-5. **Stop managed node** temporarily stops replication and preserves its configuration. **Remove local configuration** stops it, removes settings and the stored credential, and returns the setup form. Existing memories, rules and skills remain. Use removal to configure a different role or Primary. Both actions require confirmation; cancellation changes nothing.
+1. Choose **Primary** on the hosting computer. Select the private interface IP other machines can reach. IDs, a local port and a shared credential are generated automatically. Advanced options provide overrides or a public HTTPS proxy origin.
+2. Copy the shared credential and advertised Primary URL from the overview. The credential is masked with eye/copy controls and kept in the OS credential store.
+3. On another computer, choose **Replica** in the setup modal. Select a discovered Primary or enter its URL, then enter the shared credential. Authenticated enrollment returns cluster/project IDs. An advanced project override is needed only for a Primary serving multiple projects. The Primary port is already in its URL; the Replica's local port is allocated automatically.
+4. Choose **Connect to Primary**. Ax exchanges and validates the full project datasets before saving settings. Local records remain protected and received policy requires review. The overview shows real service state, active replicas, dataset counts and completed sync time. Activity respects reduced-motion preferences.
+5. **Stop managed node** stops replication and disables automatic startup until restarted. **Remove local configuration** stops it, removes settings and its credential, and removes the stale local-node card. Synchronized project data is retained. Both actions require confirmation.
 
-A configured Primary or Replica starts automatically when `ax web`, `ax serve --mcp`, or Remote MCP starts, including an IDE refresh and MCP daemon mode. These processes reuse the same service. Ax Sync starts with it, catches up offline source edits and incrementally indexes new edits in each registered project. Replication continues when Command Center closes or the IDE refreshes; explicit Stop ends it, and the next web/MCP startup starts it again. Remove configuration prevents automatic restart. Restart controls are available while stopped and normally reuse the stored credential. Unlock an unavailable OS credential store or reconnect with the credential. Headless installations can supply both `AX_COMMAND_CENTER_REPLICATION_TOKEN` and `AX_COMMAND_CENTER_NODE_CONTROL` securely in each starting process's environment; these external values are not deleted by the UI.
+Configured services start automatically when `ax web`, stdio MCP or Remote MCP starts, including IDE refresh and daemon mode. They reuse the saved node identity and credential and survive the parent process closing. Ax Sync watches native edits; replication retains received graph data separately. Restart normally reuses the stored credential. Headless installations can provide both `AX_COMMAND_CENTER_REPLICATION_TOKEN` and `AX_COMMAND_CENTER_NODE_CONTROL` in the process environment.
 
-The service listens on `127.0.0.1`, port 9070 by default, and announces automatically on UDP 9071. Its default advertised URL works on the same machine. For other machines, configure a TLS reverse proxy and enter its origin as **Advertised URL**. Announcements never replace authentication. Hosted connections can use the URL field directly. An occupied port is reported rather than terminating another service. The managed path uses authenticated polling; separate CLI setup also supports signed UDP notifications.
+The selected advertised IP is used for the listener and UDP 9071 broadcast. A LAN IP is preferred over loopback when available. Authenticated local management stays on loopback. HTTPS proxy origins route to the local listener. Discovery supplies hints; authenticated enrollment grants project access. Occupied ports are reported without stopping another service.
 
 These controls require the local writable Owner session with CSRF protection. Remote client tokens cannot configure or start local node processes. Team/client credentials and project replication enrollment credentials remain separate.
 
@@ -255,9 +267,9 @@ A Replica must explicitly configure its Primary and project credential. Successf
 
 Disabling or revoking access does not delete a team member's existing data. These controls govern authorization; export/import and shared/non-shared or active/inactive data selection retain their existing rules.
 
-![Primary/Replica management in Azure Portal Light](/screenshots/cc-access-nodes.png)
+![Primary/Replica management in Light](/screenshots/cc-access-nodes.png)
 
-![Primary/Replica management in Azure Portal Dark](/screenshots/cc-access-nodes-dark.png)
+![Primary/Replica management in Dark](/screenshots/cc-access-nodes-dark.png)
 
 These screenshots use synthetic public example identities and contain no working credentials.
 

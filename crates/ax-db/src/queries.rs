@@ -624,6 +624,7 @@ impl QueryBuilder {
             .await
             .map_err(db_err)?;
         if !assignments.is_empty() {
+            let offset:i64=sqlx::query_scalar("SELECT COALESCE(MAX(community_id)+1,0) FROM node_communities WHERE node_id GLOB 'ax-replica/*'").fetch_one(&mut *tx).await.map_err(db_err)?;
             const CHUNK: usize = 800;
             let native: Vec<_> = assignments.iter().filter(|(id,_,_)| !crate::replication::is_replica(id)).cloned().collect();
             for chunk in native.chunks(CHUNK) {
@@ -632,7 +633,7 @@ impl QueryBuilder {
                 );
                 qb.push_values(chunk, |mut b, (node_id, community_id, label)| {
                     b.push_bind(node_id)
-                        .push_bind(community_id)
+                        .push_bind(community_id+offset)
                         .push_bind(label)
                         .push_bind(now);
                 });

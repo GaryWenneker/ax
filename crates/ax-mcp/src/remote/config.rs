@@ -20,7 +20,7 @@ pub struct RemoteConfig {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OAuthConfig {
-    #[serde(default,skip_serializing_if="std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub built_in: bool,
     pub issuer: String,
     pub jwks_uri: String,
@@ -77,7 +77,12 @@ impl RemoteConfig {
         self.public_url = public.origin().ascii_serialization();
         https_url(&self.oauth.issuer)?;
         https_url(&self.oauth.jwks_uri)?;
-        if self.oauth.built_in && (self.oauth.issuer!=format!("{}/oauth",self.public_url) || self.oauth.jwks_uri!=format!("{}/oauth/jwks",self.public_url)) {return Err("Built-in OAuth endpoints must match the public origin".into());}
+        if self.oauth.built_in
+            && (self.oauth.issuer != format!("{}/oauth", self.public_url)
+                || self.oauth.jwks_uri != format!("{}/oauth/jwks", self.public_url))
+        {
+            return Err("Built-in OAuth endpoints must match the public origin".into());
+        }
         if self.projects.is_empty() {
             return Err("Register at least one project".into());
         }

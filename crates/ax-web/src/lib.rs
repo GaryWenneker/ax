@@ -352,6 +352,12 @@ async fn handle_source(
         Ok(r) => r,
         Err(e) => return api_err(format!("project root unavailable: {e}")).into_response(),
     };
+    let replicated=ax_db::replication::is_replica(&p.path);
+    let text=if replicated {
+        match sqlx::query_scalar::<_,String>("SELECT content FROM file_contents WHERE path=?").bind(&p.path).fetch_optional(&ws.graph_pool).await {
+            Ok(Some(text))=>text,Ok(None)=>return (StatusCode::NOT_FOUND,Json(ApiError{error:"Replicated source is not stored in the received index".into()})).into_response(),Err(e)=>return api_err(e.to_string()).into_response(),
+        }
+    } else {
     // Reject traversal: resolve the candidate and require it stays inside the root.
     let candidate = root.join(p.path.replace('\\', "/"));
     let resolved = match candidate.canonicalize() {
@@ -376,9 +382,10 @@ async fn handle_source(
             .into_response();
     }
 
-    let text = match tokio::fs::read_to_string(&resolved).await {
+    match tokio::fs::read_to_string(&resolved).await {
         Ok(t) => t,
         Err(e) => return api_err(format!("cannot read {}: {e}", p.path)).into_response(),
+    }
     };
     let lines: Vec<&str> = text.lines().collect();
     let total = lines.len() as i64;
@@ -405,6 +412,7 @@ async fn handle_source(
             "from": from,
             "to": to,
             "total_lines": total,
+            "replicated":replicated,
             "lines": slice,
         })),
     )

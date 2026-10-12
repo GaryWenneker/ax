@@ -73,7 +73,7 @@ test('all pages retain portal chrome in light and dark, including offline states
 test('portal themes update chrome, survive reload, and return to legacy presets', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-ax-layout', 'portal');
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
-  await page.getByRole('button', { name: 'Azure Portal Dark', exact: true }).click();
+  await page.getByRole('button', { name: 'Dark', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-ax-theme', 'azure-dark');
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
   await expect(page.locator('.statusbar')).toHaveCSS('background-color', 'rgb(32, 32, 32)');
@@ -81,7 +81,7 @@ test('portal themes update chrome, survive reload, and return to legacy presets'
   await expect(page.locator('html')).toHaveAttribute('data-ax-theme', 'azure-dark');
   await page.getByRole('button', { name: 'ax Mint', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-ax-layout', 'workbench');
-  await page.getByRole('button', { name: 'Azure Portal Light', exact: true }).click();
+  await page.getByRole('button', { name: 'Light', exact: true }).click();
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
 });
 

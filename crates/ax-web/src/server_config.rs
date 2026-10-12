@@ -55,8 +55,12 @@ pub fn validate_primary_url(value: &str) -> Result<(), String> {
     let host = url.host_str().ok_or("primary URL must have a host")?;
     let local = host == "localhost"
         || host
-            .trim_matches(['[',']']).parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| match ip { std::net::IpAddr::V4(ip)=>ip.is_loopback() || ip.is_private(), std::net::IpAddr::V6(ip)=>ip.is_loopback() || ip.is_unique_local() });
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| match ip {
+                std::net::IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
+                std::net::IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
+            });
     if url.scheme() != "https" && !(url.scheme() == "http" && local) {
         return Err("primary URL must use HTTPS; HTTP is allowed only for explicit private or loopback IP addresses".into());
     }

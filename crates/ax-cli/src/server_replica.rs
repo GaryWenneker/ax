@@ -193,7 +193,7 @@ pub(crate) fn record_attempt(
     Ok(())
 }
 
-async fn fetch_snapshot(
+pub(crate) async fn fetch_snapshot(
     client: &reqwest::Client,
     config: &ServerConfig,
     project: &ProjectRegistration,
@@ -241,7 +241,7 @@ async fn fetch_snapshot(
     server_snapshot::validate(&snapshot, &config.cluster_id, &project.id)?;
     crate::server_data::manifests(&snapshot)?;
     let local = server_snapshot::export_native(config, &project.id).await?;
-    crate::server_data::upload(client,config,project,&local).await?;
+    crate::server_data::upload(client, config, project, &local).await?;
     let exchange_url = reqwest::Url::parse(base)
         .map_err(|e| e.to_string())?
         .join(&format!("/v1/projects/{}/exchange", project.id))
@@ -271,7 +271,7 @@ async fn fetch_snapshot(
         return Err("Primary identity changed during node exchange".into());
     }
     server_snapshot::validate(&reply.snapshot, &config.cluster_id, &project.id)?;
-    crate::server_data::download(client,config,project,&reply.snapshot).await?;
+    crate::server_data::download(client, config, project, &reply.snapshot).await?;
     Ok((reply.snapshot, reply.memory_conflicts))
 }
 

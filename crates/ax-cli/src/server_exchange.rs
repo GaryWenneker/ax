@@ -167,23 +167,31 @@ fn merge(histories: &[Snapshot], config: &ServerConfig, project: &str) -> Result
     Ok(result)
 }
 
-async fn retain(tx: &mut Transaction<'_, Sqlite>, root: &std::path::Path, snapshot: &Snapshot) -> Result<(), String> {
+async fn retain(
+    tx: &mut Transaction<'_, Sqlite>,
+    root: &std::path::Path,
+    snapshot: &Snapshot,
+) -> Result<(), String> {
     let mut knowledge = snapshot.clone();
     if snapshot.schema_version == 3 {
         for mut item in crate::server_data::manifests(snapshot)? {
             let previous: Option<String> = sqlx::query_scalar("SELECT manifest FROM ax_node_datasets WHERE cluster_id=? AND project_id=? AND node_id=?")
                 .bind(&snapshot.cluster_id).bind(&snapshot.project_id).bind(&item.origin).fetch_optional(&mut **tx).await.map_err(|e|e.to_string())?;
             if let Some(previous) = previous {
-                let old:ax_db::replication::Dataset=serde_json::from_str(&previous).map_err(|e|e.to_string())?;
-                ax_db::replication::retain_logs(root,&old,&mut item).map_err(|e|e.to_string())?;
+                let old: ax_db::replication::Dataset =
+                    serde_json::from_str(&previous).map_err(|e| e.to_string())?;
+                ax_db::replication::retain_logs(root, &old, &mut item)
+                    .map_err(|e| e.to_string())?;
             }
-            ax_db::replication::pin(root,&item).map_err(|e|e.to_string())?;
+            ax_db::replication::pin(root, &item).map_err(|e| e.to_string())?;
             sqlx::query("INSERT INTO ax_node_datasets VALUES (?,?,?,?) ON CONFLICT(cluster_id,project_id,node_id) DO UPDATE SET manifest=excluded.manifest")
                 .bind(&snapshot.cluster_id).bind(&snapshot.project_id).bind(&item.origin).bind(serde_json::to_string(&item).map_err(|e|e.to_string())?).execute(&mut **tx).await.map_err(|e|e.to_string())?;
         }
-        knowledge.files.remove(ax_db::replication::DATA_PATH); knowledge.schema_version=2; knowledge.revision=server_snapshot::revision(&knowledge)?;
+        knowledge.files.remove(ax_db::replication::DATA_PATH);
+        knowledge.schema_version = 2;
+        knowledge.revision = server_snapshot::revision(&knowledge)?;
     }
-    let snapshot=&knowledge;
+    let snapshot = &knowledge;
     sqlx::query("INSERT OR IGNORE INTO ax_node_contributions (cluster_id,project_id,node_id,revision,snapshot) VALUES (?,?,?,?,?)")
         .bind(&snapshot.cluster_id).bind(&snapshot.project_id).bind(&snapshot.primary_node_id).bind(&snapshot.revision)
         .bind(serde_json::to_string(snapshot).map_err(|e| e.to_string())?)
@@ -215,7 +223,9 @@ pub async fn publish(
             return Err("a replica cannot contribute as the Primary".into());
         }
     }
-    if let Some(snapshot) = incoming.filter(|s|s.schema_version==3) { crate::server_data::verify_contribution(config,project_id,snapshot).await?; }
+    if let Some(snapshot) = incoming.filter(|s| s.schema_version == 3) {
+        crate::server_data::verify_contribution(config, project_id, snapshot).await?;
+    }
     let native = server_snapshot::export_native(config, project_id).await?;
     let project = config
         .projects
@@ -257,9 +267,17 @@ pub async fn publish(
             .await
             .map_err(|e| format!("node merge task failed: {e}"))??;
     let raw:Vec<String>=sqlx::query_scalar("SELECT manifest FROM ax_node_datasets WHERE cluster_id=? AND project_id=? ORDER BY node_id").bind(&config.cluster_id).bind(project_id).fetch_all(&mut *tx).await.map_err(|e|e.to_string())?;
-    let items:Vec<ax_db::replication::Dataset>=raw.iter().map(|s|serde_json::from_str(s).map_err(|e|e.to_string())).collect::<Result<_,_>>()?;
-    result.schema_version=3; result.files.insert(ax_db::replication::DATA_PATH.into(),serde_json::to_string(&items).map_err(|e|e.to_string())?);
-    result.revision=server_snapshot::revision(&result)?; server_snapshot::validate(&result,&config.cluster_id,project_id)?;
+    let items: Vec<ax_db::replication::Dataset> = raw
+        .iter()
+        .map(|s| serde_json::from_str(s).map_err(|e| e.to_string()))
+        .collect::<Result<_, _>>()?;
+    result.schema_version = 3;
+    result.files.insert(
+        ax_db::replication::DATA_PATH.into(),
+        serde_json::to_string(&items).map_err(|e| e.to_string())?,
+    );
+    result.revision = server_snapshot::revision(&result)?;
+    server_snapshot::validate(&result, &config.cluster_id, project_id)?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(result)
 }
@@ -436,7 +454,14 @@ mod tests {
         let native = server_snapshot::export_native(&replica, "project")
             .await
             .unwrap();
-        for hash in ax_db::replication::hashes(&crate::server_data::manifests(&native).unwrap()) {ax_db::replication::store_chunk(primary_dir.path(),&hash,&ax_db::replication::read_chunk(replica_dir.path(),&hash).unwrap()).unwrap();}
+        for hash in ax_db::replication::hashes(&crate::server_data::manifests(&native).unwrap()) {
+            ax_db::replication::store_chunk(
+                primary_dir.path(),
+                &hash,
+                &ax_db::replication::read_chunk(replica_dir.path(), &hash).unwrap(),
+            )
+            .unwrap();
+        }
         let cluster = publish(&primary, "project", Some(&native)).await.unwrap();
         crate::server_apply::apply(&primary, &cluster)
             .await
@@ -469,7 +494,16 @@ mod tests {
             let rows: Vec<MemoryRow> =
                 serde_json::from_str(&outgoing.files["state/memories.json"]).unwrap();
             assert!(rows.is_empty());
-            for hash in ax_db::replication::hashes(&crate::server_data::manifests(&outgoing).unwrap()) {ax_db::replication::store_chunk(primary_dir.path(),&hash,&ax_db::replication::read_chunk(other_dir.path(),&hash).unwrap()).unwrap();}
+            for hash in
+                ax_db::replication::hashes(&crate::server_data::manifests(&outgoing).unwrap())
+            {
+                ax_db::replication::store_chunk(
+                    primary_dir.path(),
+                    &hash,
+                    &ax_db::replication::read_chunk(other_dir.path(), &hash).unwrap(),
+                )
+                .unwrap();
+            }
             let again = publish(&primary, "project", Some(&outgoing)).await.unwrap();
             crate::server_apply::apply(&other, &again).await.unwrap();
             assert_eq!(
