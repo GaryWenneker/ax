@@ -15707,3 +15707,32 @@ html[data-ax-theme="macos"] :is(
 .replication-config-details dd { margin: 0; overflow-wrap: anywhere; }
 .replication-config-details code { white-space: normal; }
 @media (max-width: 700px) { .replication-config-details > div { grid-template-columns: 1fr; gap: 4px; } }
+
+/* Consistent Ax_ wordmark on the public site, docs and Command Center. */
+.ax-app-wordmark{
+  display:inline-flex;
+  align-items:baseline;
+  font-family:"Oxanium Variable","Oxanium","Trebuchet MS",system-ui,sans-serif;
+  font-size:29px;
+  font-weight:700;
+  letter-spacing:-.095em;
+  line-height:1;
+  white-space:nowrap;
+  color:#f0f3ed;
+}
+.ax-app-wordmark > span{
+  color:#b9ff6a;
+  letter-spacing:-.14em;
+}
+.titlebar-brand .ax-app-wordmark{color:#f0f3ed}
+.titlebar-brand .ax-app-wordmark > span{color:#b9ff6a}
+.sidebar-logo{
+  width:auto;
+  height:78px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  margin:18px auto 12px;
+}
+.sidebar-logo::before{display:none}
+.sidebar-logo .ax-app-wordmark--sidebar{font-size:55px}
