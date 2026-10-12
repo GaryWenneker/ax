@@ -70,7 +70,7 @@ In Cursor/Claude, call **`ax_policy_capture`** with `action: "propose"` first. A
 
 The prompt-hook may inject `<ax_capture_hint>` when a directive is detected. Disable with `AX_NO_POLICY_CAPTURE=1`.
 
-Saved rules go to **database** or **files** depending on `policy.storage` in `ax.json` — see [Policy storage](#policy-storage-v211) below.
+Saved rules go to **database** or **files** depending on `policy.storage` in `ax.json` — see [Policy storage](#policy-storage) below.
 
 ---
 
@@ -457,7 +457,7 @@ Save the choice in project `ax.json`:
 
 `ax init` asks which stacks to install on every run when stdin is a terminal, including a second init. The list is a colored checkbox menu, grouped into Platforms, Web, PHP, CMS, Systems, and Languages. Up and down arrows (or j and k) move through the stacks, Space toggles one, and Enter confirms. Installed stacks and newly detected stacks start checked. Clear every box for core policy only. If the menu cannot open, type ids separated by spaces, or `none`. A non-interactive run keeps the saved `policy.stacks` and does not block.
 
-![Command Center settings with the rules and skills folder](/screenshots/cc-settings.png) The command writes `.ax/stacks.lock.json` (template version and content hash per file). Re-apply skips a file you edited unless you pass `--force`. `ax policy stack status` reports catalog drift; `ax policy stack upgrade` refreshes files that still match the lock.
+![Command Center settings with the rules and skills folder](/screenshots/cc-settings-dark.png) The command writes `.ax/stacks.lock.json` (template version and content hash per file). Re-apply skips a file you edited unless you pass `--force`. `ax policy stack status` reports catalog drift; `ax policy stack upgrade` refreshes files that still match the lock.
 
 Language stacks follow the languages ax indexes: `rust`, `python`, `go`, `typescript`, `javascript`, `c`, `cpp`, `ruby`, `swift`, `kotlin`, `dart`, `svelte`, `astro`, `scala`, `lua`, `luau`, `objc`, `r`, and `pascal`, in addition to `dotnet` (C#), `java`, and `php`. C# stays on the `dotnet` stack. Config formats ax also parses (YAML, XML, properties) are not stacks.
 
@@ -621,11 +621,11 @@ In the rule/skill editor, drag the handle between **Metadata** and the markdown 
 
 ![Policy Rules — sortable table with level badges, globs, triggers, capture and match testing](/screenshots/cc-policy-rules-dark.png)
 
-![Policy Skills — task-specific instructions agents load on demand via ax_skill](/screenshots/cc-policy-skills.png)
+![Policy Skills — task-specific instructions agents load on demand via ax_skill](/screenshots/cc-policy-skills-dark.png)
 
 Use **Test match** to preview which rules and skills would inject for a given prompt — the same matcher that runs during `ax_preflight`:
 
-![Test match — simulate a prompt and preview the full policy inject output](/screenshots/cc-policy-match.png)
+![Test match — simulate a prompt and preview the full policy inject output](/screenshots/cc-policy-match-dark.png)
 
 Set `AX_WEB_READONLY=1` for browse-only mode.
 

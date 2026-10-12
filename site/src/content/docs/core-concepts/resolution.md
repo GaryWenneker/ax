@@ -29,6 +29,6 @@ Static parsing misses computed and indirect calls, so flows can break at dynamic
 
 Every synthesized edge is marked `provenance: 'heuristic'` with the site that wired it, and is shown inline wherever a path crosses it.
 
-![Unresolved references — browse, filter, and reconcile symbol links the indexer could not resolve](/screenshots/cc-unresolved.png)
+![Unresolved references — browse, filter, and reconcile symbol links the indexer could not resolve](/screenshots/cc-unresolved-dark.png)
 
 Use the **Unresolved references** page in the Command Center to inspect and reconcile symbol links that could not be resolved to a target in the graph.

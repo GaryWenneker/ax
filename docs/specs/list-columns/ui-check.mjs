@@ -1,3 +1,4 @@
+import {screenshotResponse} from '../../../site/scripts/screenshot-fixtures.mjs';
 import {spawn} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {createServer} from 'node:net';
@@ -40,6 +41,11 @@ async function streamFixture(upstream) {
         const heartbeat=setInterval(()=>res.write(': heartbeat\n\n'),1000);
         res.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
       }
+      if(process.env.AX_UI_DEMO === '1' && requestUrl.pathname.startsWith('/api/')) {
+        const response=screenshotResponse(requestUrl.href);
+        res.writeHead(response.status??200,{'Content-Type':response.contentType??'application/json'});
+        res.end(response.body??JSON.stringify(response.json));return;
+      }
       const response=await fetch(upstream+req.url,{signal:AbortSignal.timeout(10000)});
       res.writeHead(response.status,{'Content-Type':response.headers.get('content-type')??'application/octet-stream'});
       if(response.body) {const stream=Readable.fromWeb(response.body);stream.on('error',()=>res.destroy());stream.pipe(res);} else res.end();
@@ -72,11 +78,17 @@ async function main() {
       await new Promise(resolve=>setTimeout(resolve,100));
     }
     if(!ready) throw Error('Vite preview did not become ready');
-    const args=['exec','--','playwright','test','e2e/column-accessibility.spec.ts','e2e/list-columns.spec.ts','e2e/logging-layout.spec.ts','e2e/focus-row-density.spec.ts','e2e/admin-brand-home.spec.ts','e2e/control-spacing.spec.ts','--project=desktop-chrome','--project=mobile-chrome'];
+    const specs=process.env.AX_UI_SPECS ? process.env.AX_UI_SPECS.split(',') : ['e2e/column-accessibility.spec.ts','e2e/list-columns.spec.ts','e2e/logging-layout.spec.ts','e2e/focus-row-density.spec.ts','e2e/admin-brand-home.spec.ts','e2e/control-spacing.spec.ts'];
+    const args=['exec','--','playwright','test',...specs,'--project=desktop-chrome','--project=mobile-chrome'];
     if(process.env.AX_COLUMN_OUTPUT) args.push('--output',process.env.AX_COLUMN_OUTPUT,'--reporter=list');
     if(process.env.AX_DENSITY_GREP) args.push('--grep',process.env.AX_DENSITY_GREP);
+    const captureStartedAt=Date.now();
     const child=spawn('npm',args,{cwd,env:{...process.env,AX_WEB_URL:fixture.url,AX_SSE_FIXTURE_URL:fixture.url},stdio:'inherit'});
     process.exitCode=await new Promise(resolve=>{child.on('error',()=>resolve(1));child.on('exit',code=>resolve(code??1));});
+    if(process.exitCode===0 && process.env.AX_SCREENSHOT_MANIFEST === '1') {
+      const record=spawn('node',[fileURLToPath(new URL('../../../site/scripts/record-test-screenshots.mjs',import.meta.url)),String(captureStartedAt)],{stdio:'inherit'});
+      process.exitCode=await new Promise(resolve=>{record.on('error',()=>resolve(1));record.on('exit',code=>resolve(code??1));});
+    }
   } finally { server.kill();await fixture.close(); }
 }
 await main();

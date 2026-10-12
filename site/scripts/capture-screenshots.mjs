@@ -18,11 +18,12 @@
  * fails if a term is still in the page text. Text drawn on a <canvas> is not visible to
  * this check, so canvas shots still need a look by eye.
  */
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
@@ -32,18 +33,21 @@ const demo = process.env.AX_SCREENSHOT_DEMO === '1';
 const theme = process.env.AX_THEME || 'azure-dark';
 const suffix = theme === 'azure-dark' ? '-dark' : '';
 
-const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 };
+const VIEWPORT = { width: Number(process.env.AX_VIEWPORT_WIDTH || 1440), height: 900, deviceScaleFactor: 1 };
+const mobileSuffix = VIEWPORT.width < 900 ? '-mobile' : '';
+const settingsSource = readFileSync(path.join(root, 'crates/ax-web/web-ui/src/lib/settingsNavigation.ts'), 'utf8');
+const settingsIds = [...settingsSource.matchAll(/id: '([^']+)'/g)].map(m => m[1]);
 
 /** @type {Array<{ name: string, path: string, waitMs?: number, ready?: string, after?: (page: import('puppeteer').Page) => Promise<void> }>} */
 const SHOTS = [
-  ...['team', 'clients', 'nodes'].map(section => ({
-    name: `cc-access-${section}.png`, path: '/settings', waitMs: 1200,
+  {name:'cc-focus-glow.png',path:'/stats',waitMs:1200,after:async page=>{const field=await page.waitForSelector('input');await field.focus();}},
+  ...settingsIds.map(section => ({
+    name: `${['team','clients','nodes'].includes(section) ? 'cc-access' : 'cc-settings'}-${section}.png`, path: '/settings', waitMs: 1200,
     after: async (page) => {
       await clickOrFail(page, `.settings-navigation-item[aria-controls="settings-panel-${section}"]`);
       await page.waitForSelector(`#settings-panel-${section}`, { visible: true });
     },
   })),
-	{ name: 'cc-ship-full.png', path: '/ship', waitMs: 1800, ready: '.ship-page, .page-ship, main' },
 	{ name: 'cc-stats.png', path: '/stats', waitMs: 1200 },
 	{ name: 'cc-nodes.png', path: '/nodes', waitMs: 1500 },
 	{ name: 'cc-graph.png', path: '/graph', waitMs: 8000, ready: 'canvas' },
@@ -112,7 +116,7 @@ const SHOTS = [
 	{ name: 'cc-unresolved.png', path: '/unresolved', waitMs: 1500 },
 	{ name: 'cc-policy-rules.png', path: '/policy/rules', waitMs: 1200 },
 	{ name: 'cc-policy-skills.png', path: '/policy/skills', waitMs: 1200 },
-	{ name: 'cc-policy-match.png', path: '/policy/match', waitMs: 1200 },
+	{ name: 'cc-policy-match.png', path: '/policy/match', waitMs: 1200, after: async page=>{await page.type('textarea','Review project navigation before merging'); await clickOrFail(page,'button.btn.primary'); await page.waitForSelector('pre');} },
 	{ name: 'cc-policy-review.png', path: '/policy/review', waitMs: 1200 },
 	{
 		name: 'cc-project-browser.png',
@@ -282,7 +286,8 @@ async function main() {
 		.filter(Boolean);
 	const unknown = only.filter((name) => !SHOTS.some((s) => s.name === name));
 	if (unknown.length) throw new Error(`unknown AX_SHOTS entries: ${unknown.join(', ')}`);
-	const shots = only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS;
+	const selectedShots = only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS;
+  const shots = [...new Map(selectedShots.map(shot => [shot.name, shot])).values()];
 
 	mkdirSync(outDir, { recursive: true });
 	const puppeteer = await loadPuppeteer();
@@ -305,7 +310,15 @@ async function main() {
     localStorage.setItem('ax-theme-mint-v2', '1');
     localStorage.setItem('ax-web-search-q', 'Settings');
   }, theme);
+  const dist = path.join(root, 'crates/ax-web/web-ui/dist');
+  const index = readFileSync(path.join(dist, 'index.html'));
+  const digest = createHash('sha256').update(index);
+  for (const asset of index.toString().matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)) digest.update(readFileSync(path.join(dist, asset[1])));
+  const sourceHash = digest.digest('hex');
+  const manifest = [];
   const pageErrors = [];
+  const apiErrors = [];
+  page.on('response', response => { if (response.status() >= 400 && new URL(response.url()).pathname.startsWith('/api/')) apiErrors.push(`${response.status()} ${new URL(response.url()).pathname}`); });
   page.on('pageerror', error => pageErrors.push(error.message));
 
 	// Probe server
@@ -321,6 +334,7 @@ async function main() {
 	}
 
 	for (const shot of shots) {
+    apiErrors.length = 0;
 		const url = `${baseUrl}${shot.path}`;
 		process.stdout.write(`→ ${shot.name} (${shot.path}) ... `);
 		await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -343,12 +357,23 @@ async function main() {
 			);
 		}
 
+    if (apiErrors.length) throw new Error(`${shot.name}: failed API requests: ${apiErrors.join('; ')}`);
     if (pageErrors.length) throw new Error(`${shot.name}: uncaught UI errors: ${pageErrors.join('; ')}`);
-    const out = path.join(outDir, shot.name.replace('.png', `${suffix}.png`));
+    const bodyText = await page.$eval('main', el => el.innerText);
+    if (/Screenshot fixture missing|Fixture endpoint not provided/.test(bodyText)) throw new Error(`${shot.name}: incomplete fixture`);
+    const filename = shot.name.replace('.png', `${suffix}${mobileSuffix}.png`);
+    const out = path.join(outDir, filename);
 		await page.screenshot({ path: out, type: 'png', fullPage: false });
+    const section = await page.$eval('main', el => el.querySelector('.settings-navigation-item[aria-current="page"]')?.getAttribute('aria-controls')?.replace('settings-panel-', '') ?? null);
+    const imageHash=createHash('sha256').update(readFileSync(out)).digest('hex');
+    manifest.push({file: filename, imageHash, route: shot.path, state: section ? {section} : {}, theme, viewport: VIEWPORT, data: demo ? 'synthetic' : 'redacted-live', sourceHash, capturedAt: new Date().toISOString()});
 		console.log(existsSync(out) ? `ok (${removed} redacted)` : 'MISSING');
 	}
 
+  const manifestPath = path.join(outDir, 'manifest.json');
+  const previous = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : [];
+  const replaced = new Set(manifest.map(entry => entry.file));
+  writeFileSync(manifestPath, JSON.stringify([...previous.filter(entry => !replaced.has(entry.file)), ...manifest], null, 2) + '\n');
 	await browser.close();
   if (demoServer) await new Promise(resolve => demoServer.server.close(resolve));
 	console.log(`\nDone. ${shots.length} screenshots in ${outDir}`);

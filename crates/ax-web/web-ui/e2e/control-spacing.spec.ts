@@ -1,11 +1,17 @@
 import { test, expect } from '@playwright/test';
 import { SETTINGS_GROUPS } from '../src/lib/settingsNavigation';
 
+function localExport(client: string) {
+  const vscode=client==='vscode';
+  const server={command:'ax',args:['serve','--mcp','--path','/demo'],...(vscode?{type:'stdio'}:{})};
+  return {workspaceId:'fixture',client,target:'thisComputer',content:JSON.stringify({[vscode?'servers':'mcpServers']:{ax:server}},null,2),fileName:'mcp.json',destination:vscode?'.vscode/mcp.json':'.cursor/mcp.json',instructions:['Paste the ax entry into your app configuration.'],containsSecrets:false,containsLocalPaths:true,portable:false};
+}
+
 test('shared dropdowns and paragraph action gaps work in both themes', async ({ page }) => {
   test.setTimeout(120_000);
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
-    const data = path.endsWith('/local/export') ? {workspaceId:'fixture',client:route.request().postDataJSON().client,target:'thisComputer',content:'{}',fileName:'mcp.json',destination:'.cursor/mcp.json',instructions:['Paste the ax entry into your app configuration.'],containsSecrets:false,containsLocalPaths:true,portable:false}
+    const data = path.endsWith('/local/export') ? localExport(route.request().postDataJSON().client)
       : path.replace(/\/$/,'') === '/api/remote-mcp/publications' ? {workspaceId:'fixture',projectLabel:'Demo',csrf:'csrf',publications:[]}
       : path.endsWith('/publications/host') ? {workspaceId:'fixture',host:null}
       : path.endsWith('/host/authorizations') ? {workspaceId:'fixture',requests:[]}
@@ -28,6 +34,7 @@ test('shared dropdowns and paragraph action gaps work in both themes', async ({ 
     await expect(app).toBeEnabled();
     await app.selectOption('vscode');
     await expect(app).toHaveValue('vscode');
+    await expect(page.locator('.local-mcp-config')).toContainText('.vscode/mcp.json');
     for (const {id:section} of SETTINGS_GROUPS.flatMap(group=>group.items)) {
       await page.locator(`[aria-controls="settings-panel-${section}"]`).click();
       const invalid=await page.locator('select:visible:not([multiple]):not([size])').evaluateAll(elements=>elements.filter(element=>{
@@ -74,7 +81,7 @@ test('revoked OAuth and replica records can be removed after confirmation', asyn
       expect(route.request().headers()['x-ax-access-csrf']).toBe('csrf');
       nodeRemoved=true;await route.fulfill({json:{removed:true}});return;
     }
-    const data=path.endsWith('/local/export')?{workspaceId:'fixture',client:route.request().postDataJSON().client,target:'thisComputer',content:'{}',fileName:'mcp.json',destination:'.cursor/mcp.json',instructions:['Paste the ax entry into your app configuration.'],containsSecrets:false,containsLocalPaths:true,portable:false}
+    const data=path.endsWith('/local/export')?localExport(route.request().postDataJSON().client)
       :path.replace(/\/$/,'')==='/api/remote-mcp/publications'?{workspaceId:'fixture',projectLabel:'Demo',csrf:'csrf',publications:[]}
       :path.endsWith('/publications/host')?{workspaceId:'fixture',host:{status:'running',message:null,publicUrl:'https://ax.example.com',localUrl:'http://127.0.0.1:9000',builtInOAuth:true,autoStart:true}}
       :path.endsWith('/host/authorizations')?{workspaceId:'fixture',requests:oauthRemoved?[]:[{id:'revoked',clientName:'Old IDE',scope:'ax:context',status:'delivered',expires:9999999999,revoked:true,redirectUri:'http://127.0.0.1:8000/callback'}]}

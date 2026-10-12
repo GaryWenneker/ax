@@ -5,7 +5,7 @@ description: The node and edge kinds the graph is built from.
 
 ax stores three things: **nodes** (symbols and files), **edges** (relationships between them), and **files**. Every node and edge carries an exact `kind`, drawn from a fixed vocabulary so queries are consistent across languages.
 
-![Nodes — browse indexed symbols with kind/language filters, caller/callee detail, and pagination](/screenshots/cc-nodes.png)
+![Nodes — browse indexed symbols with kind/language filters, caller/callee detail, and pagination](/screenshots/cc-nodes-dark.png)
 
 ## Node kinds
 
@@ -39,7 +39,7 @@ Doc inventory (counts by extension, grouped into markdown / office / PDF) is **a
 
 ## Querying it
 
-![Search — full-text symbol search for "pipeline" with detail panel showing kind, language, callers, and source preview](/screenshots/cc-search.png)
+![Search — symbol results for the example Settings query](/screenshots/cc-search-dark.png)
 
 - **Search** symbols by name (FTS5).
 - **Callers / callees** walk the call graph one hop at a time.

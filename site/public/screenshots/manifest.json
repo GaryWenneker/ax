@@ -1,0 +1,1118 @@
+[
+  {
+    "file": "cc-focus-glow-dark.png",
+    "imageHash": "bce1f22717d7f288ca26d0038725c494f303e6fc2d9b4a6cd84e09b24a2f5388",
+    "route": "/stats",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:03.634Z"
+  },
+  {
+    "file": "cc-settings-appearance-dark.png",
+    "imageHash": "c7eff38a78f186d062a5ff4a79bd24b1fd213dc5970ed9a22523836505715467",
+    "route": "/settings",
+    "state": {
+      "section": "appearance"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:05.981Z"
+  },
+  {
+    "file": "cc-settings-command-center-dark.png",
+    "imageHash": "af30ed9dd13987a55af5668b41c3ac9f4b6679b91ed9984fb23943668f45fdc1",
+    "route": "/settings",
+    "state": {
+      "section": "command-center"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:08.022Z"
+  },
+  {
+    "file": "cc-settings-agents-dark.png",
+    "imageHash": "f227a9c12e8d3cb21965f32d91025fc6c1c74e785156371172f936d50c205b32",
+    "route": "/settings",
+    "state": {
+      "section": "agents"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:09.890Z"
+  },
+  {
+    "file": "cc-settings-remote-dark.png",
+    "imageHash": "c17e9d0c6e6a98b62763990e68482f06cca146fb088462de2a8b11935267f697",
+    "route": "/settings",
+    "state": {
+      "section": "remote"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:11.749Z"
+  },
+  {
+    "file": "cc-settings-plugins-dark.png",
+    "imageHash": "2000ccf0f28de3e637208ab7053ee8c3f499a37583b02b9cf5e42c7aaecb0437",
+    "route": "/settings",
+    "state": {
+      "section": "plugins"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:13.553Z"
+  },
+  {
+    "file": "cc-access-team-dark.png",
+    "imageHash": "d798b6dd53ae9ef4ff403270b3ad751b85bcac0c407553575856a18373de2fec",
+    "route": "/settings",
+    "state": {
+      "section": "team"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:15.360Z"
+  },
+  {
+    "file": "cc-access-clients-dark.png",
+    "imageHash": "d676ffc26036512de0a0338868240700f5dee046b5da8de54a9b90cd643dc48e",
+    "route": "/settings",
+    "state": {
+      "section": "clients"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:17.222Z"
+  },
+  {
+    "file": "cc-access-nodes-dark.png",
+    "imageHash": "83b8f4960449f8ce3e6a17aa9130af229ea341ab92dfb62b00b19798a24da046",
+    "route": "/settings",
+    "state": {
+      "section": "nodes"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:19.021Z"
+  },
+  {
+    "file": "cc-settings-replication-dark.png",
+    "imageHash": "534792d8994e36c8d14294c9000778afbf5ff1685520c87cab7f759e3cf0af23",
+    "route": "/settings",
+    "state": {
+      "section": "replication"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:20.788Z"
+  },
+  {
+    "file": "cc-settings-sharing-dark.png",
+    "imageHash": "f619fedf2c38f1ace59d8669ae0b804b57928e1496a0b0a975c8b71252968929",
+    "route": "/settings",
+    "state": {
+      "section": "sharing"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:22.540Z"
+  },
+  {
+    "file": "cc-settings-policy-sharing-dark.png",
+    "imageHash": "39909c535d7af094d352c7ae41f6744b810b3579655290ebdf287a58535a2307",
+    "route": "/settings",
+    "state": {
+      "section": "policy-sharing"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:24.327Z"
+  },
+  {
+    "file": "cc-settings-vault-dark.png",
+    "imageHash": "aab5bf00bc0806009ee51061bc59d49695c2503833b3a28b85176431ed88aeb8",
+    "route": "/settings",
+    "state": {
+      "section": "vault"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:26.019Z"
+  },
+  {
+    "file": "cc-settings-export-dark.png",
+    "imageHash": "04542d2c5102bec1e6f03da7393aeaa2fe83a7d45c860a9eb29a11817cec37d2",
+    "route": "/settings",
+    "state": {
+      "section": "export"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:27.745Z"
+  },
+  {
+    "file": "cc-settings-embeddings-dark.png",
+    "imageHash": "7796583952e8ca7972df559348bf4ba693b405e6c12b112e7ec86f09149f9d1a",
+    "route": "/settings",
+    "state": {
+      "section": "embeddings"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:29.570Z"
+  },
+  {
+    "file": "cc-stats-dark.png",
+    "imageHash": "56175602c56c7c05655add1a61b844d014ba406ae1263884e25fa2b0046a0d82",
+    "route": "/stats",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:31.281Z"
+  },
+  {
+    "file": "cc-nodes-dark.png",
+    "imageHash": "3f9b499c1f759536bac7a04a003169f6208a3abacfa3f64bb23d178b5a5dbeb3",
+    "route": "/nodes",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:33.400Z"
+  },
+  {
+    "file": "cc-graph-dark.png",
+    "imageHash": "7aae24b19228cbf96296286443f7c4dc00298bd383f5dceaac74d4bfbd7151ec",
+    "route": "/graph",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:42.263Z"
+  },
+  {
+    "file": "cc-files-dark.png",
+    "imageHash": "86ba660737512ef1a89a096bead8fa320b4a84ddbfea1fd0102dfef706ff808e",
+    "route": "/files",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:44.364Z"
+  },
+  {
+    "file": "cc-search-dark.png",
+    "imageHash": "88238e37db710b70e152bc2b38b3ba3f0b84b670e6003bff0c0269bf7660c77e",
+    "route": "/search",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:46.117Z"
+  },
+  {
+    "file": "cc-memory-vault-dark.png",
+    "imageHash": "a6a0da6dcb56c23b07869dd2e5207fa40c7764fca4345dc451feac095b3aa1d0",
+    "route": "/memory",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:47.841Z"
+  },
+  {
+    "file": "cc-savings-dashboard-dark.png",
+    "imageHash": "47ecf169bd410f719c5a05a7cb32d2941d9e78cb8510378e0e1657401c0635cb",
+    "route": "/savings",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:54.150Z"
+  },
+  {
+    "file": "cc-logging-dark.png",
+    "imageHash": "6b596772bd16681ead2526418982fa9045565b52cb9c0321bde7e6ebaeda9927",
+    "route": "/logging",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:10:56.926Z"
+  },
+  {
+    "file": "cc-mcp-quality-dark.png",
+    "imageHash": "450ee9dbb317af756749d19702423fff8b85831854b0cb0c235b72706ae4f8d7",
+    "route": "/logging",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:00.707Z"
+  },
+  {
+    "file": "cc-settings-dark.png",
+    "imageHash": "f227a9c12e8d3cb21965f32d91025fc6c1c74e785156371172f936d50c205b32",
+    "route": "/settings",
+    "state": {
+      "section": "agents"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:03.110Z"
+  },
+  {
+    "file": "cc-policy-sync-dark.png",
+    "imageHash": "438d04ed8d7aa6702c9cb9d4c93da6a771d99de79014ac8956e65da49b0093b4",
+    "route": "/policy/sync",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:05.468Z"
+  },
+  {
+    "file": "cc-prices-dark.png",
+    "imageHash": "b8e3aad94edb00ad039d8727a07155c8a42a38ae8f916ec8977588cdc785f709",
+    "route": "/prices",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:08.332Z"
+  },
+  {
+    "file": "cc-unresolved-dark.png",
+    "imageHash": "08fc5144edde53bef02f10b4925ddc019f291f5781888b40a27846f3e66110b9",
+    "route": "/unresolved",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:10.332Z"
+  },
+  {
+    "file": "cc-policy-rules-dark.png",
+    "imageHash": "f71f37fa823c48c4ef06d247979e2e6b67fdc0456eae5a9996a9e3a48a804c95",
+    "route": "/policy/rules",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:12.035Z"
+  },
+  {
+    "file": "cc-policy-skills-dark.png",
+    "imageHash": "77a58897feccb3fbc67adfdc252ac5fd2098ee29056e3f8053c6ae98e9dfee27",
+    "route": "/policy/skills",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:13.809Z"
+  },
+  {
+    "file": "cc-policy-match-dark.png",
+    "imageHash": "4d729a7fca03cd9a98b744bdf7621acd8ef4fe155e24bbc7a17efd593dc5c12f",
+    "route": "/policy/match",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:16.225Z"
+  },
+  {
+    "file": "cc-policy-review-dark.png",
+    "imageHash": "ae824df18d0f59d23ff7ad88e1ab55d34d12213999009fa691d2338a3aa747a9",
+    "route": "/policy/review",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:17.921Z"
+  },
+  {
+    "file": "cc-project-browser-dark.png",
+    "imageHash": "b7d20a3efdb21c9308fd39fca2430e2971b4372bf1eb7c4a39030b3a595c761f",
+    "route": "/stats",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:21.503Z"
+  },
+  {
+    "file": "cc-modal-composer-dark.png",
+    "imageHash": "4b522d3b2f4a3d23e2090e1e0d369a4f2a72240de06a8a139ed42d478c9d9ce0",
+    "route": "/memory",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:11:24.700Z"
+  },
+  {
+    "file": "home-install-desktop.png",
+    "imageHash": "06287c693eb2009ff8ae27f133ac3292c6c30274e08653c6b94bc9028453345d",
+    "route": "/",
+    "theme": "graphite",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "public-site",
+    "sourceHash": "ca122d02fb5dccff6b289d51afad5749e8ec33ac21d2fa56b51e2899ae4e4263",
+    "capturedAt": "2026-10-12T22:12:21.895Z"
+  },
+  {
+    "file": "home-install-mobile.png",
+    "imageHash": "c7afdd2a9f42e9dbbf55681a41dc0011f41f3f3379c31b39a8a02e29c146d834",
+    "route": "/",
+    "theme": "graphite",
+    "viewport": {
+      "width": 393,
+      "height": 852,
+      "deviceScaleFactor": 1
+    },
+    "data": "public-site",
+    "sourceHash": "ca122d02fb5dccff6b289d51afad5749e8ec33ac21d2fa56b51e2899ae4e4263",
+    "capturedAt": "2026-10-12T22:12:22.816Z"
+  },
+  {
+    "file": "cc-settings-remote-dark-mobile.png",
+    "imageHash": "956ec7607ee6cd768c85af239cca509ec913369b8fd098af1e2d52f5882770e5",
+    "route": "/settings",
+    "state": {
+      "section": "remote"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:13:09.037Z"
+  },
+  {
+    "file": "cc-stats-dark-mobile.png",
+    "imageHash": "f9ba7959005771633adda72caeaf94bb824abcdff49451112be7f21629e17c9c",
+    "route": "/stats",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:13:10.703Z"
+  },
+  {
+    "file": "cc-memory-vault-dark-mobile.png",
+    "imageHash": "89d56a88638fe89abb27f184372a9fd360d76b57e3510ce85c5fed5a9dd02c8e",
+    "route": "/memory",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:13:12.418Z"
+  },
+  {
+    "file": "cc-logging-dark-mobile.png",
+    "imageHash": "f92da81de67677460c88f7ca13d8a1c291146efc3f0f894f0d4a5652ec936e75",
+    "route": "/logging",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:13:15.121Z"
+  },
+  {
+    "file": "cc-accent-colors.png",
+    "imageHash": "c9582f2fb9a491354734c8269054398cdc9c1645d4efc801a88d72f821114be6",
+    "route": "/settings",
+    "state": {
+      "section": "appearance",
+      "fixture": "accent-selection"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 808,
+      "height": 797
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:20:50.891Z"
+  },
+  {
+    "file": "cc-logging-columns-mobile.png",
+    "imageHash": "d61a85a8a2a1daf992c75003d298a40c987ed973674896f3c4b9abcacc13d257",
+    "route": "/logging",
+    "state": {
+      "fixture": "logging-layout"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 393,
+      "height": 900
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:20:37.435Z"
+  },
+  {
+    "file": "cc-logging-columns.png",
+    "imageHash": "fcad52b56ed1981bbf6611e9908c041bd93de4a6a2cad70f2f7211642512de16",
+    "route": "/logging",
+    "state": {
+      "fixture": "logging-layout"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1366,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1366,
+      "height": 900
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:20:37.307Z"
+  },
+  {
+    "file": "cc-policy-review-desktop-chrome.png",
+    "imageHash": "db639428c7da6ee17c199a9f6bb5b3b6cae7b75a1509c534ab298a1511e23d94",
+    "route": "/policy/review",
+    "state": {
+      "fixture": "policy-review",
+      "comparison": false
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1280,
+      "height": 800
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:20:55.847Z"
+  },
+  {
+    "file": "cc-policy-review-detail.png",
+    "imageHash": "ca98cd6a45f9732b7d7b19546823a9e2a3b76c7cfb969dcfc2435f7340773386",
+    "route": "/policy/review",
+    "state": {
+      "fixture": "policy-review",
+      "comparison": true
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1028,
+      "height": 496
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:20:55.683Z"
+  },
+  {
+    "file": "cc-policy-review-mobile-chrome.png",
+    "imageHash": "475c49d2dfd750d59720c206d0cdbb5642a400b6467155fe1ced95e28e974e96",
+    "route": "/policy/review",
+    "state": {
+      "fixture": "policy-review",
+      "comparison": false
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 851,
+      "deviceScaleFactor": 2.75
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1081,
+      "height": 1999
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:19:09.658Z"
+  },
+  {
+    "file": "cc-primary-pairing.png",
+    "imageHash": "8a7c8991f85c684501f668d29a5727d369618bc0184a0256ae15c5e83ed4cff1",
+    "route": "/settings",
+    "state": {
+      "section": "nodes",
+      "fixture": "replication-setup",
+      "configured": false
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 1800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1440,
+      "height": 1800
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:21:04.559Z"
+  },
+  {
+    "file": "cc-remote-host.png",
+    "imageHash": "7ff98124454eab7989025974556dfe779a8591bfa37be948663db16635014175",
+    "route": "/settings",
+    "state": {
+      "section": "remote",
+      "fixture": "browser-test"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1280,
+      "height": 800
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:20:58.923Z"
+  },
+  {
+    "file": "cc-replication-configured.png",
+    "imageHash": "bd7953fd1efcc070675d8c5ed8c340b26a5b1121c47ee9ca60a4adea5d497e43",
+    "route": "/settings",
+    "state": {
+      "section": "nodes",
+      "fixture": "replication-setup",
+      "configured": true
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 1300,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1440,
+      "height": 1300
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:21:00.623Z"
+  },
+  {
+    "file": "cc-review-compact-desktop.png",
+    "imageHash": "dba690b9f7003aafd3f32a223157d02fe17341b206da76c5ae4dd7724491ea96",
+    "route": "/policy/review",
+    "state": {
+      "fixture": "policy-review",
+      "comparison": false
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1280,
+      "height": 800
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:21:20.667Z"
+  },
+  {
+    "file": "cc-review-compact-mobile.png",
+    "imageHash": "4e474a2c5766d0ffb70969701fc9657d094e94f6e326a06576d987d4dd7f0968",
+    "route": "/policy/review",
+    "state": {
+      "fixture": "policy-review",
+      "comparison": false
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 851,
+      "deviceScaleFactor": 2.75
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1081,
+      "height": 1999
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:19:37.326Z"
+  },
+  {
+    "file": "cc-review-comparison.png",
+    "imageHash": "19f92aa6ca4a4563428d50ba96ca56aa86c82f68f542bde50052710bf0dfc28f",
+    "route": "/policy/review",
+    "state": {
+      "fixture": "policy-review",
+      "comparison": true
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1028,
+      "height": 290
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:21:20.815Z"
+  },
+  {
+    "file": "cc-savings-aligned.png",
+    "imageHash": "2c85018ef4b0207c9de474c400b1874759dbb1d3a690818583eca13abebd9009",
+    "route": "/savings",
+    "state": {
+      "fixture": "savings-density"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 2048,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1844,
+      "height": 139
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:20:52.159Z"
+  },
+  {
+    "file": "mcp-import-existing-server.png",
+    "imageHash": "1428b828ab1bae7454a0ec5224368397cc794d2a35d79146551bee638d4d276d",
+    "route": "/settings",
+    "state": {
+      "section": "remote",
+      "fixture": "browser-test"
+    },
+    "theme": "azure-light",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1280,
+      "height": 800
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:24:34.152Z"
+  },
+  {
+    "file": "mcp-local-and-remote.png",
+    "imageHash": "779dcf28d0ae607171e04050cdfb85ad1e136c78fc2e2df3247ce0fba2933902",
+    "route": "/settings",
+    "state": {
+      "section": "remote",
+      "fixture": "browser-test"
+    },
+    "theme": "azure-light",
+    "viewport": {
+      "width": 1280,
+      "height": 1150,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1280,
+      "height": 1150
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:24:35.640Z"
+  },
+  {
+    "file": "remote-mcp-project-desktop.png",
+    "imageHash": "5a5f7cef76ab02e061a494a731e1601bdef42b39a6d93c0a13e066d138f03ad9",
+    "route": "/settings",
+    "state": {
+      "section": "remote",
+      "fixture": "browser-test"
+    },
+    "theme": "azure-light",
+    "viewport": {
+      "width": 1280,
+      "height": 1150,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1280,
+      "height": 1150
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:24:29.256Z"
+  },
+  {
+    "file": "remote-mcp-project-mobile.png",
+    "imageHash": "67d81e460aecc0d4df1baa7a5d37f2b0bfaca44686de887394b7e4a0bc6a32c1",
+    "route": "/settings",
+    "state": {
+      "section": "remote",
+      "fixture": "browser-test"
+    },
+    "theme": "azure-light",
+    "viewport": {
+      "width": 393,
+      "height": 1700,
+      "deviceScaleFactor": 2.75
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 393,
+      "height": 1700
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:24:19.012Z"
+  },
+  {
+    "file": "cc-local-controls-azure-dark.png",
+    "imageHash": "a8006705676a8c8c501c3c3e7f67e0036535e6e2edf5ad55abf0df134b31c9d7",
+    "route": "/settings",
+    "state": {
+      "section": "remote",
+      "fixture": "control-spacing",
+      "configured": false
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 760,
+      "height": 361
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:27:55.301Z"
+  },
+  {
+    "file": "cc-local-controls-azure-light.png",
+    "imageHash": "1fbe17fef2c06147fcc6fee1417410b8c80e4548fb9bf645eef691a04f55893d",
+    "route": "/settings",
+    "state": {
+      "section": "remote",
+      "fixture": "control-spacing",
+      "configured": false
+    },
+    "theme": "azure-light",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 760,
+      "height": 361
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:27:51.609Z"
+  },
+  {
+    "file": "cc-replication-controls-azure-dark.png",
+    "imageHash": "0a5ebe7fa624e2e38bf5315471e37607b5130262a6fa8ca948f21bfef9263f0f",
+    "route": "/settings",
+    "state": {
+      "section": "nodes",
+      "fixture": "control-spacing",
+      "configured": true
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 760,
+      "height": 347
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:27:55.121Z"
+  },
+  {
+    "file": "cc-replication-controls-azure-light.png",
+    "imageHash": "57d2698e6323894df6a7559d8fbcc268ab3feaf7427f3337419770f8a4606f9b",
+    "route": "/settings",
+    "state": {
+      "section": "nodes",
+      "fixture": "control-spacing",
+      "configured": true
+    },
+    "theme": "azure-light",
+    "viewport": {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 760,
+      "height": 347
+    },
+    "data": "synthetic",
+    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
+    "capturedAt": "2026-10-12T22:27:51.377Z"
+  }
+]

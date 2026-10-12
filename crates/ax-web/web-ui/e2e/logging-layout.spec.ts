@@ -85,3 +85,13 @@ test('logging heading filter keyboard does not open an event',async({page})=>{
  await expect(filter).toHaveAttribute('open','');await expect(page.locator('.mcp-trace-row.page-item--selected')).toHaveCount(0);
  const input=filter.getByRole('textbox',{name:'Filter Time',exact:true});await input.focus();await input.press('Escape');await expect(filter).not.toHaveAttribute('open','');await expect(summary).toBeFocused();
 });
+
+test('logging has one compact page heading and no duplicate summary bars',async({page})=>{
+ await page.setViewportSize({width:1366,height:900});await page.goto('/logging');
+ await expect(page.getByRole('heading',{name:'Logging',exact:true})).toBeVisible();
+ await expect(page.locator('.mcp-trace-project-banner')).toHaveCount(0);
+ await expect(page.locator('.mcp-q-strip')).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Open MCP quality',exact:true})).toBeVisible();
+ const filter=page.getByRole('search',{name:'Filter MCP log'});
+ expect((await filter.boundingBox())!.height).toBeLessThan(150);
+});

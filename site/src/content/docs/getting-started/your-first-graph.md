@@ -27,7 +27,7 @@ ax status
 
 This reports the node/edge/file counts, the active SQLite backend, and the journal mode — a quick health check that the index is ready.
 
-![Graph Stats — index summary with node/edge/file counts and language breakdown](/screenshots/cc-stats.png)
+![Graph Stats — index summary with node/edge/file counts and language breakdown](/screenshots/cc-stats-dark.png)
 
 ## Run a query
 

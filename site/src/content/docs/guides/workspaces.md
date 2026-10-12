@@ -68,7 +68,7 @@ When several git repos share rules outside any one IDE folder, mount them from t
 }
 ```
 
-Each existing root is merged as an extra policy layer after the matching built-in scope directory. Per-item stubs with `source: "root:team-shared/rules/….mdc"` keep a pointer in each member’s tree while the body lives on the shared mount. See [Policy Engine — storage](/guides/policy-engine/#policy-storage-v211).
+Each existing root is merged as an extra policy layer after the matching built-in scope directory. Per-item stubs with `source: "root:team-shared/rules/….mdc"` keep a pointer in each member’s tree while the body lives on the shared mount. See [Policy Engine — storage](/guides/policy-engine/#policy-storage).
 
 ## Per-project policy pack sync
 

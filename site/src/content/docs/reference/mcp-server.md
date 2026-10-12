@@ -133,7 +133,7 @@ Graph reads (`ax_explore`, `ax_node`, `ax_search`, `ax_callers`, `ax_callees`, `
 
 `ax_preflight`, `ax_guard`, `ax_policy_capture`, `ax_rules`, `ax_skill`, and `ax_cache_status` are never stubbed. Set `AX_CONTEXT_CACHE_TOKENS=0` or `AX_CONTEXT_CACHE=off` to disable. Rows expire after 7 days. This store is not the memory vault.
 
-`ax_cache_status` returns the context-cache counts (enabled, threshold, live rows, stored tokens, expired rows, and the current session's ledger when a session id is known) and the in-process file-token cache (entries, capacity, hits, misses, evictions). It never returns a stored body, a path, or file bytes. Call it at any time. With verbose MCP logging on, the two lines are written to the project log and the Logging page joins lines that share `group=` with one node color and a rail. A stored oversized reply writes a third line, `event=store`, with the cache id and token counts only.
+`ax_cache_status` returns the context-cache counts (enabled, threshold, live rows, stored tokens, expired rows, and the current session's ledger when a session id is known) and the in-process file-token cache (entries, capacity, hits, misses, evictions). It never returns a stored body, a path, or file bytes. Call it at any time. In the always-on project log, the two lines are written to the project log and the Logging page joins lines that share `group=` with one node color and a rail. A stored oversized reply writes a third line, `event=store`, with the cache id and token counts only.
 
 `ax_stash` stores any text you pass (a chat slice or a result from another tool) and returns only the id. While the cache is on, every successful ax MCP call, each Claude prompt-hook prompt, and each Cursor `beforeSubmitPrompt` is added to a session index. `ax_preflight` lists the current session first (about 1,500 tokens, no bodies) and one ledger line: row count, tokens stored, and tokens that stayed inline. Rows marked `inline` were small enough to stay in the original reply. On stop, ax stashes oversized tool results from the active Cursor or Claude transcript when that text is not already cached. Matching memories still arrive through the existing recall inject. Read a stored body with `ax_expand`. Install the Cursor hook with `ax savings hook install`.
 
@@ -224,9 +224,9 @@ Set `AX_MCP_FULL=1` to restore raw `structuredContent` for inline results (for c
 
 To watch what each tool receives, how preflight enrichment builds the inject block, and what ax sends back on the wire — without changing agent-facing payloads — follow the full guide: **[MCP Logging & Quality](/guides/mcp-quality/)**. Short version:
 
-1. Set `[ui] verbose_mcp = true` in `.ax/ship.toml` (on by default), **or** set `AX_MCP_VERBOSE=1` in the MCP server environment.
+1. Logging is always enabled. Confirm that the MCP server is connected with the intended project path.
 2. Reconnect / restart the ax MCP server in Cursor.
-3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a table of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI).
+3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a list of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI).
 
 ![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging-dark.png)
 
@@ -245,7 +245,7 @@ Lines are prefixed with `[ax-mcp]`. They are written to the log file (and option
 | Variable | Default | Purpose |
 |---|---|---|
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every tool |
-| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` emits inbound/enrichment/outbound traces to stderr (Cursor Output); same as `[ui] verbose_mcp = true` |
+| `AX_MCP_VERBOSE` | unset | Legacy compatibility flag; current MCP delivery writes project traces and stderr regardless of this value |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
 | `AX_CONTEXT_MAX_BLOCKS` | 6 | Max code blocks in an `ax_context` response |
@@ -307,7 +307,7 @@ Enforcement lives in `crates/ax-context/tests/no_query_time_disk_reads.rs`, a fa
 
 When the daemon stops (an upgrade replaced its binary, it was restarted, it crashed), each proxy reconnects to the next daemon, or starts one, on the same stdio connection. Requests that were in flight get the JSON-RPC error `-32000` `ax daemon restarted; retry the call`; requests sent during the reconnect are delivered in order. A proxy on a newer `ax` build restarts an older daemon on its own binary; an older proxy attaches to a newer daemon. See [`ax daemon`](/reference/cli/#ax-daemon-path-statusstoprestart).
 
-If the daemon cannot start when the client first connects, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (hamburger / sidebar Ops) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/docs/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
+If the daemon cannot start when the client first connects, each client falls back to an **embedded** engine — concurrent writers then produce `database is locked` and agents enter **DEGRADED**. Recover with Command Center **Reload MCP** (hamburger / sidebar Ops) or `ax daemon restart`, then restart MCP servers in the IDE. See [Troubleshooting](/troubleshooting/#mcp-hits-database-is-locked--agents-go-degraded).
 
 ## How agents should use it
 
@@ -346,3 +346,7 @@ disk/database differences and items needing origin review. This audit chooses no
 winning revision and does not share or delete imported content. Database mode
 bootstraps an empty database, then preserves its authority; file-owned overrides
 continue to refresh. Explicit import/index remains an intentional operation.
+
+### Local budget advice
+
+`ax_budget({})` returns the local budget decision (`allow`, `warn` or `deny`). It has no required tool-specific arguments. A `deny` result advises the requesting integration; Ax does not intercept or block a provider API call. Configure thresholds and inspect assumptions in the [budget guide](/guides/budget/).

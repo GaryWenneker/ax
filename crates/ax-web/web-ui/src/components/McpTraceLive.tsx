@@ -49,7 +49,6 @@ import {
   openMcpQualitySlideout,
   type QualitySnapshot,
 } from '../lib/mcpQuality';
-import { McpQualityStrip } from './McpQualitySlideout';
 import { detectStructuredLang, highlightStructured } from '../lib/mcpSyntax';
 import { navigateRoute } from '../lib/routes';
 import { subscribeSharedEventSource } from '../lib/sharedEventSource';
@@ -1060,8 +1059,8 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       <div className="mcp-trace-chrome">
         <div className="mcp-trace-toolbar">
           <div className="mcp-trace-toolbar-left">
-            <span className="mcp-trace-title">Trace</span>
-            <span className="mcp-trace-project-chip" title={projectRoot || path}>
+            {isPage ? <h1 className="mcp-trace-heading">Logging</h1> : <span className="mcp-trace-title">Trace</span>}
+            <span className="mcp-trace-project-chip" title={`${projectRoot || projectLabel} · ${path}`}>
               <span className="mcp-trace-project-chip-label">Project</span>
               <strong className="mcp-trace-project-chip-name">{projectLabel}</strong>
             </span>
@@ -1120,7 +1119,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                 onClick={() => openMcpQualitySlideout()}
               >
                 <Codicon name="shield" />
-                <span className="mcp-trace-btn-label">Quality</span>
+                <span className="mcp-trace-btn-label">Quality {quality.score}</span>
               </button>
             )}
             <button
@@ -1163,22 +1162,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
           </div>
         </div>
 
-        {isPage && <McpQualityStrip snap={quality} />}
       </div>
-      {filtersOpen && (
-      <div className="mcp-trace-project-banner" title={projectRoot || undefined}>
-        <div className="mcp-trace-project-banner-main">
-          <span className="mcp-trace-project-banner-kicker">Viewing MCP log for</span>
-          <span className="mcp-trace-project-banner-name">{projectLabel}</span>
-        </div>
-        <div className="mcp-trace-project-banner-meta">
-          <span className="mcp-trace-project-banner-root">{projectRoot || '—'}</span>
-          <span className="mcp-trace-project-banner-sep">·</span>
-          <code className="mcp-trace-project-banner-file">{path}</code>
-        </div>
-      </div>
-      )}
-
       {filtersOpen && (
       <div className="mcp-trace-filters" role="search" aria-label="Filter MCP log">
         <div className="mcp-trace-filter-kinds" role="group" aria-label="Filter by kind">

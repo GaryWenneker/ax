@@ -142,7 +142,7 @@ The replicas keep their own Command Center. After complete application, received
 
 Policy changes received by a replica are staged separately and are **not active by default**. Use the existing Policy Review workflow when you decide to import and approve them. The image below is an actual capture of Ax's review UI, not a claim that a live LAN synchronization was captured.
 
-![Ax Command Center policy review interface](/screenshots/cc-policy-review.png)
+![Ax Command Center policy review interface](/screenshots/cc-policy-review-dark.png)
 
 ## 5. Check status and recover from outages
 
@@ -227,7 +227,7 @@ Client credentials can call explicitly scoped HTTP APIs using `Authorization: Be
 
 For [Remote MCP](/guides/remote-mcp/), add the member's stable ID to the desired project's `subjects` in the remote config and to `write_subjects` when writes are allowed. Both the project's explicit grant and the client's effective tool scope are required. Revoked tokens and role/scope changes are checked on every request, including existing MCP sessions. OAuth and configured API-key access remain supported.
 
-![Team roles and member status in Light](/screenshots/cc-access-team-dark.png)
+![Team roles and member status in Dark](/screenshots/cc-access-team-dark.png)
 
 ![Clients, effective scopes and credential metadata](/screenshots/cc-access-clients-dark.png)
 
@@ -256,8 +256,6 @@ Open **Settings → Replication** for the local node ID, Primary/Replica role, t
 A Replica must explicitly configure its Primary and project credential. Successful authenticated registration adds it automatically; no manual approval is needed. **Block node** asks for confirmation and blocks future snapshots and registration for that node ID. **Remove revoked node** removes a blocked entry from the visible list after confirmation, while preserving its revocation marker and synchronized project data. Discovery and shared-key registration cannot restore it. **Allow re-enrollment** explicitly clears the block, but keeps previous node credentials revoked; the Replica must authenticate again with its project enrollment credential. UDP presence never chooses or changes the configured Primary. Client tokens (`axc_`) and node credentials (`axn_`) cannot be used interchangeably. Shared project credentials remain the automatic enrollment mechanism for existing standalone deployments; treat them as enrollment secrets.
 
 Disabling or revoking access does not delete a team member's existing data. These controls govern authorization; export/import and shared/non-shared or active/inactive data selection retain their existing rules.
-
-![Primary/Replica management in Light](/screenshots/cc-access-nodes.png)
 
 ![Primary/Replica management in Dark](/screenshots/cc-access-nodes-dark.png)
 

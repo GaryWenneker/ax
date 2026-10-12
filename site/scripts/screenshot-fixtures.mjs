@@ -64,7 +64,23 @@ const data = {
   '/api/access/nodes': { local: { node_id: 'demo-primary', role: 'primary', primary_url: null, sync_state: 'configured', last_sync_at: null }, nodes: [
     { id: 'demo-replica', display_name: 'Demo replica', role: 'replica', endpoint: 'https://replica.example.test', trust_state: 'trusted', last_seen_at: '2026-10-11 12:00:00', last_sync_at: '2026-10-11 12:00:00' },
   ] },
-  '/api/version': { version: '8.0.0' },
+  '/api/share/status': { readonly: false, sharing: false, port: 7070, base_url: 'http://127.0.0.1:7070' },
+  '/api/remote-mcp/': { csrf: 'demo-only', connections: [] },
+  '/api/remote-mcp/publications/': { workspaceId: 'ax-demo', projectLabel: 'Ax demo', csrf: 'demo-only', publications: [] },
+  '/api/remote-mcp/publications/host': { workspaceId: 'ax-demo', host: null },
+  '/api/remote-mcp/publications/host/authorizations': { workspaceId: 'ax-demo', requests: [] },
+  '/api/access/nodes/local': { settings: { config: {node_id:'demo-primary',role:'primary',cluster_id:'demo-cluster',projects:[{id:'demo-project'}]},port:9070,advertise:null }, running:true,active_project:true,active_replicas:1,sync:{status:'full_data_synced'},safety:{mode:'preserve_and_exchange',memories:3,rules:3,skills:3} },
+  '/api/access/nodes/local/interfaces': { interfaces: [{name:'Ethernet',address:'192.168.1.20',loopback:false}] },
+  '/api/memory/embed-status': {backend:'feature-hash',onnx_feature:false,model_path:null,tokenizer_path:null},
+  '/api/plugins': { plugins: [], root: '/projects/ax-demo/.ax/plugins' },
+  '/api/okf/config': {enabled:true,outDir:'.ax/knowledge',outDirAbs:'/projects/ax-demo/.ax/knowledge',kinds:['function','class'],autoExportOnSync:false,wikiEnabled:false,wikiRemoteConfigured:false,wikiSubdir:'ax',bundleExists:false,format:'okf'},
+  '/api/changes': {},
+  '/api/dav/mount': {os:'linux',mounted:false,name:'ax',url:'http://127.0.0.1:7070/dav',path:null,auto_connect:false},
+  '/api/vault/folders': {folders:[]},
+  '/api/policy/share/config': {provider:'github',content:{rules:true,skills:true,memory:false},importMode:'review',autoSyncMinutes:0,onedrive:{shareUrl:''},github:{repoUrl:'https://github.com/example/ax-policy',branch:'main',subpath:'.agents/shared',token:''},configPath:'/projects/ax-demo/ax.json',scope:'project'},
+  '/api/policy/share/status': {sync:{rulesAdded:0,skillsAdded:0,rulesPending:0,skillsPending:0,memoryInserted:0,memoryUpdated:0,remoteFiles:0},microsoft:{signedIn:false}},
+  '/api/remote-mcp/publications/local/export': {workspaceId:'ax-demo',client:'cursor',target:'thisComputer',fileName:'mcp.json',destination:'.cursor/mcp.json',content:JSON.stringify({mcpServers:{ax:{command:'ax',args:['serve','--mcp','--path','/projects/ax-demo']}}},null,2),instructions:['Merge into your app MCP settings and reconnect.'],containsSecrets:false,containsLocalPaths:true,portable:false},
+  '/api/version' : { version: '8.1.0' },
   '/api/stats': { node_count: 2450, edge_count: 7800, file_count: 312, languages: [{ language: 'Rust', count: 1500 }, { language: 'TypeScript', count: 950 }], last_indexed_at: now, unresolved_ref_count: 2, db_size_bytes: 2400000, policy_rules_count: 3, policy_skills_count: 3, readonly: false, project_name: 'Ax demo' },
   '/api/nodes': { nodes, total: nodes.length }, '/api/files': { files, total: files.length },
   '/api/files/roots': { roots: [{ name: 'src', path: 'src', count: files.length }], files: [] },
@@ -75,8 +91,9 @@ const data = {
   '/api/unresolved': { refs: [{ id: 1, from_node_id: nodes[0].id, reference_name: 'loadWorkspace', reference_kind: 'calls', line: 28, col: 4, file_path: nodes[0].file_path, language: 'TypeScript' }], total: 1 },
   '/api/unresolved/summary': { total: 1, by_kind: [{ kind: 'calls', count: 1 }], top_names: [{ name: 'loadWorkspace', count: 1 }] },
   '/api/policy/rules': { rules }, '/api/policy/skills': { skills },
+  '/api/policy/match': {rules,skills,inject:'# Matched project policy\n\nReview changes before merging. Update the product documentation.\n\n## Suggested skills\nLoad review-changes to inspect the diff and affected checks.'},
   '/api/policy/settings': { policySync: true, requireReview: true, storage: 'files', roots: [], agentsDir: '.agents' },
-  '/api/policy/review': { items: [{ kind: 'rule', id: 'review-before-merge', path: '.agents/rules/review-before-merge.md', status: 'pending', preview: 'Review the diff and run affected checks before merging.', levelOrDescription: 'WARNING' }] },
+  '/api/policy/review': { serverVersion:'8.1.0',comparisonAvailable:true,items: [{ kind:'rule',id:'review-before-merge',path:'.agents/rules/review-before-merge.md',scope:'project',origin:'Primary demo',effect:'replacement',changedFields:['body'],status:'pending',preview:'Review the diff and run affected checks before merging.',incomingContent:'Review the diff, run affected checks and update the walkthrough before merging.',currentContent:'Review the diff before merging.',levelOrDescription:'WARNING' }] },
   '/api/policy/pack/status': { packPath: '.agents/shared', hasManifest: true, rulesInPack: 3, skillsInPack: 3, exportedAt: now, localSharedRules: 3, localSharedSkills: 3, requireReview: true, policySync: true },
   '/api/ship/config': { config, sonar: config.sonar },
   '/api/ship/status': { branch: 'feature/azure-portal-design', config, report: { git: { head_branch: 'feature/azure-portal-design', base_ref: 'main' }, changed_files: ['src/App.tsx', 'src/portal.css'], tia: { tests: [{ name: 'Portal navigation', runner_hint: 'playwright' }], test_files: ['e2e/azure-portal.spec.ts'] }, quality_gate: { passed: true, steps: ['index', 'tia', 'tests', 'sonar', 'policy'].map(step => ({ step, status: step === 'sonar' ? 'skipped' : 'passed', detail: step === 'sonar' ? 'Disabled in demo' : 'Example result' })) }, breaking_warnings: [], business_rule_warnings: [], affected_routes: ['/settings', '/memory'] }, last_run: { ok: true, lines: ['Example quality gate complete.'] } },
@@ -96,14 +113,23 @@ const data = {
   '/api/lsp/status': { servers: [], available: false },
 };
 
+const traceLines = tools.flatMap((tool, i) => [
+  `2026-10-11T12:0${i}:00Z [ax-mcp] inbound tool=${tool} args={"query":"${['Find the settings entry point','Inspect the workspace switcher','Build focused context for the review'][i]}"}`,
+  `2026-10-11T12:0${i}:01Z [ax-mcp] enrich policy matched_rules=3 matched_skills=1 session=demo-${i}`,
+  `2026-10-11T12:0${i}:02Z [ax-mcp] outbound tool=${tool} duration_ms=38 result={"count":6}`,
+]);
+traceLines.push('2026-10-11T12:04:00Z [ax] workspace sync ok files=12 duration_ms=140 tool=workspace');
+
 export function screenshotResponse(url) {
   const path = new URL(url).pathname;
-  if (path.endsWith('/events')) return { status: 200, contentType: 'text/event-stream', body: path.includes('mcp-trace')
-    ? `retry: 600000\nevent: batch\ndata: ${JSON.stringify(tools.map((tool, i) => `[2026-10-11T12:0${i}:00Z] [ax-mcp] inbound tool=${tool} args={"query":"Explore project navigation","projectPath":"${project}"}`))}\n\n`
+  if (path === '/api/graph/stream') return {status:200,contentType:'text/event-stream',body: `data: ${JSON.stringify({type:'meta',total_nodes:48,truncated:false})}\n\ndata: ${JSON.stringify({type:'nodes',nodes:graph.nodes})}\n\ndata: ${JSON.stringify({type:'edges',edges:graph.edges})}\n\ndata: {"type":"done"}\n\n`};
+  if (path.endsWith('/events') || path === '/api/changes') return { status: 200, contentType: 'text/event-stream', body: path.includes('mcp-trace')
+    ? `retry: 600000\nevent: batch\ndata: ${JSON.stringify(traceLines)}\n\n`
     : ': demo stream\n\n' };
   if (path.startsWith('/api/node/')) return { json: { node: { ...nodes[0], docstring: 'Demo symbol', visibility: 'public', is_async: 0 }, callers: [], callees: [] } };
   if (path.startsWith('/api/links/')) return { json: { outgoing: [], incoming: [] } };
   if (data[path] !== undefined) return { json: data[path] };
+  console.error(`Screenshot fixture missing: ${path}`);
   return { status: 404, json: { error: `Screenshot fixture missing: ${path}` } };
 }
 
