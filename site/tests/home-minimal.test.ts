@@ -38,8 +38,8 @@ test('CMY interference fades horizontally from the edge and uses continuous tile
   assert.match(css, /mask-image:linear-gradient\(90deg,transparent 0%/);
   assert.match(css, /#000 100%/);
   assert.doesNotMatch(css, /mask-image:radial-gradient|infinite alternate/);
-  assert.match(css, /animation:ax-moire-magenta 72s linear infinite/);
-  assert.match(css, /animation:ax-moire-yellow 96s linear infinite/);
+  assert.match(css, /animation:ax-moire-magenta 44s ease-in-out infinite/);
+  assert.match(css, /animation:ax-moire-yellow 62s ease-in-out infinite/);
   assert.match(css, /animation:ax-moire-focus 64s ease-in-out infinite/);
   assert.match(css, /@keyframes ax-moire-focus\{0%,43%,70%,100%\{filter:blur\(0\)\}53%,59%\{filter:blur\(1\.5px\)\}\}/);
   assert.match(css, /prefers-reduced-motion:reduce\)\{\.ax-landing \.ax-halftone-dots,\.ax-landing \.ax-halftone-grid\{animation:none!important;filter:none!important/);
@@ -47,6 +47,9 @@ test('CMY interference fades horizontally from the edge and uses continuous tile
   assert.doesNotMatch(css, /border-radius:50%|ax-halftone-rosette/);
   assert.match(css, /@keyframes ax-moire-magenta/);
   assert.match(css, /@keyframes ax-moire-yellow/);
+  assert.match(css, /@keyframes ax-moire-magenta\{0%,100%\{/);
+  assert.match(css, /@keyframes ax-moire-yellow\{0%,100%\{/);
+  assert.match(css, /max-width:600px[^}]*\.ax-halftone\{inset:0 0 0 20%;opacity:\.4\}/);
   assert.match(css, /prefers-reduced-motion:reduce/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
 });
