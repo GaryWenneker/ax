@@ -149,7 +149,7 @@ struct CreateClient {
     scopes: Vec<String>,
 }
 
-async fn pool() -> Result<sqlx::SqlitePool, String> {
+pub(crate) async fn pool() -> Result<sqlx::SqlitePool, String> {
     let path = global_db_path().map_err(|e| e.to_string())?;
     let pool = open_and_init(&path).await.map_err(|e| e.to_string())?;
     let _ = access::bootstrap_owner(&pool, "local-owner", "Local owner", None)

@@ -1014,6 +1014,8 @@ ax budget set --monthly 60 --currency eur --usd-per-eur 1.08 --working-days 22 -
 Run project-scoped MCP behind your existing HTTPS tunnel. The dedicated listener uses an available loopback port; it does not expose the Command Center administration API. Native browser login uses Authorization Code + PKCE and the operating system credential store.
 
 ```bash
+ax mcp remote register --config /absolute/path/remote-mcp.json --name "Team Ax"
+ax mcp remote register --config /absolute/path/remote-mcp.json --native-client-id YOUR_NATIVE_PUBLIC_CLIENT_ID --cursor-client-id YOUR_CURSOR_PUBLIC_CLIENT_ID --vscode-client-id YOUR_VSCODE_PUBLIC_CLIENT_ID
 ax mcp remote serve --config /absolute/path/remote-mcp.json --port 0
 ax mcp remote serve --config /absolute/path/remote-mcp.json --port 0 --socket /absolute/path/ax-remote.sock
 ax mcp remote login --url https://ax.example.com/projects/my-project/mcp --client-id YOUR_NATIVE_CLIENT_ID
@@ -1022,7 +1024,7 @@ ax mcp remote proxy --url https://ax.example.com/projects/my-project/mcp
 ax mcp remote logout --url https://ax.example.com/projects/my-project/mcp
 ```
 
-The optional Unix socket supports macOS/Linux. `login --write` requests additional memory/policy permissions; the server must also grant them. Configure your OAuth issuer and client registrations before connecting. See [Remote MCP and browser login](/guides/remote-mcp/) for configuration, Cloudflare routing, ChatGPT registration and deployment limits.
+`register` saves validated public project export metadata without starting the server or signing in. Find client presets and copy/download actions in **Settings → Connections → Remote MCP → Share this project**. `serve` registers metadata automatically. The optional Unix socket supports macOS/Linux. `login --write` requests additional memory/policy permissions; the server must also grant them. Configure your OAuth issuer and client registrations before connecting. See [Remote MCP and browser login](/guides/remote-mcp/) for configuration, Cloudflare routing, ChatGPT registration and deployment limits.
 
 ### `ax mcp audit`
 

@@ -11,6 +11,8 @@ test('remote Settings sends CSRF, shows the browser fallback, and disconnects sa
     await context.route('https://issuer.example/**', route => route.fulfill({ body: 'Provider sign-in' }));
     await page.route('**/api/remote-mcp/**', async (route) => {
         const path = new URL(route.request().url()).pathname;
+        if (path.includes('/publications'))
+            return route.fulfill({ json: { workspaceId: 'workspace', csrf: 'test-csrf', projectLabel: 'demo', publications: [] } });
         if (path.endsWith('/login')) {
             loginBody = route.request().postDataJSON();
             csrfHeader = route.request().headers()['x-ax-csrf'];
@@ -33,7 +35,7 @@ test('remote Settings sends CSRF, shows the browser fallback, and disconnects sa
     await page.goto('/settings');
     await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Remote MCP', exact: true }).click();
     const section = page.locator('.remote-mcp-settings');
-    await expect(section.getByRole('heading', { name: 'Remote Ax connections' })).toBeVisible();
+    await expect(section.getByRole('heading', { name: 'Connect to another Ax' })).toBeVisible();
     await section.getByLabel('Project MCP URL').fill('https://ax.example/projects/demo/mcp');
     await section.getByLabel('OAuth client ID').fill('native');
     await section.getByRole('button', { name: 'Connect with browser' }).click();
@@ -49,6 +51,8 @@ test('remote Settings sends CSRF, shows the browser fallback, and disconnects sa
 test('remote Settings shows a denied login without claiming a connection', async ({ page }) => {
     await page.route('**/api/remote-mcp/**', route => {
         const path = new URL(route.request().url()).pathname;
+        if (path.includes('/publications'))
+            return route.fulfill({ json: { workspaceId: 'workspace', csrf: 'test-csrf', projectLabel: 'demo', publications: [] } });
         return path.endsWith('/login')
             ? route.fulfill({ status: 400, json: { error: 'Project access denied' } })
             : route.fulfill({ json: { csrf: 'test-csrf', connections: [] } });
@@ -67,6 +71,8 @@ test('remote Settings cancels a pending browser login with CSRF', async ({ page 
     let cancelled = false;
     await page.route('**/api/remote-mcp/**', async (route) => {
         const path = new URL(route.request().url()).pathname;
+        if (path.includes('/publications'))
+            return route.fulfill({ json: { workspaceId: 'workspace', csrf: 'test-csrf', projectLabel: 'demo', publications: [] } });
         if (path.endsWith('/cancel')) {
             expect(route.request().headers()['x-ax-csrf']).toBe('test-csrf');
             cancelled = true;

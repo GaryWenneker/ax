@@ -1,0 +1,115 @@
+import { expect, test, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+
+if (process.env.AX_CHROME_EXECUTABLE) test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
+const endpoint = 'https://ax.example.com/projects/remote-demo/mcp';
+function publication(id = 'publication', label = 'Team Ax', url = endpoint) {
+  return { id, publisherId: id, publisherLabel: label, projectLabel: 'Demo project', endpointUrl: url,
+    publicOrigin: 'https://ax.example.com', oauthIssuer: 'https://issuer.example.com/', resource: 'https://ax.example.com',
+    remoteProjectId: 'remote-demo', configFingerprint: 'config-revision', runtimeStatus: 'stopped', lastHeartbeatAt: null };
+}
+async function fixture(page: Page, options: { empty?: boolean; multiple?: boolean; clipboardDenied?: boolean; noNative?: boolean; delayExport?: boolean } = {}) {
+  let workspaceId = 'workspace-one';
+  let publications = options.empty ? [] : options.multiple ? [publication(), publication('second', 'Office Ax', 'https://office.example/projects/remote-demo/mcp')] : [publication()];
+  const requests: { path: string; method: string; body: unknown }[] = [];
+  await page.route('**/api/**', async route => {
+    const request = route.request(); const path = new URL(request.url()).pathname; const method = request.method();
+    const body: unknown = request.postData() ? request.postDataJSON() : null;
+    requests.push({ path, method, body });
+    let value: unknown;
+    if (path === '/api/remote-mcp/publications/') value = { workspaceId, projectLabel: 'Demo project', csrf: 'fixture-csrf', publications };
+    else if (path.endsWith('/export')) {
+      expect(request.headers()['x-ax-csrf']).toBe('fixture-csrf');
+      const args = request.postDataJSON() as { client: string; transport: string; workspaceId: string; configFingerprint: string }; // Fixture mirrors the typed export request.
+      const capturedWorkspace = workspaceId; const selected = publications.find(p => path.split('/').at(-2) === p.id) ?? publication();
+      let server: Record<string, unknown> = args.transport === 'proxy' ? { command: 'ax', args: ['mcp', 'remote', 'proxy', '--url', selected.endpointUrl] } : { url: selected.endpointUrl };
+      if (args.client === 'vscode' || args.client === 'claudeCode') server.type = args.transport === 'proxy' ? 'stdio' : 'http';
+      if (args.client === 'cline') { if (args.transport === 'direct') server.type = 'streamableHttp'; server = { ...server, disabled: false, autoApprove: [] }; }
+      value = { workspaceId: capturedWorkspace, publicationId: selected.id, configFingerprint: args.configFingerprint, client: args.client,
+        serverKey: 'axRemoteDemo', format: args.client === 'chatgpt' ? 'url' : 'json', fileName: args.client === 'chatgpt' ? null : 'mcp.json',
+        content: args.client === 'chatgpt' ? selected.endpointUrl : JSON.stringify({ [args.client === 'vscode' ? 'servers' : 'mcpServers']: { axRemoteDemo: server } }, null, 2),
+        instructions: ['Merge this entry into your receiving client settings.'], requirements: options.noNative && args.transport === 'proxy' ? ['Register a native Ax OAuth client first.'] : [],
+        loginCommand: options.noNative ? null : `ax mcp remote login --url '${selected.endpointUrl}' --client-id 'native-public'`, containsSecrets: false };
+      if (options.delayExport) await new Promise(resolve => setTimeout(resolve, 350));
+    } else if (path.endsWith('/check')) value = { workspaceId, publicationId: 'publication', configFingerprint: 'config-revision', state: 'signInRequired', message: 'Endpoint reachable, sign-in required. Project access has not been verified.' };
+    else if (path.endsWith('/import')) { publications = [publication()]; value = { workspaceId, registered: true }; }
+    else if (path.startsWith('/api/remote-mcp/publications/') && method === 'DELETE') { publications = []; value = { workspaceId, removed: true }; }
+    else if (path === '/api/remote-mcp/') value = { csrf: 'fixture-csrf', connections: [] };
+    else if (path === '/api/share/status') value = { readonly: false, sharing: false, port: 7070 };
+    else if (path === '/api/stats') value = { readonly: false, project_name: 'Demo project', node_count: 0, edge_count: 0, file_count: 0, db_size_bytes: 0, languages: [] };
+    else if (path === '/api/ship/config') value = { config: { ship: { target_branch: 'main', web_port: 7070 }, remote: { provider: 'github' }, quality_gate: { steps: [], tests: {} }, sonar: {}, ui: {} } };
+    else if (path === '/api/ship/review-language') value = { code: 'en', languages: [] };
+    else if (path === '/api/workspace/current') value = { ok: true, workspace: { path: '/demo', label: 'Demo project', initialized: true }, recent: [] };
+    await route.fulfill({ status: value === undefined ? 404 : 200, json: value ?? { error: 'Fixture endpoint not provided' } }).catch(() => {});
+  });
+  await page.addInitScript(({ denied }) => {
+    localStorage.setItem('ax-theme', 'azure-light'); localStorage.setItem('ax-theme-mint-v2', '1');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => {
+      if (denied) throw new DOMException('Denied', 'NotAllowedError');
+      localStorage.setItem('fixture-copied', value);
+    } } });
+  }, { denied: options.clipboardDenied ?? false });
+  return { requests, switchProject: async () => { workspaceId = 'workspace-two'; publications = []; await page.evaluate(() => window.dispatchEvent(new CustomEvent('ax-workspace-switched'))); } };
+}
+
+test('copies and downloads the exact client JSON and distinguishes endpoint reachability from login', async ({ page }, info) => {
+  await fixture(page); await page.goto('/settings?section=remote'); const section = page.locator('.remote-mcp-publish');
+  await expect(section.getByRole('heading', { name: 'Share this project' })).toBeVisible();
+  await expect(section).toContainText('Server stopped');
+  await expect(section.getByLabel('Generated MCP configuration')).toContainText(endpoint);
+  await section.getByLabel('MCP client').selectOption('vscode');
+  const preview = section.getByLabel('Generated MCP configuration'); await expect(preview).toContainText('"servers"');
+  const content = await preview.inputValue();
+  await section.getByRole('button', { name: 'Copy configuration', exact: true }).click();
+  await expect(section.getByRole('status')).toHaveText('Configuration copied.');
+  expect(await page.evaluate(() => localStorage.getItem('fixture-copied'))).toBe(content);
+  const downloadPromise = page.waitForEvent('download'); await section.getByRole('button', { name: 'Download configuration' }).click(); const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('mcp.json'); expect(readFileSync((await download.path())!, 'utf8')).toBe(content);
+  await section.getByRole('button', { name: 'Verify endpoint' }).click(); await expect(section).toContainText('Endpoint reachable, sign-in required. Project access has not been verified.');
+  await section.getByRole('button', { name: 'Copy MCP URL' }).click(); await expect(section.getByRole('status').filter({ hasText: 'MCP URL copied.' })).toBeVisible(); expect(await page.evaluate(() => localStorage.getItem('fixture-copied'))).toBe(endpoint);
+  await section.getByLabel('MCP client').selectOption('chatgpt'); await expect(preview).toHaveValue(endpoint);
+  await expect(section.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  if (process.env.AX_REMOTE_SCREENSHOTS) { await section.getByLabel('MCP client').selectOption('cursor'); await expect(preview).toContainText('mcpServers'); await page.setViewportSize({ width: info.project.name.startsWith('mobile') ? 393 : 1280, height: info.project.name.startsWith('mobile') ? 1700 : 1150 }); await page.evaluate(() => document.querySelectorAll('*').forEach(el => { if (el instanceof HTMLElement && el.scrollTop) el.scrollTop = 0; })); await page.screenshot({ scale: 'css', path: `/workspace/scratch/af878848d9ea/ax/site/public/screenshots/remote-mcp-project-${info.project.name.startsWith('mobile') ? 'mobile' : 'desktop'}.png`, fullPage: true }); }
+});
+
+test('requires publisher selection and uses Cline proxy with no invented native login command', async ({ page }) => {
+  await fixture(page, { multiple: true, noNative: true }); await page.goto('/settings?section=remote'); const section = page.locator('.remote-mcp-publish');
+  await expect(section.getByLabel('Publisher')).toHaveValue(''); await expect(section.getByLabel('Generated MCP configuration')).toHaveCount(0);
+  await section.getByLabel('Publisher').selectOption('second'); await expect(section.getByLabel('Generated MCP configuration')).toContainText('office.example');
+  await section.getByLabel('MCP client').selectOption('cline'); await expect(section.getByLabel('MCP transport')).toHaveValue('proxy');
+  await expect(section.getByLabel('Generated MCP configuration')).toContainText('"command": "ax"');
+  await expect(section.getByRole('button', { name: 'Copy login command (POSIX)' })).toBeDisabled();
+  await section.getByLabel('MCP transport').selectOption('direct'); await expect(section.getByLabel('Generated MCP configuration')).toContainText('streamableHttp');
+});
+
+test('clipboard denial selects manual text without a copied confirmation', async ({ page }) => {
+  await fixture(page, { clipboardDenied: true }); await page.goto('/settings?section=remote'); const section = page.locator('.remote-mcp-publish');
+  await section.getByRole('button', { name: 'Copy configuration', exact: true }).click();
+  await expect(section.getByRole('alert')).toContainText('Clipboard access was denied');
+  await expect(section.getByRole('status')).toHaveCount(0);
+  await expect(section.getByLabel('Generated MCP configuration')).toBeFocused();
+  const selected = await section.getByLabel('Generated MCP configuration').evaluate(e => { if (!(e instanceof HTMLTextAreaElement)) throw new Error('Expected textarea'); return e.selectionEnd - e.selectionStart; });
+  expect(selected).toBeGreaterThan(20);
+});
+
+test('workspace switch clears old configuration and ignores a late response in embedded IDE mode', async ({ page }) => {
+  const f = await fixture(page, { delayExport: true }); await page.goto('/settings?section=remote&embed=1');
+  await expect(page.locator('html')).toHaveAttribute('data-ax-embed', '1');
+  await expect.poll(() => f.requests.some(r => r.path.endsWith('/export'))).toBe(true);
+  await f.switchProject(); await expect(page.locator('.remote-mcp-publish')).toContainText('No remote server is registered');
+  await page.waitForTimeout(450); await expect(page.getByLabel('Generated MCP configuration')).toHaveCount(0); await expect(page.getByRole('button', { name: 'Copy MCP URL' })).toHaveCount(0);
+});
+
+test('registration opens a modal, sends only a JSON object and removes only the local registration', async ({ page }) => {
+  const f = await fixture(page, { empty: true }); await page.goto('/settings?section=remote');
+  await page.getByRole('button', { name: 'Register server configuration' }).click(); const modal = page.getByRole('dialog', { name: 'Register server configuration' });
+  await expect(modal).toBeVisible();
+  await modal.getByLabel('Publisher label (optional)').fill('Team Ax');
+  await modal.getByLabel('Server configuration file').setInputFiles({ name: 'remote.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ public_url: 'https://ax.example.com', oauth: { issuer: 'https://issuer.example/', jwks_uri: 'https://issuer.example/jwks' }, projects: [{ id: 'remote-demo', root: '/demo', subjects: ['subject'] }] })) });
+  await modal.getByRole('button', { name: 'Register active project' }).click(); await expect(modal).toHaveCount(0);
+  const imported = f.requests.find(r => r.path.endsWith('/import'));
+  expect(imported?.body).toMatchObject({ workspaceId: 'workspace-one', name: 'Team Ax', config: { public_url: 'https://ax.example.com' } });
+  await page.getByRole('button', { name: 'Remove local registration' }).click(); await expect(page.locator('.remote-mcp-publish')).toContainText('No remote server is registered');
+  expect(f.requests.filter(r => r.method === 'DELETE').map(r => r.path)).toEqual(['/api/remote-mcp/publications/publication']);
+});

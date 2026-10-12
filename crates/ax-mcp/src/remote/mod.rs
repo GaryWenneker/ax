@@ -3,6 +3,9 @@ pub mod auth;
 pub mod client;
 pub mod config;
 pub mod credentials;
+pub mod export;
+pub mod probe;
+pub mod publications;
 pub mod server;
 
 pub use config::RemoteConfig;

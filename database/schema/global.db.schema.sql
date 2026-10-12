@@ -268,3 +268,34 @@ CREATE TABLE IF NOT EXISTS local_replication_status (
     last_sync_at TIMESTAMP,
     sync_state TEXT NOT NULL DEFAULT 'configured'
 );
+
+-- Public MCP export metadata. Credentials and server grants are never stored here.
+CREATE TABLE IF NOT EXISTS remote_mcp_publishers (
+    id TEXT PRIMARY KEY,
+    public_origin TEXT NOT NULL,
+    oauth_issuer TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    label TEXT NOT NULL,
+    config_fingerprint TEXT NOT NULL,
+    client_registrations TEXT NOT NULL DEFAULT '{}',
+    configured_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS remote_mcp_publications (
+    id TEXT PRIMARY KEY,
+    publisher_id TEXT NOT NULL REFERENCES remote_mcp_publishers(id) ON DELETE CASCADE,
+    remote_project_id TEXT NOT NULL,
+    canonical_project_root TEXT NOT NULL,
+    project_label TEXT NOT NULL,
+    endpoint_url TEXT NOT NULL,
+    UNIQUE(publisher_id, remote_project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_remote_mcp_root ON remote_mcp_publications(canonical_project_root);
+CREATE TABLE IF NOT EXISTS remote_mcp_runtime_leases (
+    publisher_id TEXT PRIMARY KEY REFERENCES remote_mcp_publishers(id) ON DELETE CASCADE,
+    instance_id TEXT NOT NULL,
+    config_fingerprint TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    last_heartbeat_at INTEGER NOT NULL,
+    stopped_at INTEGER
+);

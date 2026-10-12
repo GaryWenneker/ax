@@ -4,6 +4,7 @@ pub mod access;
 pub mod database;
 pub mod graph;
 pub mod policy;
+pub mod remote_mcp_publications;
 pub mod sync;
 
 #[cfg(test)]
