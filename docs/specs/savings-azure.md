@@ -1,6 +1,6 @@
 # SPEC — Savings page uses Azure Portal colors
 
-Status: autonomous run (spec approval not obtained).
+Status: implemented on main in PR #35. Original local verification is recorded in [savings-azure-EVIDENCE.md](savings-azure-EVIDENCE.md); the original autonomous specification did not receive separate human approval.
 Tier: 2. Isolation: landing tree, so `ax web` can embed the same files.
 
 ## Goal

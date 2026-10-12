@@ -1,15 +1,15 @@
 # SPEC — Daily trend color and list wheel
 
-Status: autonomous run (spec approval not obtained).
+Status: implemented on main in PR #35. Original local verification is recorded in [daily-trend-and-list-scroll-EVIDENCE.md](daily-trend-and-list-scroll-EVIDENCE.md); the original autonomous specification did not receive separate human approval.
 Tier: 2.
 Isolation: none — landing tree, so `ax web` embeds the same files.
 
 ## Behaviors
 
 ### D1 — Daily trend “Tokens saved” uses the Azure accent
-Given the Savings page on Azure Dark or Azure Light,
+Given the Savings page on Dark or Light,
 When the Daily trends card shows the Tokens saved view,
-Then the area stroke and fill use `var(--accent)`, the same blue as the other Savings charts,
+Then the area stroke and fill use `var(--accent)`, the selected signal color (Lime by default), as on the other Savings charts,
 And that view does not pass `var(--ok)`.
 
 ### L1 — A record does not trap the wheel

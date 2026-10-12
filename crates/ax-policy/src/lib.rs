@@ -17,6 +17,7 @@ pub mod migrate;
 pub mod pack;
 pub mod parse;
 pub mod paths;
+pub mod provenance;
 pub mod review;
 pub mod revisions;
 pub mod seed;
@@ -76,8 +77,8 @@ pub use migrate::{
     MigratePlan, MigrateSkipped,
 };
 pub use pack::{
-    default_pack_path, export_pack, import_pack, import_pack_with_options, pack_status,
-    PackExportResult, PackImportResult, PackStatus,
+    default_pack_path, export_pack, import_pack, import_pack_with_options, import_pack_with_origin,
+    pack_status, PackExportResult, PackImportResult, PackStatus,
 };
 pub use parse::{
     parse_rule_file, parse_skill_file, serialize_rule, serialize_rule_stub, serialize_skill,

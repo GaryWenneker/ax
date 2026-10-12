@@ -3,6 +3,7 @@ import { ACCENT_COLORS, THEMES, THEME_CHANGED, accentForTheme, applyTheme, loadA
 
 export default function ThemeChooser({ activeId, onSelect }: { activeId: string; onSelect: (id: string) => void }) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const selectedTheme = themeById(activeId);
   const [accentId, setAccentId] = useState(loadAccentId);
   useEffect(() => {
     const update = () => setAccentId(loadAccentId());
@@ -55,11 +56,11 @@ export default function ThemeChooser({ activeId, onSelect }: { activeId: string;
       })}
     </div>
     <div className="accent-chooser">
-      <span className="settings-row-title">Accent color</span>
+      <span className="settings-row-title">Accent color · {selectedTheme.label}</span>
       <p className="settings-row-desc">Lime matches the Ax website. Each color adapts to Light and Dark for readable controls. Header and footer backgrounds stay unchanged; error and warning colors keep their meaning.</p>
       <div className="accent-options" role="group" aria-label="Accent color">
-        {ACCENT_COLORS.map(color => <button key={color.id} type="button" className="btn accent-option" aria-pressed={accentId === color.id} onClick={() => {selectAccent(color.id);setAccentId(color.id);}}>
-          <span aria-hidden="true" className="accent-dot" style={{background:accentForTheme(themeById(activeId),color.id)}} />{color.label}{color.id === 'lime' ? ' (default)' : ''}
+        {ACCENT_COLORS.map(color => <button key={color.id} type="button" className="btn accent-option" aria-pressed={accentId === color.id} onClick={() => {selectAccent(color.id, selectedTheme);setAccentId(color.id);}}>
+          <span aria-hidden="true" className="accent-dot" style={{background:accentForTheme(selectedTheme,color.id)}} />{color.label}{color.id === 'lime' ? ' (default)' : ''}
         </button>)}
       </div>
     </div>

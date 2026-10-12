@@ -12,7 +12,7 @@ try {
   }
   if (!ready) throw Error('Local preview did not become ready');
   const result = await new Promise(resolve=>{
-    const check = spawn(process.execPath,['scripts/check-moire-motion.mjs'],{stdio:'inherit'});
+    const check = spawn(process.execPath,[process.argv[2] ?? 'scripts/check-moire-motion.mjs'],{stdio:'inherit'});
     check.on('exit',resolve);
   });
   process.exitCode = result ?? 1;

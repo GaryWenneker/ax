@@ -22,7 +22,7 @@ export function PageHero({
     <header className={`settings-hero${actions ? ' settings-hero--actions' : ''}`}>
       <div className="settings-hero-text">
         <h1 className="settings-hero-title">{title}</h1>
-        {subtitle && <p className="settings-hero-sub">{subtitle}</p>}
+        {subtitle && <details className="page-header-help"><summary>About {title}</summary><div className="settings-hero-sub">{subtitle}</div></details>}
       </div>
       {actions && <div className="settings-hero-actions">{actions}</div>}
     </header>

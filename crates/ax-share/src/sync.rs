@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use ax_memory::sync::import_shared;
-use ax_policy::{export_pack, import_pack_with_options, index_policy, open_rw_pool};
+use ax_policy::{export_pack, import_pack_with_origin, index_policy, open_rw_pool};
 use sqlx::SqlitePool;
 
 use crate::config::{load_share_config, ShareConfig, ShareProvider};
@@ -62,12 +62,14 @@ pub async fn run_sync(
 
         if config.content.rules || config.content.skills {
             if let Some(pack_dir) = pull.pack_dir {
-                let import = import_pack_with_options(
+                let origin = share_origin(&config);
+                let import = import_pack_with_origin(
                     pool,
                     project_root,
                     Some(&pack_dir),
                     force,
                     Some(require_review),
+                    Some(&origin),
                 )
                 .await
                 .map_err(|e| e.to_string())?;
@@ -80,9 +82,7 @@ pub async fn run_sync(
 
         if config.content.memory {
             if let Some(mem) = pull.memory_file {
-                let mem_result = import_shared(pool, &mem)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let mem_result = import_shared(pool, &mem).await.map_err(|e| e.to_string())?;
                 status.memory_inserted = mem_result.inserted;
                 status.memory_updated = mem_result.updated;
             }
@@ -120,22 +120,19 @@ async fn push_to_remote(
     }
 
     let memory_path = if config.content.memory {
-        Some(ax_memory::sync::export_shared(pool, project_root, "shared", None)
-            .await
-            .map_err(|e| e.to_string())?
-            .path)
+        Some(
+            ax_memory::sync::export_shared(pool, project_root, "shared", None)
+                .await
+                .map_err(|e| e.to_string())?
+                .path,
+        )
     } else {
         None
     };
 
     match config.provider {
         ShareProvider::Onedrive => {
-            onedrive::push_onedrive(
-                &config.onedrive,
-                &pack_out,
-                memory_path.as_deref(),
-            )
-            .await?;
+            onedrive::push_onedrive(&config.onedrive, &pack_out, memory_path.as_deref()).await?;
         }
         ShareProvider::Github if gitlab_api::should_use_api(&config.github) => {
             gitlab_api::push_gitlab_api(&config.github, &pack_out, memory_path.as_deref()).await?;
@@ -157,8 +154,76 @@ pub fn share_status_for_api(project_root: &Path) -> ShareSyncStatus {
 
 pub async fn open_policy_pool(project_root: &Path) -> Result<SqlitePool, String> {
     let db_path = project_root.join(".ax").join("ax.db");
-    let pool = open_rw_pool(&db_path)
-        .await
-        .map_err(|e| e.to_string())?;
+    let pool = open_rw_pool(&db_path).await.map_err(|e| e.to_string())?;
     Ok(pool)
+}
+
+/// Share URLs can contain bearer credentials; only a scrubbed location is shown.
+fn share_origin(config: &ShareConfig) -> String {
+    let raw = match config.provider {
+        ShareProvider::Github => &config.github.repo_url,
+        ShareProvider::Onedrive => &config.onedrive.share_url,
+    };
+    let parsed = reqwest::Url::parse(raw).ok().or_else(|| {
+        let (authority, path) = raw.split_once(':')?;
+        let (_, host) = authority.rsplit_once('@')?;
+        reqwest::Url::parse(&format!("ssh://{host}/{path}")).ok()
+    });
+    let location = parsed
+        .filter(|url| matches!(url.scheme(), "http" | "https" | "ssh"))
+        .and_then(|mut url| {
+            url.set_username("").ok()?;
+            url.set_password(None).ok()?;
+            url.set_query(None);
+            url.set_fragment(None);
+            Some(url.to_string())
+        })
+        .unwrap_or_else(|| "configured remote".into());
+    match config.provider {
+        ShareProvider::Github => format!(
+            "Git policy share {location} · branch {}",
+            config.github.branch
+        ),
+        ShareProvider::Onedrive => {
+            let host = reqwest::Url::parse(&location)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned));
+            format!(
+                "OneDrive policy share {}",
+                host.as_deref().unwrap_or("configured remote")
+            )
+        }
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+    #[test]
+    fn share_source_never_contains_url_credentials_or_query_tokens() {
+        let mut config = ShareConfig {
+            provider: ShareProvider::Github,
+            ..Default::default()
+        };
+        config.github.repo_url =
+            "https://user:secret@example.com/team/policies.git?token=private#credential".into();
+        let source = share_origin(&config);
+        assert_eq!(
+            source,
+            "Git policy share https://example.com/team/policies.git · branch main"
+        );
+        config.github.repo_url = "git@example.com:team/policies.git".into();
+        assert_eq!(
+            share_origin(&config),
+            "Git policy share ssh://example.com/team/policies.git · branch main"
+        );
+        config.provider = ShareProvider::Onedrive;
+        config.onedrive.share_url = "https://secret@example.com/team?access_token=private".into();
+        assert_eq!(share_origin(&config), "OneDrive policy share example.com");
+        config.onedrive.share_url = "secret-no-url".into();
+        assert_eq!(
+            share_origin(&config),
+            "OneDrive policy share configured remote"
+        );
+    }
 }

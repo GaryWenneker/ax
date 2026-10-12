@@ -123,7 +123,10 @@ pub async fn approve_pending_kind(
             .save_rule(doc.frontmatter, doc.body)
             .await
             .map_err(|e| AxError::Other(e.error))?;
-        let _ = std::fs::remove_file(&rule_path);
+        crate::provenance::remove_pending_origin(&rule_path).await?;
+        tokio::fs::remove_file(&rule_path)
+            .await
+            .map_err(|e| AxError::Other(e.to_string()))?;
         index_policy(pool, project_root, false).await?;
         return Ok(ReviewActionResult {
             ok: true,
@@ -144,7 +147,10 @@ pub async fn approve_pending_kind(
             .await
             .map_err(|e| AxError::Other(e.error))?;
         let dir = skill_path.parent().map(Path::to_path_buf);
-        let _ = std::fs::remove_file(&skill_path);
+        crate::provenance::remove_pending_origin(&skill_path).await?;
+        tokio::fs::remove_file(&skill_path)
+            .await
+            .map_err(|e| AxError::Other(e.to_string()))?;
         if let Some(d) = dir {
             let _ = std::fs::remove_dir(&d);
         }
@@ -179,6 +185,7 @@ pub async fn reject_pending_kind(
 
     let rule_path = rule_file(&pending_rules_dir(&ax_dir), id);
     if kind != Some("skill") && rule_path.is_file() {
+        crate::provenance::remove_pending_origin(&rule_path).await?;
         std::fs::remove_file(&rule_path).map_err(|e| AxError::Other(e.to_string()))?;
         let _ = pool; // keep signature consistent; no DB row for pending files
         return Ok(ReviewActionResult {
@@ -192,6 +199,7 @@ pub async fn reject_pending_kind(
     let skill_dir = pending_skills_dir(&ax_dir).join(id);
     let skill_path = skill_dir.join(SKILL_FILENAME);
     if kind != Some("rule") && skill_path.is_file() {
+        crate::provenance::remove_pending_origin(&skill_path).await?;
         std::fs::remove_file(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
         let _ = std::fs::remove_dir(&skill_dir);
         return Ok(ReviewActionResult {

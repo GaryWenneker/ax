@@ -180,7 +180,7 @@ async fn retain(
             if let Some(previous) = previous {
                 let old: ax_db::replication::Dataset =
                     serde_json::from_str(&previous).map_err(|e| e.to_string())?;
-                ax_usage::replication::retain(root,&old,&mut item).await?;
+                ax_usage::replication::retain(root, &old, &mut item).await?;
                 ax_db::replication::retain_logs(root, &old, &mut item)
                     .map_err(|e| e.to_string())?;
             }
@@ -569,16 +569,41 @@ mod tests {
         incoming.files.insert("state/skills.json".into(),serde_json::json!([{"name":"older-skill","description":"Existing workflow","alwaysApply":false,"triggers":[],"tags":[],"priority":70,"body":"Existing workflow body","sourcePath":"","enabled":true,"status":"approved","scope":"project"}]).to_string());
         incoming.revision = server_snapshot::revision(&incoming).unwrap();
         let cluster = publish(&c, "project", Some(&incoming)).await.unwrap();
+        let records: Vec<Value> = serde_json::from_str(&cluster.files["state/rules.json"]).unwrap();
+        let transport_properties: std::collections::HashSet<&str> = records[0]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            transport_properties,
+            std::collections::HashSet::from([ORIGIN, CONTENT]),
+            "Source display must not add policy properties that older peers count as edits"
+        );
         let report = crate::server_apply::apply(&c, &cluster).await.unwrap();
         assert_eq!(report.policy_queued, 2);
         let pending = ax_policy::paths::pending_rules_dir(&dir.path().join(".ax"));
         let path = std::fs::read_dir(&pending)
             .unwrap()
-            .next()
-            .unwrap()
+            .map(Result::unwrap)
+            .find(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("mdc"))
             .unwrap()
             .path();
         let raw = std::fs::read_to_string(&path).unwrap();
+        let origin = ax_policy::provenance::pending_origin(&path, &raw)
+            .await
+            .unwrap();
+        assert_eq!(
+            origin,
+            format!(
+                "Replica node replica · project {} · policy {} · cluster {} · revision {}",
+                cluster.project_id,
+                records[0]["id"].as_str().unwrap(),
+                c.cluster_id,
+                cluster.revision
+            )
+        );
         let imported = ax_policy::parse::parse_rule_file(&path, &raw).unwrap();
         assert_eq!(imported.frontmatter.status, "pending");
         assert!(!imported.frontmatter.enabled);
@@ -588,6 +613,7 @@ mod tests {
         ax_policy::review::approve_pending(ax.db_pool(), dir.path(), &imported.frontmatter.id)
             .await
             .unwrap();
+        assert!(!path.with_extension("origin.json").exists());
         let native = server_snapshot::export_native(&c, "project").await.unwrap();
         assert!(!native.files["state/rules.json"].contains("Existing safety rule"));
         let approved = ax_policy::list_rules(ax.db_pool()).await.unwrap();

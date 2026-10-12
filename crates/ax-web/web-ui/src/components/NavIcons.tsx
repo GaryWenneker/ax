@@ -12,7 +12,6 @@ type NavId =
   | 'prices'
   | 'ship'
   | 'sonar'
-  | 'agent'
   | 'settings'
   | 'logging'
   | 'policy-rules'
@@ -34,7 +33,6 @@ const NAV_CODICONS: Record<NavId, string> = {
   prices: 'tag',
   ship: 'rocket',
   sonar: 'shield',
-  agent: 'terminal',
   settings: 'settings-gear',
   logging: 'output',
   'policy-rules': 'law',
@@ -63,7 +61,6 @@ export const PAGE_LABELS: Record<string, string> = {
   prices: 'Prices',
   ship: 'Command Center',
   sonar: 'SonarQube',
-  agent: 'Agent',
   settings: 'Settings',
   logging: 'Logging',
   'policy-rules': 'Rules',

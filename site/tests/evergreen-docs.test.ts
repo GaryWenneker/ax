@@ -21,3 +21,9 @@ test('website documentation has no per-version update sections', () => {
   scan(root);
   assert.deepEqual(violations,[],'Document current behavior in place; do not add version-by-version updates');
 });
+
+test('README describes current behavior without a per-version update list', () => {
+  const content = readFileSync(path.resolve(root, '../../../../README.md'), 'utf8');
+  assert.doesNotMatch(content, /^\*\*(?:v\d+\.\d+\.\d+|Unreleased:)/m);
+  assert.doesNotMatch(content, /\[What's new\]/i);
+});

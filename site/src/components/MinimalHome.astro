@@ -1,6 +1,7 @@
 ---
 import MinimalDownload from './MinimalDownload.astro';
 import MotionControl from './MotionControl.astro';
+import ScrollReveal from './ScrollReveal.astro';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <a class="ax-skip" href="#main">Skip to content</a>
@@ -14,8 +15,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   </div>
 
   <header class="ax-header">
-    <a class="ax-wordmark" href={base + '/'} aria-label="Ax home">Ax<span>_</span></a>
-    <nav class="ax-navigation" aria-label="Primary navigation">
+    <a class="ax-wordmark" data-ax-reveal href={base + '/'} aria-label="Ax home">Ax<span>_</span></a>
+    <nav class="ax-navigation" data-ax-reveal aria-label="Primary navigation">
       <a href={base + '/getting-started/introduction/'}>Docs ↗</a>
       <a href="https://github.com/GaryWenneker/ax" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
       <MotionControl />
@@ -24,13 +25,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
   <main class="ax-main" id="main">
     <div class="ax-content">
-      <p class="ax-eyebrow">LOCAL-FIRST / OPEN SOURCE / DEVELOPER TOOLING</p>
-      <div class="ax-display-word" aria-hidden="true">Ax<span>_</span></div>
+      <p class="ax-eyebrow" data-ax-reveal>LOCAL-FIRST / OPEN SOURCE / DEVELOPER TOOLING</p>
+      <div class="ax-display-word" data-ax-reveal aria-hidden="true">Ax<span>_</span></div>
       <h1 class="ax-headline"><span>Your context.</span><span>Your rules.</span><span class="ax-headline-accent">Your control.</span></h1>
-      <div class="ax-feature-strip" aria-label="Core capabilities">
+      <div class="ax-feature-strip" data-ax-reveal aria-label="Core capabilities">
         <span>Context</span><span>Rules</span><span>Control</span><span>One native binary</span>
       </div>
-      <p class="ax-explainer">
+      <p class="ax-explainer" data-ax-reveal>
         Local-first code intelligence, persistent memory, MCP integration and
         policy-driven development. One native binary.
       </p>
@@ -39,10 +40,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   </main>
 
   <footer class="ax-footer">
-    <span>© Ax · Open source · MIT · Native Rust</span>
-    <div class="ax-footer-links">
+    <span data-ax-reveal>© Ax · Open source · MIT · Native Rust</span>
+    <div class="ax-footer-links" data-ax-reveal>
       <a href={base + '/getting-started/installation/'}>Install guide</a>
       <a href="https://github.com/GaryWenneker/ax/releases/latest" target="_blank" rel="noopener noreferrer">Releases ↗</a>
     </div>
   </footer>
 </div>
+
+<ScrollReveal />

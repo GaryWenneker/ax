@@ -1,6 +1,6 @@
 # SPEC — ratatouille
 
-Status: autonomous run (spec approval not obtained). The request was to make the menu.
+Status: launcher implemented on main in PR #35. Release and deployment menu actions remain explicit manual operations, not a claim that they have been executed. The original autonomous specification did not receive separate human approval.
 Tier: 2.
 Isolation: none. The launcher lives in this checkout.
 

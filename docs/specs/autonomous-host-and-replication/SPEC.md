@@ -1,6 +1,6 @@
 # Autonomous remote hosting and complete project replication
 
-Status: implementation and local verification complete. Ready to merge; releases and deployments remain paused.
+Status: implemented and merged to main in [PR #42](https://github.com/GaryWenneker/ax/pull/42). Subsequent interface and connection-cleanup work is merged in [PR #48](https://github.com/GaryWenneker/ax/pull/48). Releases and deployments remain paused. Physical LAN discovery has not been validated in this environment.
 
 ## Goal
 
@@ -38,7 +38,7 @@ Only Azure Portal Light and Dark themes remain, named Light and Dark. Migrate ol
 
 ## Implementation checkpoint
 
-- Autonomous host, built-in OAuth, selected-interface setup and settings UI are reconstructed and saved on the feature branch.
+- Autonomous host, built-in OAuth, selected-interface setup and settings UI are implemented and merged in PR #42.
 - Protocol 3 includes graph/source, logs, memory/policy and explicitly project-scoped usage/conversation data.
 - Complete three-node HTTP exchange and 603 backend unit tests passed, including restart reads, source availability, collision protection, no feedback, history retention and OAuth refresh replay/revocation.
 - All 52 desktop/mobile browser checks, 35 website checks, frontend production build, theme/log parsing checks and strict Clippy passed. Current screenshots include a real installed-host capture.

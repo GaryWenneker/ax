@@ -3,102 +3,19 @@
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 
-**Current release: [v7.1.0](https://github.com/GaryWenneker/ax/releases/tag/v7.1.0)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+**Download the [latest release](https://github.com/GaryWenneker/ax/releases/latest)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
 Sharing a page on [getax.wenneker.io](https://getax.wenneker.io) previews that page. The site build screenshots it and stamps the current release on the card.
 
 **Development source:** Command Center can generate and manage a remote MCP host with built-in OAuth, project-scoped approval, client registration, refresh and revocation. Replication transfers the full graph and indexed source, memory, daily MCP logs, structured call history, working context and durable conversations. Settings provides persistent node setup, a selected advertised IP, real service/activity status and Light/Dark themes. See [remote hosting](https://getax.wenneker.io/guides/remote-mcp/) and [replication](https://getax.wenneker.io/guides/standalone-ax/). Build and reinstall Ax from source to use these changes; no release or deployment is implied.
 
-**v7.1.0** (minor) seeds generated-client, Kubernetes, container-image, design-token, and CSS-layer rules, plus a pnpm release-age skill. React and TypeScript stacks gain composition, test, and strictness rules. `ax costs` can report imported sessions when a period has no quoted usage events. Command Center plays a short green intro on a full page load.
-
-**v7.0.0** (major) seeds Ax's architecture with `ax bootstrap`, keeps Pi as the agent runtime, and shows Agent activity as status instead of a raw context report. Cost quotes stay advisory.
-
-**v6.3.0** (minor) initializes every project it can find when you install or upgrade ax. The scan walks four levels under your home directory, skips hidden and dependency folders, and runs `ax init` on each git repo, project manifest, or existing ax project without asking questions. Run it again with `ax init --all`. Set `AX_SKIP_PROJECT_INIT=1` to skip.
-
 **ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP. The `pr` skill reviews the draft it opened and keeps fixing until a review round has zero findings. `ax init` seeds that skill together with `old-coder`, `old-coder-api`, `review-loop`, `dotnet-code-review`, `typescript-review`, and `react-review`.
 
-**v5.1.0** (minor) saves a memory after every agent turn that changed files or made a commit: the prompt (secrets redacted), the files changed, and the commits made. Turn memories are found with `ax_recall` / `ax recall`, are never injected into preflight or exported, and are deleted after 30 days. Run `ax install` again to add the turn hooks for Cursor and Claude Code; switch them off with `"memory": { "perTurn": false }` in `ax.json`.
-
-**v5.0.3** (patch) makes git auto-capture work again on macOS and Linux: git hooks are written with a shebang and the execute bit, broken ones are repaired by `ax init`, `ax sync`, and MCP startup, and the hooks run the quality gate quietly (`ax ship --evaluate --quiet`). Run `ax capture-git --limit 100` once to backfill missed commits.
-
-**v5.0.2** (patch) fixes the docs site on phones: the menu button is visible again and the header bar runs edge to edge. The binaries are the same as v5.0.1 apart from the version number.
-
-**v5.0.1** (patch) removes built-in defaults that only fit one team: `ax docs-catalog sync` has no built-in wiki (set `docsCatalog.wiki_remote` in `ax.json`), the OneDrive share has no default folder, and the `pr` / `preq` / `pre-pr-check` / `no-ab-prefix` skill templates are generic and in English.
-
-**v5.0.0** (major) keeps **one copy of every rule and skill**: a name stored at the global level is removed from project `ax.db` files automatically (the longest copy wins, every change is versioned, files on disk stay). It also adds the **read guard hook** (the first whole-file read of indexed source is steered to `ax_node`), a **review loop** after the old-coder gauntlet, the **`pr-review-comments`** skill for colleague PRs, and principal-level review skills for every stack pack. `ax init` no longer seeds global skills into projects. See [What's new](https://getax.wenneker.io/getting-started/introduction/) and [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).
-
-**v8.1.0** (minor) publishes the work that landed after v8.0.0: standalone Primary and Replica setup, team and node access, deterministic preflight retrieval, and the Command Center and public-site updates.
-
-**v8.0.0 — Smart Output:** MCP responses use compact agent context, lean metadata and project-bound on-demand expansion. Mandatory rule bodies are preserved; unrelated preflight catalogs are omitted. See [Smart Output](https://getax.wenneker.io/guides/smart-output/) for memory retrieval, scope migration and compatibility.
-
-**Unreleased:** `ax init` asks which **IDEs** to connect (same menu as stacks), saves the choice in `ax.json` (`agents.ides`), pre-checks it on the next run, and removes ax from every configured IDE you uncheck. "Found" now means the CLI or app is really installed, not that a config folder exists. Disconnecting Claude Code also cleans the project's `.mcp.json`, and `ax policy pack import` no longer reconnects IDEs you turned off. The Code-OSS fork target is removed. `AX_INIT_IDES` answers it in scripts.
-
-**v4.12.0** adds **stack-aware policy seeding** (`ax policy stack`, init asks every time) and a **configurable policy folder** (`policy.agentsDir`, default `.agents`, also in Command Center settings). See [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).
-
-**v4.8.0** adds Command Center **History** (hash-on-change policy revisions, cap 20) and zip `contentHash` with Reject/Accept restore. See [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).
-
-**v4.7.1** adds safer policy zip restore (Skip/Install on new items, local-vs-package newer badges, no older overwrite by default), WCAG AA macOS status-bar ink, and the Command Center update notice at `ax web` start.
-
-**v4.6.0** adds **Graph Start here** (Leiden subsystems, god-node tour, suggested questions) and an opt-in **Domain** overlay (`.ax/domain-graph.json`, agent `domain` skill) so you can show business flows without writing those nodes into `ax.db`. See [Architecture Insights](https://getax.wenneker.io/guides/architecture-insights/).
-
-**v4.5.0** serves **graph-only snippets** (`ax_explore` / `ax_context` read indexed source from `ax.db`) and adds `policy.storage: "database"` with `ax policy import` / `ax policy export`.
-
-**v4.4.0** **guards old-coder end-to-end** — `alwaysApply` skills inject on every turn (including empty prompts), `guard: require-skill: "old-coder"` blocks writes when the skill is missing, and preflight never hard-truncates always-apply rules or skills. Also ships **OKF export** (`ax export okf`) and preflight hardening (`projectPath`, degrade-on-error). See [Policy Engine](https://getax.wenneker.io/guides/policy-engine/) and [OKF](https://getax.wenneker.io/guides/okf/).
-
-**v4.3.1** seeds **global old-coder policy** on init/install — evidence-first skills plus a CRITICAL `alwaysApply` rule for implementation work.
-
-**v4.2.0** improves **policy filtering and Azure DevOps pack depth**:
-
-- **Label autocomplete** on Policy → Rules / Skills (tag chips, AND filter; tags required on save). **Rules and Skills** lists group by a shared catalog (collapsible; empty folders hidden until assigned).
-- **Expanded `azdo-fullstack` skills** — full workflows from refinement through release (`ax policy pack install azdo-fullstack --force` to refresh).
-- **Pack install → database** — install force-imports into `ax.db` when storage mode is database.
-
-**v4.1.0** added policy layers, default pack export, built-in packs, Policy Sync/Review, pricing catalog, and `ax desktop`.
-
-**v4.0.0** is the **federation, share, and Command Center maturity** release:
-
-- **Monorepo workspaces** — `ax init --workspace`, `ax index --all` / `ax sync --all`, workspace switcher, `ax policy pull`.
-- **Multi-format graph export** — CLI + Graph page Download/Copy (JSON, GraphML, DOT, Mermaid, PlantUML, Cypher, HTML).
-- **Extractor plugins** — process host (optional WASM); Settings → Plugins.
-- **Optional ONNX embeddings** — dense vectors behind the `onnx` feature; Settings → Embeddings.
-- **`ax ship --ci`** — headless quality gate + reusable `.github/workflows/ax-ship.yml`.
-- **LSP bridge** — Exact edges via `ax-lsp`; Unresolved → enrich (limit, server checklist, report).
-- **`ax share` + PWA** — LAN token gate, Settings → Sharing, opt-in install, Activity chip (SSE).
-- **Light and Dark** — the two Command Center themes use Azure Portal styling, saved browser preferences and accessible contrast. Removed theme preferences migrate to Dark.
-
-**v3.1.0** focused on **agent-side diagnostics, safer auto-commit, and policy flexibility** (diagnostics bridge, generic guard directives, Stop hook, ship auto-commit, MCP Logging polish, VS Code / Windsurf / Zed).
-
-**v3.0.0** was a major release focused on **agent observability and savings accuracy**:
-
-- **MCP Logging** — live Command Center table for `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` (daily rotation; kind/date/tool filters, Call Inspector, scroll-up history, project switcher).
-- **MCP Quality** — status-bar **Q** chip + slide-out; CLI `ax mcp audit` scores correlation, enrichment, and Explore-before-Grep waste; **Copy fixpack** for agent-ready briefs.
-- **Cursor sessionStart hook** — `ax savings hook install` tags Composer chats with picker model + session id for savings and audit correlation.
-- **Savings dashboard** — activity heatmap, period filter, TokenViz path graph, by-model rollups.
-- **Architecture Graph** — interactive Leiden communities, god nodes, confidence-tagged edges, doc nodes.
-- **Document inventory** — PDF / Office / Markdown as `Doc` nodes; `<ax_index>` on every `ax_preflight`.
-
-**v2.1.14** adds **document inventory** — Markdown (parsed), PDF, Office, and other doc types as `Doc` nodes; `stats.docsByExtension` in `ax status`; `<ax_index>` auto-injected on every `ax_preflight` turn.
-
-**v2.1.7** fixes **SonarQube dashboard responsiveness** in Command Center (iframe overlay, lighter dark-theme injection), improves **token savings counterfactuals** (line-range spans, related-file arrays, `AX_SAVINGS_CF_MODE`), and adds **running-state animations** across Ship, Savings, Sonar, and Settings.
-
-**v2.1.6** adds the **memory vault** — `ax remember`, `ax recall`, `ax capture-git`, MCP `ax_remember` / `ax_recall`, Command Center **Memory** page (modal composer), git-hook auto-capture on commit, and hybrid FTS5 + vector recall injected via `ax_preflight`. **Savings** leaves beta with real BPE token counts and dollar estimates. **Cursor auth switching** — `ax cursor auth save/use/list` for fast subscription profile switching. **Command Center** gains a **project browser** (disk navigation, ax-project detection, in-browser `ax init`), modal-based forms, and a comprehensive SonarQube dark-theme proxy with auto-login, cached credentials, and localhost fallback.
-
-**v2.1.5** adds **context-token savings tracking** — each MCP graph call logs estimated savings vs reading full files in `~/.ax/usage.db`. Query via `ax savings` and the **Savings** page in `ax web`. Import Cursor / Claude Code session logs with `ax savings import --all`.
-
-**v2.1.3** adds **`ax policy storage status`** — explicit subcommand to show effective storage mode (project + global config paths and values).
-
-**v2.1.2** improves **policy migration to database** — `--migrate` recursively scans the whole repo for `.mdc` rules and `SKILL.md` skills (not only `.ax/policy/`), with per-item interview questions before import. Use `--yes` to apply with parsed defaults.
-
-**v2.1.1** adds **policy capture** — propose team rules from directive language in prompts, interview the user on options, save to `ax.db`. Plus `ax policy storage` and `ax upgrade --local` for dev releases.
-
-**v2.0.0** adds an **IDE-agnostic policy engine** — project rules and skills in `.ax/policy/`, delivered via MCP, CLI, prompt-hook, and **ax web**. See [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md).
-
-**v2.1.0** adds the **Command Center** — git-aware quality gates, test-impact analysis, SSE dashboard, and draft PRs (Azure DevOps or GitHub). See [Command Center guide](https://getax.wenneker.io/guides/command-center/).
-
-- **100% local** — no source code leaves your machine
+- **Local by default** — source stays on your machine unless you explicitly enroll a project in authenticated replication
 - **Deterministic** — graph data comes from AST extraction, not LLM summaries
 - **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed, and more
 - **Native Rust** — single binary, no Node.js runtime required
+- **Policy reviews** — compare incoming and current content, see recorded pack or replica origins, classify new/duplicate/replacement changes and approve selected items in bulk
 - **Connection cleanup** — remove inactive OAuth grants and revoked replicas in Command Center while keeping revoked replica access blocked and synchronized project data available
 
 Docs: [getax.wenneker.io](https://getax.wenneker.io) — MCP loop: [MCP Logging & Quality](https://getax.wenneker.io/guides/mcp-quality/)

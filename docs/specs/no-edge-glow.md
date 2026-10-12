@@ -1,6 +1,6 @@
 # SPEC — No edge glow animations
 
-Status: autonomous run (spec approval not obtained; user asked to continue without a further question).
+Status: implemented on main in PR #35. Original local verification is recorded in [no-edge-glow-EVIDENCE.md](no-edge-glow-EVIDENCE.md); the original autonomous specification did not receive separate human approval.
 Tier: 2 (normal — visual chrome change, existing e2e encodes the opposite behavior).
 Isolation: none — continue in the landing tree so `ax web` embed matches the files under test.
 
