@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   THEMES,
+  ACCENT_COLORS,
+  accentForTheme,
   contrastRatioHex,
   ensureTextContrast,
   ensureWhiteOnFill,
@@ -55,10 +57,21 @@ describe('WCAG AA contrast', () => {
   });
 
   it('uses dark status ink on a light fill', () => { const ink=statusbarInk('#64d2ff');assert.equal(ink.onLight,true);assert.ok(contrastRatioHex(ink.fg,'#64d2ff')>=4.5); });
-  it('W10 applyTheme computes statusbar ink from painted fill', async () => {
+  it('keeps the status bar surface neutral when accent changes', async () => {
     const { readFile } = await import('node:fs/promises');
     const src = await readFile(new URL('./themes.ts', import.meta.url), 'utf8');
-    assert.match(src, /statusbarInk\(fill\)/);
+    assert.match(src, /statusbarInk\(theme.bgSide\)/);
     assert.equal(src.includes('statusbarInk(theme.statusbarBg'), false);
+  });
+  it('offers distinct readable Light and Dark shades for every accent', () => {
+    assert.equal(accentForTheme(THEMES[1],'lime'),'#b9ff6a');
+    for (const theme of THEMES) for (const color of ACCENT_COLORS) {
+      assert.notEqual(color.light,color.dark);
+      const accent = accentForTheme(theme,color.id);
+      const text = [theme.bg,theme.bgPanel,theme.bgInput,theme.bgHover].reduce((fg,bg)=>ensureTextContrast(fg,bg),accent);
+      for (const bg of [theme.bg,theme.bgPanel,theme.bgInput,theme.bgHover]) assert.ok(contrastRatioHex(text,bg)>=7,`${theme.id}/${color.id} text`);
+      const fill = themeAccentFill({...theme,accent});
+      assert.ok(contrastRatioHex(statusbarInk(fill).fg,fill)>=4.5,`${theme.id}/${color.id} button`);
+    }
   });
 });

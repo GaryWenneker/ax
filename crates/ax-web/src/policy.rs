@@ -271,7 +271,20 @@ async fn pack_import(
 async fn review_list(State(hub): State<WebHub>) -> impl IntoResponse {
     let ws = hub.read().await;
     match ax_policy::list_pending(ws.policy.store.project_root()) {
-        Ok(items) => (StatusCode::OK, Json(serde_json::json!({ "items": items }))).into_response(),
+        Ok(items) => {
+            let mut reviews = Vec::with_capacity(items.len());
+            for item in items {
+                match review_details(&ws.policy.store, &item).await {
+                    Ok(value) => reviews.push(value),
+                    Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "items": reviews })),
+            )
+                .into_response()
+        }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -284,26 +297,183 @@ async fn review_show(State(hub): State<WebHub>, Path(id): Path<String>) -> impl 
     }
 }
 
-async fn review_approve(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+#[derive(Deserialize)]
+struct ReviewQuery {
+    kind: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewDecision {
+    expected_incoming: Option<String>,
+    expected_current: Option<String>,
+}
+
+async fn verify_review_snapshot(
+    store: &PolicyStore,
+    id: &str,
+    kind: Option<&str>,
+    decision: &ReviewDecision,
+) -> Result<(), String> {
+    let Some(incoming) = &decision.expected_incoming else {
+        return Ok(());
+    };
+    let items = ax_policy::list_pending(store.project_root()).map_err(|e| e.to_string())?;
+    let item = items
+        .iter()
+        .find(|item| item.id == id && kind.is_none_or(|kind| item.kind == kind))
+        .ok_or_else(|| "Review item is no longer pending. Refresh the queue.".to_string())?;
+    let value = review_details(store, item)
+        .await
+        .map_err(|e| e.to_string())?;
+    if value["incomingContent"].as_str() != Some(incoming.as_str())
+        || value["currentContent"].as_str() != decision.expected_current.as_deref()
+    {
+        return Err("Policy changed since inspection. Refresh and review it again.".into());
+    }
+    Ok(())
+}
+
+async fn review_details(
+    store: &PolicyStore,
+    item: &ax_policy::PendingItem,
+) -> Result<serde_json::Value, ax_utils::errors::AxError> {
+    let incoming = std::fs::read_to_string(&item.path)
+        .map_err(|e| ax_utils::errors::AxError::Other(e.to_string()))?;
+    let path = std::path::Path::new(&item.path);
+    let (normalized, current, scope) = if item.kind == "rule" {
+        let mut doc = parse_rule_file(path, &incoming)
+            .map_err(|e| ax_utils::errors::AxError::Other(e.error))?;
+        doc.frontmatter.status = "approved".into();
+        let scope = doc.frontmatter.scope.clone();
+        let current = store.get_rule_doc(&item.id).await?.map(|mut local| {
+            local.frontmatter.status = "approved".into();
+            serialize_rule(&local.frontmatter, &local.body)
+        });
+        (serialize_rule(&doc.frontmatter, &doc.body), current, scope)
+    } else {
+        let mut doc = parse_skill_file(path, &incoming)
+            .map_err(|e| ax_utils::errors::AxError::Other(e.error))?;
+        doc.frontmatter.status = "approved".into();
+        let scope = doc.frontmatter.scope.clone();
+        let current = store.get_skill_doc(&item.id).await?.map(|mut local| {
+            local.frontmatter.status = "approved".into();
+            serialize_skill(&local.frontmatter, &local.body)
+        });
+        (serialize_skill(&doc.frontmatter, &doc.body), current, scope)
+    };
+    let effect = match &current {
+        None => "new",
+        Some(local) if local == &normalized => "duplicate",
+        Some(_) => "replacement",
+    };
+    let mut value =
+        serde_json::to_value(item).map_err(|e| ax_utils::errors::AxError::Other(e.to_string()))?;
+    value["effect"] = effect.into();
+    value["incomingContent"] = incoming.into();
+    value["currentContent"] = current.into();
+    value["scope"] = scope.into();
+    value["origin"] = "Policy import queue; originating peer was not recorded".into();
+    let comparison = value["currentContent"]
+        .as_str()
+        .map(|local| -> Result<Vec<String>, ax_utils::errors::AxError> {
+            let path = std::path::Path::new(&item.path);
+            let (pending, active) = if item.kind == "rule" {
+                let pending = parse_rule_file(path, &normalized)
+                    .map_err(|e| ax_utils::errors::AxError::Other(e.error))?;
+                let active = parse_rule_file(path, local)
+                    .map_err(|e| ax_utils::errors::AxError::Other(e.error))?;
+                (
+                    serde_json::json!({"settings":pending.frontmatter,"body":pending.body}),
+                    serde_json::json!({"settings":active.frontmatter,"body":active.body}),
+                )
+            } else {
+                let pending = parse_skill_file(path, &normalized)
+                    .map_err(|e| ax_utils::errors::AxError::Other(e.error))?;
+                let active = parse_skill_file(path, local)
+                    .map_err(|e| ax_utils::errors::AxError::Other(e.error))?;
+                (
+                    serde_json::json!({"settings":pending.frontmatter,"body":pending.body}),
+                    serde_json::json!({"settings":active.frontmatter,"body":active.body}),
+                )
+            };
+            let mut fields = Vec::new();
+            if pending["body"] != active["body"] {
+                fields.push("body".to_string());
+            }
+            for name in pending["settings"]
+                .as_object()
+                .into_iter()
+                .flat_map(|object| object.keys())
+                .chain(
+                    active["settings"]
+                        .as_object()
+                        .into_iter()
+                        .flat_map(|object| object.keys()),
+                )
+            {
+                if pending["settings"][name] != active["settings"][name] && !fields.contains(name) {
+                    fields.push(name.clone());
+                }
+            }
+            Ok(fields)
+        })
+        .transpose()?
+        .unwrap_or_default();
+    value["changedFields"] = serde_json::json!(comparison);
+    Ok(value)
+}
+
+async fn review_approve(
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+    Query(query): Query<ReviewQuery>,
+    Json(decision): Json<ReviewDecision>,
+) -> impl IntoResponse {
     if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    match ax_policy::approve_pending(ws.policy.store.pool(), ws.policy.store.project_root(), &id)
-        .await
+    if let Err(message) =
+        verify_review_snapshot(&ws.policy.store, &id, query.kind.as_deref(), &decision).await
+    {
+        return err(StatusCode::CONFLICT, &message);
+    }
+    match ax_policy::approve_pending_kind(
+        ws.policy.store.pool(),
+        ws.policy.store.project_root(),
+        &id,
+        query.kind.as_deref(),
+    )
+    .await
     {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, &e.to_string()),
     }
 }
 
-async fn review_reject(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+async fn review_reject(
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+    Query(query): Query<ReviewQuery>,
+    Json(decision): Json<ReviewDecision>,
+) -> impl IntoResponse {
     if hub.readonly {
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    match ax_policy::reject_pending(ws.policy.store.pool(), ws.policy.store.project_root(), &id)
-        .await
+    if let Err(message) =
+        verify_review_snapshot(&ws.policy.store, &id, query.kind.as_deref(), &decision).await
+    {
+        return err(StatusCode::CONFLICT, &message);
+    }
+    match ax_policy::reject_pending_kind(
+        ws.policy.store.pool(),
+        ws.policy.store.project_root(),
+        &id,
+        query.kind.as_deref(),
+    )
+    .await
     {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, &e.to_string()),
@@ -1634,4 +1804,100 @@ fn validation_err(v: ValidationError) -> axum::response::Response {
         }),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn review_compares_database_content_and_rejects_changed_snapshots() {
+        let root = tempfile::tempdir().unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        let store = PolicyStore::new(pool, root.path().to_path_buf());
+        let pending = ax_policy::ensure_pending_dirs(root.path())
+            .unwrap()
+            .join("rules")
+            .join("sample.mdc");
+        let raw = "---\nid: sample\nlevel: INFO\nalwaysApply: true\nstorage: database\nstatus: pending\n---\nKeep the current policy.\n";
+        std::fs::write(&pending, raw).unwrap();
+        let item = ax_policy::list_pending(root.path()).unwrap().remove(0);
+        let value = review_details(&store, &item).await.unwrap();
+        assert_eq!(value["effect"], "new");
+        let doc = parse_rule_file(&pending, raw).unwrap();
+        let mut fm = doc.frontmatter;
+        fm.status = "approved".into();
+        store.save_rule(fm, doc.body).await.unwrap();
+        let value = review_details(&store, &item).await.unwrap();
+        assert_eq!(value["effect"], "duplicate");
+        assert!(value["currentContent"]
+            .as_str()
+            .unwrap()
+            .contains("Keep the current policy."));
+        let decision = ReviewDecision {
+            expected_incoming: Some(raw.into()),
+            expected_current: value["currentContent"].as_str().map(str::to_string),
+        };
+        assert!(
+            verify_review_snapshot(&store, "sample", Some("rule"), &decision)
+                .await
+                .is_ok()
+        );
+        std::fs::write(&pending, raw.replace("current", "incoming")).unwrap();
+        assert_eq!(
+            review_details(&store, &item).await.unwrap()["effect"],
+            "replacement"
+        );
+        assert_eq!(
+            review_details(&store, &item).await.unwrap()["changedFields"],
+            serde_json::json!(["body"])
+        );
+        assert!(
+            verify_review_snapshot(&store, "sample", Some("rule"), &decision)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn review_rejection_distinguishes_rule_and_skill_with_equal_ids() {
+        let root = tempfile::tempdir().unwrap();
+        let pending = ax_policy::ensure_pending_dirs(root.path()).unwrap();
+        let rule = pending.join("rules").join("same.mdc");
+        let skill = pending.join("skills").join("same").join("SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&rule, "---\nid: same\nlevel: INFO\n---\nRule").unwrap();
+        std::fs::write(
+            &skill,
+            "---\nname: same\ndescription: Same skill\n---\nSkill",
+        )
+        .unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_policy::reject_pending_kind(&pool, root.path(), "same", Some("skill"))
+            .await
+            .unwrap();
+        assert!(rule.exists());
+        assert!(!skill.exists());
+        assert!(
+            ax_policy::reject_pending_kind(&pool, root.path(), "../same", Some("rule"))
+                .await
+                .is_err()
+        );
+        assert!(
+            ax_policy::reject_pending_kind(&pool, root.path(), "same", Some("unknown"))
+                .await
+                .is_err()
+        );
+        assert!(rule.exists());
+    }
 }

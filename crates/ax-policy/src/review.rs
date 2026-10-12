@@ -101,11 +101,21 @@ pub async fn approve_pending(
     project_root: &Path,
     id: &str,
 ) -> Result<ReviewActionResult, AxError> {
+    approve_pending_kind(pool, project_root, id, None).await
+}
+
+pub async fn approve_pending_kind(
+    pool: &SqlitePool,
+    project_root: &Path,
+    id: &str,
+    kind: Option<&str>,
+) -> Result<ReviewActionResult, AxError> {
+    validate_review_identity(id, kind)?;
     let ax_dir = ax_dir_from_project(project_root);
     let store = PolicyStore::new(pool.clone(), project_root.to_path_buf());
 
     let rule_path = rule_file(&pending_rules_dir(&ax_dir), id);
-    if rule_path.is_file() {
+    if kind != Some("skill") && rule_path.is_file() {
         let raw = std::fs::read_to_string(&rule_path).map_err(|e| AxError::Other(e.to_string()))?;
         let mut doc = parse_rule_file(&rule_path, &raw).map_err(|e| AxError::Other(e.error))?;
         doc.frontmatter.status = PolicyItemStatus::Approved.as_str().into();
@@ -124,7 +134,7 @@ pub async fn approve_pending(
     }
 
     let skill_path = pending_skills_dir(&ax_dir).join(id).join(SKILL_FILENAME);
-    if skill_path.is_file() {
+    if kind != Some("rule") && skill_path.is_file() {
         let raw =
             std::fs::read_to_string(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
         let mut doc = parse_skill_file(&skill_path, &raw).map_err(|e| AxError::Other(e.error))?;
@@ -155,10 +165,20 @@ pub async fn reject_pending(
     project_root: &Path,
     id: &str,
 ) -> Result<ReviewActionResult, AxError> {
+    reject_pending_kind(pool, project_root, id, None).await
+}
+
+pub async fn reject_pending_kind(
+    pool: &SqlitePool,
+    project_root: &Path,
+    id: &str,
+    kind: Option<&str>,
+) -> Result<ReviewActionResult, AxError> {
+    validate_review_identity(id, kind)?;
     let ax_dir = ax_dir_from_project(project_root);
 
     let rule_path = rule_file(&pending_rules_dir(&ax_dir), id);
-    if rule_path.is_file() {
+    if kind != Some("skill") && rule_path.is_file() {
         std::fs::remove_file(&rule_path).map_err(|e| AxError::Other(e.to_string()))?;
         let _ = pool; // keep signature consistent; no DB row for pending files
         return Ok(ReviewActionResult {
@@ -171,7 +191,7 @@ pub async fn reject_pending(
 
     let skill_dir = pending_skills_dir(&ax_dir).join(id);
     let skill_path = skill_dir.join(SKILL_FILENAME);
-    if skill_path.is_file() {
+    if kind != Some("rule") && skill_path.is_file() {
         std::fs::remove_file(&skill_path).map_err(|e| AxError::Other(e.to_string()))?;
         let _ = std::fs::remove_dir(&skill_dir);
         return Ok(ReviewActionResult {
@@ -183,6 +203,18 @@ pub async fn reject_pending(
     }
 
     Err(AxError::Other(format!("pending item not found: {id}")))
+}
+
+fn validate_review_identity(id: &str, kind: Option<&str>) -> Result<(), AxError> {
+    if id.is_empty()
+        || id == "."
+        || id == ".."
+        || id.contains(['/', '\\'])
+        || kind.is_some_and(|k| k != "rule" && k != "skill")
+    {
+        return Err(AxError::Other("invalid review identity".into()));
+    }
+    Ok(())
 }
 
 /// Diff helper: local active body vs pending body for UI.

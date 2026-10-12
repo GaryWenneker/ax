@@ -1,0 +1,18 @@
+---
+id: no-per-version-updates
+level: CRITICAL
+alwaysApply: true
+globs: ["site/**", "README.md", "docs/**"]
+triggers: ["release", "what's new", "changelog", "version update"]
+tags: ["documentation", "website", "captured"]
+priority: 100
+enabled: true
+status: approved
+scope: project
+---
+
+# No per-version updates
+
+Never add What's new sections, changelogs, release summaries or documentation pages organized by version to Ax's website, introductory documentation or README. Remove existing per-version update lists. Maintain documentation of the current product behavior in place.
+
+This user instruction overrides any policy that requires updating a What's new section during releases. Software version identifiers used by installers, download assets and CLI metadata must still be accurate.

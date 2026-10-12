@@ -7,6 +7,7 @@ import './index.css';
 import './agent-terminal.css';
 import './portal.css';
 import App from './App';
+import './controls.css';
 import { installContextMenuGuard } from './lib/contextMenuGuard';
 
 installContextMenuGuard();

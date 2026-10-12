@@ -1,144 +1,91 @@
 import { useEffect, useState } from 'react';
 import { useLive, useNewKeys } from '../lib/useLive';
-import {
-  approvePolicyReview,
-  fetchPolicyReview,
-  rejectPolicyReview,
-} from '../policyApi';
+import { approvePolicyReview, fetchPolicyReview, rejectPolicyReview } from '../policyApi';
 import type { PendingPolicyItem } from '../policyTypes';
-import {
-  DataTable,
-  PageCard,
-  PageCardBody,
-  PageEmpty,
-  PageHero,
-  PageLoading,
-  PageShell,
-  PageStack,
-  PageToasts,
-} from '../components/ui/PageLayout';
+import { PageCard, PageCardBody, PageEmpty, PageHero, PageLoading, PageShell, PageStack, PageToasts } from '../components/ui/PageLayout';
+import ModalShell from '../components/ModalShell';
 import { usePageContext } from '../context/UiContext';
+
+const keyOf = (item: PendingPolicyItem) => `${item.kind}:${item.id}`;
+const effectLabel = (item: PendingPolicyItem) => ({ new: 'New item', duplicate: 'Duplicate', replacement: 'Replaces existing content' }[item.effect ?? 'new']);
 
 export default function PolicyReviewPage() {
   const [items, setItems] = useState<PendingPolicyItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [busyId, setBusyId] = useState<string | null>(null);
-
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [kind, setKind] = useState('all');
+  const [effect, setEffect] = useState('all');
+  const [search, setSearch] = useState('');
+  const [confirmation, setConfirmation] = useState<{ action: 'approve' | 'reject'; items: PendingPolicyItem[] } | null>(null);
   usePageContext('Review', !loading ? `${items.length} pending` : undefined);
-
-  async function reload(quiet = false) {
+  async function reload(quiet = false, clearError = true) {
     if (!quiet) setLoading(true);
     try {
       const res = await fetchPolicyReview();
       setItems(res.items);
-      setError('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load review queue');
-    } finally {
-      setLoading(false);
-    }
+      setSelected(prev => new Set([...prev].filter(key => res.items.some(item => keyOf(item) === key))));
+      if (clearError) setError('');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load review queue'); }
+    finally { setLoading(false); }
   }
-
-  useEffect(() => {
-    void reload();
-  }, []);
-
-  useLive(['rules', 'skills'], () => void reload(true));
-  const fresh = useNewKeys(loading ? null : items.map((item) => `${item.kind}:${item.id}`));
-
-  async function approve(id: string) {
-    setBusyId(id);
+  useEffect(() => { void reload(); }, []);
+  useLive(['rules', 'skills'], () => { if (!busy && !confirmation) void reload(true); });
+  const fresh = useNewKeys(loading ? null : items.map(keyOf));
+  const visible = items.filter(item => (kind === 'all' || item.kind === kind)
+    && (effect === 'all' || item.effect === effect)
+    && `${item.id} ${item.levelOrDescription}`.toLowerCase().includes(search.toLowerCase()));
+  const chosen = visible.filter(item => selected.has(keyOf(item)));
+  function toggle(item: PendingPolicyItem) {
+    setSelected(prev => { const next = new Set(prev); const key = keyOf(item); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  }
+  async function decide() {
+    if (!confirmation) return;
+    setBusy(true); setError('');
+    let completed = 0;
     try {
-      await approvePolicyReview(id);
-      setItems((prev) => prev.filter((i) => i.id !== id));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Approve failed');
-    } finally {
-      setBusyId(null);
-    }
+      for (const item of confirmation.items) {
+        if (confirmation.action === 'approve') await approvePolicyReview(item.id, item.kind, item);
+        else await rejectPolicyReview(item.id, item.kind, item);
+        completed++;
+        setItems(prev => prev.filter(row => keyOf(row) !== keyOf(item)));
+        setSelected(prev => { const next = new Set(prev); next.delete(keyOf(item)); return next; });
+      }
+      setMessage(`${completed} item${completed === 1 ? '' : 's'} ${confirmation.action === 'approve' ? 'approved' : 'rejected'}.`);
+    } catch (e) { setError(`${completed} completed. Remaining items were not processed. ${e instanceof Error ? e.message : 'Review failed'}`); }
+    finally { setBusy(false); setConfirmation(null); void reload(true, false); }
   }
-
-  async function reject(id: string) {
-    setBusyId(id);
-    try {
-      await rejectPolicyReview(id);
-      setItems((prev) => prev.filter((i) => i.id !== id));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Reject failed');
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  if (loading) {
-    return (
-      <PageShell>
-        <PageHero title="Review" subtitle="Pending pack imports awaiting approval." />
-        <PageLoading label="Loading review queue…" />
-      </PageShell>
-    );
-  }
-
-  return (
-    <PageShell>
-      <PageHero
-        title="Review"
-        subtitle="Approve or reject incoming shared rules and skills (when requireReview is on)."
-        actions={
-          <button type="button" className="btn btn-subtle" onClick={() => void reload()}>
-            Refresh
-          </button>
-        }
-      />
-      <PageToasts err={error || null} />
-      <PageStack>
-        <PageCard title="Pending" description="Items staged under .ax/policy/pending/.">
-          <PageCardBody>
-            {items.length === 0 ? (
-              <PageEmpty title="Queue empty">No pending rules or skills.</PageEmpty>
-            ) : (
-              <DataTable dense>
-                <thead>
-                  <tr>
-                    <th>Kind</th>
-                    <th>ID</th>
-                    <th>Summary</th>
-                    <th className="col-actions">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item) => (
-                    <tr key={`${item.kind}:${item.id}`} className={fresh.has(`${item.kind}:${item.id}`) ? 'live-new' : undefined}>
-                      <td>{item.kind}</td>
-                      <td className="mono">{item.id}</td>
-                      <td>{item.levelOrDescription}</td>
-                      <td className="col-actions">
-                        <button
-                          type="button"
-                          className="btn primary"
-                          disabled={busyId === item.id}
-                          onClick={() => void approve(item.id)}
-                        >
-                          Approve
-                        </button>{' '}
-                        <button
-                          type="button"
-                          className="btn btn-subtle"
-                          disabled={busyId === item.id}
-                          onClick={() => void reject(item.id)}
-                        >
-                          Reject
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </DataTable>
-            )}
-          </PageCardBody>
-        </PageCard>
-      </PageStack>
-    </PageShell>
-  );
+  return <PageShell className="review-page">
+    <PageHero title="Review" subtitle="Inspect incoming policy changes before activating them. Replica data synchronization runs separately from this policy import queue."
+      actions={<button className="btn" disabled={busy} onClick={() => void reload()}>Refresh</button>} />
+    <PageToasts err={error || null} ok={message || null} />
+    {loading ? <PageLoading label="Loading review queue…" /> : <PageStack><PageCard title="Pending changes" description={`${items.length} awaiting a decision. Approval activates incoming policy; rejection keeps current policy.`}><PageCardBody>
+      <div className="review-toolbar">
+        <input className="settings-input" aria-label="Search review items" placeholder="Search ID or description" value={search} onChange={e => setSearch(e.target.value)} />
+        <select className="settings-select" aria-label="Review kind" value={kind} onChange={e => setKind(e.target.value)}><option value="all">All types</option><option value="rule">Rules</option><option value="skill">Skills</option></select>
+        <select className="settings-select" aria-label="Review effect" value={effect} onChange={e => setEffect(e.target.value)}><option value="all">All changes</option><option value="new">New items</option><option value="duplicate">Duplicates</option><option value="replacement">Replacements</option></select>
+        <button className="btn" disabled={busy || !visible.length} onClick={() => setSelected(prev => new Set([...prev, ...visible.map(keyOf)]))}>Select filtered ({visible.length})</button>
+        <button className="btn" disabled={busy || !selected.size} onClick={() => setSelected(new Set())}>Clear selection</button>
+      </div>
+      <div className="review-toolbar">
+        <span>{chosen.length} selected in this filter</span>
+        <button className="btn primary" disabled={busy || !chosen.length || chosen.some(item => !item.effect)} onClick={() => setConfirmation({ action: 'approve', items: chosen })}>Approve selected</button>
+        <button className="btn" disabled={busy || !chosen.length} onClick={() => setConfirmation({ action: 'reject', items: chosen })}>Reject selected</button>
+        <button className="btn" disabled={busy || !visible.length || visible.some(item => !item.effect)} onClick={() => setConfirmation({ action: 'approve', items: visible })}>Approve filtered type</button>
+      </div>
+      {!visible.length ? <PageEmpty title={items.length ? 'No matching items' : 'Queue empty'}>No pending rules or skills in this filter.</PageEmpty> : <div className="review-list">{visible.map(item => <article key={keyOf(item)} className={`review-item${fresh.has(keyOf(item)) ? ' live-new' : ''}`}>
+        <div className="review-item-heading"><input type="checkbox" aria-label={`Select ${item.kind} ${item.id}`} disabled={busy} checked={selected.has(keyOf(item))} onChange={() => toggle(item)} /><strong>{item.id}</strong><span>{item.kind} · {item.scope ?? 'Scope unavailable'}</span><span className="review-effect">{item.effect ? effectLabel(item) : 'Comparison unavailable'}</span></div>
+        <p>{item.levelOrDescription}</p>
+        {!!item.changedFields?.length && <p><strong>Changed:</strong> {item.changedFields.join(', ')}</p>}
+        <p>{item.effect === 'new' ? 'No current item with this identity exists. Approval adds it.' : item.effect === 'duplicate' ? 'Active content and policy settings match, ignoring review status. Approval clears the pending copy.' : item.effect === 'replacement' ? 'An active item has this identity with different content or settings. Approval saves the incoming version in its configured scope and storage.' : 'Refresh using an updated server to compare this item before approval.'}</p>
+        <details><summary>Inspect content and source</summary><p>{item.origin ?? 'Origin was not recorded'} · Queue file: {item.path}</p><div className="review-comparison"><section><h3>Current</h3><pre>{item.currentContent ?? 'No current item'}</pre></section><section><h3>Incoming</h3><pre>{item.incomingContent ?? item.preview}</pre></section></div></details>
+        <div className="review-actions"><button className="btn primary" disabled={busy || !item.effect} onClick={() => setConfirmation({ action: 'approve', items: [item] })}>Approve</button><button className="btn" disabled={busy} onClick={() => setConfirmation({ action: 'reject', items: [item] })}>Reject</button></div>
+      </article>)}</div>}
+    </PageCardBody></PageCard></PageStack>}
+    {confirmation && <ModalShell title={`${confirmation.action === 'approve' ? 'Approve' : 'Reject'} ${confirmation.items.length} item${confirmation.items.length === 1 ? '' : 's'}?`} onClose={() => { if (!busy) setConfirmation(null); }} footer={<><button className="btn" disabled={busy} onClick={() => setConfirmation(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => void decide()}>{busy ? 'Processing…' : 'Confirm decision'}</button></>}>
+      <p>{confirmation.action === 'approve' ? 'Incoming versions will become active. Review replacements carefully.' : 'Pending versions will be discarded. Current active content stays in place.'}</p><ul>{confirmation.items.map(item => <li key={keyOf(item)}>{item.kind}: {item.id} — {item.effect ? effectLabel(item) : 'Comparison unavailable'}</li>)}</ul>
+    </ModalShell>}
+  </PageShell>;
 }

@@ -7,6 +7,20 @@ ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, s
 
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
+Page headers and filters share compact spacing so more rows fit on screen. Savings metrics use equal label rows and aligned numeric values, adapting to smaller screens.
+
+Quality Gates uses the full workspace width without the sidebar, including embedded views. **Home** in the breadcrumbs returns to the dashboard and restores the navigation.
+
+In **Settings → Appearance**, choose **Light** or **Dark**, then **Lime**, **Blue**, **Teal**, **Violet**, **Orange** or **Rose**. Lime is the default and matches the website in Dark. Each color uses a darker shade in Light and a brighter shade in Dark. The browser remembers your choice; header/footer backgrounds and semantic error/warning colors keep their existing meaning.
+
+![Light/Dark and accent color controls](/screenshots/cc-accent-colors.png)
+
+In **Policy → Review**, filter by type and effect, inspect current and incoming content, then select individual or filtered items. **Approve selected**, **Reject selected**, and **Approve filtered type** show a confirmation of the affected items. New items add policy; duplicates match existing content and settings; replacements save a differing version. Comparisons include database-backed policies. Changes since inspection stop the decision and require a refresh. Bulk processing stops on failure and keeps unprocessed items in the queue. When an import did not record its originating peer, the screen says so. This queue reviews policy imports; graph, memory and logging replication runs separately.
+
+![Policy review with change classification and readable content](/screenshots/cc-policy-review-desktop-chrome.png)
+
+![Current and incoming policy content](/screenshots/cc-policy-review-detail.png)
+
 Prefer a native GPU window instead of the browser? Use `ax desktop` — see the [Desktop Client](/guides/desktop-client/) guide (same `/api` surface with an embedded `ax-web` server).
 
 Embedding Command Center in an IDE webview? Append `?embed=1` to hide the browser titlebar.
@@ -18,6 +32,10 @@ Each full page load and hard refresh plays a short green edge glow (Green Vessel
 ## Azure Portal appearance
 
 Open **Settings → Appearance** and choose **Light** or **Dark**. The selection is saved in this browser. Both modes apply across pages, editors, Logging, quality panels and dialogs. The header search opens pages or searches code; Settings has its own grouped, filterable navigation.
+
+Action rows have a clear gap from their explanatory text. Single-choice dropdowns use the same theme-colored chevron and reserve space for it; keyboard and touch selection remain native.
+
+![Local MCP controls with consistent spacing and dropdown chevron](/screenshots/cc-local-controls-azure-dark.png)
 
 ![Azure Portal Light — theme selection](/screenshots/cc-settings-appearance-dark.png)
 

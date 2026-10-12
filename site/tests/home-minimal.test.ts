@@ -42,8 +42,11 @@ test('CMY interference fades horizontally from the edge and uses continuous tile
   assert.match(css, /animation:ax-moire-yellow 62s ease-in-out infinite/);
   assert.match(css, /animation:ax-moire-focus 64s ease-in-out infinite/);
   assert.match(css, /@keyframes ax-moire-focus\{0%,43%,70%,100%\{filter:blur\(0\)\}53%,59%\{filter:blur\(1\.5px\)\}\}/);
-  assert.match(css, /prefers-reduced-motion:reduce\)\{\.ax-landing \.ax-halftone-dots,\.ax-landing \.ax-halftone-grid\{animation:none!important;filter:none!important/);
-  assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-halftone-grid\{animation-play-state:paused!important/);
+  assert.match(css, /prefers-reduced-motion:reduce\)\{html:not\(\[data-ax-motion='running'\]\)/);
+  assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-halftone-grid\{animation-play-state:paused/);
+  assert.match(home, /<MotionControl\s*\/>/);
+  assert.match(css, /animation-delay:-11s/);
+  assert.match(css, /animation-delay:-15\.5s/);
   assert.doesNotMatch(css, /border-radius:50%|ax-halftone-rosette/);
   assert.match(css, /@keyframes ax-moire-magenta/);
   assert.match(css, /@keyframes ax-moire-yellow/);

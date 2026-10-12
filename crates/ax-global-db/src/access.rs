@@ -934,13 +934,27 @@ pub async fn revoke_node(pool: &SqlitePool, node_id: &str) -> Result<bool> {
 }
 
 pub async fn allow_node_reenrollment(pool: &SqlitePool, node_id: &str) -> Result<bool> {
+    let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "UPDATE replication_nodes SET trust_state = 'pending', revoked_at = NULL,
         credential_id = NULL WHERE id = ? AND trust_state = 'revoked'",
     )
     .bind(node_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    if result.rows_affected() == 1 {
+        sqlx::query("DELETE FROM removed_replication_nodes WHERE node_id=?")
+            .bind(node_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn remove_revoked_node(pool: &SqlitePool, node_id: &str) -> Result<bool> {
+    let result = sqlx::query("INSERT OR IGNORE INTO removed_replication_nodes(node_id) SELECT id FROM replication_nodes WHERE id=? AND trust_state='revoked'")
+        .bind(node_id).execute(pool).await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -948,7 +962,7 @@ pub async fn list_nodes(pool: &SqlitePool) -> Result<Vec<ReplicationNode>> {
     let rows: Vec<NodeRow> = sqlx::query_as(
         "SELECT id, display_name, role, endpoint, trust_state, credential_id,
                 discovered_at, approved_at, revoked_at, last_seen_at, last_sync_at
-         FROM replication_nodes ORDER BY discovered_at, id",
+         FROM replication_nodes WHERE NOT EXISTS (SELECT 1 FROM removed_replication_nodes r WHERE r.node_id=replication_nodes.id) ORDER BY discovered_at, id",
     )
     .fetch_all(pool)
     .await?;
@@ -1204,11 +1218,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "trusted");
+        assert!(!remove_revoked_node(&pool, "n1").await.unwrap());
         revoke_node(&pool, "n1").await.unwrap();
+        assert!(remove_revoked_node(&pool, "n1").await.unwrap());
+        assert!(list_nodes(&pool).await.unwrap().is_empty());
+        discover_replica(&pool, "n1", "Replica", None)
+            .await
+            .unwrap();
+        assert!(list_nodes(&pool).await.unwrap().is_empty());
         assert!(register_trusted_replica(&pool, "n1", "Replica", None, "p1")
             .await
             .is_err());
-        assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "revoked");
+        let reopened = open_and_init(&dir.path().join("global.db")).await.unwrap();
+        assert!(list_nodes(&reopened).await.unwrap().is_empty());
+        assert!(issue_node_credential(&reopened, "n1", None).await.is_err());
         assert!(allow_node_reenrollment(&pool, "n1").await.unwrap());
         assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "pending");
         register_trusted_replica(&pool, "n1", "Replica", None, "p1")

@@ -156,6 +156,12 @@ export interface PolicyRootInfo {
 }
 
 export interface PendingPolicyItem {
+  effect?: 'new' | 'duplicate' | 'replacement';
+  changedFields?: string[];
+  incomingContent?: string;
+  currentContent?: string | null;
+  scope?: string;
+  origin?: string;
   kind: string;
   id: string;
   path: string;

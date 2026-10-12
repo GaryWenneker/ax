@@ -299,3 +299,7 @@ CREATE TABLE IF NOT EXISTS remote_mcp_runtime_leases (
     last_heartbeat_at INTEGER NOT NULL,
     stopped_at INTEGER
 );
+-- Removed rows retain their revoked identity so bootstrap registration cannot restore access.
+CREATE TABLE IF NOT EXISTS removed_replication_nodes (
+    node_id TEXT PRIMARY KEY REFERENCES replication_nodes(id) ON DELETE CASCADE
+);

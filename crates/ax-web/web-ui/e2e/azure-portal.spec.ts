@@ -60,7 +60,8 @@ test('all pages retain portal chrome in light and dark, including offline states
       await page.goto(path);
       await expect(page.locator('html')).toHaveAttribute('data-ax-theme', theme);
       await expect(page.locator('.workspace')).toBeVisible();
-      await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+      if (path === '/ship') await expect(page.getByRole('navigation', { name: 'Main navigation' })).toHaveCount(0);
+      else await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
       if (process.env.AX_PORTAL_SCREENSHOTS && ['/stats', '/memory', '/policy/rules', '/graph'].includes(path)) {
         await page.waitForTimeout(500);
         await page.screenshot({ path: `/tmp/ax-portal-previews/${theme}-${path.replaceAll('/', '-')}.png` });

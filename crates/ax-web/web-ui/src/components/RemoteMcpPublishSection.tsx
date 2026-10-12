@@ -160,7 +160,7 @@ export default function RemoteMcpPublishSection() {
   }
   const runtime = publication?.runtimeStatus === 'running' && (!publication.lastHeartbeatAt || clock / 1000 - publication.lastHeartbeatAt > 45) ? 'unknown' : publication?.runtimeStatus;
   return <section className="remote-mcp-publish" aria-labelledby="remote-publish-title">
-    <LocalMcpConfigSection key={data?.workspaceId ?? 'loading'} workspace={data} onStale={refreshLocal} />
+    <LocalMcpConfigSection workspace={data} onStale={refreshLocal} />
     {data && <RemoteHostSetup key={data.workspaceId} workspaceId={data.workspaceId} csrf={data.csrf} onChanged={load} />}
     <div className="remote-publish-heading"><div><h3 id="remote-publish-title">Share this project</h3><p>Let another computer access {data?.projectLabel ?? 'your active project'} through its remote HTTPS server.</p></div>
       <button type="button" className="btn" disabled={loading || busy} onClick={() => void load()} aria-label="Refresh project publications">Refresh</button></div>

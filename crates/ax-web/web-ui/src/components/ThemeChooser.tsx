@@ -1,8 +1,14 @@
-import { useState } from 'react';
-import { THEMES, applyTheme, saveThemeId, type ThemePreset } from '../lib/themes';
+import { useEffect, useState } from 'react';
+import { ACCENT_COLORS, THEMES, THEME_CHANGED, accentForTheme, applyTheme, loadAccentId, saveThemeId, selectAccent, themeById, type ThemePreset } from '../lib/themes';
 
 export default function ThemeChooser({ activeId, onSelect }: { activeId: string; onSelect: (id: string) => void }) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [accentId, setAccentId] = useState(loadAccentId);
+  useEffect(() => {
+    const update = () => setAccentId(loadAccentId());
+    window.addEventListener(THEME_CHANGED,update);
+    return () => window.removeEventListener(THEME_CHANGED,update);
+  },[]);
 
   function select(theme: ThemePreset) {
     saveThemeId(theme.id);
@@ -11,8 +17,10 @@ export default function ThemeChooser({ activeId, onSelect }: { activeId: string;
   }
 
   return (
+    <>
     <div className="theme-chooser">
-      {THEMES.map((theme) => {
+      {THEMES.map((base) => {
+        const theme = {...base,accent:accentForTheme(base,accentId)};
         const active = theme.id === activeId;
         const hovered = theme.id === hoveredId;
         return (
@@ -46,5 +54,15 @@ export default function ThemeChooser({ activeId, onSelect }: { activeId: string;
         );
       })}
     </div>
+    <div className="accent-chooser">
+      <span className="settings-row-title">Accent color</span>
+      <p className="settings-row-desc">Lime matches the Ax website. Each color adapts to Light and Dark for readable controls. Header and footer backgrounds stay unchanged; error and warning colors keep their meaning.</p>
+      <div className="accent-options" role="group" aria-label="Accent color">
+        {ACCENT_COLORS.map(color => <button key={color.id} type="button" className="btn accent-option" aria-pressed={accentId === color.id} onClick={() => {selectAccent(color.id);setAccentId(color.id);}}>
+          <span aria-hidden="true" className="accent-dot" style={{background:accentForTheme(themeById(activeId),color.id)}} />{color.label}{color.id === 'lime' ? ' (default)' : ''}
+        </button>)}
+      </div>
+    </div>
+    </>
   );
 }

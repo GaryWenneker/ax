@@ -99,6 +99,7 @@ Sharing a page on [getax.wenneker.io](https://getax.wenneker.io) previews that p
 - **Deterministic** — graph data comes from AST extraction, not LLM summaries
 - **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed, and more
 - **Native Rust** — single binary, no Node.js runtime required
+- **Connection cleanup** — remove inactive OAuth grants and revoked replicas in Command Center while keeping revoked replica access blocked and synchronized project data available
 
 Docs: [getax.wenneker.io](https://getax.wenneker.io) — MCP loop: [MCP Logging & Quality](https://getax.wenneker.io/guides/mcp-quality/)
 

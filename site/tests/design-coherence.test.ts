@@ -17,7 +17,7 @@ test('docs use the landing graphite/lime theme and responsive moving overprint',
   assert.match(theme, /\.ax-doc-moire-magenta\{[^}]*animation:ax-doc-magenta 44s ease-in-out infinite/);
   assert.match(theme, /\.ax-doc-moire-yellow\{[^}]*animation:ax-doc-yellow 62s ease-in-out infinite/);
   assert.match(theme, /max-width:600px\)\{\.ax-doc-moire\{/);
-  assert.match(theme, /prefers-reduced-motion:reduce\)\{\.ax-doc-moire-grid/);
+  assert.match(theme, /prefers-reduced-motion:reduce\)\{html:not\(\[data-ax-motion='running'\]\) \.ax-doc-moire-grid/);
   assert.match(header, /class="ax-doc-moire"/);
   assert.match(title, /cg-site-title__wordmark">Ax<span>_<\/span>/);
   assert.match(astro, /@fontsource-variable\/oxanium\/wght\.css/);

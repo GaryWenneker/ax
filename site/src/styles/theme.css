@@ -345,8 +345,8 @@ h1#_top,.sl-markdown-content h2,.sl-markdown-content h3{
 .ax-doc-moire-grid{position:absolute;inset:0;background:#fff;isolation:isolate;animation:ax-doc-focus 70s ease-in-out infinite}
 .ax-doc-moire-screen{position:absolute;inset:-35%;background-position:center;mix-blend-mode:multiply;will-change:transform}
 .ax-doc-moire-cyan{background-image:radial-gradient(circle,#00ffff 0 10.8px,transparent 11.3px);background-size:26px 26px;transform:rotate(-3deg)}
-.ax-doc-moire-magenta{background-image:radial-gradient(circle,#ff00ff 0 11.1px,transparent 11.6px);background-size:26.8px 26.8px;animation:ax-doc-magenta 44s ease-in-out infinite}
-.ax-doc-moire-yellow{background-image:radial-gradient(circle,#ffff00 0 10.55px,transparent 11.05px);background-size:25.4px 25.4px;animation:ax-doc-yellow 62s ease-in-out infinite}
+.ax-doc-moire-magenta{background-image:radial-gradient(circle,#ff00ff 0 11.1px,transparent 11.6px);background-size:26.8px 26.8px;animation:ax-doc-magenta 44s ease-in-out infinite;animation-delay:-11s}
+.ax-doc-moire-yellow{background-image:radial-gradient(circle,#ffff00 0 10.55px,transparent 11.05px);background-size:25.4px 25.4px;animation:ax-doc-yellow 62s ease-in-out infinite;animation-delay:-15.5s}
 .ax-doc-moire-grid::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(90deg,transparent 25%,rgba(185,255,106,.22) 60%,rgba(185,255,106,.8) 100%);mix-blend-mode:color}
 @keyframes ax-doc-magenta{0%,100%{transform:rotate(2.5deg) translate3d(-24px,-11px,0)}50%{transform:rotate(5.5deg) translate3d(24px,11px,0)}}
 @keyframes ax-doc-yellow{0%,100%{transform:rotate(-7deg) translate3d(17px,-21px,0)}50%{transform:rotate(-4deg) translate3d(-17px,21px,0)}}
@@ -355,9 +355,9 @@ h1#_top,.sl-markdown-content h2,.sl-markdown-content h3{
 .main-pane{position:relative;z-index:2;background:transparent}
 @media(max-width:899px){.ax-doc-moire{width:75vw;opacity:.22}}
 @media(max-width:600px){.ax-doc-moire{width:84vw;height:48svh;opacity:.16}}
-@media(prefers-reduced-motion:reduce){.ax-doc-moire-grid,.ax-doc-moire-screen{animation:none!important;filter:none!important}}
+@media(prefers-reduced-motion:reduce){html:not([data-ax-motion='running']) .ax-doc-moire-grid,html:not([data-ax-motion='running']) .ax-doc-moire-screen{animation-play-state:paused;filter:none}}
 html[data-ax-motion='paused'] .ax-doc-moire-grid,
-html[data-ax-motion='paused'] .ax-doc-moire-screen{animation-play-state:paused!important}
+html[data-ax-motion='paused'] .ax-doc-moire-screen{animation-play-state:paused}
 
 /* Content is visible by default; JS only arms reveal when motion is enabled. */
 .ax-reveal { transition:opacity .65s ease, transform .65s cubic-bezier(.2,.65,.25,1); }

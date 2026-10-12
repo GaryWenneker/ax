@@ -12,6 +12,7 @@ export default function RemoteHostSetup({ workspaceId, csrf, onChanged }: { work
   const [ready, setReady] = useState(false);
   const [open, setOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removeRequest, setRemoveRequest] = useState<Approval | null>(null);
   const [publicUrl, setPublicUrl] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [nativeId, setNativeId] = useState('');
@@ -74,10 +75,11 @@ export default function RemoteHostSetup({ workspaceId, csrf, onChanged }: { work
     {host?.builtInOAuth && <div aria-label="OAuth authorization requests"><h4>Connection approvals</h4><p>Match the request ID shown on the connecting computer before approving its access to this project.</p>
       {!requests.length && <p className="access-note">No connection requests.</p>}
       {requests.map(request => <article key={request.id} className="access-client"><h4>{request.clientName}</h4><p><code>{request.id}</code></p><p>{request.scope.includes('ax:write') ? 'Read and write access' : 'Read context access'} · {request.revoked ? 'Revoked' : request.status}</p><p className="access-note">Callback: {request.redirectUri}</p><div className="access-actions">
-        {request.status === 'pending' && !request.revoked ? <><button type="button" className="btn primary" disabled={busy} onClick={() => void act(() => decide(request, 'approve'))}>{request.scope.includes('ax:write') ? 'Approve read and write' : 'Approve context access'}</button><button type="button" className="btn" disabled={busy} onClick={() => void act(() => decide(request, 'deny'))}>Deny</button></> : !request.revoked && <button type="button" className="btn danger" disabled={busy} onClick={() => void act(() => decide(request, 'revoke'))}>Revoke access</button>}
+        {request.revoked || ['denied', 'expired'].includes(request.status) ? <button type="button" className="btn danger" disabled={busy} onClick={() => setRemoveRequest(request)}>Remove connection</button> : request.status === 'pending' ? <><button type="button" className="btn primary" disabled={busy} onClick={() => void act(() => decide(request, 'approve'))}>{request.scope.includes('ax:write') ? 'Approve read and write' : 'Approve context access'}</button><button type="button" className="btn" disabled={busy} onClick={() => void act(() => decide(request, 'deny'))}>Deny</button></> : <button type="button" className="btn danger" disabled={busy} onClick={() => void act(() => decide(request, 'revoke'))}>Revoke access</button>}
       </div></article>)}
     </div>}
     {error && !open && <p role="alert">{error}</p>}
+    {removeRequest && <ModalShell title="Remove inactive OAuth connection?" onClose={() => !busy && setRemoveRequest(null)}><p>Remove this inactive connection and its stored token records. Access will remain invalid; a new connection requires authentication and host approval.</p><div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setRemoveRequest(null)}>Cancel</button><button type="button" className="btn danger" disabled={busy} onClick={() => void act(async () => { await decide(removeRequest, 'remove'); setRemoveRequest(null); })}>Remove connection</button></div></ModalShell>}
     {open && <ModalShell title="Set up remote MCP host" onClose={() => !busy && setOpen(false)}><form className="access-form" onSubmit={setup}>
       <p>Enter the HTTPS address that routes to this computer. Ax creates the configuration and OAuth client ID and starts the service. Route that address to the proxy target shown after setup.</p>
       <label>Public HTTPS origin<input className="settings-input" type="url" placeholder="https://ax.example.com" required={!file} disabled={busy} value={publicUrl} onChange={e => setPublicUrl(e.target.value)} /></label>
