@@ -335,10 +335,7 @@ function AppShell() {
                 <i className="codicon codicon-menu" aria-hidden="true" />
               </button>
               <span className="titlebar-brand" title={AX_FULL_NAME}>
-                <img className="titlebar-logo" src="/ax-mark.png" alt="" width={30} height={30} draggable={false} />
-                <abbr className="titlebar-brand-ax" title={AX_FULL_NAME}>
-                  ax
-                </abbr>{' '}
+                <span className="ax-app-wordmark" role="img" aria-label="Ax">Ax<span aria-hidden="true">_</span></span>
                 <span>{portalLayout ? '| Command Center' : '/ graph + policy'}</span>
               </span>
             </div>
@@ -420,7 +417,7 @@ function AppShell() {
             </div>
           ))}
           <div className="sidebar-logo">
-            <img src="/ax-logo.png" alt="ax" width={96} height={96} draggable={false} />
+            <span className="ax-app-wordmark ax-app-wordmark--sidebar" role="img" aria-label="Ax">Ax<span aria-hidden="true">_</span></span>
           </div>
         </nav>
 
