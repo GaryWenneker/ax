@@ -64,7 +64,7 @@ async fn approved_business_rule_supplies_search_terms_without_model() {
     let rules = root.join(".agents/rules");
     std::fs::create_dir_all(&rules).unwrap();
     std::fs::write(rules.join("auth-context.mdc"),
-        "---\nid: auth-context\nlevel: INFO\ntriggers: [inloggen]\nproperties:\n  contextTerms: [refreshToken]\n---\nPrefer the indexed authentication implementation.\n").unwrap();
+        "---\nid: auth-context\nlevel: INFO\ntriggers: [inloggen]\ncontextTerms: [refreshToken]\n---\nPrefer the indexed authentication implementation.\n").unwrap();
     ax.index_all(IndexOptions::default(), None).await.unwrap();
     ax_policy::index_policy(ax.db_pool(), root, true).await.unwrap();
     let result = ToolHandler::call_tool(&mut ax, "ax_preflight", json!({

@@ -8,7 +8,9 @@ import "../styles/home-cinematic.css";
 import "../styles/landscape-svg.css";
 import "../styles/live-terminal.css";
 import "../styles/ares-identity.css";
+import "../styles/home-interaction.css";
 import CinematicHome from "../components/CinematicHome.astro";
+import ScrollReveal from "../components/ScrollReveal.astro";
 import { DOCS_SITE } from "../lib/brand";
 import { ogImagePath } from "../lib/og-card.mjs";
 import { pageLockScript } from "../lib/page-lock";
@@ -38,5 +40,6 @@ const pageLock = pageLockScript();
   </head>
   <body class="signal-site">
     <CinematicHome />
+    <ScrollReveal />
   </body>
 </html>

@@ -724,6 +724,13 @@ pub async fn serve(
     let listener = bind(port).await?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
     let bridge = start_socket_bridge(socket.as_deref(), addr).await?;
+    // Remote IDE/browser clients need a current graph without waiting for a
+    // first tool call. Only explicitly registered projects are watched.
+    let sync_tasks: Vec<_> = config
+        .projects
+        .iter()
+        .map(|project| ax_core::Ax::spawn_background_watch(project.root.clone()))
+        .collect();
     println!(
         "{}",
         json!({"port":addr.port(),"local_url":format!("http://{addr}"),"public_url":config.public_url,"socket":socket,"projects":config.projects.iter().map(|p| json!({"id":p.id,"url":format!("{}/projects/{}/mcp",config.public_url,p.id)})).collect::<Vec<_>>() })
@@ -735,6 +742,9 @@ pub async fn serve(
         .await
         .map_err(|e| e.to_string());
     if let Some(task) = bridge {
+        task.abort();
+    }
+    for task in sync_tasks {
         task.abort();
     }
     if let Some(path) = socket {

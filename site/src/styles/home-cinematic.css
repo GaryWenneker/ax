@@ -273,10 +273,7 @@
  .signal-footer > span { display:none; }
  .signal-footer nav { gap:15px; font-size:11px; }
 }
-@media(prefers-reduced-motion:reduce) {
- .signal-site { scroll-behavior:auto; }
- .signal-site *, .signal-site *::before, .signal-site *::after { animation-duration:.001ms!important; animation-iteration-count:1!important; scroll-behavior:auto!important; transition-duration:0s!important; }
- .log-entry { opacity:1; }
+@media(prefers-reduced-motion:reduce) {html:not([data-ax-motion="running"]) .signal-site { scroll-behavior:auto; }html:not([data-ax-motion="running"]) .signal-site *,html:not([data-ax-motion="running"]) .signal-site *::before,html:not([data-ax-motion="running"]) .signal-site *::after { animation-duration:.001ms!important; animation-iteration-count:1!important; scroll-behavior:auto!important; transition-duration:0s!important; }html:not([data-ax-motion="running"]) .log-entry { opacity:1; }
 }
 html[data-ax-motion="paused"] .signal-site *,html[data-ax-motion="paused"] .signal-site *::before,html[data-ax-motion="paused"] .signal-site *::after {
  animation-play-state:paused!important;

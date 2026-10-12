@@ -76,7 +76,7 @@
 .ax-terminal-history li:nth-child(2n){border-left-color:rgba(255,87,110,.5)}
 .ax-terminal-history li:nth-child(2n+1){border-left-color:rgba(73,170,235,.46)}
 @media(max-width:850px){.ax-ares-architecture{opacity:.62}.ax-landscape .ax-depth-dots{opacity:.3}.ares-spectrum-haze{opacity:.6}}
-@media(prefers-reduced-motion:reduce){.ax-ares-architecture *, .ax-ares-architecture, .ares-spectrum-haze{animation:none!important}}
+@media(prefers-reduced-motion:reduce){html:not([data-ax-motion="running"]) .ax-ares-architecture *,html:not([data-ax-motion="running"]) .ax-ares-architecture,html:not([data-ax-motion="running"]) .ares-spectrum-haze {animation:none!important}}
 html[data-ax-motion="paused"] .ax-ares-architecture *,html[data-ax-motion="paused"] .ax-ares-architecture,html[data-ax-motion="paused"] .ares-spectrum-haze{animation-play-state:paused!important}
 
 .ax-landscape .ares-red-network{mix-blend-mode:screen;animation:ares-red-grid-breathe 11s ease-in-out infinite alternate;filter:drop-shadow(0 0 2px rgba(255,40,70,.38))}

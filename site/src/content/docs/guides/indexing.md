@@ -28,7 +28,9 @@ ax sync            # incremental — only changed files
 
 ### 1. File watcher with debounced auto-sync (always on)
 
-`serve --mcp` spins up a native file watcher (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) over the project root. Every source-file create / modify / delete is captured. A debounce timer collapses bursts of edits into a single sync.
+`serve --mcp`, writable `ax web`, Remote MCP, and standalone Primary/Replica servers start the same Ax Sync file watcher automatically. Web watches the active workspace and stops its old watcher when you switch projects. Standalone and Remote MCP servers watch only their explicitly registered projects. Read-only/shared web sessions do not start a source-sync writer.
+
+The native watcher (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) captures source-file create / modify / delete events. A debounce timer collapses bursts of edits into a single sync. Startup also reconciles edits made while the service was stopped. A configured detached Primary or Replica keeps its own watcher running after web closes or MCP refreshes; no separate `ax sync` command is required.
 
 ```
 agent writes src/Widget.ts

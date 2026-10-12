@@ -1,0 +1,25 @@
+---
+import { INSTALL_UNIX } from "../lib/install-command.ts";
+const { hero = false } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<div class:list={["install-block", { "hero-install": hero }]} data-install-picker>
+  <div class="install-heading"><span>INSTALL AX</span><span data-install-shell>TERMINAL</span></div>
+  <div class="install-platforms" role="group" aria-label="Installation operating system">
+    {[["macos", "macOS"], ["linux", "Linux"], ["wsl2", "WSL2"], ["windows", "Windows"]].map(([os, label]) => (
+      <button type="button" data-install-os={os} aria-pressed="false">{label}</button>
+    ))}
+  </div>
+  <div class="install" data-install={INSTALL_UNIX}>
+    <span class="prompt" aria-hidden="true">$</span><code>{INSTALL_UNIX}</code>
+    <button class="copy" type="button" aria-label="Copy install command">Copy</button>
+  </div>
+  <p class="copy-status" aria-live="polite" role="status"></p>
+  <p class="install-note" data-install-detection>Choose the computer where you will install Ax.</p>
+  <a class="install-guide" data-install-guide href={base + "/getting-started/installation/"}>Installation guide ↗</a>
+</div>
+
+<script>
+  import { mountInstallPickers } from "../lib/install-command.ts";
+  mountInstallPickers();
+</script>

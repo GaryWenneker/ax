@@ -340,3 +340,12 @@ code {
 }
 .sl-markdown-content strong{color:#f2f5ff}
 .card:hover,.pagination-links a:hover{border-color:rgba(253,83,106,.4)}
+
+/* Content is visible by default; JS only arms reveal when motion is enabled. */
+.ax-reveal { transition:opacity .65s ease, transform .65s cubic-bezier(.2,.65,.25,1); }
+.ax-reveal-pending { opacity:0; transform:translateY(18px); }
+html[data-ax-motion="paused"] .ax-reveal { transition:none; }
+html[data-ax-motion="paused"] .ax-reveal-pending { opacity:1; transform:none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-ax-motion="running"]) .ax-reveal { transition:none; opacity:1; transform:none; }
+}

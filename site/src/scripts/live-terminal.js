@@ -2,6 +2,7 @@
  * Continuous, bounded Ax homepage terminal demo.
  * Illustrative output only; never accesses a real workspace or sends network requests.
  */
+import { motionPaused } from "./motion.js";
 export const MAX_TERMINAL_LINES = 38;
 
 export const terminalScenarios = [
@@ -185,7 +186,7 @@ export function mountLiveTerminal(root) {
     listInto(commands, commandHistory, 3);
   }
   function isPaused() {
-    return document.hidden || motion.matches || document.documentElement.dataset.axMotion === "paused";
+    return document.hidden || motionPaused();
   }
   function delay(ms) {
     if (!stopped) timer = window.setTimeout(tick, ms);
@@ -193,7 +194,7 @@ export function mountLiveTerminal(root) {
   function tick() {
     if (stopped) return;
     if (isPaused()) {
-      subtitle.textContent = motion.matches ? "Motion reduced · static preview" : "Replay paused";
+      subtitle.textContent = motionPaused() ? "Replay paused · static preview" : "Replay paused";
       delay(650);
       return;
     }
@@ -235,12 +236,12 @@ export function mountLiveTerminal(root) {
   delay(380);
 
   const onVisibility = () => {
-    if (!document.hidden && !motion.matches) subtitle.textContent = "Streaming context and activity…";
+    if (!isPaused()) subtitle.textContent = "Streaming context and activity…";
   };
   document.addEventListener("visibilitychange", onVisibility);
   motion.addEventListener("change", onVisibility);
   const onMotionChange = (event) => {
-    if (event.detail?.paused) subtitle.textContent = "Replay paused";
+    subtitle.textContent = event.detail?.paused ? "Replay paused" : "Streaming context and activity…";
   };
   window.addEventListener("ax:motion", onMotionChange);
   const destroy = () => {

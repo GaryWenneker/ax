@@ -1086,9 +1086,11 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     if ice_enabled && !prompt.trim().is_empty() {
         let max_blocks = if context_mode == "expanded" { 6 } else { 3 };
         let max_chars = if context_mode == "expanded" { 3000 } else { 1500 };
-        let mut hints = ax_context::retrieval::RetrievalHints::default();
-        hints.paths = files.iter().filter_map(|f|
-            ax_context::task_analyzer::safe_relative_path(f)).collect();
+        let mut hints = ax_context::retrieval::RetrievalHints {
+            paths: files.iter().filter_map(|f|
+                ax_context::task_analyzer::safe_relative_path(f)).collect(),
+            ..Default::default()
+        };
         // Approved/matched rules may supply optional retrieval preferences.
         // Rule bodies remain policy, never assertions of code relationships.
         for rule in &result.rules {

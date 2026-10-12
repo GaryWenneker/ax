@@ -58,11 +58,43 @@ Set `AX_UPGRADE_ARCHIVE` to point at a specific zip if needed.
 
 ax is a **native Rust binary** — no Node.js required for normal use.
 
-```bash
-# macOS / Linux
-curl -fsSL https://getax.wenneker.io/install.sh | sh
+The homepage puts installation in the first screen. It detects your desktop OS and selects the command and guide. Select another platform to switch both install panels; phone and tablet browsers ask which development computer you use. The Copy button copies the selected command.
 
-# Windows (PowerShell)
+![Ax homepage with the OS selector and installation command](/screenshots/home-install-desktop.png)
+
+[View the mobile installer](/screenshots/home-install-mobile.png).
+
+### macOS
+
+Run in Terminal on Apple Silicon or Intel Macs:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install.sh | sh
+```
+
+### Linux
+
+Run in your Linux shell:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install.sh | sh
+```
+
+### WSL2
+
+Open your WSL2 Linux terminal and install the Linux binary inside that distribution:
+
+```bash
+curl -fsSL https://getax.wenneker.io/install.sh | sh
+```
+
+Windows browsers identify Windows, rather than your WSL distribution. Select **WSL2** in the homepage installer when this is your development environment.
+
+### Windows
+
+Run in PowerShell to install the native Windows binary:
+
+```powershell
 irm https://getax.wenneker.io/install.ps1 | iex
 ```
 

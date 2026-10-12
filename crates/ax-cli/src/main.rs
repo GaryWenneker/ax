@@ -2204,7 +2204,14 @@ async fn async_main() {
             McpAction::Remote { action } => match action {
                 RemoteMcpAction::Serve { config, port, socket } => {
                     match ax_mcp::remote::RemoteConfig::load(&config) {
-                        Ok(config) => ax_mcp::remote::serve(config, port, socket).await,
+                        Ok(config) => {
+                            for project in &config.projects {
+                                if let Err(error) = ax_web::replication_setup::auto_start(&project.root).await {
+                                    tracing::warn!("replication automatic startup failed: {error}");
+                                }
+                            }
+                            ax_mcp::remote::serve(config, port, socket).await
+                        }
                         Err(error) => Err(error),
                     }
                 }
