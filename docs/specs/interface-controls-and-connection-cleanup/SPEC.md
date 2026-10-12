@@ -25,3 +25,7 @@ Below Light/Dark offer Lime (default, website lime #b9ff6a in Dark), Blue, Teal,
 ## Website motion
 
 The minimal homepage exposes the shared Play/Pause control. CSS honors explicit Play even with reduced motion enabled, while an unset choice respects the operating system. Negative phase offsets start the slow CMY layers away from the stationary turnaround so movement is visible immediately on desktop and mobile. Keep smooth matching loop endpoints, reduced-motion defaults and persistent Pause. Verify transforms and rendered pixel changes in a local Astro preview, including explicit Play, pause and reload. Do not deploy.
+
+## Evergreen documentation
+
+Remove all version-organized updates from Introduction, including the earlier-release list. Preserve current feature guides and valid installation/version metadata. Persist the user's binding prohibition on per-version updates through Ax MCP and in the shared project rules. A website documentation check must reject version-update headings; demonstrate its failure against the old Introduction, then pass the complete site test suite after removal.
