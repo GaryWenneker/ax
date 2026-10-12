@@ -1,0 +1,53 @@
+---
+import { platformIcons } from '../lib/agent-icons';
+import { AX_RELEASE_VERSION } from '../lib/version';
+
+const osOptions = [
+  { id:'macos', label:'macOS', icon: platformIcons.macOS },
+  { id:'linux', label:'Linux', icon: platformIcons.Linux },
+  { id:'windows', label:'Windows', icon: platformIcons.Windows },
+  { id:'wsl2', label:'WSL2', icon: platformIcons.Linux },
+];
+const initialUrl = 'https://github.com/GaryWenneker/ax/releases/latest/download/ax-darwin-arm64.tar.gz';
+---
+<div class="ax-download" data-ax-downloader>
+  <div class="ax-download-row">
+    <a class="ax-download-primary" href={initialUrl} data-ax-download>
+      <span class="ax-os-icon" data-ax-main-icon set:html={platformIcons.macOS} />
+      <span data-ax-download-label>Download for macOS (ARM64)</span>
+      <span class="ax-download-glyph" aria-hidden="true">↓</span>
+    </a>
+    <div class="ax-download-controls">
+      <button class="ax-other-platforms" type="button" data-ax-platform-toggle aria-expanded="false" aria-controls="ax-platform-menu">
+        Other platforms <span aria-hidden="true">⌄</span>
+      </button>
+      <div class="ax-platform-panel" id="ax-platform-menu" data-ax-platform-panel hidden>
+        <p class="ax-panel-title">Select development platform</p>
+        <div class="ax-platform-options" role="group" aria-label="Operating system">
+          {osOptions.map(os => (
+            <button type="button" data-ax-os={os.id} aria-pressed={os.id === 'macos' ? 'true' : 'false'}>
+              <span class="ax-os-icon" set:html={os.icon} /> {os.label}
+            </button>
+          ))}
+        </div>
+        <div class="ax-architecture">
+          <span>Architecture</span>
+          <div class="ax-architecture-controls" role="group" aria-label="CPU architecture">
+            <button data-ax-arch="arm64" type="button" aria-pressed="true">ARM64</button>
+            <button data-ax-arch="x64" type="button" aria-pressed="false">x64</button>
+          </div>
+        </div>
+        <p class="ax-platform-help" data-ax-platform-help>Apple Silicon default. Select x64 for Intel Macs.</p>
+      </div>
+    </div>
+  </div>
+  <p class="ax-download-caption" aria-live="polite">
+    <span data-ax-platform-label>macOS · ARM64</span><span aria-hidden="true">·</span>
+    <span>Latest release: v{AX_RELEASE_VERSION.replace(/^v/, '')}</span><span aria-hidden="true">·</span>
+    <a href="https://github.com/GaryWenneker/ax/releases/latest" target="_blank" rel="noopener noreferrer">Other files ↗</a>
+  </p>
+</div>
+<script>
+  import { mountMinimalDownload } from '../scripts/minimal-download';
+  mountMinimalDownload();
+</script>
