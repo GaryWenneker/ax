@@ -56,7 +56,6 @@ export function mountMinimalDownload(): void {
     os = button.dataset.axOs as InstallOS;
     arch = getDefaultArch(os);
     render();
-    openPanel(false);
   }));
   root.querySelectorAll<HTMLButtonElement>('[data-ax-arch]').forEach(button => button.addEventListener('click', () => {
     arch = button.dataset.axArch as Arch;
