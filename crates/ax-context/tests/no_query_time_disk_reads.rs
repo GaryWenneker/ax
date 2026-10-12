@@ -31,6 +31,8 @@ const QUERY_PATH_FILES: &[&str] = &[
     "src/formatter.rs",
     "src/explore_format.rs",
     "src/markers.rs",
+    "src/retrieval.rs",
+    "src/task_analyzer.rs",
 ];
 
 /// Spellings that read the filesystem. Substring match, so `std::fs::read_to_string`

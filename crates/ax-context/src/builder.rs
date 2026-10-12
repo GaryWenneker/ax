@@ -55,7 +55,6 @@ impl ContextBuilder {
         let depth = opts.traversal_depth.unwrap_or(2);
         let mut related_files = HashSet::new();
         let mut subgraph = ax_types::Subgraph::default();
-        let mut edge_count = 0u32;
         let mut code_blocks = Vec::new();
         let max_blocks = opts.max_code_blocks.unwrap_or(6) as usize;
         let max_size = opts.max_code_block_size.unwrap_or(1200) as usize;
@@ -118,7 +117,7 @@ impl ContextBuilder {
         subgraph.edges.sort_by(|a, b| a.source.cmp(&b.source)
             .then_with(|| a.target.cmp(&b.target))
             .then_with(|| a.kind.as_str().cmp(b.kind.as_str())));
-        edge_count = subgraph.edges.len() as u32;
+        let edge_count = subgraph.edges.len() as u32;
 
         let summary = if entry_points.is_empty() {
             format!("No matching symbols for: {}", query)

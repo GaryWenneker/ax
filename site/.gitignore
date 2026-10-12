@@ -21,3 +21,7 @@ pnpm-debug.log*
 # macOS-specific files
 .DS_Store
 netlify/latest-version.json
+# tsc emit next to the TypeScript functions; Netlify rejects the dotted names
+netlify/functions/*.js
+netlify/functions/*.js.map
+netlify/functions/*.d.ts

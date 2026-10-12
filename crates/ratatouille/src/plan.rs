@@ -308,9 +308,21 @@ mod tests {
     fn ax_rebuilds_then_starts_web_without_a_kill_flag() {
         let steps = plan(Action::Ax, &root(), Host::Unix, true);
         assert_eq!(steps[0].program, "bash");
-        assert_eq!(steps[0].args, ["/repo/scripts/reinstall-cli.sh"]);
+        assert_eq!(
+            steps[0].args,
+            vec![root()
+                .join("scripts/reinstall-cli.sh")
+                .to_string_lossy()
+                .into_owned()]
+        );
         assert!(steps[0].args.iter().all(|arg| !arg.contains("pkill")));
-        assert_eq!(steps[1].program, "/repo/target-dev/release/ax");
+        assert_eq!(
+            steps[1].program,
+            root()
+                .join("target-dev/release/ax")
+                .to_string_lossy()
+                .into_owned()
+        );
         assert_eq!(steps[1].args, ["web", "--port", "7070"]);
     }
 
@@ -322,7 +334,13 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg.ends_with("reinstall-cli.ps1")));
-        assert_eq!(steps[1].program, "/repo/target-dev/release/ax.exe");
+        assert_eq!(
+            steps[1].program,
+            root()
+                .join("target-dev/release/ax.exe")
+                .to_string_lossy()
+                .into_owned()
+        );
     }
 
     #[test]

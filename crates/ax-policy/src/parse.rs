@@ -194,19 +194,53 @@ fn extra_properties(
     known: &[&str],
 ) -> crate::types::PolicyProperties {
     let mut props = crate::types::PolicyProperties::new();
+    // Authors write `properties:` as a section. Those keys are the same
+    // properties as a top-level `contextTerms:`; do not nest them one level down.
+    let mut nested = None;
     for (key, val) in map {
-        if known.iter().any(|k| *k == key) {
+        if key == "properties" {
+            nested = Some(val);
             continue;
         }
+        insert_property(&mut props, known, key, val);
+    }
+    if let Some(val) = nested {
         let Ok(json) = serde_json::to_value(val) else {
-            continue;
+            return props;
         };
-        if property_is_blank(&json) {
-            continue;
+        let Some(object) = json.as_object() else {
+            insert_property(&mut props, known, "properties", val);
+            return props;
+        };
+        for (inner, inner_val) in object {
+            if known.iter().any(|k| *k == inner)
+                || props.contains_key(inner)
+                || property_is_blank(inner_val)
+            {
+                continue;
+            }
+            props.insert(inner.clone(), inner_val.clone());
         }
-        props.insert(key.clone(), json);
     }
     props
+}
+
+fn insert_property(
+    props: &mut crate::types::PolicyProperties,
+    known: &[&str],
+    key: &str,
+    val: &Value,
+) {
+    if known.iter().any(|k| *k == key) {
+        return;
+    }
+    let Ok(json) = serde_json::to_value(val) else {
+        return;
+    };
+    if property_is_blank(&json) {
+        return;
+    }
+    props.insert(key.to_string(), json);
 }
 
 fn property_is_blank(value: &serde_json::Value) -> bool {
