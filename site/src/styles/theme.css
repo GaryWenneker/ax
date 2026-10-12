@@ -351,7 +351,7 @@ h1#_top,.sl-markdown-content h2,.sl-markdown-content h3{
 @keyframes ax-doc-magenta{0%,100%{transform:rotate(2.5deg) translate3d(-24px,-11px,0)}50%{transform:rotate(5.5deg) translate3d(24px,11px,0)}}
 @keyframes ax-doc-yellow{0%,100%{transform:rotate(-7deg) translate3d(17px,-21px,0)}50%{transform:rotate(-4deg) translate3d(-17px,21px,0)}}
 @keyframes ax-doc-focus{0%,43%,70%,100%{filter:blur(0)}53%,59%{filter:blur(1.5px)}}
-.header,.sidebar-pane{position:relative;z-index:3}
+.header,.sidebar-pane{z-index:3}
 .main-pane{position:relative;z-index:2;background:transparent}
 @media(max-width:899px){.ax-doc-moire{width:75vw;opacity:.22}}
 @media(max-width:600px){.ax-doc-moire{width:84vw;height:48svh;opacity:.16}}
