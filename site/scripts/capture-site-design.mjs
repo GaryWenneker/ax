@@ -3,6 +3,7 @@
  * No Ax backend or Netlify deployment required.
  */
 import puppeteer from "puppeteer";
+import sharp from "sharp";
 import { spawn } from "node:child_process";
 import { mkdir, access } from "node:fs/promises";
 import path from "node:path";
@@ -35,6 +36,7 @@ try {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const cases = [
+    ["home-wide", "/", 2048, 1018],
     ["home-desktop", "/", 1440, 900],
     ["home-1280", "/", 1280, 720],
     ["home-1024", "/", 1024, 768],
@@ -141,9 +143,30 @@ try {
     };
   });
   if (moire.count !== 3 || new Set(moire.pitch).size !== 3 || !moire.blending || moire.hardCircle ||
-      moire.changed !== 2 || moire.moving !== 2 || !moire.mask.includes('closest-side') || !moire.mask.includes('100%')) {
-    throw new Error('Independent overprint interference and feathered edges required: ' + JSON.stringify(moire));
+      moire.changed !== 2 || moire.moving !== 2 || !moire.mask.includes('linear-gradient') || moire.mask.includes('radial-gradient') || !moire.mask.includes('100%')) {
+    throw new Error('Independent overprint interference and horizontal side fade required: ' + JSON.stringify(moire));
   }
+  // Compare rendered pixels immediately before and after both animation wraps.
+  // A one-tile translation should look continuous even though its matrix resets.
+  await page.evaluate(() => document.querySelectorAll('.ax-halftone-dots').forEach(el =>
+    el.getAnimations().forEach(animation => { animation.pause(); animation.currentTime = 4000; })));
+  for (const selector of ['.ax-halftone-screen-two', '.ax-halftone-screen-three']) {
+    const setPhase = async offset => page.evaluate(({ selector, offset }) => {
+      const animation = document.querySelector(selector).getAnimations()[0];
+      animation.currentTime = Number(animation.effect.getTiming().duration) + offset;
+    }, { selector, offset });
+    const clip = { x: 1000, y: 200, width: 400, height: 500 };
+    await setPhase(-16);
+    const before = await sharp(await page.screenshot({ clip })).removeAlpha().raw().toBuffer();
+    await setPhase(16);
+    const after = await sharp(await page.screenshot({ clip })).removeAlpha().raw().toBuffer();
+    const difference = before.reduce((total, channel, index) => total + Math.abs(channel - after[index]), 0) / before.length;
+    if (difference > 1.5) throw new Error(selector + ': visible loop discontinuity, mean pixel delta ' + difference);
+    console.log(selector, 'continuous loop, mean pixel delta', difference.toFixed(3));
+  }
+  // Reload so the manual animation controls used by the pixel comparison do not
+  // override CSS play state during normal interaction and reduced-motion checks.
+  await page.reload({ waitUntil: 'networkidle0' });
   await page.click("[data-ax-platform-toggle]");
   await page.click('[data-ax-os="windows"]');
   await page.click('[data-ax-arch="arm64"]');
@@ -161,7 +184,7 @@ try {
     [...new Set(links.map(x => x.getAttribute("href")).filter(x => x.startsWith("/") && !x.includes("#")))]);
   for (const target of targets) await access(path.join(site, "dist", target, "index.html"));
   if (errors.length) throw new Error(errors.join("\n"));
-  console.log("Minimal homepage checks passed: responsive viewport, CMY interference and edge fade, native download links, and reduced motion.");
+  console.log("Minimal homepage checks passed: responsive viewport, CMY interference and side fade, native download links, and reduced motion.");
 } finally {
   await browser?.close();
   server.kill();
