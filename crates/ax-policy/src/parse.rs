@@ -213,7 +213,7 @@ fn extra_properties(
             return props;
         };
         for (inner, inner_val) in object {
-            if known.iter().any(|k| *k == inner)
+            if known.contains(&inner.as_str())
                 || props.contains_key(inner)
                 || property_is_blank(inner_val)
             {
@@ -231,7 +231,7 @@ fn insert_property(
     key: &str,
     val: &Value,
 ) {
-    if known.iter().any(|k| *k == key) {
+    if known.contains(&key) {
         return;
     }
     let Ok(json) = serde_json::to_value(val) else {
