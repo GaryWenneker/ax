@@ -168,7 +168,7 @@ export function savePolicySyncSettings(
   return request('/settings', { method: 'PUT', body: JSON.stringify(patch) });
 }
 
-export function fetchPolicyReview(): Promise<{ items: import('./policyTypes').PendingPolicyItem[] }> {
+export function fetchPolicyReview(): Promise<{ items: import('./policyTypes').PendingPolicyItem[]; serverVersion?: string; comparisonAvailable?: boolean }> {
   return request('/review');
 }
 

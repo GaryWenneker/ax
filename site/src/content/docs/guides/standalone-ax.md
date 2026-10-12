@@ -287,3 +287,7 @@ editing that text invalidates old attribution. Older items without source record
 show an explicit unknown origin. Accepting or rejecting clears the source record
 for that item. A source label is context for review, never permission to activate
 policy automatically.
+
+### Different node versions
+
+Replication exchanges app-version and protocol metadata without changing snapshot fingerprints. Settings shows a persistent warning when peer versions differ or an older peer does not report its version. Complete protocol 3 peers can still synchronize; a matching successful sync clears the warning. Explicitly incompatible protocols stop before applying incoming data, with an update/reconnect message. Existing local records remain intact. Ax does not automatically replace or restart another node: update the older node through your normal deployment process.

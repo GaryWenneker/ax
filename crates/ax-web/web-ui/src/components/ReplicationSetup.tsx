@@ -8,7 +8,7 @@ type Settings = { config: { node_id: string; role: 'primary' | 'replica'; cluste
 type Candidate = { node_id: string; role: string; advertised_url: string; cluster_id: string; project_ids?: string[] };
 type Interface = { name: string; address: string; loopback: boolean };
 type Dataset = { origin: string; nodes: number; edges: number; files: number; sourceBytes: number; logFiles: number; logBytes: number; agentSessions: number; historyRows: number };
-type State = { active_replicas?: number; runtime_error?: string; datasets?: Dataset[]; sync?: { status?: string; last_error?: string; last_success_unix_seconds?: number }; settings: Settings | null; running: boolean; active_project: boolean; safety?: { mode: string; memories: number; rules: number; skills: number; review_required?: boolean; sync_failed?: boolean } };
+type State = { active_replicas?: number; runtime_error?: string; datasets?: Dataset[]; sync?: { compatibility_warning?: string | null; status?: string; last_error?: string; last_success_unix_seconds?: number }; settings: Settings | null; running: boolean; active_project: boolean; safety?: { mode: string; memories: number; rules: number; skills: number; review_required?: boolean; sync_failed?: boolean } };
 
 export default function ReplicationSetup({ locked, onChanged }: { locked: boolean; onChanged: () => Promise<void> }) {
   const [state, setState] = useState<State | null>(null);
@@ -110,7 +110,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
   const complete = state?.sync?.status?.includes('full_data_synced') ?? false;
   const peers = state?.active_replicas ?? 0;
   const paired = !!state?.running && state.active_project && !state.safety?.sync_failed && (state.settings?.config.role === 'primary' ? peers > 0 : complete);
-  const serviceState: ServiceState = error || state?.runtime_error || state?.safety?.sync_failed ? 'error' : !state?.running ? 'stopped' : state.safety?.review_required ? 'warning' : 'running';
+  const serviceState: ServiceState = error || state?.runtime_error || state?.safety?.sync_failed ? 'error' : !state?.running ? 'stopped' : (state.safety?.review_required || state.sync?.compatibility_warning) ? 'warning' : 'running';
   const saved = state?.settings;
   async function credential() {
     if (issued) return issued;
@@ -140,6 +140,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
       <div className="access-node-local"><h3>Local {saved.config.role === 'primary' ? 'Primary' : 'Replica'}</h3><p>{saved.config.node_id}</p>
         <p>Sync state: {state?.safety?.sync_failed ? 'Failed' : complete ? 'All datasets synchronized' : 'Waiting for synchronization'}</p>
         <p>Last successful sync: {state?.sync?.last_success_unix_seconds ? new Date(state.sync.last_success_unix_seconds * 1000).toLocaleString() : 'Never'}</p>
+        {state?.sync?.compatibility_warning && <p role="status" className="access-note">{state.sync.compatibility_warning}</p>}
         {state?.sync?.last_error && <p role="alert">{state.sync.last_error}</p>}
         {state?.datasets?.map(dataset => <p key={dataset.origin}><strong>Node {dataset.origin}</strong>: {dataset.nodes} nodes · {dataset.edges} relationships · {dataset.files} files · {dataset.logFiles} log files · {dataset.agentSessions} agent sessions · {dataset.historyRows} conversation and log records</p>)}
       </div>

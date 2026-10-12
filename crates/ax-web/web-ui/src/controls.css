@@ -131,3 +131,17 @@ html[data-ax-layout="portal"] .mcp-trace .settings-log-header{padding-block:6px;
 html[data-ax-layout="portal"] .settings-card-header{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 16px}
 html[data-ax-layout="portal"] .settings-card-header h2{font-size:14px}
 html[data-ax-layout="portal"] .settings-card-header p{font-size:12px;max-width:none;margin:0}
+
+/* Keep large review queues scannable; full content opens per item. */
+.review-list{gap:6px}
+.review-item{padding:8px 10px}
+.review-item-heading{display:grid;grid-template-columns:20px minmax(120px,1fr) auto auto auto;gap:8px 12px;align-items:center}
+.review-item-heading>strong{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.review-item-heading>span{font-size:12px}
+.review-item .review-actions{margin:0;gap:8px}
+.review-item>details{margin:4px 0 0}
+.review-item>details>summary{cursor:pointer;font-size:12px;line-height:24px;color:var(--accent-text)}
+.review-item>details[open]{margin-top:10px}
+.review-item>details p{margin:8px 0;font-size:13px}
+.review-compatibility-warning{margin:8px 0;padding:10px 14px;border:1px solid var(--warn);color:var(--text);background:var(--bg-panel);font-size:13px}
+@media(max-width:899px){.review-item-heading{grid-template-columns:20px minmax(0,1fr) auto}.review-item-heading>span{grid-column:2}.review-item-heading>.review-actions{grid-column:3;grid-row:1 / span 3;flex-direction:column;align-items:stretch}.review-item>details>summary{min-height:32px;line-height:32px}}
