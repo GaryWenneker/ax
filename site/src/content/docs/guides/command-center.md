@@ -7,7 +7,7 @@ ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, s
 
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
-Page headers and filters share compact spacing so more rows fit on screen. Savings metrics use equal label rows and aligned numeric values, adapting to smaller screens.
+Page headers and filters share compact spacing so more rows fit on screen. Rules, Skills, Memory and shared lists adapt to the width of their panel: wide rows place names, descriptions and tags together; smaller panels stack readable metadata with labels and wrap instead of forcing horizontal scrolling. Hover a shortened description or tag to see its full value, or open the item for complete content. Focused fields and keyboard controls use a soft accent glow; system high-contrast mode retains a thin focus outline. Savings metrics use equal label rows and aligned numeric values, adapting to smaller screens.
 
 The header and sidebar use the public homepage’s Archivo/lime wordmark. Click either logo to return to the admin homepage. Quality Gates has been removed from the UI and navigation; old `/ship` and `#ship` bookmarks return to **Stats**. CLI quality gates and Settings configuration remain available.
 
@@ -27,7 +27,11 @@ Embedding Command Center in an IDE webview? Append `?embed=1` to hide the browse
 
 Each full page load and hard refresh plays a short green edge glow (Green Vessel) with a startup chime. The overlay is removed when that animation ends, so the dashboard is usable again. Moving between pages inside the app does not replay it. `prefers-reduced-motion: reduce` skips the glow. If the browser blocks the chime until a gesture, the first click or key plays it.
 
-![Command Center — Rules page with the Policy, Code, Activity, and System sidebar groups](/screenshots/cc-policy-rules-dark.png)
+![Compact Rules rows on a wide screen](/screenshots/cc-responsive-policy-rules.png)
+
+![Memory metadata wraps on a narrow screen](/screenshots/cc-responsive-memory-mobile.png)
+
+![Soft accent focus glow](/screenshots/cc-focus-glow.png)
 
 ## Azure Portal appearance
 

@@ -101,6 +101,7 @@ function PolicyCalmRow({ item, ...p }: Props & { item: PolicyCalmItem }) {
         <ScopeBadge scope={item.scope} onClick={() => p.filters.onScope(item.scope)} active={p.filters.scope === normalizePolicyScope(item.scope)} />,
         item.meta,
       ] : undefined}
+      portalLabels={['Level', 'Scope', 'Priority']}
       metaTitle="Priority"
       selected={selected}
       disabled={!item.enabled}

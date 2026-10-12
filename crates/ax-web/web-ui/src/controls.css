@@ -145,3 +145,55 @@ html[data-ax-layout="portal"] .settings-card-header p{font-size:12px;max-width:n
 .review-item>details p{margin:8px 0;font-size:13px}
 .review-compatibility-warning{margin:8px 0;padding:10px 14px;border:1px solid var(--warn);color:var(--text);background:var(--bg-panel);font-size:13px}
 @media(max-width:899px){.review-item-heading{grid-template-columns:20px minmax(0,1fr) auto}.review-item-heading>span{grid-column:2}.review-item-heading>.review-actions{grid-column:3;grid-row:1 / span 3;flex-direction:column;align-items:stretch}.review-item>details>summary{min-height:32px;line-height:32px}}
+
+/* One soft focus treatment, including controls with older per-page outlines. */
+:root { --control-focus-glow:0 0 8px 2px color-mix(in srgb,var(--accent-text) 32%,transparent); }
+html[data-ax-layout] body :is(button,a[href],input,select,textarea,[contenteditable="true"]):focus-visible,
+html[data-ax-layout] body :is(input,select,textarea):focus {
+  outline:0 !important;
+  box-shadow:var(--control-focus-glow) !important;
+}
+html[data-ax-layout] body :is(input,select,textarea):focus { border-color:var(--accent-text); }
+html[data-ax-layout] body .portal-search:focus-within { outline:0;box-shadow:var(--control-focus-glow);border-color:var(--accent-text); }
+html[data-ax-layout] body .portal-search input:focus { box-shadow:none !important; }
+html[data-ax-layout] .label-ac-box:focus-within { box-shadow:var(--control-focus-glow);border-color:var(--accent-text); }
+html[data-ax-layout] body .label-ac-input:focus { box-shadow:none !important; }
+html[data-ax-layout] .portal-data-cell:focus-within { overflow:visible; }
+@media(forced-colors:active) {
+  html[data-ax-layout] body :is(button,a[href],input,select,textarea,[contenteditable="true"]):focus-visible,
+  html[data-ax-layout] body :is(input,select,textarea):focus { outline:1px solid Highlight !important;outline-offset:2px;box-shadow:none !important; }
+}
+
+/* Respond to panel width, so an open detail pane gets the same compact fallback. */
+html[data-ax-layout="portal"] .page-item-list { container-type:inline-size;container-name:ax-list; }
+html[data-ax-layout="portal"] body :is(.page-item,.list-item,.edge-item) { padding-block:4px;min-height:34px; }
+html[data-ax-layout="portal"] body :is(.portal-data-row,.portal-data-header) { padding:4px 12px;min-height:34px; }
+html[data-ax-layout="portal"] .page-table :is(th,td) { padding-block:5px; }
+html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(180px,1fr) 100px 105px 64px 146px;min-width:0;column-gap:8px; }
+html[data-ax-layout="portal"] body .portal-memory-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(180px,1fr) 90px 90px 65px 64px;min-width:0; }
+html[data-ax-layout="portal"] .portal-data-name { display:grid;grid-template-columns:minmax(80px,.4fr) minmax(0,1fr);align-items:center;gap:2px 12px; }
+html[data-ax-layout="portal"] .portal-data-name .page-item-sub { margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:1/-1;margin:0; }
+@container ax-list (min-width:1000px) {
+  html[data-ax-layout="portal"] .portal-data-name { grid-template-columns:minmax(100px,.3fr) minmax(120px,1fr) minmax(0,auto);gap:12px; }
+  html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:auto; }
+  html[data-ax-layout="portal"] .page-item:not(.portal-data-row) .page-item-body { display:flex;align-items:center;gap:12px;min-width:0; }
+  html[data-ax-layout="portal"] .page-item:not(.portal-data-row) .page-item-sub { margin:0;min-width:0;flex:1; }
+}
+@container ax-list (max-width:675px) {
+  html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { min-width:0;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px; }
+  html[data-ax-layout="portal"] .portal-data-header { display:none; }
+  html[data-ax-layout="portal"] .portal-data-name { grid-column:1/-1;display:flex;flex-direction:column;align-items:stretch;gap:3px; }
+  html[data-ax-layout="portal"] .portal-data-name .page-item-sub { white-space:normal; }
+  html[data-ax-layout="portal"] .portal-data-actions { grid-column:1/-1; }
+  html[data-ax-layout="portal"] .portal-data-cell[data-label]::before { content:attr(data-label);display:block;font-size:10px;color:var(--text-dim);line-height:16px; }
+}
+/* Long tag labels stay within their column; tooltips retain the full value. */
+html[data-ax-layout="portal"] .portal-data-tags { min-width:0; }
+html[data-ax-layout="portal"] .portal-data-tags .policy-view-tags { min-width:0;max-width:100%;flex-wrap:wrap; }
+html[data-ax-layout="portal"] .portal-data-tags .page-item-badge { max-width:100%;overflow:hidden;text-overflow:ellipsis; }
+
+/* Keep header actions and their help icons together when the panel narrows. */
+html[data-ax-layout="portal"] .settings-hero-actions { max-width:100%;min-width:0;flex-shrink:1;align-items:center; }
+.page-action-pair { display:inline-flex;align-items:center;gap:6px;max-width:100%; }
+.page-action-pair .info-hover { margin-left:0; }
