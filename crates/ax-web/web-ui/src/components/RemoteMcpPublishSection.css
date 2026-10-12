@@ -21,3 +21,12 @@
   .remote-publish-actions .btn { flex: 1 1 170px; }
   .remote-publish-heading { flex-wrap: wrap; }
 }
+.local-mcp-config { margin-bottom: 28px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+.local-mcp-config > label { display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+.local-mcp-config summary, .remote-publish-import summary { cursor: pointer; font-weight: 600; margin-block: 12px; }
+.local-mcp-config textarea, .remote-publish-transfer textarea { margin-top: 12px; }
+.remote-mcp-publish ol { padding-left: 24px; }
+.remote-publish-transfer { margin-block: 24px; padding: 16px; border: 1px solid var(--border); border-radius: 6px; }
+.remote-publish-import details label { margin-bottom: 16px; }
+.remote-connection-paste { display: flex; flex-direction: column; gap: 8px; }
+.remote-connection-paste textarea { color: var(--text); background: var(--bg-input); border: 1px solid var(--border); padding: 12px; width: 100%; font: 12px/1.6 var(--font-mono); user-select: text; resize: vertical; }

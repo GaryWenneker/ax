@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Publication, PublicationList, publicationRequest, isRemoteClient, RemoteClient, RemoteExport, RemoteMcpError, RemoteTransport } from '../remoteMcpApi';
+import { Publication, PublicationList, publicationRequest, isRemoteClient, ConnectionExport, RemoteClient, RemoteExport, RemoteMcpError, RemoteTransport } from '../remoteMcpApi';
 import { WORKSPACE_SWITCHED } from '../workspaceEvents';
 import './RemoteMcpPublishSection.css';
 import ModalShell from './ModalShell';
+import LocalMcpConfigSection from './LocalMcpConfigSection';
 
 const clients: { id: RemoteClient; label: string }[] = [
   { id: 'cursor', label: 'Cursor' }, { id: 'vscode', label: 'VS Code' },
@@ -21,6 +22,8 @@ export default function RemoteMcpPublishSection() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [checking, setChecking] = useState('');
+  const [connectionText, setConnectionText] = useState('');
+  const transferText = useRef<HTMLTextAreaElement>(null);
   const [showImport, setShowImport] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState('');
@@ -38,7 +41,7 @@ export default function RemoteMcpPublishSection() {
     generation.current++;
     controller.current.abort(); controller.current = new AbortController();
     setData(null); setSelected(''); setOutput(null); setMessage(''); setError(''); setChecking('');
-    setBusy(false); setLoading(true); setFile(null); setName(''); setNativeId(''); setCursorId(''); setVscodeId(''); setShowImport(false);
+    setConnectionText(''); setBusy(false); setLoading(true); setFile(null); setName(''); setNativeId(''); setCursorId(''); setVscodeId(''); setShowImport(false);
   }, []);
   const load = useCallback(async () => {
     reset();
@@ -75,7 +78,7 @@ export default function RemoteMcpPublishSection() {
     return value;
   }, [client, data, effectiveTransport]);
   useEffect(() => {
-    setOutput(null); setMessage(''); setError(''); setChecking('');
+    setOutput(null); setConnectionText(''); setMessage(''); setError(''); setChecking('');
     if (!publication || !data) return;
     let cancelled = false;
     const epoch = generation.current;
@@ -138,12 +141,28 @@ export default function RemoteMcpPublishSection() {
     } catch (e) { handleError(e, epoch); }
     finally { if (epoch === generation.current) setBusy(false); }
   }
+  const refreshLocal = useCallback(() => { void load(); }, [load]);
+  async function copyConnection() {
+    await act(async (p, epoch) => {
+      const value = await publicationRequest<ConnectionExport>(`/${p.id}/connection`, { method: 'POST', body: identity(p), csrf: data!.csrf, signal: controller.current.signal });
+      if (epoch !== generation.current || value.workspaceId !== data!.workspaceId || value.publicationId !== p.id || value.configFingerprint !== p.configFingerprint) return;
+      setConnectionText(value.content);
+      try { await navigator.clipboard.writeText(value.content); }
+      catch {
+        if (epoch !== generation.current) return;
+        setError('Clipboard access was denied. Select and copy the connection details below.');
+        requestAnimationFrame(() => { transferText.current?.focus(); transferText.current?.select(); }); return;
+      }
+      if (epoch === generation.current) setMessage(value.requiresClientId ? 'Connection details copied. The server owner still needs to supply a public native Ax client ID for browser sign-in.' : 'Connection details copied. On the receiving computer, choose Paste connection details under Connect to another Ax.');
+    });
+  }
   const runtime = publication?.runtimeStatus === 'running' && (!publication.lastHeartbeatAt || clock / 1000 - publication.lastHeartbeatAt > 45) ? 'unknown' : publication?.runtimeStatus;
   return <section className="remote-mcp-publish" aria-labelledby="remote-publish-title">
-    <div className="remote-publish-heading"><div><h3 id="remote-publish-title">Share this project</h3><p>Copy the remote MCP configuration for {data?.projectLabel ?? 'your active project'}.</p></div>
+    <LocalMcpConfigSection key={data?.workspaceId ?? 'loading'} workspace={data} onStale={refreshLocal} />
+    <div className="remote-publish-heading"><div><h3 id="remote-publish-title">Share this project</h3><p>Let another computer access {data?.projectLabel ?? 'your active project'} through its remote HTTPS server.</p></div>
       <button type="button" className="btn" disabled={loading || busy} onClick={() => void load()} aria-label="Refresh project publications">Refresh</button></div>
     {loading && <p role="status">Loading project publications…</p>}
-    {data && data.publications.length === 0 && <p>No remote server is registered for this project. Register your existing server configuration to generate its client settings.</p>}
+    {data && data.publications.length === 0 && <div className="remote-publish-empty"><p>No remote server is registered for this project.</p><p>For an app on this computer, use the copy buttons above. To offer this project to another computer, first set up an Ax HTTPS server and sign-in provider. Then import the server’s existing <code>remote-mcp.json</code> on the computer hosting the project.</p><p>Receiving someone else’s connection? Use <strong>Paste connection details</strong> under <strong>Connect to another Ax</strong> below.</p></div>}
     {data && data.publications.length > 1 && <div className="settings-row"><label htmlFor="remote-publisher">Publisher</label>
       <select id="remote-publisher" value={selected} disabled={busy} onChange={e => { setOutput(null); setSelected(e.target.value); }}>
         <option value="">Choose a publisher…</option>{data.publications.map(p => <option key={p.id} value={p.id}>{p.publisherLabel} · {p.remoteProjectId}</option>)}
@@ -169,6 +188,11 @@ export default function RemoteMcpPublishSection() {
         <ol>{output.instructions.map(i => <li key={i}>{i}</li>)}</ol>
         <p>No secrets are included. Every receiving user needs their own project access and sign-in.</p>
       </>}
+      <div className="remote-publish-transfer"><h4>Send this connection to another Ax computer</h4>
+        <p>Copy the address and public Ax sign-in ID together. The receiving person pastes these details into Connect to another Ax and signs in with their own account.</p>
+        <button type="button" className="btn" disabled={busy} onClick={() => void copyConnection()}>Copy connection details</button>
+        {connectionText && <textarea ref={transferText} aria-label="Shareable Ax connection details" value={connectionText} readOnly rows={4} spellCheck={false} />}
+      </div>
       <div className="remote-publish-actions"><button className="btn" type="button" disabled={busy} onClick={() => void act(async (p, epoch) => {
         const result = await publicationRequest<{ workspaceId: string; publicationId: string; configFingerprint: string; message: string }>(`/${p.id}/check`, { method: 'POST', body: identity(p), csrf: data!.csrf, signal: controller.current.signal });
         if (epoch === generation.current && result.workspaceId === data!.workspaceId && result.publicationId === p.id && result.configFingerprint === p.configFingerprint) setChecking(result.message);
@@ -179,14 +203,16 @@ export default function RemoteMcpPublishSection() {
       })}>Remove local registration</button></div>
       {checking && <p role="status">{checking}</p>}
     </>}
-    {data && <div className="remote-publish-actions"><button className="btn" type="button" disabled={busy} onClick={() => setShowImport(!showImport)}>Register server configuration</button>
+    {data && <div className="remote-publish-actions"><button className="btn" type="button" disabled={busy} onClick={() => setShowImport(!showImport)}>Import existing server file</button>
       <a href={guide} target="_blank" rel="noopener noreferrer">View setup guide</a></div>}
-    {showImport && <ModalShell title="Register server configuration" onClose={() => setShowImport(false)} footer={<><button className="btn" type="button" onClick={() => setShowImport(false)}>Cancel</button><button className="btn btn-primary" type="button" disabled={busy || !file} onClick={() => void register()}>Register active project</button></>}><div className="remote-publish-import"><p>Choose the private server JSON on this computer. The local catalogue keeps the project root for workspace matching. Exports contain public metadata only; project grants, key hashes and credentials are never stored in this catalogue.</p>
+    {showImport && <ModalShell title="Import existing remote server" onClose={() => setShowImport(false)} footer={<><button className="btn" type="button" onClick={() => setShowImport(false)}>Cancel</button><button className="btn btn-primary" type="button" disabled={busy || !file} onClick={() => void register()}>Import for this project</button></>}><div className="remote-publish-import"><p>Use this on the computer hosting the project. Choose the <code>remote-mcp.json</code> file used with <code>ax mcp remote serve --config</code>. Ax reads it to find this project’s HTTPS address.</p><p>This is a server setup file, rather than a Cursor or VS Code MCP settings file. If you do not have a remote server yet, <a href={guide} target="_blank" rel="noopener noreferrer">follow the remote server setup guide</a>. For local use, cancel and use <strong>Copy for this computer</strong>.</p>
       <label>Server configuration file<input aria-label="Server configuration file" type="file" accept=".json,application/json" disabled={busy} onChange={e => setFile(e.target.files?.[0] ?? null)} /></label>
-      <label>Publisher label (optional)<input value={name} onChange={e => setName(e.target.value)} maxLength={160} disabled={busy} /></label>
+      <label>Server name (optional)<input value={name} onChange={e => setName(e.target.value)} maxLength={160} disabled={busy} /></label>
+      <details><summary>Advanced: public OAuth client IDs (optional)</summary><p>Enter IDs already registered with your sign-in provider. These are public app identifiers, not passwords. Leave this section empty to keep existing IDs.</p>
       <label>Native Ax public client ID (optional)<input value={nativeId} onChange={e => setNativeId(e.target.value)} disabled={busy} /></label>
       <label>Cursor public client ID (optional)<input value={cursorId} onChange={e => setCursorId(e.target.value)} disabled={busy} /></label>
       <label>VS Code public client ID (optional)<input value={vscodeId} onChange={e => setVscodeId(e.target.value)} disabled={busy} /></label>
+      </details><p>This imports settings for this project only. It does not start the server or sign anyone in. Private server settings are excluded from the configurations you share.</p>
       {error && <p role="alert">{error}</p>}</div></ModalShell>}
     {busy && <p role="status">Preparing project configuration…</p>}
     {message && <p role="status">{message}</p>}{error && !showImport && <p role="alert">{error}</p>}

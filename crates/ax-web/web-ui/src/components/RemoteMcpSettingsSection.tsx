@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import RemoteMcpPublishSection from './RemoteMcpPublishSection';
+import ModalShell from './ModalShell';
+import { parseConnectionDetails } from '../connectionTransfer';
 
 type Connection = { url: string; client_id: string; issuer: string; state: 'stored' | 'expired'; expires_at: number };
 async function request(path: string, body?: unknown, csrf?: string) {
@@ -14,6 +16,9 @@ async function request(path: string, body?: unknown, csrf?: string) {
 }
 
 export default function RemoteMcpSettingsSection() {
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasted, setPasted] = useState('');
+  const [pasteError, setPasteError] = useState('');
   const [url, setUrl] = useState('');
   const [clientId, setClientId] = useState('');
   const [csrf, setCsrf] = useState('');
@@ -47,6 +52,14 @@ export default function RemoteMcpSettingsSection() {
     return () => { stopped = true; clearInterval(timer); };
   }, [attempt]);
 
+  function importConnection() {
+    try {
+      const details = parseConnectionDetails(pasted);
+      setUrl(details.projectMcpUrl); setClientId(details.nativeClientId ?? '');
+      setError(null); setPasteError(''); setShowPaste(false); setPasted('');
+      setMessage(details.nativeClientId ? 'Connection details loaded. Choose Connect with browser to sign in with your own account.' : 'MCP URL loaded. Ask the server owner for the public native Ax client ID before connecting.');
+    } catch (e) { setPasteError(e instanceof Error ? e.message : String(e)); }
+  }
   async function connect() {
     setError(null); setMessage(null); setBusy(true);
     // Open synchronously so the browser's popup blocker permits the user gesture.
@@ -74,7 +87,14 @@ export default function RemoteMcpSettingsSection() {
 
   return <><RemoteMcpPublishSection /><section className="remote-mcp-settings" aria-labelledby="remote-mcp-title">
     <h3 id="remote-mcp-title">Connect to another Ax</h3>
-    <p>Use the context from Ax running on another computer. Sign in through your browser; credentials stay in your operating system’s secure credential store.</p>
+    <p>Use a project hosted on another computer. Ask that computer’s owner to choose <strong>Copy connection details</strong> in Ax, paste them here, then sign in with your own account.</p>
+    <button type="button" className="btn btn-primary" disabled={busy} onClick={() => { setPasteError(''); setShowPaste(true); }}>Paste connection details</button>
+    {showPaste && <ModalShell title="Paste Ax connection details" onClose={() => setShowPaste(false)} footer={<><button className="btn" type="button" onClick={() => setShowPaste(false)}>Cancel</button><button className="btn btn-primary" type="button" disabled={!pasted.trim()} onClick={importConnection}>Use connection</button></>}>
+      <p>Paste the JSON copied with <strong>Copy connection details</strong> on the hosting computer. This fills in the address and public sign-in ID. You will sign in yourself afterward.</p>
+      <label className="remote-connection-paste">Connection details<textarea aria-label="Received Ax connection details" value={pasted} onChange={e => setPasted(e.target.value)} rows={7} spellCheck={false} /></label>
+      {pasteError && <p role="alert">{pasteError}</p>}
+    </ModalShell>}
+    <p>Or enter the two values supplied by the hosting computer:</p>
     <div className="settings-row">
       <label htmlFor="remote-mcp-url" className="settings-row-label">Project MCP URL</label>
       <input id="remote-mcp-url" type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://ax.example.com/projects/my-project/mcp" disabled={busy} />
@@ -83,7 +103,8 @@ export default function RemoteMcpSettingsSection() {
       <label htmlFor="remote-mcp-client" className="settings-row-label">OAuth client ID</label>
       <input id="remote-mcp-client" value={clientId} onChange={e => setClientId(e.target.value)} placeholder="Native Ax client registered with your provider" disabled={busy} />
     </div>
-    <button type="button" onClick={connect} disabled={busy || !url.trim() || !clientId.trim()}>{busy ? 'Waiting for browser sign-in…' : 'Connect with browser'}</button>
+    <p>The OAuth client ID is the public native Ax app ID from the server owner. It is not your password or the Cursor app ID.</p>
+    <button className="btn" type="button" onClick={connect} disabled={busy || !url.trim() || !clientId.trim()}>{busy ? 'Waiting for browser sign-in…' : 'Connect with browser'}</button>
     {attempt && <button type="button" onClick={cancel}>Cancel sign-in</button>}
     {authorizationUrl && <p><a href={authorizationUrl} target="_blank" rel="noopener noreferrer">Open sign-in if your browser did not open</a>. Return here after authorizing Ax.</p>}
     {message && <p role="status">{message}</p>}

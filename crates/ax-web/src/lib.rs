@@ -17,6 +17,7 @@ mod global_policy;
 mod graph_export;
 mod links_api;
 mod local_owner;
+mod local_mcp_export;
 mod lsp_api;
 mod mcp_ops;
 mod mcp_quality;
