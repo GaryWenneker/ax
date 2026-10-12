@@ -436,6 +436,7 @@ mod tests {
         let native = server_snapshot::export_native(&replica, "project")
             .await
             .unwrap();
+        for hash in ax_db::replication::hashes(&crate::server_data::manifests(&native).unwrap()) {ax_db::replication::store_chunk(primary_dir.path(),&hash,&ax_db::replication::read_chunk(replica_dir.path(),&hash).unwrap()).unwrap();}
         let cluster = publish(&primary, "project", Some(&native)).await.unwrap();
         crate::server_apply::apply(&primary, &cluster)
             .await
@@ -468,6 +469,7 @@ mod tests {
             let rows: Vec<MemoryRow> =
                 serde_json::from_str(&outgoing.files["state/memories.json"]).unwrap();
             assert!(rows.is_empty());
+            for hash in ax_db::replication::hashes(&crate::server_data::manifests(&outgoing).unwrap()) {ax_db::replication::store_chunk(primary_dir.path(),&hash,&ax_db::replication::read_chunk(other_dir.path(),&hash).unwrap()).unwrap();}
             let again = publish(&primary, "project", Some(&outgoing)).await.unwrap();
             crate::server_apply::apply(&other, &again).await.unwrap();
             assert_eq!(

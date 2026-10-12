@@ -63,7 +63,6 @@ export default function AccessSettingsSection({ section }: { section: string }) 
   const [clients, setClients] = useState<Client[]>([]);
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
-  const [localNode, setLocalNode] = useState<LocalNode | null>(null);
   const [scopeDrafts, setScopeDrafts] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [readonly, setReadonly] = useState(true);
@@ -109,7 +108,6 @@ export default function AccessSettingsSection({ section }: { section: string }) 
         const data = await accessJson<{ nodes: Node[]; local?: LocalNode }>('/api/access/nodes');
         if (version !== requestVersion.current) return;
         setNodes(data.nodes);
-        setLocalNode(data.local ?? null);
       }
       setError(null);
     } catch (e) {
@@ -130,7 +128,7 @@ export default function AccessSettingsSection({ section }: { section: string }) 
     void refresh(section, true);
     const interval = window.setInterval(() => {
       if (!mutationRunning.current) void refresh(section);
-    }, 30000);
+    }, section === 'nodes' ? 5000 : 30000);
     return () => { window.clearInterval(interval); requestVersion.current++; };
   }, [active, section, refresh]);
 
@@ -296,13 +294,6 @@ export default function AccessSettingsSection({ section }: { section: string }) 
 
         {!loading && section === 'nodes' && <>
           <ReplicationSetup locked={locked} onChanged={() => refresh('nodes')} />
-          <div className="access-node-local"><h3>{localNode ? `Local ${localNode.role === 'primary' ? 'Primary' : 'Replica'}` : 'Standalone node not configured'}</h3>
-            {localNode ? <dl className="access-metadata">
-              <div><dt>Node identity</dt><dd><code>{localNode.node_id}</code></dd></div><div><dt>Sync state</dt><dd>{localNode.sync_state}</dd></div>
-              {localNode.primary_url && <div><dt>Configured Primary</dt><dd>{localNode.primary_url}</dd></div>}
-              <div><dt>Last successful sync</dt><dd><DateLabel value={localNode.last_sync_at} /></dd></div>
-            </dl> : <p className="access-note">Start <code>ax server</code> with its node configuration to show local identity and sync status here.</p>}
-          </div>
           <p className="access-note">An authenticated Replica registers with its configured Primary automatically. Replication is separate from policy sharing and export.</p>
           {!nodes.length && !error && <div className="access-empty"><strong>No registered nodes</strong><p>Configure a Replica’s Primary URL and project credential to connect it.</p></div>}
           {nodes.map(node => {

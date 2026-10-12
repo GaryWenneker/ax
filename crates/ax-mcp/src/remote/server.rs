@@ -73,6 +73,8 @@ pub struct RemoteState {
     verifier: TokenVerifier,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
     concurrency: Arc<Semaphore>,
+    control: Option<String>,
+    shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 impl RemoteState {
@@ -82,20 +84,41 @@ impl RemoteState {
             verifier,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             concurrency: Arc::new(Semaphore::new(16)),
+            control:None,shutdown:None,
         }
     }
 }
 
 pub fn router(state: RemoteState) -> Router {
-    Router::new()
+    let provider=state.verifier.oauth_store().map(|store|super::oauth::router(store,state.config.clone()));
+    let app=Router::new()
         .route("/health", get(|| async { Json(json!({"ready":true})) }))
         .route("/.well-known/oauth-protected-resource", get(metadata))
+        .route("/_ax/host/status",axum::routing::post(host_status))
+        .route("/_ax/host/stop",axum::routing::post(host_stop))
         .route(
             "/projects/{project}/mcp",
             axum::routing::post(post).delete(delete),
         )
         .layer(DefaultBodyLimit::max(128 * 1024))
-        .with_state(state)
+        .with_state(state);
+    match provider {Some(provider)=>app.merge(provider),None=>app}
+}
+
+fn control(state:&RemoteState,headers:&HeaderMap)->bool {
+    use subtle::ConstantTimeEq;
+    let Some(expected)=&state.control else {return false;};
+    let candidate=headers.get("authorization").and_then(|h|h.to_str().ok()).and_then(|h|h.strip_prefix("Bearer ")).unwrap_or("");
+    expected.len()==candidate.len() && bool::from(expected.as_bytes().ct_eq(candidate.as_bytes()))
+}
+async fn host_status(State(state):State<RemoteState>,headers:HeaderMap)->Response {
+    if !control(&state,&headers) {return error(StatusCode::UNAUTHORIZED,"Local control authorization required");}
+    no_store(Json(json!({"ready":true,"publicUrl":state.config.public_url})).into_response())
+}
+async fn host_stop(State(state):State<RemoteState>,headers:HeaderMap)->Response {
+    if !control(&state,&headers) {return error(StatusCode::UNAUTHORIZED,"Local control authorization required");}
+    if state.shutdown.as_ref().is_none_or(|tx|tx.send(true).is_err()) {return error(StatusCode::CONFLICT,"Service cannot stop");}
+    no_store(Json(json!({"stopping":true})).into_response())
 }
 
 async fn metadata(State(state): State<RemoteState>) -> Response {
@@ -772,10 +795,14 @@ pub async fn serve(
         "{}",
         json!({"port":addr.port(),"local_url":format!("http://{addr}"),"public_url":config.public_url,"socket":socket,"projects":config.projects.iter().map(|p| json!({"id":p.id,"url":format!("{}/projects/{}/mcp",config.public_url,p.id)})).collect::<Vec<_>>() })
     );
-    let result = axum::serve(listener, router(RemoteState::new(config, verifier)))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+    let (shutdown,mut receiver)=tokio::sync::watch::channel(false);
+    let mut state=RemoteState::new(config,verifier);
+    if let Ok(control)=std::env::var("AX_REMOTE_HOST_CONTROL") {
+        if control.len()<32 || control.len()>4096 || !control.is_ascii() || control.bytes().any(|b|b.is_ascii_whitespace() || b.is_ascii_control()) {return Err("Invalid host control credential".into());}
+        state.control=Some(control);state.shutdown=Some(shutdown);
+    }
+    let result = axum::serve(listener,router(state))
+        .with_graceful_shutdown(async move {tokio::select!{_=tokio::signal::ctrl_c()=>{},_=receiver.changed()=>{}}})
         .await
         .map_err(|e| e.to_string());
     heartbeat.abort();

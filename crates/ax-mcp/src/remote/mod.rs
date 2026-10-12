@@ -1,5 +1,6 @@
 //! Authenticated remote MCP and native browser sign-in. Stdio remains unchanged.
 pub mod auth;
+pub mod oauth;
 pub mod client;
 pub mod config;
 pub mod credentials;

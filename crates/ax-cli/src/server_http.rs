@@ -9,6 +9,7 @@ use crate::{
     server_discovery, server_push, server_snapshot,
 };
 use axum::{
+    body::Bytes,
     extract::{DefaultBodyLimit, Path as AxumPath, State},
     http::{header, HeaderMap, StatusCode},
     routing::{get, post},
@@ -177,7 +178,7 @@ async fn snapshot(
             tracing::warn!(project = %id, "snapshot export failed: {}", error);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP, last_sync_at = CURRENT_TIMESTAMP WHERE id = ? AND trust_state = 'trusted'")
+    sqlx::query("UPDATE replication_nodes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ? AND trust_state = 'trusted'")
         .bind(node_id).execute(&state.access_db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(result))
 }
@@ -192,6 +193,7 @@ async fn exchange(
     if incoming.primary_node_id != node_id {
         return Err(StatusCode::FORBIDDEN);
     }
+    if incoming.schema_version!=3 { return Err(StatusCode::CONFLICT); }
     server_snapshot::validate(&incoming, &state.config.cluster_id, &id)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let _permit = state
@@ -199,22 +201,40 @@ async fn exchange(
         .acquire()
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let snapshot = crate::server_exchange::publish(&state.config, &id, Some(&incoming))
-        .await
-        .map_err(|error| {
-            tracing::warn!(project = %id, "node contribution was not accepted: {}", error);
-            StatusCode::CONFLICT
-        })?;
-    // Received memory is available under separate IDs; native Primary data is
-    // untouched. Policy enters pending review, never automatic activation.
-    let report = crate::server_apply::apply(&state.config, &snapshot).await.map_err(|error| {
-        tracing::warn!(project = %id, "cluster projection failed; durable contribution retained: {}", error); StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    Ok(Json(crate::server_exchange::ExchangeReply {
-        snapshot,
-        contributed_revision: incoming.revision,
-        memory_conflicts: report.conflicts,
-    }))
+    let outcome = async {
+        let snapshot = crate::server_exchange::publish(&state.config, &id, Some(&incoming)).await?;
+        crate::server_data::apply(&state.config,&snapshot).await?;
+        let report = crate::server_apply::apply(&state.config,&snapshot).await?;
+        Ok::<_,String>((snapshot,report))
+    }.await;
+    if let Some(project) = state.config.projects.iter().find(|p|p.id==id) {
+        let status=outcome.as_ref().map(|(snapshot,_)| ("full_data_synced; two_way_preserved".into(),snapshot.revision.clone())).map_err(Clone::clone);
+        crate::server_replica::record_attempt(&state.config,project,&status).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let (snapshot,report)=outcome.map_err(|error| { tracing::warn!(project=%id,"complete node synchronization failed: {}",error); StatusCode::CONFLICT })?;
+    sqlx::query("UPDATE replication_nodes SET last_sync_at=CURRENT_TIMESTAMP,last_seen_at=CURRENT_TIMESTAMP WHERE id=? AND trust_state='trusted'").bind(&node_id).execute(&state.access_db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(crate::server_exchange::ExchangeReply { snapshot,contributed_revision:incoming.revision,memory_conflicts:report.conflicts }))
+}
+
+async fn enrollment(State(state):State<Arc<StateData>>,headers:HeaderMap)->Result<Json<serde_json::Value>,StatusCode> {
+    let mut projects=Vec::new(); let mut node=None;
+    for project in &state.config.projects { if let Ok(id)=authorize_project(&state,&project.id,&headers).await { projects.push(project.id.clone()); node=Some(id); } }
+    if projects.is_empty() { return Err(StatusCode::FORBIDDEN); }
+    Ok(Json(serde_json::json!({"protocol_version":3,"node_id":node,"cluster_id":state.config.cluster_id,"project_ids":projects,"datasets":["graph","source","logs","agent_history","memories","rules","skills"]})))
+}
+async fn chunk_read(State(state):State<Arc<StateData>>,AxumPath((id,hash)):AxumPath<(String,String)>,headers:HeaderMap)->Result<Bytes,StatusCode> {
+    authorize_project(&state,&id,&headers).await?;
+    let root=state.config.projects.iter().find(|p|p.id==id).ok_or(StatusCode::NOT_FOUND)?.path.clone();
+    let bytes=tokio::task::spawn_blocking(move||ax_db::replication::read_chunk(&root,&hash)).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.map_err(|_|StatusCode::NOT_FOUND)?;
+    Ok(Bytes::from(bytes))
+}
+async fn chunk_write(State(state):State<Arc<StateData>>,AxumPath((id,hash)):AxumPath<(String,String)>,headers:HeaderMap,bytes:Bytes)->Result<StatusCode,StatusCode> {
+    authorize_project(&state,&id,&headers).await?;
+    if bytes.len()>ax_db::replication::CHUNK_BYTES {return Err(StatusCode::PAYLOAD_TOO_LARGE);}
+    let _permit=state.exports.acquire().await.map_err(|_|StatusCode::SERVICE_UNAVAILABLE)?;
+    let root=state.config.projects.iter().find(|p|p.id==id).ok_or(StatusCode::NOT_FOUND)?.path.clone();
+    tokio::task::spawn_blocking(move||ax_db::replication::store_chunk(&root,&hash,&bytes)).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.map_err(|_|StatusCode::BAD_REQUEST)?;
+    Ok(StatusCode::CREATED)
 }
 
 fn private_bind(ip: IpAddr) -> bool {
@@ -249,9 +269,6 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
     } = options;
     let config = server_cli::load(path)?;
     let control = if managed {
-        if !bind.ip().is_loopback() {
-            return Err("managed control requires loopback binding".into());
-        }
         let token = std::env::var("AX_COMMAND_CENTER_NODE_CONTROL")
             .map_err(|_| "managed node control credential is missing")?;
         if token.len() < 32
@@ -360,18 +377,26 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         access_db,
         exports: Semaphore::new(4),
         control,
-        shutdown: managed.then_some(shutdown),
+        shutdown: managed.then_some(shutdown.clone()),
     });
-    let app = Router::new()
+    let public = Router::new()
         .route("/health", get(health))
-        .route("/managed/status", post(managed_status))
-        .route("/managed/stop", post(managed_stop))
+        .route("/v1/enrollment",post(enrollment))
+        .route("/v1/projects/{id}/chunks/{hash}",get(chunk_read).put(chunk_write))
         .route("/v1/projects/{id}/snapshot", get(snapshot))
         .route("/v1/projects/{id}/exchange", post(exchange))
         .layer(DefaultBodyLimit::max(
             server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024,
         ))
-        .with_state(state.clone());
+        ;
+    let controlled=public.clone().route("/managed/status",post(managed_status)).route("/managed/stop",post(managed_stop));
+    let separate_control=managed && bind.ip()!=IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let app=if separate_control {public.clone()} else {controlled.clone()}.with_state(state.clone());
+    let control_task=if separate_control {
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",bind.port())).await.map_err(|e|format!("Cannot bind local control: {e}"))?;
+        let app=controlled.with_state(state.clone()); let mut receiver=shutdown.subscribe();
+        Some(tokio::spawn(async move {axum::serve(listener,app).with_graceful_shutdown(async move {let _=receiver.changed().await;}).await}))
+    } else {None};
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|e| e.to_string())?;
@@ -394,6 +419,8 @@ pub async fn run(path: &Path, options: RunOptions) -> Result<(), String> {
         })
         .await
         .map_err(|e| e.to_string());
+    let _=shutdown.send(true);
+    if let Some(task)=control_task {let _=task.await;}
     if let Some(task) = announcement {
         task.abort();
     }

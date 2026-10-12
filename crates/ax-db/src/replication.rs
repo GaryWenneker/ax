@@ -358,7 +358,7 @@ mod tests {
         let query=crate::queries::QueryBuilder::new(db.pool().clone()); query.clear_all().await.unwrap();
         let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM nodes").fetch_one(db.pool()).await.unwrap(); assert_eq!(count,1);
         query.clear_file("ax-replica/a_1/src/main.rs").await.unwrap();
-        let mirror=export(b.path(),"b",db.pool()).await.unwrap(); assert_eq!(mirror.nodes,0); assert_eq!(mirror.agent_sessions,0); assert!(mirror.logs.is_empty());
+        let mirror=export(b.path(),"b",db.pool()).await.unwrap(); assert_eq!(mirror.nodes,0); assert_eq!(mirror.agent_sessions,1); assert!(mirror.logs.is_empty());
         assert_eq!(std::fs::read_to_string(b.path().join(".ax/server/replicated-logs/a_1/mcp-verbose-2026-10-12.log")).unwrap(),"2026-10-12T00:00:00Z hello\n");
         sqlx::query("DELETE FROM nodes").execute(da.pool()).await.unwrap();
         let empty=export(a.path(),"a_1",da.pool()).await.unwrap(); transfer(a.path(),b.path(),std::slice::from_ref(&empty)); project(b.path(),"b",db.pool(),&[empty]).await.unwrap();

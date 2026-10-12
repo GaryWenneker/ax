@@ -5,7 +5,7 @@ use crate::server_config::{NodeRole, ServerConfig};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 
-const MAX_ANNOUNCEMENT_BYTES: usize = 512;
+const MAX_ANNOUNCEMENT_BYTES: usize = 4096;
 const PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +16,8 @@ struct Announcement {
     node_id: String,
     role: NodeRole,
     advertised_url: String,
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    project_ids: Vec<String>,
 }
 
 fn announcement(config: &ServerConfig, url: &str) -> Result<Announcement, String> {
@@ -36,6 +38,7 @@ fn announcement(config: &ServerConfig, url: &str) -> Result<Announcement, String
         node_id: config.node_id.clone(),
         role: config.role,
         advertised_url: url.into(),
+        project_ids: config.projects.iter().map(|p|p.id.clone()).collect(),
     };
     let len = serde_json::to_vec(&message)
         .map_err(|e| e.to_string())?
@@ -59,6 +62,8 @@ fn matching_candidate(raw: &[u8], config: &ServerConfig) -> Option<Announcement>
     if item.protocol_version != PROTOCOL_VERSION
         || (!config.cluster_id.is_empty() && item.cluster_id != config.cluster_id)
         || item.node_id == config.node_id
+        || item.project_ids.len()>32
+        || item.project_ids.iter().any(|id|id.is_empty() || id.len()>128 || !id.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_'))
         || item.node_id.is_empty()
         || !item
             .node_id
@@ -106,6 +111,7 @@ pub async fn discover_candidates(
                         candidate.cluster_id,
                         candidate.role,
                         source.ip(),
+                        candidate.project_ids,
                     ),
                 );
             }
@@ -113,7 +119,7 @@ pub async fn discover_candidates(
     }
     let peers = peers
         .into_iter()
-        .map(|((node_id, url), (protocol, cluster, role, sender_ip))| {
+        .map(|((node_id, url), (protocol, cluster, role, sender_ip, project_ids))| {
             serde_json::json!({
                 "protocol_version": protocol,
                 "cluster_id": cluster,
@@ -122,6 +128,7 @@ pub async fn discover_candidates(
                 "sender_ip": sender_ip.to_string(),
                 "advertised_url": url,
                 "trusted": false,
+                "project_ids":project_ids,
             })
         })
         .collect::<Vec<_>>();

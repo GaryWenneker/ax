@@ -30,3 +30,9 @@
 .remote-publish-import details label { margin-bottom: 16px; }
 .remote-connection-paste { display: flex; flex-direction: column; gap: 8px; }
 .remote-connection-paste textarea { color: var(--text); background: var(--bg-input); border: 1px solid var(--border); padding: 12px; width: 100%; font: 12px/1.6 var(--font-mono); user-select: text; resize: vertical; }
+
+.remote-host-setup { margin-block: 1.5rem; padding-block: 1rem; border-block: 1px solid var(--border); }
+.remote-host-setup p { line-height: 1.6; overflow-wrap: anywhere; }
+.remote-host-setup .access-actions { gap: .75rem; }
+.remote-host-setup details { padding-block: .75rem; }
+.remote-publish-actions { gap: 1rem; align-items: center; padding-block: .75rem; }

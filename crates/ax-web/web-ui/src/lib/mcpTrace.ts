@@ -84,6 +84,7 @@ export interface TraceEntry {
   message: string;
   /** Optional tool name for highlighting. */
   tool: string | null;
+  origin?: string;
 }
 
 /** Active IANA zone for Logging Date/time (resolved; never empty). */
@@ -636,6 +637,9 @@ export function parseTraceEntry(raw: string): TraceEntry {
     day = formatted.day || null;
   }
 
+  const originMatch = rest.match(/^\[node:([A-Za-z0-9_-]{1,128})\]\s*/);
+  const origin = originMatch?.[1];
+  if (originMatch) rest = rest.slice(originMatch[0].length);
   rest = rest.replace(/^\[ax-mcp\]\s*(?:🪓\s*)?/, '');
   const { kind, badge } = classify(rest);
   const message = withAxLogIcon(rest.replace(/⏎/g, '↵ '));
@@ -649,6 +653,7 @@ export function parseTraceEntry(raw: string): TraceEntry {
     badge,
     message,
     tool: extractTool(message),
+    origin,
   };
 }
 

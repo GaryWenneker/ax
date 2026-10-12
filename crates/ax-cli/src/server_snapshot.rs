@@ -83,7 +83,7 @@ pub fn validate(
     {
         return Err("snapshot identity or protocol version mismatch".into());
     }
-    let expected_files = if snapshot.schema_version == 3 { 4 } else { 3 };
+    let expected_files = if snapshot.schema_version == 3 { MAX_SNAPSHOT_FILES } else { 3 };
     if snapshot.files.len() != expected_files
         || snapshot
             .files
