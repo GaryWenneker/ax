@@ -41,7 +41,7 @@ test('Memory starts with compact help and rows near the top', async ({ page }) =
 });
 
 test('shared list page headers keep explanations collapsed', async ({ page }) => {
-  for (const path of ['/policy/rules','/policy/skills','/nodes','/files','/unresolved','/stats','/search','/graph','/settings','/prices','/policy/review','/policy/sync','/ship']) {
+  for (const path of ['/policy/rules','/policy/skills','/nodes','/files','/unresolved','/stats','/search','/graph','/settings','/prices','/policy/review','/policy/sync']) {
     await page.goto(path);
     const hero=page.locator('.settings-hero').first();
     await expect(hero).toBeVisible();

@@ -10,7 +10,6 @@ type NavId =
   | 'unresolved'
   | 'savings'
   | 'prices'
-  | 'ship'
   | 'sonar'
   | 'settings'
   | 'logging'
@@ -31,7 +30,6 @@ const NAV_CODICONS: Record<NavId, string> = {
   unresolved: 'warning',
   savings: 'dashboard',
   prices: 'tag',
-  ship: 'rocket',
   sonar: 'shield',
   settings: 'settings-gear',
   logging: 'output',
@@ -59,7 +57,6 @@ export const PAGE_LABELS: Record<string, string> = {
   unresolved: 'Unresolved',
   savings: 'Savings',
   prices: 'Prices',
-  ship: 'Command Center',
   sonar: 'SonarQube',
   settings: 'Settings',
   logging: 'Logging',

@@ -120,8 +120,8 @@ html[data-ax-layout="portal"] .mem-overview{padding:4px 12px;gap:4px 16px}
 html[data-ax-layout="portal"] .mem-stats-strip{gap:4px 16px}
 @media(max-width:899px){html[data-ax-layout="portal"] .settings-hero--actions{gap:6px}html[data-ax-layout="portal"] .settings-hero-actions .btn{min-height:36px;padding-block:6px}html[data-ax-layout="portal"] .portal-breadcrumbs{padding-block:4px}}
 
-/* Policy badges align across rows and both policy lists. */
-:is(.page-level-badge,.page-scope-badge,.page-item-badge,.page-origin-badge,.mcp-kind-badge,.policy-pack-badge){display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:100px;min-width:100px;max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Semantic badges align across rows; tags and count chips fit their labels. */
+:is(.page-level-badge,.page-scope-badge,.page-origin-badge,.mcp-kind-badge,.policy-pack-badge){display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:100px;min-width:100px;max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 html[data-ax-layout="portal"] .settings-hub .settings-hero{padding-block:6px;margin-bottom:8px}
 html[data-ax-layout="portal"] .settings-hub > .settings-hero .settings-hero-text{display:flex;align-items:center;gap:16px}

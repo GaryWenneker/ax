@@ -1,15 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { ACCENT_COLORS, THEMES, contrastRatioHex } from '../src/lib/themes';
 
-test('Quality Gates has no sidebar and restores navigation on other pages', async ({ page }) => {
+test('retired Quality Gates bookmarks return to the homepage', async ({ page }) => {
   for (const suffix of ['', '?embed=1']) {
     await page.goto('/ship'+suffix);
-    await expect(page.getByRole('heading',{name:'Quality gates',exact:true})).toBeVisible();
-    await expect(page.getByRole('navigation',{name:'Main navigation'})).toHaveCount(0);
-    await expect(page.getByRole('button',{name:'Toggle menu'})).toHaveCount(0);
-    await expect(page.getByRole('button',{name:'Evaluate',exact:true})).toBeVisible();
-    await page.getByRole('button',{name:'Home',exact:true}).click();
+    await expect(page).toHaveURL(/\/stats$/);
     await expect(page.getByRole('navigation',{name:'Main navigation'})).toHaveCount(1);
+    await expect(page.getByRole('heading',{name:'Quality gates',exact:true})).toHaveCount(0);
   }
 });
 

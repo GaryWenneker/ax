@@ -13,7 +13,6 @@ import PolicyMatchPage from './pages/PolicyMatch';
 import PolicyReviewPage from './pages/PolicyReview';
 import PolicySyncPage from './pages/PolicySync';
 import UnresolvedPage from './pages/Unresolved';
-import ShipPage from './pages/Ship';
 import SettingsPage from './pages/Settings';
 import LoggingPage from './pages/Logging';
 import SavingsPage from './pages/Savings';
@@ -74,7 +73,6 @@ function AppShell() {
   const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const { page, ruleId: editRuleId, skillName: editSkillName, sonarTab, ruleEditMode, skillEditMode, origin: routeOrigin, projectId: routeProjectId } = route;
-  const qualityGatesOnly = page === 'ship';
 
   function refreshNavConfig() {
     fetchShipConfig()
@@ -301,9 +299,7 @@ function AppShell() {
     }
   }
 
-  const navSections = visibleNav(showSavings).map((section) => portalLayout && section.id === 'activity'
-    ? { ...section, items: [...section.items, { id: 'ship' as const, label: 'Quality gates' }] }
-    : section);
+  const navSections = visibleNav(showSavings);
   const activeSection = navSections.find((section) => section.items.some((item) => navItemActive(page, item.id)));
   const activeLabel = activeSection?.items.find((item) => navItemActive(page, item.id))?.label
     ?? (page === 'policy-rule-edit' ? 'Edit rule' : page === 'policy-skill-edit' ? 'Edit skill' : 'Command Center');
@@ -312,7 +308,7 @@ function AppShell() {
 
   return (
     <>
-      {sidebarOpen && !embedMode && !qualityGatesOnly && (
+      {sidebarOpen && !embedMode && (
         <div
           className="sidebar-overlay open"
           onClick={() => setSidebarOpen(false)}
@@ -320,12 +316,12 @@ function AppShell() {
         />
       )}
 
-      <div className={`app${embedMode ? ' app--embed' : ''}${qualityGatesOnly ? ' app--quality-gates' : ''}`}>
+      <div className={`app${embedMode ? ' app--embed' : ''}`}>
         {!embedMode && (
         <header className="titlebar">
           <div className="titlebar-inner">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {!qualityGatesOnly && <button
+              <button
                 className="hamburger"
                 type="button"
                 onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -333,9 +329,9 @@ function AppShell() {
                 aria-expanded={sidebarOpen}
               >
                 <i className="codicon codicon-menu" aria-hidden="true" />
-              </button>}
+              </button>
               <span className="titlebar-brand" title={AX_FULL_NAME}>
-                <span className="ax-app-wordmark" role="img" aria-label="Ax">Ax<span aria-hidden="true">_</span></span>
+                <a href="/" className="ax-app-wordmark" aria-label="Ax home">Ax<span aria-hidden="true">_</span></a>
                 <span>{portalLayout ? '| Command Center' : '/ graph + policy'}</span>
               </span>
             </div>
@@ -374,7 +370,7 @@ function AppShell() {
           </div>
         </header>
         )}
-        {embedMode && !qualityGatesOnly && (
+        {embedMode && (
           <button
             className="hamburger embed-menu"
             type="button"
@@ -386,7 +382,7 @@ function AppShell() {
           </button>
         )}
 
-        {!qualityGatesOnly && <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
+        <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
           {navSections.map((section) => (
             <div key={section.id} className="nav-section" data-nav={section.id}>
               <div className="nav-section-label">{section.label}</div>
@@ -417,11 +413,11 @@ function AppShell() {
             </div>
           ))}
           <div className="sidebar-logo">
-            <span className="ax-app-wordmark ax-app-wordmark--sidebar" role="img" aria-label="Ax">Ax<span aria-hidden="true">_</span></span>
+            <a href="/" className="ax-app-wordmark ax-app-wordmark--sidebar" aria-label="Ax home">Ax<span aria-hidden="true">_</span></a>
           </div>
-        </nav>}
+        </nav>
 
-        {!qualityGatesOnly && <SidebarResizeHandle />}
+        <SidebarResizeHandle />
 
         <div className="workspace">
           {portalLayout && <nav className="portal-breadcrumbs" aria-label="Breadcrumb">
@@ -457,7 +453,6 @@ function AppShell() {
             {page === 'unresolved' && <UnresolvedPage key={workspaceKey} route={route} onRouteChange={applyRoute} />}
             {page === 'savings' && showSavings && <SavingsPage key={workspaceKey} />}
             {page === 'prices' && <PricesPage key={workspaceKey} />}
-            {page === 'ship' && <ShipPage key={workspaceKey} />}
             {page === 'settings' && <SettingsPage key={workspaceKey} />}
             {page === 'logging' && <LoggingPage key={workspaceKey} />}
             {(page === 'policy-rules' || (page === 'policy-rule-edit' && editRuleId && !ruleEditMode)) && (
