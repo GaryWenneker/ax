@@ -34,6 +34,7 @@ test('CMY interference fades horizontally from the edge and uses continuous tile
   for (const pitch of ['26px 26px', '26.8px 26.8px', '25.4px 25.4px']) assert.ok(css.includes(pitch));
   for (const ink of ['#00ffff', '#ff00ff', '#ffff00']) assert.ok(css.includes(ink));
   assert.match(css, /mix-blend-mode:multiply/);
+  assert.match(css, /\.ax-halftone-grid::after\{[^}]*var\(--ax-lime\)[^}]*mix-blend-mode:color/);
   assert.match(css, /mask-image:linear-gradient\(90deg,transparent 0%/);
   assert.match(css, /#000 100%/);
   assert.doesNotMatch(css, /mask-image:radial-gradient|infinite alternate/);
