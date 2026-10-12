@@ -1,6 +1,5 @@
 ---
 // Starlight header: AX dot logo + wordmark + current release tag.
-import LogoMark from './LogoMark.astro';
 import { AX_VERSION } from '../lib/version';
 import { AX_FULL_NAME } from '../lib/brand';
 
@@ -14,9 +13,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 	translate="no"
 	aria-label={`${siteTitle} ${AX_VERSION}, ${AX_FULL_NAME}`}
 >
-	<LogoMark size="sm" class="cg-site-title__logo" />
-	<span class="cg-site-title__text">{siteTitle}</span>
-	<span class="cg-site-title__version">{AX_VERSION}</span>
+	<span class="cg-site-title__wordmark">Ax<span>_</span></span>
+		<span class="cg-site-title__version">{AX_VERSION}</span>
 </a>
 
 <style>
@@ -24,9 +22,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 		display: inline-flex;
 		align-items: center;
 		gap: 0.55rem;
-		font-family: var(--sl-font);
-		font-weight: 800;
-		font-size: 1.25rem;
+		font-family: "Oxanium Variable", "Oxanium", var(--sl-font);
+		font-weight: 650;
+		font-size: 1.3rem;
 		letter-spacing: -0.025em;
 		line-height: 1;
 		color: var(--cg-ink);
@@ -36,9 +34,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 	.cg-site-title:hover {
 		color: var(--cg-ink);
 	}
-	.cg-site-title__logo {
-		opacity: 1;
+	.cg-site-title__wordmark {
+		color: #f0f3ed;
+		font-size: 1.65rem;
+		line-height: 1;
+		letter-spacing: -0.095em;
 	}
+	.cg-site-title__wordmark > span { color: #b9ff6a; }
 	.cg-site-title__version {
 		font-size: 0.72rem;
 		font-weight: 600;
