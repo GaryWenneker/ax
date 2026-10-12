@@ -29,13 +29,16 @@ test('Oxanium is bundled and used for the heading, not loaded from Google Fonts'
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
-test('CMY interference uses near-matched pitches, independent motion and feathered edges', () => {
+test('CMY interference fades horizontally from the edge and uses continuous tile loops', () => {
   assert.match(home, /ax-halftone-screen-three/);
   for (const pitch of ['26px 26px', '26.8px 26.8px', '25.4px 25.4px']) assert.ok(css.includes(pitch));
   for (const ink of ['#00ffff', '#ff00ff', '#ffff00']) assert.ok(css.includes(ink));
   assert.match(css, /mix-blend-mode:multiply/);
-  assert.match(css, /ellipse closest-side/);
-  assert.match(css, /transparent 100%/);
+  assert.match(css, /mask-image:linear-gradient\(90deg,transparent 0%/);
+  assert.match(css, /#000 100%/);
+  assert.doesNotMatch(css, /mask-image:radial-gradient|infinite alternate/);
+  assert.match(css, /16s linear infinite/);
+  assert.match(css, /21s linear infinite/);
   assert.doesNotMatch(css, /border-radius:50%|ax-halftone-rosette/);
   assert.match(css, /@keyframes ax-moire-magenta/);
   assert.match(css, /@keyframes ax-moire-yellow/);
