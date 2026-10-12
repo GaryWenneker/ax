@@ -45,6 +45,7 @@ pub struct TokenVerifier {
     config: Arc<RemoteConfig>,
     keys: Arc<RwLock<(JwkSet, Instant)>>,
     client: reqwest::Client,
+    built_in: Option<super::oauth::OAuthStore>,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +62,13 @@ impl TokenVerifier {
             .timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| e.to_string())?;
+        if config.oauth.built_in {
+            let store = super::oauth::OAuthStore::open(&config.public_url).await?;
+            store.native_client().await?;
+            let mut verifier = Self::with_keys(config, JwkSet { keys: vec![] }, client);
+            verifier.built_in = Some(store);
+            return Ok(verifier);
+        }
         let keys = fetch_keys(&client, &config.oauth.jwks_uri).await?;
         Ok(Self::with_keys(config, keys, client))
     }
@@ -69,7 +77,11 @@ impl TokenVerifier {
             config,
             keys: Arc::new(RwLock::new((keys, Instant::now()))),
             client,
+            built_in: None,
         }
+    }
+    pub fn oauth_store(&self) -> Option<super::oauth::OAuthStore> {
+        self.built_in.clone()
     }
     pub async fn verify(&self, token: &str) -> Result<Principal, String> {
         if token.is_empty() || token.len() > 16384 {
@@ -91,6 +103,9 @@ impl TokenVerifier {
                     key_write: key.write,
                 });
             }
+        }
+        if let Some(store) = &self.built_in {
+            return store.verify(token).await;
         }
         // Never follow a token's jku/x5u or accept symmetric algorithms.
         let header = decode_header(token).map_err(|_| "Invalid access token")?;

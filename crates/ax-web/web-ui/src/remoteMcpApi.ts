@@ -25,6 +25,12 @@ function validPublication(value: unknown): value is Publication {
 function validResponse(path: string, value: unknown): boolean {
   if (!record(value)) return false;
   if (path === '/') return typeof value.workspaceId === 'string' && typeof value.csrf === 'string' && typeof value.projectLabel === 'string' && Array.isArray(value.publications) && value.publications.every(validPublication);
+  if (path === '/host') {
+    const host = value.host;
+    return typeof value.workspaceId === 'string' && (host === null || (record(host) && ['running', 'stopped', 'error'].includes(String(host.status)) && ['publicUrl', 'localUrl'].every(k => typeof host[k] === 'string') && typeof host.builtInOAuth === 'boolean' && typeof host.autoStart === 'boolean' && (host.message === null || typeof host.message === 'string')));
+  }
+  if (path === '/host/authorizations') return typeof value.workspaceId === 'string' && Array.isArray(value.requests) && value.requests.every(r => record(r) && ['id', 'clientName', 'scope', 'status', 'redirectUri'].every(k => typeof r[k] === 'string') && typeof r.expires === 'number' && typeof r.revoked === 'boolean');
+  if (path.startsWith('/host/')) return typeof value.workspaceId === 'string' && value.updated === true;
   if (path === '/local/export') return ['workspaceId', 'content', 'fileName', 'destination'].every(k => typeof value[k] === 'string') && ['cursor', 'vscode', 'cline', 'claudeCode', 'other'].includes(String(value.client)) && ['thisComputer', 'projectFolder'].includes(String(value.target)) && strings(value.instructions) && value.containsSecrets === false && typeof value.containsLocalPaths === 'boolean' && typeof value.portable === 'boolean';
   if (path.endsWith('/connection')) return ['workspaceId', 'publicationId', 'configFingerprint', 'content'].every(k => typeof value[k] === 'string') && value.containsSecrets === false && typeof value.requiresClientId === 'boolean';
   if (path.endsWith('/export')) return ['workspaceId', 'publicationId', 'configFingerprint', 'content'].every(k => typeof value[k] === 'string') && isRemoteClient(value.client)

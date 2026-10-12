@@ -3,7 +3,7 @@
 //! Calendar day boundaries follow `[ui].timezone` in `.ax/ship.toml` (empty / `local` = host local).
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
@@ -104,6 +104,115 @@ pub fn append_verbose_log(lines: &[String], project_root: Option<&Path>) {
     }
 }
 
+/// Verified file layout for received logs. Native append/export never uses this directory.
+pub fn replicated_log_files(project_root: &Path) -> Vec<(NaiveDate, PathBuf)> {
+    let mut out = Vec::new();
+    let mut dir = project_root.join(".ax");
+    for part in ["server", "replicated-logs"] {
+        let Ok(meta) = fs::symlink_metadata(&dir) else {
+            return out;
+        };
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            return out;
+        }
+        dir = dir.join(part);
+    }
+    let Ok(meta) = fs::symlink_metadata(&dir) else {
+        return out;
+    };
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return out;
+    }
+    let Ok(origins) = fs::read_dir(&dir) else {
+        return out;
+    };
+    for entry in origins.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.is_empty()
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            || !entry.file_type().is_ok_and(|m| m.is_dir())
+        {
+            continue;
+        }
+        let Ok(files) = fs::read_dir(entry.path()) else {
+            continue;
+        };
+        for file in files.flatten() {
+            if !file.file_type().is_ok_and(|m| m.is_file()) {
+                continue;
+            }
+            let name = file.file_name().to_string_lossy().to_string();
+            let legacy = name == LEGACY_LOG_NAME
+                || name
+                    .strip_prefix("mcp-verbose.")
+                    .and_then(|s| s.strip_suffix(".log"))
+                    .is_some_and(|h| {
+                        h.len() == 64
+                            && h.bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    });
+            if legacy {
+                if let Ok(input) = fs::File::open(file.path()) {
+                    let mut text = String::new();
+                    let _ = input.take(4096).read_to_string(&mut text);
+                    let mtime = file
+                        .metadata()
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .and_then(|d| DateTime::<Utc>::from_timestamp(d.as_secs() as i64, 0));
+                    let day = infer_legacy_log_day(Some(project_root), &text, mtime);
+                    out.push((day, file.path()));
+                }
+                continue;
+            }
+            let stem = name
+                .strip_prefix(DATED_LOG_PREFIX)
+                .and_then(|s| s.strip_suffix(DATED_LOG_SUFFIX));
+            if let Some(stem) = stem {
+                let (date, segment) = stem
+                    .split_once('.')
+                    .map_or((stem, None), |(d, h)| (d, Some(h)));
+                if segment.is_some_and(|h| {
+                    h.len() != 64
+                        || !h
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                }) {
+                    continue;
+                }
+                if let Ok(day) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                    out.push((day, file.path()));
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+pub fn replicated_log_origin(project_root: &Path, path: &Path) -> Option<String> {
+    let relative = path
+        .strip_prefix(project_root.join(".ax/server/replicated-logs"))
+        .ok()?;
+    let parts: Vec<_> = relative.components().collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    Some(parts[0].as_os_str().to_string_lossy().to_string())
+}
+pub fn label_log_line(line: &str, origin: Option<&str>) -> String {
+    let Some(origin) = origin else {
+        return line.to_owned();
+    };
+    match line.split_once(' ') {
+        Some((ts, rest)) => format!("{ts} [node:{origin}] {rest}"),
+        None => format!("[node:{origin}] {line}"),
+    }
+}
+
 /// All dated log files for a project, oldest first.
 pub fn list_dated_log_files(project_root: &Path) -> Vec<(NaiveDate, PathBuf)> {
     let _ = migrate_legacy_log(Some(project_root));
@@ -119,6 +228,7 @@ pub fn list_dated_log_files(project_root: &Path) -> Vec<(NaiveDate, PathBuf)> {
             out.push((day, entry.path()));
         }
     }
+    out.extend(replicated_log_files(project_root));
     out.sort_by_key(|(d, _)| *d);
     out
 }
@@ -128,8 +238,29 @@ pub fn read_log_file_text(path: &Path) -> String {
 }
 
 pub fn read_log_for_day(project_root: &Path, day: NaiveDate) -> String {
-    let path = path_for_date(&ax_dir_for(Some(project_root)), day);
-    read_log_file_text(&path)
+    let mut merged = std::collections::BTreeMap::<String, usize>::new();
+    for (date, path) in list_dated_log_files(project_root) {
+        if date == day {
+            let origin = replicated_log_origin(project_root, &path);
+            let mut file_counts = std::collections::BTreeMap::<String, usize>::new();
+            for line in read_log_file_text(&path).lines() {
+                *file_counts
+                    .entry(label_log_line(line, origin.as_deref()))
+                    .or_default() += 1;
+            }
+            // Retained segments may overlap a current file. Keep the maximum count
+            // across segments, preserving repeated events within each file.
+            for (line, count) in file_counts {
+                let existing = merged.entry(line).or_default();
+                *existing = (*existing).max(count);
+            }
+        }
+    }
+    merged
+        .into_iter()
+        .flat_map(|(line, count)| (0..count).map(move |_| line.clone()))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn previous_calendar_day(day: NaiveDate) -> NaiveDate {
@@ -155,7 +286,7 @@ pub fn nearest_dated_log_before(
         .filter(|d| *d < before)
         .collect();
     let &day = older.last()?;
-    let has_older = older.len() > 1;
+    let has_older = older.iter().any(|d| *d < day);
     Some((day, has_older))
 }
 
@@ -164,7 +295,12 @@ pub fn read_merged_verbose_log(project_root: &Path) -> String {
     let _ = migrate_legacy_log(Some(project_root));
     let mut parts = Vec::new();
     for (_day, path) in list_dated_log_files(project_root) {
-        let text = read_log_file_text(&path);
+        let origin = replicated_log_origin(project_root, &path);
+        let text = read_log_file_text(&path)
+            .lines()
+            .map(|line| label_log_line(line, origin.as_deref()))
+            .collect::<Vec<_>>()
+            .join("\n");
         if !text.trim().is_empty() {
             parts.push(text);
         }
@@ -312,6 +448,32 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn received_segments_preserve_repeated_events_without_duplicating_overlaps() {
+        let dir = tempfile_dir();
+        let remote = dir.join(".ax/server/replicated-logs/node");
+        fs::create_dir_all(&remote).unwrap();
+        let line = "2026-10-12T11:00:00.000Z [ax-mcp] same event\n";
+        fs::write(dir.join(".ax/mcp-verbose-2026-10-12.log"), line.repeat(2)).unwrap();
+        fs::write(remote.join("mcp-verbose-2026-10-12.log"), line.repeat(2)).unwrap();
+        fs::write(
+            remote.join(format!("mcp-verbose-2026-10-12.{}.log", "0".repeat(64))),
+            line,
+        )
+        .unwrap();
+        let day = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let text = read_log_for_day(&dir, day);
+        assert_eq!(text.lines().count(), 4);
+        assert_eq!(
+            text.lines().filter(|l| l.contains("[node:node]")).count(),
+            2
+        );
+        assert_eq!(
+            nearest_dated_log_before(&dir, day.succ_opt().unwrap()),
+            Some((day, false))
+        );
+    }
 
     #[test]
     fn verbose_enabled_always_on() {

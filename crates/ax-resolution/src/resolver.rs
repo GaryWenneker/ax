@@ -49,12 +49,13 @@ impl ReferenceResolver {
             )
             .await?;
 
-        let refs = match scope {
+        let mut refs = match scope {
             Some(files) if !files.is_empty() => {
                 queries.get_unresolved_refs_by_files(files).await?
             }
             _ => queries.get_unresolved_refs().await?,
         };
+        refs.retain(|reference| !ax_db::replication::is_replica(&reference.from_node_id));
         let total = refs.len() as u32;
         if let Some(ref mut cb) = on_progress {
             let label = match scope {

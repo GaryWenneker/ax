@@ -19,6 +19,7 @@ mod pricing_sync;
 mod reuse_cache;
 mod savings;
 mod store;
+pub mod replication;
 mod tokenizer;
 mod working_context;
 
@@ -72,6 +73,7 @@ pub use mcp_audit::{
     Finding, QualitySnapshot, ToolMix, DEFAULT_WINDOW_MINUTES,
 };
 pub use mcp_verbose_log::{
+    replicated_log_files, replicated_log_origin, label_log_line,
     append_verbose_log, current_log_path, has_older_log_day, list_dated_log_files,
     mcp_verbose_log_path, migrate_legacy_log, nearest_dated_log_before, path_for_date,
     previous_calendar_day, read_log_for_day, read_merged_verbose_log, read_ship_timezone,

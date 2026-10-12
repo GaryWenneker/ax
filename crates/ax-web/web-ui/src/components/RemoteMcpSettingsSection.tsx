@@ -87,8 +87,8 @@ export default function RemoteMcpSettingsSection() {
 
   return <><RemoteMcpPublishSection /><section className="remote-mcp-settings" aria-labelledby="remote-mcp-title">
     <h3 id="remote-mcp-title">Connect to another Ax</h3>
-    <p>Use a project hosted on another computer. Ask that computer’s owner to choose <strong>Copy connection details</strong> in Ax, paste them here, then sign in with your own account.</p>
-    <button type="button" className="btn btn-primary" disabled={busy} onClick={() => { setPasteError(''); setShowPaste(true); }}>Paste connection details</button>
+    <p>Use a project hosted on another computer. Ask that computer’s owner to choose <strong>Copy connection details</strong> in Ax, paste them here, then complete authentication. A built-in host asks its owner to approve your request.</p>
+    <div className="remote-publish-actions"><button type="button" className="btn btn-primary" disabled={busy} onClick={() => { setPasteError(''); setShowPaste(true); }}>Paste connection details</button></div>
     {showPaste && <ModalShell title="Paste Ax connection details" onClose={() => setShowPaste(false)} footer={<><button className="btn" type="button" onClick={() => setShowPaste(false)}>Cancel</button><button className="btn btn-primary" type="button" disabled={!pasted.trim()} onClick={importConnection}>Use connection</button></>}>
       <p>Paste the JSON copied with <strong>Copy connection details</strong> on the hosting computer. This fills in the address and public sign-in ID. You will sign in yourself afterward.</p>
       <label className="remote-connection-paste">Connection details<textarea aria-label="Received Ax connection details" value={pasted} onChange={e => setPasted(e.target.value)} rows={7} spellCheck={false} /></label>

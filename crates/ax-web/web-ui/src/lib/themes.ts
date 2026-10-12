@@ -23,194 +23,14 @@ export interface ThemePreset {
 
 export const THEMES: ThemePreset[] = [
   {
-    id: 'ax',
-    label: 'ax Mint',
-    accent: '#3ee4b2',
-    ok: '#3fb950',
-    danger: '#f14c4c',
-    warn: '#cca700',
-    bg: '#1e1e1e',
-    bgSide: '#181818',
-    bgInput: '#313131',
-    bgHover: '#252826',
-    bgActive: '#2e3532',
-    bgPanel: '#1e1e1e',
-    border: '#2b2b2b',
-    borderHi: '#454545',
-    text: '#cccccc',
-    textDim: '#9d9d9d',
-    textHi: '#ffffff',
-    statusbarBg: '#3ee4b2',
-  },
-  {
-    id: 'vscode-dark',
-    label: 'VS Code Dark Modern',
-    accent: '#0078d4',
-    ok: '#3fb950',
-    danger: '#f14c4c',
-    warn: '#cca700',
-    bg: '#1f1f1f',
-    bgSide: '#181818',
-    bgInput: '#313131',
-    bgHover: '#2a2d2e',
-    bgActive: '#37373d',
-    bgPanel: '#1f1f1f',
-    border: '#2b2b2b',
-    borderHi: '#454545',
-    text: '#cccccc',
-    textDim: '#9d9d9d',
-    textHi: '#ffffff',
-    statusbarBg: '#0078d4',
-  },
-  {
-    id: 'ember',
-    label: 'Ember',
-    accent: '#e06c2b',
-    ok: '#3fb950',
-    danger: '#f14c4c',
-    warn: '#e0a030',
-    bg: '#1a1a1a',
-    bgSide: '#141414',
-    bgInput: '#2a2a2a',
-    bgHover: '#2c2420',
-    bgActive: '#3a2e26',
-    bgPanel: '#1a1a1a',
-    border: '#2a2420',
-    borderHi: '#4a3a30',
-    text: '#cccccc',
-    textDim: '#9d9d9d',
-    textHi: '#ffffff',
-    statusbarBg: '#e06c2b',
-  },
-  {
-    id: 'emerald',
-    label: 'Emerald',
-    accent: '#2ea87a',
-    ok: '#3fb950',
-    danger: '#f14c4c',
-    warn: '#cca700',
-    bg: '#1a1c1a',
-    bgSide: '#141614',
-    bgInput: '#262e28',
-    bgHover: '#222e26',
-    bgActive: '#2a3a2e',
-    bgPanel: '#1a1c1a',
-    border: '#222e24',
-    borderHi: '#3a4a3e',
-    text: '#cccccc',
-    textDim: '#9d9d9d',
-    textHi: '#ffffff',
-    statusbarBg: '#2ea87a',
-  },
-  {
-    id: 'nightfall',
-    label: 'Nightfall',
-    accent: '#8b5cf6',
-    ok: '#3fb950',
-    danger: '#f14c4c',
-    warn: '#cca700',
-    bg: '#1a1a22',
-    bgSide: '#14141c',
-    bgInput: '#282838',
-    bgHover: '#252535',
-    bgActive: '#30304a',
-    bgPanel: '#1a1a22',
-    border: '#252530',
-    borderHi: '#3a3a50',
-    text: '#cccccc',
-    textDim: '#9d9d9d',
-    textHi: '#ffffff',
-    statusbarBg: '#8b5cf6',
-  },
-  {
-    id: 'crimson',
-    label: 'Crimson',
-    accent: '#dc3545',
-    ok: '#3fb950',
-    danger: '#f14c4c',
-    warn: '#cca700',
-    bg: '#1c1a1a',
-    bgSide: '#161414',
-    bgInput: '#302828',
-    bgHover: '#2e2424',
-    bgActive: '#3e2e2e',
-    bgPanel: '#1c1a1a',
-    border: '#2c2222',
-    borderHi: '#4a3535',
-    text: '#cccccc',
-    textDim: '#9d9d9d',
-    textHi: '#ffffff',
-    statusbarBg: '#dc3545',
-  },
-  {
-    id: 'ocean',
-    label: 'Ocean',
-    accent: '#22a2c8',
-    ok: '#3fb950',
-    danger: '#f14c4c',
-    warn: '#cca700',
-    bg: '#1a1c1e',
-    bgSide: '#141618',
-    bgInput: '#262e34',
-    bgHover: '#222e34',
-    bgActive: '#2a3842',
-    bgPanel: '#1a1c1e',
-    border: '#222830',
-    borderHi: '#364450',
-    text: '#cccccc',
-    textDim: '#9d9d9d',
-    textHi: '#ffffff',
-    statusbarBg: '#22a2c8',
-  },
-  {
-    id: 'macos',
-    label: 'macOS',
-    accent: '#64d2ff',
-    ok: '#30d158',
-    danger: '#ff453a',
-    warn: '#ffd60a',
-    bg: '#1c1c1e',
-    bgSide: '#161618',
-    bgInput: '#2c2c2e',
-    bgHover: '#2c2c2e',
-    bgActive: '#3a3a3c',
-    bgPanel: '#1c1c1e',
-    border: '#38383a',
-    borderHi: '#48484a',
-    text: '#f5f5f7',
-    textDim: '#c7c7cc',
-    textHi: '#ffffff',
-    statusbarBg: '#2c2c2e',
-  },
-  {
-    id: 'mono',
-    label: 'Mono',
-    accent: '#d0d0d0',
-    ok: '#a8a8a8',
-    danger: '#8a8a8a',
-    warn: '#b8b8b8',
-    bg: '#141414',
-    bgSide: '#0e0e0e',
-    bgInput: '#242424',
-    bgHover: '#1c1c1c',
-    bgActive: '#2a2a2a',
-    bgPanel: '#141414',
-    border: '#2c2c2c',
-    borderHi: '#4a4a4a',
-    text: '#d8d8d8',
-    textDim: '#a0a0a0',
-    textHi: '#f4f4f4',
-    statusbarBg: '#d0d0d0',
-  },
-  {
-    id: 'azure-light', label: 'Azure Portal Light', layout: 'portal', colorScheme: 'light',
+    id: 'azure-light', label: 'Light', layout: 'portal', colorScheme: 'light',
     accent: '#0078d4', ok: '#107c10', danger: '#a4262c', warn: '#865d00',
     bg: '#f5f5f5', bgSide: '#fafafa', bgInput: '#ffffff', bgHover: '#eeeeee',
     bgActive: '#deecf9', bgPanel: '#ffffff', border: '#d6d6d6', borderHi: '#8a8886',
     text: '#323130', textDim: '#605e5c', textHi: '#201f1e', statusbarBg: '#0078d4',
   },
   {
-    id: 'azure-dark', label: 'Azure Portal Dark', layout: 'portal', colorScheme: 'dark',
+    id: 'azure-dark', label: 'Dark', layout: 'portal', colorScheme: 'dark',
     accent: '#2899f5', ok: '#6ccb5f', danger: '#ff8585', warn: '#f2c661',
     bg: '#1b1b1b', bgSide: '#202020', bgInput: '#252525', bgHover: '#333333',
     bgActive: '#163b59', bgPanel: '#252525', border: '#444444', borderHi: '#797775',
@@ -219,41 +39,18 @@ export const THEMES: ThemePreset[] = [
 ];
 
 const STORAGE_KEY = 'ax-theme';
-const MIGRATE_KEY = 'ax-theme-mint-v2';
-
-/** Force Open-project mint as the product look (re-migrate legacy blues). */
-function migrateLegacyDefaultTheme(): void {
-  try {
-    if (localStorage.getItem(MIGRATE_KEY) === '1') return;
-    const current = localStorage.getItem(STORAGE_KEY);
-    // Pull anyone still on the old default blue onto ax Mint.
-    if (current == null || current === 'vscode-dark') {
-      localStorage.setItem(STORAGE_KEY, 'ax');
-    }
-    localStorage.setItem(MIGRATE_KEY, '1');
-  } catch {
-    /* ignore */
-  }
+function normalizeThemeId(id: string | null): string {
+  return id === 'azure-light' || id === 'light' ? 'azure-light' : 'azure-dark';
 }
-
 export function loadThemeId(): string {
-  try {
-    migrateLegacyDefaultTheme();
-    return localStorage.getItem(STORAGE_KEY) ?? 'ax';
-  } catch {
-    return 'ax';
-  }
+  try { const id = normalizeThemeId(localStorage.getItem(STORAGE_KEY)); localStorage.setItem(STORAGE_KEY,id); return id; }
+  catch { return 'azure-dark'; }
 }
-
 export function saveThemeId(id: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, id);
-    localStorage.setItem(MIGRATE_KEY, '1');
-  } catch {}
+  try { localStorage.setItem(STORAGE_KEY,normalizeThemeId(id)); } catch {}
 }
-
 export function themeById(id: string): ThemePreset {
-  return THEMES.find((t) => t.id === id) ?? THEMES[0];
+  return THEMES.find((theme) => theme.id === normalizeThemeId(id)) ?? THEMES[1];
 }
 
 /** sRGB relative luminance (0 = black, 1 = white). */

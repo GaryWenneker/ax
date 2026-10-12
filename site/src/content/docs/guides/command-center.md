@@ -17,7 +17,7 @@ Each full page load and hard refresh plays a short green edge glow (Green Vessel
 
 ## Azure Portal appearance
 
-Open **Settings → Appearance** and choose **Azure Portal Light** or **Azure Portal Dark**. The selection is saved in this browser. Both modes apply across pages, editors, Logging, quality panels and dialogs. The header search opens pages or searches code; Settings has its own grouped, filterable navigation.
+Open **Settings → Appearance** and choose **Light** or **Dark**. The selection is saved in this browser. Both modes apply across pages, editors, Logging, quality panels and dialogs. The header search opens pages or searches code; Settings has its own grouped, filterable navigation.
 
 ![Azure Portal Light — theme selection](/screenshots/cc-settings-appearance-dark.png)
 
@@ -129,7 +129,7 @@ For GitHub, uncomment `[remote.github]` and set `GITHUB_TOKEN`.
 
 ## Command Center pages (`ax web`)
 
-The Azure Portal themes use the full viewport with a fixed sidebar, blue header, breadcrumbs and a content area that grows with the window. Other themes retain their centered stage.
+Light and Dark use the full viewport with a fixed sidebar, blue header, breadcrumbs and a content area that grows with the window. These are the two available themes; legacy preferences migrate to Dark.
 
 **Mobile (≤899px):** hamburger drawer (aligned with the shell breakpoint), status bar keeps Project / Logging / Activity (Activity and Logging open as full-width sheets above the dock — Logging sheet has kind filters, scroll-to-newest, quality), Logging table scrolls horizontally instead of crushing columns, project browser does not autofocus the filter, modals become bottom sheets. Graph is still best on desktop. Agents verify with `.\scripts\web-ui-mobile-smoke.ps1` (Playwright Pixel 5 + screenshots).
 
@@ -273,7 +273,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 
 - **IDEs & agents** — connect ax to the IDEs and coding agents found on this machine (writes the ax MCP server and hooks into their config). **Connect** also puts the Command Center inside the IDE — see [Command Center inside your IDE](#command-center-inside-your-ide)
 - **Command Center** — target branch, git repositories, dashboard port, test runner, index scope, **Review comment language**, and the PR provider (Azure DevOps organization / project / repository ID / token env var, or GitHub)
-- **Interface** — theme chooser (default **ax Mint** `#3ee4b2`; presets include **macOS**, charcoal chrome with `#64d2ff` accent, and **Mono**, grayscale chrome with light-gray status bar and dark ink). The **status bar** uses that accent fill with **WCAG AA** ink (`4.5:1`). **Show Savings page** toggle and **Timezone** for Logging Date/time and daily log rotation (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC). MCP verbose traces are always recorded to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; there is no on/off switch in the UI anymore
+- **Interface** — theme chooser (**Light** and **Dark**, using Azure Portal styling; removed theme preferences migrate to Dark). The **status bar** uses that accent fill with **WCAG AA** ink (`4.5:1`). **Show Savings page** toggle and **Timezone** for Logging Date/time and daily log rotation (IANA, e.g. `Europe/Amsterdam`; empty/`local` = host local; timestamps inside files stay UTC). MCP verbose traces are always recorded to `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; there is no on/off switch in the UI anymore
 - **Sharing** — policy sync, live share status card (badge, port, copy URL), How to share, Enable PWA / Install
 - **Vault connection** — mount rules, skills, and memories as a WebDAV drive for Obsidian or any editor — see [Obsidian Vault](/guides/obsidian-vault/)
 - **Open Knowledge Format (OKF)** — **Generate OKF bundle** / **Validate** (and optional wiki publish) via `/api/okf/*`; writes Markdown under `okf.outDir` from `ax.json` — see [OKF](/guides/okf/)

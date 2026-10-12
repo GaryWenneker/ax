@@ -685,6 +685,7 @@ pub fn router(hub: WebHub) -> Router {
             "/nodes/local",
             get(crate::replication_setup::status).post(crate::replication_setup::start),
         )
+        .route("/nodes/local/interfaces",get(crate::replication_setup::interfaces))
         .route("/nodes/local/stop", post(crate::replication_setup::stop))
         .route(
             "/nodes/local/credential",

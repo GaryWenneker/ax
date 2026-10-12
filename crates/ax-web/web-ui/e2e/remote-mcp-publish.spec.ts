@@ -18,6 +18,8 @@ async function fixture(page: Page, options: { empty?: boolean; multiple?: boolea
     requests.push({ path, method, body });
     let value: unknown;
     if (path === '/api/remote-mcp/publications/') value = { workspaceId, projectLabel: 'Demo project', csrf: 'fixture-csrf', publications };
+    else if (path.endsWith('/host')) value = { workspaceId, host: null };
+    else if (path.endsWith('/host/authorizations')) value = { workspaceId, requests: [] };
     else if (path.endsWith('/local/export')) {
       const args = request.postDataJSON() as { client: string; target: string }; // Fixture mirrors validated local request fields.
       const shared = args.target === 'projectFolder';
@@ -68,7 +70,7 @@ test('copies and downloads the exact client JSON and distinguishes endpoint reac
   const preview = section.getByLabel('Generated MCP configuration'); await expect(preview).toContainText('"servers"');
   const content = await preview.inputValue();
   await section.getByRole('button', { name: 'Copy configuration', exact: true }).click();
-  await expect(section.getByRole('status')).toHaveText('Configuration copied.');
+  await expect(section.locator('.remote-publish-feedback')).toHaveText('Configuration copied.');
   expect(await page.evaluate(() => localStorage.getItem('fixture-copied'))).toBe(content);
   const downloadPromise = page.waitForEvent('download'); await section.getByRole('button', { name: 'Download configuration' }).click(); const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe('mcp.json'); expect(readFileSync((await download.path())!, 'utf8')).toBe(content);
@@ -94,7 +96,7 @@ test('clipboard denial selects manual text without a copied confirmation', async
   await fixture(page, { clipboardDenied: true }); await page.goto('/settings?section=remote'); const section = page.locator('.remote-mcp-publish');
   await section.getByRole('button', { name: 'Copy configuration', exact: true }).click();
   await expect(section.getByRole('alert')).toContainText('Clipboard access was denied');
-  await expect(section.getByRole('status')).toHaveCount(0);
+  await expect(section.locator('.remote-publish-feedback')).toHaveCount(0);
   await expect(section.getByLabel('Generated MCP configuration')).toBeFocused();
   const selected = await section.getByLabel('Generated MCP configuration').evaluate(e => { if (!(e instanceof HTMLTextAreaElement)) throw new Error('Expected textarea'); return e.selectionEnd - e.selectionStart; });
   expect(selected).toBeGreaterThan(20);
@@ -110,6 +112,7 @@ test('workspace switch clears old configuration and ignores a late response in e
 
 test('registration opens a modal, sends only a JSON object and removes only the local registration', async ({ page }, info) => {
   const f = await fixture(page, { empty: true }); await page.goto('/settings?section=remote');
+  await page.getByText('Advanced: register an externally managed server', { exact: true }).click();
   await page.getByRole('button', { name: 'Import existing server file' }).click(); const modal = page.getByRole('dialog', { name: 'Import existing remote server' });
   await expect(modal).toBeVisible();
   await expect(modal.getByLabel('Native Ax public client ID (optional)')).not.toBeVisible();
@@ -136,13 +139,14 @@ test('local configuration is copyable without a remote server and project sharin
   await expect(local.getByRole('status')).toHaveText('Shareable project configuration copied.');
   const shared = await page.evaluate(() => localStorage.getItem('fixture-copied'));
   expect(shared).toContain('${workspaceFolder}'); expect(shared).not.toContain('/demo'); expect(shared).not.toContain('/tools/ax');
+  await page.getByText('Advanced: register an externally managed server', { exact: true }).click();
   await expect(page.getByRole('button', { name: 'Import existing server file' })).toBeVisible();
 });
 
 test('remote connection details can be copied and pasted here without starting sign-in automatically', async ({ page }) => {
   const f = await fixture(page); await page.goto('/settings?section=remote');
   await page.getByRole('button', { name: 'Copy connection details', exact: true }).click();
-  await expect(page.locator('.remote-mcp-publish').getByRole('status').filter({ hasText: 'Connection details copied.' })).toBeVisible();
+  await expect(page.locator('.remote-publish-feedback').filter({ hasText: 'Connection details copied.' })).toBeVisible();
   const copied = await page.evaluate(() => localStorage.getItem('fixture-copied'));
   await page.getByRole('button', { name: 'Paste connection details' }).click();
   const dialog = page.getByRole('dialog', { name: 'Paste Ax connection details' });

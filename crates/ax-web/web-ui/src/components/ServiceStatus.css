@@ -1,0 +1,11 @@
+.service-status { display: inline-flex; align-items: center; gap: .55rem; font-weight: 600; color: var(--text); }
+.service-status-dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--text-dim); flex: none; }
+.service-status--running .service-status-dot { background: var(--ok); }
+.service-status--warning .service-status-dot { background: var(--warn); }
+.service-status--error .service-status-dot { background: var(--danger); }
+.service-status--stopped .service-status-dot { background: var(--text-dim); }
+.service-status.is-active .service-status-dot { animation: service-pulse 2s ease-in-out infinite; }
+.service-toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; padding: 1rem 0; }
+.service-toolbar .btn { margin: 0; }
+@keyframes service-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb,var(--ok) 20%,transparent); } }
+@media (prefers-reduced-motion: reduce) { .service-status.is-active .service-status-dot { animation: none; } }

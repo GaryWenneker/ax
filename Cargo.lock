@@ -599,6 +599,7 @@ dependencies = [
  "ax-agent",
  "ax-context",
  "ax-core",
+ "ax-db",
  "ax-desktop-client",
  "ax-docs-catalog",
  "ax-extraction",
@@ -691,9 +692,11 @@ dependencies = [
  "anyhow",
  "ax-types",
  "ax-utils",
+ "blake3",
  "serde",
  "serde_json",
  "sqlx",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -881,6 +884,7 @@ dependencies = [
  "ax-usage",
  "ax-utils",
  "axum",
+ "base64 0.22.1",
  "dirs",
  "fs2",
  "hex",
@@ -1148,15 +1152,18 @@ dependencies = [
 name = "ax-usage"
 version = "8.1.0"
 dependencies = [
+ "ax-db",
  "ax-utils",
  "chrono",
  "chrono-tz",
  "dirs",
+ "hex",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
+ "tempfile",
  "tiktoken-rs",
  "tokio",
  "toml",
@@ -1213,6 +1220,7 @@ dependencies = [
  "dirs",
  "fs2",
  "futures-util",
+ "if-addrs",
  "include_dir",
  "mime_guess",
  "portable-pty",
@@ -3683,6 +3691,16 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "if-addrs"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b2eeee38fef3aa9b4cc5f1beea8a2444fc00e7377cafae396de3f5c2065e24"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

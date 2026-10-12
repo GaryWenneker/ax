@@ -7,6 +7,8 @@
 
 Sharing a page on [getax.wenneker.io](https://getax.wenneker.io) previews that page. The site build screenshots it and stamps the current release on the card.
 
+**Development source:** Command Center can generate and manage a remote MCP host with built-in OAuth, project-scoped approval, client registration, refresh and revocation. Replication transfers the full graph and indexed source, memory, daily MCP logs, structured call history, working context and durable conversations. Settings provides persistent node setup, a selected advertised IP, real service/activity status and Light/Dark themes. See [remote hosting](https://getax.wenneker.io/guides/remote-mcp/) and [replication](https://getax.wenneker.io/guides/standalone-ax/). Build and reinstall Ax from source to use these changes; no release or deployment is implied.
+
 **v7.1.0** (minor) seeds generated-client, Kubernetes, container-image, design-token, and CSS-layer rules, plus a pnpm release-age skill. React and TypeScript stacks gain composition, test, and strictness rules. `ax costs` can report imported sessions when a period has no quoted usage events. Command Center plays a short green intro on a full page load.
 
 **v7.0.0** (major) seeds Ax's architecture with `ax bootstrap`, keeps Pi as the agent runtime, and shows Agent activity as status instead of a raw context report. Cost quotes stay advisory.
@@ -62,7 +64,7 @@ Sharing a page on [getax.wenneker.io](https://getax.wenneker.io) previews that p
 - **`ax ship --ci`** — headless quality gate + reusable `.github/workflows/ax-ship.yml`.
 - **LSP bridge** — Exact edges via `ax-lsp`; Unresolved → enrich (limit, server checklist, report).
 - **`ax share` + PWA** — LAN token gate, Settings → Sharing, opt-in install, Activity chip (SSE).
-- **ax Mint default** — `#3ee4b2` Command Center theme; project browser tracks `--accent`. Settings also includes a **macOS** theme (System Settings–style charcoal + `#64d2ff`).
+- **Light and Dark** — the two Command Center themes use Azure Portal styling, saved browser preferences and accessible contrast. Removed theme preferences migrate to Dark.
 
 **v3.1.0** focused on **agent-side diagnostics, safer auto-commit, and policy flexibility** (diagnostics bridge, generic guard directives, Stop hook, ship auto-commit, MCP Logging polish, VS Code / Windsurf / Zed).
 

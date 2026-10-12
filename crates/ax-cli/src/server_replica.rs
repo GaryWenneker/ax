@@ -146,7 +146,7 @@ fn attempt_file(config: &ServerConfig, project: &ProjectRegistration) -> std::pa
 
 /// Retain successful sync metadata when a subsequent network attempt fails.
 /// Status must describe the current attempt, not claim the listener is running.
-fn record_attempt(
+pub(crate) fn record_attempt(
     config: &ServerConfig,
     project: &ProjectRegistration,
     outcome: &Result<(String, String), String>,
@@ -193,7 +193,7 @@ fn record_attempt(
     Ok(())
 }
 
-async fn fetch_snapshot(
+pub(crate) async fn fetch_snapshot(
     client: &reqwest::Client,
     config: &ServerConfig,
     project: &ProjectRegistration,
@@ -239,7 +239,9 @@ async fn fetch_snapshot(
     }
     let snapshot: Snapshot = read_response(response).await?;
     server_snapshot::validate(&snapshot, &config.cluster_id, &project.id)?;
+    crate::server_data::manifests(&snapshot)?;
     let local = server_snapshot::export_native(config, &project.id).await?;
+    crate::server_data::upload(client, config, project, &local).await?;
     let exchange_url = reqwest::Url::parse(base)
         .map_err(|e| e.to_string())?
         .join(&format!("/v1/projects/{}/exchange", project.id))
@@ -269,6 +271,7 @@ async fn fetch_snapshot(
         return Err("Primary identity changed during node exchange".into());
     }
     server_snapshot::validate(&reply.snapshot, &config.cluster_id, &project.id)?;
+    crate::server_data::download(client, config, project, &reply.snapshot).await?;
     Ok((reply.snapshot, reply.memory_conflicts))
 }
 
@@ -319,7 +322,7 @@ pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result
     .map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
     let mut errors = Vec::new();
@@ -331,9 +334,9 @@ pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result
         {
             Ok((snapshot, primary_conflicts)) => match stage(&config, project, &snapshot) {
                 Ok(status) if apply_memories => {
-                    match crate::server_apply::apply(&config, &snapshot).await {
+                    match async { crate::server_data::apply(&config,&snapshot).await?; crate::server_apply::apply(&config,&snapshot).await }.await {
                             Ok(report) => Ok((
-                                format!("two_way_preserved; {status}; memories: +{} updated {} retained {} unchanged {}; {}",
+                                format!("full_data_synced; two_way_preserved; {status}; memories: +{} updated {} retained {} unchanged {}; {}",
                                     report.inserted,report.updated,report.retained,report.unchanged,
                                     if report.conflicts+primary_conflicts>0 { format!("review_required: {} conflicts preserved",report.conflicts+primary_conflicts) } else { "no conflicts".into() }),
                                 snapshot.revision,
@@ -343,7 +346,7 @@ pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result
                 }
                 Ok(status) => Ok((
                     format!(
-                        "two_way_preserved; {status}; {}",
+                        "staged_only; two_way_preserved; {status}; {}",
                         if primary_conflicts > 0 {
                             format!("review_required: {primary_conflicts} conflicts preserved")
                         } else {

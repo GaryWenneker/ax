@@ -7,6 +7,20 @@ Remote MCP exposes Ax's existing context tools through an authenticated HTTP end
 
 This guide describes the remote MCP feature. Availability requires a binary built from the feature or a release containing it. It does not claim that a local build has already been published or that your OAuth provider has been configured.
 
+## Set up the host in Command Center
+
+On the computer that holds the project, open **Settings → Remote MCP → Set up remote MCP**. Enter the public HTTPS origin that routes to this computer, then choose **Generate and start host**. Ax writes its own server configuration, generates a stable native public client ID, starts the local listener and saves the settings for automatic startup. Route your HTTPS hostname to the **Proxy target** shown in the host overview. This does not create a hostname or tunnel for you.
+
+An existing server configuration can be selected in the same modal. **Advanced OAuth options** explains the issuer (authentication service), JWKS URI (external provider signing keys) and public client IDs (app identifiers, never passwords). A generated host uses built-in OAuth with opaque, project-scoped tokens. Ax registers its own native client and supports dynamic registration for public clients. Externally managed providers retain their existing issuer/JWKS and registered IDs; those registrations must come from that provider.
+
+For another computer, choose **Copy connection details** under **Share this project**. On the receiving computer, use **Paste connection details** under **Connect to another Ax**, then **Connect with browser**. With built-in OAuth, the browser displays a request ID. The host's owner matches it in **Connection approvals**, checks context versus read/write access, then approves or denies it. Authentication uses S256 PKCE and exact redirect/resource validation. Codes are single-use, refresh tokens rotate, refresh replay revokes the grant, and the owner can revoke access at any time. Secrets are stored as hashes; exported connection details contain public metadata only.
+
+The host card reports actual local service state. **Stop host** disables automatic startup until **Start host** is used. **Remove host** stops it, revokes its built-in grants and removes its saved configuration. The setup button remains available on the hosting computer. Advanced registration of an externally managed server only adds export metadata; it does not manage that service.
+
+![Remote MCP host status and project-scoped connection approval](/screenshots/cc-remote-host.png)
+
+The manual external-provider setup below remains available.
+
 ## What runs where
 
 | Component | Responsibility |
@@ -92,9 +106,9 @@ Windows uses the TCP upstream path; Unix sockets in this feature are macOS/Linux
 
 The server does not rewrite your Cloudflare configuration or create another tunnel. OAuth discovery and authenticated MCP traffic must reach Ax through the route. If you also use Cloudflare Access, configure it so its separate browser login or custom service-token headers do not block the MCP OAuth client.
 
-## OAuth provider setup
+## External OAuth provider setup
 
-Use an established OAuth provider. Ax implements the resource server and native client; it does not provide its own account database or authorization server.
+A generated host uses Ax's built-in authorization server and project-scoped host approvals. The following steps apply only when selecting an existing configuration that uses an external provider. In that mode, the provider manages accounts and sign-in, while Ax validates its access tokens.
 
 Configure the provider to:
 

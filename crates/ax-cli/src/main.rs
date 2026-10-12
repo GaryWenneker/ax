@@ -9,6 +9,7 @@ use ax_web::server_config;
 mod server_apply;
 mod server_cli;
 mod server_exchange;
+mod server_data;
 mod server_http;
 mod server_replica;
 mod server_snapshot;
@@ -644,7 +645,7 @@ enum ServerAction {
         push_port: u16,
         #[arg(
             long,
-            help = "Project staged replica memories under conflict-safe local IDs"
+            help = "Apply verified graph, source, logs, conversation history and memories under separate node identities"
         )]
         auto_apply_memories: bool,
         #[arg(long, hide = true)]

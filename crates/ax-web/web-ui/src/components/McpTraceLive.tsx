@@ -1410,6 +1410,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                   onClick={() => openEntry(e.id)}
                   badges={
                     <>
+                      {e.origin && <span className="page-item-badge" title="Replicated log source">Node {e.origin}</span>}
                       <button
                         type="button"
                         className={`page-item-badge page-item-badge--btn mcp-kind-badge mcp-kind-badge--${e.kind}${

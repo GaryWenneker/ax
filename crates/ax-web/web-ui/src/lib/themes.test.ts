@@ -10,25 +10,9 @@ import {
   themeById,
 } from './themes.ts';
 
-describe('macOS theme preset', () => {
-  it('M1 THEMES includes macos with light system blue', () => {
-    const macos = THEMES.find((t) => t.id === 'macos');
-    assert.ok(macos, 'missing macos preset');
-    assert.equal(macos.label, 'macOS');
-    assert.equal(macos.accent, '#64d2ff');
-  });
-
-  it('M2 themeById resolves macos and unknown falls back to ax Mint', () => {
-    assert.equal(themeById('macos').id, 'macos');
-    assert.equal(themeById('not-a-theme').id, 'ax');
-  });
-
-  it('M3 existing presets stay registered', () => {
-    const ids = THEMES.map((t) => t.id);
-    for (const id of ['ax', 'vscode-dark', 'ember', 'emerald', 'nightfall', 'crimson', 'ocean', 'macos', 'mono']) {
-      assert.ok(ids.includes(id), `missing ${id}`);
-    }
-  });
+describe('available themes', () => {
+  it('keeps only Light and Dark', () => { assert.deepEqual(THEMES.map(t => [t.id,t.label]), [['azure-light','Light'],['azure-dark','Dark']]); });
+  it('migrates removed themes to Dark and preserves Light', () => { assert.equal(themeById('macos').id,'azure-dark'); assert.equal(themeById('unknown').id,'azure-dark'); assert.equal(themeById('azure-light').id,'azure-light'); });
 });
 
 describe('WCAG AA contrast', () => {
@@ -54,17 +38,7 @@ describe('WCAG AA contrast', () => {
     }
   });
 
-  it('W5 macos dim text vs bg is AA', () => {
-    const macos = THEMES.find((t) => t.id === 'macos')!;
-    assert.ok(contrastRatioHex(macos.textDim, macos.bg) >= 4.5);
-  });
-
-  it('W6 macos accent vs charcoal is AAA 7:1', () => {
-    const macos = THEMES.find((t) => t.id === 'macos')!;
-    const r = contrastRatioHex(macos.accent, macos.bg);
-    assert.ok(r >= 7, `${macos.accent} on ${macos.bg} ratio ${r.toFixed(2)}`);
-  });
-
+  it('dim text in both themes meets AA', () => { for (const theme of THEMES) assert.ok(contrastRatioHex(theme.textDim,theme.bg)>=4.5); });
   it('W7 ensureTextContrast default is AAA', () => {
     const fg = ensureTextContrast('#0a84ff', '#1c1c1e');
     const r = contrastRatioHex(fg, '#1c1c1e');
@@ -80,23 +54,7 @@ describe('WCAG AA contrast', () => {
     }
   });
 
-  it('W9 macOS footer uses dark ink on light system blue', () => {
-    const macos = themeById('macos');
-    const painted = themeAccentFill(macos);
-    const ink = statusbarInk(painted);
-    assert.equal(painted, '#64d2ff');
-    assert.equal(ink.onLight, true);
-    assert.ok(contrastRatioHex(ink.fg, painted) >= 4.5);
-  });
-
-  it('M4 THEMES includes Mono grayscale preset', () => {
-    const mono = THEMES.find((t) => t.id === 'mono');
-    assert.ok(mono, 'missing mono preset');
-    assert.equal(mono.label, 'Mono');
-    assert.equal(mono.accent, '#d0d0d0');
-    assert.equal(themeById('mono').id, 'mono');
-  });
-
+  it('uses dark status ink on a light fill', () => { const ink=statusbarInk('#64d2ff');assert.equal(ink.onLight,true);assert.ok(contrastRatioHex(ink.fg,'#64d2ff')>=4.5); });
   it('W10 applyTheme computes statusbar ink from painted fill', async () => {
     const { readFile } = await import('node:fs/promises');
     const src = await readFile(new URL('./themes.ts', import.meta.url), 'utf8');

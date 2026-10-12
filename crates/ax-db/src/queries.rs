@@ -262,6 +262,7 @@ impl QueryBuilder {
     }
 
     async fn clear_file_inner(&self, file_path: &str, drop_content: bool) -> Result<(), AxError> {
+        if crate::replication::is_replica(file_path) { return Ok(()); }
         let mut tx = self
             .pool
             .begin()
@@ -618,19 +619,21 @@ impl QueryBuilder {
             .begin()
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
-        sqlx::query("DELETE FROM node_communities")
+        sqlx::query("DELETE FROM node_communities WHERE node_id NOT GLOB 'ax-replica/*'")
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
         if !assignments.is_empty() {
+            let offset:i64=sqlx::query_scalar("SELECT COALESCE(MAX(community_id)+1,0) FROM node_communities WHERE node_id GLOB 'ax-replica/*'").fetch_one(&mut *tx).await.map_err(db_err)?;
             const CHUNK: usize = 800;
-            for chunk in assignments.chunks(CHUNK) {
+            let native: Vec<_> = assignments.iter().filter(|(id,_,_)| !crate::replication::is_replica(id)).cloned().collect();
+            for chunk in native.chunks(CHUNK) {
                 let mut qb = sqlx::QueryBuilder::new(
                     "INSERT OR REPLACE INTO node_communities (node_id, community_id, community_label, computed_at) ",
                 );
                 qb.push_values(chunk, |mut b, (node_id, community_id, label)| {
                     b.push_bind(node_id)
-                        .push_bind(community_id)
+                        .push_bind(community_id+offset)
                         .push_bind(label)
                         .push_bind(now);
                 });
@@ -657,7 +660,7 @@ impl QueryBuilder {
     /// Remove all documentation nodes (edges cascade via FK). Used to refresh
     /// the markdown/doc layer on each index pass.
     pub async fn delete_doc_nodes(&self) -> Result<(), AxError> {
-        sqlx::query("DELETE FROM nodes WHERE kind = 'doc'")
+        sqlx::query("DELETE FROM nodes WHERE kind = 'doc' AND id NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
@@ -968,7 +971,7 @@ impl QueryBuilder {
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))
     }
     pub async fn clear_unresolved_refs(&self) -> Result<(), AxError> {
-        sqlx::query("DELETE FROM unresolved_refs")
+        sqlx::query("DELETE FROM unresolved_refs WHERE from_node_id NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
             .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -1000,7 +1003,7 @@ impl QueryBuilder {
     /// Full generic call text captured before callee normalization (e.g. `AddSingleton<T>`).
     pub async fn prune_malformed_call_unresolved_refs(&self) -> Result<u64, AxError> {
         let result = sqlx::query(
-            "DELETE FROM unresolved_refs WHERE reference_kind = 'calls' AND reference_name LIKE '%<%'",
+            "DELETE FROM unresolved_refs WHERE from_node_id NOT GLOB 'ax-replica/*' AND reference_kind = 'calls' AND reference_name LIKE '%<%'",
         )
         .execute(&self.pool)
         .await
@@ -1063,7 +1066,7 @@ impl QueryBuilder {
         ];
         let placeholders = EXTERNAL.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "DELETE FROM unresolved_refs WHERE reference_kind = 'calls' AND reference_name IN ({placeholders})"
+            "DELETE FROM unresolved_refs WHERE from_node_id NOT GLOB 'ax-replica/*' AND reference_kind = 'calls' AND reference_name IN ({placeholders})"
         );
         let mut query = sqlx::query(&sql);
         for name in EXTERNAL {
@@ -1221,23 +1224,23 @@ impl QueryBuilder {
     }
 
     pub async fn clear_all(&self) -> Result<(), AxError> {
-        sqlx::query("DELETE FROM edges")
+        sqlx::query("DELETE FROM edges WHERE source NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
-        sqlx::query("DELETE FROM unresolved_refs")
+        sqlx::query("DELETE FROM unresolved_refs WHERE from_node_id NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
-        sqlx::query("DELETE FROM nodes")
+        sqlx::query("DELETE FROM nodes WHERE id NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
-        sqlx::query("DELETE FROM files")
+        sqlx::query("DELETE FROM files WHERE path NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
-        sqlx::query("DELETE FROM file_contents")
+        sqlx::query("DELETE FROM file_contents WHERE path NOT GLOB 'ax-replica/*'")
             .execute(&self.pool)
             .await
             .map_err(db_err)?;

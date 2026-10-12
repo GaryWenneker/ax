@@ -15,6 +15,7 @@ plugins-wasm = ["ax-extraction/plugins-wasm"]
 onnx = ["ax-memory/onnx"]
 
 [dependencies]
+ax-db = { workspace = true }
 ax-types = { workspace = true }
 ax-utils = { workspace = true }
 ax-core = { workspace = true }

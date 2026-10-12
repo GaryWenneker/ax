@@ -331,7 +331,7 @@ impl ExtractionOrchestrator {
 
         let indexed = queries.get_all_files().await?;
         let indexed_map: HashMap<String, FileRecord> =
-            indexed.into_iter().map(|f| (f.path.clone(), f)).collect();
+            indexed.into_iter().filter(|f| !ax_db::replication::is_replica(&f.path)).map(|f| (f.path.clone(), f)).collect();
 
         // Databases indexed before schema v17 have file rows but no stored source.
         // Unchanged files would never be revisited, so snippets would stay
