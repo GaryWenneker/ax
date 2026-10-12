@@ -352,3 +352,11 @@ editing that text invalidates old attribution. Older items without source record
 show an explicit unknown origin. Accepting or rejecting clears the source record
 for that item. A source label is context for review, never permission to activate
 policy automatically.
+
+### Missing comparisons
+
+Open **Inspect content and source** on a compact review row to see its full Current and Incoming content. A preview is not a verified comparison. If the page reports missing comparisons, update the Ax process serving Command Center and restart it, then refresh the queue. Updating only a remote Primary cannot add comparison support to an older local web server. The version label alone may match across unreleased builds; review capability is checked from the response fields. Approval stays disabled until comparison data is available.
+
+![Compact review queue with full comparisons available per row](/screenshots/cc-review-compact-desktop.png)
+
+![Current and incoming policy content shown after opening Inspect](/screenshots/cc-review-comparison.png)

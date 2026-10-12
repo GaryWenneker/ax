@@ -150,6 +150,7 @@ pub(crate) fn record_attempt(
     config: &ServerConfig,
     project: &ProjectRegistration,
     outcome: &Result<(String, String), String>,
+    warning: Option<&str>,
 ) -> Result<(), String> {
     let dir = project.path.join(".ax");
     safe_dir(&dir)?;
@@ -173,6 +174,7 @@ pub(crate) fn record_attempt(
         "last_success_revision": previous.get("last_success_revision").cloned(),
         "last_success_unix_seconds": previous.get("last_success_unix_seconds").cloned(),
         "last_error": serde_json::Value::Null,
+        "compatibility_warning": warning,
     });
     match outcome {
         Ok((status, revision)) => {
@@ -193,11 +195,35 @@ pub(crate) fn record_attempt(
     Ok(())
 }
 
+/// Optional transport metadata never changes snapshot fingerprints.
+pub(crate) fn peer_warning(headers: &reqwest::header::HeaderMap) -> Result<Option<String>, String> {
+    let version = headers
+        .get("x-ax-version")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| {
+            v.len() <= 64
+                && v.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b".-+_".contains(&c))
+        })
+        .unwrap_or("unknown");
+    if let Some(protocol) = headers.get("x-ax-replication-protocol") {
+        if protocol != "3" {
+            let value = protocol
+                .to_str()
+                .ok()
+                .filter(|v| v.len() <= 8 && v.bytes().all(|c| c.is_ascii_digit()))
+                .unwrap_or("unknown");
+            return Err(format!("Replication protocol {value} is incompatible with local protocol 3 (peer Ax {version}, local Ax {}). Update the older node before syncing; local data was preserved.", env!("CARGO_PKG_VERSION")));
+        }
+    }
+    Ok((version != env!("CARGO_PKG_VERSION")).then(|| format!("Peer Ax {version}; local Ax {}. Complete replication protocol 3 is compatible, but versions differ or are unknown. Update and restart the older node for matching features.",env!("CARGO_PKG_VERSION"))))
+}
+
 pub(crate) async fn fetch_snapshot(
     client: &reqwest::Client,
     config: &ServerConfig,
     project: &ProjectRegistration,
-) -> Result<(Snapshot, usize), String> {
+) -> Result<(Snapshot, usize, Option<String>), String> {
     let token = std::env::var(&project.token_env).map_err(|_| {
         format!(
             "missing project token in environment variable {}",
@@ -222,6 +248,8 @@ pub(crate) async fn fetch_snapshot(
         .get(url)
         .bearer_auth(&token)
         .header("x-ax-node-id", &config.node_id)
+        .header("x-ax-version", env!("CARGO_PKG_VERSION"))
+        .header("x-ax-replication-protocol", "3")
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -237,7 +265,11 @@ pub(crate) async fn fetch_snapshot(
     {
         return Err("snapshot response too large".into());
     }
+    let warning = peer_warning(response.headers())?;
     let snapshot: Snapshot = read_response(response).await?;
+    if snapshot.schema_version != 3 {
+        return Err(format!("Peer snapshot protocol {} cannot synchronize all datasets; local protocol is 3. Update the older node. Local data was preserved.", snapshot.schema_version));
+    }
     server_snapshot::validate(&snapshot, &config.cluster_id, &project.id)?;
     crate::server_data::manifests(&snapshot)?;
     let local = server_snapshot::export_native(config, &project.id).await?;
@@ -250,6 +282,8 @@ pub(crate) async fn fetch_snapshot(
         .post(exchange_url)
         .bearer_auth(&token)
         .header("x-ax-node-id", &config.node_id)
+        .header("x-ax-version", env!("CARGO_PKG_VERSION"))
+        .header("x-ax-replication-protocol", "3")
         .json(&local)
         .send()
         .await
@@ -263,6 +297,7 @@ pub(crate) async fn fetch_snapshot(
             response.status()
         ));
     }
+    let exchange_warning = peer_warning(response.headers())?;
     let reply: crate::server_exchange::ExchangeReply = read_response(response).await?;
     if reply.contributed_revision != local.revision {
         return Err("Primary did not acknowledge the exact contributed revision".into());
@@ -272,7 +307,11 @@ pub(crate) async fn fetch_snapshot(
     }
     server_snapshot::validate(&reply.snapshot, &config.cluster_id, &project.id)?;
     crate::server_data::download(client, config, project, &reply.snapshot).await?;
-    Ok((reply.snapshot, reply.memory_conflicts))
+    Ok((
+        reply.snapshot,
+        reply.memory_conflicts,
+        exchange_warning.or(warning),
+    ))
 }
 
 async fn read_response<T: serde::de::DeserializeOwned>(
@@ -327,14 +366,17 @@ pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result
         .map_err(|e| e.to_string())?;
     let mut errors = Vec::new();
     for project in &config.projects {
+        let mut warning = None;
         let result: Result<(String, String), String> = match fetch_snapshot(
             &client, &config, project,
         )
         .await
         {
-            Ok((snapshot, primary_conflicts)) => match stage(&config, project, &snapshot) {
-                Ok(status) if apply_memories => {
-                    match async { crate::server_data::apply(&config,&snapshot).await?; crate::server_apply::apply(&config,&snapshot).await }.await {
+            Ok((snapshot, primary_conflicts, peer_note)) => {
+                warning = peer_note;
+                match stage(&config, project, &snapshot) {
+                    Ok(status) if apply_memories => {
+                        match async { crate::server_data::apply(&config,&snapshot).await?; crate::server_apply::apply(&config,&snapshot).await }.await {
                             Ok(report) => Ok((
                                 format!("full_data_synced; two_way_preserved; {status}; memories: +{} updated {} retained {} unchanged {}; {}",
                                     report.inserted,report.updated,report.retained,report.unchanged,
@@ -343,23 +385,24 @@ pub async fn sync_with_apply(config_path: &Path, apply_memories: bool) -> Result
                             )),
                             Err(error) => Err(error),
                         }
+                    }
+                    Ok(status) => Ok((
+                        format!(
+                            "staged_only; two_way_preserved; {status}; {}",
+                            if primary_conflicts > 0 {
+                                format!("review_required: {primary_conflicts} conflicts preserved")
+                            } else {
+                                "no conflicts".into()
+                            }
+                        ),
+                        snapshot.revision,
+                    )),
+                    Err(error) => Err(error),
                 }
-                Ok(status) => Ok((
-                    format!(
-                        "staged_only; two_way_preserved; {status}; {}",
-                        if primary_conflicts > 0 {
-                            format!("review_required: {primary_conflicts} conflicts preserved")
-                        } else {
-                            "no conflicts".into()
-                        }
-                    ),
-                    snapshot.revision,
-                )),
-                Err(error) => Err(error),
-            },
+            }
             Err(error) => Err(error),
         };
-        let recorded = record_attempt(&config, project, &result);
+        let recorded = record_attempt(&config, project, &result, warning.as_deref());
         match (result, recorded) {
             (Ok((status, _)), Ok(())) => println!("Project {}: {}", project.id, status),
             (Err(error), _) | (_, Err(error)) => {
@@ -421,5 +464,81 @@ mod tests {
         };
         assert!(stage(&config, &project, &snapshot).is_err());
         assert!(!project_path.join(".ax/server").exists());
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    #[test]
+    fn peer_protocol_and_version_are_reported_before_exchange() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert!(peer_warning(&headers).unwrap().unwrap().contains("unknown"));
+        headers.insert("x-ax-version", env!("CARGO_PKG_VERSION").parse().unwrap());
+        headers.insert("x-ax-replication-protocol", "3".parse().unwrap());
+        assert_eq!(peer_warning(&headers).unwrap(), None);
+        headers.insert("x-ax-version", "8.0.0".parse().unwrap());
+        assert!(peer_warning(&headers).unwrap().unwrap().contains("8.0.0"));
+        headers.insert("x-ax-replication-protocol", "4".parse().unwrap());
+        assert!(peer_warning(&headers).unwrap_err().contains("protocol 4"));
+        for protocol in 0..16 {
+            headers.insert(
+                "x-ax-replication-protocol",
+                protocol.to_string().parse().unwrap(),
+            );
+            assert_eq!(peer_warning(&headers).is_ok(), protocol == 3);
+        }
+        headers.insert("x-ax-replication-protocol", "3".parse().unwrap());
+        headers.insert("x-ax-version", "invalid<script>".parse().unwrap());
+        let warning = peer_warning(&headers).unwrap().unwrap();
+        assert!(warning.contains("unknown"));
+        assert!(!warning.contains("<script>"));
+    }
+    #[test]
+    fn compatibility_warning_persists_and_clears_on_matching_success() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join(".ax")).unwrap();
+        let project = ProjectRegistration {
+            id: "project".into(),
+            path: tmp.path().into(),
+            token_env: "AX_TEST_PEER_TOKEN".into(),
+        };
+        let config = ServerConfig {
+            schema_version: 1,
+            cluster_id: "cluster".into(),
+            node_id: "replica".into(),
+            role: NodeRole::Replica,
+            primary_url: Some("https://example.test".into()),
+            projects: vec![project.clone()],
+        };
+        let outcome = Ok(("full_data_synced".into(), "revision-one".into()));
+        record_attempt(
+            &config,
+            &project,
+            &outcome,
+            Some("Peer Ax 8.0.0; local Ax 8.1.0"),
+        )
+        .unwrap();
+        assert!(status(&config, &project)["compatibility_warning"]
+            .as_str()
+            .unwrap()
+            .contains("8.0.0"));
+        record_attempt(
+            &config,
+            &project,
+            &Err("incompatible protocol 4".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            status(&config, &project)["last_success_revision"],
+            "revision-one"
+        );
+        assert_eq!(
+            status(&config, &project)["last_error"],
+            "incompatible protocol 4"
+        );
+        record_attempt(&config, &project, &outcome, None).unwrap();
+        assert!(status(&config, &project)["compatibility_warning"].is_null());
     }
 }

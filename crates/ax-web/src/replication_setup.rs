@@ -308,7 +308,15 @@ async fn enroll(request: &mut SetupRequest, node: &str, token: &str) -> Result<(
     }
     let body: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     if body["protocol_version"] != 3 {
-        return Err("Complete replication requires updated Ax on both nodes".into());
+        let version = body["ax_version"]
+            .as_str()
+            .filter(|v| {
+                v.len() <= 64
+                    && v.bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b".-+_".contains(&c))
+            })
+            .unwrap_or("unknown");
+        return Err(format!("Primary Ax {version} uses replication protocol {}; local Ax {} requires protocol 3. Update the older node and reconnect. Existing local data and settings were preserved.",body["protocol_version"].as_u64().map(|n|n.to_string()).unwrap_or_else(||"unknown".into()),env!("CARGO_PKG_VERSION")));
     }
     let cluster = body["cluster_id"]
         .as_str()

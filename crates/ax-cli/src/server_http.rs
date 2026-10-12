@@ -12,6 +12,7 @@ use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path as AxumPath, State},
     http::{header, HeaderMap, StatusCode},
+    middleware,
     routing::{get, post},
     Json, Router,
 };
@@ -190,6 +191,8 @@ async fn exchange(
     Json(incoming): Json<server_snapshot::Snapshot>,
 ) -> Result<Json<crate::server_exchange::ExchangeReply>, StatusCode> {
     let node_id = authorize_project(&state, &id, &headers).await?;
+    let warning =
+        crate::server_replica::peer_warning(&headers).map_err(|_| StatusCode::CONFLICT)?;
     if incoming.primary_node_id != node_id {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -220,7 +223,7 @@ async fn exchange(
                 )
             })
             .map_err(Clone::clone);
-        crate::server_replica::record_attempt(&state.config, project, &status)
+        crate::server_replica::record_attempt(&state.config, project, &status, warning.as_deref())
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     let (snapshot, report) = outcome.map_err(|error| {
@@ -251,7 +254,7 @@ async fn enrollment(
         return Err(StatusCode::FORBIDDEN);
     }
     Ok(Json(
-        serde_json::json!({"protocol_version":3,"node_id":node,"cluster_id":state.config.cluster_id,"project_ids":projects,"datasets":["graph","source","logs","agent_history","working_context","durable_sessions","structured_logs","memories","rules","skills"]}),
+        serde_json::json!({"protocol_version":3,"ax_version":env!("CARGO_PKG_VERSION"),"node_id":node,"cluster_id":state.config.cluster_id,"project_ids":projects,"datasets":["graph","source","logs","agent_history","working_context","durable_sessions","structured_logs","memories","rules","skills"]}),
     ))
 }
 async fn chunk_read(
@@ -327,6 +330,19 @@ fn public_routes() -> Router<Arc<StateData>> {
             server_snapshot::MAX_SNAPSHOT_BYTES + 1024 * 1024,
         ))
         .merge(chunks)
+        .layer(middleware::map_response(
+            |mut response: axum::response::Response| async {
+                response.headers_mut().insert(
+                    "x-ax-version",
+                    axum::http::HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+                );
+                response.headers_mut().insert(
+                    "x-ax-replication-protocol",
+                    axum::http::HeaderValue::from_static("3"),
+                );
+                response
+            },
+        ))
 }
 
 pub struct RunOptions {
@@ -807,9 +823,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(enroll["protocol_version"], 3);
+        assert_eq!(enroll["ax_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(enroll["project_ids"], serde_json::json!(["project"]));
+        let contribution = crate::server_snapshot::export_native(&a, "project")
+            .await
+            .unwrap();
+        let primary_before = crate::server_snapshot::export_native(&primary, "project")
+            .await
+            .unwrap();
+        let primary_nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes")
+            .fetch_one(primary_ax.db_pool())
+            .await
+            .unwrap();
+        let denied = client
+            .post(format!("http://{address}/v1/projects/project/exchange"))
+            .bearer_auth(&token)
+            .header("x-ax-node-id", "a_1")
+            .header("x-ax-replication-protocol", "4")
+            .header("x-ax-version", "99.0.0")
+            .json(&contribution)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), reqwest::StatusCode::CONFLICT);
+        let primary_after = crate::server_snapshot::export_native(&primary, "project")
+            .await
+            .unwrap();
+        let a_after = crate::server_snapshot::export_native(&a, "project")
+            .await
+            .unwrap();
+        for path in [
+            "state/memories.json",
+            "state/rules.json",
+            "state/skills.json",
+        ] {
+            assert_eq!(primary_after.files[path], primary_before.files[path]);
+            assert_eq!(a_after.files[path], contribution.files[path]);
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nodes")
+                .fetch_one(primary_ax.db_pool())
+                .await
+                .unwrap(),
+            primary_nodes
+        );
+        assert_eq!(denied.headers()["x-ax-replication-protocol"], "3");
+        assert_eq!(denied.headers()["x-ax-version"], env!("CARGO_PKG_VERSION"));
         async fn sync(client: &reqwest::Client, config: &ServerConfig) {
-            let (snapshot, _) =
+            let (snapshot, _, _) =
                 crate::server_replica::fetch_snapshot(client, config, &config.projects[0])
                     .await
                     .unwrap();

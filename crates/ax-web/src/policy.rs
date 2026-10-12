@@ -281,7 +281,7 @@ async fn review_list(State(hub): State<WebHub>) -> impl IntoResponse {
             }
             (
                 StatusCode::OK,
-                Json(serde_json::json!({ "items": reviews })),
+                Json(serde_json::json!({ "items": reviews, "serverVersion": env!("CARGO_PKG_VERSION"), "comparisonAvailable": true })),
             )
                 .into_response()
         }
