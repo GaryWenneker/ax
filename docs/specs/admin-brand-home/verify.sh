@@ -5,4 +5,5 @@ node --experimental-strip-types --test crates/ax-web/web-ui/src/lib/navigation-r
 npm test --prefix site
 npm run build --prefix crates/ax-web/web-ui
 node docs/specs/admin-brand-home/ui-check.mjs
-git diff --check
+git diff --check -- . ':!crates/ax-web/web-ui/dist'
+git diff --cached --check -- . ':!crates/ax-web/web-ui/dist'

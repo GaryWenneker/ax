@@ -21,7 +21,7 @@ Final command: `AX_CHROME_EXECUTABLE=<installed Chromium executable> sh docs/spe
 - Website suite: **55 passed**, zero failures; no website production build/deployment.
 - Embedded frontend production build: **exit 0**, strict TypeScript and Vite.
 - Targeted desktop/mobile browser suite: **10 passed**, zero failures (35.2 seconds).
-- `git diff --check`, Node syntax check, Python compilation: **exit 0**.
+- Source-only diff whitespace check (excluding generated `crates/ax-web/web-ui/dist`), Node syntax check, Python compilation: **exit 0**. Generated Vite output retains whitespace inside vendored grammar/template strings; the raw generated-bundle whitespace check reports these and is not used as a source-format gate.
 - Negative controls: `python docs/specs/admin-brand-home/mutations.py` with the same Chromium environment. **3/3 killed**: restored retired route, incorrect logo font, fixed-width tags. Each control ran and failed the expected behavioral assertion; sources restored in `finally`. Final verification rebuilt the restored source afterward.
 
 RED observations: `/ship` originally parsed as a valid page; the initial logo check caught the portal stylesheet forcing the underscore white; the initial tag check measured 100px for `graph`. Fixed the implementation rather than relaxing those assertions. Existing tests expecting an available Quality Gates page were updated to the user's explicit new removal contract.
