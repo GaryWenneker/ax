@@ -1,6 +1,6 @@
 use std::env;
 use std::io::{self, stdout, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -103,7 +103,7 @@ fn menu() -> io::Result<i32> {
 
 fn run_action(
     action: Action,
-    root: &PathBuf,
+    root: &Path,
     host: Host,
     publish: Option<&Result<Decision, String>>,
 ) -> io::Result<i32> {
