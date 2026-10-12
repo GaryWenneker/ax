@@ -11,7 +11,7 @@ import VaultFoldersCard from '../components/VaultFoldersCard';
 import IdeInstallCard from '../components/IdeInstallCard';
 import PolicyShareSettingsSection from '../components/PolicyShareSettingsSection';
 import PolicySyncSettingsSection from '../components/PolicySyncSettingsSection';
-import { BusyLabel } from '../components/ui/PageLayout';
+import { BusyLabel, PageHero } from '../components/ui/PageLayout';
 import ThemeChooser from '../components/ThemeChooser';
 import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
@@ -270,12 +270,7 @@ export default function SettingsPage() {
 
   return (
     <div className="page settings-page settings-hub">
-      <header className="settings-hero">
-        <h1 className="settings-hero-title">Settings</h1>
-        <p className="settings-hero-sub">
-          Workspace configuration, connections, and appearance.
-        </p>
-      </header>
+      <PageHero title="Settings" subtitle="Workspace configuration, connections, and appearance." />
 
       {msg && <div className="settings-toast settings-toast--ok">{msg}</div>}
       {err && <div className="settings-toast settings-toast--err">{err}</div>}

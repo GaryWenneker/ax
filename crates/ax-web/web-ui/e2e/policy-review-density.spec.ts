@@ -51,7 +51,7 @@ test('savings values share baselines and headers remain compact across viewport 
       expect(Math.max(...peers.map(row => row.valueTop)) - Math.min(...peers.map(row => row.valueTop))).toBeLessThan(1);
       expect(cell.overflow).toBeFalsy();
     }
-    expect(await page.locator('.settings-hero').evaluate(el => getComputedStyle(el).paddingTop)).toBe('10px');
+    expect(await page.locator('.settings-hero').evaluate(el => getComputedStyle(el).paddingTop)).toBe('6px');
     expect(await page.locator('.sv-page').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBeTruthy();
     if (process.env.AX_ACCESS_SCREENSHOTS && width === 2048 && test.info().project.name === 'desktop-chrome') await page.locator('.sv-hero-strip').screenshot({path:'../../../site/public/screenshots/cc-savings-aligned.png'});
   }

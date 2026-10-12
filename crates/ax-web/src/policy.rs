@@ -338,7 +338,8 @@ async fn review_details(
     store: &PolicyStore,
     item: &ax_policy::PendingItem,
 ) -> Result<serde_json::Value, ax_utils::errors::AxError> {
-    let incoming = std::fs::read_to_string(&item.path)
+    let incoming = tokio::fs::read_to_string(&item.path)
+        .await
         .map_err(|e| ax_utils::errors::AxError::Other(e.to_string()))?;
     let path = std::path::Path::new(&item.path);
     let (normalized, current, scope) = if item.kind == "rule" {
@@ -370,10 +371,13 @@ async fn review_details(
     let mut value =
         serde_json::to_value(item).map_err(|e| ax_utils::errors::AxError::Other(e.to_string()))?;
     value["effect"] = effect.into();
+    let origin = ax_policy::provenance::pending_origin(path, &incoming)
+        .await
+        .unwrap_or_else(|| "Origin was not recorded for this content".into());
     value["incomingContent"] = incoming.into();
     value["currentContent"] = current.into();
     value["scope"] = scope.into();
-    value["origin"] = "Policy import queue; originating peer was not recorded".into();
+    value["origin"] = origin.into();
     let comparison = value["currentContent"]
         .as_str()
         .map(|local| -> Result<Vec<String>, ax_utils::errors::AxError> {
@@ -1830,6 +1834,20 @@ mod review_tests {
         let item = ax_policy::list_pending(root.path()).unwrap().remove(0);
         let value = review_details(&store, &item).await.unwrap();
         assert_eq!(value["effect"], "new");
+        let source = "Replica node office-mac · project demo · policy sample · revision abc";
+        let provenance = serde_json::json!({
+            "contentHash": ax_policy::revisions::content_hash(raw),
+            "origin": source
+        });
+        std::fs::write(
+            pending.with_extension("origin.json"),
+            provenance.to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            review_details(&store, &item).await.unwrap()["origin"],
+            source
+        );
         let doc = parse_rule_file(&pending, raw).unwrap();
         let mut fm = doc.frontmatter;
         fm.status = "approved".into();
@@ -1850,6 +1868,10 @@ mod review_tests {
                 .is_ok()
         );
         std::fs::write(&pending, raw.replace("current", "incoming")).unwrap();
+        assert_eq!(
+            review_details(&store, &item).await.unwrap()["origin"],
+            "Origin was not recorded for this content"
+        );
         assert_eq!(
             review_details(&store, &item).await.unwrap()["effect"],
             "replacement"

@@ -356,7 +356,7 @@ export default function MemoryPage() {
         )}
 
         <div className="mem-overview">
-          <div className="mem-how-grid">
+          <details className="mem-overview-help"><summary>How memory works</summary><div className="mem-how-grid">
             <div className="mem-how-card">
               <div className="mem-how-icon"><Codicon name="git-commit" /></div>
               <div className="mem-how-title">
@@ -393,6 +393,7 @@ export default function MemoryPage() {
               </div>
             </div>
           </div>
+          </details>
           <div className="mem-stats-strip">
           <div className="mem-stat">
             <span className="mem-stat-value">{total}</span>
@@ -471,11 +472,11 @@ export default function MemoryPage() {
           </FilterBar>
 
           <PageCardBody>
-            <p className="memory-badge-legend">
+            <details className="memory-badge-legend"><summary>About memory tags</summary><p>
               Pills are tags saved on that memory — a product, environment, or topic. They have no
               separate definition; the memory text is what they refer to. A row shows the first three.
               Open it to see every tag. <strong>git</strong> means the memory was captured from a commit.
-            </p>
+            </p></details>
             {loading ? (
               <PageLoading />
             ) : shown.length === 0 ? (
@@ -486,13 +487,6 @@ export default function MemoryPage() {
               </PageEmpty>
             ) : (
               <>
-              <div className="memory-kind-legend" aria-label="Node colors by memory kind">
-                {MEMORY_CATEGORIES.filter((c) => shown.some((m) => memoryCategory(m.kind) === c.id)).map((c) => (
-                  <span key={c.id} className={`memory-kind-legend-item memory-kind-legend-item--${c.id}`}>
-                    {c.label}
-                  </span>
-                ))}
-              </div>
               <ItemList className={`memory-vault-list${portal ? ' portal-data-list portal-memory-list' : ''}`}>
                     {portal && <div className="portal-data-header"><span>Title</span><span>Kind</span><span>Source</span><span>Updated</span><span>Enabled</span></div>}
                     {shown.map((m, i) => {

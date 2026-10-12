@@ -49,3 +49,14 @@ test('mobile and unknown browsers ask for the development computer', () => {
 	assert.equal(detectInstallOS('MacIntel', 'Macintosh', 5), null);
 	assert.equal(detectInstallOS('', ''), null);
 });
+
+import { installerCommand, installerShell } from '../src/scripts/minimal-download.ts';
+test('all primary installation paths offer script commands and correct shells', () => {
+  for (const os of ['macos', 'linux', 'windows', 'wsl2'] as const) {
+    assert.equal(installerCommand(os), os === 'windows' ? INSTALL_WINDOWS : INSTALL_UNIX);
+    assert.ok(installerShell(os).length > 0);
+    assert.doesNotMatch(installerCommand(os), /releases\/|tar\.gz|\.zip/);
+  }
+  assert.equal(installerShell('windows'), 'PowerShell');
+  assert.equal(installerShell('wsl2'), 'your WSL2 Linux terminal');
+});

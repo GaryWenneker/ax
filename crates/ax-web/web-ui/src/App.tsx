@@ -19,7 +19,6 @@ import LoggingPage from './pages/Logging';
 import SavingsPage from './pages/Savings';
 import PricesPage from './pages/Prices';
 import MemoryPage from './pages/Memory';
-import AgentPage from './pages/Agent';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
 import LoggingProjectSwitch from './components/LoggingProjectSwitch';
@@ -455,7 +454,6 @@ function AppShell() {
             {page === 'files' && <FilesPage key={workspaceKey} />}
             {page === 'search' && <SearchPage key={`${workspaceKey}:${searchRequest}`} />}
             {page === 'memory' && <MemoryPage key={workspaceKey} />}
-            {page === 'agent' && <AgentPage key={workspaceKey} />}
             {page === 'unresolved' && <UnresolvedPage key={workspaceKey} route={route} onRouteChange={applyRoute} />}
             {page === 'savings' && showSavings && <SavingsPage key={workspaceKey} />}
             {page === 'prices' && <PricesPage key={workspaceKey} />}

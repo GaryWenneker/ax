@@ -57,13 +57,13 @@ test('CMY interference fades horizontally from the edge and uses continuous tile
   assert.doesNotMatch(css, /background-image:\s*url\(/);
 });
 
-test('installer offers the six real release assets and manual OS and CPU selection', () => {
+test('installer offers commands with manual OS selection and keeps optional release assets', () => {
   assert.match(home, /<MinimalDownload\s*\/>/);
   for (const icon of ['macOS', 'Linux', 'Windows']) assert.match(download, new RegExp(`platformIcons\\.${icon}`));
   assert.match(download, /AX_RELEASE_VERSION/);
   assert.match(download, /data-ax-platform-toggle/);
-  assert.match(download, /data-ax-arch="arm64"/);
-  assert.match(download, /data-ax-arch="x64"/);
+  assert.match(download, /data-ax-install-code/);
+  assert.match(download, /data-ax-install-copy/);
   assert.equal(new Set(Object.values(releaseAssets).flatMap(assets => Object.values(assets))).size, 6);
   assert.equal(getReleaseAsset('macos', 'arm64'), 'https://github.com/GaryWenneker/ax/releases/latest/download/ax-darwin-arm64.tar.gz');
   assert.equal(getReleaseAsset('linux', 'x64'), 'https://github.com/GaryWenneker/ax/releases/latest/download/ax-linux-x64.tar.gz');

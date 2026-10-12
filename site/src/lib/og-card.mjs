@@ -125,6 +125,7 @@ export function prepareShareShot() {
 	style.textContent = `
 		*, *::before, *::after { animation: none !important; transition: none !important; }
 		.reveal { opacity: 1 !important; transform: none !important; }
+		.ax-reveal, .ax-reveal-pending { opacity: 1 !important; transform: none !important; }
 		header.header, header.nav, header.signal-header, .integration-ticker, nav.sidebar, aside.right-sidebar-container, footer { display: none !important; }
 		.main-frame { padding: 1.25rem 1.5rem 0 !important; }
 		#hero, main:not(#main) { background: #121110 !important; }

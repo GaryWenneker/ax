@@ -85,3 +85,16 @@ html[data-ax-motion='paused'] .ax-landing .ax-halftone-dots,html[data-ax-motion=
 
 /* Keep small navigation labels readable where the ink reaches the right edge. */
 .ax-landing .ax-navigation,.ax-landing .ax-footer-links{padding:9px 12px;background:rgba(8,10,9,.82);border-radius:4px}
+
+/* Progressive reveal: content is visible until the observer mounts. */
+.ax-landing .ax-reveal{transition:opacity .65s ease,transform .65s cubic-bezier(.2,.65,.25,1)}
+.ax-landing .ax-reveal-pending{opacity:0;transform:translateY(18px)}
+html[data-ax-motion='paused'] .ax-landing .ax-reveal{opacity:1;transform:none;transition:none}
+@media(prefers-reduced-motion:reduce){html:not([data-ax-motion='running']) .ax-landing .ax-reveal{opacity:1;transform:none;transition:none}}
+
+.ax-landing .ax-install-command{margin-top:16px;padding:18px;background:rgba(8,10,9,.92);border:1px solid var(--ax-border);border-radius:6px;font-size:13px;line-height:1.6}
+.ax-landing .ax-install-command code{display:block;overflow-wrap:anywhere;font-family:'IBM Plex Mono',monospace;color:var(--ax-lime);margin:12px 0}
+.ax-landing .ax-install-command button{padding:10px 16px;margin:4px 0 8px;background:var(--ax-lime);color:#101510;border:0;border-radius:4px}
+/* Keep installation instructions reachable when opened, and on short screens. */
+@media(max-width:600px){html:has(body.ax-landing [data-ax-install-panel]:not([hidden])),body.ax-landing:has([data-ax-install-panel]:not([hidden])){height:auto;overflow-y:auto}.ax-landing .ax-page:has([data-ax-install-panel]:not([hidden])){height:auto;min-height:100svh}.ax-landing .ax-main:has([data-ax-install-panel]:not([hidden])){padding-block:24px}}
+@media(max-width:600px) and (max-height:700px){html:has(body.ax-landing),body.ax-landing{height:auto;overflow-y:auto}.ax-landing .ax-page{height:auto;min-height:100svh}.ax-landing .ax-main{flex:none;padding-block:24px}}

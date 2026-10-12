@@ -14,11 +14,11 @@ test('docs use the landing graphite/lime theme and responsive moving overprint',
   const astro = file('site/astro.config.mjs');
   assert.match(theme, /--ax-lime:#b9ff6a/);
   assert.match(theme, /--sl-color-accent: #b9ff6a/);
-  assert.match(theme, /\.ax-doc-moire-magenta\{[^}]*animation:ax-doc-magenta 44s ease-in-out infinite/);
-  assert.match(theme, /\.ax-doc-moire-yellow\{[^}]*animation:ax-doc-yellow 62s ease-in-out infinite/);
-  assert.match(theme, /max-width:600px\)\{\.ax-doc-moire\{/);
-  assert.match(theme, /prefers-reduced-motion:reduce\)\{html:not\(\[data-ax-motion='running'\]\) \.ax-doc-moire-grid/);
-  assert.match(header, /class="ax-doc-moire"/);
+  assert.match(header, /import '..\/styles\/minimal-home.css'/);
+  assert.match(header, /class="ax-doc-moire ax-landing"/);
+  for (const screen of ['one', 'two', 'three']) assert.ok(header.includes(`ax-halftone-screen-${screen}`));
+  assert.match(theme, /content-panel\{background:rgba\(8,10,9,\.88\)/);
+  assert.match(theme, /data-theme='light'.*content-panel\{background:rgba\(255,255,255,\.94\)/);
   assert.match(title, /cg-site-title__wordmark">Ax<span>_<\/span>/);
   assert.match(astro, /@fontsource-variable\/oxanium\/wght\.css/);
 });

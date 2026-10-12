@@ -248,6 +248,26 @@ pub async fn import_pack_with_options(
     force: bool,
     require_review_override: Option<bool>,
 ) -> Result<PackImportResult, AxError> {
+    import_pack_with_origin(
+        pool,
+        project_root,
+        pack_path,
+        force,
+        require_review_override,
+        None,
+    )
+    .await
+}
+
+/// Import with a source label supplied by the authenticated share transport.
+pub async fn import_pack_with_origin(
+    pool: &SqlitePool,
+    project_root: &Path,
+    pack_path: Option<&Path>,
+    force: bool,
+    require_review_override: Option<bool>,
+    origin: Option<&str>,
+) -> Result<PackImportResult, AxError> {
     let pack_root = pack_path
         .map(Path::to_path_buf)
         .unwrap_or_else(|| default_pack_path(project_root));
@@ -259,6 +279,21 @@ pub async fn import_pack_with_options(
     }
 
     let manifest = read_manifest(&pack_root)?;
+    let export_time = if manifest.exported_at > 0 {
+        format!("exported at Unix milliseconds {}", manifest.exported_at)
+    } else {
+        "export time not recorded".into()
+    };
+    let origin = format!(
+        "{} · {}",
+        origin.map(str::to_owned).unwrap_or_else(|| {
+            format!(
+                "Local policy pack {}",
+                pack_root.file_name().unwrap_or_default().to_string_lossy()
+            )
+        }),
+        export_time
+    );
     let cfg = load_policy_config(project_root);
     let require_review = require_review_override.unwrap_or(cfg.require_review);
     let store = PolicyStore::new(pool.clone(), project_root.to_path_buf());
@@ -298,7 +333,7 @@ pub async fn import_pack_with_options(
         match local_rule_map.get(&meta.id) {
             None => {
                 if require_review {
-                    stage_pending_rule(&ax_dir, &mut doc)?;
+                    stage_pending_rule(&ax_dir, &mut doc, &origin).await?;
                     result.rules_pending += 1;
                 } else {
                     apply_rule(&store, doc).await?;
@@ -310,7 +345,7 @@ pub async fn import_pack_with_options(
             }
             Some(_) => {
                 if require_review || !force {
-                    stage_pending_rule(&ax_dir, &mut doc)?;
+                    stage_pending_rule(&ax_dir, &mut doc, &origin).await?;
                     result.rules_pending += 1;
                     if !require_review {
                         result.conflicts += 1;
@@ -336,7 +371,7 @@ pub async fn import_pack_with_options(
         match local_skill_map.get(&meta.id) {
             None => {
                 if require_review {
-                    stage_pending_skill(&ax_dir, &mut doc)?;
+                    stage_pending_skill(&ax_dir, &mut doc, &origin).await?;
                     result.skills_pending += 1;
                 } else {
                     apply_skill(&store, doc).await?;
@@ -348,7 +383,7 @@ pub async fn import_pack_with_options(
             }
             Some(_) => {
                 if require_review || !force {
-                    stage_pending_skill(&ax_dir, &mut doc)?;
+                    stage_pending_skill(&ax_dir, &mut doc, &origin).await?;
                     result.skills_pending += 1;
                     if !require_review {
                         result.conflicts += 1;
@@ -386,20 +421,32 @@ async fn apply_skill(store: &PolicyStore, doc: PolicySkillDoc) -> Result<(), AxE
     Ok(())
 }
 
-fn stage_pending_rule(ax_dir: &Path, doc: &mut PolicyRuleDoc) -> Result<(), AxError> {
+async fn stage_pending_rule(
+    ax_dir: &Path,
+    doc: &mut PolicyRuleDoc,
+    origin: &str,
+) -> Result<(), AxError> {
     doc.frontmatter.status = PolicyItemStatus::Pending.as_str().into();
     let raw = serialize_rule(&doc.frontmatter, &doc.body);
     let dir = pending_rules_dir(ax_dir);
-    std::fs::create_dir_all(&dir).map_err(|e| AxError::Other(e.to_string()))?;
-    write_utf8(&rule_file(&dir, &doc.frontmatter.id), &raw)
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| AxError::Other(e.to_string()))?;
+    write_pending_with_origin(rule_file(&dir, &doc.frontmatter.id), raw, origin.to_owned()).await
 }
 
-fn stage_pending_skill(ax_dir: &Path, doc: &mut PolicySkillDoc) -> Result<(), AxError> {
+async fn stage_pending_skill(
+    ax_dir: &Path,
+    doc: &mut PolicySkillDoc,
+    origin: &str,
+) -> Result<(), AxError> {
     doc.frontmatter.status = PolicyItemStatus::Pending.as_str().into();
     let raw = serialize_skill(&doc.frontmatter, &doc.body);
     let dir = pending_skills_dir(ax_dir).join(&doc.frontmatter.name);
-    std::fs::create_dir_all(&dir).map_err(|e| AxError::Other(e.to_string()))?;
-    write_utf8(&dir.join(SKILL_FILENAME), &raw)
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| AxError::Other(e.to_string()))?;
+    write_pending_with_origin(dir.join(SKILL_FILENAME), raw, origin.to_owned()).await
 }
 
 fn read_manifest(pack_root: &Path) -> Result<PackManifest, AxError> {
@@ -502,4 +549,93 @@ pub fn active_rule_path(project_root: &Path, id: &str) -> PathBuf {
 
 pub fn active_skill_path(project_root: &Path, name: &str) -> PathBuf {
     skill_file(&skills_dir(&ax_dir_from_project(project_root)), name)
+}
+
+async fn write_pending_with_origin(
+    path: PathBuf,
+    raw: String,
+    origin: String,
+) -> Result<(), AxError> {
+    tokio::task::spawn_blocking(move || {
+        write_utf8(&path, &raw)?;
+        crate::provenance::record_pending_origin(&path, &raw, &origin)
+    })
+    .await
+    .map_err(|e| AxError::Other(e.to_string()))?
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn pack_import_records_sources_and_kind_safe_rejection_cleans_them() {
+        let root = tempfile::tempdir().unwrap();
+        let pack = root.path().join("team-pack");
+        std::fs::create_dir_all(pack.join("rules")).unwrap();
+        std::fs::create_dir_all(pack.join("skills/same")).unwrap();
+        std::fs::write(
+            pack.join("rules/same.mdc"),
+            "---\nid: same\nlevel: INFO\nalwaysApply: true\nstatus: approved\n---\nIncoming rule\n",
+        )
+        .unwrap();
+        std::fs::write(pack.join("skills/same/SKILL.md"), "---\nname: same\ndescription: Incoming skill\nstatus: approved\n---\nIncoming skill body\n").unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        ax_db::schema::apply_initial_schema(&pool).await.unwrap();
+        ax_db::migrations::run_migrations(&pool, 0).await.unwrap();
+        let result = import_pack_with_options(&pool, root.path(), Some(&pack), false, Some(true))
+            .await
+            .unwrap();
+        assert_eq!((result.rules_pending, result.skills_pending), (1, 1));
+        let items = crate::list_pending(root.path()).unwrap();
+        for item in &items {
+            let path = Path::new(&item.path);
+            let raw = std::fs::read_to_string(path).unwrap();
+            assert!(crate::provenance::pending_origin(path, &raw)
+                .await
+                .unwrap()
+                .contains("Local policy pack team-pack"));
+            assert!(crate::provenance::pending_origin(path, &raw)
+                .await
+                .unwrap()
+                .contains("export time not recorded"));
+        }
+        import_pack_with_origin(
+            &pool,
+            root.path(),
+            Some(&pack),
+            false,
+            Some(true),
+            Some("Git policy share https://example.com/team · branch main"),
+        )
+        .await
+        .unwrap();
+        for item in &items {
+            let path = Path::new(&item.path);
+            let raw = std::fs::read_to_string(path).unwrap();
+            assert!(crate::provenance::pending_origin(path, &raw)
+                .await
+                .unwrap()
+                .starts_with("Git policy share https://example.com/team"));
+        }
+        crate::reject_pending_kind(&pool, root.path(), "same", Some("rule"))
+            .await
+            .unwrap();
+        assert!(!Path::new(&items[0].path)
+            .with_extension("origin.json")
+            .exists());
+        assert!(Path::new(&items[1].path)
+            .with_extension("origin.json")
+            .exists());
+        crate::reject_pending_kind(&pool, root.path(), "same", Some("skill"))
+            .await
+            .unwrap();
+        assert!(!Path::new(&items[1].path)
+            .with_extension("origin.json")
+            .exists());
+    }
 }

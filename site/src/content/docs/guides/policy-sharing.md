@@ -337,3 +337,18 @@ Combine with `"policySync": true` in the project repo for git-hook pack sync ins
 - [Policy Engine](/guides/policy-engine/) — rules, skills, pack export, review queue
 - [CLI reference](/reference/cli/) — `ax policy share` and `ax auth microsoft`
 - [Configuration](/getting-started/configuration/) — `ax.json` and global config merge
+
+## Review incoming policy sources
+
+Policy Review shows whether an incoming rule or skill is new, duplicates current
+content, or replaces it. Expand an item to compare the complete incoming and
+current text and see changed fields. Filter by type and effect, select several
+items, and confirm a bulk accept or reject operation.
+
+New pack and remote-share imports record their source and export time. Replication
+records the contributing node, project, policy identity and snapshot revision.
+Source records persist with the queue and apply only to the exact incoming text;
+editing that text invalidates old attribution. Older items without source records
+show an explicit unknown origin. Accepting or rejecting clears the source record
+for that item. A source label is context for review, never permission to activate
+policy automatically.

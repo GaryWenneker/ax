@@ -1,3 +1,4 @@
+import { PageHero } from '../components/ui/PageLayout';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   streamGraph,
@@ -1324,7 +1325,7 @@ export default function GraphPage() {
 
   return (
     <div className="graph-page">
-      {portal && <header className="settings-hero"><h1 className="settings-hero-title">Graph</h1><p className="settings-hero-sub">Explore relationships across code and knowledge.</p></header>}
+      {portal && <PageHero title="Graph" subtitle="Explore relationships across code and knowledge." />}
       <div className="graph-toolbar">
         <div className="graph-toolbar-left">
           <strong>Graph</strong>

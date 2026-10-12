@@ -55,10 +55,10 @@ export function accentForTheme(theme: ThemePreset, id = loadAccentId()): string 
   const color = ACCENT_COLORS.find(color => color.id === id) ?? ACCENT_COLORS[0];
   return theme.colorScheme === 'light' ? color.light : color.dark;
 }
-export function selectAccent(id: string): void {
+export function selectAccent(id: string, theme = themeById(loadThemeId())): void {
   if (!ACCENT_COLORS.some(color => color.id === id)) return;
   try { localStorage.setItem('ax-accent',id); } catch {}
-  applyTheme({...themeById(loadThemeId()),accent:accentForTheme(themeById(loadThemeId()),id)});
+  applyTheme(theme, id);
 }
 
 const STORAGE_KEY = 'ax-theme';
@@ -190,8 +190,8 @@ export function statusbarInk(accentHex: string): {
   };
 }
 
-export function applyTheme(theme: ThemePreset): void {
-  theme = {...theme,accent:accentForTheme(theme)};
+export function applyTheme(theme: ThemePreset, accentId = loadAccentId()): void {
+  theme = {...theme,accent:accentForTheme(theme, accentId)};
   const root = document.documentElement;
   root.dataset.axLayout = theme.layout ?? 'workbench';
   root.style.colorScheme = theme.colorScheme ?? 'dark';

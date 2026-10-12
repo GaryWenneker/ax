@@ -9,7 +9,6 @@ export type Page =
   | 'memory'
   | 'ship'
   | 'sonar'
-  | 'agent'
   | 'settings'
   | 'logging'
   | 'savings'
@@ -48,7 +47,6 @@ const VALID_PAGES: Page[] = [
   'memory',
   'ship',
   'sonar',
-  'agent',
   'settings',
   'logging',
   'savings',
@@ -78,7 +76,6 @@ const PAGE_PATH: Record<Page, string> = {
   memory: '/memory',
   ship: '/ship',
   sonar: '/sonar',
-  agent: '/agent',
   settings: '/settings',
   logging: '/logging',
   savings: '/savings',
@@ -109,7 +106,7 @@ const LEGACY_HASH_PAGE: Record<string, Page> = {
   memory: 'memory',
   ship: 'ship',
   sonar: 'sonar',
-  agent: 'agent',
+  agent: 'stats',
   settings: 'settings',
   logging: 'logging',
   savings: 'savings',

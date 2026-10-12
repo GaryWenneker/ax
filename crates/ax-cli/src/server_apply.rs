@@ -309,6 +309,7 @@ fn stage_policies(
     let mut queued = 0;
     let mut conflicts = 0;
     for rule in rules {
+        let source = policy_source(config, snapshot, &rule.properties, &rule.id);
         if rule
             .properties
             .get(crate::server_exchange::ORIGIN)
@@ -351,10 +352,13 @@ fn stage_policies(
             false => conflicts += 1,
         }
         if output.is_file() && fs::read_to_string(&output).ok().as_deref() == Some(raw.as_str()) {
+            ax_policy::provenance::record_pending_origin(&output, &raw, &source)
+                .map_err(|e| e.to_string())?;
             ledger.insert(item_key, digest);
         }
     }
     for skill in skills {
+        let source = policy_source(config, snapshot, &skill.properties, &skill.name);
         if skill
             .properties
             .get(crate::server_exchange::ORIGIN)
@@ -399,6 +403,8 @@ fn stage_policies(
             false => conflicts += 1,
         }
         if output.is_file() && fs::read_to_string(&output).ok().as_deref() == Some(raw.as_str()) {
+            ax_policy::provenance::record_pending_origin(&output, &raw, &source)
+                .map_err(|e| e.to_string())?;
             ledger.insert(item_key, digest);
         }
     }
@@ -433,6 +439,27 @@ fn queue_policy(path: &Path, body: &str) -> Result<bool, String> {
     file.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+fn policy_source(
+    config: &ServerConfig,
+    snapshot: &Snapshot,
+    properties: &ax_policy::types::PolicyProperties,
+    name: &str,
+) -> String {
+    let node = properties
+        .get(crate::server_exchange::ORIGIN)
+        .and_then(|v| v.as_str())
+        .unwrap_or(&snapshot.primary_node_id);
+    let role = if node == snapshot.primary_node_id {
+        "Primary"
+    } else {
+        "Replica"
+    };
+    format!(
+        "{role} node {node} · project {} · policy {name} · cluster {} · revision {}",
+        snapshot.project_id, config.cluster_id, snapshot.revision
+    )
 }
 
 #[cfg(test)]

@@ -1,13 +1,14 @@
 ---
 /** Shared, quiet documentation chrome; search and mobile navigation stay native. */
+import '../styles/minimal-home.css';
 import Default from "@astrojs/starlight/components/Header.astro";
 ---
 
-<div class="ax-doc-moire" aria-hidden="true">
-  <div class="ax-doc-moire-grid">
-    <span class="ax-doc-moire-screen ax-doc-moire-cyan"></span>
-    <span class="ax-doc-moire-screen ax-doc-moire-magenta"></span>
-    <span class="ax-doc-moire-screen ax-doc-moire-yellow"></span>
-  </div>
+<div class="ax-doc-moire ax-landing" aria-hidden="true">
+  <div class="ax-halftone"><div class="ax-halftone-grid">
+    <span class="ax-halftone-dots ax-halftone-screen-one"></span>
+    <span class="ax-halftone-dots ax-halftone-screen-two"></span>
+    <span class="ax-halftone-dots ax-halftone-screen-three"></span>
+  </div></div>
 </div>
 <Default {...Astro.props} />
