@@ -117,6 +117,8 @@ irm https://getax.wenneker.io/install.ps1 | iex
 cargo install --path crates/ax-cli
 ```
 
+If the website serves an outdated installer, use the [current shell installer from main](https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh). It still downloads a published platform binary.
+
 Prebuilt releases ship **six** binaries (Windows x64/arm64, macOS Intel/Apple Silicon, Linux x64/arm64). WSL2 uses the Linux installer inside your WSL shell. See [installation docs](https://getax.wenneker.io/getting-started/installation/).
 
 ```bash
