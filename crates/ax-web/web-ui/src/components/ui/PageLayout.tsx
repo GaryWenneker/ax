@@ -279,6 +279,7 @@ export function ItemRow({
   badges,
   aside,
   portalColumns,
+  portalLabels,
   selected,
   static: isStatic,
   variant,
@@ -300,6 +301,8 @@ export function ItemRow({
   aside?: ReactNode;
   /** Portal table cells between Name and existing row actions. */
   portalColumns?: ReactNode[];
+  /** Metadata labels exposed on narrow stacked rows. */
+  portalLabels?: readonly string[];
   selected?: boolean;
   static?: boolean;
   variant?: 'graph';
@@ -331,10 +334,10 @@ export function ItemRow({
         <>
           <div className="portal-data-name">
             <div className="page-item-title" title={title}>{title}</div>
-            {subtitle && <div className="page-item-sub">{subtitle}</div>}
+            {subtitle && <div className="page-item-sub" title={subtitle}>{subtitle}</div>}
             {badges && <div className="page-item-badges portal-data-tags">{badges}</div>}
           </div>
-          {portalColumns.map((cell, index) => <div className="portal-data-cell" key={index}>{cell}</div>)}
+          {portalColumns.map((cell, index) => <div className="portal-data-cell" data-label={portalLabels?.[index]} key={index}>{cell}</div>)}
           <div className="portal-data-actions">{aside}</div>
         </>
       ) : (<>

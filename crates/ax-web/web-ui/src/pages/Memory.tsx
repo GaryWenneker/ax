@@ -273,37 +273,43 @@ export default function MemoryPage() {
         }
         actions={
           <>
-            <button type="button" className="btn" disabled={capturing} onClick={runCaptureGit}>
-              {capturing ? 'Capturing…' : 'Capture from git'}
-            </button>
-            <InfoHover label="About Capture from git">
-              Scans your git log for non-trivial commits (skips merge commits, version bumps, and
-              single-line changes) and creates a memory for each one. This gives agents
-              historical context about <strong>why</strong> code changed. Duplicates are
-              automatically skipped. Run this periodically or set up a post-commit hook.
-            </InfoHover>
-            <button
-              type="button"
-              className="btn"
-              disabled={syncingCatalog}
-              onClick={runDocsCatalogSync}
-            >
-              {syncingCatalog ? 'Syncing catalog…' : 'Sync docs catalog'}
-            </button>
-            <InfoHover label="About Sync docs catalog">
-              Pulls the wiki set in <code>docsCatalog.wiki_remote</code> (if any), scans <code>.docs/</code>, agent skills,
-              and script READMEs, then imports <strong>documentation-catalog</strong> memories into
-              ax.db. Same as <code>ax docs-catalog sync</code>.
-            </InfoHover>
-            <button type="button" className="btn primary" onClick={() => setComposerOpen(true)}>
-              New memory
-            </button>
-            <InfoHover label="About New memory">
-              Manually store a decision, convention, or piece of knowledge. When you save, ax
-              checks for <strong>similar existing memories</strong> — if duplicates exist, you
-              are warned so you can avoid contradictions. Choose a <strong>kind</strong> (note,
-              decision, bug_fix, architecture, convention) to help categorize recall.
-            </InfoHover>
+            <div className="page-action-pair">
+              <button type="button" className="btn" disabled={capturing} onClick={runCaptureGit}>
+                {capturing ? 'Capturing…' : 'Capture from git'}
+              </button>
+              <InfoHover label="About Capture from git">
+                Scans your git log for non-trivial commits (skips merge commits, version bumps, and
+                single-line changes) and creates a memory for each one. This gives agents
+                historical context about <strong>why</strong> code changed. Duplicates are
+                automatically skipped. Run this periodically or set up a post-commit hook.
+              </InfoHover>
+            </div>
+            <div className="page-action-pair">
+              <button
+                type="button"
+                className="btn"
+                disabled={syncingCatalog}
+                onClick={runDocsCatalogSync}
+              >
+                {syncingCatalog ? 'Syncing catalog…' : 'Sync docs catalog'}
+              </button>
+              <InfoHover label="About Sync docs catalog">
+                Pulls the wiki set in <code>docsCatalog.wiki_remote</code> (if any), scans <code>.docs/</code>, agent skills,
+                and script READMEs, then imports <strong>documentation-catalog</strong> memories into
+                ax.db. Same as <code>ax docs-catalog sync</code>.
+              </InfoHover>
+            </div>
+            <div className="page-action-pair">
+              <button type="button" className="btn primary" onClick={() => setComposerOpen(true)}>
+                New memory
+              </button>
+              <InfoHover label="About New memory">
+                Manually store a decision, convention, or piece of knowledge. When you save, ax
+                checks for <strong>similar existing memories</strong> — if duplicates exist, you
+                are warned so you can avoid contradictions. Choose a <strong>kind</strong> (note,
+                decision, bug_fix, architecture, convention) to help categorize recall.
+              </InfoHover>
+            </div>
           </>
         }
       />
@@ -514,6 +520,7 @@ export default function MemoryPage() {
                           .filter(Boolean)
                           .join(' · ')}
                         portalColumns={portal ? [m.kind.replace(/_/g, ' '), m.source || '—', age] : undefined}
+                        portalLabels={['Kind', 'Source', 'Age']}
                         meta={age}
                         metaTitle={fmtMemoryTime(m.updated_at)}
                         selected={selectedId === m.id}

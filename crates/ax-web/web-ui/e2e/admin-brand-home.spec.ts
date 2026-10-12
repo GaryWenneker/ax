@@ -15,10 +15,11 @@ test('header matches homepage typography and logo links home', async ({ page }) 
   const style = await logo.evaluate(async el => {
     await document.fonts.ready;
     const s=getComputedStyle(el);
-    return {font:s.fontFamily,weight:s.fontWeight,spacing:parseFloat(s.letterSpacing)/parseFloat(s.fontSize),loaded:document.fonts.check('700 29px "Archivo Variable"'),underline:getComputedStyle(el.querySelector('span')!).color};
+    return {ink:s.color,font:s.fontFamily,weight:s.fontWeight,spacing:parseFloat(s.letterSpacing)/parseFloat(s.fontSize),loaded:document.fonts.check('700 29px "Archivo Variable"'),underline:getComputedStyle(el.querySelector('span')!).color};
   });
   expect(style.font).toContain('Archivo Variable');
   expect(style.weight).toBe('700');
+  expect(style.ink).toBe('rgb(240, 243, 237)');
   expect(style.spacing).toBeCloseTo(-.085,3);
   expect(style.loaded).toBe(true);
   expect(style.underline).toBe('rgb(185, 255, 106)');

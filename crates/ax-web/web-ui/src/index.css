@@ -14544,10 +14544,10 @@ input[type='checkbox'],
 input[type='radio'] {
   accent-color: var(--accent-text);
 }
-a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link) {
+a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-app-wordmark) {
   color: var(--accent-text);
 }
-a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):hover {
+a:not(.nav-item):not(.btn):not(.btn-secondary):not(.status-panel-link):not(.ax-app-wordmark):hover {
   color: color-mix(in srgb, var(--accent) 80%, #fff);
 }
 

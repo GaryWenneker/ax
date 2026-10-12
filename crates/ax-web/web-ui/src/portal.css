@@ -106,8 +106,8 @@ html[data-ax-layout="portal"] .settings-hero, html[data-ax-layout="portal"] .pag
 html[data-ax-layout="portal"] .settings-hero-title, html[data-ax-layout="portal"] .page-header h1 { color: var(--text-hi); font-size: 24px; font-weight: 600; }
 html[data-ax-layout="portal"] .settings-hero-sub { color: var(--text-dim); margin-top: 6px; }
 html[data-ax-layout="portal"] .settings-hero-actions { gap: 4px; }
-html[data-ax-layout="portal"] :is(.settings-hero-actions, .policy-toolbar-actions) > .btn:not(.primary):not(.danger) { background: transparent; border-color: transparent; color: var(--accent-text); }
-html[data-ax-layout="portal"] :is(.settings-hero-actions, .policy-toolbar-actions) > .btn:hover { background: var(--bg-hover); }
+html[data-ax-layout="portal"] :is(.settings-hero-actions, .policy-toolbar-actions, .page-action-pair) > .btn:not(.primary):not(.danger) { background: transparent; border-color: transparent; color: var(--accent-text); }
+html[data-ax-layout="portal"] :is(.settings-hero-actions, .policy-toolbar-actions, .page-action-pair) > .btn:hover { background: var(--bg-hover); }
 html[data-ax-layout="portal"] .settings-stack { gap: 0; background: var(--bg-panel); }
 html[data-ax-layout="portal"] body .settings-card { background: var(--bg-panel); border: 0; border-bottom: 1px solid var(--border); border-radius: 0; box-shadow: none; }
 html[data-ax-layout="portal"] .settings-stack > .settings-card + .settings-card { margin-top: 0; }
