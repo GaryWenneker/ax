@@ -5,6 +5,7 @@ import { OriginDbBadge, TagList } from '../PolicyMetaView';
 import { ItemGroupHeader, ItemList, ItemRow, LevelBadge, ScopeBadge } from './PageLayout';
 import { GitShareDot } from './GitShareDot';
 import { normalizePolicyScope, policyDbAccent } from './policyListUtils';
+import type {ColumnValue} from '../../lib/columnModel';
 
 const SHOWN_TAGS = 3;
 
@@ -73,7 +74,7 @@ export function PolicyCalmList(props: Props) {
               <ItemList className={`calm-list${portal ? ' portal-data-list portal-policy-list' : ''}`}>
                 {portal && <div className="portal-data-header"><span>Name</span><span>Level</span><span>Scope</span><span>Priority</span><span>Enabled / actions</span></div>}
                 {g.items.map((item) => (
-                  <PolicyCalmRow key={item.key} item={item} {...props} />
+                  <PolicyCalmRow key={item.key} item={item} {...props} listValues={[item.id, item.level ?? '', normalizePolicyScope(item.scope), Number(item.meta.replace(/^p/, '')), item.enabled ? 'enabled' : 'disabled']} />
                 ))}
               </ItemList>
             )}
@@ -84,7 +85,7 @@ export function PolicyCalmList(props: Props) {
   );
 }
 
-function PolicyCalmRow({ item, ...p }: Props & { item: PolicyCalmItem }) {
+function PolicyCalmRow({ item, listValues: _listValues, ...p }: Props & { item: PolicyCalmItem; listValues: readonly ColumnValue[] }) {
   const portal = useTheme().layout === 'portal';
   const selected = p.selectedIds.has(item.id);
   const shownTags = item.tags.slice(0, SHOWN_TAGS);

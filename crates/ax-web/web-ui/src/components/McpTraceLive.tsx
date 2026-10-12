@@ -79,6 +79,10 @@ type Props = {
   variant?: 'page' | 'embedded';
 };
 
+function traceHeadline(entry: TraceEntry): string {
+  return entryHeadline(entry) || [entry.tool, KIND_LABELS[entry.kind]].filter(Boolean).join(' · ');
+}
+
 const KIND_ICONS: Record<TraceKind, string> = {
   inbound: 'arrow-down',
   outbound: 'arrow-up',
@@ -486,10 +490,6 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     () => (selectedId ? entries.findIndex((e) => e.id === selectedId) : -1),
     [entries, selectedId],
   );
-  const cursorIndex = useMemo(
-    () => (cursorId ? displayEntries.findIndex((e) => e.id === cursorId) : -1),
-    [displayEntries, cursorId],
-  );
   const selected = selectedIndex >= 0 ? entries[selectedIndex] : null;
   const cluster = useMemo(
     () => (selectedIndex >= 0 ? findCallCluster(entries, selectedIndex) : null),
@@ -874,8 +874,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
         }
         if (e.key === 'Home') {
           e.preventDefault();
-          if (displayEntries.length) {
-            const id = displayEntries[0].id;
+          const first = visibleRowIds()[0];
+          if (first) {
+            const id = first;
             setSelectedId(id);
             setCursorId(id);
           }
@@ -883,8 +884,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
         }
         if (e.key === 'End') {
           e.preventDefault();
-          if (displayEntries.length) {
-            const id = displayEntries[displayEntries.length - 1].id;
+          const ids = visibleRowIds();
+          if (ids.length) {
+            const id = ids[ids.length - 1];
             setSelectedId(id);
             setCursorId(id);
           }
@@ -916,17 +918,20 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       }
       if (e.key === 'Home') {
         e.preventDefault();
-        if (displayEntries.length) setCursorId(displayEntries[0].id);
+        const first = visibleRowIds()[0];
+        if (first) setCursorId(first);
         return;
       }
       if (e.key === 'End') {
         e.preventDefault();
-        if (displayEntries.length) setCursorId(displayEntries[displayEntries.length - 1].id);
+        const ids = visibleRowIds();
+        if (ids.length) setCursorId(ids[ids.length - 1]);
         return;
       }
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        const id = cursorId ?? (displayEntries.length ? displayEntries[0].id : null);
+        const ids = visibleRowIds();
+        const id = cursorId && ids.includes(cursorId) ? cursorId : ids[0];
         if (id) {
           setCursorId(id);
           setSelectedId(id);
@@ -992,32 +997,28 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     }
   }
 
+  function visibleRowIds(): string[] {
+    // Read the rendered list: shared column sorting/filtering may change arrival order.
+    return Array.from(scrollerRef.current?.querySelectorAll<HTMLElement>('.mcp-trace-row[data-entry-id]') ?? [])
+      .map(row => row.dataset.entryId ?? '').filter(Boolean);
+  }
+
   function moveCursor(delta: number) {
-    if (displayEntries.length === 0) return;
-    const idx = cursorIndex >= 0 ? cursorIndex : 0;
-    const next = Math.max(0, Math.min(displayEntries.length - 1, idx + delta));
-    setCursorId(displayEntries[next].id);
+    const ids = visibleRowIds();
+    if (!ids.length) return;
+    const current = ids.indexOf(cursorId ?? '');
+    const next = Math.max(0, Math.min(ids.length - 1, (current >= 0 ? current : 0) + delta));
+    setCursorId(ids[next]);
     setFollow(false);
   }
 
   function selectNeighbor(delta: number) {
-    if (selectedIndex < 0) return;
-    // Prefer navigating within the displayed (filtered, newest-first) list.
-    const visIdx = displayEntries.findIndex((e) => e.id === selectedId);
-    if (visIdx >= 0) {
-      const next = visIdx + delta;
-      if (next < 0 || next >= displayEntries.length) return;
-      const id = displayEntries[next].id;
-      setSelectedId(id);
-      setCursorId(id);
-      return;
-    }
-    // Fallback: chronological neighbors in the full buffer.
-    const next = selectedIndex + delta;
-    if (next < 0 || next >= entries.length) return;
-    const id = entries[next].id;
-    setSelectedId(id);
-    setCursorId(id);
+    const ids = visibleRowIds();
+    const current = ids.indexOf(selectedId ?? '');
+    const next = current + delta;
+    if (current < 0 || next < 0 || next >= ids.length) return;
+    setSelectedId(ids[next]);
+    setCursorId(ids[next]);
   }
 
   function openEntry(id: string) {
@@ -1373,7 +1374,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
           </div>
           <ItemList className="calm-list mcp-trace-calm">
             {displayEntries.map((e, i) => {
-              const headline = entryHeadline(e);
+              const headline = traceHeadline(e);
               const group = cacheGroups[i];
               const meta = entryMeta(e);
               const textPrimary = primaryTextPayload(e);
@@ -1570,7 +1571,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                         key={step.id}
                         variant="graph"
                         className={`mcp-blade-step mcp-blade-step--dir-${traceDirection(step.kind)}`}
-                        title={entryHeadline(step) || '—'}
+                        title={traceHeadline(step)}
                         meta={formatTraceTime(step.time).slice(11)}
                         metaTitle={step.time}
                         selected={step.id === selected.id}

@@ -63,10 +63,16 @@ test('long metadata fits constrained panels without horizontal scrolling',async(
 });
 
 test('column headings have room without touching the next heading',async({page})=>{
- await page.setViewportSize({width:1366,height:900});
- for(const path of ['/policy/rules','/policy/skills','/memory']){
-  await page.goto(path);const header=page.locator('.portal-data-header').first();await expect(header).toBeVisible();
-  expect(await header.evaluate(e=>[...e.children].every(c=>c.scrollWidth<=c.clientWidth+1))).toBe(true);
+ for(const width of [1366,2048]){
+  await page.setViewportSize({width,height:900});
+  for(const path of ['/policy/rules','/policy/skills','/memory']){
+   await page.goto(path);const header=page.locator('.portal-data-header').first();await expect(header).toBeVisible();
+   expect(await header.evaluate(e=>[...e.children].every(c=>c.scrollWidth<=c.clientWidth+1))).toBe(true);
+   expect(await header.locator('.column-sort').evaluateAll(buttons=>buttons.filter(b=>b.scrollWidth>b.clientWidth+1).map(b=>({label:b.textContent,width:b.clientWidth,scroll:b.scrollWidth})))).toEqual([]);
+   for(const button of await header.locator('.column-sort').all()){
+    await button.click();expect(await button.evaluate(b=>b.scrollWidth<=b.clientWidth+1)).toBe(true);
+   }
+  }
  }
 });
 
