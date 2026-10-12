@@ -1,22 +1,15 @@
 ---
-import "@fontsource-variable/archivo";
-import "@fontsource/ibm-plex-mono/400.css";
-import "@fontsource/ibm-plex-mono/500.css";
-import "@fontsource/ibm-plex-mono/600.css";
-import "../styles/theme.css";
-import "../styles/home-cinematic.css";
-import "../styles/landscape-svg.css";
-import "../styles/live-terminal.css";
-import "../styles/ares-identity.css";
-import "../styles/home-interaction.css";
-import CinematicHome from "../components/CinematicHome.astro";
-import ScrollReveal from "../components/ScrollReveal.astro";
-import { DOCS_SITE } from "../lib/brand";
-import { ogImagePath } from "../lib/og-card.mjs";
-import { pageLockScript } from "../lib/page-lock";
+import '@fontsource-variable/archivo';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '../styles/minimal-home.css';
+import MinimalHome from '../components/MinimalHome.astro';
+import { DOCS_SITE } from '../lib/brand';
+import { ogImagePath } from '../lib/og-card.mjs';
+import { pageLockScript } from '../lib/page-lock';
 
-const tagline = "Understand code. Preserve context. Guide every agent. Ax brings code intelligence, durable memory, policy, MCP and quality gates into one developer workflow.";
-const ogImage = new URL(ogImagePath("/"), DOCS_SITE).href;
+const description = 'Ax is a local-first Rust developer tool for code intelligence, persistent memory, MCP and enforceable project rules. Install for macOS, Linux or Windows.';
+const ogImage = new URL(ogImagePath('/'), DOCS_SITE).href;
 const pageLock = pageLockScript();
 ---
 <!doctype html>
@@ -26,20 +19,20 @@ const pageLock = pageLockScript();
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script is:inline set:html={pageLock} />
     <link rel="icon" href="/favicon.svg" />
-    <title>Ax — Understand code. Preserve context. Guide every agent.</title>
-    <meta name="description" content={tagline} />
-    <meta property="og:title" content="Ax — Understand code. Preserve context. Guide every agent." />
-    <meta property="og:description" content={tagline} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <title>Ax — Your codebase, understood.</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content="Ax — Your codebase, understood." />
+    <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <meta property="og:image" content={ogImage} />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:image" content={ogImage} />
-    <meta name="theme-color" content="#030c16" />
+    <meta name="theme-color" content="#080a09" />
   </head>
-  <body class="signal-site">
-    <CinematicHome />
-    <ScrollReveal />
+  <body class="ax-landing">
+    <MinimalHome />
   </body>
 </html>

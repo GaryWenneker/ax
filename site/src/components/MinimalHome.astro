@@ -1,0 +1,44 @@
+---
+import MinimalDownload from './MinimalDownload.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<a class="ax-skip" href="#main">Skip to content</a>
+<div class="ax-page">
+  <div class="ax-moire" aria-hidden="true">
+    <div class="ax-moire-layer one"></div>
+    <div class="ax-moire-layer two"></div>
+    <div class="ax-moire-haze"></div>
+  </div>
+
+  <header class="ax-header">
+    <a class="ax-wordmark" href={base + '/'} aria-label="Ax home">Ax<span>_</span></a>
+    <nav class="ax-navigation" aria-label="Primary navigation">
+      <a href={base + '/getting-started/introduction/'}>Docs ↗</a>
+      <a href="https://github.com/GaryWenneker/ax" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main class="ax-main" id="main">
+    <div class="ax-content">
+      <p class="ax-eyebrow">LOCAL / OPEN SOURCE / BUILT FOR DEVELOPERS</p>
+      <div class="ax-display-word" aria-hidden="true">Ax<span>_</span></div>
+      <h1>Your codebase,<br />understood.</h1>
+      <div class="ax-feature-strip" aria-label="Core capabilities">
+        <span>Code intelligence</span><span>Persistent memory</span><span>MCP</span><span>Quality gates</span>
+      </div>
+      <p class="ax-explainer">
+        Local-first code intelligence, durable memory, rules and MCP access.
+        One native Rust binary, connected to your development tools.
+      </p>
+      <MinimalDownload />
+    </div>
+  </main>
+
+  <footer class="ax-footer">
+    <span>© Ax · Open source · MIT · Native Rust</span>
+    <div class="ax-footer-links">
+      <a href={base + '/getting-started/installation/'}>Install guide</a>
+      <a href="https://github.com/GaryWenneker/ax/releases/latest" target="_blank" rel="noopener noreferrer">Releases ↗</a>
+    </div>
+  </footer>
+</div>
