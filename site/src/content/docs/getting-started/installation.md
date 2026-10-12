@@ -58,9 +58,9 @@ Set `AX_UPGRADE_ARCHIVE` to point at a specific zip if needed.
 
 ax is a **native Rust binary** — no Node.js required for normal use.
 
-The homepage puts installation in the first screen. It detects your desktop OS and selects the command and guide. Select another platform to switch both install panels; phone and tablet browsers ask which development computer you use. The Copy button copies the selected command.
+The homepage detects your desktop OS and offers the matching native binary. Open **Other platforms** to choose macOS, Linux, Windows or WSL2 and select ARM64 or x64. Phone and tablet browsers ask which development computer you use. On a Mac, choose ARM64 for Apple Silicon or x64 for Intel. The **Install guide** link opens these instructions if you prefer the command-line installer.
 
-![Ax homepage with the OS selector and installation command](/screenshots/home-install-desktop.png)
+![Ax homepage with the native download button and platform selector](/screenshots/home-install-desktop.png)
 
 [View the mobile installer](/screenshots/home-install-mobile.png).
 
