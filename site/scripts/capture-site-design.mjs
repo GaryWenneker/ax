@@ -106,6 +106,46 @@ try {
         });
       });
     }
+    // Pixel-level visual regression: ensure the overprint visibly changes on both desktop and mobile.
+    // Animation existence alone previously missed an almost static 72/96-second movement.
+    if (name === "home-desktop" || name === "home-mobile") {
+      const clip = {
+        x: Math.floor(width * 0.70),
+        y: Math.floor(height * 0.20),
+        width: width - Math.floor(width * 0.70),
+        height: Math.floor(height * 0.55),
+      };
+      const seekMoire = async (milliseconds) => page.evaluate((milliseconds) => {
+        document.querySelectorAll('.ax-halftone-dots, .ax-halftone-grid').forEach(el => {
+          el.getAnimations().forEach(animation => {
+            animation.pause();
+            animation.currentTime = milliseconds;
+          });
+        });
+      }, milliseconds);
+      await seekMoire(0);
+      const start = await sharp(await page.screenshot({ clip })).removeAlpha().raw().toBuffer();
+      await seekMoire(10_000);
+      const finish = await sharp(await page.screenshot({ clip })).removeAlpha().raw().toBuffer();
+      const delta = start.reduce((sum, value, i) => sum + Math.abs(value - finish[i]), 0) / start.length;
+      if (delta < 2.0) throw new Error(name + ': moiré not visibly moving (pixel delta ' + delta.toFixed(2) + ')');
+      console.log(name, 'moiré visible motion, pixel delta', delta.toFixed(2));
+      await page.evaluate(() => document.querySelectorAll('.ax-halftone-dots, .ax-halftone-grid').forEach(el =>
+        el.getAnimations().forEach(animation => {
+          animation.currentTime = Number(animation.effect.getTiming().duration) / 2;
+          animation.play();
+        })));
+    }
+    if (route !== "/" && name.startsWith("docs-")) {
+      const docsTheme = await page.evaluate(() => ({
+        wordmark: document.querySelector('.cg-site-title__wordmark')?.textContent?.trim(),
+        moire: !!document.querySelector('.ax-doc-moire'),
+        lime: getComputedStyle(document.documentElement).getPropertyValue('--ax-lime').trim(),
+      }));
+      if (docsTheme.wordmark !== 'Ax_' || !docsTheme.moire || docsTheme.lime !== '#b9ff6a') {
+        throw new Error(name + ': docs did not inherit landing identity: ' + JSON.stringify(docsTheme));
+      }
+    }
     await page.screenshot({
       path: path.join(output, name + ".jpg"),
       fullPage: route === "/" && width < 900,
