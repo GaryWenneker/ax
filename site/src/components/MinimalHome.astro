@@ -4,10 +4,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <a class="ax-skip" href="#main">Skip to content</a>
 <div class="ax-page">
-  <div class="ax-moire" aria-hidden="true">
-    <div class="ax-moire-layer one"></div>
-    <div class="ax-moire-layer two"></div>
-    <div class="ax-moire-haze"></div>
+  <div class="ax-halftone" aria-hidden="true">
+    <div class="ax-halftone-grid">
+      <div class="ax-halftone-dots"></div>
+      <div class="ax-halftone-dots ax-halftone-highlight"></div>
+    </div>
   </div>
 
   <header class="ax-header">
