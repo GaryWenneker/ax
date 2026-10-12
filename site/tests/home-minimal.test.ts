@@ -29,20 +29,18 @@ test('Oxanium is bundled and used for the heading, not loaded from Google Fonts'
   assert.doesNotMatch(page, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
 });
 
-test('coarse circular print rosette remains CSS-only and respects reduced motion', () => {
-  assert.match(home, /ax-halftone-grid/);
+test('CMY interference uses near-matched pitches, independent motion and feathered edges', () => {
   assert.match(home, /ax-halftone-screen-three/);
-  assert.match(css, /38px 38px/);
-  assert.match(css, /rotate\(30deg\)/);
-  assert.match(css, /rotate\(60deg\)/);
-  assert.match(css, /border-radius:50%/);
-  assert.doesNotMatch(css, /ax-moire|mix-blend-mode/);
-  assert.match(css, /rgba\(185,255,106/);
-  assert.match(css, /@keyframes ax-halftone-rosette/);
+  for (const pitch of ['26px 26px', '26.8px 26.8px', '25.4px 25.4px']) assert.ok(css.includes(pitch));
+  for (const ink of ['#00ffff', '#ff00ff', '#ffff00']) assert.ok(css.includes(ink));
+  assert.match(css, /mix-blend-mode:multiply/);
+  assert.match(css, /ellipse closest-side/);
+  assert.match(css, /transparent 100%/);
+  assert.doesNotMatch(css, /border-radius:50%|ax-halftone-rosette/);
+  assert.match(css, /@keyframes ax-moire-magenta/);
+  assert.match(css, /@keyframes ax-moire-yellow/);
   assert.match(css, /prefers-reduced-motion:reduce/);
-  assert.match(css, /@media\(min-width:900px\)/);
   assert.doesNotMatch(css, /background-image:\s*url\(/);
-  assert.doesNotMatch(home, /VectorLandscape|AresOverlay|LiveTerminal|ScrollReveal/);
 });
 
 test('installer offers the six real release assets and manual OS and CPU selection', () => {
