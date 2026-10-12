@@ -83,12 +83,8 @@ From $siteDir run once:
     Write-Host "Site: $siteName ($siteUrl)" -ForegroundColor DarkGray
 
     if (-not $SkipBuild) {
-        Write-Step "Installing npm dependencies (if needed)"
-        if (-not (Test-Path 'node_modules')) {
-            npm ci
-        }
-
-        Write-Step "Building Astro site"
+        # npm prebuild refreshes the locked dependencies even when node_modules already exists.
+        Write-Step "Building Astro site with current dependencies"
         npm run build
         if ($LASTEXITCODE -ne 0) { throw 'Site build failed.' }
         npm test

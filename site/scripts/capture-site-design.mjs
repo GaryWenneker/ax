@@ -95,6 +95,14 @@ try {
           !hero.rows.every((top, i) => i === 0 || top > hero.rows[i - 1])) {
         throw new Error(name + ': incorrect slogan, font, accent or layout: ' + JSON.stringify(hero));
       }
+      // Capture a representative light-wave phase rather than its dark starting edge.
+      await page.evaluate(() => {
+        document.querySelectorAll('.ax-halftone-grid, .ax-halftone-highlight').forEach(el => {
+          el.getAnimations().forEach(animation => {
+            animation.currentTime = Number(animation.effect.getTiming().duration) / 2;
+          });
+        });
+      });
     }
     await page.screenshot({
       path: path.join(output, name + ".jpg"),
@@ -116,12 +124,18 @@ try {
   if ((await page.$$(".signal-ambient, .ax-ares-architecture, .integrated-console")).length) {
     throw new Error("Old cinematic layout is still rendered");
   }
-  const moire = await page.$$eval(".ax-moire-layer", elements => ({
+  const halftone = await page.$$eval(".ax-halftone-dots", elements => ({
     count: elements.length,
+    registrations: elements.map(el => {
+      const style = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      return [style.backgroundSize, style.backgroundPosition, box.x, box.y, box.width, box.height];
+    }),
     moving: elements.some(el => el.getAnimations().some(a => a.playState === "running")),
   }));
-  if (moire.count !== 2 || !moire.moving) {
-    throw new Error("Two animated moire layers required: " + JSON.stringify(moire));
+  if (halftone.count !== 2 || !halftone.moving ||
+      JSON.stringify(halftone.registrations[0]) !== JSON.stringify(halftone.registrations[1])) {
+    throw new Error("Halftone dots must remain registered: " + JSON.stringify(halftone));
   }
   await page.click("[data-ax-platform-toggle]");
   await page.click('[data-ax-os="windows"]');
@@ -133,14 +147,14 @@ try {
   const macUrl = await page.$eval("[data-ax-download]", el => el.getAttribute("href"));
   if (!macUrl.endsWith("ax-darwin-x64.tar.gz")) throw new Error("Intel macOS asset mismatch");
   await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
-  const respectsMotion = await page.$$eval(".ax-moire-layer", elements =>
+  const respectsMotion = await page.$$eval(".ax-halftone-grid, .ax-halftone-highlight", elements =>
     elements.every(el => el.getAnimations().every(a => a.playState !== "running")));
   if (!respectsMotion) throw new Error("Reduced-motion preference ignored");
   const targets = await page.$$eval('a[href]', links =>
     [...new Set(links.map(x => x.getAttribute("href")).filter(x => x.startsWith("/") && !x.includes("#")))]);
   for (const target of targets) await access(path.join(site, "dist", target, "index.html"));
   if (errors.length) throw new Error(errors.join("\n"));
-  console.log("Minimal homepage checks passed: responsive viewport, moire, native download links, and reduced motion.");
+  console.log("Minimal homepage checks passed: responsive viewport, registered halftone, native download links, and reduced motion.");
 } finally {
   await browser?.close();
   server.kill();

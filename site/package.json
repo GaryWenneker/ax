@@ -3,6 +3,7 @@
   "type": "module",
   "version": "0.0.1",
   "scripts": {
+    "prebuild": "npm ci --include=dev --no-audit --no-fund",
     "dev": "astro dev",
     "start": "astro dev",
     "build": "node scripts/write-latest-version.mjs && astro build && node scripts/render-og.mjs",
