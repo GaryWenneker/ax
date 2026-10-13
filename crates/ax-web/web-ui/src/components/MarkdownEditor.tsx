@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import MDEditor from '@uiw/react-md-editor';
+import useMobile from '../hooks/useMobile';
 import MarkdownPreview from './MarkdownPreview';
 import { MdPreviewResizeHandle, loadMdEditPct } from './PolicyEditorResize';
 import { interceptLinkClick } from './LinkedBody';
@@ -30,27 +31,33 @@ interface Props {
  * (uiw's visibleDragbar only resizes editor height, and is disabled when height is %.)
  */
 export default function MarkdownEditor({ value, onChange, height = 520, fill = false, links, view, selfKey }: Props) {
+  const mobile=useMobile();
+  const [mobileView,setMobileView]=useState<'markdown'|'preview'>('markdown');
+  const activeView=view ?? (mobile ? mobileView : undefined);
   const colorMode = useTheme().colorScheme ?? 'dark';
   const splitRef = useRef<HTMLDivElement>(null);
   const pct = loadMdEditPct();
   const preview = links ? wikiLinksToMarkdown(value, links.outgoing) : value;
-  const showEdit = view === undefined || view === 'markdown';
-  const showPreview = view === undefined || view === 'preview';
+  const showEdit = activeView === undefined || activeView === 'markdown';
+  const showPreview = activeView === undefined || activeView === 'preview';
 
   return (
     <div
       ref={splitRef}
-      className={`md-editor-wrap md-editor-split${view ? ' md-editor-split--single' : ''}${fill ? ' md-editor-wrap--fill' : ''}`}
+      className={`md-editor-wrap md-editor-split${activeView ? ' md-editor-split--single' : ''}${fill ? ' md-editor-wrap--fill' : ''}`}
       data-color-mode={colorMode}
       style={{ ['--md-edit-pct' as string]: `${pct}%`, height: fill ? undefined : height }}
     >
+      {mobile && !view && <div className="md-mobile-tabs" role="tablist" aria-label="Editor view">
+        {(['markdown','preview'] as const).map(tab=><button type="button" className="btn" key={tab} role="tab" aria-selected={mobileView===tab} onClick={()=>setMobileView(tab)}>{tab==='markdown'?'Markdown':'Preview'}</button>)}
+      </div>}
       {showEdit && <SourceEditor value={value} onChange={onChange} selfKey={selfKey} />}
       {view === 'wysiwyg' && (
         <div className="md-editor-split-edit">
           <WysiwygEditor value={value} onChange={onChange} selfKey={selfKey} />
         </div>
       )}
-      {!view && <MdPreviewResizeHandle containerRef={splitRef} />}
+      {!activeView && <MdPreviewResizeHandle containerRef={splitRef} />}
       {showPreview && (
         <div className="md-editor-split-preview">
           <MarkdownPreview value={preview} onClick={links ? interceptLinkClick : undefined} />

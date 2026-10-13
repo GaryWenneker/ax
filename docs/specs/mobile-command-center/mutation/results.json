@@ -1,0 +1,23 @@
+[
+  {
+    "id": "escape",
+    "test": "mobile navigation is hidden",
+    "buildExit": 0,
+    "testExit": 1,
+    "killed": true
+  },
+  {
+    "id": "detail-width",
+    "test": "mobile detail is a viewport",
+    "buildExit": 0,
+    "testExit": 1,
+    "killed": true
+  },
+  {
+    "id": "form-focus",
+    "test": "mobile forms fit small screens",
+    "buildExit": 0,
+    "testExit": 1,
+    "killed": true
+  }
+]

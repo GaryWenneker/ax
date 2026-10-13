@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import StatsPage from './pages/Stats';
 import NodesPage from './pages/Nodes';
@@ -21,6 +21,9 @@ import MemoryPage from './pages/Memory';
 import StatusBar from './components/StatusBar';
 import { McpQualityHost } from './components/McpQualitySlideout';
 import LoggingProjectSwitch from './components/LoggingProjectSwitch';
+import MobileDetailLayer from './components/MobileDetailLayer';
+import useMobile from './hooks/useMobile';
+import {containOverlayFocus} from './lib/overlayFocus';
 import SidebarResizeHandle, { initSidebarWidth } from './components/SidebarResize';
 import { initBladeWidth } from './components/BladeResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale } from './components/NavIcons';
@@ -59,6 +62,8 @@ function stripValid(parsed: RouteState & { valid?: boolean }): RouteState {
 }
 
 function AppShell() {
+  const mobile = useMobile();
+  const sidebar = useRef<HTMLElement>(null);
   const [route, setRoute] = useState<RouteState>(() => stripValid(parseLocation()));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [fontScale, setFontScale] = useState(loadUiScale);
@@ -133,18 +138,11 @@ function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (!sidebarOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setSidebarOpen(false);
-    }
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [sidebarOpen]);
+    const panel = sidebar.current;
+    if (!panel) return;
+    panel.inert = mobile && !sidebarOpen;
+    if (mobile && sidebarOpen) return containOverlayFocus(panel, () => setSidebarOpen(false));
+  }, [sidebarOpen, mobile]);
 
   useEffect(() => {
     if (page === 'sonar') {
@@ -327,6 +325,7 @@ function AppShell() {
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 aria-label="Toggle menu"
                 aria-expanded={sidebarOpen}
+                aria-controls="main-navigation"
               >
                 <i className="codicon codicon-menu" aria-hidden="true" />
               </button>
@@ -354,6 +353,7 @@ function AppShell() {
               </form>
             )}
             <div className="titlebar-tools">
+              {portalLayout && <button type="button" className="portal-settings-button portal-mobile-search" aria-label="Search code" onClick={() => navigate('search')}><i className="codicon codicon-search" aria-hidden="true" /></button>}
               <LoggingProjectSwitch variant="header" />
               {portalLayout && <button type="button" className="portal-settings-button" aria-label="Open settings"
                 onClick={() => navigate('settings')}><i className="codicon codicon-settings-gear" aria-hidden="true" /></button>}
@@ -382,7 +382,8 @@ function AppShell() {
           </button>
         )}
 
-        <nav className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
+        <nav ref={sidebar} id="main-navigation" className={`sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Main navigation">
+          {mobile && <div className="drawer-header"><strong>Command Center</strong><button type="button" className="btn drawer-close" aria-label="Close menu" onClick={() => setSidebarOpen(false)}>✕</button></div>}
           {navSections.map((section) => (
             <div key={section.id} className="nav-section" data-nav={section.id}>
               <div className="nav-section-label">{section.label}</div>
@@ -510,6 +511,7 @@ function AppShell() {
 
         <StatusBar />
         <McpQualityHost />
+        <MobileDetailLayer />
       </div>
     </>
   );

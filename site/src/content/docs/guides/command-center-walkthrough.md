@@ -36,7 +36,7 @@ Use **Memory** to recall a decision or convention. **New memory** opens a compos
 ## Inspect an agent call
 
 1. Open **Logging**. Confirm the project and live state in the heading.
-2. Choose a kind chip, tool, date or search term. Resize a heading divider or use the heading filter; **Columns** offers the same controls on mobile.
+2. Open **Filters** to choose a kind, tool, date or search term. On desktop, resize a heading divider or use the heading filter; mobile uses the **Sort and filter** sheet for column controls.
 3. Select a row to read the payload and call steps. Arrow keys move through the visible order; Enter opens details and Escape closes them.
 4. **Newest** follows incoming events. Scroll into history to load earlier days. **Quality** opens correlation and findings; it does not change your log.
 
@@ -47,6 +47,24 @@ The source log path is available in the project label tooltip. Existing rows rem
 ![Logging with one header and compact filters](/screenshots/cc-logging-dark.png)
 
 ![Logging on a phone](/screenshots/cc-logging-dark-mobile.png)
+
+## Mobile navigation and controls
+
+Open the hamburger menu to choose a page. **Filters** and **Sort and filter** open sheets with the same filtering and sorting behavior as desktop. Tap **Done** to return to the results; filters remain selected. Details fill the screen, so use **Close** or Escape before selecting another item. In Settings, tap the current section to choose another section from the sheet.
+
+![Mobile navigation drawer](/screenshots/cc-mobile-navigation.png)
+
+![Choose a Settings section](/screenshots/cc-mobile-settings-sections.png)
+
+![Sort and filter loaded rows](/screenshots/cc-mobile-sort-filter.png)
+
+![Logging filters on a phone](/screenshots/cc-mobile-logging-filters.png)
+
+![File preview on a phone](/screenshots/cc-mobile-files-preview.png)
+
+![Graph settings on a phone](/screenshots/cc-mobile-graph-settings.png)
+
+![New memory form on a phone](/screenshots/cc-mobile-memory-form.png)
 
 ## All page destinations
 

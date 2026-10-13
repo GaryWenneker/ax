@@ -1,0 +1,20 @@
+{
+  "provenance": "compiled UI, synthetic public API fixtures",
+  "targets": [
+    "/stats"
+  ],
+  "results": [
+    {
+      "width": 390,
+      "path": "/stats",
+      "actualPath": "/stats",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 790,
+      "mainScrollWidth": 790,
+      "clipped": []
+    }
+  ]
+}

@@ -128,7 +128,26 @@ traceLines.push(
 );
 
 export function screenshotResponse(url) {
-  const path = new URL(url).pathname;
+  const requested = new URL(url);
+  const path = requested.pathname;
+  if (/^\/api\/memory\/[^/]+\/file-(changes|links)$/.test(path)) return {json:{files:{}}};
+  if (path === '/api/links') return {json:{links:[],outgoing:[],incoming:[]}};
+  if (path === '/api/nodes') {
+    const q = (requested.searchParams.get('q') ?? '').toLowerCase();
+    const kind = requested.searchParams.get('kind');
+    const lang = requested.searchParams.get('lang');
+    const filtered = nodes.filter(node => node.name.toLowerCase().includes(q) && (!kind || node.kind === kind) && (!lang || node.language === lang));
+    return {json:{nodes:filtered,total:filtered.length}};
+  }
+  if (path === '/api/source') return {json:{path:requested.searchParams.get('path'),from:1,to:3,total_lines:3,lines:[{no:1,text:'// Synthetic source for the mobile walkthrough'},{no:2,text:'export function AppShell() {'},{no:3,text:'  return null; }'}]}};
+  if (path.startsWith('/api/policy/rules/')) {
+    const rule = rules.find(item => item.id === decodeURIComponent(path.slice('/api/policy/rules/'.length)));
+    if (rule) return {json:{frontmatter:rule,body:rule.body,sourcePath:rule.sourcePath}};
+  }
+  if (path.startsWith('/api/policy/skills/')) {
+    const skill = skills.find(item => item.name === decodeURIComponent(path.slice('/api/policy/skills/'.length)));
+    if (skill) return {json:{frontmatter:{...skill,triggers:[]},body:skill.body,sourcePath:skill.sourcePath}};
+  }
   if (path === '/api/graph/stream') return {status:200,contentType:'text/event-stream',body: `data: ${JSON.stringify({type:'meta',total_nodes:48,truncated:false})}\n\ndata: ${JSON.stringify({type:'nodes',nodes:graph.nodes})}\n\ndata: ${JSON.stringify({type:'edges',edges:graph.edges})}\n\ndata: {"type":"done"}\n\n`};
   if (path.endsWith('/events') || path === '/api/changes') return { status: 200, contentType: 'text/event-stream', body: path.includes('mcp-trace')
     ? `retry: 600000\nevent: batch\ndata: ${JSON.stringify(traceLines)}\n\n`

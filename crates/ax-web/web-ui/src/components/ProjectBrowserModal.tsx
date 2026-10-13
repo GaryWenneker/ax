@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
@@ -13,6 +13,7 @@ import {
   type RecentProject,
 } from '../workspaceApi';
 import { notifyWorkspaceSwitched } from '../workspaceEvents';
+import {containOverlayFocus} from '../lib/overlayFocus';
 
 interface Props {
   onClose: () => void;
@@ -29,6 +30,9 @@ function AxProjectBadge({ compact }: { compact?: boolean }) {
 }
 
 export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
+  const modal = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => {close.current = onClose;}, [onClose]);
   const [currentPath, setCurrentPath] = useState('');
   const [recent, setRecent] = useState<RecentProject[]>([]);
   const [browsePath, setBrowsePath] = useState('');
@@ -91,17 +95,8 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   }
 
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [onClose]);
+    if (modal.current) return containOverlayFocus(modal.current, () => close.current());
+  }, []);
 
   async function doSwitch(path: string) {
     setBusy('switch');
@@ -172,6 +167,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
   return createPortal(
     <div className="project-browser-overlay" role="presentation" onMouseDown={onClose}>
       <div
+        ref={modal}
         className="project-browser-modal"
         role="dialog"
         aria-modal="true"

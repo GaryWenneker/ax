@@ -1,3 +1,4 @@
+import {ResponsiveSheet} from './ui/MobileControls';
 import { useEffect, useRef, useState } from 'react';
 import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import Codicon from './Codicon';
@@ -92,6 +93,7 @@ export default function ActivityStatusChip({ openPanel, onTogglePanel }: Props) 
         <span className="status-val">{unread > 0 ? unread : events.length || '—'}</span>
       </button>
       {isOpen && (
+        <ResponsiveSheet title="Live activity" onClose={() => onTogglePanel(null)}>
         <div
           className="status-panel status-panel--activity"
           role="region"
@@ -172,6 +174,7 @@ export default function ActivityStatusChip({ openPanel, onTogglePanel }: Props) 
             </p>
           )}
         </div>
+        </ResponsiveSheet>
       )}
     </span>
   );

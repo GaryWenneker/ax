@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
+import {ResponsiveSheet} from './ui/MobileControls';
 import { ItemList, ItemRow } from './ui/PageLayout';
 import { liveClass, useFreshMarks } from '../lib/useLive';
 import { traceGroupLinks } from '../traceGroups';
@@ -1165,6 +1166,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
 
       </div>
       {filtersOpen && (
+      <ResponsiveSheet title="Logging filters" onClose={() => setFiltersOpen(false)}>
       <div className="mcp-trace-filters" role="search" aria-label="Filter MCP log">
         <div className="mcp-trace-filter-kinds" role="group" aria-label="Filter by kind">
           {TRACE_KIND_ORDER.map((kind) => {
@@ -1298,6 +1300,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
           )}
         </div>
       </div>
+      </ResponsiveSheet>
       )}
 
       <div className="mcp-trace-scroller-wrap">

@@ -7,6 +7,28 @@ ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, s
 
 Follow the [page-by-page walkthrough](/guides/command-center-walkthrough/) for every page and Settings group.
 
+## On a phone or tablet
+
+Below 900 pixels, open the hamburger menu for a navigation drawer. Tap **Filters** for page searches and filters, or **Sort and filter** for loaded-row column controls. Sheets retain your selections after **Done**; **Close**, Escape or tapping the backdrop dismisses them. On narrow phones, the header search icon opens **Search**.
+
+Lists stack their metadata and keep row actions visible for touch. Selecting a node, memory, policy item, file, log event or quality entry opens its details across the screen. Close the panel to return to the list. **Graph controls** opens search, kind, community, density and export options; **Graph settings** opens the graph display settings.
+
+Settings shows the current section in a selector. Tap it to open **Settings sections**, filter the list if needed, then choose a section. Forms and status panels use scrollable sheets with reachable footer actions. Appearance and saved column widths remain browser-local; mobile layouts do not overwrite desktop widths.
+
+In **Savings**, **Period** opens the time-range controls. **Review** uses a filter sheet and an **Inspect content and source** sheet for current/incoming comparisons. Full-page Markdown editors offer **Markdown** and **Preview** tabs on mobile so each view has the full screen width; switching tabs preserves the draft.
+
+![Settings on a phone](/screenshots/cc-mobile-settings.png)
+
+![Page filters in a mobile sheet](/screenshots/cc-mobile-filters.png)
+
+![Node details on a phone](/screenshots/cc-mobile-details.png)
+
+![Review comparisons in a sheet](/screenshots/cc-mobile-review-details.png)
+
+![A full-width mobile editor](/screenshots/cc-mobile-editor.png)
+
+These screenshots use the compiled UI and public synthetic data. They demonstrate layout and controls, not a production deployment or measured activity.
+
 Run it after `ax init`; configuration lives in `.ax/ship.toml` (seeded automatically on init when missing).
 
 Page headers and filters share compact spacing so more rows fit on screen. Rules, Skills, Memory and shared lists adapt to the width of their panel: wide rows place names, descriptions and tags together; smaller panels stack readable metadata with labels and wrap instead of forcing horizontal scrolling. Hover a shortened description or tag to see its full value, or open the item for complete content. Focused fields and keyboard controls use a soft accent glow; system high-contrast mode retains a thin focus outline. Savings metrics use equal label rows and aligned numeric values, adapting to smaller screens.

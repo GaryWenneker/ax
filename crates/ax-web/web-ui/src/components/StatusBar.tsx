@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { fetchStats, fetchVersion } from '../api';
 import { useMcpTraceStatus } from '../hooks/useMcpTraceStatus';
 import ActivityStatusChip from './ActivityStatusChip';
+import {ResponsiveSheet} from './ui/MobileControls';
 import Codicon from './Codicon';
 import LoggingProjectSwitch from './LoggingProjectSwitch';
 import ProjectBrowserModal from './ProjectBrowserModal';
@@ -184,9 +185,11 @@ function StatusChip({
         {children}
       </button>
       {panel && isOpen && (
+        <ResponsiveSheet title={title} onClose={() => onTogglePanel(null)}>
         <div className="status-panel" role="region" aria-label={title}>
           {panel}
         </div>
+        </ResponsiveSheet>
       )}
     </span>
   );
