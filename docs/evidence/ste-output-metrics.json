@@ -1,0 +1,147 @@
+{
+  "source_sha": "2294a8ab6fcce44226ff2910c54242d9b75c3a81",
+  "toolchain": [
+    "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo 1.99.0 (5f94df478 2026-08-27)",
+    "Python 3.12.14"
+  ],
+  "coverage_tool": "cargo-llvm-cov 0.9.1",
+  "coverage": {
+    "covered": 156,
+    "total": 156,
+    "missing": [],
+    "declaration_only_files": [
+      "crates/ax-mcp/src/lib.rs"
+    ],
+    "scope": "changed executable line coverage; not branch coverage"
+  },
+  "mutants": [
+    {
+      "mutant": "reject-invalid-style",
+      "test": "s04_invalid_style_has_no_delivery_effect",
+      "executed_source_sha256": "35b6bf58727d306c1f7ac9497d5077e3a1aaa9041f7df22f520b138edebf70a2",
+      "exit_code": 101,
+      "killed": true
+    },
+    {
+      "mutant": "validate-before-reset",
+      "test": "s04_invalid_style_has_no_delivery_effect",
+      "executed_source_sha256": "74a628617afba9a6b7b0c190a8bb23fb22fd5ac729559d88808cc274db03c6f7",
+      "exit_code": 101,
+      "killed": true
+    },
+    {
+      "mutant": "metadata-is-opt-in",
+      "test": "s01_legacy_default_is_unchanged",
+      "executed_source_sha256": "c5c02cab2d2ed444db8d073c4121a6f032f354ffbbe1e6939144a36b6594906b",
+      "exit_code": 101,
+      "killed": true
+    },
+    {
+      "mutant": "metadata-does-not-duplicate-bodies",
+      "test": "s13_metadata_does_not_duplicate_bodies",
+      "executed_source_sha256": "615c199844451966f82c897284b049f159c5feaa2a36c1d827816dec2ef179ad",
+      "exit_code": 101,
+      "killed": true
+    },
+    {
+      "mutant": "source-exceptions-survive",
+      "test": "s05_protected_source_is_exact",
+      "executed_source_sha256": "7773b780af9afdaf00f6228089f126278a0354da8064466acf893a18c359b9e6",
+      "exit_code": 101,
+      "killed": true,
+      "property_suite_killed": true
+    }
+  ],
+  "evaluation": {
+    "measurement": "MCP text plus serialized metadata; not billed usage",
+    "rows": 90,
+    "comparisons": [
+      {
+        "task": "simple",
+        "turn": "cold",
+        "median_wire_projection_tokens": {
+          "standard": 5175,
+          "ste-inspired": 5245
+        },
+        "change_percent": 1.353
+      },
+      {
+        "task": "simple",
+        "turn": "warm",
+        "median_wire_projection_tokens": {
+          "standard": 445,
+          "ste-inspired": 516
+        },
+        "change_percent": 15.955
+      },
+      {
+        "task": "simple",
+        "turn": "reset",
+        "median_wire_projection_tokens": {
+          "standard": 5176,
+          "ste-inspired": 5245
+        },
+        "change_percent": 1.333
+      },
+      {
+        "task": "access",
+        "turn": "cold",
+        "median_wire_projection_tokens": {
+          "standard": 5173,
+          "ste-inspired": 5244
+        },
+        "change_percent": 1.373
+      },
+      {
+        "task": "access",
+        "turn": "warm",
+        "median_wire_projection_tokens": {
+          "standard": 442,
+          "ste-inspired": 514
+        },
+        "change_percent": 16.29
+      },
+      {
+        "task": "access",
+        "turn": "reset",
+        "median_wire_projection_tokens": {
+          "standard": 5174,
+          "ste-inspired": 5244
+        },
+        "change_percent": 1.353
+      },
+      {
+        "task": "replication",
+        "turn": "cold",
+        "median_wire_projection_tokens": {
+          "standard": 5201,
+          "ste-inspired": 5270
+        },
+        "change_percent": 1.327
+      },
+      {
+        "task": "replication",
+        "turn": "warm",
+        "median_wire_projection_tokens": {
+          "standard": 452,
+          "ste-inspired": 522
+        },
+        "change_percent": 15.487
+      },
+      {
+        "task": "replication",
+        "turn": "reset",
+        "median_wire_projection_tokens": {
+          "standard": 5199,
+          "ste-inspired": 5271
+        },
+        "change_percent": 1.385
+      }
+    ],
+    "agent_quality": "unverified",
+    "monthly_cost": "unverified"
+  },
+  "local_source_sha": "3de29cd22e99450f128fe528f2522f8b829dae31",
+  "source_tree_sha": "cb36150bc96b5f18ddaa4d27b9980c7d307091a5"
+}
