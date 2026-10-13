@@ -40,6 +40,7 @@ import { filterGraph, groupColor } from '../lib/graphFilter';
 import { buildNeighbors, highlightFor, selectionPulse, type Highlight, type NeighborIndex } from '../lib/graphHover';
 import { forceParams, seedCluster } from '../lib/graphForces';
 import { labelAlpha, labelPx, placeLabels, type LabelBox } from '../lib/graphLabels';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 interface SimNode extends GraphNode {
   x: number;
@@ -1368,21 +1369,21 @@ export default function GraphPage() {
           />
           <label className="graph-limit">
             Kind:
-            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}>
+            <SettingsSelect value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}>
               <option value="">all</option>
               {kindOptions.map((k) => (
                 <option key={k} value={k}>{k}</option>
               ))}
-            </select>
+            </SettingsSelect>
           </label>
           <label className="graph-limit">
             {meta?.palette === 'project' ? 'Project:' : 'Community:'}
-            <select value={communityFilter} onChange={(e) => setCommunityFilter(e.target.value)}>
+            <SettingsSelect value={communityFilter} onChange={(e) => setCommunityFilter(e.target.value)}>
               <option value="">all</option>
               {communityLegend.map((c) => (
                 <option key={c.id} value={c.id}>{c.label}</option>
               ))}
-            </select>
+            </SettingsSelect>
           </label>
           {matchCount != null && (
             <span className="graph-meta">{matchCount} match{matchCount === 1 ? '' : 'es'}</span>
@@ -1408,7 +1409,7 @@ export default function GraphPage() {
             title="Exports the density slice (top nodes by degree, same limit as the canvas). Kind/community/search filters are canvas-only. Full interactive HTML: ax export graph --format html"
           >
             Export:
-            <select
+            <SettingsSelect
               value={exportFormat}
               onChange={(e) => setExportFormat(e.target.value)}
               disabled={exportBusy}
@@ -1418,7 +1419,7 @@ export default function GraphPage() {
                   {f.label}
                 </option>
               ))}
-            </select>
+            </SettingsSelect>
           </label>
           {textExportFormats.has(exportFormat) && (
             <button

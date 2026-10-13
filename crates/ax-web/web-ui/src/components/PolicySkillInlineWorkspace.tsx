@@ -11,6 +11,7 @@ import { Spinner } from './ui/Spinner';
 import { SKILL_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
+import SettingsSelect from './ui/SettingsSelect';
 
 interface Props {
   skillName: string;
@@ -149,7 +150,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
       ) : fm ? (
         <div key={skillName} className={`policy-inline-workspace-grid policy-inline-workspace-grid--editor${reveal ? ' policy-inline-reveal' : ''}`}>
           {propsOpen && (
-          <ModalShell title="Properties" subtitle={fm.name} size="lg" onClose={() => setPropsOpen(false)} footer={<button type="button" className="btn primary" onClick={() => setPropsOpen(false)}>Done</button>}>
+          <ModalShell title="Properties" subtitle={fm.name} size="full" onClose={() => setPropsOpen(false)} footer={<button type="button" className="btn primary" onClick={() => setPropsOpen(false)}>Done</button>}>
           <div className="policy-inline-pane policy-inline-pane--props">
             <PageCardBody>
               <PageRow title="Name">
@@ -185,7 +186,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                 />
               </PageRow>
               <PageRow title="Scope">
-                <select
+                <SettingsSelect
                   className="settings-select"
                   value={fm.scope || 'project'}
                   onChange={(e) => setFm({ ...fm, scope: e.target.value })}
@@ -195,10 +196,10 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                       {s.label}
                     </option>
                   ))}
-                </select>
+                </SettingsSelect>
               </PageRow>
               <PageRow title="Storage" description="Override project default, or leave empty to inherit.">
-                <select
+                <SettingsSelect
                   className="settings-select"
                   value={fm.storage ?? ''}
                   onChange={(e) =>
@@ -213,7 +214,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                   <option value="">Project default</option>
                   <option value="files">Files (MD)</option>
                   <option value="database">Database</option>
-                </select>
+                </SettingsSelect>
               </PageRow>
               <PageRow title="Source" description="External path or root:id/skills/…/SKILL.md.">
                 <input
@@ -232,7 +233,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                 />
               </PageRow>
               <PageRow title="Group" description="Catalog folder on the Skills list.">
-                <select
+                <SettingsSelect
                   className="settings-select"
                   value={fm.group || 'ungrouped'}
                   onChange={(e) => setFm({ ...fm, group: e.target.value })}
@@ -241,7 +242,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                   {SKILL_GROUPS.map((g) => (
                     <option key={g.id} value={g.id}>{g.label}</option>
                   ))}
-                </select>
+                </SettingsSelect>
               </PageRow>
               <PageRow title="Priority">
                 <input

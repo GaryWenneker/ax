@@ -32,6 +32,7 @@ import { usePersistedString } from '../hooks/usePersistedState';
 import { usePageContext } from '../context/UiContext';
 import type { RouteState } from '../lib/routes';
 import type { UnresolvedRow, UnresolvedSummary } from '../types';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 const LIMIT = 50;
 
@@ -689,7 +690,7 @@ export default function UnresolvedPage({
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <select
+            <SettingsSelect
               className="settings-select"
               value={kind}
               onChange={(e) => {
@@ -705,7 +706,7 @@ export default function UnresolvedPage({
                   {k}
                 </option>
               ))}
-            </select>
+            </SettingsSelect>
             <button
               type="button"
               className="btn primary"

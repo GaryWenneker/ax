@@ -13,7 +13,7 @@ export function memoryRowHeadline(memory: { title: string; body: string }): stri
   return memory.title;
 }
 
-/** Compact age for a memory row, like a commit graph ("18h ago"). */
+/** Relative age through one day; older rows show a calendar date. */
 export function memoryRowAge(updatedAtMs: number, nowMs: number): string {
   if (!Number.isFinite(updatedAtMs) || !Number.isFinite(nowMs)) return '';
   const delta = nowMs - updatedAtMs;
@@ -21,9 +21,8 @@ export function memoryRowAge(updatedAtMs: number, nowMs: number): string {
   const minutes = Math.floor(delta / 60_000);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  if (hours <= 24) return `${hours}h ago`;
+  return new Date(updatedAtMs).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function countCommits(body: string): number {

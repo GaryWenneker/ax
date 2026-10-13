@@ -59,6 +59,7 @@ import { loadJson, saveJson } from '../lib/uiStorage';
 import AutoGroupModal from '../components/AutoGroupModal';
 import PolicyGraphOverlay from '../components/PolicyGraphOverlay';
 import { menuTargets, nextRowSelection, toggleVisibleSelection } from '../lib/policySelection';
+import SettingsSelect from '../components/ui/SettingsSelect';
 import {
   POLICY_BLADE_DISMISS_MS,
   policyDetailOpen,
@@ -596,7 +597,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
               placeholder="Search id or add label…"
               ariaLabel="Filter rules by labels and text"
             />
-            <select
+            <SettingsSelect
               className="settings-select policy-toolbar-select"
               value={level}
               onChange={(e) => setLevel(e.target.value)}
@@ -606,8 +607,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
               <option value="CRITICAL">Critical</option>
               <option value="WARNING">Warning</option>
               <option value="INFO">Info</option>
-            </select>
-            <select
+            </SettingsSelect>
+            <SettingsSelect
               className="settings-select policy-toolbar-select"
               value={scope}
               onChange={(e) => setScope(e.target.value)}
@@ -617,8 +618,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
               {POLICY_SCOPES.map((s) => (
                 <option key={s.value} value={s.value}>{s.label}</option>
               ))}
-            </select>
-            <select
+            </SettingsSelect>
+            <SettingsSelect
               className="settings-select policy-toolbar-select"
               value={origin}
               onChange={(e) => setOrigin(e.target.value)}
@@ -627,8 +628,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
               <option value="">All databases</option>
               <option value="project">This project (ax.db)</option>
               <option value="global">Other projects (global.db)</option>
-            </select>
-            <select
+            </SettingsSelect>
+            <SettingsSelect
               className="settings-select policy-toolbar-select"
               value={always}
               onChange={(e) => setAlways(e.target.value)}
@@ -637,7 +638,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
               <option value="">Always apply: any</option>
               <option value="yes">Always apply</option>
               <option value="no">Conditional</option>
-            </select>
+            </SettingsSelect>
             <PolicySortControl
               options={RULE_SORT_OPTIONS}
               sortKey={sortKey}

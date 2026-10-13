@@ -3,6 +3,7 @@ import { accessJson } from '../lib/accessApi';
 import ModalShell from './ModalShell';
 import Codicon from './Codicon';
 import ServiceStatus, { type ServiceState } from './ServiceStatus';
+import SettingsSelect from './ui/SettingsSelect';
 
 type Settings = { config: { node_id: string; role: 'primary' | 'replica'; cluster_id: string; primary_url?: string | null; projects: { id: string }[] }; port: number; advertise?: string | null };
 type Candidate = { node_id: string; role: string; advertised_url: string; cluster_id: string; project_ids?: string[] };
@@ -179,7 +180,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
     {setupOpen && <ModalShell title="Set up replication" onClose={() => { if (!busy) { setSetupOpen(false); editing.current = false; } }}>
       {error && !setupOpen && <p role="alert">{error}</p>}
 <form className="access-form" onSubmit={activate} aria-label="Replication setup">
-      <label>Local node role<select className="settings-select" aria-label="Local node role" value={role} disabled={disabled} onChange={e => { setRole(e.target.value as 'primary' | 'replica'); setToken(''); setIssued(null); setMessage(null); }}><option value="primary">Primary — publish this project</option><option value="replica">Replica — connect to a Primary</option></select></label>
+      <label>Local node role<SettingsSelect className="settings-select" aria-label="Local node role" value={role} disabled={disabled} onChange={e => { setRole(e.target.value as 'primary' | 'replica'); setToken(''); setIssued(null); setMessage(null); }}><option value="primary">Primary — publish this project</option><option value="replica">Replica — connect to a Primary</option></SettingsSelect></label>
       <details><summary>Advanced options</summary><p className="access-note">IDs are generated for a Primary and returned by authenticated enrollment for a Replica. Override a project ID only when the Primary serves multiple projects.</p>
       <label>Cluster ID<input className="settings-input" pattern="[A-Za-z0-9_-]+" maxLength={128} placeholder={role === 'primary' ? 'Generated automatically when empty' : 'Primary cluster ID'} value={cluster} disabled={disabled} onChange={e => setCluster(e.target.value)} /></label>
       <label>Replication project ID<input className="settings-input" pattern="[A-Za-z0-9_-]+" maxLength={128} placeholder={role === 'primary' ? 'Generated automatically when empty' : 'Primary project ID'} value={project} disabled={disabled} onChange={e => setProject(e.target.value)} /></label>
@@ -198,7 +199,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
         <label>Primary URL<input className="settings-input" type="url" required placeholder="https://primary.example.com" value={primary} disabled={disabled} onChange={e => { setPrimary(e.target.value); setCluster(''); setProject(''); }} /></label>
         <p className="access-note">HTTPS or an explicit private LAN IP is supported. Discovery works on the same LAN; the URL field also supports hosted environments. Selecting a candidate does not connect it automatically.</p>
       </>}
-      <label>Advertised IP address<select className="settings-select" aria-label="Advertised IP address" value={ip} disabled={disabled} onChange={e => setIp(e.target.value)}>{interfaces.map(i => <option key={i.address} value={i.address}>{i.address} — {i.name}{i.loopback ? ' (this machine only)' : ''}</option>)}</select></label>
+      <label>Advertised IP address<SettingsSelect className="settings-select" aria-label="Advertised IP address" value={ip} disabled={disabled} onChange={e => setIp(e.target.value)}>{interfaces.map(i => <option key={i.address} value={i.address}>{i.address} — {i.name}{i.loopback ? ' (this machine only)' : ''}</option>)}</SettingsSelect></label>
       <p className="access-note">This address is used by the service and its LAN broadcast. Choose the address other machines can reach.</p>
       {credentialControl}
       <p className="access-note">{role === 'primary' && !state?.settings ? 'Leave IDs and credential empty to generate them on Start Primary.' : 'Enter the Primary’s project credential. Client access tokens are separate.'} The credential is stored in your OS credential store for automatic startup.</p>

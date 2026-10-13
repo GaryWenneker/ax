@@ -20,6 +20,7 @@ import { usePageContext } from '../context/UiContext';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
 import { SKILL_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 interface Props {
   skillName: string | null;
@@ -255,7 +256,7 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
                       title="Scope"
                       description="Company/user private live under ~/.ax; project private is gitignored."
                     >
-                      <select
+                      <SettingsSelect
                         className="settings-select"
                         value={fm.scope || 'project'}
                         onChange={(e) => setFm({ ...fm, scope: e.target.value })}
@@ -263,10 +264,10 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
                         {POLICY_SCOPES.map((s) => (
                           <option key={s.value} value={s.value}>{s.label}</option>
                         ))}
-                      </select>
+                      </SettingsSelect>
                     </PageRow>
                     <PageRow title="Group" description="Catalog folder on the Skills list. Empty groups stay available here.">
-                      <select
+                      <SettingsSelect
                         className="settings-select"
                         value={fm.group || 'ungrouped'}
                         onChange={(e) => setFm({ ...fm, group: e.target.value })}
@@ -275,7 +276,7 @@ export default function PolicySkillEditor({ skillName, origin, projectId, onBack
                         {SKILL_GROUPS.map((g) => (
                           <option key={g.id} value={g.id}>{g.label}</option>
                         ))}
-                      </select>
+                      </SettingsSelect>
                     </PageRow>
                     <PageRow title="Triggers" description="Keywords that activate this skill.">
                       <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />

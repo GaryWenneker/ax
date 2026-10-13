@@ -48,6 +48,7 @@ import {
   PageToasts,
 } from '../components/ui/PageLayout';
 import { usePageContext } from '../context/UiContext';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 type Period = 'week' | 'month_to_date' | 'month' | 'year' | 'custom';
 
@@ -918,7 +919,7 @@ export default function SavingsPage() {
         }
         actions={
           <MobileControls className="sv-period-bar" title="Time period" triggerLabel="Period" icon="calendar">
-            <select
+            <SettingsSelect
               className="settings-select"
               value={period}
               onChange={(e) => setPeriod(e.target.value as Period)}
@@ -927,7 +928,7 @@ export default function SavingsPage() {
               {PERIOD_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </select>
+            </SettingsSelect>
             {period === 'custom' && (
               <>
                 <input className="settings-input settings-input--narrow" type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From date" />

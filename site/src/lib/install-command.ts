@@ -61,7 +61,16 @@ export function mountInstallPickers(): void {
       const status = picker.querySelector('.copy-status');
       try {
         await navigator.clipboard.writeText(picker.querySelector<HTMLElement>('.install')?.dataset.install || '');
-        if (status) status.textContent = 'Install command copied.';
+        const button = picker.querySelector<HTMLButtonElement>('.copy');
+        if (status) status.textContent = 'Copied';
+        if (button) {
+          button.textContent = 'Copied';
+          button.dataset.copied = 'true';
+          window.setTimeout(() => {
+            button.textContent = 'Copy';
+            delete button.dataset.copied;
+          }, 2000);
+        }
       } catch {
         if (status) status.textContent = 'Select and copy the command above.';
       }

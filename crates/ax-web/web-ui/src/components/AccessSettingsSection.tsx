@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import Codicon from './Codicon';
 import ReplicationSetup from './ReplicationSetup';
 import ModalShell from './ModalShell';
+import SettingsSelect from './ui/SettingsSelect';
 
 type Role = 'owner' | 'admin' | 'member' | 'readonly';
 type Member = { id: string; display_name: string; email?: string | null; role: Role; roles?: Role[]; status: string; created_at: string; last_active_at?: string | null };
@@ -373,8 +374,8 @@ export default function AccessSettingsSection({ section }: { section: string }) 
           <p className="access-note">Roles combine their allowed permissions. Clients are added separately.</p>
         </> : <>
           <label>Client name<input autoFocus required className="settings-input" value={clientName} onChange={event => setClientName(event.target.value)} disabled={locked} /></label>
-          <label>Application type<select aria-label="Application type" className="settings-select" value={clientType} onChange={event => setClientType(event.target.value)} disabled={locked}>{CLIENT_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}</select></label>
-          <label>Team member<select aria-label="Team member" required className="settings-select" value={clientMember} onChange={event => setClientMember(event.target.value)} disabled={locked}>{activeMembers.map(member => <option key={member.id} value={member.id}>{member.display_name}</option>)}</select></label>
+          <label>Application type<SettingsSelect aria-label="Application type" className="settings-select" value={clientType} onChange={event => setClientType(event.target.value)} disabled={locked}>{CLIENT_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}</SettingsSelect></label>
+          <label>Team member<SettingsSelect aria-label="Team member" required className="settings-select" value={clientMember} onChange={event => setClientMember(event.target.value)} disabled={locked}>{activeMembers.map(member => <option key={member.id} value={member.id}>{member.display_name}</option>)}</SettingsSelect></label>
           <p className="access-note">Starts with context, preflight and memory access allowed by this member’s role. Edit permissions and issue a token after creation.</p>
         </>}
         <div className="access-actions"><button type="button" className="btn" disabled={busy} onClick={() => setForm(null)}>Cancel</button><button type="submit" className="btn primary" disabled={locked}>{busy ? 'Saving…' : form === 'member' ? 'Add member' : 'Add client'}</button></div>

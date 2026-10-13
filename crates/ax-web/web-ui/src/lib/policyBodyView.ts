@@ -2,8 +2,8 @@ export type BodyView = 'markdown' | 'wysiwyg' | 'preview';
 
 export const BODY_VIEW_KEY = 'ax-web-policy-body-view';
 export const POLICY_LIST_MIN = 240;
-export const POLICY_LIST_MAX = 480;
-export const POLICY_LIST_DEFAULT = 280;
+export const POLICY_LIST_MAX = 1600;
+export const POLICY_LIST_DEFAULT = 480;
 
 export function loadBodyView(storage: Pick<Storage, 'getItem'> = localStorage): BodyView {
   const stored = storage.getItem(BODY_VIEW_KEY);

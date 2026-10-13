@@ -11,6 +11,7 @@ import { Spinner } from './ui/Spinner';
 import { RULE_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
+import SettingsSelect from './ui/SettingsSelect';
 
 interface Props {
   ruleId: string;
@@ -161,7 +162,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
       ) : fm ? (
         <div key={ruleId} className={`policy-inline-workspace-grid policy-inline-workspace-grid--editor${reveal ? ' policy-inline-reveal' : ''}`}>
           {propsOpen && (
-          <ModalShell title="Properties" subtitle={fm.id} size="lg" onClose={() => setPropsOpen(false)} footer={<button type="button" className="btn primary" onClick={() => setPropsOpen(false)}>Done</button>}>
+          <ModalShell title="Properties" subtitle={fm.id} size="full" onClose={() => setPropsOpen(false)} footer={<button type="button" className="btn primary" onClick={() => setPropsOpen(false)}>Done</button>}>
           <div className="policy-inline-pane policy-inline-pane--props">
             <PageCardBody>
               <PageRow title="ID" description="Kebab-case identifier.">
@@ -173,7 +174,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                 />
               </PageRow>
               <PageRow title="Level">
-                <select
+                <SettingsSelect
                   className="settings-select"
                   value={fm.level}
                   onChange={(e) => setFm({ ...fm, level: e.target.value })}
@@ -181,10 +182,10 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                   <option>CRITICAL</option>
                   <option>WARNING</option>
                   <option>INFO</option>
-                </select>
+                </SettingsSelect>
               </PageRow>
               <PageRow title="Scope">
-                <select
+                <SettingsSelect
                   className="settings-select"
                   value={fm.scope || 'project'}
                   onChange={(e) => setFm({ ...fm, scope: e.target.value })}
@@ -194,10 +195,10 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                       {s.label}
                     </option>
                   ))}
-                </select>
+                </SettingsSelect>
               </PageRow>
               <PageRow title="Storage" description="Override project default, or leave empty to inherit.">
-                <select
+                <SettingsSelect
                   className="settings-select"
                   value={fm.storage ?? ''}
                   onChange={(e) =>
@@ -212,7 +213,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                   <option value="">Project default</option>
                   <option value="files">Files (MD)</option>
                   <option value="database">Database</option>
-                </select>
+                </SettingsSelect>
               </PageRow>
               <PageRow title="Source" description="External path or root:id/rules/…. Creates a stub pointer.">
                 <input
@@ -231,7 +232,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                 />
               </PageRow>
               <PageRow title="Group" description="Catalog folder on the Rules list. Empty groups stay available here.">
-                <select
+                <SettingsSelect
                   className="settings-select"
                   value={fm.group || 'ungrouped'}
                   onChange={(e) => setFm({ ...fm, group: e.target.value })}
@@ -240,7 +241,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                   {SKILL_GROUPS.map((g) => (
                     <option key={g.id} value={g.id}>{g.label}</option>
                   ))}
-                </select>
+                </SettingsSelect>
               </PageRow>
               <PageRow title="Enabled">
                 <button

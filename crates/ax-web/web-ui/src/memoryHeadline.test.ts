@@ -37,9 +37,11 @@ describe('memory row age', () => {
     assert.equal(memoryRowAge(now + 5_000, now), 'just now');
   });
 
-  it('uses minutes, then hours, then days', () => {
+  it('uses minutes and hours through one day, then a date', () => {
     assert.equal(memoryRowAge(now - 5 * 60_000, now), '5m ago');
     assert.equal(memoryRowAge(now - 18 * 3_600_000, now), '18h ago');
-    assert.equal(memoryRowAge(now - 3 * 86_400_000, now), '3d ago');
+    assert.equal(memoryRowAge(now - 24 * 3_600_000, now), '24h ago');
+    const older = now - 3 * 86_400_000;
+    assert.equal(memoryRowAge(older, now), new Date(older).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }));
   });
 });

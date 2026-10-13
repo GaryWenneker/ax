@@ -986,6 +986,42 @@ html, body {
 .ax-modal--lg {
   width: min(640px, 100%);
 }
+.ax-modal--full:has(.policy-inline-pane--props) {
+  width: calc(100vw - 24px);
+  max-width: none;
+  height: calc(100vh - 24px);
+  max-height: none;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--accent-text) 40%, var(--border));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+.ax-modal--full:has(.policy-inline-pane--props) .ax-modal-title { color: var(--accent-text); }
+.ax-modal--full:has(.policy-inline-pane--props) .ax-modal-body { overflow: auto; display: block; }
+.ax-modal--full:has(.policy-inline-pane--props) .policy-inline-pane { height: auto; overflow: visible; border: 0; }
+.ax-modal--full:has(.policy-inline-pane--props) .settings-card-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 32px;
+  padding: 8px 12px 28px;
+}
+.ax-modal--full:has(.policy-inline-pane--props) .settings-row:has(.policy-chips) { grid-column: 1 / -1; }
+.ax-modal--full:has(.policy-inline-pane--props) .settings-row-title {
+  color: color-mix(in srgb, var(--text) 70%, var(--accent-text));
+}
+.ax-modal--full:has(.policy-inline-pane--props) .settings-row-desc {
+  color: color-mix(in srgb, var(--text) 58%, var(--text-dim));
+}
+.ax-modal--full:has(.policy-inline-pane--props) :is(.settings-input, .settings-select-btn) {
+  min-height: 42px;
+  border-color: color-mix(in srgb, var(--accent-text) 32%, var(--border));
+}
+.ax-modal--full:has(.policy-inline-pane--props) .policy-chips { gap: 10px; }
+.ax-modal--full:has(.policy-inline-pane--props) .policy-chip-list {
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-text) 24%, var(--border));
+  border-radius: 10px;
+}
 
 .ax-modal--xl {
   width: min(1120px, 96vw);
@@ -5085,6 +5121,57 @@ body.md-split-resizing .md-preview-resize-handle {
   background: var(--bg-side);
 }
 
+.settings-select-wrap { position: relative; display: inline-block; max-width: 100%; min-width: 0; vertical-align: middle; }
+.settings-select-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.settings-select-btn .codicon { flex: none; font-size: 12px; color: var(--text-dim); }
+.settings-select-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(28rem, 80vw);
+  max-height: 20rem;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+  overflow: auto;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel) 62%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid color-mix(in srgb, #fff 14%, transparent);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+}
+.settings-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-select-option span:first-child { width: 1em; color: var(--accent-text); }
+.settings-select-option:hover,
+.settings-select-option[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 .settings-field-check {
   display: flex;
   flex-direction: column;
@@ -8478,9 +8565,11 @@ button.linkish {
   z-index: 30;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.28);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 160px),
+    var(--bg-panel);
+  border-left: 1px solid color-mix(in srgb, var(--accent-text) 45%, var(--border));
+  box-shadow: inset 3px 0 0 var(--accent), -8px 0 24px rgba(0, 0, 0, 0.28);
   animation: memory-blade-in 0.16s ease-out;
 }
 
@@ -8961,12 +9050,13 @@ button.linkish {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 8px 6px 8px;
+  border: 1px solid color-mix(in srgb, #fff 14%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-input) 86%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent);
   cursor: text;
 }
 
@@ -8978,16 +9068,17 @@ button.linkish {
 .label-ac-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border: 1px solid color-mix(in srgb, var(--accent, #5b8def) 40%, var(--border));
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-text) 42%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent, #5b8def) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
   color: var(--text-hi);
-  font-size: calc(var(--fs-base) * 0.85 * var(--ui-scale));
+  font-size: 12px;
   font-family: var(--font-mono);
   cursor: pointer;
-  line-height: 1.4;
+  line-height: 1;
 }
 
 .label-ac-chip:hover {
@@ -9267,7 +9358,7 @@ button.linkish {
 }
 
 .policy-rules-split.page-split--with-detail {
-  grid-template-columns: var(--policy-list-w, 280px) 12px minmax(0, 1fr);
+  grid-template-columns: var(--policy-list-w, 480px) 12px minmax(280px, 1fr);
 }
 
 /* Grip + editor must be direct grid children (not wrapped together). */
@@ -9297,8 +9388,11 @@ button.linkish {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 140px),
+    var(--bg-panel);
+  border-left: 1px solid color-mix(in srgb, var(--accent-text) 40%, var(--border));
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 /* List ↔ detail grip (same look as meta / source-preview handles). */
@@ -9365,8 +9459,8 @@ body.policy-list-resizing .policy-list-resize-handle {
   gap: 12px;
   flex-shrink: 0;
   padding: 10px 18px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-side);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-text) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-side));
 }
 
 .policy-inline-workspace-title {

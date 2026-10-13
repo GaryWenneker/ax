@@ -41,7 +41,9 @@ function fmtUpdated(ms: number) {
   if (diff < 15_000) return 'just now';
   if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
+  const hours = Math.floor(diff / 3_600_000);
+  if (hours <= 24) return `${hours}h ago`;
+  return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function FindingRow({

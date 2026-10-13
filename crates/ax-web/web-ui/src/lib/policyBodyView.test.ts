@@ -39,11 +39,11 @@ describe('policy list width', () => {
   });
 
   it('keeps widths in range and caps wide ones', () => {
-    assert.equal(clampPolicyListWidth(300), 300);
-    assert.equal(clampPolicyListWidth(900), 480);
+    assert.equal(clampPolicyListWidth(800), 800);
+    assert.equal(clampPolicyListWidth(1800), 1600);
   });
 
   it('uses the default for a non-number', () => {
-    assert.equal(clampPolicyListWidth(Number.NaN), 280);
+    assert.equal(clampPolicyListWidth(Number.NaN), 480);
   });
 });

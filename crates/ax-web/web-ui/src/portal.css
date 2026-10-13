@@ -156,7 +156,7 @@ html[data-ax-layout="portal"] :is(.calm-row-action, .calm-group-header):hover { 
 html[data-ax-layout="portal"] .calm-row-action--remove:hover { color: var(--danger); }
 html[data-ax-layout="portal"] .portal-data-list { display: block; overflow-x: auto; }
 html[data-ax-layout="portal"] :is(.portal-data-row, .portal-data-header) { display: grid; grid-template-columns: minmax(240px, 1fr) 100px 105px 70px 175px; min-width: 720px; align-items: center; column-gap: 12px; padding: 10px 16px; min-height: 44px; }
-html[data-ax-layout="portal"] .portal-memory-list :is(.portal-data-row, .portal-data-header) { grid-template-columns: minmax(230px, 1fr) 105px 95px 85px 55px; min-width: 640px; }
+html[data-ax-layout="portal"] .portal-memory-list :is(.portal-data-row, .portal-data-header) { grid-template-columns: minmax(0, 1fr) 105px 95px 85px 55px; min-width: 0; }
 html[data-ax-layout="portal"] .portal-data-header { color: var(--text-hi); font-weight: 600; background: var(--bg-side); border-bottom: 1px solid var(--border-hi); position: sticky; top: 0; z-index: 1; }
 html[data-ax-layout="portal"] .portal-data-row::before, html[data-ax-layout="portal"] .portal-data-row::after { display: none; }
 html[data-ax-layout="portal"] .portal-data-name { min-width: 0; }
@@ -313,4 +313,60 @@ html[data-ax-layout="portal"] :is(.memory-vault-list, .calm-list) .page-item--se
 html[data-ax-layout="portal"] .page-split-main :is(.page-item-list, .portal-data-list) {
   overflow: visible;
   overscroll-behavior: auto;
+}
+
+/* Floating menus on a wide screen: larger, rounded, translucent, blurred. */
+@media (min-width: 1100px) {
+  html[data-ax-layout="portal"] :is(
+    .policy-group-filter-menu,
+    .label-ac-menu,
+    .logging-proj-switch-menu,
+    .policy-chip-suggest,
+    .policy-context-menu,
+    .column-filter-panel,
+    .settings-select-menu
+  ) {
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--bg-panel) 62%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(1.2);
+    backdrop-filter: blur(18px) saturate(1.2);
+    border: 1px solid color-mix(in srgb, #fff 14%, transparent);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+    padding: 10px;
+  }
+
+  html[data-ax-layout="portal"] .policy-group-filter-menu {
+    min-width: 22rem;
+    max-height: 28rem;
+  }
+
+  html[data-ax-layout="portal"] .policy-group-filter-option {
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+
+  html[data-ax-layout="portal"] .label-ac-menu {
+    max-height: 320px;
+  }
+
+  html[data-ax-layout="portal"] .column-filter-panel {
+    width: 240px;
+    padding: 14px;
+  }
+
+  html[data-ax-layout="portal"] .policy-context-menu {
+    min-width: 260px;
+    padding: 8px;
+  }
+
+  html[data-ax-layout="portal"] .settings-select-menu {
+    min-width: 16rem;
+    max-height: 28rem;
+  }
+
+  html[data-ax-layout="portal"] .settings-select-option {
+    padding: 9px 12px;
+    font-size: 14px;
+  }
 }

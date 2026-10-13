@@ -8,6 +8,7 @@ import { PageCard, PageCardBody, PageEmpty, PageHero, PageLoading, PageShell, Pa
 import {ColumnHeader, ColumnTools, useListColumns} from '../components/ui/ListColumns';
 import ModalShell from '../components/ModalShell';
 import { usePageContext } from '../context/UiContext';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 const canCompare = (item: PendingPolicyItem) => ['new', 'duplicate', 'replacement'].includes(item.effect ?? '') && typeof item.incomingContent === 'string' && (item.effect === 'new' ? item.currentContent === null : typeof item.currentContent === 'string');
 const keyOf = (item: PendingPolicyItem) => `${item.kind}:${item.id}`;
@@ -73,8 +74,8 @@ export default function PolicyReviewPage() {
     {loading ? <PageLoading label="Loading review queue…" /> : <PageStack><PageCard title="Pending changes" description={`${items.length} awaiting a decision. Approval activates incoming policy; rejection keeps current policy.`}><PageCardBody>
       <MobileControls className="review-toolbar">
         <input className="settings-input" aria-label="Search review items" placeholder="Search ID or description" value={search} onChange={e => setSearch(e.target.value)} />
-        <select className="settings-select" aria-label="Review kind" value={kind} onChange={e => setKind(e.target.value)}><option value="all">All types</option><option value="rule">Rules</option><option value="skill">Skills</option></select>
-        <select className="settings-select" aria-label="Review effect" value={effect} onChange={e => setEffect(e.target.value)}><option value="all">All changes</option><option value="new">New items</option><option value="duplicate">Duplicates</option><option value="replacement">Replacements</option></select>
+        <SettingsSelect className="settings-select" aria-label="Review kind" value={kind} onChange={e => setKind(e.target.value)}><option value="all">All types</option><option value="rule">Rules</option><option value="skill">Skills</option></SettingsSelect>
+        <SettingsSelect className="settings-select" aria-label="Review effect" value={effect} onChange={e => setEffect(e.target.value)}><option value="all">All changes</option><option value="new">New items</option><option value="duplicate">Duplicates</option><option value="replacement">Replacements</option></SettingsSelect>
         <button className="btn" disabled={busy || !visible.length} onClick={() => setSelected(prev => new Set([...prev, ...visible.map(keyOf)]))}>Select filtered ({visible.length})</button>
         <button className="btn" disabled={busy || !selected.size} onClick={() => setSelected(new Set())}>Clear selection</button>
       </MobileControls>

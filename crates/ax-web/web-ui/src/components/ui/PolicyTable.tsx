@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { SortDir } from './policyListUtils';
 import MobileControls from './MobileControls';
+import SettingsSelect from './SettingsSelect';
 
 export function PolicyToolbar({ children }: { children: ReactNode }) {
   return <MobileControls className="policy-toolbar">{children}</MobileControls>;
@@ -21,7 +22,7 @@ export function PolicySortControl<K extends string>({
 }) {
   return (
     <span className="policy-sort-control">
-      <select
+      <SettingsSelect
         className="settings-select policy-toolbar-select"
         value={sortKey}
         onChange={(e) => {
@@ -35,7 +36,7 @@ export function PolicySortControl<K extends string>({
             Sort: {o.label}
           </option>
         ))}
-      </select>
+      </SettingsSelect>
       <button
         type="button"
         className="btn btn-compact btn-subtle"

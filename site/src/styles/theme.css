@@ -364,3 +364,17 @@ html[data-ax-motion="paused"] .ax-reveal-pending { opacity:1; transform:none; }
 :root[data-theme="light"] .sl-markdown-content strong{color:var(--cg-ink)}
 :root[data-theme="light"] .sl-markdown-content a:hover{color:#284d00}
 :root[data-theme="light"] .sidebar-content a[aria-current="page"]{background:#e4f1d7;color:#20281d}
+
+.expressive-code .copy .feedback.show {
+  opacity: 1;
+  transform: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #b9ff6a;
+  color: #101510;
+  font: 650 12px/1 'IBM Plex Mono', monospace;
+}
+.install-block .copy[data-copied="true"] {
+  background: #b9ff6a;
+  color: #101510;
+}

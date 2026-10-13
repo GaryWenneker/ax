@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LocalExport, LocalClient, PublicationList, publicationRequest, RemoteMcpError } from '../remoteMcpApi';
+import SettingsSelect from './ui/SettingsSelect';
 
 type Props = { workspace: PublicationList | null; onStale: () => void };
 const localClients: { id: LocalClient; label: string }[] = [
@@ -69,9 +70,9 @@ export default function LocalMcpConfigSection({ workspace, onStale }: Props) {
   return <section className="local-mcp-config" aria-labelledby="local-mcp-title">
     <h3 id="local-mcp-title">Use on this computer</h3>
     <p>Connect an app to <strong>{workspace?.projectLabel ?? 'your active project'}</strong> here. Ax prepares the settings; no server file or sign-in is required.</p>
-    <label>App<select aria-label="Local MCP app" value={client} disabled={!workspace || busy} onChange={e => {
+    <label>App<SettingsSelect aria-label="Local MCP app" value={client} disabled={!workspace || busy} onChange={e => {
       const next = localClients.find(c => c.id === e.target.value); if (next) { setOutput(null); setClient(next.id); }
-    }}>{localClients.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
+    }}>{localClients.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</SettingsSelect></label>
     <div className="remote-publish-actions">
       <button type="button" className="btn btn-primary" disabled={!output || busy} onClick={() => void useConfiguration('thisComputer', 'copy')}>Copy for this computer</button>
       {shareable && <button type="button" className="btn" disabled={!output || busy} onClick={() => void useConfiguration('projectFolder', 'copy')}>Copy to share with project</button>}

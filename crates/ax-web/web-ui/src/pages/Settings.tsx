@@ -21,6 +21,7 @@ import { DEFAULT_SONAR_CONFIG } from '../lib/sonarGuide';
 import { loadThemeId, THEME_CHANGED } from '../lib/themes';
 import { SETTINGS_GROUPS, readSettingsSection, type SettingsSectionId } from '../lib/settingsNavigation';
 import { TIMEZONE_OPTIONS, browserTimeZone } from '../lib/timeZone';
+import SettingsSelect from '../components/ui/SettingsSelect';
 import {
   fetchReviewLanguage,
   fetchShipConfig,
@@ -349,7 +350,7 @@ export default function SettingsPage() {
               title="Timezone"
               description={`Display Logging Date/time in this zone and rotate daily log files at midnight here. Line timestamps in files stay UTC. Browser local is currently ${browserTimeZone()}.`}
             >
-              <select
+              <SettingsSelect
                 className="settings-select"
                 value={config.ui?.timezone ?? ''}
                 disabled={!!busy || !configLoaded}
@@ -367,7 +368,7 @@ export default function SettingsPage() {
                   !TIMEZONE_OPTIONS.some((o) => o.value === config.ui?.timezone) && (
                     <option value={config.ui.timezone}>{config.ui.timezone}</option>
                   )}
-              </select>
+              </SettingsSelect>
             </SettingRow>
 
 
@@ -440,7 +441,7 @@ export default function SettingsPage() {
             </SettingRow>
 
             <SettingRow title="Index scope" description="Incremental syncs dirty files; full re-indexes the entire codebase.">
-              <select
+              <SettingsSelect
                 className="settings-select"
                 value={config.quality_gate.index_mode ?? 'incremental'}
                 disabled={!!busy}
@@ -453,7 +454,7 @@ export default function SettingsPage() {
               >
                 <option value="incremental">Incremental (sync)</option>
                 <option value="full">Full codebase</option>
-              </select>
+              </SettingsSelect>
             </SettingRow>
 
             <div className="settings-divider" />
@@ -463,7 +464,7 @@ export default function SettingsPage() {
               title="Review comment language"
               description="Language of comments the agent posts on a pull request. Chat stays English."
             >
-              <select
+              <SettingsSelect
                 className="settings-select"
                 value={reviewLanguage}
                 disabled={!!busy || !configLoaded}
@@ -475,11 +476,11 @@ export default function SettingsPage() {
                     {opt.name}
                   </option>
                 ))}
-              </select>
+              </SettingsSelect>
             </SettingRow>
 
             <SettingRow title="PR provider" description="Where ship opens and updates pull requests.">
-              <select
+              <SettingsSelect
                 className="settings-select"
                 value={config.remote.provider}
                 disabled={!!busy}
@@ -487,7 +488,7 @@ export default function SettingsPage() {
               >
                 <option value="azure_devops">Azure DevOps</option>
                 <option value="github">GitHub</option>
-              </select>
+              </SettingsSelect>
             </SettingRow>
 
             {config.remote.provider === 'azure_devops' && (

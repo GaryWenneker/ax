@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import ModalShell from './ModalShell';
 import { BusyLabel } from './ui/PageLayout';
+import SettingsSelect from './ui/SettingsSelect';
 import {
   AUTO_SYNC_OPTIONS,
   DEFAULT_SHARE_CONFIG,
@@ -564,7 +565,7 @@ export default function PolicyShareSettingsSection() {
         </SettingRow>
 
         <SettingRow title="Import mode" description={importModeHelp}>
-          <select
+          <SettingsSelect
             className="settings-select"
             value={config.importMode}
             disabled={!loaded || !!busy}
@@ -581,11 +582,11 @@ export default function PolicyShareSettingsSection() {
                 {opt.label}
               </option>
             ))}
-          </select>
+          </SettingsSelect>
         </SettingRow>
 
         <SettingRow title="Auto-sync interval" description="Background pull interval when ax web is running (0 = manual only).">
-          <select
+          <SettingsSelect
             className="settings-select"
             value={String(config.autoSyncMinutes)}
             disabled={!loaded || !!busy}
@@ -605,7 +606,7 @@ export default function PolicyShareSettingsSection() {
             {!AUTO_SYNC_OPTIONS.some((o) => o.value === config.autoSyncMinutes) && (
               <option value={config.autoSyncMinutes}>Every {config.autoSyncMinutes} minutes</option>
             )}
-          </select>
+          </SettingsSelect>
         </SettingRow>
 
         <div className="settings-divider" />

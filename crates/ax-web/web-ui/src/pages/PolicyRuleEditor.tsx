@@ -20,6 +20,7 @@ import { usePageContext } from '../context/UiContext';
 import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
 import { RULE_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { SKILL_GROUPS, resolveSkillGroup } from '../skillGroups';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 interface Props {
   ruleId: string | null;
@@ -195,7 +196,7 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
                       />
                     </PageRow>
                     <PageRow title="Level" description="CRITICAL rules block edits via ax_guard.">
-                      <select
+                      <SettingsSelect
                         className="settings-select"
                         value={fm.level}
                         onChange={(e) => setFm({ ...fm, level: e.target.value })}
@@ -203,13 +204,13 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
                         <option>CRITICAL</option>
                         <option>WARNING</option>
                         <option>INFO</option>
-                      </select>
+                      </SettingsSelect>
                     </PageRow>
                     <PageRow
                       title="Scope"
                       description="Company/user private live under ~/.ax; project private is gitignored."
                     >
-                      <select
+                      <SettingsSelect
                         className="settings-select"
                         value={fm.scope || 'project'}
                         onChange={(e) => setFm({ ...fm, scope: e.target.value })}
@@ -217,13 +218,13 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
                         {POLICY_SCOPES.map((s) => (
                           <option key={s.value} value={s.value}>{s.label}</option>
                         ))}
-                      </select>
+                      </SettingsSelect>
                     </PageRow>
                     <PageRow
                       title="Storage"
                       description="Per-item override of the project files/database default. Empty = inherit."
                     >
-                      <select
+                      <SettingsSelect
                         className="settings-select"
                         value={fm.storage ?? ''}
                         onChange={(e) =>
@@ -238,7 +239,7 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
                         <option value="">Project default</option>
                         <option value="files">Files (MD)</option>
                         <option value="database">Database</option>
-                      </select>
+                      </SettingsSelect>
                     </PageRow>
                     <PageRow
                       title="Source"
@@ -299,7 +300,7 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
                       />
                     </PageRow>
                     <PageRow title="Group" description="Catalog folder on the Rules list. Empty groups stay available here.">
-                      <select
+                      <SettingsSelect
                         className="settings-select"
                         value={fm.group || 'ungrouped'}
                         onChange={(e) => setFm({ ...fm, group: e.target.value })}
@@ -308,7 +309,7 @@ export default function PolicyRuleEditor({ ruleId, origin, projectId, onBack }: 
                         {SKILL_GROUPS.map((g) => (
                           <option key={g.id} value={g.id}>{g.label}</option>
                         ))}
-                      </select>
+                      </SettingsSelect>
                     </PageRow>
                     <PageRow title="Globs" description="Comma-separated file patterns.">
                       <input

@@ -57,6 +57,7 @@ import { loadJson, saveJson } from '../lib/uiStorage';
 import AutoGroupModal from '../components/AutoGroupModal';
 import PolicyGraphOverlay from '../components/PolicyGraphOverlay';
 import { menuTargets, nextRowSelection, toggleVisibleSelection } from '../lib/policySelection';
+import SettingsSelect from '../components/ui/SettingsSelect';
 import {
   POLICY_BLADE_DISMISS_MS,
   policyDetailOpen,
@@ -472,7 +473,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
               placeholder="Search name or add label…"
               ariaLabel="Filter skills by labels and text"
             />
-            <select
+            <SettingsSelect
               className="settings-select policy-toolbar-select"
               value={scope}
               onChange={(e) => setScope(e.target.value)}
@@ -482,8 +483,8 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
               {POLICY_SCOPES.map((s) => (
                 <option key={s.value} value={s.value}>{s.label}</option>
               ))}
-            </select>
-            <select
+            </SettingsSelect>
+            <SettingsSelect
               className="settings-select policy-toolbar-select"
               value={origin}
               onChange={(e) => setOrigin(e.target.value)}
@@ -492,7 +493,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
               <option value="">All databases</option>
               <option value="project">This project (ax.db)</option>
               <option value="global">Other projects (global.db)</option>
-            </select>
+            </SettingsSelect>
             <PolicySortControl
               options={SKILL_SORT_OPTIONS}
               sortKey={sortKey}

@@ -52,6 +52,7 @@ import { MEMORY_CATEGORIES, memoryCategory } from '../memoryCategory';
 import { useTheme } from '../hooks/useTheme';
 import { usePageContext } from '../context/UiContext';
 import { formatInstantInZone, browserTimeZone } from '../lib/timeZone';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 const KIND_ICONS: Record<string, string> = {
   decision: 'law',
@@ -341,14 +342,14 @@ export default function MemoryPage() {
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                 />
-                <select
+                <SettingsSelect
                   className="settings-select"
                   value={newKind}
                   onChange={(e) => setNewKind(e.target.value)}
                   aria-label="Memory kind"
                 >
                   {KIND_OPTIONS.map((k) => <option key={k} value={k}>{k}</option>)}
-                </select>
+                </SettingsSelect>
               </div>
               <textarea
                 className="settings-input memory-composer-body"

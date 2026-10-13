@@ -63,7 +63,19 @@ export function mountMinimalDownload(): void {
     install.hidden = false;
     code.textContent = installerCommand(selected);
     void navigator.clipboard?.writeText(installerCommand(selected)).then(() => {
-      if (os === selected) status.textContent = 'Install command copied. Paste into your terminal and press Enter.';
+      if (os !== selected || !title || !main) return;
+      status.textContent = 'Install command copied. Paste into your terminal and press Enter.';
+      title.textContent = 'Copied';
+      copy.textContent = 'Copied';
+      main.dataset.copied = 'true';
+      copy.dataset.copied = 'true';
+      window.setTimeout(() => {
+        if (os !== selected) return;
+        title.textContent = `Copy ${osLabel[selected]} install command`;
+        copy.textContent = 'Copy install command';
+        delete main.dataset.copied;
+        delete copy.dataset.copied;
+      }, 2000);
     }).catch(() => { if (os === selected) status.textContent = 'Select and copy the command above.'; });
     if (!navigator.clipboard) status.textContent = 'Select and copy the command above.';
   }

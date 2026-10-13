@@ -13,6 +13,7 @@ import { Spinner } from '../components/ui/Spinner';
 import { usePageContext } from '../context/UiContext';
 import { DEFAULT_SONAR_CONFIG, SONAR_GUIDE_SECTIONS } from '../lib/sonarGuide';
 import type { SonarTab } from '../lib/routes';
+import SettingsSelect from '../components/ui/SettingsSelect';
 import {
   bootstrapSonar,
   discoverSonar,
@@ -731,7 +732,7 @@ export default function SonarQubePage({
               description="Container engine preference."
               locked={sonarInfraLocked ? sonarInfraLockReason : undefined}
             >
-              <select
+              <SettingsSelect
                 className="settings-select"
                 value={config.sonar.container_runtime}
                 disabled={sonarInfraLocked || !!busy}
@@ -742,7 +743,7 @@ export default function SonarQubePage({
                 <option value="auto">Auto (Podman → Docker)</option>
                 <option value="podman">Podman</option>
                 <option value="docker">Docker</option>
-              </select>
+              </SettingsSelect>
             </SettingRow>
 
             <SettingRow title="Project key" description="SonarQube project identifier.">
@@ -766,7 +767,7 @@ export default function SonarQubePage({
             </SettingRow>
 
             <SettingRow title="Scan scope" description="Incremental scans changed files only; full scans the entire project.">
-              <select
+              <SettingsSelect
                 className="settings-select"
                 value={config.sonar.scan_mode ?? 'incremental'}
                 onChange={(e) =>
@@ -775,7 +776,7 @@ export default function SonarQubePage({
               >
                 <option value="incremental">Incremental (changed files)</option>
                 <option value="full">Full codebase</option>
-              </select>
+              </SettingsSelect>
             </SettingRow>
 
             <div className="settings-divider" />

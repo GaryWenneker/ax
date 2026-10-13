@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import SettingsSelect from './ui/SettingsSelect';
 import {
   draftsFromProperties,
   propertiesFromDrafts,
@@ -112,7 +113,7 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
             </div>
             <div className="settings-row-control policy-property-value">
               {!filled ? (
-                <select
+                <SettingsSelect
                   className="settings-select policy-property-type"
                   aria-label={`Property ${index + 1} type`}
                   value={row.kind}
@@ -121,7 +122,7 @@ export default function PolicyPropertiesEditor({ properties, reserved, descripti
                   {KINDS.map((kind) => (
                     <option key={kind.value} value={kind.value}>{kind.label}</option>
                   ))}
-                </select>
+                </SettingsSelect>
               ) : null}
               {row.kind === 'boolean' ? (
                 <button

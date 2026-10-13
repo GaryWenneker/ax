@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { updateAgentProfile, type ProfileEntry } from '../../agentApi';
 import ModalShell from '../ModalShell';
+import SettingsSelect from '../ui/SettingsSelect';
 
 interface Props {
   agent: string;
@@ -101,13 +102,13 @@ export default function ProfileEditor({ agent, profile, readonly, onSaved, onErr
               <>
                 <label className="agent-profile-field">
                   <span>Provider</span>
-                  <select className="settings-input" value={provider} disabled={readonly} onChange={(e) => setProvider(e.target.value)}>
+                  <SettingsSelect className="settings-input" value={provider} disabled={readonly} onChange={(e) => setProvider(e.target.value)}>
                     <option value="">Default</option>
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
                     <option value="google">Google</option>
                     <option value="openrouter">OpenRouter</option>
-                  </select>
+                  </SettingsSelect>
                 </label>
                 <label className="agent-profile-field">
                   <span>API key env var</span>

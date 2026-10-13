@@ -4,6 +4,7 @@ import { proposeGroups } from '../lib/autoGroup';
 import { fetchPolicyRule, fetchPolicySkill, savePolicyRule, savePolicySkill } from '../policyApi';
 import type { PolicyRuleRow, PolicySkillRow } from '../policyTypes';
 import { SKILL_GROUPS, ruleResolvedGroup, skillGroupLabel, skillResolvedGroup } from '../skillGroups';
+import SettingsSelect from './ui/SettingsSelect';
 
 type Props =
   | { kind: 'rule'; rows: PolicyRuleRow[]; onClose: () => void; onApplied: () => void }
@@ -134,7 +135,7 @@ export default function AutoGroupModal(props: Props) {
               />
               <span>{row.name}</span>
             </label>
-            <select
+            <SettingsSelect
               aria-label={`Group for ${row.name}`}
               value={choice[row.key] ?? ''}
               onChange={(e) => {
@@ -154,7 +155,7 @@ export default function AutoGroupModal(props: Props) {
                   {skillGroupLabel(g.id)}
                 </option>
               ))}
-            </select>
+            </SettingsSelect>
           </li>
         ))}
       </ul>

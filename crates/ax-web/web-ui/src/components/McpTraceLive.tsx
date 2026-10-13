@@ -55,6 +55,7 @@ import { detectStructuredLang, highlightStructured } from '../lib/mcpSyntax';
 import { navigateRoute } from '../lib/routes';
 import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import { fetchShipConfig } from '../shipApi';
+import SettingsSelect from './ui/SettingsSelect';
 
 const KIND_LABELS: Record<TraceKind, string> = {
   inbound: 'Inbound',
@@ -1247,7 +1248,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
         <div className="mcp-trace-filter-controls">
           <label className="mcp-trace-filter-field">
             <span className="mcp-trace-filter-field-label">Date</span>
-            <select
+            <SettingsSelect
               className="mcp-trace-filter-select"
               value={dateFilter}
               onChange={(e) => setDateFilter(e.target.value)}
@@ -1259,11 +1260,11 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                   {d}
                 </option>
               ))}
-            </select>
+            </SettingsSelect>
           </label>
           <label className="mcp-trace-filter-field">
             <span className="mcp-trace-filter-field-label">Tool</span>
-            <select
+            <SettingsSelect
               className="mcp-trace-filter-select"
               value={toolFilter}
               onChange={(e) => setToolFilter(e.target.value)}
@@ -1275,7 +1276,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                   {t}
                 </option>
               ))}
-            </select>
+            </SettingsSelect>
           </label>
           <label className="mcp-trace-filter-field mcp-trace-filter-field--grow">
             <span className="mcp-trace-filter-field-label">Search</span>

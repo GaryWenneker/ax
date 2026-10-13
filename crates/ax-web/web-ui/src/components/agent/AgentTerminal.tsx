@@ -27,6 +27,7 @@ import {
 import AgentPtyTerminal from './AgentPtyTerminal';
 import Codicon from '../Codicon';
 import WorkspacePicker from '../WorkspacePicker';
+import SettingsSelect from '../ui/SettingsSelect';
 
 type ChatLine =
   | { kind: 'user'; text: string }
@@ -300,7 +301,7 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
         <WorkspacePicker compact />
         <label className="agent-terminal-select-wrap">
           <span className="sr-only">Agent</span>
-          <select
+          <SettingsSelect
             className="settings-input agent-terminal-select"
             value={agent}
             onChange={(e) => void onAgentChange(e.target.value)}
@@ -308,11 +309,11 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
             {agentOptions.map((o) => (
               <option key={o.id} value={o.id}>{o.label}</option>
             ))}
-          </select>
+          </SettingsSelect>
         </label>
         <label className="agent-terminal-select-wrap">
           <span className="sr-only">Profile</span>
-          <select
+          <SettingsSelect
             className="settings-input agent-terminal-select"
             value={profileId}
             onChange={(e) => void onProfileChange(e.target.value)}
@@ -321,7 +322,7 @@ export default function AgentTerminal({ maximized, onToggleMaximize }: Props) {
             {profiles.map((p: ProfileEntry) => (
               <option key={p.id} value={p.id}>{p.label}</option>
             ))}
-          </select>
+          </SettingsSelect>
         </label>
         {isExternal && (
           <span className="agent-terminal-status">{labelFor(agent)} · Interactive CLI</span>

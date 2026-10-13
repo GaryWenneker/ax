@@ -38,6 +38,7 @@ import { usePersistedString } from '../hooks/usePersistedState';
 import { usePageContext } from '../context/UiContext';
 
 import type { FileRoot, FileRow } from '../types';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 
 
@@ -410,7 +411,7 @@ export default function FilesPage() {
 
               />
 
-              <select
+              <SettingsSelect
 
                 className="settings-select"
 
@@ -434,7 +435,7 @@ export default function FilesPage() {
 
                 ))}
 
-              </select>
+              </SettingsSelect>
 
             </FilterBar>
 

@@ -20,6 +20,7 @@ import {
 import { usePersistedNumber, usePersistedString } from '../hooks/usePersistedState';
 import { usePageContext } from '../context/UiContext';
 import type { NodeRow } from '../types';
+import SettingsSelect from '../components/ui/SettingsSelect';
 
 const LIMIT = 50;
 
@@ -149,7 +150,7 @@ export default function NodesPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <select
+            <SettingsSelect
               className="settings-select"
               value={kind}
               onChange={(e) => setKind(e.target.value)}
@@ -159,8 +160,8 @@ export default function NodesPage() {
               {KIND_OPTIONS.filter(Boolean).map((k) => (
                 <option key={k} value={k}>{k}</option>
               ))}
-            </select>
-            <select
+            </SettingsSelect>
+            <SettingsSelect
               className="settings-select"
               value={lang}
               onChange={(e) => setLang(e.target.value)}
@@ -170,7 +171,7 @@ export default function NodesPage() {
               {languages.map((l) => (
                 <option key={l} value={l}>{l}</option>
               ))}
-            </select>
+            </SettingsSelect>
           </FilterBar>
 
           <PageCardBody>

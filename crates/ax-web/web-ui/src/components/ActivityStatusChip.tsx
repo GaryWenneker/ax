@@ -25,8 +25,8 @@ function relativeTime(ts: number, now: number): string {
   const min = Math.round(sec / 60);
   if (min < 60) return `${min}m ago`;
   const hr = Math.round(min / 60);
-  if (hr < 48) return `${hr}h ago`;
-  return new Date(ts).toLocaleString();
+  if (hr <= 24) return `${hr}h ago`;
+  return new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function kindClass(kind: string): string {

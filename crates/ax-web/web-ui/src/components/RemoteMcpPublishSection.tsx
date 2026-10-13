@@ -6,6 +6,7 @@ import ModalShell from './ModalShell';
 import LocalMcpConfigSection from './LocalMcpConfigSection';
 import RemoteHostSetup from './RemoteHostSetup';
 import ServiceStatus from './ServiceStatus';
+import SettingsSelect from './ui/SettingsSelect';
 
 const clients: { id: RemoteClient; label: string }[] = [
   { id: 'cursor', label: 'Cursor' }, { id: 'vscode', label: 'VS Code' },
@@ -167,18 +168,18 @@ export default function RemoteMcpPublishSection() {
     {loading && <p role="status">Loading project publications…</p>}
     {data && data.publications.length === 0 && <div className="remote-publish-empty"><p>No remote server is registered for this project.</p><p>For an app on this computer, use the copy buttons above. To offer this project to another computer, choose <strong>Set up remote MCP</strong> on the hosting computer. Ax can generate the server configuration and manage its authentication.</p><p>Receiving someone else’s connection? Use <strong>Paste connection details</strong> under <strong>Connect to another Ax</strong> below.</p></div>}
     {data && data.publications.length > 1 && <div className="settings-row"><label htmlFor="remote-publisher">Publisher</label>
-      <select id="remote-publisher" value={selected} disabled={busy} onChange={e => { setOutput(null); setSelected(e.target.value); }}>
+      <SettingsSelect id="remote-publisher" value={selected} disabled={busy} onChange={e => { setOutput(null); setSelected(e.target.value); }}>
         <option value="">Choose a publisher…</option>{data.publications.map(p => <option key={p.id} value={p.id}>{p.publisherLabel} · {p.remoteProjectId}</option>)}
-      </select></div>}
+      </SettingsSelect></div>}
     {publication && <>
       <dl className="remote-publish-details"><dt>Publisher</dt><dd>{publication.publisherLabel}</dd><dt>Remote project ID</dt><dd>{publication.remoteProjectId}</dd><dt>MCP URL</dt><dd>{publication.endpointUrl}</dd></dl>
       <p className="remote-publish-state"><ServiceStatus state={runtime === 'running' ? 'running' : runtime === 'stopped' ? 'stopped' : 'warning'} label={runtime === 'running' ? 'Running' : runtime === 'stopped' ? 'Stopped' : 'Status unknown'} /> {runtime === 'running' ? 'Local server running. Public endpoint has not been verified.' : runtime === 'stopped' ? 'Server stopped. You can copy the configuration and start the server separately.' : 'Runtime status unknown. The last local heartbeat is stale.'}
         {publication.lastHeartbeatAt && <span> Last heartbeat: {new Date(publication.lastHeartbeatAt * 1000).toLocaleString()}.</span>}</p>
-      <div className="remote-publish-controls"><label>Client<select aria-label="MCP client" value={client} disabled={busy} onChange={e => {
+      <div className="remote-publish-controls"><label>Client<SettingsSelect aria-label="MCP client" value={client} disabled={busy} onChange={e => {
         const next = e.target.value; if (!isRemoteClient(next)) return; setOutput(null); setClient(next); setTransport(next === 'cline' || next === 'axProxy' ? 'proxy' : 'direct');
-      }}>{clients.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
-      {!['chatgpt', 'claudeCode', 'axProxy'].includes(client) && <label>Transport<select aria-label="MCP transport" value={transport} disabled={busy} onChange={e => { setOutput(null); if (e.target.value === 'direct' || e.target.value === 'proxy') setTransport(e.target.value); }}>
-        <option value="direct">Direct HTTP with OAuth</option><option value="proxy">Ax proxy (stdio)</option></select></label>}</div>
+      }}>{clients.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</SettingsSelect></label>
+      {!['chatgpt', 'claudeCode', 'axProxy'].includes(client) && <label>Transport<SettingsSelect aria-label="MCP transport" value={transport} disabled={busy} onChange={e => { setOutput(null); if (e.target.value === 'direct' || e.target.value === 'proxy') setTransport(e.target.value); }}>
+        <option value="direct">Direct HTTP with OAuth</option><option value="proxy">Ax proxy (stdio)</option></SettingsSelect></label>}</div>
       {output && <>
         {output.requirements.length > 0 && <ul className="remote-publish-requirements">{output.requirements.map(r => <li key={r}>{r}</li>)}</ul>}
         <label className="remote-publish-preview">{output.format === 'url' ? 'Connection text' : 'Client configuration'}<textarea ref={text} aria-label="Generated MCP configuration" readOnly value={output.content} rows={output.format === 'url' ? 3 : 12} spellCheck={false} /></label>
