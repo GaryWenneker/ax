@@ -98,11 +98,18 @@ test('member and client forms send email and role-limited defaults', async ({ pa
   await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Clients & tokens', exact: true }).click();
   await page.getByRole('button', { name: 'Add client', exact: true }).click();
   await dialog.getByLabel('Client name').fill('Read-only integration');
-  await dialog.getByLabel('Application type').selectOption('custom');
-  await dialog.getByLabel('Team member').selectOption('new-member');
+  await dialog.getByRole('button', { name: 'Application type' }).click();
+  await dialog.getByRole('listbox', { name: 'Application type' }).getByRole('option', { name: 'Custom', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Team member' }).click();
+  await dialog.getByRole('listbox', { name: 'Team member' }).getByRole('option', { name: 'Read-only colleague', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add client', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  expect(calls.find(call => call.path === '/api/access/clients' && call.method === 'POST')?.body.scopes).toEqual(['memory:read', 'preflight:read', 'context:read']);
+  const createdClient = calls.find(call => call.path === '/api/access/clients' && call.method === 'POST')?.body;
+  expect(createdClient).toMatchObject({
+    client_type: 'custom',
+    member_id: 'new-member',
+    scopes: ['memory:read', 'preflight:read', 'context:read'],
+  });
 });
 
 test('read-only sessions disable writes and tokens vanish on navigation', async ({ page }) => {
