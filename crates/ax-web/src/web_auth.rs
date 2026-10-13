@@ -692,6 +692,11 @@ pub async fn gate(State(hub):State<WebHub>,mut req:Request,next:Next)->Response 
     req.extensions_mut().insert(member_id);
     next.run(req).await
 }
+async fn no_store(req:Request,next:Next) -> Response {
+    let mut response=next.run(req).await;
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
 pub fn router(hub:WebHub)->Router {
     Router::new()
         .route("/status",get(status))
@@ -711,6 +716,7 @@ pub fn router(hub:WebHub)->Router {
         .route("/passkeys/authentication/start",post(auth_start))
         .route("/passkeys/authentication/finish",post(auth_finish))
         .route("/passkeys/{id}",axum::routing::delete(remove_key).patch(rename_key))
+        .layer(axum::middleware::from_fn(no_store))
         .with_state(hub)
 }
 #[cfg(test)]
