@@ -31,7 +31,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
-          git merge --no-edit origin/main
+          # Concurrent main adjusted the same dependency stanza. Prefer the
+          # reviewed Vite major during conflict resolution, then require the
+          # independently added esbuild override to remain in place.
+          git merge --no-edit -X ours origin/main
+          node -e 'const p=require("./crates/ax-web/web-ui/package.json"); if(!p.devDependencies.vite.startsWith("^7.") || p.overrides.esbuild !== "0.25.12") process.exit(1)'
       - name: Regenerate eligible npm versions
         working-directory: crates/ax-web/web-ui
         shell: bash
