@@ -3,6 +3,7 @@ import { registerPasskey } from '../lib/passkeys';
 
 type Passkey = { id: string; label: string; created_at: string; revoked: boolean };
 type Status = { enabled: boolean; passkeys: boolean };
+type WebSession = { id: string; current: boolean; created_at: number; last_seen_at: number; expires_at: number };
 async function request(url: string, init?: RequestInit) {
   const result = await fetch(url, { cache: 'no-store', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, ...init });
@@ -13,6 +14,8 @@ async function request(url: string, init?: RequestInit) {
 export default function SecuritySettingsSection() {
   const [status, setStatus] = useState<Status | null>(null);
   const [keys, setKeys] = useState<Passkey[]>([]);
+  const [sessions, setSessions] = useState<WebSession[]>([]);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +25,10 @@ export default function SecuritySettingsSection() {
     setStatus(value);
     const response = await fetch('/api/web-auth/passkeys', { cache: 'no-store' });
     if (response.ok) setKeys(((await response.json()) as { passkeys: Passkey[] }).passkeys);
+    if (value.enabled) {
+      const sessionsResponse = await fetch('/api/web-auth/sessions', { cache: 'no-store' });
+      if (sessionsResponse.ok) setSessions(((await sessionsResponse.json()) as { sessions: WebSession[] }).sessions);
+    } else setSessions([]);
   };
   useEffect(() => { void reload().catch(e => setError(String(e))); }, []);
   async function execute(fn: () => Promise<unknown>, message: string) {
@@ -42,6 +49,19 @@ export default function SecuritySettingsSection() {
     await execute(() => request('/api/web-auth/config', { method: 'POST',
       body: JSON.stringify({ enabled: !status.enabled }) }), status.enabled ? 'Sign-in disabled.' : 'Sign-in enabled.');
     window.dispatchEvent(new Event('ax-web-auth-changed'));
+  }
+  async function generateCodes() {
+    if (!window.confirm('Regenerate recovery codes? Your previous codes will stop working.')) return;
+    await execute(async () => {
+      const response = await request('/api/web-auth/recovery/rotate', { method: 'POST' }) as { codes: string[] };
+      setRecoveryCodes(response.codes);
+    }, 'Recovery codes generated. Store them safely.');
+  }
+  async function revokeSession(id: string) {
+    if (!window.confirm('End this browser session?')) return;
+    await execute(() => request(`/api/web-auth/sessions/${id}`, { method: 'DELETE' }), 'Session ended.');
+    const current = sessions.find(session => session.id === id)?.current;
+    if (current) window.dispatchEvent(new Event('ax-web-auth-changed'));
   }
   async function signout() {
     await execute(() => request('/api/web-auth/logout', { method: 'POST' }), 'Signed out.');
@@ -70,6 +90,31 @@ export default function SecuritySettingsSection() {
         {status?.enabled && <button type="button" className="btn" disabled={busy} onClick={() => void signout()}>Sign out</button>}
       </div>
     </section>
+    <section className="settings-card">
+      <div className="settings-card-header"><h2>Recovery codes</h2><p>Keep a private, one-time recovery method in case all your passkeys are unavailable.</p></div>
+      <div className="settings-card-body">
+        {recoveryCodes ? <div role="region" aria-label="New recovery codes" className="access-token">
+          <p>These codes are displayed only now. Store them offline. Each code works once.</p>
+          <ul>{recoveryCodes.map(code => <li key={code}><code>{code}</code></li>)}</ul>
+          <button className="btn" type="button" onClick={() => {
+            void navigator.clipboard.writeText(recoveryCodes.join('\n'));
+          }}>Copy codes</button>
+          <button className="btn" type="button" onClick={() => setRecoveryCodes(null)}>I've saved these codes</button>
+        </div> : <button className="btn" type="button" disabled={busy} onClick={() => void generateCodes()}>Generate recovery codes</button>}
+      </div>
+    </section>
+    {status?.enabled && <section className="settings-card">
+      <div className="settings-card-header"><h2>Active sessions</h2><p>End browser sessions you no longer recognize.</p></div>
+      <div className="settings-card-body">
+        {sessions.map(session => <div className="settings-row" key={session.id}>
+          <div className="settings-row-label"><strong>{session.current ? 'This browser' : 'Other browser'}</strong>
+            <p>Last active {new Date(session.last_seen_at * 1000).toLocaleString()}</p>
+          </div>
+          <button className="btn danger" type="button" disabled={busy} onClick={() => void revokeSession(session.id)}>End session</button>
+        </div>)}
+        {!sessions.length && <p>No active sessions found.</p>}
+      </div>
+    </section>}
     <section className="settings-card">
       <div className="settings-card-header"><h2>My passkeys</h2><p>Register Touch ID, Face ID, Windows Hello or a hardware security key. You can add more than one.</p></div>
       <div className="settings-card-body">
