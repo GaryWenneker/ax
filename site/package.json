@@ -23,7 +23,7 @@
     "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "@netlify/functions": "^4.3.0",
+    "@netlify/functions": "^6.0.2",
     "puppeteer": "^24.15.0",
     "typescript": "^5.0.0"
   },
