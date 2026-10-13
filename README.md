@@ -4,6 +4,13 @@
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 [![Supply-chain LCM: 7-day gate](assets/dependency-lifecycle.svg)](docs/DEPENDENCY_LIFECYCLE.md)
 [![Dependency Lifecycle Monitor](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml/badge.svg?branch=main)](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml)
+[![LCM Auto-Remediation](https://github.com/GaryWenneker/ax/actions/workflows/dependency-autofix.yml/badge.svg?branch=main)](https://github.com/GaryWenneker/ax/actions/workflows/dependency-autofix.yml)
+
+**Supply-chain lifecycle security:** Dependabot proposes dependency updates;
+the [LCM auto-remediation workflow](docs/DEPENDENCY_LIFECYCLE.md) also opens
+review-only PRs for safe npm lockfile fixes after a strict 7-day release-age
+gate. Automatic PR creation requires [GitHub repository permissions](docs/DEPENDENCY_LIFECYCLE.md#one-time-rights-for-automatic-pr-creation);
+nothing is merged or deployed automatically.
 
 **Download the [latest release](https://github.com/GaryWenneker/ax/releases/latest)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
