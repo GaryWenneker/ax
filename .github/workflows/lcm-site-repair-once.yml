@@ -41,7 +41,9 @@ jobs:
         run: |
           set -euo pipefail
           cutoff="$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')"
-          # Re-resolve the old Astro 6 peer graph; retaining that lock creates ERESOLVE.\n          rm -- package-lock.json\n          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --before="$cutoff"
+          # Re-resolve the old Astro 6 peer graph; retaining that lock creates ERESOLVE.
+          rm -- package-lock.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --before="$cutoff"
       - name: Enforce strict 168-hour release age
         run: python scripts/check_dependency_age.py --base origin/main
       - name: Block newly introduced known OSV advisories
