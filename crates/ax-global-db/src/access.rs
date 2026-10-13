@@ -299,7 +299,10 @@ pub async fn update_member_roles(
     sqlx::query(
         "UPDATE web_sessions SET revoked_at=unixepoch()
          WHERE member_id=? AND revoked_at IS NULL",
-    ).bind(id).execute(&mut *tx).await?;
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
