@@ -43,7 +43,7 @@ jobs:
           cargo test --locked -p ax-global-db multiple_roles_migrate_and_last_owner_stays_safe
           cargo test --locked -p ax-web web_auth::tests
           cargo test --locked -p ax-web access_api
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: resolved-cargo-lockfile

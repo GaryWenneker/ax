@@ -149,7 +149,7 @@ jobs:
         shell: pwsh
         run: ./scripts/package-release.ps1 -Bundle ${{ matrix.bundle }} -RustTarget ${{ matrix.target }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ax-${{ matrix.bundle }}
           path: dist/ax-${{ matrix.bundle }}.*
@@ -230,7 +230,7 @@ jobs:
           npm run build
           npm test
       - name: Upload released documentation
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: released-docs-site
           path: site/dist
