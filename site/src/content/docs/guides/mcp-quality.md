@@ -74,6 +74,10 @@ When a Cursor session id is known, lines include `session=<uuid>` for tighter co
 
 Open via the status-bar **Logging** chip, or navigate to `/logging`.
 
+Rows summarize routine activity as readable actions: **Workspace sync completed** with **19 files · 162 ms**, or **Git history captured** with **20 scanned · 2 captured**. A small marker sits in its own gutter. Only related call groups are connected; unrelated events have no dotted timeline. The Context column keeps kind/tool filters and avoids repeating an identical domain/tool label.
+
+The original entry is preserved. Search the complete message or filter Event by a raw field such as `duration_ms=162`; select the row and expand **Raw line** to inspect or copy exactly what Ax logged. Unrecognized or failed domain messages retain their text.
+
 | Control | Purpose |
 |---|---|
 | **Kind chips** | Filter Inbound / Outbound / Preview / Error / Internal / Enrich / plugin / lsp / ship / share / workspace / memory / policy / cli / embed / action |
@@ -88,6 +92,8 @@ Open via the status-bar **Logging** chip, or navigate to `/logging`.
 | **Status bar** | Live in / out / prev / err / event counts; muted danger tint when offline |
 | **Quality** | Opens the quality panel; the button includes the current score |
 | **Call Inspector** | Tap a row (or Enter) for pretty-printed JSON/XML and `key=value` fields |
+
+![Logging inspector with readable call steps and the original raw line](/screenshots/cc-logging-inspector-dark.png)
 
 Keyboard: `↑↓` / `j` `k` to move (down = older), Home = newest, End = oldest, Enter to inspect, Esc / `b` to back.
 
