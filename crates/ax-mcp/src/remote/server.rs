@@ -631,6 +631,9 @@ async fn post(
         Ok(outcome) => outcome,
         Err(_) => return error(StatusCode::GATEWAY_TIMEOUT, "Ax tool timed out"),
     };
+    if !outcome.verbose_lines.is_empty() {
+        crate::verbose::append_verbose_log_file(&outcome.verbose_lines, Some(&project.root));
+    }
     let mut value = match outcome.result {
         Ok(v) => v,
         Err(_) => return rpc(request.id, Err(("Ax request failed", -32603))),

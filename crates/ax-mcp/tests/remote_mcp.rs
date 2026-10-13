@@ -132,6 +132,38 @@ async fn initialize(app: &Router, project: &str, token: &str) -> String {
 }
 
 #[tokio::test]
+async fn remote_tool_call_appends_the_same_verbose_log_as_the_local_daemon() {
+    let (dir, app, _) = fixture().await;
+    let session = initialize(&app, "alpha", "test-ide-key").await;
+    let (status, _, body) = post(
+        &app,
+        "alpha",
+        Some("test-ide-key"),
+        Some(&session),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ax_status","arguments":{}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let log_dir = dir.path().join("alpha/.ax");
+    let text = std::fs::read_dir(&log_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("mcp-verbose-")
+        })
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
+        .collect::<String>();
+    assert!(
+        text.contains("inbound tool=ax_status"),
+        "remote call was not written to the verbose log: {text}"
+    );
+}
+
+#[tokio::test]
 async fn remote_tokens_require_signature_issuer_audience_expiry_and_scope() {
     let (_dir, app, config) = fixture().await;
     let verify = verifier(config);
