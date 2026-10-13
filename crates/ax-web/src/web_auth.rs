@@ -571,13 +571,10 @@ async fn auth_finish(headers:HeaderMap,Json(body):Json<CeremonyBody>) -> Result<
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot update passkey"))?;
     establish(&pool,&member_id,&headers,secure_origin()).await
 }
-async fn remove_key(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<SocketAddr>,
-    headers:HeaderMap,Path(id):Path<String>) -> Result<Json<serde_json::Value>,ErrorResponse> {
-    let pool=db().await?;
-    let actor=browser_member(&pool,&headers,peer,&hub).await?;
-    require_recent_if_enabled(&pool, &headers).await?;
-    // A single conditional statement serializes the final-Owner check with the
-    // revocation. Two concurrent requests cannot both remove the last keys.
+/// Atomically revoke an authenticator only if the last active Owner keeps
+/// another viable sign-in method.
+async fn revoke_passkey_in_db(pool: &SqlitePool, actor: &str, id: &str)
+    -> Result<bool, ErrorResponse> {
     let result=sqlx::query(
         "UPDATE web_passkeys SET revoked_at=unixepoch()
          WHERE id=? AND member_id=? AND revoked_at IS NULL
@@ -589,10 +586,17 @@ async fn remove_key(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<Socke
                     SELECT 1 FROM web_passkeys AS other
                     WHERE other.member_id=? AND other.id!=? AND other.revoked_at IS NULL
                 ))"
-    ).bind(&id).bind(&actor).bind(&actor).bind(&actor).bind(&actor).bind(&id)
-        .execute(&pool).await
+    ).bind(id).bind(actor).bind(actor).bind(actor).bind(actor).bind(id)
+        .execute(pool).await
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot revoke passkey"))?;
-    if result.rows_affected()!=1 {
+    Ok(result.rows_affected()==1)
+}
+async fn remove_key(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<SocketAddr>,
+    headers:HeaderMap,Path(id):Path<String>) -> Result<Json<serde_json::Value>,ErrorResponse> {
+    let pool=db().await?;
+    let actor=browser_member(&pool,&headers,peer,&hub).await?;
+    require_recent_if_enabled(&pool, &headers).await?;
+    if !revoke_passkey_in_db(&pool,&actor,&id).await? {
         return Err(err(StatusCode::CONFLICT,"Passkey not found or final Owner login method"));
     }
     let _=access::audit(&pool,Some(&actor),None,"web_auth.passkey_revoked","passkey",&id,&serde_json::json!({})).await;
@@ -712,6 +716,44 @@ pub fn router(hub:WebHub)->Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn revoking_two_owner_passkeys_preserves_one() {
+        let directory=tempfile::tempdir().unwrap();
+        let pool=open_and_init(&directory.path().join("auth.db")).await.unwrap();
+        access::bootstrap_owner(&pool,"owner","Local owner",None).await.unwrap();
+        for id in ["key-a","key-b"] {
+            sqlx::query("INSERT INTO web_passkeys(id,member_id,credential_id,credential_json)
+                VALUES (?, 'owner', ?, '{}')")
+                .bind(id).bind(id).execute(&pool).await.unwrap();
+        }
+        let (left,right)=tokio::join!(
+            revoke_passkey_in_db(&pool,"owner","key-a"),
+            revoke_passkey_in_db(&pool,"owner","key-b")
+        );
+        assert!(left.unwrap_or(false) || right.unwrap_or(false));
+        let still_active:(i64,)=sqlx::query_as(
+            "SELECT COUNT(*) FROM web_passkeys WHERE member_id='owner' AND revoked_at IS NULL"
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(still_active.0,1,"an active Owner must retain a usable passkey");
+        assert!(!revoke_passkey_in_db(&pool,"owner","key-a").await.unwrap());
+        assert!(!revoke_passkey_in_db(&pool,"owner","key-b").await.unwrap());
+    }
+    #[tokio::test]
+    async fn recovery_verifiers_are_consumed_once() {
+        let directory=tempfile::tempdir().unwrap();
+        let pool=open_and_init(&directory.path().join("auth.db")).await.unwrap();
+        access::bootstrap_owner(&pool,"owner","Owner",None).await.unwrap();
+        let code="axr-this-is-only-a-test-code";
+        sqlx::query("INSERT INTO web_recovery_codes(member_id,verifier) VALUES ('owner',?)")
+            .bind(hash(code)).execute(&pool).await.unwrap();
+        for expected in [1,0] {
+            let result=sqlx::query(
+                "UPDATE web_recovery_codes SET consumed_at=unixepoch()
+                 WHERE verifier=? AND consumed_at IS NULL"
+            ).bind(hash(code)).execute(&pool).await.unwrap();
+            assert_eq!(result.rows_affected(),expected);
+        }
+    }
     #[test] fn invalid_origins_and_cookie_parsing() {
         let mut headers=HeaderMap::new();
         headers.insert(header::HOST,"localhost:7070".parse().unwrap());
