@@ -143,6 +143,18 @@ fn passkey_ceremonies() -> &'static Mutex<HashMap<String,(Instant,Ceremony)>> {
     static STORE: OnceLock<Mutex<HashMap<String,(Instant,Ceremony)>>> = OnceLock::new();
     STORE.get_or_init(||Mutex::new(HashMap::new()))
 }
+fn login_attempts() -> &'static Mutex<HashMap<String, (u32, Instant)>> {
+    static STORE: OnceLock<Mutex<HashMap<String, (u32, Instant)>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn dummy_password_hash() -> &'static str {
+    static DUMMY: OnceLock<String> = OnceLock::new();
+    DUMMY.get_or_init(|| {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default().hash_password(b"dummy-unusable-password", &salt)
+            .expect("argon2 dummy hash").to_string()
+    })
+}
 enum Ceremony {
     Register { member_id: String, state: PasskeyRegistration },
     Authenticate { member_id: String, state: PasskeyAuthentication },
@@ -151,6 +163,7 @@ async fn store_challenge(ceremony: Ceremony) -> String {
     let id=fresh_secret();
     let mut map=passkey_ceremonies().lock().await;
     map.retain(|_,(created,_)|created.elapsed()<Duration::from_secs(180));
+    if map.len() >= 1000 { map.clear(); }
     map.insert(id.clone(),(Instant::now(),ceremony));
     id
 }
@@ -248,24 +261,40 @@ async fn configure(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<Socket
     let _=access::audit(&pool,Some(&actor),None,"web_auth.config_updated","installation","1",&serde_json::json!({"enabled":body.enabled})).await;
     Ok(Json(serde_json::json!({"enabled":body.enabled})))
 }
-async fn password_login(headers:HeaderMap,Json(body):Json<PasswordBody>) -> Result<Response,ErrorResponse> {
+async fn password_login(ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers:HeaderMap,Json(body):Json<PasswordBody>) -> Result<Response,ErrorResponse> {
     let pool=db().await?;
     if !enabled(&pool).await? {return Err(err(StatusCode::CONFLICT,"Login disabled"));}
     let identity=body.identity.trim();
     if identity.is_empty() || body.password.len()>1024 {return Err(err(StatusCode::UNAUTHORIZED,"Invalid credentials"));}
+    let limit_key = format!("{}:{}",peer.ip(),hash(identity));
+    {
+        let attempts=login_attempts().lock().await;
+        if attempts.get(&limit_key).is_some_and(|(count,first)|
+            *count >= 5 && first.elapsed() < Duration::from_secs(300)) {
+            return Err(err(StatusCode::TOO_MANY_REQUESTS,"Too many login attempts"));
+        }
+    }
     let row: Option<(String,String)> = sqlx::query_as(
         "SELECT m.id, c.password_hash FROM team_members m
          JOIN web_password_credentials c ON c.member_id=m.id
          WHERE m.status='active' AND (m.id=? OR m.email=? OR m.display_name=?) LIMIT 1"
     ).bind(identity).bind(identity).bind(identity).fetch_optional(&pool).await
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Sign-in unavailable"))?;
-    // Use a verifier even for unknown identities, and never echo whether a user exists.
-    let good=if let Some((_,ref digest))=row {
-        PasswordHash::new(digest).ok()
-            .is_some_and(|hash|Argon2::default().verify_password(body.password.as_bytes(),&hash).is_ok())
-    } else { false };
-    if !good {return Err(err(StatusCode::UNAUTHORIZED,"Invalid credentials"));}
-    establish(&pool,&row.expect("checked above").0,&headers,secure_origin()).await
+    // Always run Argon2, even for unknown identities, to avoid timing
+    // differences that disclose account existence.
+    let digest = row.as_ref().map(|(_, hash)| hash.as_str()).unwrap_or_else(||dummy_password_hash());
+    let valid = PasswordHash::new(digest).ok()
+        .is_some_and(|parsed| Argon2::default().verify_password(body.password.as_bytes(),&parsed).is_ok());
+    if !valid {
+        let mut attempts=login_attempts().lock().await;
+        let entry=attempts.entry(limit_key).or_insert((0,Instant::now()));
+        if entry.1.elapsed() >= Duration::from_secs(300) { *entry=(0,Instant::now()); }
+        entry.0+=1;
+        return Err(err(StatusCode::UNAUTHORIZED,"Invalid credentials"));
+    }
+    login_attempts().lock().await.remove(&limit_key);
+    establish(&pool,&row.expect("valid account has a password").0,&headers,secure_origin()).await
 }
 async fn logout(headers:HeaderMap) -> Result<Response,ErrorResponse> {
     let pool=db().await?;
@@ -426,7 +455,9 @@ pub async fn gate(State(hub):State<WebHub>,mut req:Request,next:Next)->Response 
         Ok(value)=>value,Err((s,j))=>return (s,j).into_response(),
     };
     let path=req.uri().path();
-    if excluded(path) || !path.starts_with("/api/") {
+    // All JSON data routes require the gate. The static SPA shell itself can
+    // load to display a login without exposing any indexed project data.
+    if excluded(path) || (!path.starts_with("/api/") && path != "/api") {
         // Static SPA assets and its unauthenticated login shell contain no user data;
         // every data API remains behind the server-side gate.
         return next.run(req).await;
@@ -448,7 +479,10 @@ pub async fn gate(State(hub):State<WebHub>,mut req:Request,next:Next)->Response 
         let expected=origin().ok();
         let req_origin=req.headers().get(header::ORIGIN).and_then(|v|v.to_str().ok());
         // Reject cross-site mutations. Require an exact Origin from modern browsers.
-        if expected.as_ref().is_none_or(|url|req_origin!=Some(url.as_str().trim_end_matches('/'))) {
+        // Local command center accepts either loopback spelling for non-WebAuthn endpoints.
+        let local_origin = peer.is_some_and(|addr|local_request(req.headers(),addr,hub.port));
+        if !local_origin && expected.as_ref().is_none_or(|url|
+            req_origin!=Some(url.as_str().trim_end_matches('/'))) {
             return err(StatusCode::FORBIDDEN,"Untrusted request origin").into_response();
         }
     }
