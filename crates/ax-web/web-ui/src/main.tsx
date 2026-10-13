@@ -9,6 +9,7 @@ import './portal.css';
 import App from './App';
 import './controls.css';
 import './mobile.css';
+import './auth.css';
 import { installContextMenuGuard } from './lib/contextMenuGuard';
 
 installContextMenuGuard();

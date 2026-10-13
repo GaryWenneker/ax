@@ -1,5 +1,5 @@
 /** Every entry points to an existing settings surface; no mock-only controls. */
-export type SettingsSectionId = 'team' | 'clients' | 'nodes' | 'appearance' | 'agents' | 'command-center' | 'remote' | 'sharing' | 'replication' | 'vault' | 'export' | 'plugins' | 'embeddings' | 'policy-sharing';
+export type SettingsSectionId = 'security' | 'team' | 'clients' | 'nodes' | 'appearance' | 'agents' | 'command-center' | 'remote' | 'sharing' | 'replication' | 'vault' | 'export' | 'plugins' | 'embeddings' | 'policy-sharing';
 export const SETTINGS_GROUPS: { label: string; items: { id: SettingsSectionId; label: string; icon: string }[] }[] = [
   { label: 'General', items: [
     { id: 'appearance', label: 'Appearance', icon: 'color-mode' },
@@ -11,7 +11,8 @@ export const SETTINGS_GROUPS: { label: string; items: { id: SettingsSectionId; l
     { id: 'plugins', label: 'Plugins', icon: 'extensions' },
   ] },
   { label: 'Access', items: [
-    { id: 'team', label: 'Team', icon: 'organization' },
+    { id: 'security', label: 'Security & passkeys', icon: 'shield' },
+    { id: 'team', label: 'Users & roles', icon: 'organization' },
     { id: 'clients', label: 'Clients & tokens', icon: 'key' },
     { id: 'nodes', label: 'Replication', icon: 'server' },
   ] },

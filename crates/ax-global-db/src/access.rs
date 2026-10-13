@@ -119,6 +119,7 @@ pub struct TeamMember {
     pub display_name: String,
     pub email: Option<String>,
     pub role: MemberRole,
+    pub roles: Vec<MemberRole>,
     pub status: String,
     pub created_at: String,
     pub last_active_at: Option<String>,
@@ -160,6 +161,7 @@ type MemberRow = (
     String,
     String,
     String,
+    Option<String>,
     Option<String>,
 );
 type ClientRow = (
@@ -214,6 +216,12 @@ pub async fn bootstrap_owner(
     .bind(email)
     .execute(pool)
     .await?;
+    if result.rows_affected() == 1 {
+        sqlx::query("INSERT OR IGNORE INTO member_roles(member_id, role) VALUES (?, 'owner')")
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
     Ok(result.rows_affected() == 1)
 }
 
@@ -234,29 +242,79 @@ pub async fn create_member(
     .bind(role.as_str())
     .execute(pool)
     .await?;
+    sqlx::query("INSERT INTO member_roles(member_id, role) VALUES (?, ?)")
+        .bind(id)
+        .bind(role.as_str())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
-/// Keep at least one active owner, including when simultaneous edits occur.
+/// Keep at least one active Owner, including under concurrent updates.
+/// Update the compatibility role and role-set in one SQLite write transaction.
+pub async fn update_member_roles(
+    pool: &SqlitePool,
+    id: &str,
+    roles: &[MemberRole],
+    status: &str,
+) -> Result<()> {
+    if !["active", "disabled"].contains(&status) || roles.is_empty() {
+        bail!("invalid member status or empty role set");
+    }
+    let mut unique = roles.to_vec();
+    unique.sort_by_key(|role| match role {
+        MemberRole::Owner => 0,
+        MemberRole::Admin => 1,
+        MemberRole::Member => 2,
+        MemberRole::Readonly => 3,
+    });
+    unique.dedup();
+    let strongest = unique[0];
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        "UPDATE team_members SET role = ?, status = ? WHERE id = ?
+         AND (role != 'owner' OR status != 'active' OR (? = 'owner' AND ? = 'active')
+              OR EXISTS (SELECT 1 FROM team_members other
+                         WHERE other.id != team_members.id AND other.role = 'owner' AND other.status = 'active'))",
+    )
+    .bind(strongest.as_str()).bind(status).bind(id)
+    .bind(strongest.as_str()).bind(status).execute(&mut *tx).await?;
+    if result.rows_affected() != 1 {
+        bail!("member not found or last active owner cannot be changed");
+    }
+    sqlx::query("DELETE FROM member_roles WHERE member_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    for role in unique {
+        sqlx::query("INSERT INTO member_roles(member_id,role) VALUES (?,?)")
+            .bind(id)
+            .bind(role.as_str())
+            .execute(&mut *tx)
+            .await?;
+    }
+    // Role and status edits invalidate every existing human browser session.
+    // This is atomic with the role write, so disabled users cannot regain
+    // an unexpired cookie if they are subsequently re-enabled.
+    sqlx::query(
+        "UPDATE web_sessions SET revoked_at=unixepoch()
+         WHERE member_id=? AND revoked_at IS NULL",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Compatibility API for existing single-role clients.
 pub async fn update_member(
     pool: &SqlitePool,
     id: &str,
     role: MemberRole,
     status: &str,
 ) -> Result<()> {
-    if !["active", "disabled"].contains(&status) {
-        bail!("invalid member status");
-    }
-    let result = sqlx::query(
-        "UPDATE team_members SET role = ?, status = ? WHERE id = ?
-         AND (role != 'owner' OR status != 'active' OR (? = 'owner' AND ? = 'active')
-              OR EXISTS (SELECT 1 FROM team_members other
-                         WHERE other.id != team_members.id AND other.role = 'owner' AND other.status = 'active'))",
-    ).bind(role.as_str()).bind(status).bind(id).bind(role.as_str()).bind(status).execute(pool).await?;
-    if result.rows_affected() != 1 {
-        bail!("member not found or last active owner cannot be changed");
-    }
-    Ok(())
+    update_member_roles(pool, id, &[role], status).await
 }
 
 pub async fn update_client_scopes(pool: &SqlitePool, id: &str, scopes: &[String]) -> Result<()> {
@@ -364,19 +422,25 @@ pub async fn rotate_client_credential(
 
 pub async fn list_members(pool: &SqlitePool) -> Result<Vec<TeamMember>> {
     let rows: Vec<MemberRow> = sqlx::query_as(
-        "SELECT id, display_name, email, role, status, created_at, last_active_at
+        "SELECT id, display_name, email, role, status, created_at, last_active_at,
+                (SELECT GROUP_CONCAT(role, ',') FROM member_roles WHERE member_id = team_members.id)
              FROM team_members ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await?;
     rows.into_iter()
         .map(
-            |(id, display_name, email, role, status, created_at, last_active_at)| {
+            |(id, display_name, email, role, status, created_at, last_active_at, roles): MemberRow| {
                 Ok(TeamMember {
                     id,
                     display_name,
                     email,
                     role: MemberRole::parse(&role)?,
+                    roles: roles
+                        .unwrap_or(role)
+                        .split(',')
+                        .map(MemberRole::parse)
+                        .collect::<Result<Vec<_>>>()?,
                     status,
                     created_at,
                     last_active_at,
@@ -1075,6 +1139,84 @@ pub async fn audit(
 mod tests {
     use super::*;
     use crate::open_and_init;
+
+    #[tokio::test]
+    async fn multiple_roles_migrate_and_last_owner_stays_safe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("global.db");
+        let pool = crate::open_and_init(&path).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_member(&pool, "teammate", "Teammate", None, MemberRole::Member)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO web_sessions(id,token_hash,member_id,expires_at)
+             VALUES ('session-before-role-edit','mock-session','teammate',unixepoch()+3600)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        update_member_roles(
+            &pool,
+            "teammate",
+            &[
+                MemberRole::Readonly,
+                MemberRole::Admin,
+                MemberRole::Member,
+                MemberRole::Admin,
+            ],
+            "active",
+        )
+        .await
+        .unwrap();
+        let revoked: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM web_sessions
+             WHERE member_id='teammate' AND revoked_at IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(revoked.0, 1, "role changes revoke browser sessions");
+        let members = list_members(&pool).await.unwrap();
+        let member = members.iter().find(|m| m.id == "teammate").unwrap();
+        assert_eq!(member.role, MemberRole::Admin);
+        assert_eq!(member.roles.len(), 3);
+        assert!(member.roles.contains(&MemberRole::Member));
+        assert!(member.roles.contains(&MemberRole::Readonly));
+        assert!(
+            update_member_roles(&pool, "owner", &[MemberRole::Member], "active")
+                .await
+                .is_err()
+        );
+        crate::database::initialize_schema(&pool).await.unwrap();
+        let after_restart = list_members(&pool).await.unwrap();
+        assert_eq!(
+            after_restart
+                .iter()
+                .find(|m| m.id == "teammate")
+                .unwrap()
+                .roles
+                .len(),
+            3
+        );
+        update_member_roles(&pool, "teammate", &[MemberRole::Owner], "active")
+            .await
+            .unwrap();
+        update_member_roles(&pool, "owner", &[MemberRole::Member], "active")
+            .await
+            .unwrap();
+        assert_eq!(
+            list_members(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|m| m.role == MemberRole::Owner)
+                .count(),
+            1
+        );
+    }
 
     #[tokio::test]
     async fn member_safety_and_effective_scopes() {

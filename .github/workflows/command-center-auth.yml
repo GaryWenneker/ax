@@ -1,0 +1,90 @@
+name: Command Center Authentication
+
+on:
+  pull_request:
+    paths:
+      - 'crates/ax-web/**'
+      - 'crates/ax-global-db/**'
+      - 'database/schema/global.db.schema.sql'
+      - '.github/workflows/command-center-auth.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auth-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust auth build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Rust format gate for changed authentication sources
+        run: |
+          rustfmt --edition 2021 --check \
+            crates/ax-web/src/web_auth.rs \
+            crates/ax-web/src/access_api.rs \
+            crates/ax-web/src/workspace_state.rs \
+            crates/ax-global-db/src/access.rs \
+            crates/ax-global-db/src/database/mod.rs
+      - name: Compile Command Center and global DB with locked dependencies
+        run: cargo check --locked -p ax-web -p ax-global-db
+      - name: Clippy with warnings denied
+        run: cargo clippy --locked -p ax-web -p ax-global-db --all-targets -- -D warnings
+      - name: Run role migration and security tests
+        run: |
+          cargo test --locked -p ax-global-db multiple_roles_migrate_and_last_owner_stays_safe
+          cargo test --locked -p ax-web web_auth::tests
+          cargo test --locked -p ax-web access_api
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resolved-cargo-lockfile
+          path: Cargo.lock
+          if-no-files-found: error
+  ui:
+    name: UI build and authenticated browser flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: crates/ax-web/web-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: crates/ax-web/web-ui/package-lock.json
+      - name: Install dependencies and compile TypeScript
+        run: |
+          npm ci
+          npm run build
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Serve fixture shell
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 --port 7070 > /tmp/auth-vite.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:7070/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/auth-vite.log
+          exit 1
+      - name: Check authenticated desktop and mobile layouts
+        run: npx playwright test e2e/command-center-auth.spec.ts --project=desktop-chrome --project=mobile-chrome
+      - name: Regression test existing Settings, roles and Remote MCP flows
+        run: |
+          npx playwright test \
+            e2e/access-settings.spec.ts \
+            e2e/access-workflows.spec.ts \
+            e2e/remote-mcp.spec.ts \
+            e2e/azure-portal.spec.ts \
+            --project=desktop-chrome

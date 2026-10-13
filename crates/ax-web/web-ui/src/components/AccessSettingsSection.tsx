@@ -5,7 +5,7 @@ import ReplicationSetup from './ReplicationSetup';
 import ModalShell from './ModalShell';
 
 type Role = 'owner' | 'admin' | 'member' | 'readonly';
-type Member = { id: string; display_name: string; email?: string | null; role: Role; status: string; created_at: string; last_active_at?: string | null };
+type Member = { id: string; display_name: string; email?: string | null; role: Role; roles?: Role[]; status: string; created_at: string; last_active_at?: string | null };
 type Client = { id: string; member_id: string; display_name: string; client_type: string; scopes: string[]; status: string; created_at: string; last_seen_at?: string | null };
 type Credential = { id: string; client_id: string; token_prefix: string; created_at: string; last_used_at?: string | null; revoked_at?: string | null };
 type Node = { id: string; display_name: string; role: string; endpoint?: string | null; trust_state: string; last_seen_at?: string | null; last_sync_at?: string | null };
@@ -75,7 +75,9 @@ export default function AccessSettingsSection({ section }: { section: string }) 
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [memberName, setMemberName] = useState('');
   const [memberEmail, setMemberEmail] = useState('');
-  const [memberRole, setMemberRole] = useState<Role>('member');
+  const [memberRoles, setMemberRoles] = useState<Role[]>(['member']);
+  const [passwordFor, setPasswordFor] = useState<Member | null>(null);
+  const [newMemberPassword, setNewMemberPassword] = useState('');
   const [clientName, setClientName] = useState('');
   const [clientType, setClientType] = useState('custom');
   const [clientMember, setClientMember] = useState('');
@@ -162,9 +164,17 @@ export default function AccessSettingsSection({ section }: { section: string }) 
   async function addMember(event: FormEvent) {
     event.preventDefault();
     if (!memberName.trim()) return;
-    if (await mutate('/api/access/team', 'POST', { display_name: memberName.trim(), email: memberEmail.trim() || null, role: memberRole }, 'Team member added.')) {
+    if (await mutate('/api/access/team', 'POST', { display_name: memberName.trim(), email: memberEmail.trim() || null, role: memberRoles[0], roles: memberRoles }, 'Team member added.')) {
       setMemberName(''); setMemberEmail(''); setForm(null);
     }
+  }
+
+  async function setMemberPassword(event: FormEvent) {
+    event.preventDefault();
+    if (!passwordFor || newMemberPassword.length < 12) return;
+    const updated = await mutate(`/api/web-auth/users/${passwordFor.id}/password`, 'POST',
+      { password: newMemberPassword }, `Sign-in password configured for ${passwordFor.display_name}.`);
+    if (updated) { setNewMemberPassword(''); setPasswordFor(null); }
   }
 
   async function addClient(event: FormEvent) {
@@ -226,7 +236,7 @@ export default function AccessSettingsSection({ section }: { section: string }) 
           <p className="access-note">{activeMembers.length} active · {members.length} total. A client can never exceed its member’s role.</p>
           {!members.length && !error && <p className="access-empty">No members found. Add a member to assign application access.</p>}
           {members.map(member => {
-            const lastOwner = member.role === 'owner' && member.status === 'active' && activeOwners === 1;
+            const lastOwner = (member.roles ?? [member.role]).includes('owner') && member.status === 'active' && activeOwners === 1;
             return <div className="settings-row" key={member.id}>
               <div className="settings-row-label">
                 <span className="settings-row-title">{member.display_name} <Status label={member.status === 'active' ? 'Active' : 'Disabled'} good={member.status === 'active'} /></span>
@@ -235,13 +245,36 @@ export default function AccessSettingsSection({ section }: { section: string }) 
                 {lastOwner && <span className="settings-row-desc">The last active Owner must remain enabled.</span>}
               </div>
               <div className="settings-row-control access-actions">
-                <select aria-label={`Role for ${member.display_name}`} className="settings-select" value={member.role} disabled={locked || lastOwner}
-                  onChange={event => void mutate(`/api/access/team/${member.id}`, 'PATCH', { role: event.target.value, status: member.status }, `Role updated for ${member.display_name}.`)}>
-                  {ROLES.map(role => <option key={role.id} value={role.id}>{role.label}</option>)}
-                </select>
+                <fieldset className="access-scopes" aria-label={`Roles for ${member.display_name}`} disabled={locked} style={{ border: 0, padding: 0, margin: 0 }}>
+                  <legend className="sr-only">Roles</legend>
+                  {ROLES.map(option => {
+                    const assigned = member.roles ?? [member.role];
+                    const checked = assigned.includes(option.id);
+                    return <label key={option.id} className="access-scope">
+                      <input type="checkbox" checked={checked} disabled={locked || (lastOwner && option.id === 'owner')}
+                        onChange={() => {
+                          const roles = checked ? assigned.filter(value => value !== option.id) : [...assigned, option.id];
+                          if (roles.length) {
+                            // Controlled checkboxes must reflect the input immediately. On failure
+                            // restore the server-confirmed role set rather than leaving a false state.
+                            setMembers(current => current.map(item => item.id === member.id ? { ...item, roles } : item));
+                            void mutate(`/api/access/team/${member.id}`, 'PATCH',
+                              { roles, status: member.status }, `Roles updated for ${member.display_name}.`)
+                              .then(saved => {
+                                if (!saved) setMembers(current => current.map(item => item.id === member.id ? member : item));
+                              });
+                          }
+                        }} />{option.label}
+                    </label>;
+                  })}
+                </fieldset>
+                <button type="button" className="btn" disabled={locked || member.status !== 'active'}
+                  onClick={() => { setPasswordFor(member); setNewMemberPassword(''); }}>
+                  Set password
+                </button>
                 <button type="button" className="btn" disabled={locked || lastOwner} onClick={() => {
-                  if (member.status !== 'active') { void mutate(`/api/access/team/${member.id}`, 'PATCH', { role: member.role, status: 'active' }, `${member.display_name} enabled.`); return; }
-                  setConfirmation({ title: `Disable ${member.display_name}?`, description: 'Their clients will lose access until this member is enabled again.', label: 'Disable member', action: async () => { await mutate(`/api/access/team/${member.id}`, 'PATCH', { role: member.role, status: 'disabled' }, `${member.display_name} disabled.`); } });
+                  if (member.status !== 'active') { void mutate(`/api/access/team/${member.id}`, 'PATCH', { roles: member.roles ?? [member.role], status: 'active' }, `${member.display_name} enabled.`); return; }
+                  setConfirmation({ title: `Disable ${member.display_name}?`, description: 'Their clients will lose access until this member is enabled again.', label: 'Disable member', action: async () => { await mutate(`/api/access/team/${member.id}`, 'PATCH', { roles: member.roles ?? [member.role], status: 'disabled' }, `${member.display_name} disabled.`); } });
                 }}>{member.status === 'active' ? 'Disable' : 'Enable'}</button>
               </div>
             </div>;
@@ -313,14 +346,31 @@ export default function AccessSettingsSection({ section }: { section: string }) 
       </div>
     </section>
 
+    {passwordFor && <ModalShell title={`Set password for ${passwordFor.display_name}`} onClose={() => !busy && setPasswordFor(null)}>
+      <form className="access-form" onSubmit={setMemberPassword}>
+        <p className="access-note">Setting a password revokes this member’s existing web sessions. Share the initial password securely and ask the member to enroll a passkey.</p>
+        <label>New password<input className="settings-input" type="password" autoComplete="new-password" required minLength={12}
+          value={newMemberPassword} onChange={event => setNewMemberPassword(event.target.value)} disabled={busy} /></label>
+        <div className="access-actions">
+          <button type="button" className="btn" onClick={() => setPasswordFor(null)} disabled={busy}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={busy || newMemberPassword.length < 12}>Save password</button>
+        </div>
+      </form>
+    </ModalShell>}
     {form && <ModalShell title={form === 'member' ? 'Add team member' : 'Add client'} onClose={() => !busy && setForm(null)}>
       <form className="access-form" onSubmit={form === 'member' ? addMember : addClient}>
         {error && <p role="alert" className="settings-toast settings-toast--err">{error}</p>}
         {form === 'member' ? <>
           <label>Name<input autoFocus required className="settings-input" value={memberName} onChange={event => setMemberName(event.target.value)} disabled={locked} /></label>
           <label>Email (optional)<input type="email" className="settings-input" value={memberEmail} onChange={event => setMemberEmail(event.target.value)} disabled={locked} /></label>
-          <label>Role<select aria-label="Role" className="settings-select" value={memberRole} onChange={event => setMemberRole(event.target.value as Role)} disabled={locked}>{ROLES.map(role => <option key={role.id} value={role.id}>{role.label}</option>)}</select></label>
-          <p className="access-note">{ROLES.find(role => role.id === memberRole)?.description} Clients are added separately.</p>
+          <fieldset className="access-scopes" style={{ border: 0, padding: 0 }}><legend>Roles</legend>
+            {ROLES.map(option => <label key={option.id} className="access-scope">
+              <input type="checkbox" checked={memberRoles.includes(option.id)} disabled={locked}
+                onChange={() => setMemberRoles(roles => roles.includes(option.id) ? (roles.length > 1 ? roles.filter(r => r !== option.id) : roles) : [...roles, option.id])} />
+              {option.label}
+            </label>)}
+          </fieldset>
+          <p className="access-note">Roles combine their allowed permissions. Clients are added separately.</p>
         </> : <>
           <label>Client name<input autoFocus required className="settings-input" value={clientName} onChange={event => setClientName(event.target.value)} disabled={locked} /></label>
           <label>Application type<select aria-label="Application type" className="settings-select" value={clientType} onChange={event => setClientType(event.target.value)} disabled={locked}>{CLIENT_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}</select></label>

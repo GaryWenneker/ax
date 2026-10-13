@@ -1,0 +1,8 @@
+.auth-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: var(--bg); color: var(--text); }
+.auth-loading { min-height: 100dvh; display: grid; place-items: center; }
+.auth-card { display: grid; gap: 14px; width: min(100%, 420px); padding: 28px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); }
+.auth-card .settings-input, .auth-card .btn { min-height: 44px; width: 100%; }
+.auth-eyebrow { color: var(--accent); letter-spacing: .06em; }
+.auth-card h1 { font-size: 26px; }
+.auth-card :is(input, button):focus-visible { outline: 1px solid var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+@media (max-width: 640px) { .auth-card { padding: 20px; } }

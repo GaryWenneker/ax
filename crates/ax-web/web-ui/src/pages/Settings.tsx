@@ -1,6 +1,7 @@
 import useMobile from '../hooks/useMobile';
 import ModalShell from '../components/ModalShell';
 import AccessSettingsSection from '../components/AccessSettingsSection';
+import SecuritySettingsSection from '../components/SecuritySettingsSection';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import EmbedSettingsSection from '../components/EmbedSettingsSection';
@@ -312,6 +313,7 @@ export default function SettingsPage() {
         </div> : settingsNavigation}
         <div className="settings-hub-content">
         <AccessSettingsSection section={section} />
+        {section === 'security' && <SecuritySettingsSection />}
         <div id="settings-panel-appearance" hidden={section !== 'appearance'}>
           <section className="settings-card">
             <div className="settings-card-header"><h2>Appearance</h2><p>Theme and display preferences.</p></div>

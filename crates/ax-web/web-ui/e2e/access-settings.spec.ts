@@ -10,6 +10,7 @@ test('access management sends CSRF and shows new tokens only until dismissed', a
   const client = { id: 'c1', member_id: 'm1', display_name: 'Demo client', client_type: 'cli', scopes: ['memory:read'], status: 'active', created_at: '2026-10-11' };
   await page.route('**/api/**', route => route.fulfill({ status: 404, json: { error: 'Fixture endpoint not provided' } }));
   await page.route('**/api/share/status', route => route.fulfill({ json: { readonly: false, sharing: false, port: 7070 } }));
+  await page.route('**/api/web-auth/status', route => route.fulfill({ json: { enabled: false, passkeys: true } }));
   await page.route('**/api/access/**', async route => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -39,8 +40,8 @@ test('access management sends CSRF and shows new tokens only until dismissed', a
   const teamNav = page.locator('.settings-navigation-item[aria-controls="settings-panel-team"]');
   if (await teamNav.count()) await teamNav.click();
   const team = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Team', exact: true }) });
-  await team.getByLabel('Role for Demo member').selectOption('readonly');
-  await expect.poll(() => member.role).toBe('readonly');
+  await team.getByRole('group', { name: 'Roles for Demo member' }).getByLabel('Read-only').click();
+  await expect.poll(() => (member as typeof member & { roles?: string[] }).roles).toContain('readonly');
   const clientsNav = page.locator('.settings-navigation-item[aria-controls="settings-panel-clients"]');
   if (await clientsNav.count()) await clientsNav.click();
   const clients = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Clients & tokens', exact: true }) });

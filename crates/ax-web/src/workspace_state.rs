@@ -24,6 +24,7 @@ pub struct WebHub {
     inner: Arc<RwLock<WorkspaceBundle>>,
     pub readonly: bool,
     pub port: u16,
+    pub local_only: bool,
     switching: Arc<AtomicBool>,
     pub(crate) replication: Arc<Mutex<crate::replication_setup::ManagedNode>>,
     pub(crate) sonar_proxy: Arc<Mutex<SonarProxyCache>>,
@@ -48,6 +49,7 @@ impl WebHub {
             inner: Arc::new(RwLock::new(bundle)),
             readonly,
             port,
+            local_only: true,
             switching: Arc::new(AtomicBool::new(false)),
             replication: Arc::new(Mutex::new(crate::replication_setup::ManagedNode::default())),
             sonar_proxy: Arc::new(Mutex::new(SonarProxyCache::default())),
@@ -158,6 +160,7 @@ impl WebHub {
             .nest("/api/workspace", workspace::router_hub(hub.clone()))
             .nest("/api/agent", agent::router_hub(hub.clone()))
             .nest("/api/access", crate::access_api::router(hub.clone()))
+            .nest("/api/web-auth", crate::web_auth::router(hub.clone()))
             .nest("/api/actions", crate::actions::router_hub(hub.clone()))
             .nest("/api/changes", crate::changes::router_hub(hub.clone()))
             .nest("/api/share", crate::share_api::router_hub(hub.clone()))
@@ -180,9 +183,15 @@ impl WebHub {
                 crate::share_auth::share_token_middleware,
             ))
             .layer(cors)
-            .merge(crate::dav::router(hub).layer(axum::middleware::from_fn(
-                crate::share_auth::share_token_middleware,
-            )))
+            .merge(
+                crate::dav::router(hub.clone()).layer(axum::middleware::from_fn(
+                    crate::share_auth::share_token_middleware,
+                )),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                hub,
+                crate::web_auth::gate,
+            ))
     }
 }
 
