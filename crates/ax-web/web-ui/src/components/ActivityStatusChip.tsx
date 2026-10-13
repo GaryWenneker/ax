@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import Codicon from './Codicon';
 import { navigateRoute } from '../lib/routes';
+import { memoryRowAge } from '../memoryHeadline';
 
 type ActionEvent = {
   ts: number;
@@ -19,14 +20,7 @@ type Props = {
 };
 
 function relativeTime(ts: number, now: number): string {
-  const sec = Math.max(0, Math.round((now - ts) / 1000));
-  if (sec < 5) return 'just now';
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr <= 24) return `${hr}h ago`;
-  return new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return memoryRowAge(ts, now);
 }
 
 function kindClass(kind: string): string {

@@ -343,6 +343,31 @@ pub fn save_global_budget(patch: &BudgetSectionPatch) -> Result<std::path::PathB
     Ok(path)
 }
 
+/// Write `context.budgetTokens` into the project's `ax.json` and leave every other key alone.
+pub fn save_project_context_budget(project_root: &std::path::Path, tokens: u32) -> Result<std::path::PathBuf, String> {
+    let path = project_root.join("ax.json");
+    let mut root: Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "ax.json root is not an object".to_string())?;
+    let context = obj
+        .entry("context")
+        .or_insert_with(|| Value::Object(Default::default()));
+    let context = context
+        .as_object_mut()
+        .ok_or_else(|| "context is not an object".to_string())?;
+    context.insert("budgetTokens".into(), serde_json::json!(tokens));
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BudgetSectionPatch {
     pub monthly: Option<f64>,
@@ -810,5 +835,19 @@ mod tests {
         assert_eq!(settings.currency, Currency::Eur);
         assert_eq!(settings.mode, BudgetMode::Cheap);
         assert_eq!(settings.context_budget_tokens, Some(12_000));
+    }
+
+    #[test]
+    fn project_context_budget_keeps_other_keys() {
+        let dir = std::env::temp_dir().join(format!("ax-budget-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ax.json"), r#"{"name":"keep","budget":{"enabled":false}}"#).unwrap();
+        save_project_context_budget(&dir, 8_000).unwrap();
+        let text = std::fs::read_to_string(dir.join("ax.json")).unwrap();
+        let settings = parse_settings(None, Some(&text));
+        assert_eq!(settings.context_budget_tokens, Some(8_000));
+        assert!(!settings.enabled);
+        assert!(text.contains("\"name\": \"keep\"") || text.contains("\"name\":\"keep\""));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

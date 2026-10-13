@@ -273,6 +273,7 @@ export function ItemRow({
   metaTitle,
   badges,
   aside,
+  leading,
   portalColumns,
   portalLabels,
   selected,
@@ -294,6 +295,8 @@ export function ItemRow({
   metaTitle?: string;
   badges?: ReactNode;
   aside?: ReactNode;
+  /** Selection control rendered at the start of the row. */
+  leading?: ReactNode;
   /** Portal table cells between Name and existing row actions. */
   portalColumns?: ReactNode[];
   /** Metadata labels exposed on narrow stacked rows. */
@@ -330,6 +333,7 @@ export function ItemRow({
     >
       {portalColumns ? (
         <>
+          {leading && <div className="portal-data-lead">{leading}</div>}
           <div className="portal-data-name">
             <div className="page-item-title" title={title}>{title}</div>
             {subtitle && <div className="page-item-sub" title={subtitle}>{subtitle}</div>}
@@ -343,6 +347,7 @@ export function ItemRow({
         <div className="item-column-detail" data-label={columns.labels[1]} title={subtitle}>{subtitle}</div>
         <div className="item-column-context" data-label={columns.labels[2]}>{badges}{aside}</div>
       </>) : (<>
+      {leading}
       {graph ? <span className="page-item-node" aria-hidden="true" /> : icon && <span className="page-item-icon">{icon}</span>}
       <div className="page-item-body">
         {graph ? (

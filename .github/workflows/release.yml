@@ -172,7 +172,7 @@ jobs:
           cd dist
           sha256sum ax-* > SHA256SUMS
       - name: Stage complete release from validated main commit
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           target_commitish: ${{ needs.prepare.outputs.sha }}

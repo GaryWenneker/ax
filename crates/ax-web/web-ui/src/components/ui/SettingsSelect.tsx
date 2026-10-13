@@ -86,6 +86,7 @@ export default function SettingsSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={menuId}
+        data-value={current?.value ?? ''}
         disabled={disabled}
         onClick={() => setOpen((prev) => !prev)}
       >
@@ -100,6 +101,7 @@ export default function SettingsSelect({
                 type="button"
                 role="option"
                 className="settings-select-option"
+                data-value={opt.value}
                 aria-selected={opt.value === String(value ?? '')}
                 disabled={opt.disabled}
                 onClick={() => choose(opt.value)}

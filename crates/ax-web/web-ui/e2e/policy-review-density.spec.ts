@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { chooseSelect } from './chooseSelect';
 import { ACCENT_COLORS, THEMES, contrastRatioHex } from '../src/lib/themes';
 
 test('retired Quality Gates bookmarks return to the homepage', async ({ page }) => {
@@ -88,7 +89,7 @@ test('review wraps content and supports scoped bulk decisions with partial failu
   await page.locator('.review-item').last().getByText('Inspect content and source',{exact:true}).click();
   await page.getByRole('heading',{name:'Review',exact:true}).scrollIntoViewIfNeeded();
   if (process.env.AX_ACCESS_SCREENSHOTS) await page.screenshot({path:`../../../site/public/screenshots/cc-policy-review-${test.info().project.name}.png`});
-  await page.getByRole('combobox',{name:'Review kind'}).selectOption('skill');
+  await chooseSelect(page.getByLabel('Review kind'), 'skill');
   await page.getByRole('button',{name:'Approve filtered type',exact:true}).click();
   await page.getByRole('button',{name:'Cancel',exact:true}).click();
   expect(decisions).toHaveLength(0);
@@ -98,7 +99,7 @@ test('review wraps content and supports scoped bulk decisions with partial failu
   await expect(page.locator('.review-item')).toHaveCount(0);
   expect(decisions[0].path).toContain('same/approve?kind=skill');
   expect(decisions[0].body).toMatchObject({expectedIncoming:expect.any(String),expectedCurrent:'Current skill'});
-  await page.getByRole('combobox',{name:'Review kind'}).selectOption('rule');
+  await chooseSelect(page.getByLabel('Review kind'), 'rule');
   await expect(page.locator('.review-item')).toHaveCount(2);
   await page.getByRole('button',{name:'Select filtered (2)',exact:true}).click();
   await page.getByRole('button',{name:'Approve selected',exact:true}).click();

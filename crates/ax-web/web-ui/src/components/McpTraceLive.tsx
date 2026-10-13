@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
 import {ResponsiveSheet} from './ui/MobileControls';
+import { NewArrivalPill, nextPending } from './ui/NewArrivalPill';
+import { useNow } from '../lib/useNow';
 import { ItemList, ItemRow } from './ui/PageLayout';
 import { liveClass, useFreshMarks } from '../lib/useLive';
 import { traceGroupLinks } from '../traceGroups';
-import { formatTraceTime, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
+import { traceAge, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
 import { loggingRowPresentation } from '../lib/loggingPresentation';
 import {
   computeMcpTraceStats,
@@ -330,8 +332,12 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   const [entries, setEntries] = useState<TraceEntry[]>([]);
   const [freshIds, markFresh] = useFreshMarks();
   const [live, setLive] = useState(false);
+  /** True after this view has received the current log snapshot, not only a later live line. */
+  const [caughtUp, setCaughtUp] = useState(false);
   /** When true, keep the viewport pinned to the newest rows (top). */
   const [follow, setFollow] = useState(true);
+  const now = useNow();
+  const [pendingNew, setPendingNew] = useState(0);
   const isPage = variant === 'page';
   const [maximized, setMaximized] = useState(false);
   const [browserFs, setBrowserFs] = useState(false);
@@ -665,6 +671,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       if (batch.length === 0) return;
       setEntries((prev) => [...prev, ...batch]);
       if (live) markFresh(batch.map((e) => e.id));
+      setPendingNew((pending) => nextPending(followRef.current, live, batch.length, pending));
       const last = lines[lines.length - 1];
       if (last) {
         publishMcpTraceActivity({ summary: summarizeTraceLine(last) });
@@ -685,6 +692,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
           try {
             const lines = JSON.parse(raw) as string[];
             if (Array.isArray(lines)) ingestLines(lines);
+            setCaughtUp(true);
           } catch {
             // ignore malformed batch
           }
@@ -708,12 +716,14 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
           setCursorId(null);
           setHistoryExhausted(false);
           setOldestLoadedDay('');
+          setCaughtUp(false);
         },
         rotate: () => {
           // Day rolled over: keep buffer; tail follows the new file via server.
         },
         ready: () => {
           setLive(true);
+          setCaughtUp(true);
         },
       },
       onError: () => {
@@ -807,11 +817,11 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   // daemon just rotated). Don't leave the page looking broken — pull in
   // whatever history exists automatically, same as scrolling down would.
   useEffect(() => {
-    if (!live) return;
+    if (!live || !caughtUp) return;
     if (entries.length > 0) return;
     if (loadingHistory || historyExhausted || !oldestLoadedDay) return;
     loadOlderDayRef.current();
-  }, [live, entries.length, loadingHistory, historyExhausted, oldestLoadedDay]);
+  }, [live, caughtUp, entries.length, loadingHistory, historyExhausted, oldestLoadedDay]);
 
   useEffect(() => {
     const root = scrollerRef.current;
@@ -979,11 +989,15 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     const el = scrollerRef.current;
     if (!el) return;
     const atTop = el.scrollTop < 48;
+    followRef.current = atTop;
     setFollow(atTop);
+    if (atTop) setPendingNew(0);
   }
 
   function jumpToNew() {
     setFollow(true);
+    followRef.current = true;
+    setPendingNew(0);
     const el = scrollerRef.current;
     if (el) el.scrollTop = 0;
   }
@@ -1305,16 +1319,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       )}
 
       <div className="mcp-trace-scroller-wrap">
-        {!follow && entries.length > 0 ? (
-          <button
-            type="button"
-            className="mcp-trace-scroll-new"
-            onClick={jumpToNew}
-          >
-            <Codicon name="arrow-up" />
-            Scroll to new
-          </button>
-        ) : null}
+        <NewArrivalPill count={pendingNew} noun="event" onJump={jumpToNew} onDismiss={() => setPendingNew(0)} />
       <div
         ref={scrollerRef}
         className="mcp-trace-scroller"
@@ -1399,7 +1404,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                     e.raw.match(/^\S+/)?.[0] ?? e.time,
                     [KIND_LABELS[e.kind], e.badge, e.tool, textPrimary?.leaf, e.origin ? `Node ${e.origin}` : '', group ? `${group.lane} ${group.position}/${group.count}` : ''].filter(Boolean).join(' '),
                   ]}
-                  meta={formatTraceTime(e.time)}
+                  meta={traceAge(e.instantMs, e.time, now)}
                   metaTitle={e.raw.match(/^\S+/)?.[0] ?? e.time}
                   selected={isOpen}
                   onClick={() => openEntry(e.id)}
@@ -1531,7 +1536,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
               <div className="detail-meta">
                 <div className="detail-kv">
                   <span className="detail-key">Time</span>
-                  <span className="detail-val">{formatTraceTime(selected.time)}</span>
+                  <span className="detail-val" title={selected.time}>{traceAge(selected.instantMs, selected.time, now)}</span>
                 </div>
                 <div className="detail-kv">
                   <span className="detail-key">Kind</span>
@@ -1570,7 +1575,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                         className={`mcp-blade-step mcp-blade-step--dir-${traceDirection(step.kind)}`}
                         title={presentation.title}
                         subtitle={presentation.subtitle}
-                        meta={formatTraceTime(step.time).slice(11)}
+                        meta={traceAge(step.instantMs, step.time, now)}
                         metaTitle={step.time}
                         selected={step.id === selected.id}
                         onClick={() => setSelectedId(step.id)}

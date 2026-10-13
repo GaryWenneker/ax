@@ -1,4 +1,5 @@
 import {expect, test} from '@playwright/test';
+import { chooseSelect } from './chooseSelect';
 import {screenshotResponse} from '../../../../site/scripts/screenshot-fixtures.mjs';
 
 test.beforeEach(async ({page}) => {
@@ -203,17 +204,17 @@ test('mobile review and period filters use sheets and comparisons remain readabl
   await page.goto('/savings');
   await page.getByRole('button',{name:'Period',exact:true}).click();
   const period=page.getByRole('dialog',{name:'Time period',exact:true});
-  await period.getByLabel('Time period',{exact:true}).selectOption('month');
+  await chooseSelect(period.getByLabel('Time period',{exact:true}), 'month');
   await period.getByRole('button',{name:'Done',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Context savings',exact:true})).toBeVisible();
   await page.goto('/policy/review');
   await page.getByRole('button',{name:'Filters',exact:true}).click();
   const filters=page.getByRole('dialog',{name:'Filters',exact:true});
-  await filters.getByLabel('Review kind',{exact:true}).selectOption('skill');
+  await chooseSelect(filters.getByLabel('Review kind',{exact:true}), 'skill');
   await filters.getByRole('button',{name:'Done',exact:true}).click();
   await expect(page.getByText('No matching items',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Filters',exact:true}).click();
-  await filters.getByLabel('Review kind',{exact:true}).selectOption('all');
+  await chooseSelect(filters.getByLabel('Review kind',{exact:true}), 'all');
   await filters.getByRole('button',{name:'Done',exact:true}).click();
   await page.getByRole('button',{name:'Inspect content and source',exact:true}).click();
   const comparison=page.getByRole('dialog',{name:'Inspect content and source',exact:true});
