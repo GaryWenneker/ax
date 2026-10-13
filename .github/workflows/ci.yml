@@ -61,11 +61,9 @@ jobs:
           AX_TEST_UNIX_SOCKETS: "1"
         shell: bash
         run: |
-          # Windows locks the shared test database when cases run in parallel, so one case
-          # sees "Database unavailable". One thread keeps those cases isolated.
-          threads=()
-          if [ "$RUNNER_OS" = "Windows" ]; then threads=(-- --test-threads=1); fi
-          cargo test --workspace --locked --no-fail-fast "${threads[@]}"
+          # Cases in one binary share a database file. Parallel runs lock it and return
+          # "Database unavailable", on Windows every time and on Linux often enough to fail CI.
+          cargo test --workspace --locked --no-fail-fast -- --test-threads=1
 
   lint:
     needs: changes
