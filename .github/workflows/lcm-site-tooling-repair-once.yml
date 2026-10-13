@@ -5,6 +5,8 @@ on:
     branches: [fix/security-site-build-tools]
     paths:
       - "site/package.json"
+      - "site/puppeteer.config.cjs"
+      - "site/tests/puppeteer-config.test.ts"
       - ".github/workflows/lcm-site-tooling-repair-once.yml"
 permissions:
   contents: write
