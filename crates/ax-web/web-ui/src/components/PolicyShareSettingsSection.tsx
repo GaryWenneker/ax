@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 
 import ModalShell from './ModalShell';
 import { BusyLabel } from './ui/PageLayout';
@@ -676,13 +678,14 @@ function SyncStatusPanel({
   microsoft: MicrosoftAuthStatus;
   provider: ShareProvider;
 }) {
+  const now = useNow();
   return (
     <div className="settings-status-panel">
       <div className="settings-status-grid settings-status-grid--metrics">
         <div className="settings-status-pill">
           <div className="settings-status-pill-body">
             <span className="settings-status-pill-label">Last sync</span>
-            <span className="settings-status-pill-value">{formatSyncTime(sync.lastSyncAt)}</span>
+            <span className="settings-status-pill-value">{sync.lastSyncAt ? memoryRowAge(sync.lastSyncAt * 1000, now) : 'Never'}</span>
           </div>
         </div>
         <div className="settings-status-pill">

@@ -26,7 +26,7 @@ mod working_context;
 pub use budget::{
     banner, cycle_stats, daily_plan, display_amount, format_money, global_config_path, level_for,
     load_settings, monthly_budget_usd, parse_mode, parse_settings, price_band, project_budget,
-    save_global_budget, simulate, working_schedule, BudgetDecision, BudgetLevel, BudgetMode,
+    save_global_budget, save_project_context_budget, simulate, working_schedule, BudgetDecision, BudgetLevel, BudgetMode,
     BudgetSectionPatch, BudgetSettings, BudgetSnapshot, Currency, CycleStats, DailyPlan, DaySpend,
     PriceBand, Simulation,
 };

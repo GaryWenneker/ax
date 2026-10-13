@@ -1,0 +1,156 @@
+# Only safe npm lockfile fixes. Does not reactivate suspended CI or deployment.
+name: Dependency Auto-Remediation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/dependency-autofix.yml"
+      - "**/package-lock.json"
+  schedule:
+    - cron: "47 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: lcm-auto-remediation
+  cancel-in-progress: false
+
+jobs:
+  safe-npm-fixes:
+    name: propose-safe-fixes-${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: site
+            path: site
+          - name: telemetry
+            path: telemetry-worker
+          - name: command-center
+            path: crates/ax-web/web-ui
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.AX_LCM_PR_TOKEN || github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate remediation policy unit tests
+        run: python -m unittest discover -s scripts -p 'test_lcm_autofix.py'
+
+      - name: Attempt non-breaking updates older than seven days
+        id: candidate
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ matrix.path }}
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')"
+          before="$RUNNER_TEMP/audit-before.json"
+          after="$RUNNER_TEMP/audit-after.json"
+
+          cd "$PROJECT_PATH"
+          # npm audit returns 1 when vulnerabilities remain. Errors still fail
+          # closed when candidate validation inspects the report.
+          npm audit --package-lock-only --json > "$before" || test "$?" -eq 1
+
+          # No --force. --before limits npm to versions at least 7 days old.
+          # Ignore an exit code of 1 when other vulnerabilities remain; the
+          # independent JSON policy verifies an actual risk reduction.
+          set +e
+          npm audit fix --package-lock-only --ignore-scripts \
+            --no-fund --before="$cutoff" > "$RUNNER_TEMP/npm-fix.log" 2>&1
+          fix_exit=$?
+          set -e
+          cat "$RUNNER_TEMP/npm-fix.log"
+          if [ "$fix_exit" -gt 1 ]; then
+            echo "::error::npm audit fix encountered an operational error ($fix_exit)"
+            exit "$fix_exit"
+          fi
+
+          npm audit --package-lock-only --json > "$after" || test "$?" -eq 1
+          cd "$GITHUB_WORKSPACE"
+          python scripts/lcm_autofix.py \
+            --project "$PROJECT_PATH" \
+            --before "$before" --after "$after" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Verify all new package releases are at least 168 hours old
+        if: steps.candidate.outputs.eligible == 'true'
+        run: python scripts/check_dependency_age.py --base HEAD
+
+      - name: Skip unsafe candidates; fail on incomplete OSV review
+        id: osv
+        if: steps.candidate.outputs.eligible == 'true'
+        shell: bash
+        run: |
+          set +e
+          python scripts/check_dependency_advisories.py --base HEAD --candidate
+          osv_exit=$?
+          set -e
+          if [ "$osv_exit" -eq 2 ]; then
+            echo "safe=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=LCM candidate skipped::Known OSV advisory blocks this remediation. No branch or PR will be changed."
+            echo "### Skipped unsafe remediation for ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Known advisory in proposed version. No pull request created; the independent dependency monitor still reports vulnerabilities." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$osv_exit" -ne 0 ]; then
+            echo "::error title=OSV review failed::Security metadata could not be verified; no PR will be created."
+            exit "$osv_exit"
+          else
+            echo "safe=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify package lock remains installable
+        if: steps.candidate.outputs.eligible == 'true' && steps.osv.outputs.safe == 'true'
+        working-directory: ${{ matrix.path }}
+        run: npm ci --dry-run --ignore-scripts --no-audit --no-fund
+
+      - name: Create or update review-only pull request
+        if: steps.candidate.outputs.eligible == 'true' && steps.osv.outputs.safe == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AX_LCM_PR_TOKEN || github.token }}
+          PROJECT_PATH: ${{ matrix.path }}
+          PROJECT_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          branch="automation/lcm-${PROJECT_NAME}"
+          lockfile="${PROJECT_PATH}/package-lock.json"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Dedicated bot branches are updated in place to avoid duplicate PRs.
+          git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" || true
+          git switch -c "${branch}"
+          git add -- "${lockfile}"
+          git commit -m "fix(deps): apply safe LCM remediation for ${PROJECT_NAME}"
+
+          if git show-ref --verify --quiet "refs/remotes/origin/${branch}" &&
+             git diff --quiet "refs/remotes/origin/${branch}" HEAD -- "${lockfile}"; then
+            echo "Existing bot branch already has the fix; checking whether its PR exists."
+          else
+            git push --force-with-lease origin "HEAD:refs/heads/${branch}"
+          fi
+
+          existing="$(gh pr list --state open --base main --head "${branch}" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "Updated existing automatic LCM pull request #$existing."
+          else
+            gh pr create \
+              --base main --head "${branch}" \
+              --title "fix(deps): safe lifecycle remediation for ${PROJECT_NAME}" \
+              --body "Automated lockfile-only npm audit fix for \`${PROJECT_PATH}\`. This update reduces known advisory counts without a severity regression. Versions younger than 7 days, unverifiable registry releases and manifest changes were rejected. No major upgrades or application source changes were proposed. The PR requires review; do not auto-merge. See [LCM policy](https://github.com/GaryWenneker/ax/blob/main/docs/DEPENDENCY_LIFECYCLE.md)."
+          fi

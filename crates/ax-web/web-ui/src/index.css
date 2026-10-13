@@ -987,11 +987,16 @@ html, body {
 .ax-modal--lg {
   width: min(640px, 100%);
 }
+.ax-modal-overlay:has(.policy-inline-pane--props) {
+  background: rgba(0, 0, 0, 0.28);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
 .ax-modal--full:has(.policy-inline-pane--props) {
-  width: min(640px, 50vw);
-  max-width: 50vw;
+  width: min(820px, 68vw);
+  max-width: 68vw;
   height: auto;
-  max-height: 50vh;
+  max-height: min(820px, 78vh);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1002,7 +1007,15 @@ html, body {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 .ax-modal--full:has(.policy-inline-pane--props) .ax-modal-title { color: var(--accent-text); }
-.ax-modal--full:has(.policy-inline-pane--props) .ax-modal-body { overflow: auto; display: block; }
+.ax-modal--full:has(.policy-inline-pane--props) :is(.ax-modal-header, .ax-modal-footer) { flex: none; }
+.ax-modal--full:has(.policy-inline-pane--props) .ax-modal-body {
+  overflow: auto;
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(78vh - 132px);
+  overscroll-behavior: contain;
+}
 .ax-modal--full:has(.policy-inline-pane--props) .policy-inline-pane { height: auto; overflow: visible; border: 0; }
 .ax-modal--full:has(.policy-inline-pane--props) .settings-card-body {
   display: flex;
@@ -6333,31 +6346,72 @@ html:-webkit-full-screen .mcp-trace-max-overlay {
   flex-direction: column;
 }
 
-.mcp-trace-scroll-new {
+.ax-new-pill {
   position: absolute;
   top: 0.55rem;
   left: 50%;
   transform: translateX(-50%);
   z-index: 4;
   display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.75rem;
+  align-items: stretch;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--panel) 92%, var(--accent));
-  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 82%, #000);
+  color: var(--accent-text);
   font: inherit;
   font-size: 0.78rem;
   font-weight: 600;
-  box-shadow: 0 4px 16px color-mix(in srgb, var(--bg) 55%, transparent);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.ax-new-pill-jump,
+.ax-new-pill-dismiss {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
   cursor: pointer;
 }
 
-.mcp-trace-scroll-new:hover {
-  border-color: var(--accent-text);
-  color: var(--accent-text);
+.ax-new-pill-jump {
+  padding: 0.35rem 0.7rem 0.35rem 0.75rem;
 }
+
+.ax-new-pill-dismiss {
+  padding: 0.35rem 0.65rem 0.35rem 0.45rem;
+  border-left: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.ax-new-pill-jump:hover,
+.ax-new-pill-dismiss:hover {
+  color: var(--text);
+}
+
+.ax-new-pill--dock {
+  position: fixed;
+  top: auto;
+  bottom: calc(var(--statusbar-h) + 0.75rem);
+  z-index: 30;
+}
+
+.ax-new-pill--dock-page {
+  bottom: calc(var(--statusbar-h) + 3.1rem);
+}
+
+.settings-budget {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 220px;
+}
+.settings-budget input[type="range"] { flex: 1; accent-color: var(--accent-text); }
+.settings-budget span { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .mcp-trace-history-status {
   padding: 0.55rem 0.75rem 0.85rem;
@@ -15366,7 +15420,7 @@ html[data-ax-theme="macos"] :is(
 }
 .page-split--with-detail .calm-list .page-item-sub { display: none; }
 
-.mcp-trace-calm .page-item-title { font-family: var(--font-mono); font-size: 12px; }
+.mcp-trace-calm .page-item-title { font: 400 13px var(--font-ui); color: var(--accent-text); }
 .mcp-trace-calm .mcp-trace-row--cursor:not(.page-item--selected) {
   background: color-mix(in srgb, var(--accent-text) 8%, var(--bg-panel));
 }
@@ -15433,9 +15487,10 @@ html[data-ax-theme="macos"] :is(
   box-shadow: none;
 }
 
-/* Logging: readable text, calm timestamps. */
-.mcp-trace-calm .page-item-title { font-family: var(--font-ui, system-ui, sans-serif); font-size: 12.5px; }
-.mcp-trace-calm .page-item-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+/* Logging rows use the same type as Rules and Skills. */
+.mcp-trace-calm .page-item-title { font: 400 13px var(--font-ui); color: var(--accent-text); }
+.mcp-trace-calm .page-item-sub { font-family: var(--font-ui); font-size: 11px; color: var(--text-dim); margin-top: 0; }
+.mcp-trace-calm .page-item-meta { font-family: var(--font-ui); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text); }
 
 /* Logging kinds: each kind its own outline color (text stays #cccccc). */
 .mcp-kind-badge--inbound, .mcp-trace-badge--inbound { --kind-color: #4fa8ff; }
@@ -15465,7 +15520,7 @@ html[data-ax-theme="macos"] :is(
 :is(html, html[data-ax-theme]) .mcp-trace-calm .page-item-badge.mcp-kind-badge,
 :is(html, html[data-ax-theme]) .mcp-trace-filter-chip .mcp-trace-badge {
   border-color: color-mix(in srgb, var(--kind-color, var(--accent-text)) 70%, transparent);
-  color: #cccccc;
+  color: var(--text);
 }
 .mcp-trace-calm .mcp-kind-badge .badge-icon { color: var(--kind-color, var(--accent-text)); }
 
@@ -15495,8 +15550,7 @@ html[data-ax-theme="macos"] :is(
 .mcp-trace-calm .mcp-trace-group--prev::after { top: 0; }
 .mcp-trace-calm .mcp-trace-group--next::after { bottom: 0; }
 .mcp-trace-calm .mcp-trace-group .mcp-trace-group-badge .badge-icon { color: var(--conv-color); }
-.mcp-trace-calm :is(.mcp-trace-row--dir-in, .mcp-trace-row--dir-out) { box-shadow: inset 2px 0 0 var(--dir-color); }
-.mcp-trace-calm .mcp-trace-row--dir-internal .page-item-title { color: #b8b8b8; }
+.mcp-trace-calm .mcp-trace-row--dir-internal .page-item-title { color: var(--accent-text); }
 .mcp-dir-legend { display: flex; gap: 14px; padding: 6px 12px; font-size: 11px; color: var(--text-dim); }
 .mcp-dir-legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .mcp-dir-legend-item::before {
@@ -15565,8 +15619,8 @@ html[data-ax-theme="macos"] :is(
 .mcp-blade-steps .mcp-blade-step--dir-out { --dir-color: #3ee4b2; }
 .mcp-blade-steps .mcp-blade-step--dir-internal { --dir-color: #6b6b6b; }
 .mcp-blade-steps .mcp-blade-step .page-item-node { border-color: var(--dir-color); }
-.mcp-blade-steps .page-item-title { font-family: var(--font-ui, system-ui, sans-serif); font-size: 12px; }
-.mcp-blade-steps .page-item-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+.mcp-blade-steps .page-item-title { font: 400 13px var(--font-ui); color: var(--accent-text); }
+.mcp-blade-steps .page-item-meta { font-family: var(--font-ui); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text); }
 :is(html, html[data-ax-theme]) .mcp-blade-steps .page-item-badge.mcp-kind-badge {
   border-color: color-mix(in srgb, var(--kind-color, var(--accent-text)) 70%, transparent);
   color: #cccccc;
@@ -15593,7 +15647,8 @@ html[data-ax-theme="macos"] :is(
 /* Toggles and row actions brighten for hover and keyboard focus, not for leftover mouse focus. */
 :is(.memory-vault-list, .calm-list) .page-item--graph:is(:focus-within):not(:hover):not(:has(:focus-visible)) > .settings-toggle.on { opacity: 0; }
 .calm-list .page-item--graph:focus-within:not(:hover):not(:has(:focus-visible)) .settings-toggle { opacity: 0.5; }
-.calm-list .page-item--graph:focus-within:not(:hover):not(:has(:focus-visible)) :is(.calm-row-action, .calm-row-check) { opacity: 0; }
+.calm-list .page-item--graph:focus-within:not(:hover):not(:has(:focus-visible)) .calm-row-action { opacity: 0; }
+.calm-row-check { opacity: 1; }
 
 /* Memory kind categories: node color per category, with a legend. */
 .memory-vault-list .page-item--graph { --cat-color: #8b8b8b; }
@@ -15892,7 +15947,7 @@ html[data-ax-layout="portal"] .titlebar-brand .ax-app-wordmark > span{color:#b9f
 .mcp-trace-shell--page .mcp-trace-filter-chip .mcp-trace-badge { display: none; }
 .mcp-trace-shell--page .mcp-trace-filter-chip-count { opacity: 0.65; }
 .mcp-trace-shell--page .mcp-trace-scroller { padding: 8px 16px 16px; }
-.mcp-trace-shell--page .mcp-trace-row { min-height: 52px; }
+.mcp-trace-shell--page .mcp-trace-row { min-height: 34px; }
 @media (max-width: 899px) {
   .mcp-trace-shell--page .mcp-trace-toolbar { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
   .mcp-trace-shell--page .mcp-trace-heading { font-size: 18px; }
