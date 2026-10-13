@@ -41,7 +41,7 @@ def read_base_file(base: str, path: str) -> bytes | None:
         return result.stdout
     # Missing files on the base branch are valid for newly created lockfiles.
     exists = subprocess.run(
-        ["git", "cat-file", "-e", f"{base}:^{path}"], capture_output=True, check=False
+        ["git", "cat-file", "-e", f"{base}:{path}"], capture_output=True, check=False
     )
     if exists.returncode == 0:
         raise PolicyError(f"Cannot read {base}:{path}")
@@ -177,6 +177,16 @@ def run(base: str) -> int:
             raise PolicyError(f"Required dependency lockfile is missing: {path}")
         before = read_base_file(base, path)
         after = target.read_bytes()
+        if path in NPM_LOCKFILES:
+            manifest_path = target.with_name("package.json")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            root_lock = json.loads(after).get("packages", {}).get("", {})
+            for group in ("dependencies", "devDependencies", "optionalDependencies"):
+                if manifest.get(group, {}) != root_lock.get(group, {}):
+                    raise PolicyError(
+                        f"{manifest_path} {group} differs from {path}; "
+                        "regenerate and commit the npm lockfile"
+                    )
         parser = cargo_packages if path == CARGO_LOCKFILE else npm_packages
         ecosystem = "cargo" if path == CARGO_LOCKFILE else "npm"
         additions = added_versions(parser(before), parser(after))
