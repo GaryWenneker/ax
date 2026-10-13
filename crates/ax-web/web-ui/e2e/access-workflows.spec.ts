@@ -140,7 +140,7 @@ test('access panels fit light, dark and mobile and refresh documentation screens
   for (const theme of ['azure-light', 'azure-dark']) {
     await page.setViewportSize({ width: 1440, height: 1100 });
     await page.goto('/settings?section=appearance');
-    await page.getByTitle(theme === 'azure-dark' ? 'Azure Portal Dark' : 'Azure Portal Light', { exact: true }).click();
+    await page.getByRole('button', { name: theme === 'azure-dark' ? /^Dark(?: \(current\))?$/ : /^Light(?: \(current\))?$/ }).click();
     await expect(page.locator('html')).toHaveAttribute('data-ax-theme', theme);
     await page.setViewportSize({ width: 1440, height: 1100 });
     for (const section of ['team', 'clients', 'nodes']) {
