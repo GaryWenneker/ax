@@ -9,7 +9,7 @@
     "check": "wrangler types && tsc --noEmit && wrangler deploy --dry-run"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
+    "typescript": "^7.0.2",
     "wrangler": "^4.147.0"
   },
   "overrides": {
