@@ -39,23 +39,8 @@ fn check_local(
     if readonly {
         return Err("Remote connections can only be managed on the local Command Center");
     }
-    let expected = format!("127.0.0.1:{port}");
-    let alternate = format!("localhost:{port}");
-    let host = headers
-        .get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("");
-    if host != expected && host != alternate {
-        return Err("Local Command Center host required");
-    }
-    if headers.get("sec-fetch-site").and_then(|h| h.to_str().ok()) == Some("cross-site") {
-        return Err("Cross-site request rejected");
-    }
-    if let Some(origin) = headers.get("origin") {
-        let origin = origin.to_str().unwrap_or("");
-        if origin != format!("http://{expected}") && origin != format!("http://{alternate}") {
-            return Err("Local Command Center origin required");
-        }
+    if !crate::local_owner::browser_serves(headers, port) {
+        return Err("Command Center host required");
     }
     if mutation && headers.get("x-ax-csrf").and_then(|h| h.to_str().ok()) != Some(csrf()) {
         return Err("Reload Settings before changing the connection");

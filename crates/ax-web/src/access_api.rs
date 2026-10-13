@@ -103,26 +103,7 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
             role,
         }
     } else {
-        let host = req
-            .headers()
-            .get(header::HOST)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let local = [
-            format!("127.0.0.1:{}", hub.port),
-            format!("localhost:{}", hub.port),
-        ];
-        let origin = req
-            .headers()
-            .get(header::ORIGIN)
-            .and_then(|v| v.to_str().ok());
-        if !local.iter().any(|v| v == host)
-            || origin.is_some_and(|v| !local.iter().any(|h| v == format!("http://{h}")))
-            || req
-                .headers()
-                .get("sec-fetch-site")
-                .and_then(|v| v.to_str().ok())
-                == Some("cross-site")
+        if !crate::local_owner::browser_serves(req.headers(), hub.port)
             || (mutation
                 && req
                     .headers()

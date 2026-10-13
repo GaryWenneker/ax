@@ -155,7 +155,7 @@ html[data-ax-layout="portal"] .calm-group-header { background: var(--bg-side); p
 html[data-ax-layout="portal"] :is(.calm-row-action, .calm-group-header):hover { color: var(--text-hi); background: var(--bg-hover); }
 html[data-ax-layout="portal"] .calm-row-action--remove:hover { color: var(--danger); }
 html[data-ax-layout="portal"] .portal-data-list { display: block; overflow-x: auto; }
-html[data-ax-layout="portal"] :is(.portal-data-row, .portal-data-header) { display: grid; grid-template-columns: minmax(240px, 1fr) 100px 105px 70px 175px; min-width: 720px; align-items: center; column-gap: 12px; padding: 10px 16px; min-height: 44px; }
+html[data-ax-layout="portal"] :is(.portal-data-row, .portal-data-header) { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 5.5rem) minmax(0, 6rem) minmax(0, 4.5rem) minmax(0, 1fr); min-width: 0; align-items: center; column-gap: 12px; padding: 10px 16px; min-height: 44px; }
 html[data-ax-layout="portal"] .portal-memory-list :is(.portal-data-row, .portal-data-header) { grid-template-columns: minmax(0, 1fr) 105px 95px 85px 55px; min-width: 0; }
 html[data-ax-layout="portal"] .portal-data-header { color: var(--text-hi); font-weight: 600; background: var(--bg-side); border-bottom: 1px solid var(--border-hi); position: sticky; top: 0; z-index: 1; }
 html[data-ax-layout="portal"] .portal-data-row::before, html[data-ax-layout="portal"] .portal-data-row::after { display: none; }

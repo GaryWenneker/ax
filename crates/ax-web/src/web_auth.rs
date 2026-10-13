@@ -46,28 +46,8 @@ fn cookie_value(headers: &HeaderMap) -> Option<&str> {
         .find_map(|part| part.trim().strip_prefix("ax_web_session="))
 }
 fn local_request(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
-    if !peer.ip().is_loopback() {
-        return false;
-    }
-    if headers.contains_key("forwarded")
-        || headers.contains_key("x-forwarded-for")
-        || headers.contains_key("x-forwarded-host")
-    {
-        return false;
-    }
-    let host = headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("");
-    let allowed = [format!("localhost:{port}"), format!("127.0.0.1:{port}")];
-    if !allowed.iter().any(|h| h == host) {
-        return false;
-    }
-    let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
-    if origin.is_some_and(|o| !allowed.iter().any(|h| o == format!("http://{h}"))) {
-        return false;
-    }
-    headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) != Some("cross-site")
+    // The reverse proxy connects from this machine and sets the public Host.
+    peer.ip().is_loopback() && crate::local_owner::browser_serves(headers, port)
 }
 async fn db() -> Result<SqlitePool, ErrorResponse> {
     let path = global_db_path()
@@ -237,14 +217,44 @@ async fn establish(
         session_cookie(&token, secure),
     ))
 }
+fn page_origin(headers: &HeaderMap) -> Result<Url, ErrorResponse> {
+    if let Ok(value) = std::env::var("AX_WEB_AUTH_ORIGIN") {
+        return parse_origin(&value);
+    }
+    if let Some(value) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        if let Ok(url) = parse_origin(value) {
+            return Ok(url);
+        }
+    }
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https")
+        && !host.is_empty()
+    {
+        return parse_origin(&format!("https://{host}"));
+    }
+    if host.starts_with("localhost:") || host.starts_with("127.0.0.1:") || host.starts_with("[::1]:")
+    {
+        return parse_origin(&format!("http://{host}"));
+    }
+    origin()
+}
+
 fn origin() -> Result<Url, ErrorResponse> {
     let value =
         std::env::var("AX_WEB_AUTH_ORIGIN").unwrap_or_else(|_| "http://localhost:7070".to_string());
+    parse_origin(&value)
+}
+
+fn parse_origin(value: &str) -> Result<Url, ErrorResponse> {
     let url = Url::parse(&value)
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid AX_WEB_AUTH_ORIGIN"))?;
     let host = url.host_str().unwrap_or("");
     if host.is_empty()
-        || !(url.scheme() == "https" || (url.scheme() == "http" && host == "localhost"))
+        || !(url.scheme() == "https"
+            || (url.scheme() == "http" && matches!(host, "localhost" | "127.0.0.1" | "::1")))
     {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -253,8 +263,8 @@ fn origin() -> Result<Url, ErrorResponse> {
     }
     Ok(url)
 }
-fn webauthn() -> Result<Webauthn, ErrorResponse> {
-    let url = origin()?;
+fn webauthn(headers: &HeaderMap) -> Result<Webauthn, ErrorResponse> {
+    let url = page_origin(headers)?;
     let rp_id = url
         .host_str()
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "RP ID missing"))?;
@@ -267,8 +277,8 @@ fn webauthn() -> Result<Webauthn, ErrorResponse> {
             )
         })
 }
-fn secure_origin() -> bool {
-    origin().is_ok_and(|u| u.scheme() == "https")
+fn secure_origin(headers: &HeaderMap) -> bool {
+    page_origin(headers).is_ok_and(|u| u.scheme() == "https")
 }
 fn passkey_ceremonies() -> &'static Mutex<HashMap<String, (Instant, Ceremony)>> {
     static STORE: OnceLock<Mutex<HashMap<String, (Instant, Ceremony)>>> = OnceLock::new();
@@ -339,9 +349,11 @@ struct PasskeyLabel {
     label: String,
 }
 
-async fn status() -> Result<Json<serde_json::Value>, ErrorResponse> {
+async fn status(headers: HeaderMap) -> Result<Json<serde_json::Value>, ErrorResponse> {
     let pool = db().await?;
-    let canonical_origin = origin().ok().map(|url| url.origin().ascii_serialization());
+    let canonical_origin = page_origin(&headers)
+        .ok()
+        .map(|url| url.origin().ascii_serialization());
     Ok(Json(
         serde_json::json!({"enabled":enabled(&pool).await?,"passkeys":canonical_origin.is_some(),"origin":canonical_origin}),
     ))
@@ -574,7 +586,7 @@ async fn password_login(
         &pool,
         &row.expect("valid account has a password").0,
         &headers,
-        secure_origin(),
+        secure_origin(&headers),
     )
     .await
 }
@@ -855,7 +867,7 @@ async fn recover_login(
         &serde_json::json!({}),
     )
     .await;
-    establish(&pool, &member_id, &headers, secure_origin()).await
+    establish(&pool, &member_id, &headers, secure_origin(&headers)).await
 }
 async fn logout(headers: HeaderMap) -> Result<Response, ErrorResponse> {
     let pool = db().await?;
@@ -868,7 +880,7 @@ async fn logout(headers: HeaderMap) -> Result<Response, ErrorResponse> {
     }
     Ok(cookie_response(
         serde_json::json!({"authenticated":false}),
-        clear_cookie(secure_origin()),
+        clear_cookie(secure_origin(&headers)),
     ))
 }
 async fn passkeys(
@@ -905,7 +917,7 @@ async fn register_start(
         let digest = blake3::hash(actor.as_bytes());
         Uuid::from_bytes(digest.as_bytes()[..16].try_into().expect("16 bytes"))
     });
-    let (options, state) = webauthn()?
+    let (options, state) = webauthn(&headers)?
         .start_passkey_registration(
             user_id,
             user.email.as_deref().unwrap_or(&user.display_name),
@@ -942,7 +954,7 @@ async fn register_finish(
     };
     let credential: RegisterPublicKeyCredential = serde_json::from_value(body.credential)
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Malformed registration"))?;
-    let passkey = webauthn()?
+    let passkey = webauthn(&headers)?
         .finish_passkey_registration(&credential, &state)
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Passkey registration rejected"))?;
     let id = fresh_secret();
@@ -973,7 +985,7 @@ async fn register_finish(
     .await;
     Ok(Json(serde_json::json!({"id":id,"created":true})))
 }
-async fn auth_start(Json(body): Json<StartBody>) -> Result<Json<serde_json::Value>, ErrorResponse> {
+async fn auth_start(headers: HeaderMap, Json(body): Json<StartBody>) -> Result<Json<serde_json::Value>, ErrorResponse> {
     let pool = db().await?;
     if !enabled(&pool).await? {
         return Err(err(StatusCode::CONFLICT, "Login disabled"));
@@ -997,7 +1009,7 @@ async fn auth_start(Json(body): Json<StartBody>) -> Result<Json<serde_json::Valu
     if credentials.is_empty() {
         return Err(err(StatusCode::UNAUTHORIZED, "No available passkey"));
     }
-    let (options, state) = webauthn()?
+    let (options, state) = webauthn(&headers)?
         .start_passkey_authentication(&credentials)
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Cannot start passkey sign-in"))?;
     let ceremony = store_challenge(Ceremony::Authenticate { member_id, state }).await;
@@ -1024,7 +1036,7 @@ async fn auth_finish(
     };
     let credential: PublicKeyCredential = serde_json::from_value(body.credential)
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Malformed assertion"))?;
-    let verified = webauthn()?
+    let verified = webauthn(&headers)?
         .finish_passkey_authentication(&credential, &state)
         .map_err(|_| err(StatusCode::UNAUTHORIZED, "Passkey assertion rejected"))?;
     if !verified.user_verified() {
@@ -1051,7 +1063,7 @@ async fn auth_finish(
         .execute(&pool)
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot update passkey"))?;
-    establish(&pool, &member_id, &headers, secure_origin()).await
+    establish(&pool, &member_id, &headers, secure_origin(&headers)).await
 }
 /// Atomically revoke an authenticator only if the last active Owner keeps
 /// another viable sign-in method.
@@ -1192,23 +1204,16 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|v| v.0);
+    // Login is opt-in. Until an Owner turns it on, APIs keep their existing
+    // access rules. A public host must not be locked until that setup exists.
     if !active {
-        if trusted_local_mode(&hub)
-            && peer.is_some_and(|addr| local_request(req.headers(), addr, hub.port))
-        {
-            return next.run(req).await;
-        }
-        return err(
-            StatusCode::FORBIDDEN,
-            "Remote Command Center requires authentication",
-        )
-        .into_response();
+        return next.run(req).await;
     }
     let Some(member_id) = member_for_session(&pool, req.headers()).await else {
         return err(StatusCode::UNAUTHORIZED, "Sign in required").into_response();
     };
     if req.method() != Method::GET && req.method() != Method::HEAD {
-        let expected = origin().ok();
+        let expected = page_origin(req.headers()).ok();
         let req_origin = req
             .headers()
             .get(header::ORIGIN)

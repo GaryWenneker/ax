@@ -3,6 +3,46 @@ use ax_global_db::access;
 use axum::http::HeaderMap;
 use sqlx::SqlitePool;
 
+/// A browser on this Command Center: loopback, or the same public host a
+/// reverse proxy presents (Cloudflare sets Host and Origin to that URL).
+pub(crate) fn browser_serves(headers: &HeaderMap, port: u16) -> bool {
+    if headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) == Some("cross-site") {
+        return false;
+    }
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if host.is_empty() {
+        return false;
+    }
+    let loopback = [
+        format!("127.0.0.1:{port}"),
+        format!("localhost:{port}"),
+        format!("[::1]:{port}"),
+    ];
+    let origin = headers.get("origin").and_then(|v| v.to_str().ok());
+    if loopback.iter().any(|item| item == host) {
+        return origin.is_none_or(|value| loopback.iter().any(|item| value == format!("http://{item}")));
+    }
+    match origin {
+        Some(value) => origin_names_host(value, host),
+        None => headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https"),
+    }
+}
+
+fn origin_names_host(origin: &str, host: &str) -> bool {
+    let Some(rest) = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    authority == host
+        || authority.split(':').next() == host.split(':').next() && !authority.is_empty()
+}
+
 pub(crate) fn browser_headers(
     headers: &HeaderMap,
     port: u16,
@@ -25,23 +65,8 @@ pub(crate) fn browser_headers(
     {
         return Err("Remote credentials and share sessions cannot manage project publications");
     }
-    let local = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
-    let host = headers
-        .get("host")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if !local.iter().any(|h| h == host) {
-        return Err("Local Command Center host required");
-    }
-    if headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) == Some("cross-site") {
-        return Err("Cross-site request rejected");
-    }
-    if headers.get("origin").is_some_and(|v| {
-        v.to_str()
-            .ok()
-            .is_none_or(|v| !local.iter().any(|h| v == format!("http://{h}")))
-    }) {
-        return Err("Local Command Center origin required");
+    if !browser_serves(headers, port) {
+        return Err("Command Center host required");
     }
     if mutation && headers.get("x-ax-csrf").and_then(|v| v.to_str().ok()) != Some(csrf) {
         return Err("Reload Settings before changing the registration");
@@ -88,6 +113,13 @@ mod tests {
             );
         }
         assert!(browser_headers(&h, 7070, true, false, "csrf").is_err());
+        let mut proxy = HeaderMap::new();
+        proxy.insert("host", "admin.wenneker.dev".parse().unwrap());
+        proxy.insert("origin", "https://admin.wenneker.dev".parse().unwrap());
+        proxy.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(browser_headers(&proxy, 7070, false, false, "csrf").is_ok());
+        proxy.insert("sec-fetch-site", "cross-site".parse().unwrap());
+        assert!(browser_headers(&proxy, 7070, false, false, "csrf").is_err());
     }
     #[tokio::test]
     async fn active_owner_is_required_in_database() {

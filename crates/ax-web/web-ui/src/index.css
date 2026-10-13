@@ -926,8 +926,9 @@ html, body {
   position: fixed;
   inset: 0;
   z-index: 5000;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  backdrop-filter: blur(18px) saturate(1.15);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -987,11 +988,16 @@ html, body {
   width: min(640px, 100%);
 }
 .ax-modal--full:has(.policy-inline-pane--props) {
-  width: calc(100vw - 24px);
-  max-width: none;
-  height: calc(100vh - 24px);
-  max-height: none;
+  width: min(640px, 50vw);
+  max-width: 50vw;
+  height: auto;
+  max-height: 50vh;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  backdrop-filter: blur(18px) saturate(1.15);
   border-color: color-mix(in srgb, var(--accent-text) 40%, var(--border));
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
@@ -999,10 +1005,10 @@ html, body {
 .ax-modal--full:has(.policy-inline-pane--props) .ax-modal-body { overflow: auto; display: block; }
 .ax-modal--full:has(.policy-inline-pane--props) .policy-inline-pane { height: auto; overflow: visible; border: 0; }
 .ax-modal--full:has(.policy-inline-pane--props) .settings-card-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px 32px;
-  padding: 8px 12px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 8px 16px;
 }
 .ax-modal--full:has(.policy-inline-pane--props) .settings-row:has(.policy-chips) { grid-column: 1 / -1; }
 .ax-modal--full:has(.policy-inline-pane--props) .settings-row-title {

@@ -74,7 +74,7 @@ export default function SecuritySettingsSection() {
         {error && <p role="alert" className="settings-toast settings-toast--err">{error}</p>}
         {notice && <p role="status" className="settings-toast settings-toast--ok">{notice}</p>}
         <div className="settings-row"><div className="settings-row-label">
-          <strong>Require sign-in</strong><p>When disabled, local Command Center keeps the existing trusted-local behavior. Remote access remains protected.</p>
+          <strong>Require sign-in</strong><p>When disabled, this address works without a password, including through a reverse proxy. Turn sign-in on to require a password or a passkey.</p>
         </div><div className="settings-row-control">
           <button className="btn" disabled={busy || !status} type="button" onClick={() => void toggle()}>
             {status?.enabled ? 'Disable sign-in' : 'Enable sign-in'}
@@ -119,7 +119,7 @@ export default function SecuritySettingsSection() {
       <div className="settings-card-header"><h2>My passkeys</h2><p>Register Touch ID, Face ID, Windows Hello or a hardware security key. You can add more than one.</p></div>
       <div className="settings-card-body">
         {status?.origin && status.origin !== window.location.origin &&
-          <p className="access-note">Passkeys require the configured origin. <a href={status.origin}>Open {status.origin}</a> to register or use passkeys.</p>}
+          <p className="access-note">Passkeys are tied to {status.origin}. Open that address to register or use them.</p>}
         <button className="btn primary" type="button"
           disabled={busy || !status?.passkeys || Boolean(status?.origin && status.origin !== window.location.origin)}
           onClick={() => void execute(registerPasskey, 'Passkey registered.')}>Add passkey</button>
