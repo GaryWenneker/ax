@@ -192,6 +192,30 @@ The `/api/ship/sonar/*` endpoints (discover, install, start, stop, bootstrap, se
 | POST | `/api/actions/publish` | Publish an action to the stream |
 | GET | `/api/reset-client-cache` | Clear a stale service worker / browser cache |
 
+## Interactive Command Center sign-in and WebAuthn
+
+Interactive human sessions use an opaque, HttpOnly, SameSite cookie. Passkeys are verified server-side against the configured relying party ID and origin. Browser identities must not be confused with MCP client tokens.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/web-auth/status` | Whether interactive sign-in is enabled |
+| GET | `/api/web-auth/session` | Active member and roles, or 401 |
+| POST | `/api/web-auth/setup` | Initial local Owner password setup before enabling sign-in |
+| POST | `/api/web-auth/config` | Trusted-local Owner enable/disable; revokes web sessions |
+| POST | `/api/web-auth/login` | Sign in using identity and password |
+| POST | `/api/web-auth/logout` | Revoke current session |
+| GET | `/api/web-auth/passkeys` | Current user's registered passkeys (metadata only) |
+| POST | `/api/web-auth/passkeys/registration/start` | Create WebAuthn registration challenge |
+| POST | `/api/web-auth/passkeys/registration/finish` | Verify and store public-key credential |
+| POST | `/api/web-auth/passkeys/authentication/start` | Begin passkey sign-in |
+| POST | `/api/web-auth/passkeys/authentication/finish` | Verify assertion and establish session |
+| PATCH | `/api/web-auth/passkeys/{id}` | Rename own passkey |
+| DELETE | `/api/web-auth/passkeys/{id}` | Revoke own passkey |
+
+`GET /api/access/team` returns both `role` (strongest-role compatibility value) and `roles` (authoritative role set). The `POST /api/access/team` and `PATCH /api/access/team/{id}` bodies accept `roles: ["admin", "member"]` and remain compatible with the legacy `role` input. An active member cannot have zero roles; only an Owner may grant or remove ownership, and the final active Owner cannot be demoted or disabled.
+
+Authentication may be disabled for trusted local installations; remote Command Center data access stays protected. Configure `AX_WEB_AUTH_ORIGIN` to the exact stable HTTPS origin used for passkeys; localhost development is supported. Browser clients must not send credentials to a different host.
+
 ## Team, clients and replication access
 
 These endpoints enforce the local-owner session or a client credential with the corresponding `admin:team`, `admin:clients` or `admin:nodes` scope. Mutations are rejected in read-only mode. Local browser mutations use the CSRF value from `/api/access/session` in `X-Ax-Access-Csrf`. Token values are returned only when created/revealed; keep them out of logs and screenshots.
