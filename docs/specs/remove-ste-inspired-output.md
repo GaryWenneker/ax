@@ -28,3 +28,8 @@ Review with the usable Old Coder, API, review-loop and Rust review skills until 
 ## R1 — preserve applicable coverage tooling
 
 The original generic changed-line coverage checker and its unchanged behavioral controls remain useful for the restored MCP code. Retain them under neutral names `tools/check_mcp_removal_coverage.py` and `tools/test_mcp_removal_coverage.py`. Add `tools/ste_removal_mutants.py` for three partial-removal mutations. No dependencies are added. Four removal tests were observed failing on the feature-enabled source, then passing after reversal.
+
+
+## R2 — final evidence
+
+Add `docs/evidence/remove-ste-inspired-output-metrics.json` for the executed coverage and mutation records. The final published implementation is `e278a087b04be71771d33759223d5483eaf08b8b`, tree `4a9255719f6732bc672e409533c5c0deccb568ea`, identical to tested local state `a95fb76a79347205959a7880e14c8f3a8a7ae114`. The evidence commit changes reports only. Workspace coverage artifacts were cleared to resolve an instrumented-cache collision, and the gauntlet resumed on the same unchanged implementation state.
