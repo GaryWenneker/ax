@@ -254,7 +254,7 @@ fn origin() -> Result<Url, ErrorResponse> {
 }
 
 fn parse_origin(value: &str) -> Result<Url, ErrorResponse> {
-    let url = Url::parse(&value)
+    let url = Url::parse(value)
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Invalid AX_WEB_AUTH_ORIGIN"))?;
     let host = url.host_str().unwrap_or("");
     if host.is_empty()
