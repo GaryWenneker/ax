@@ -7,6 +7,7 @@ pub mod server_config;
 pub mod server_discovery;
 
 mod access_api;
+mod web_auth;
 mod actions;
 mod agent;
 mod agent_pty;
@@ -851,7 +852,7 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     actions::publish("web", "server started", None);
     ax_usage::spawn_ensure_daily_pricing_sync();
 
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| e.to_string())
