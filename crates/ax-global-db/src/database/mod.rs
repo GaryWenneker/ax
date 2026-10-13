@@ -14,6 +14,13 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
             .await
             .with_context(|| format!("schema statement failed: {}", stmt.chars().take(80).collect::<String>()))?;
     }
+    // One-time backfill for existing single-role installs; never re-add a
+    // deliberately removed role when init runs again.
+    sqlx::query(
+        "INSERT INTO member_roles(member_id, role)
+         SELECT id, role FROM team_members AS m
+         WHERE NOT EXISTS (SELECT 1 FROM member_roles AS r WHERE r.member_id = m.id)",
+    ).execute(pool).await?;
     for table in ["global_policy_rules", "global_policy_skills"] {
         add_level_column(pool, table).await?;
     }
