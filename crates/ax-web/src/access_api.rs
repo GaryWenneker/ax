@@ -82,6 +82,16 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
             .and_then(|v| v.to_str().ok()) != Some(csrf()) {
             return failure(StatusCode::FORBIDDEN, "Missing CSRF token");
         }
+        let required_scope = if req.uri().path().contains("/team") {
+            "admin:team"
+        } else if req.uri().path().contains("/nodes") {
+            "admin:nodes"
+        } else {
+            "admin:clients"
+        };
+        if !role.permits(required_scope) {
+            return failure(StatusCode::FORBIDDEN, "Insufficient member permissions");
+        }
         Actor { member_id, client_id: None, role }
     } else {
         let host = req
