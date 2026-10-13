@@ -1,4 +1,5 @@
 ---
+import { AX_FULL_NAME, AX_TAGLINE } from '../lib/brand';
 import MinimalDownload from './MinimalDownload.astro';
 import MotionControl from './MotionControl.astro';
 import ScrollReveal from './ScrollReveal.astro';
@@ -32,7 +33,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     <div class="ax-content">
       <p class="ax-eyebrow" data-ax-reveal>LOCAL-FIRST / OPEN SOURCE / DEVELOPER TOOLING</p>
       <div class="ax-display-word" data-ax-reveal aria-hidden="true">Ax<span>_</span></div>
-      <h1 class="ax-headline"><span>Your context.</span><span>Your rules.</span><span class="ax-headline-accent">Your control.</span></h1>
+      <p class="ax-full-name" data-ax-reveal>{AX_FULL_NAME}</p>
+      <h1 class="ax-headline" aria-label={AX_TAGLINE}><span>The context layer</span><span class="ax-headline-accent">for AI agents</span></h1>
       <div class="ax-feature-strip" data-ax-reveal aria-label="Core capabilities">
         <span>Context</span><span>Rules</span><span>Control</span><span>One native binary</span>
       </div>
