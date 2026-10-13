@@ -63,14 +63,10 @@ pub fn model_text(value: &Value) -> String {
 
 /// Remove only the formatter-owned policy envelope. Rule bodies are byte-for-byte intact.
 pub fn policy_markdown(block: &str) -> String {
-    policy_markdown_with_instruction(block, "Apply matched rules and skills before editing.")
-}
-
-pub(crate) fn policy_markdown_with_instruction(block: &str, instruction: &str) -> String {
     if block.starts_with("<ax_policy ") {
         if let Some((_, body)) = block.split_once('\n') {
             if let Some(body) = body.strip_suffix("</ax_policy>\n") {
-                return format!("{instruction}\n\n{body}");
+                return format!("Apply matched rules and skills before editing.\n\n{body}");
             }
         }
     }

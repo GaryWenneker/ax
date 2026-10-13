@@ -336,7 +336,6 @@ async fn call_tool_and_wrap(
     if let Some(root) = project_root {
         crate::request_context::validate(root, &args)?;
     }
-    crate::text_style::PreflightTextStyle::validate_tool(name, &args)?;
     if is_policy_tool(name) {
         if let Err(e) = engine.ensure_policy_fresh().await {
             tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");
@@ -728,30 +727,24 @@ pub(crate) fn lean_structured(name: &str, value: &Value) -> Option<Value> {
         })),
         // The inject block (with full rule/skill/memory/index bodies) is in
         // content.text. Keep only counts and machine-actionable fields.
-        "ax_preflight" => {
-            let mut metadata = json!({
-                "policyStatus": value.get("policyStatus"),
-                "matchedRules": value.get("matchedRules"),
-                "matchedSkills": value.get("matchedSkills"),
-                "matchedMemories": value.get("matchedMemories"),
-                "guardRequired": value.get("guardRequired"),
-                "mode": value.get("mode"),
-                "directiveDetected": value.get("directiveDetected"),
-                "captureProposal": value.get("captureProposal"),
-                "instruction": value.get("instruction"),
-                "indexStats": value.get("indexStats"),
-                "pendingFiles": value.get("pendingFiles"),
-                "project": value.get("project"),
-                "session": value.get("session"),
-                "contextBudget": value.get("contextBudget"),
-                "policySources": value.get("policySources"),
-                "policyError": value.get("policyError"),
-            });
-            if let Some(presentation) = value.get("presentation") {
-                metadata["presentation"] = presentation.clone();
-            }
-            Some(metadata)
-        }
+        "ax_preflight" => Some(json!({
+            "policyStatus": value.get("policyStatus"),
+            "matchedRules": value.get("matchedRules"),
+            "matchedSkills": value.get("matchedSkills"),
+            "matchedMemories": value.get("matchedMemories"),
+            "guardRequired": value.get("guardRequired"),
+            "mode": value.get("mode"),
+            "directiveDetected": value.get("directiveDetected"),
+            "captureProposal": value.get("captureProposal"),
+            "instruction": value.get("instruction"),
+            "indexStats": value.get("indexStats"),
+            "pendingFiles": value.get("pendingFiles"),
+            "project": value.get("project"),
+            "session": value.get("session"),
+            "contextBudget": value.get("contextBudget"),
+            "policySources": value.get("policySources"),
+            "policyError": value.get("policyError"),
+        })),
         // Summary text is in content.text; keep structured stats for scripts.
         "ax_status" => Some(json!({
             "stats": value.get("stats"),

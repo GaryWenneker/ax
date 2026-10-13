@@ -695,7 +695,6 @@ fn resolve_preflight_cwd(ax: &Ax, params: &Value) -> Result<PathBuf, String> {
 }
 
 async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let text_style = crate::text_style::PreflightTextStyle::from_params(&params)?;
     let prompt = params
         .get("prompt")
         .and_then(|v| v.as_str())
@@ -808,7 +807,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         policy_blocks.push(ax_usage::ContextBlock {
             id: format!("rule:{}", r.id),
             class: ax_usage::ContextClass::HighValue,
-            text: text_style.policy_markdown(&text),
+            text: crate::smart_output::policy_markdown(&text),
         });
     }
     for s in result.skills.iter().filter(|s| !s.always_apply) {
@@ -822,7 +821,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         policy_blocks.push(ax_usage::ContextBlock {
             id: format!("skill:{}", s.name),
             class: ax_usage::ContextClass::HighValue,
-            text: text_style.policy_markdown(&text),
+            text: crate::smart_output::policy_markdown(&text),
         });
     }
     crate::verbose::push_line(format!(
@@ -840,10 +839,9 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
 
     let mut optional_blocks: Vec<ax_usage::ContextBlock> = policy_blocks;
     let mut inject = format!(
-        "# Ax context\n\nProject: `{}`\n\n{}{}",
+        "# Ax context\n\nProject: `{}`\n\n{}",
         ax_usage::project_scope(ax.project_root()),
-        text_style.guidance(),
-        text_style.policy_markdown(&policy_inject)
+        crate::smart_output::policy_markdown(&policy_inject)
     );
     if let Some(ref stats) = index_stats {
         let block = crate::smart_output::index_context(stats, &pending);
@@ -922,7 +920,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         if !inject.is_empty() {
             inject.push('\n');
         }
-        inject.push_str(text_style.history_hint());
+        inject.push_str("<ax_history_hint>This asks when something changed: call ax_history with the file, symbol, or topic. It lists dated agent turns (prompt, outcome, files, commits) and git commits.</ax_history_hint>");
     }
 
     match ax_core::review_language::resolve_for_project(ax.project_root()) {
@@ -947,7 +945,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         push_once(
             &mut inject,
             "block:cache_help",
-            text_style.cache_help(CONTEXT_CACHE_LINE),
+            CONTEXT_CACHE_LINE,
             session_delivered.as_ref(),
             &mut delivered,
         );
@@ -1045,13 +1043,17 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         inject.push('\n');
     }
     if has_directive {
-        inject.push_str(text_style.capture_hint());
+        inject.push_str("<ax_capture_hint>Directive detected — a ready rule proposal is in captureProposal. Ask the user captureProposal.questions, then call ax_policy_capture({ action: \"save\", rule }) after they confirm.</ax_capture_hint>");
         crate::verbose::push_line("enrich directive capture_hint appended");
     } else {
         crate::verbose::push_line("enrich directive none");
     }
 
-    let instruction = text_style.instruction(has_directive);
+    let mut instruction =
+        "Apply CRITICAL rules before editing. If a skill matched, follow its workflow.".to_string();
+    if has_directive {
+        instruction.push_str(" DIRECTIVE DETECTED — captureProposal holds a ready rule. Ask the user the questions in captureProposal.questions, then call ax_policy_capture(action=\"save\", rule) after they say yes. This persists even in a project with no prior policy.");
+    }
 
     crate::verbose::push_line(format!(
         "enrich done final_inject_chars={} directive={}",
@@ -1198,7 +1200,6 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
             obj.insert("policyError".to_string(), Value::String(err));
         }
     }
-    text_style.add_metadata(&mut out);
     out = crate::context_budget::finish(out, &blocks, budget)?;
     let included: Vec<_> = out["contextBudget"]["included"]
         .as_array()
@@ -2120,11 +2121,6 @@ fn preflight_tool() -> Value {
                     "type": "string",
                     "enum": ["auto", "off", "compact", "expanded"],
                     "description": "Opt in to deterministic source retrieval during preflight; no model is called"
-                },
-                "textStyle": {
-                    "type": "string",
-                    "enum": ["standard", "ste-inspired"],
-                    "description": "Optional style for AX-authored instructions. Default: standard. STE-inspired keeps canonical policy and source text unchanged; no model is called."
                 }
             }
         }

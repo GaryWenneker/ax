@@ -89,12 +89,6 @@ Agents should **not** read `.agents/` files when these tools are available — p
 
 **Cursor:** call `ax_preflight` at turn start (MCP pull only — no prompt-hook).
 
-**Writing style:** `ax_preflight` accepts optional `textStyle: "standard" | "ste-inspired"`. Omission and `"standard"` preserve the current presentation. `"ste-inspired"` uses explicit AX-authored instructions and adds `presentation.textStyle` and `presentation.profile` metadata; canonical policy and source content remain unchanged. Unsupported values or types fail before delivery state changes. See [optional writing style](/guides/smart-output/#optional-writing-style).
-
-```json
-{ "prompt": "Inspect role permissions", "textStyle": "ste-inspired" }
-```
-
 **Claude Code:** prompt-hook may auto-inject `<ax_policy>…</ax_policy>` before the model sees the prompt, in addition to MCP tools. A `Stop`/`SubagentStop` hook (`ax stop-hook`) also runs a lightweight post-flight check on turn end — see [Turn-end post-flight (Claude Code)](#turn-end-post-flight-claude-code) below.
 
 Call `ax_guard` with the target file path before editing project files. See [Policy Engine](/guides/policy-engine/) for flow diagrams and delivery channels.
@@ -212,7 +206,7 @@ By default ax uses **[Smart Output](/guides/smart-output/)**. Agent-facing bodie
 | Tool | `content.text` | Lean `structuredContent` |
 |---|---|---|
 | `ax_explore` | Numbered source + caller/callee spine | `query`, `summary`, `blastRadius`, compact `entries` (name/file/lines/score) — no source or neighbor duplication |
-| `ax_preflight` | Project-scoped Markdown, complete required rules, required working context and budget-selected memory/history/index blocks; directive proposal and questions visible in text | existing counts/action fields + `project`, `session`, `contextBudget`; optional `presentation` for STE-inspired text; no rule/skill/memory bodies |
+| `ax_preflight` | Project-scoped Markdown, complete required rules, required working context and budget-selected memory/history/index blocks; directive proposal and questions visible in text | existing counts/action fields + `project`, `session`, `contextBudget`; no rule/skill/memory bodies |
 | `ax_status` | Markdown status summary + doc breakdown | `stats`, `lastIndexedAt`, `pendingFiles`, `policy` — no `text` duplication |
 | `ax_context` | Markdown task context | `query`, `summary`, `stats`, `relatedFiles` — no `subgraph`/`codeBlocks` duplication |
 | `ax_skill` | Skill body | metadata envelope (no `body`, `text` or `inject`) |

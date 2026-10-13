@@ -65,15 +65,9 @@ fn render_with_iterations(
         text.push_str("\n\nOptional blocks omitted. Retrieve with ax_status, ax_rules, ax_skill, ax_recall, ax_history or ax_expand; graph queries accept fresh: true.");
     }
     if overflow {
-        text.push_str(if base
-            .pointer("/presentation/textStyle")
-            .and_then(Value::as_str)
-            == Some("ste-inspired")
-        {
-            "\n\nThe context exceeds the token budget. Required policy and working context are preserved."
-        } else {
-            "\n\nContext budget exceeded: required policy and working context are preserved."
-        });
+        text.push_str(
+            "\n\nContext budget exceeded: required policy and working context are preserved.",
+        );
     }
     out["inject"] = json!(text);
     out["contextBudget"] = json!({"included":ids, "omitted":omitted,
