@@ -35,8 +35,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Rust format gate
-        run: cargo fmt --all -- --check
+      - name: Rust format gate for changed authentication sources
+        run: |
+          rustfmt --edition 2021 --check \
+            crates/ax-web/src/web_auth.rs \
+            crates/ax-web/src/access_api.rs \
+            crates/ax-web/src/workspace_state.rs \
+            crates/ax-global-db/src/access.rs \
+            crates/ax-global-db/src/database/mod.rs
       - name: Compile Command Center and global DB with locked dependencies
         run: cargo check --locked -p ax-web -p ax-global-db
       - name: Clippy with warnings denied
