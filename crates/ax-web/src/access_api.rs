@@ -139,6 +139,7 @@ struct CreateMember {
     display_name: String,
     email: Option<String>,
     role: String,
+    roles: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -215,23 +216,26 @@ async fn create_member(
             )
         }
     };
-    let role = match role(&body.role) {
-        Ok(role) => role,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error":e})),
-            )
-        }
+    let parsed_roles: Result<Vec<_>, _> = body.roles.as_ref()
+        .map(|roles| roles.iter().map(|r| role(r)).collect())
+        .unwrap_or_else(|| role(&body.role).map(|r| vec![r]));
+    let roles = match parsed_roles {
+        Ok(roles) if !roles.is_empty() => roles,
+        _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Invalid role set"}))),
     };
-    if role == access::MemberRole::Owner && actor.role != access::MemberRole::Owner {
+    if roles.contains(&access::MemberRole::Owner) && actor.role != access::MemberRole::Owner {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({"error":"Only an owner can assign ownership"})),
         );
     }
     let id = Uuid::new_v4().to_string();
-    match access::create_member(&pool, &id, &body.display_name, body.email.as_deref(), role).await {
+    let created = access::create_member(&pool, &id, &body.display_name, body.email.as_deref(), roles[0]).await;
+    let created = match created {
+        Ok(()) if roles.len() > 1 => access::update_member_roles(&pool, &id, &roles, "active").await,
+        other => other,
+    };
+    match created {
         Ok(()) => {
             let _ = access::audit(
                 &pool,
@@ -505,7 +509,8 @@ async fn remove_node(
 
 #[derive(Deserialize)]
 struct UpdateMember {
-    role: String,
+    role: Option<String>,
+    roles: Option<Vec<String>>,
     status: String,
 }
 #[derive(Deserialize)]
@@ -531,23 +536,32 @@ async fn update_member(
             )
         }
     };
-    let role = match role(&body.role) {
-        Ok(role) => role,
-        Err(_) => return failure(StatusCode::BAD_REQUEST, "Invalid role"),
+    let roles: Vec<access::MemberRole> = match body.roles.as_ref() {
+        Some(roles) if !roles.is_empty() => {
+            match roles.iter().map(|r| role(r)).collect::<Result<Vec<_>, _>>() {
+                Ok(parsed) => parsed,
+                Err(_) => return failure(StatusCode::BAD_REQUEST, "Invalid roles"),
+            }
+        }
+        Some(_) => return failure(StatusCode::BAD_REQUEST, "At least one role required"),
+        None => match body.role.as_deref().map(role) {
+            Some(Ok(role)) => vec![role],
+            _ => return failure(StatusCode::BAD_REQUEST, "Invalid role"),
+        }
     };
     let members = match access::list_members(&db).await {
         Ok(m) => m,
         Err(_) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"),
     };
     if actor.role != access::MemberRole::Owner
-        && (role == access::MemberRole::Owner
+        && (roles.contains(&access::MemberRole::Owner)
             || members
                 .iter()
-                .any(|m| m.id == id && m.role == access::MemberRole::Owner))
+                .any(|m| m.id == id && m.roles.contains(&access::MemberRole::Owner)))
     {
         return failure(StatusCode::FORBIDDEN, "Only an owner can change ownership");
     }
-    match access::update_member(&db, &id, role, &body.status).await {
+    match access::update_member_roles(&db, &id, &roles, &body.status).await {
         Ok(()) => {
             let _ = access::audit(
                 &db,
@@ -556,7 +570,7 @@ async fn update_member(
                 "member.updated",
                 "member",
                 &id,
-                &serde_json::json!({"role":body.role,"status":body.status}),
+                &serde_json::json!({"roles":body.roles,"role":body.role,"status":body.status}),
             )
             .await;
             Json(serde_json::json!({"updated":true})).into_response()
