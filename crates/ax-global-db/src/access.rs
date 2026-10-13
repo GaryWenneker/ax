@@ -430,16 +430,7 @@ pub async fn list_members(pool: &SqlitePool) -> Result<Vec<TeamMember>> {
     .await?;
     rows.into_iter()
         .map(
-            |(id, display_name, email, role, status, created_at, last_active_at, roles): (
-                String,
-                String,
-                Option<String>,
-                String,
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-            )| {
+            |(id, display_name, email, role, status, created_at, last_active_at, roles): MemberRow| {
                 Ok(TeamMember {
                     id,
                     display_name,
