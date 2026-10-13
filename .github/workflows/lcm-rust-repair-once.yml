@@ -1,0 +1,56 @@
+# Temporary, branch-scoped lockfile generation: self-removes after success.
+name: Rust LCM Remediation Validation
+
+on:
+  push:
+    branches: [fix/security-rust-lockfile]
+    paths:
+      - "Cargo.toml"
+      - "crates/ax-plugins/Cargo.toml"
+      - ".github/workflows/lcm-rust-repair-once.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rust-lcm-lockfile-repair
+  cancel-in-progress: false
+
+jobs:
+  resolve-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve only the approved Rust security upgrades
+        run: |
+          set -euo pipefail
+          cargo update -p wasmtime --precise 36.0.16
+          cargo update -p lru --precise 0.18.5
+          git diff --stat -- Cargo.lock
+      - name: Enforce seven-day minimum for every new Cargo and npm lock entry
+        run: python scripts/check_dependency_age.py --base origin/main
+      - name: Disallow new known OSV vulnerabilities
+        run: python scripts/check_dependency_advisories.py --base origin/main
+      - name: Compile patched WASM plugin host
+        run: cargo check --locked -p ax-plugins --features wasm
+      - name: Compile consumers of updated LRU
+        run: cargo check --locked -p ax-resolution
+      - name: Prove manifest/lockfile consistency
+        run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
+      - name: Commit verified regenerated lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git rm .github/workflows/lcm-rust-repair-once.yml
+          git commit -m "fix(deps): lock security-patched Rust dependencies and verify builds"
+          git push origin HEAD:fix/security-rust-lockfile
