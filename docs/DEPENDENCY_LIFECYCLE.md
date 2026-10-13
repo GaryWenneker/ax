@@ -38,7 +38,12 @@ AX has two complementary automated proposal paths:
 The workflow never forces major upgrades, never changes package manifests or
 source files, never bypasses the seven-day gate, and **never merges or
 deploys** the proposed update. Unsafe or unfixable changes remain findings for
-manual investigation. A passing GitHub workflow is a technical gate, not a
+manual investigation. When an otherwise eligible auto-fix contains a known OSV
+vulnerability, the workflow emits a visible warning and **skips proposing a PR**
+without failing the job. OSV service errors, incomplete results, or other
+unverifiable metadata still **fail the job**, and no PR is proposed. The separate
+daily Dependency Lifecycle Monitor remains responsible for reporting unresolved
+vulnerabilities. A passing GitHub workflow is a technical gate, not a
 claim that the change has been application-tested.
 
 [View automatically proposed LCM PRs](https://github.com/GaryWenneker/ax/pulls?q=is%3Apr+is%3Aopen+head%3Aautomation%2Flcm-) or
