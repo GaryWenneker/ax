@@ -42,6 +42,36 @@ This is an illustrative response, not a measurement. Real identifiers, counts an
 
 Session markers such as `ax_chat` and `ax_working_context` remain available because agents and existing clients use their IDs and hashes. Rule bodies, including embedded markup and exceptions, are preserved rather than rewritten by a generic XML converter.
 
+## Optional writing style
+
+Pass `textStyle: "ste-inspired"` to `ax_preflight` to request clearer AX-authored instructions and guidance for the agent's explanations:
+
+```json
+{
+  "prompt": "Inspect replication setup",
+  "textStyle": "ste-inspired"
+}
+```
+
+AX uses authored templates with explicit actions, conditions and exceptions. The text asks the agent to use clear technical English, keep one instruction per sentence, and preserve technical names and uncertainty. The renderer makes no model call.
+
+Stored rules, skill bodies, memories, numbered source, identifiers and quotations retain their original content. The style does not simplify arbitrary stored text. It is inspired by [ASD-STE100](https://www.asd-ste100.org/STE_faq.html); AX does not claim verified conformity to that standard.
+
+The MCP envelope stays the same. An opted-in preflight adds this small metadata field:
+
+```json
+{
+  "presentation": {
+    "textStyle": "ste-inspired",
+    "profile": "ax-ste-inspired-1"
+  }
+}
+```
+
+Omit `textStyle`, or pass `"standard"`, to retain the existing presentation. Other values and types are rejected before the request can reset policy delivery. The option is per request and works through the existing MCP and embedded adapters. It does not add a format selector or a settings page. Session, authorization, expansion and reset behavior still apply.
+
+The guidance and metadata count toward the response budget. Clearer language can increase tokens; savings and better agent results require a measured comparison. Run `cargo run -p ax-mcp --example evaluate_ste_output --locked` to collect paired, model-free MCP measurements, then summarize them with `python3 tools/evaluate-ste-output.py --measurements <measurements.jsonl>`. These measurements do not establish agent task quality or provider-billed savings. The same summarizer accepts separately measured agent runs and dated EUR prices; see `docs/specs/ste-inspired-output.md` for evaluation criteria.
+
 ## Preflight selection and budgets
 
 Preflight identifies the actual project and chat. It preserves mandatory rule bodies, required workflows and working context. CRITICAL contextual rules are not dropped when the policy character limit is exceeded. Existing on-demand skill-loading semantics are preserved.
