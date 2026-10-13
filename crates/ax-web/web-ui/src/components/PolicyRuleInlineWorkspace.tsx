@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchPolicyRule, savePolicyRule } from '../policyApi';
 import PolicyBodyCard from './PolicyBodyCard';
+import ModalShell from './ModalShell';
+import PolicyChipField, { suggestTags } from './PolicyChipField';
 import { useItemLinks } from './LinkedBody';
-import PolicyMetaResizeHandle from './PolicyEditorResize';
 import PolicyRevisionHistory from './PolicyRevisionHistory';
 import PolicyPropertiesEditor from './PolicyPropertiesEditor';
-import { PageCard, PageCardBody, PageRow } from './ui/PageLayout';
+import { PageCardBody, PageRow } from './ui/PageLayout';
 import { Spinner } from './ui/Spinner';
 import { RULE_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { POLICY_SCOPES, type RuleFrontmatter } from '../policyTypes';
@@ -47,6 +48,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [propsOpen, setPropsOpen] = useState(false);
   /** Reveal content when switching rows; first open uses the blade slide-in only. */
   const [reveal, setReveal] = useState(false);
   const prevRuleIdRef = useRef<string | null>(null);
@@ -157,8 +159,10 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
           <span className="muted">Loading rule…</span>
         </div>
       ) : fm ? (
-        <div key={ruleId} className={`policy-inline-workspace-grid${reveal ? ' policy-inline-reveal' : ''}`}>
-          <PageCard title="Metadata" description="Matching criteria." className="policy-inline-pane policy-inline-pane--props">
+        <div key={ruleId} className={`policy-inline-workspace-grid policy-inline-workspace-grid--editor${reveal ? ' policy-inline-reveal' : ''}`}>
+          {propsOpen && (
+          <ModalShell title="Properties" subtitle={fm.id} size="lg" onClose={() => setPropsOpen(false)} footer={<button type="button" className="btn primary" onClick={() => setPropsOpen(false)}>Done</button>}>
+          <div className="policy-inline-pane policy-inline-pane--props">
             <PageCardBody>
               <PageRow title="ID" description="Kebab-case identifier.">
                 <input
@@ -267,13 +271,16 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                 />
               </PageRow>
               <PageRow title="Globs">
-                <input className="settings-input" value={globsText} onChange={(e) => setGlobsText(e.target.value)} />
+                <PolicyChipField label="Globs" values={parseCsv(globsText)} suggestions={['**/*.ts', '**/*.tsx', '**/*.rs', '**/*.md', '**/*.css']} onChange={(next) => setGlobsText(next.join(', '))} />
               </PageRow>
               <PageRow title="Triggers">
-                <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />
+                <PolicyChipField label="Triggers" values={parseCsv(triggersText)} suggestions={['implement', 'review', 'test', 'mcp', 'preflight', 'always', 'never']} onChange={(next) => setTriggersText(next.join(', '))} />
               </PageRow>
               <PageRow title="Tags">
-                <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
+                <div className="policy-chips">
+                  <button type="button" className="btn" onClick={() => setTagsText([...parseCsv(tagsText), ...suggestTags(body, fm.id, parseCsv(tagsText))].join(', '))}>Autotag</button>
+                  <PolicyChipField label="Tags" values={parseCsv(tagsText)} suggestions={['policy', 'mcp', 'frontend', 'security', 'testing', 'docs']} onChange={(next) => setTagsText(next.join(', '))} />
+                </div>
               </PageRow>
               <PolicyPropertiesEditor
                 key={ruleId}
@@ -283,9 +290,10 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
                 onChange={(properties) => setFm({ ...fm, properties })}
               />
             </PageCardBody>
-          </PageCard>
-          <PolicyMetaResizeHandle />
-          <PolicyBodyCard title="Rule body" body={body} onChange={setBody} links={links} selfKey={`rule:${origin ?? 'project'}:${ruleId}`} />
+          </div>
+          </ModalShell>
+          )}
+          <PolicyBodyCard title="Rule body" body={body} onChange={setBody} links={links} selfKey={`rule:${origin ?? 'project'}:${ruleId}`} onProperties={() => setPropsOpen(true)} />
         </div>
       ) : null}
     </div>

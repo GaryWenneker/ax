@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchPolicySkill, savePolicySkill } from '../policyApi';
 import PolicyBodyCard from './PolicyBodyCard';
+import ModalShell from './ModalShell';
+import PolicyChipField, { suggestTags } from './PolicyChipField';
 import { useItemLinks } from './LinkedBody';
-import PolicyMetaResizeHandle from './PolicyEditorResize';
 import PolicyRevisionHistory from './PolicyRevisionHistory';
 import PolicyPropertiesEditor from './PolicyPropertiesEditor';
-import { PageCard, PageCardBody, PageRow } from './ui/PageLayout';
+import { PageCardBody, PageRow } from './ui/PageLayout';
 import { Spinner } from './ui/Spinner';
 import { SKILL_PROPERTY_RESERVED } from '../lib/policyProperties';
 import { POLICY_SCOPES, type SkillFrontmatter } from '../policyTypes';
@@ -45,6 +46,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [propsOpen, setPropsOpen] = useState(false);
   /** Reveal content when switching rows; first open uses the blade slide-in only. */
   const [reveal, setReveal] = useState(false);
   const prevSkillNameRef = useRef<string | null>(null);
@@ -145,8 +147,10 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
           <span className="muted">Loading skill…</span>
         </div>
       ) : fm ? (
-        <div key={skillName} className={`policy-inline-workspace-grid${reveal ? ' policy-inline-reveal' : ''}`}>
-          <PageCard title="Metadata" description="Matching criteria." className="policy-inline-pane policy-inline-pane--props">
+        <div key={skillName} className={`policy-inline-workspace-grid policy-inline-workspace-grid--editor${reveal ? ' policy-inline-reveal' : ''}`}>
+          {propsOpen && (
+          <ModalShell title="Properties" subtitle={fm.name} size="lg" onClose={() => setPropsOpen(false)} footer={<button type="button" className="btn primary" onClick={() => setPropsOpen(false)}>Done</button>}>
+          <div className="policy-inline-pane policy-inline-pane--props">
             <PageCardBody>
               <PageRow title="Name">
                 <input className="settings-input" value={fm.name} disabled />
@@ -248,10 +252,13 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                 />
               </PageRow>
               <PageRow title="Triggers">
-                <input className="settings-input" value={triggersText} onChange={(e) => setTriggersText(e.target.value)} />
+                <PolicyChipField label="Triggers" values={parseCsv(triggersText)} suggestions={['implement', 'review', 'test', 'mcp', 'preflight', 'always', 'never']} onChange={(next) => setTriggersText(next.join(', '))} />
               </PageRow>
               <PageRow title="Tags">
-                <input className="settings-input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} />
+                <div className="policy-chips">
+                  <button type="button" className="btn" onClick={() => setTagsText([...parseCsv(tagsText), ...suggestTags(body, fm.name, parseCsv(tagsText))].join(', '))}>Autotag</button>
+                  <PolicyChipField label="Tags" values={parseCsv(tagsText)} suggestions={['policy', 'mcp', 'frontend', 'security', 'testing', 'docs']} onChange={(next) => setTagsText(next.join(', '))} />
+                </div>
               </PageRow>
               <PageRow title="Context task">
                 <input
@@ -268,9 +275,10 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
                 onChange={(properties) => setFm({ ...fm, properties })}
               />
             </PageCardBody>
-          </PageCard>
-          <PolicyMetaResizeHandle />
-          <PolicyBodyCard title="Skill body" body={body} onChange={setBody} links={links} selfKey={`skill:${origin ?? 'project'}:${skillName}`} />
+          </div>
+          </ModalShell>
+          )}
+          <PolicyBodyCard title="Skill body" body={body} onChange={setBody} links={links} selfKey={`skill:${origin ?? 'project'}:${skillName}`} onProperties={() => setPropsOpen(true)} />
         </div>
       ) : null}
     </div>

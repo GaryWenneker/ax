@@ -18,12 +18,14 @@ export default function PolicyBodyCard({
   onChange,
   links,
   selfKey,
+  onProperties,
 }: {
   title: string;
   body: string;
   onChange: (value: string) => void;
   links: ItemLinks | null | undefined;
   selfKey?: string;
+  onProperties?: () => void;
 }) {
   const [view, setView] = useState<BodyView>(() => loadBodyView());
   const choose = (next: BodyView) => {
@@ -36,6 +38,12 @@ export default function PolicyBodyCard({
       <div className="settings-card-header policy-body-header">
         <h2>{title}</h2>
         <div className="policy-body-toggle" role="group" aria-label="Body view">
+          {onProperties && (
+            <button type="button" className="btn policy-body-toggle-btn" onClick={onProperties}>
+              <Codicon name="settings-gear" />
+              Properties
+            </button>
+          )}
           {VIEWS.map((v) => (
             <button
               key={v.id}

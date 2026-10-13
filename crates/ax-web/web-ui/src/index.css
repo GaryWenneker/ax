@@ -9421,6 +9421,23 @@ body.policy-list-resizing .policy-list-resize-handle {
   gap: 0;
   overflow: hidden;
 }
+.policy-inline-workspace-grid--editor {
+  grid-template-columns: minmax(0, 1fr);
+}
+.policy-chips { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.policy-chip-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.policy-chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 4px 0 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-text) 38%, transparent); border-radius: 999px;
+  color: #cccccc; font-size: 11px;
+}
+.policy-chip-remove {
+  border: 0; background: transparent; color: var(--text-dim); cursor: pointer; line-height: 1; padding: 0 4px;
+}
+.policy-chip-remove:hover { color: var(--danger); }
+.policy-chip-suggest { margin: 0; padding: 4px; list-style: none; border: 1px solid var(--border); background: var(--bg-panel); }
+.policy-chip-suggest button { width: 100%; text-align: left; background: transparent; border: 0; color: var(--text); cursor: pointer; padding: 4px 6px; }
+.policy-chip-suggest button:hover { background: #2a2d2e; }
 
 .policy-inline-pane {
   min-height: 0;
