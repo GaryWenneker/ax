@@ -83,6 +83,24 @@ fn trusted_local_mode(hub: &WebHub) -> bool {
     hub.local_only && std::env::var("AX_WEB_AUTH_ORIGIN").ok()
         .is_none_or(|configured| configured.starts_with("http://localhost:"))
 }
+async fn require_recent_login(pool: &SqlitePool, headers: &HeaderMap)
+    -> Result<(), ErrorResponse> {
+    let token = cookie_value(headers).unwrap_or("");
+    let recent: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM web_sessions WHERE token_hash = ? AND revoked_at IS NULL
+         AND expires_at > unixepoch() AND authenticated_at >= unixepoch() - 300"
+    ).bind(hash(token)).fetch_optional(pool).await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Session unavailable"))?;
+    if recent.is_none() {
+        return Err(err(StatusCode::FORBIDDEN, "Sign in again to make this change"));
+    }
+    Ok(())
+}
+async fn require_recent_if_enabled(pool: &SqlitePool, headers: &HeaderMap)
+    -> Result<(), ErrorResponse> {
+    if enabled(pool).await? { require_recent_login(pool, headers).await?; }
+    Ok(())
+}
 async fn browser_member(pool: &SqlitePool, headers: &HeaderMap, peer: SocketAddr, hub: &WebHub)
     -> Result<String, ErrorResponse> {
     if let Some(id) = member_for_session(pool, headers).await { return Ok(id); }
@@ -309,6 +327,7 @@ async fn user_password(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<So
     if hub.readonly {return Err(err(StatusCode::FORBIDDEN,"Read-only"));}
     let actor=browser_member(&pool,&headers,peer,&hub).await?;
     require_owner(&pool,&actor).await?;
+    require_recent_if_enabled(&pool, &headers).await?;
     let req_origin=headers.get(header::ORIGIN).and_then(|value|value.to_str().ok());
     let trusted=local_request(&headers,peer,hub.port)
         || origin().is_ok_and(|url|req_origin==Some(url.as_str().trim_end_matches('/')));
@@ -361,6 +380,7 @@ async fn register_start(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<S
     headers:HeaderMap) -> Result<Json<serde_json::Value>,ErrorResponse> {
     let pool=db().await?;
     let actor=browser_member(&pool,&headers,peer,&hub).await?;
+    require_recent_if_enabled(&pool, &headers).await?;
     let user=access::list_members(&pool).await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Members unavailable"))?
         .into_iter().find(|m|m.id==actor).ok_or_else(||err(StatusCode::FORBIDDEN,"Unknown user"))?;
     let user_id=Uuid::parse_str(&actor).unwrap_or_else(|_| {
@@ -377,6 +397,7 @@ async fn register_finish(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<
     headers:HeaderMap,Json(body):Json<CeremonyBody>) -> Result<Json<serde_json::Value>,ErrorResponse> {
     let pool=db().await?;
     let actor=browser_member(&pool,&headers,peer,&hub).await?;
+    require_recent_if_enabled(&pool, &headers).await?;
     let state=match consume_challenge(&body.ceremony).await {
         Some(Ceremony::Register{member_id,state}) if member_id==actor=>state,
         _=>return Err(err(StatusCode::BAD_REQUEST,"Registration expired or invalid")),
@@ -447,6 +468,7 @@ async fn remove_key(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<Socke
     headers:HeaderMap,Path(id):Path<String>) -> Result<Json<serde_json::Value>,ErrorResponse> {
     let pool=db().await?;
     let actor=browser_member(&pool,&headers,peer,&hub).await?;
+    require_recent_if_enabled(&pool, &headers).await?;
     // Never strand the final Owner without a remaining sign-in method.
     let owner: Option<(String,)> = sqlx::query_as("SELECT role FROM team_members WHERE id=?")
         .bind(&actor).fetch_optional(&pool).await.ok().flatten();
