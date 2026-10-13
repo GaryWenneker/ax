@@ -5,6 +5,7 @@ on:
     branches: [fix/security-command-center-vite]
     paths:
       - "crates/ax-web/web-ui/package.json"
+      - "crates/ax-web/web-ui/src/components/MarkdownPreview.tsx"
       - ".github/workflows/lcm-webui-repair-once.yml"
 permissions:
   contents: write
