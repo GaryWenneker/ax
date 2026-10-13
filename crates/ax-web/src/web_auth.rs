@@ -230,12 +230,17 @@ fn page_origin(headers: &HeaderMap) -> Result<Url, ErrorResponse> {
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https")
+    if headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        == Some("https")
         && !host.is_empty()
     {
         return parse_origin(&format!("https://{host}"));
     }
-    if host.starts_with("localhost:") || host.starts_with("127.0.0.1:") || host.starts_with("[::1]:")
+    if host.starts_with("localhost:")
+        || host.starts_with("127.0.0.1:")
+        || host.starts_with("[::1]:")
     {
         return parse_origin(&format!("http://{host}"));
     }
@@ -985,7 +990,10 @@ async fn register_finish(
     .await;
     Ok(Json(serde_json::json!({"id":id,"created":true})))
 }
-async fn auth_start(headers: HeaderMap, Json(body): Json<StartBody>) -> Result<Json<serde_json::Value>, ErrorResponse> {
+async fn auth_start(
+    headers: HeaderMap,
+    Json(body): Json<StartBody>,
+) -> Result<Json<serde_json::Value>, ErrorResponse> {
     let pool = db().await?;
     if !enabled(&pool).await? {
         return Err(err(StatusCode::CONFLICT, "Login disabled"));

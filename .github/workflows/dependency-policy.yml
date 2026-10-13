@@ -25,6 +25,8 @@ jobs:
           python-version: "3.12"
       - name: Verify minimum release-age checker
         run: python -m unittest discover -s scripts -p 'test_dependency_age.py'
+      - name: Verify automatic remediation policy
+        run: python -m unittest discover -s scripts -p 'test_lcm_autofix.py'
       - name: Reject newly locked packages published less than 7 days ago
         env:
           GITHUB_BASE_REF: ${{ github.base_ref }}

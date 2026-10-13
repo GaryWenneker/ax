@@ -13,8 +13,13 @@ for (const platform of ['darwin', 'win32', 'linux']) {
     // platform selection is simulated, browser execution is not claimed.
     const script = `
       Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });
+      const { createRequire } = await import('node:module');
+      const require = createRequire(import.meta.url);
+      // Puppeteer 25 no longer exposes .configuration on its public instance.
+      // Read the actual configuration entry-point and also check Puppeteer loads.
       const { default: puppeteer } = await import('puppeteer');
-      console.log(JSON.stringify(puppeteer.configuration));
+      if (typeof puppeteer.launch !== 'function') throw new Error('Puppeteer missing launch API');
+      console.log(JSON.stringify(require('./puppeteer.config.cjs')));
     `;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
       cwd: site, env, encoding: 'utf8',

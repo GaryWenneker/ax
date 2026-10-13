@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
@@ -35,15 +37,9 @@ function fmtTokens(n: number) {
   return String(n);
 }
 
-function fmtUpdated(ms: number) {
+function fmtUpdated(ms: number, now: number) {
   if (!ms) return '—';
-  const diff = Date.now() - ms;
-  if (diff < 15_000) return 'just now';
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  const hours = Math.floor(diff / 3_600_000);
-  if (hours <= 24) return `${hours}h ago`;
-  return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return memoryRowAge(ms, now);
 }
 
 function FindingRow({
@@ -76,6 +72,7 @@ function FindingRow({
 }
 
 export default function McpQualitySlideout({ open, onClose, highlightFindingId }: Props) {
+  const now = useNow();
   const [snap, setSnap] = useState<QualitySnapshot>(emptyQualitySnapshot);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -183,7 +180,7 @@ export default function McpQualitySlideout({ open, onClose, highlightFindingId }
           <div className="mcp-q-header-main">
             <div className="detail-title">MCP quality</div>
             <div className="mcp-q-header-sub">
-              {snap.projectLabel || '—'} · last {snap.windowMinutes}m · {fmtUpdated(snap.updatedAtMs)}
+              {snap.projectLabel || '—'} · last {snap.windowMinutes}m · {fmtUpdated(snap.updatedAtMs, now)}
             </div>
           </div>
           <div className={`mcp-q-score mcp-q-score--${tone}`}>
