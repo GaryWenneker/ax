@@ -19,7 +19,7 @@ For the website, Command Center and telemetry worker, each run:
    against the checked-in lockfile.
 2. Considers only registry versions published **at least seven days ago**.
 3. Rejects any candidate that changes a manifest or source, increases
-   vulnerability counts at any severity, or fails the 168-hour release-age gate.
+   vulnerability counts at any severity, fails the 168-hour release-age gate, or introduces a known OSV advisory.
 4. Verifies lockfile consistency with `npm ci --dry-run`.
 5. Opens or updates one project-specific PR only when a valid improvement
    exists. Human review is always required.
