@@ -59,7 +59,13 @@ jobs:
       - name: Run tests
         env:
           AX_TEST_UNIX_SOCKETS: "1"
-        run: cargo test --workspace --locked --no-fail-fast
+        shell: bash
+        run: |
+          # Windows locks the shared test database when cases run in parallel, so one case
+          # sees "Database unavailable". One thread keeps those cases isolated.
+          threads=()
+          if [ "$RUNNER_OS" = "Windows" ]; then threads=(-- --test-threads=1); fi
+          cargo test --workspace --locked --no-fail-fast "${threads[@]}"
 
   lint:
     needs: changes
