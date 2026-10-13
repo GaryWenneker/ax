@@ -155,6 +155,36 @@ CREATE TABLE IF NOT EXISTS member_roles (
 );
 CREATE INDEX IF NOT EXISTS idx_member_roles_role ON member_roles(role);
 
+-- Browser login is deliberately installation-global, not project scoped.
+CREATE TABLE IF NOT EXISTS web_auth_settings (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1))
+);
+CREATE TABLE IF NOT EXISTS web_password_credentials (
+    member_id TEXT PRIMARY KEY REFERENCES team_members(id) ON DELETE CASCADE,
+    password_hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS web_passkeys (
+    id TEXT PRIMARY KEY,
+    member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+    credential_id TEXT NOT NULL UNIQUE,
+    credential_json TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT 'Passkey',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at INTEGER,
+    revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_web_passkeys_member ON web_passkeys(member_id,revoked_at);
+CREATE TABLE IF NOT EXISTS web_sessions (
+    token_hash TEXT PRIMARY KEY,
+    member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    authenticated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    last_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    expires_at INTEGER NOT NULL,
+    revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_member ON web_sessions(member_id,revoked_at);
 CREATE TABLE IF NOT EXISTS clients (
     id TEXT PRIMARY KEY,
     member_id TEXT NOT NULL,
