@@ -1157,6 +1157,13 @@ mod tests {
         create_member(&pool, "teammate", "Teammate", None, MemberRole::Member)
             .await
             .unwrap();
+        sqlx::query(
+            "INSERT INTO web_sessions(id,token_hash,member_id,expires_at)
+             VALUES ('session-before-role-edit','mock-session','teammate',unixepoch()+3600)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         update_member_roles(
             &pool,
             "teammate",
@@ -1170,6 +1177,14 @@ mod tests {
         )
         .await
         .unwrap();
+        let revoked: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM web_sessions
+             WHERE member_id='teammate' AND revoked_at IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(revoked.0, 1, "role changes revoke browser sessions");
         let members = list_members(&pool).await.unwrap();
         let member = members.iter().find(|m| m.id == "teammate").unwrap();
         assert_eq!(member.role, MemberRole::Admin);
