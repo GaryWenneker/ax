@@ -158,6 +158,7 @@ impl WebHub {
             .nest("/api/workspace", workspace::router_hub(hub.clone()))
             .nest("/api/agent", agent::router_hub(hub.clone()))
             .nest("/api/access", crate::access_api::router(hub.clone()))
+            .nest("/api/web-auth", crate::web_auth::router(hub.clone()))
             .nest("/api/actions", crate::actions::router_hub(hub.clone()))
             .nest("/api/changes", crate::changes::router_hub(hub.clone()))
             .nest("/api/share", crate::share_api::router_hub(hub.clone()))
@@ -180,9 +181,10 @@ impl WebHub {
                 crate::share_auth::share_token_middleware,
             ))
             .layer(cors)
-            .merge(crate::dav::router(hub).layer(axum::middleware::from_fn(
+            .merge(crate::dav::router(hub.clone()).layer(axum::middleware::from_fn(
                 crate::share_auth::share_token_middleware,
             )))
+            .layer(axum::middleware::from_fn_with_state(hub, crate::web_auth::gate))
     }
 }
 
