@@ -50,15 +50,13 @@ base64 = "0.22"
 argon2 = "0.5"
 blake3 = { workspace = true }
 webauthn-rs = "0.5.5"
+# webauthn-rs links OpenSSL. Cross builds (Linux arm64, macOS Intel) and Windows
+# runners have no usable system library for the target, so compile the vendored copy.
+openssl = { version = "0.10.81", features = ["vendored"] }
 portable-pty = "0.8"
 dav-server = { version = "0.11", default-features = false }
 bytes = "1"
 serde_yaml = { workspace = true }
-
-# webauthn-rs links OpenSSL. Windows CI and release runners have no detectable install,
-# so that target compiles the vendored copy. Other platforms keep the system library.
-[target.'cfg(windows)'.dependencies]
-openssl = { version = "0.10.81", features = ["vendored"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
