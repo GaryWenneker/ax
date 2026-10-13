@@ -210,7 +210,8 @@ struct PasskeyLabel { label: String }
 
 async fn status() -> Result<Json<serde_json::Value>,ErrorResponse> {
     let pool=db().await?;
-    Ok(Json(serde_json::json!({"enabled":enabled(&pool).await?,"passkeys":true})))
+    let canonical_origin = origin().ok().map(|url| url.origin().ascii_serialization());
+    Ok(Json(serde_json::json!({"enabled":enabled(&pool).await?,"passkeys":canonical_origin.is_some(),"origin":canonical_origin})))
 }
 async fn session(headers: HeaderMap) -> Result<Json<serde_json::Value>, ErrorResponse> {
     let pool=db().await?;
