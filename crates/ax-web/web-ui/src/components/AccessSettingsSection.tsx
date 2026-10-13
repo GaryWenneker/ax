@@ -254,8 +254,16 @@ export default function AccessSettingsSection({ section }: { section: string }) 
                       <input type="checkbox" checked={checked} disabled={locked || (lastOwner && option.id === 'owner')}
                         onChange={() => {
                           const roles = checked ? assigned.filter(value => value !== option.id) : [...assigned, option.id];
-                          if (roles.length) void mutate(`/api/access/team/${member.id}`, 'PATCH',
-                            { roles, status: member.status }, `Roles updated for ${member.display_name}.`);
+                          if (roles.length) {
+                            // Controlled checkboxes must reflect the input immediately. On failure
+                            // restore the server-confirmed role set rather than leaving a false state.
+                            setMembers(current => current.map(item => item.id === member.id ? { ...item, roles } : item));
+                            void mutate(`/api/access/team/${member.id}`, 'PATCH',
+                              { roles, status: member.status }, `Roles updated for ${member.display_name}.`)
+                              .then(saved => {
+                                if (!saved) setMembers(current => current.map(item => item.id === member.id ? member : item));
+                              });
+                          }
                         }} />{option.label}
                     </label>;
                   })}
