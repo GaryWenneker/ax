@@ -167,6 +167,7 @@ export default defineConfig({
 						{ label: 'Remote Policy Share', slug: 'guides/policy-sharing' },
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },
 						{ label: 'Affected Tests in CI', slug: 'guides/affected-tests' },
+						{ label: 'Dependency lifecycle security', slug: 'guides/dependency-lifecycle' },
 						{ label: 'Command Center', slug: 'guides/command-center' },
 					{ label: 'Command Center walkthrough', slug: 'guides/command-center-walkthrough' },
 						{ label: 'Desktop Client', slug: 'guides/desktop-client' },

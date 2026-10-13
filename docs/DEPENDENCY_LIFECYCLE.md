@@ -18,6 +18,49 @@ claims that all packages are vulnerability-free.
 Dependabot checks for ordinary version updates on weekdays. GitHub security
 advisories can arrive independently of this schedule.
 
+## Automatic remediation pull requests
+
+AX has two complementary automated proposal paths:
+
+1. **Dependabot** proposes Cargo, npm and GitHub Actions version updates daily,
+   with a seven-day cooldown. With GitHub Dependency Graph, alerts and security
+   updates enabled, it also opens advisory-driven security PRs.
+2. **Dependency Auto-Remediation** runs on a daily schedule and after changes to
+   npm lockfiles on `main`. It attempts a **non-breaking, lockfile-only** npm
+   audit fix for each of `site/`, `telemetry-worker/`, and
+   `crates/ax-web/web-ui/`. It only creates or updates a PR when the affected
+   project's vulnerability count strictly decreases at one or more severity
+   levels, no severity count increases, the candidate passes a full 168-hour
+   registry publication-age check, and `npm ci --dry-run` succeeds.
+   It creates stable `automation/lcm-*` branches, rather than duplicate
+   PRs every day.
+
+The workflow never forces major upgrades, never changes package manifests or
+source files, never bypasses the seven-day gate, and **never merges or
+deploys** the proposed update. Unsafe or unfixable changes remain findings for
+manual investigation. A passing GitHub workflow is a technical gate, not a
+claim that the change has been application-tested.
+
+[View automatically proposed LCM PRs](https://github.com/GaryWenneker/ax/pulls?q=is%3Apr+is%3Aopen+head%3Aautomation%2Flcm-) or
+[run the safe-fix workflow](https://github.com/GaryWenneker/ax/actions/workflows/dependency-autofix.yml).
+
+### One-time rights for automatic PR creation
+
+- Under **Settings → Actions → General → Workflow permissions**, enable
+  **Allow GitHub Actions to create and approve pull requests**. This is
+  necessary when using the built-in `GITHUB_TOKEN` and cannot be set through
+  workflow YAML alone.
+- Strongly recommended: create repository secret `AX_LCM_PR_TOKEN` containing
+  a dedicated fine-grained PAT or GitHub App token with **Contents: read/write**
+  and **Pull requests: read/write** for this repository. The automation falls
+  back to `GITHUB_TOKEN` if the secret is absent.
+- **Important:** PRs opened with `GITHUB_TOKEN` do *not* automatically trigger
+  `pull_request` workflows. A dedicated token ensures the existing release-age
+  and OSV checks execute on bot PRs. Keep both as required checks in the main
+  ruleset. A bot PR must never bypass human review.
+- Actions in this new workflow use scoped write permissions solely to update
+  lockfile branches and open PRs. No release or deployment rights are needed.
+
 ## Release-age gate
 
 - Regular Dependabot **version-update** PRs are delayed until versions are at
@@ -48,6 +91,8 @@ python3.12 scripts/check_dependency_age.py --base origin/main
 
 ## Vulnerability triage and maintenance
 
+- [Automatic safe-fix PR workflow](https://github.com/GaryWenneker/ax/actions/workflows/dependency-autofix.yml):
+  only lockfile-only, non-breaking npm advisory reductions are proposed.
 - [Daily lifecycle scan](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml):
   RustSec against `Cargo.lock` and `npm audit` for the three npm lockfiles.
   A failed scan is an actionable warning, not proof that a release is compromised.
@@ -75,8 +120,9 @@ Under **Settings → Rules → Rulesets** (or branch protection), require both
 merging PRs to `main`. Enable notifications for security alerts and failed
 workflow runs.
 
-Only `dependency-policy.yml` (pull requests) and
-`dependency-monitor.yml` (daily schedule and dependency pushes to `main`) are automatically triggered.
+Only `dependency-policy.yml` (pull requests),
+`dependency-monitor.yml` (daily schedule and dependency pushes to `main`),
+and `dependency-autofix.yml` (daily schedule and npm lockfile pushes to `main`) are automatically triggered.
 Existing CI, release and deployment workflows retain their prior owners'
 suspension and are not reactivated.
 
