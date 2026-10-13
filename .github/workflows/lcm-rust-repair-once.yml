@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo update -p wasmtime --precise 36.0.16
-          cargo update -p lru --precise 0.18.5
+          # lru 0.18.5 is already selected for AX; ratatui 0.29 still requires 0.12.
           git diff --stat -- Cargo.lock
       - name: Enforce seven-day minimum for every new Cargo and npm lock entry
         run: python scripts/check_dependency_age.py --base origin/main
