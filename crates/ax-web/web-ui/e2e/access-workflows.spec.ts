@@ -31,7 +31,8 @@ async function accessFixture(page: Page, options: { readonly?: boolean; failScop
       if (path.endsWith('/revoke') && path.includes('/nodes/')) nodes[0].trust_state = 'revoked';
       if (path === '/api/access/team') members.push({ id: 'new-member', status: 'active', created_at: '2026-10-11 12:00:00', ...body });
       if (path === '/api/access/clients') clients.push({ id: 'new-client', status: 'active', created_at: '2026-10-11 12:00:00', ...body });
-    } else if (path === '/api/share/status') data = { readonly: options.readonly ?? false, sharing: false, port: 7070 };
+    } else if (path === '/api/web-auth/status') data = { enabled: false, passkeys: true };
+    else if (path === '/api/share/status') data = { readonly: options.readonly ?? false, sharing: false, port: 7070 };
     else if (path === '/api/access/session') data = { csrf: 'fixture-csrf' };
     else if (path === '/api/access/team') data = { members };
     else if (path === '/api/access/clients') data = { clients, credentials: [{ id: 'credential', client_id: 'cli', token_prefix: 'axc_demo', created_at: '2026-10-10 10:00:00' }] };
@@ -52,15 +53,15 @@ test('only the selected access panel loads and direct links survive reload', asy
   await page.goto('/settings');
   await expect(page.getByRole('heading', { name: 'Appearance', exact: true })).toBeVisible();
   expect(calls.some(call => call.path.startsWith('/api/access/'))).toBe(false);
-  await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Team', exact: true }).click();
-  await expect(page.getByLabel('Role for Demo developer')).toBeVisible();
+  await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Users & roles', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Roles for Demo developer' })).toBeVisible();
   expect(calls.some(call => call.path === '/api/access/nodes' || call.path === '/api/access/clients')).toBe(false);
-  await expect(page.getByLabel('Role for Local owner')).toBeDisabled();
+  await expect(page.getByRole('group', { name: 'Roles for Local owner' }).getByLabel('Owner')).toBeDisabled();
   await expect(page).toHaveURL(/section=team/);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Team', exact: true })).toBeVisible();
   await page.getByLabel('Filter settings').fill('access');
-  await expect(page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button')).toHaveCount(3);
+  await expect(page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button')).toHaveCount(4);
 });
 
 test('a failed permission save preserves the draft and role restrictions', async ({ page }) => {
@@ -84,7 +85,8 @@ test('member and client forms send email and role-limited defaults', async ({ pa
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name', { exact: true }).fill('Read-only colleague');
   await dialog.getByLabel('Email (optional)').fill('colleague@example.com');
-  await dialog.getByLabel('Role', { exact: true }).selectOption('readonly');
+  await dialog.getByLabel('Read-only', { exact: true }).check();
+  await dialog.getByLabel('Member', { exact: true }).uncheck();
   await dialog.getByRole('button', { name: 'Add member', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(members.find(member => member.display_name === 'Read-only colleague')?.email).toBe('colleague@example.com');
