@@ -358,36 +358,6 @@
     "capturedAt": "2026-10-12T22:10:54.150Z"
   },
   {
-    "file": "cc-logging-dark.png",
-    "imageHash": "6b596772bd16681ead2526418982fa9045565b52cb9c0321bde7e6ebaeda9927",
-    "route": "/logging",
-    "state": {},
-    "theme": "azure-dark",
-    "viewport": {
-      "width": 1440,
-      "height": 900,
-      "deviceScaleFactor": 1
-    },
-    "data": "synthetic",
-    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
-    "capturedAt": "2026-10-12T22:10:56.926Z"
-  },
-  {
-    "file": "cc-mcp-quality-dark.png",
-    "imageHash": "450ee9dbb317af756749d19702423fff8b85831854b0cb0c235b72706ae4f8d7",
-    "route": "/logging",
-    "state": {},
-    "theme": "azure-dark",
-    "viewport": {
-      "width": 1440,
-      "height": 900,
-      "deviceScaleFactor": 1
-    },
-    "data": "synthetic",
-    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
-    "capturedAt": "2026-10-12T22:11:00.707Z"
-  },
-  {
     "file": "cc-settings-dark.png",
     "imageHash": "f227a9c12e8d3cb21965f32d91025fc6c1c74e785156371172f936d50c205b32",
     "route": "/settings",
@@ -615,21 +585,6 @@
     "capturedAt": "2026-10-12T22:13:12.418Z"
   },
   {
-    "file": "cc-logging-dark-mobile.png",
-    "imageHash": "f92da81de67677460c88f7ca13d8a1c291146efc3f0f894f0d4a5652ec936e75",
-    "route": "/logging",
-    "state": {},
-    "theme": "azure-dark",
-    "viewport": {
-      "width": 393,
-      "height": 900,
-      "deviceScaleFactor": 1
-    },
-    "data": "synthetic",
-    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
-    "capturedAt": "2026-10-12T22:13:15.121Z"
-  },
-  {
     "file": "cc-accent-colors.png",
     "imageHash": "c9582f2fb9a491354734c8269054398cdc9c1645d4efc801a88d72f821114be6",
     "route": "/settings",
@@ -651,50 +606,6 @@
     "data": "synthetic",
     "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
     "capturedAt": "2026-10-12T22:20:50.891Z"
-  },
-  {
-    "file": "cc-logging-columns-mobile.png",
-    "imageHash": "d61a85a8a2a1daf992c75003d298a40c987ed973674896f3c4b9abcacc13d257",
-    "route": "/logging",
-    "state": {
-      "fixture": "logging-layout"
-    },
-    "theme": "azure-dark",
-    "viewport": {
-      "width": 393,
-      "height": 900,
-      "deviceScaleFactor": 1
-    },
-    "viewportOrigin": "fixture-declared",
-    "imageSize": {
-      "width": 393,
-      "height": 900
-    },
-    "data": "synthetic",
-    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
-    "capturedAt": "2026-10-12T22:20:37.435Z"
-  },
-  {
-    "file": "cc-logging-columns.png",
-    "imageHash": "fcad52b56ed1981bbf6611e9908c041bd93de4a6a2cad70f2f7211642512de16",
-    "route": "/logging",
-    "state": {
-      "fixture": "logging-layout"
-    },
-    "theme": "azure-dark",
-    "viewport": {
-      "width": 1366,
-      "height": 900,
-      "deviceScaleFactor": 1
-    },
-    "viewportOrigin": "fixture-declared",
-    "imageSize": {
-      "width": 1366,
-      "height": 900
-    },
-    "data": "synthetic",
-    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
-    "capturedAt": "2026-10-12T22:20:37.307Z"
   },
   {
     "file": "cc-policy-review-desktop-chrome.png",
@@ -1114,5 +1025,112 @@
     "data": "synthetic",
     "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
     "capturedAt": "2026-10-12T22:27:51.377Z"
+  },
+  {
+    "file": "cc-logging-columns-mobile.png",
+    "imageHash": "cdfcd702c81ec91d76ef8cf0ee103daebe05ce8892201950637138d812c529bc",
+    "route": "/logging",
+    "state": {
+      "fixture": "logging-layout"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 393,
+      "height": 900
+    },
+    "data": "synthetic",
+    "sourceHash": "2974c664f60556c934634c00cf2f89aaaeec8e80531db14c0af243f53fe1a5f3",
+    "capturedAt": "2026-10-13T06:30:03.042Z"
+  },
+  {
+    "file": "cc-logging-columns.png",
+    "imageHash": "e4d8ddba405c95cbe431fc1694bbe4854ebce35ae3cfa87aa0ea7f7f91038d09",
+    "route": "/logging",
+    "state": {
+      "fixture": "logging-layout"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1366,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 1366,
+      "height": 900
+    },
+    "data": "synthetic",
+    "sourceHash": "2974c664f60556c934634c00cf2f89aaaeec8e80531db14c0af243f53fe1a5f3",
+    "capturedAt": "2026-10-13T06:30:02.954Z"
+  },
+  {
+    "file": "cc-logging-dark.png",
+    "imageHash": "53979f80c7e60891c3c2984581e85ec07504d5b1c3d4d85e8af3e0ea5436a41a",
+    "route": "/logging",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "2974c664f60556c934634c00cf2f89aaaeec8e80531db14c0af243f53fe1a5f3",
+    "capturedAt": "2026-10-13T06:30:09.812Z"
+  },
+  {
+    "file": "cc-logging-inspector-dark.png",
+    "imageHash": "2f597b12dbde80612fea145dba8a2e88f2e35ef40b48c1b353ba1c97bfa4e153",
+    "route": "/logging",
+    "state": {
+      "selectedTitle": "Workspace sync completed",
+      "rawLineOpen": true
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "2974c664f60556c934634c00cf2f89aaaeec8e80531db14c0af243f53fe1a5f3",
+    "capturedAt": "2026-10-13T06:30:10.461Z"
+  },
+  {
+    "file": "cc-mcp-quality-dark.png",
+    "imageHash": "dc2cb62fcf37f19586c7a224873e9e1d982c98b4981efa89c683129d68446624",
+    "route": "/logging",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "2974c664f60556c934634c00cf2f89aaaeec8e80531db14c0af243f53fe1a5f3",
+    "capturedAt": "2026-10-13T06:30:13.920Z"
+  },
+  {
+    "file": "cc-logging-dark-mobile.png",
+    "imageHash": "50e0a1fbcba3474e52d0401e856780c4ae0c697582ae8ca5e0d46d6d23691b0d",
+    "route": "/logging",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 393,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "2974c664f60556c934634c00cf2f89aaaeec8e80531db14c0af243f53fe1a5f3",
+    "capturedAt": "2026-10-13T06:30:18.504Z"
   }
 ]

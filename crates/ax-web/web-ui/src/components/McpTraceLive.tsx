@@ -6,6 +6,7 @@ import { ItemList, ItemRow } from './ui/PageLayout';
 import { liveClass, useFreshMarks } from '../lib/useLive';
 import { traceGroupLinks } from '../traceGroups';
 import { formatTraceTime, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
+import { loggingRowPresentation } from '../lib/loggingPresentation';
 import {
   computeMcpTraceStats,
   filterTraceEntries,
@@ -321,7 +322,7 @@ async function exitBrowserFullscreen() {
 /**
  * Live SSE view of daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`.
  * Newest events render at the top; scroll down for older days.
- * Table layout; tap a row for the compact Call Inspector.
+ * Shared column list; tap a row for the compact Call Inspector.
  */
 export default function McpTraceLive({ variant = 'embedded' }: Props) {
   const [entries, setEntries] = useState<TraceEntry[]>([]);
@@ -1325,9 +1326,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
               'Loading earlier history…'
             ) : historyExhausted ? (
               verboseFromApi === false && !logExists && !fallbackLabel ? (
-                `No MCP log in ${projectLabel || 'this project'} yet. Enable verbose MCP in Settings → Interface and reconnect ax MCP with this folder as --path.`
+                `No MCP log in ${projectLabel || 'this project'} yet. Reconnect ax MCP with this folder as --path.`
               ) : (
-                'Waiting for MCP tool calls… (enable verbose + reconnect ax MCP)'
+                'Waiting for MCP tool calls…'
               )
             ) : (
               <>
@@ -1365,13 +1366,13 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
               const hasText = Boolean(textPrimary);
               const isCursor = cursorId === e.id;
               const isOpen = selectedId === e.id;
-              const summaryText =
-                textPrimary && textPrimary.value.length > 0
-                  ? `${textPrimary.leaf}=${
-                      textPrimary.value.length > 96 ? `${textPrimary.value.slice(0, 96)}…` : textPrimary.value
-                    }`
-                  : headline || '—';
               const dir = traceDirection(e.kind);
+              const presentation = loggingRowPresentation(e, {
+                title: headline || '—',
+                subtitle: traceRowSubtitle(traceDirectionLabel(dir) || undefined, KIND_LABELS[e.kind], meta),
+                text: textPrimary?.value ? (textPrimary.value.length > 96 ? `${textPrimary.value.slice(0, 96)}…` : textPrimary.value) : undefined,
+              });
+              const duplicateTool = e.tool?.toLowerCase() === e.kind;
               return (
                 <ItemRow
                   key={e.id}
@@ -1387,8 +1388,13 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                     'aria-selected': isCursor || isOpen,
                     'data-entry-id': e.id,
                   }}
-                  title={summaryText}
-                  subtitle={traceRowSubtitle(traceDirectionLabel(dir) || undefined, KIND_LABELS[e.kind], meta)}
+                  title={presentation.title}
+                  subtitle={presentation.subtitle}
+                  listValues={[
+                    `${presentation.title} ${presentation.subtitle} ${e.raw}`,
+                    e.raw.match(/^\S+/)?.[0] ?? e.time,
+                    [KIND_LABELS[e.kind], e.badge, e.tool, textPrimary?.leaf, e.origin ? `Node ${e.origin}` : '', group ? `${group.lane} ${group.position}/${group.count}` : ''].filter(Boolean).join(' '),
+                  ]}
                   meta={formatTraceTime(e.time)}
                   metaTitle={e.raw.match(/^\S+/)?.[0] ?? e.time}
                   selected={isOpen}
@@ -1408,7 +1414,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                         }}
                       >
                         <Codicon name={KIND_ICONS[e.kind]} className="badge-icon" />
-                        {e.badge}
+                        {duplicateTool ? KIND_LABELS[e.kind] : e.badge}
                       </button>
                       {group && (
                         <span
@@ -1419,7 +1425,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                           {group.lane} {group.position}/{group.count}
                         </span>
                       )}
-                      {e.tool && (
+                      {e.tool && !duplicateTool && (
                         <button
                           type="button"
                           className="page-item-badge page-item-badge--btn mcp-col-tool"
@@ -1476,6 +1482,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     [selected, hasStructured],
   );
   const hasTimeline = Boolean(cluster && cluster.end > cluster.start);
+  const inspectedTool = selected?.tool ?? cluster?.tool;
 
   const bladeHost = typeof document !== 'undefined' ? document.querySelector('.workspace') : null;
   const selectedDir = selected ? traceDirection(selected.kind) : 'internal';
@@ -1490,7 +1497,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
             <div className="detail-header">
               <span className="detail-title memory-blade-title">
                 <Codicon name={KIND_ICONS[selected.kind]} className="detail-title-icon" />
-                <span>{cluster.tool ?? selected.tool ?? 'Log event'}</span>
+                <span>{inspectedTool ?? 'Log event'}</span>
               </span>
               <span className="mcp-blade-nav">
                 <button
@@ -1532,10 +1539,10 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                     {traceDirectionLabel(selectedDir) || 'Internal'}
                   </span>
                 </div>
-                {(cluster.tool ?? selected.tool) && (
+                {inspectedTool && (
                   <div className="detail-kv">
                     <span className="detail-key">Tool</span>
-                    <span className="detail-val">{cluster.tool ?? selected.tool}</span>
+                    <span className="detail-val">{inspectedTool}</span>
                   </div>
                 )}
                 {hasTimeline && (
@@ -1550,12 +1557,15 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                 <div>
                   <div className="detail-section-title">Steps</div>
                   <ItemList className="calm-list mcp-blade-steps">
-                    {entries.slice(cluster.start, cluster.end + 1).map((step) => (
+                    {entries.slice(cluster.start, cluster.end + 1).map((step) => {
+                      const presentation = loggingRowPresentation(step, {title: traceHeadline(step), subtitle: '', text: primaryTextPayload(step)?.value});
+                      return (
                       <ItemRow
                         key={step.id}
                         variant="graph"
                         className={`mcp-blade-step mcp-blade-step--dir-${traceDirection(step.kind)}`}
-                        title={traceHeadline(step)}
+                        title={presentation.title}
+                        subtitle={presentation.subtitle}
                         meta={formatTraceTime(step.time).slice(11)}
                         metaTitle={step.time}
                         selected={step.id === selected.id}
@@ -1567,7 +1577,8 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                           </span>
                         }
                       />
-                    ))}
+                      );
+                    })}
                   </ItemList>
                 </div>
               )}

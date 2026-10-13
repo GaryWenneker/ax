@@ -40,6 +40,8 @@ Use **Memory** to recall a decision or convention. **New memory** opens a compos
 3. Select a row to read the payload and call steps. Arrow keys move through the visible order; Enter opens details and Escape closes them.
 4. **Newest** follows incoming events. Scroll into history to load earlier days. **Quality** opens correlation and findings; it does not change your log.
 
+Routine Workspace, Memory and Ship events use readable action titles with counts/timing on a quiet second line. The marker has its own gutter; unrelated events have no dotted connector. Kind/tool labels are not duplicated. **Raw line** in the inspector preserves the original entry, and searches still match raw fields such as `duration_ms=162`.
+
 The source log path is available in the project label tooltip. Existing rows remain readable while the stream reconnects. The app header/status bar switches the project. Timezone is under **Settings → Appearance**.
 
 ![Logging with one header and compact filters](/screenshots/cc-logging-dark.png)

@@ -86,6 +86,16 @@ const SHOTS = [
 		},
 	},
 	{ name: 'cc-logging.png', path: '/logging', waitMs: 2000, ready: '.logging-page, main' },
+  {
+    name: 'cc-logging-inspector.png', path: '/logging', ready: '.mcp-trace-row--workspace',
+    after: async page => {
+      await page.click('.mcp-trace-row--workspace .page-item-title');
+      await page.waitForSelector('.mcp-inspect-fold--raw summary');
+      await page.click('.mcp-inspect-fold--raw summary');
+      await page.waitForSelector('.mcp-inspect-raw', {visible: true});
+      await page.$eval('.mcp-inspect-raw', element => element.scrollIntoView({block: 'center'}));
+    },
+  },
 	{
 		name: 'cc-mcp-quality.png',
 		path: '/logging',
@@ -365,8 +375,12 @@ async function main() {
     const out = path.join(outDir, filename);
 		await page.screenshot({ path: out, type: 'png', fullPage: false });
     const section = await page.$eval('main', el => el.querySelector('.settings-navigation-item[aria-current="page"]')?.getAttribute('aria-controls')?.replace('settings-panel-', '') ?? null);
+    const selection = await page.evaluate(() => {
+      const row=document.querySelector('.mcp-trace-row.page-item--selected');
+      return row ? {selectedTitle:row.querySelector('.page-item-title')?.textContent, rawLineOpen:document.querySelector('.mcp-inspect-fold--raw')?.hasAttribute('open') ?? false} : {};
+    });
     const imageHash=createHash('sha256').update(readFileSync(out)).digest('hex');
-    manifest.push({file: filename, imageHash, route: shot.path, state: section ? {section} : {}, theme, viewport: VIEWPORT, data: demo ? 'synthetic' : 'redacted-live', sourceHash, capturedAt: new Date().toISOString()});
+    manifest.push({file: filename, imageHash, route: shot.path, state: section ? {section} : selection, theme, viewport: VIEWPORT, data: demo ? 'synthetic' : 'redacted-live', sourceHash, capturedAt: new Date().toISOString()});
 		console.log(existsSync(out) ? `ok (${removed} redacted)` : 'MISSING');
 	}
 

@@ -95,3 +95,69 @@ test('logging has one compact page heading and no duplicate summary bars',async(
  const filter=page.getByRole('search',{name:'Filter MCP log'});
  expect((await filter.boundingBox())!.height).toBeLessThan(150);
 });
+
+test('logging markers have a separate gutter and no unrelated dotted connector',async({page})=>{
+ await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(3);
+ for(const width of [2048,1366,900,393]) {
+  await page.setViewportSize({width,height:900});
+  const geometry=await page.locator('.mcp-trace-row').first().evaluate(row=>{
+   const dot=row.querySelector('.page-item-node')!.getBoundingClientRect();
+   const title=row.querySelector('.page-item-title')!.getBoundingClientRect();
+   return {gap:title.left-dot.right,dotWidth:dot.width,connector:getComputedStyle(row,'::before').display,overflow:row.scrollWidth>row.clientWidth+1,pageOverflow:document.documentElement.scrollWidth>innerWidth+1};
+  });
+  expect(geometry.gap,`marker gutter at ${width}px`).toBeGreaterThanOrEqual(12);
+  expect(geometry.dotWidth).toBeLessThanOrEqual(12);
+  expect(geometry.connector).toBe('none');expect(geometry.overflow).toBe(false);expect(geometry.pageOverflow).toBe(false);
+ }
+});
+
+test('real domain lines show readable actions and preserve raw-field search',async({page})=>{
+ const domainLines=[
+  '2026-10-12T20:00:00Z [ax] 🪓 workspace sync ok files=19 duration_ms=162 tool=workspace',
+  '2026-10-12T20:00:01Z [ax] 🪓 memory capture-git ok scanned=20 captured=2 tool=memory',
+  '2026-10-12T20:00:02Z [ax] 🪓 ship ok mode=evaluate passed=1 tool=ship',
+ ];
+ if(streamFixture){const response=await page.request.post(`${streamFixture}/configure`,{data:{lines:domainLines}});expect(response.ok()).toBe(true);}
+ else await page.route('**/api/usage/mcp-trace/events',route=>route.fulfill({contentType:'text/event-stream',body:`event: batch\ndata: ${JSON.stringify(domainLines)}\n\n`}));
+ await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(3);
+ const workspace=page.locator('.mcp-trace-row--workspace');
+ await expect(workspace.locator('.page-item-title')).toHaveText('Workspace sync completed');
+ await expect(workspace.locator('.page-item-sub')).toHaveText('19 files · 162 ms');
+ await expect(page.locator('.mcp-trace-row--memory .page-item-title')).toHaveText('Git history captured');
+ await expect(page.locator('.mcp-trace-row--ship .page-item-title')).toHaveText('Quality check completed');
+ await expect(workspace.locator('.item-column-context button')).toHaveCount(1);
+ await expect(workspace).not.toContainText('tool=workspace');await expect(workspace).not.toContainText('🪓');
+ const columns=page.locator('.mcp-trace-calm .column-header');
+ await page.setViewportSize({width:1366,height:900});
+ await columns.locator('summary[aria-label="Filter Event"]').click();
+ await columns.getByRole('textbox',{name:'Filter Event',exact:true}).fill('duration_ms=162');
+ await expect(page.locator('.mcp-trace-row')).toHaveCount(1);await expect(workspace).toBeVisible();
+ await workspace.locator('.page-item-title').click();await expect(page.locator('.mcp-blade-step').first()).toBeVisible();
+ await page.locator('.mcp-inspect-fold--raw summary').click();
+ await expect(page.locator('.mcp-inspect-raw')).toHaveText(domainLines[0]);
+ await page.getByRole('complementary',{name:'Log event details'}).getByRole('button',{name:'Close',exact:true}).click();
+ await page.setViewportSize({width:393,height:900});
+ const mobile=await workspace.evaluate(row=>{
+  const time=row.querySelector('.page-item-meta')!.getBoundingClientRect(),context=row.querySelector('.item-column-context')!.getBoundingClientRect();
+  return {height:row.getBoundingClientRect().height,metaAlignment:Math.abs((time.top+time.height/2)-(context.top+context.height/2))};
+ });
+ expect(mobile.metaAlignment).toBeLessThanOrEqual(2);expect(mobile.height).toBeLessThanOrEqual(72);
+});
+
+test('inspector steps have a marker gutter and label the selected tool',async({page})=>{
+ const mixed=[...lines,'2026-10-12T20:00:03Z [ax] 🪓 workspace sync ok files=19 duration_ms=162 tool=workspace'];
+ if(streamFixture){const response=await page.request.post(`${streamFixture}/configure`,{data:{lines:mixed}});expect(response.ok()).toBe(true);}
+ else await page.route('**/api/usage/mcp-trace/events',route=>route.fulfill({contentType:'text/event-stream',body:`event: batch\ndata: ${JSON.stringify(mixed)}\n\n`}));
+ await page.goto('/logging');await expect(page.locator('.mcp-trace-row')).toHaveCount(4);
+ await page.locator('.mcp-trace-row--workspace .page-item-title').click();
+ const blade=page.getByRole('complementary',{name:'Log event details'});
+ await expect(blade.locator('.mcp-blade-step')).toHaveCount(4);
+ const geometry=await blade.locator('.mcp-blade-step').first().evaluate(row=>{
+  const node=row.querySelector('.page-item-node')!.getBoundingClientRect(),title=row.querySelector('.page-item-title')!.getBoundingClientRect();
+  return title.left-node.right;
+ });
+ expect(geometry).toBeGreaterThanOrEqual(12);
+ await expect(blade.locator('.detail-header .detail-title')).toHaveText('workspace');
+ await expect(blade.getByText('Tool',{exact:true}).locator('..')).toContainText('workspace');
+ await expect(blade.locator('.mcp-blade-step').last().locator('.page-item-title')).toHaveText('Workspace sync completed');
+});

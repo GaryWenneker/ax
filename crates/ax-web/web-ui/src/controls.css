@@ -234,7 +234,10 @@ html[data-ax-layout="portal"] body .column-list--resized :is(.portal-data-row,.p
 .item-column-detail{font-size:11px;color:var(--text-dim);white-space:nowrap}
 .item-column-context{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .item-column-context .page-item-badge{max-width:100%;overflow:hidden;text-overflow:ellipsis}
-html[data-ax-layout="portal"] body .mcp-trace-calm :is(.item-column-row,.item-column-header){grid-template-columns:var(--list-columns,minmax(180px,1fr) 160px minmax(120px,.35fr));padding-left:24px}
+html[data-ax-layout="portal"] body .mcp-trace-calm :is(.item-column-row,.item-column-header){grid-template-columns:var(--list-columns,minmax(180px,1fr) 160px minmax(120px,.35fr))}
+html[data-ax-layout="portal"] body :is(.mcp-trace-calm,.mcp-blade-steps) :is(.item-column-row,.item-column-header){padding-left:40px}
+/* Column rows are independent events. Explicit related-call groups keep their own connectors. */
+.column-list .item-column-row.page-item--graph::before{display:none}
 html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-body{display:flex;flex-direction:column;align-items:stretch;gap:1px}
 .mcp-trace-calm .item-column-row>.page-item-meta{margin:0;font-size:11px}
 .mcp-trace-calm .item-column-context{overflow:visible}
@@ -244,7 +247,10 @@ html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-body{display:flex;
  .column-list .column-header{display:none!important}
  html[data-ax-layout="portal"] body .column-list--resized .portal-data-row{min-width:0;grid-template-columns:repeat(3,minmax(0,1fr))}
  html[data-ax-layout="portal"] body .column-list .item-column-row{min-width:0;grid-template-columns:minmax(0,1fr);gap:3px;padding:6px 12px}
- html[data-ax-layout="portal"] body .mcp-trace-calm .item-column-row{padding-left:24px}
+ html[data-ax-layout="portal"] body :is(.mcp-trace-calm,.mcp-blade-steps) .item-column-row{padding-left:40px}
+ html[data-ax-layout="portal"] body :is(.mcp-trace-calm,.mcp-blade-steps) .item-column-row{grid-template-columns:minmax(140px,1fr) minmax(0,auto)}
+ :is(.mcp-trace-calm,.mcp-blade-steps) .item-column-row>.page-item-body{grid-column:1/-1}
+ :is(.mcp-trace-calm,.mcp-blade-steps) .item-column-row>.item-column-context{justify-content:flex-end}
  .item-column-detail{white-space:normal}
  .item-column-row>.page-item-meta{margin:0}
  .item-column-context{overflow:visible}

@@ -118,7 +118,14 @@ const traceLines = tools.flatMap((tool, i) => [
   `2026-10-11T12:0${i}:01Z [ax-mcp] enrich policy matched_rules=3 matched_skills=1 session=demo-${i}`,
   `2026-10-11T12:0${i}:02Z [ax-mcp] outbound tool=${tool} duration_ms=38 result={"count":6}`,
 ]);
-traceLines.push('2026-10-11T12:04:00Z [ax] workspace sync ok files=12 duration_ms=140 tool=workspace');
+traceLines.push(
+  '2026-10-11T12:04:00Z [ax] ship start mode=evaluate tool=ship',
+  '2026-10-11T12:04:01Z [ax] ship ok mode=evaluate passed=1 tool=ship',
+  '2026-10-11T12:04:02Z [ax] memory capture-git start limit=20 tool=memory',
+  '2026-10-11T12:04:03Z [ax] memory capture-git ok scanned=20 captured=2 tool=memory',
+  '2026-10-11T12:04:04Z [ax] workspace sync start watch=0 tool=workspace',
+  '2026-10-11T12:04:05Z [ax] workspace sync ok files=19 duration_ms=162 tool=workspace',
+);
 
 export function screenshotResponse(url) {
   const path = new URL(url).pathname;
