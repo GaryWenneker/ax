@@ -80,7 +80,7 @@ async fn member_for_session(pool: &SqlitePool, headers: &HeaderMap) -> Option<St
 async fn browser_member(pool: &SqlitePool, headers: &HeaderMap, peer: SocketAddr, hub: &WebHub)
     -> Result<String, ErrorResponse> {
     if let Some(id) = member_for_session(pool, headers).await { return Ok(id); }
-    if !enabled(pool).await? && local_request(headers, peer, hub.port) {
+    if !enabled(pool).await? && hub.local_only && local_request(headers, peer, hub.port) {
         return access::list_members(pool).await
             .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Members unavailable"))?
             .into_iter().find(|m| m.role == access::MemberRole::Owner && m.status == "active")
@@ -203,7 +203,7 @@ async fn setup(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<SocketAddr
     headers:HeaderMap,Json(body):Json<SetupBody>) -> Result<Json<serde_json::Value>,ErrorResponse> {
     let pool=db().await?;
     if enabled(&pool).await? {return Err(err(StatusCode::FORBIDDEN,"Already enabled"));}
-    if hub.readonly || !local_request(&headers,peer,hub.port) {return Err(err(StatusCode::FORBIDDEN,"Local Owner required"));}
+    if hub.readonly || !hub.local_only || !local_request(&headers,peer,hub.port) {return Err(err(StatusCode::FORBIDDEN,"Local Owner required"));}
     if body.password.len()<12 || body.password.len()>1024 {return Err(err(StatusCode::BAD_REQUEST,"Password must be 12-1024 characters"));}
     let owner=access::list_members(&pool).await
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Members unavailable"))?
@@ -225,7 +225,7 @@ async fn configure(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<Socket
     let current=enabled(&pool).await?;
     let actor=browser_member(&pool,&headers,peer,&hub).await?;
     require_owner(&pool,&actor).await?;
-    if !local_request(&headers,peer,hub.port) {
+    if !hub.local_only || !local_request(&headers,peer,hub.port) {
         return Err(err(StatusCode::FORBIDDEN,"Change authentication only at local Command Center"));
     }
     if body.enabled {
@@ -504,7 +504,7 @@ pub async fn gate(State(hub):State<WebHub>,mut req:Request,next:Next)->Response 
     if bearer && path.starts_with("/api/") && !active {return next.run(req).await;}
     let peer=req.extensions().get::<ConnectInfo<SocketAddr>>().map(|v|v.0);
     if !active {
-        if peer.is_some_and(|addr|local_request(req.headers(),addr,hub.port)) {return next.run(req).await;}
+        if hub.local_only && peer.is_some_and(|addr|local_request(req.headers(),addr,hub.port)) {return next.run(req).await;}
         return err(StatusCode::FORBIDDEN,"Remote Command Center requires authentication").into_response();
     }
     let Some(member_id)=member_for_session(&pool,req.headers()).await else {
