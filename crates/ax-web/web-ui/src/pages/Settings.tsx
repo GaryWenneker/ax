@@ -126,6 +126,8 @@ export default function SettingsPage() {
   const [settingsFilter, setSettingsFilter] = useState('');
   const [reviewLanguage, setReviewLanguage] = useState('en');
   const [reviewLanguages, setReviewLanguages] = useState<ReviewLanguageChoice[]>(REVIEW_LANGUAGES);
+  const [contextBudget, setContextBudget] = useState(8_000);
+  const [contextBudgetSet, setContextBudgetSet] = useState(false);
 
   usePageContext('Settings', 'Command Center · pipeline & agents');
 
@@ -166,6 +168,15 @@ export default function SettingsPage() {
           sonar: { ...DEFAULT_CONFIG.sonar, ...d.config.sonar },
         });
         setConfigLoaded(true);
+        try {
+          const budget = await fetch('/api/context-budget/').then((res) => res.json()) as { tokens?: number | null };
+          if (!cancelled && typeof budget.tokens === 'number') {
+            setContextBudget(budget.tokens);
+            setContextBudgetSet(true);
+          }
+        } catch {
+          // The slider still saves a project override when the current value cannot be read.
+        }
       } catch (e) {
         if (!cancelled) {
           setErr(String(e));
@@ -333,6 +344,37 @@ export default function SettingsPage() {
               description="Ax automatically optimizes MCP responses for AI agents using compact Markdown, structured metadata and on-demand context retrieval. No manual format selection is required."
             >
               <span className="settings-row-title">Smart Output</span>
+            </SettingRow>
+
+            <SettingRow
+              title="Context budget"
+              description="Optional preflight blocks stop once this many tokens are used. Required rules still come through. The value is stored in this project's ax.json."
+            >
+              <label className="settings-budget">
+                <input
+                  type="range"
+                  min={1000}
+                  max={64000}
+                  step={1000}
+                  value={contextBudget}
+                  aria-label="Context budget tokens"
+                  disabled={!!busy || !configLoaded}
+                  onChange={(event) => {
+                    const tokens = Number(event.target.value);
+                    setContextBudget(tokens);
+                    setContextBudgetSet(true);
+                    void fetch('/api/context-budget/', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ tokens }),
+                    }).then((res) => {
+                      if (!res.ok) setErr('Could not save the context budget');
+                      else setMsg(`Context budget set to ${tokens.toLocaleString()} tokens`);
+                    }).catch(() => setErr('Could not save the context budget'));
+                  }}
+                />
+                <span>{contextBudgetSet ? `${contextBudget.toLocaleString()} tokens` : 'Not set'}</span>
+              </label>
             </SettingRow>
 
             <SettingRow

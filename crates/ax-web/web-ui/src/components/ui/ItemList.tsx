@@ -1,5 +1,5 @@
 import {Children, isValidElement, useMemo, type ReactNode, type ReactElement} from 'react';
-import {ColumnHeader, ColumnTools, ItemColumnContext, columnText, useListColumns, type ListColumn} from './ListColumns';
+import {ColumnHeader, ColumnTools, ItemColumnContext, columnFromHeader, columnText, useListColumns, type ListColumn} from './ListColumns';
 import type {ColumnValue} from '../../lib/columnModel';
 
 export function ItemList({ children, className = '', columns: suppliedColumns, listId = '' }: { children: ReactNode; className?: string; columns?: readonly ListColumn[]; listId?: string }) {
@@ -7,7 +7,7 @@ export function ItemList({ children, className = '', columns: suppliedColumns, l
   // Repository-owned rows expose presentation props or explicit raw listValues for typed sorting.
   const parts = Children.toArray(children);
   const legacyHeader = parts.find(child => isValidElement<{className?: string}>(child) && child.props.className?.includes('portal-data-header')) as ReactElement<{children?: ReactNode}> | undefined;
-  const columns = suppliedColumns ?? (legacyHeader ? Children.toArray(legacyHeader.props.children).map(child => ({label: columnText(child)})) : trace ? [{label:'Event'}, {label:'Time'}, {label:'Context'}] : [{label:'Name'}, {label:'Details'}, {label:'Labels'}]);
+  const columns = suppliedColumns ?? (legacyHeader ? Children.toArray(legacyHeader.props.children).map(columnFromHeader) : trace ? [{label:'Event'}, {label:'Time'}, {label:'Context'}] : [{label:'Name'}, {label:'Details'}, {label:'Labels'}]);
   const controls = useListColumns(columns, listId || (trace ? 'trace' : 'items'));
   const records = parts.filter(child => child !== legacyHeader).filter(isValidElement).map(child => {
     const props = child.props as {listValues?: readonly ColumnValue[]; title?: string; subtitle?: string; meta?: string; metaTitle?: string; badges?: ReactNode; portalColumns?: ReactNode[]};

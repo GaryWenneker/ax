@@ -2,35 +2,20 @@
 
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
-[![Supply-chain LCM: 7-day gate](assets/dependency-lifecycle.svg)](docs/DEPENDENCY_LIFECYCLE.md)
 [![Dependency Lifecycle Monitor](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml/badge.svg?branch=main)](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml)
-[![LCM Auto-Remediation](https://github.com/GaryWenneker/ax/actions/workflows/dependency-autofix.yml/badge.svg?branch=main)](https://github.com/GaryWenneker/ax/actions/workflows/dependency-autofix.yml)
 
-**Supply-chain lifecycle security:** Dependabot proposes dependency updates;
-the [LCM auto-remediation workflow](docs/DEPENDENCY_LIFECYCLE.md) also opens
-review-only PRs for safe npm lockfile fixes after a strict 7-day release-age
-gate. Automatic PR creation requires [GitHub repository permissions](docs/DEPENDENCY_LIFECYCLE.md#one-time-rights-for-automatic-pr-creation);
-nothing is merged or deployed automatically.
+**ax** is local-first intelligence for AI coding agents: one Rust binary, no cloud index, no API keys. Four layers work in every project.
 
-**Download the [latest release](https://github.com/GaryWenneker/ax/releases/latest)** — six-platform binaries (Windows, macOS, Linux/WSL2).
+| Layer | What it does |
+|---|---|
+| **Knowledge graph** | Tree-sitter parsing into a SQLite index of symbols, calls, imports, and routes |
+| **Memory vault** | Durable decisions, fixes, and conventions, with hybrid recall and git auto-capture |
+| **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected each turn |
+| **Command Center** | Policy, memory, graph, quality gates, token savings, MCP Logging and Quality, draft PRs |
 
-Sharing a page on [getax.wenneker.io](https://getax.wenneker.io) previews that page. The site build screenshots it and stamps the current release on the card.
+Agents query structure through MCP (`ax_explore`, `ax_preflight`, and the rest) instead of fanning out across search and file reads. The documentation describes the current source. Published binaries follow the [latest release](https://github.com/GaryWenneker/ax/releases/latest). [Build from main](https://getax.wenneker.io/getting-started/installation/#build-from-main) when you need source that is newer than that release.
 
-**Development source:** Command Center can generate and manage a remote MCP host with built-in OAuth, project-scoped approval, client registration, refresh and revocation. Replication transfers the full graph and indexed source, memory, daily MCP logs, structured call history, working context and durable conversations. Settings provides persistent node setup, a selected advertised IP, real service/activity status and Light/Dark themes. See [remote hosting](https://getax.wenneker.io/guides/remote-mcp/) and [replication](https://getax.wenneker.io/guides/standalone-ax/). Build and reinstall Ax from source to use these changes; no release or deployment is implied.
-
-**ax** gives AI agents structured context — entirely on your machine. A **knowledge graph** (tree-sitter → SQLite), **memory vault** (decisions, git auto-capture, hybrid recall), **policy engine** (configurable rules/skills folder, default `.agents/`), and **Command Center** (quality gates, SonarQube, token savings, MCP Logging / Quality, draft PRs) — one Rust binary, CLI + MCP. The `pr` skill reviews the draft it opened and keeps fixing until a review round has zero findings. `ax init` seeds that skill together with `old-coder`, `old-coder-api`, `review-loop`, `dotnet-code-review`, `typescript-review`, and `react-review`.
-
-- **Local by default** — source stays on your machine unless you explicitly enroll a project in authenticated replication
-- **Deterministic** — graph data comes from AST extraction, not LLM summaries
-- **Agent-native** — MCP integration for Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed, and more
-- **Native Rust** — single binary, no Node.js runtime required
-- **Policy reviews** — compare incoming and current content, see recorded pack or replica origins, classify new/duplicate/replacement changes and approve selected items in bulk
-- **Mobile Command Center** — navigation drawer, filter and Settings sheets, full-screen details, readable stacked rows and touch controls; desktop keeps column resizing, sorting and filtering ([guide](https://getax.wenneker.io/guides/command-center/#on-a-phone-or-tablet))
-- **Connection cleanup** — remove inactive OAuth grants and revoked replicas in Command Center while keeping revoked replica access blocked and synchronized project data available
-
-Docs: [getax.wenneker.io](https://getax.wenneker.io) — MCP loop: [MCP Logging & Quality](https://getax.wenneker.io/guides/mcp-quality/)
-
----
+Full introduction: [getax.wenneker.io](https://getax.wenneker.io/getting-started/introduction/).
 
 ## Quick start
 
@@ -40,476 +25,100 @@ curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 # Windows (PowerShell)
 irm https://getax.wenneker.io/install.ps1 | iex
-
-# Or build from source
-cargo install --path crates/ax-cli
 ```
 
-If the website serves an outdated installer, use the [current shell installer from main](https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh). It still downloads a published platform binary.
-
-Prebuilt releases ship **six** binaries (Windows x64/arm64, macOS Intel/Apple Silicon, Linux x64/arm64). WSL2 uses the Linux installer inside your WSL shell. See [installation docs](https://getax.wenneker.io/getting-started/installation/).
+Have Node? `npx @garywenneker/ax` downloads the native binary. Open a new terminal so `PATH` updates. WSL2 uses the Linux command inside WSL.
 
 ```bash
-# Wire MCP into detected agents
-ax install
-
-# Index a project (creates .ax/ and builds the graph)
-cd your-project
-ax init
-
-# Keep the index fresh while you work
-ax sync --watch
+ax install          # wire MCP into detected agents
+ax init --all       # find and index projects under your home directory
+cd your-project && ax init
+ax web --open       # local Command Center
 ```
 
----
-
-## What ax builds
-
-Each indexed project gets a `.ax/` directory:
-
-| File | Purpose |
-|------|---------|
-| `ax.db` | SQLite database (WAL mode) — nodes, edges, files, FTS5, policy index |
-| `ax.json` | Project config (extensions, ignore rules) |
-| `policy/` | Rules (`.mdc`) and skills (`SKILL.md`) — IDE-agnostic agent instructions |
-| `ship.toml` | Command Center config — quality gates, remote PR provider, Sonar (seeded on `ax init`) |
-| `ax.lock` | Cross-process lock during indexing |
-| `daemon.json` | MCP daemon metadata (when running) |
-
-### Graph contents
-
-- **Nodes** — functions, classes, methods, types, routes, components, files, …
-- **Edges** — calls, imports, extends, implements, framework-specific links
-- **Files** — structure + full-text symbol search (FTS5)
-
----
-
-## How it works
-
-```
-source files
-    │
-    ▼
-Extraction (tree-sitter, parallel via rayon)
-    │  AST → nodes + edges + unresolved refs
-    ▼
-Storage (SQLite .ax/ax.db, schema v7, FTS5 + policy)
-    │
-    ▼
-Resolution (imports, name-matching, framework synthesizers)
-    │
-    ▼
-Graph queries (callers, callees, impact, explore, context)
-    │
-    ▼
-CLI / MCP / markdown context for agents
-```
-
-### 1. Extraction
-
-Native [tree-sitter](https://tree-sitter.github.io/) grammars parse source into ASTs. Language-specific extractors emit **nodes** and **edges**. Parsing runs in parallel (`AX_PARSE_WORKERS`, default: CPU count).
-
-Supported languages include Rust, TypeScript/JavaScript, Python, Go, Java, and 30+ file extensions via framework extractors (React, Angular, Django, Spring, etc.). **Documentation files** (Markdown, PDF, Office, and other opaque types) are indexed as `Doc` nodes — see [Languages](https://getax.wenneker.io/reference/languages/).
-
-### 2. Storage
-
-Everything lands in `.ax/ax.db`:
-
-- `nodes` + `edges` tables for the call/import graph
-- `nodes_fts` virtual table (FTS5) for symbol search
-- WAL mode for concurrent MCP reads during sync
-
-### 3. Resolution
-
-After extraction, unresolved references are matched to definitions:
-
-- Import paths → source files
-- Function calls → symbol definitions
-- Class inheritance and framework patterns (routes, DI, JSX, …)
-
-Some dynamic boundaries (callbacks, observers) are bridged by **synthesizers** so call flows connect end-to-end.
-
-### 4. Auto-sync
-
-`ax sync` incrementally re-indexes changed files. `ax sync --watch` (or `ax watch`) debounces filesystem events via `notify` and keeps the graph current. Git hooks (`post-commit`, `post-merge`, `post-checkout`) run sync, ship evaluation, and memory capture automatically after `ax init`.
-
----
-
-## CLI commands
-
-The CLI uses **colored output**, **progress bars** (index/init), and **spinners** (explore, sync, query, …). Disable with `--quiet` or `NO_COLOR=1`.
-
-| Command | Description |
-|---------|-------------|
-| `ax` / `ax install` | Interactive MCP installer for detected agents |
-| `ax uninstall` | Remove ax from agent configs |
-| `ax init [path] [--workspace] [--all]` | Create `.ax/`, full index, git hooks; `--workspace` discovers monorepo members; `--all` initializes every project found under the home directory |
-| `ax uninit [path]` | Delete `.ax/` directory |
-| `ax index [--force] [--quiet] [--all]` | Full re-index; `--all` indexes every `ax.json` workspace member |
-| `ax sync [--watch] [--quiet] [--all]` | Incremental sync; `--all` syncs every workspace member |
-| `ax export okf` | Export Open Knowledge Format (OKF) Markdown concept bundle |
-| `ax export graph --format …` | Export graph (`json`/`dot`/`graphml`/`gexf`/`cypher`/`mermaid`/`plantuml`/`html`) |
-| `ax policy pull <git-url>` | Pull shared policy rules/skills from a git registry |
-| `ax policy pack export\|import\|status\|install\|zip` | Git shared pack, built-in packs, or portable `.ax-policy.zip` |
-| `ax policy restore` | Preview/install a portable policy zip into `.agents/` |
-| `ax policy share config\|sync` | Remote policy share — pull/push via git (GitHub/GitLab/Azure DevOps/on-prem, optionally GitLab `/api/v4` with a token) or OneDrive Graph |
-| `ax auth microsoft login\|logout\|status` | Microsoft device-code sign-in for OneDrive share sync |
-| `ax policy review list\|show\|approve\|reject` | Review pending pack imports |
-| `ax policy enable\|disable <id>` | Toggle a rule or skill without deleting it |
-| `ax policy storage status\|database\|files\|set-item` | Default files vs database; exclusive migrate with `--yes` |
-| `ax watch [path]` | Alias for `ax sync --watch` |
-| `ax status [--json]` | Node/edge/file counts, doc inventory by extension, pending sync |
-| `ax query <text> [--json]` | FTS symbol search |
-| `ax explore <query> [--json]` | Natural-language explore (same as MCP) |
-| `ax node [name]` | Symbol or file details |
-| `ax files [--json]` | List indexed files |
-| `ax context <task>` | Build markdown task context |
-| `ax callers <symbol>` | Who calls this symbol? |
-| `ax callees <symbol>` | What does this symbol call? |
-| `ax impact <symbol>` | Blast-radius subgraph |
-| `ax domain` | Write `.ax/domain-graph.json` (Command Center Domain view) from Leiden communities |
-| `ax remember <text>` | Store a durable project memory (decision, fix, convention) |
-| `ax recall <query>` | Hybrid search (FTS + vectors) over project memories |
-| `ax capture-git` | Mine recent git commits into memories |
-| `ax memory export\|import` | Shared memory JSONL sync for teams (`memorySync` in `ax.json`) |
-| `ax savings` | Context-token and cost savings summary (`import`, `tag-session`, `hook install`) |
-| `ax pricing` | Daily model price sync (OpenRouter) |
-| `ax costs` | Estimated agent spend from imported turns (`today`, `month`, `model`) |
-| `ax budget` | Local monthly plan, simulation, and thresholds (`plan`, `simulate`, `set`) |
-| `ax bootstrap` | Versioned Ax and Pi architecture seed (`--dry-run`, `--verify`, `--json`) |
-| `ax agent economics` | Pi session token and cost estimates (`--session`, `--json`) |
-| `ax agent optimize --report` | Estimated avoidable context from recorded Pi tool calls |
-| `ax mcp audit` | MCP quality audit (verbose log ↔ Cursor transcript; Quality slide-out engine) |
-| `ax mcp remote register` | Register public project export metadata; Remote MCP Settings copies local/project setup and shareable remote connection details |
-| `ax mcp remote serve` | Authenticated project MCP over HTTP; dynamic loopback port and optional Unix socket |
-| `ax mcp remote login\|status\|logout\|proxy` | Browser OAuth login, secure credentials, and a stdio bridge for remote IDEs |
-| `ax cursor auth …` | Save/restore Cursor subscription sessions (`status`, `save`, `use`, `list`) |
-| `ax affected <files…>` | Tests affected by file changes |
-| `ax diff --base main` | Git diff symbol blast radius |
-| `ax test-impact --base main` | Test-function impact via graph |
-| `ax ship --evaluate` | Command Center quality gate (`--auto-commit`/`--revert-on-fail` for opt-in Aider-style checkpointing) |
-| `ax ship --ci` | Headless quality gate for CI — JSON on stdout, exit 1 if failed |
-| `ax ship --watch` | Ship dashboard + git watcher |
-| `ax ship --draft` | Draft PR after quality gate |
-| `ax share [--open]` | Share Command Center on the LAN with a token (read-only) |
-| `ax lsp status\|enrich` | Optional LSP bridge — Exact edges via rust-analyzer / tsserver / pyright / gopls |
-| `ax unlock [path]` | Force-clear stale `ax.lock` / orphaned ax (prefer `ax daemon restart`) |
-| `ax daemon [status\|stop\|restart]` | MCP daemon control (restart = Command Center **Reload MCP**) |
-| `ax upgrade [tag]` | Self-update from GitHub releases |
-| `ax telemetry [on\|off\|status]` | Anonymous usage telemetry |
-| `ax offload …` | Optional BYO LLM for explore synthesis |
-| `ax policy index` | Index `.agents/` (and legacy `.ax/policy/`) rules and skills |
-| `ax policy match <text>` | Test which rules/skills match a prompt |
-| `ax policy rules` / `skills` | List indexed policy |
-| `ax policy guard` | Pre-write CRITICAL checks (encoding, secrets paths, plus any rule-defined `guard:` directive) |
-| `ax stop-hook` | Claude Code `Stop`/`SubagentStop` post-flight — blocks turn end on a CRITICAL guard violation |
-| `ax web [--open]` | Local web UI — graph browser + policy editor + Command Center; also serves rules, skills, memories, and global rules and skills as an Obsidian vault over WebDAV at `/dav/`; `[[links]]` between them are clickable and followed by `ax_preflight`; rule and skill bodies edit as Markdown or WYSIWYG, and typing `[[` (or the WYSIWYG link button, ⌘K) opens a picker to link a rule, skill or memory, with kind filters and quick search on name, `#tag` and `s:`/`r:`/`m:`; Settings → Folders adds your own directories under `folders/` (with a native folder picker) and can index their Markdown into memory; Settings → IDEs & agents connects ax to every IDE on the machine with one click ([guide](https://getax.wenneker.io/guides/obsidian-vault/)) |
-| `ax desktop [--port]` | Native wgpu Command Center (embeds ax-web in-process) |
-Run `ax help <command>` for detailed help with examples.
-
-### Terminal UX
-
-| Feature | When | Flag to disable |
-|---------|------|-----------------|
-| Colored help (clap) | `ax help` | `NO_COLOR=1` |
-| Progress bar + spinner | `ax index`, `ax init` | `--quiet` |
-| Spinner | `ax sync`, `ax explore`, `ax query`, graph commands | `--quiet` or `--json` |
-| Styled status lines | `ax status`, success/error messages | `--json` |
-
-Environment:
-
-| Variable | Effect |
-|----------|--------|
-| `NO_COLOR` | Disable all ANSI colors |
-| `AX_FORCE_COLOR=1` | Force colors (overrides `NO_COLOR` — needed in Cursor/CI shells) |
-| `AX_UNICODE=1` | Force Unicode glyphs (✓, spinner frames) on Windows |
-| `AX_ASCII=1` | Force ASCII glyphs everywhere |
-| `AX_PARSE_WORKERS` | Parallel parse thread count |
-| `AX_QUERY_POOL_SIZE` | MCP query pool size |
-| `AX_GITHUB_REPO` | Override repo for `ax upgrade` (default `GaryWenneker/ax`) |
-| `AX_MS_CLIENT_ID` | Optional custom Azure AD public client ID for OneDrive policy share (`ax auth microsoft login`) — defaults to the built-in Microsoft app if unset |
-| `AX_SHARE_TOKEN` | Require this token for `ax web` / `ax share` (query / Bearer / cookie) |
-| `AX_ONNX_MODEL` | Path to ONNX embedding model (requires `--features onnx` build) |
-
----
-
-## MCP server
-
-ax exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server. Agents call tools instead of grepping the tree.
-
-### Tools
-
-Advertised by default — the turn contract plus the whole graph read surface:
-
-| Tool | Purpose |
-|------|---------|
-| `ax_explore` | Semantic search + graph traversal + numbered source |
-| `ax_node` | Single symbol or file details |
-| `ax_search` | FTS symbol lookup |
-| `ax_status` | Index stats, doc breakdown by extension, staleness, source-store coverage |
-| `ax_sync` | Incremental index sync (changed files only) |
-| `ax_context` | Task-oriented markdown context |
-| `ax_callers` | Incoming call edges |
-| `ax_callees` | Outgoing call edges |
-| `ax_impact` | Blast-radius subgraph |
-| `ax_path` | Shortest call path between two symbols |
-| `ax_cycles` | Call-graph cycles |
-| `ax_api` | Exported API surface of a module |
-| `ax_affected` | Reverse impact → affected tests |
-| `ax_insights` | Communities, god nodes, surprising connections |
-| `ax_report` | Full Markdown architecture report |
-| `ax_remember` | Store a durable project memory (flags near-duplicates) |
-| `ax_recall` | Hybrid memory search (FTS5 + local vector embeddings) |
-| `ax_expand` | Read a cached MCP reply by id (`offset` / `limit` in characters); also returns the answer behind an `[ax cache hit]` |
-| `ax_session` | Read or update this conversation's working context (`get`, `add`, `update`, `compact`, `clear`, `fork`, `handoff`) |
-| `ax_durable` | Transcript, JSON documents, and checkpointed tasks for this chat (`append`, `read`, `search`, `compact`, `fork`, `handoff`, `doc_put`, `doc_get`, `task_start`, `task_checkpoint`, `task_resume`, `task_finish`, `hook`) |
-| `ax_stash` | Store a chat slice or other tool result; returns an id, does not echo the body |
-| `ax_cache_status` | Context-cache and file-token-cache counts. No bodies. Writes two grouped lines to the MCP log |
-| `ax_preflight` | Turn-start policy: matched rules + skills (when `.agents/` or `.ax/policy/` exists) |
-| `ax_rules` | List or match policy rules |
-| `ax_skill` | Load a skill by name (`~/.ax/global.db` wins over project `ax.db`) |
-| `ax_guard` | Pre-write guard for CRITICAL rules — built-in (encoding, secrets) plus generic `guard: forbid-path/forbid-content/require-content/require-skill` directives declared in any rule body |
-
-Opt-in via `AX_MCP_TOOLS` (comma-separated names, or `all`) — these mutate the index, spawn language servers, or run the quality gate. They stay callable by name either way; the allowlist only controls discovery:
-
-| Tool | Purpose |
-|------|---------|
-| `ax_index` | Trigger incremental sync; pass `force: true` for a full rebuild |
-| `ax_lsp` | LSP status / enrich Exact edges (`action`: `status` \| `enrich`) |
-| `ax_ship` | Quality-gate evaluate / ci (never exits the MCP process) |
-| `ax_policy_index` | Re-index / import policy rules and skills from disk |
-| `ax_diagnostics` | Diagnostics bridge — feed in editor/LSP/compiler findings (Cursor Problems panel, `tsc`, `eslint`, ...), get back guarded-path and `ax_affected` test correlation |
-| `ax_files` | Project file listing (superseded by graph queries) |
-
-**Agent rule:** for structural questions (how does X work, call paths, impact), call `ax_explore` first. Treat returned numbered source as already read. Prefer MCP ops (`ax_sync`, `ax_lsp`, `ax_ship`, `ax_policy_index`, `ax_remember`) over shelling out to the CLI when MCP is connected.
-
-**Graph-only snippets:** source in `ax_explore` and `ax_context` responses is served from the source store in `ax.db`, never read from your working tree at query time. Each read verifies the stored content hash against the indexed one, so a snippet is either provably current or explicitly labelled stale — there is no silent disk fallback. Files over 1 MB (`AX_SOURCE_STORE_MAX_BYTES`) are not stored and say so. Only files a parser claims are stored — build output the watcher reports during a `cargo build` is not — which keeps the store to 3.8 MB of text over 499 files on this repo; `ax sync` also drops stored text no indexed file claims. After upgrading from a pre-v17 index, run `ax index` (or `ax sync`) once to backfill; `ax status` reports the coverage gap (counted over parseable files, not every indexed row) until you do. A snippet shows the last indexed text, so its line numbers and its source always agree.
-
-**Policy rule:** when `.agents/` is indexed, call `ax_preflight` at turn start (returns full rule/skill bodies in `inject` plus an `<ax_index>` doc inventory snapshot — no need to read `.agents/` files) and `ax_guard` before writes on guarded paths.
-
-**Turn-end post-flight (Claude Code):** `ax install` also wires `Stop`/`SubagentStop` hooks (`ax stop-hook`) so ax gets a say at the *end* of a turn too, not just the start — it re-checks every uncommitted file against `ax_guard` and blocks (`{"decision": "block", ...}`) only on a CRITICAL violation. Disable with `AX_NO_STOP_HOOK=1`.
-
-**Lean by default:** responses never ship the answer twice — `content.text` is authoritative and `structuredContent` is projected down to metadata (no duplicated source/rule bodies). `ax_context` and the data tools return compact markdown / one-line-per-symbol text instead of pretty-JSON. Tune with `AX_MCP_FULL` (restore full structured payload), `AX_EXPLORE_MAX_LINES` (40), `AX_EXPLORE_MAX_SOURCE_CHARS` (2000), `AX_CONTEXT_MAX_BLOCKS` (6), `AX_CONTEXT_MAX_BLOCK_CHARS` (1200). See the [token savings guide](https://getax.wenneker.io/guides/token-savings/).
-
-**Conversation cache:** within one agent conversation, a repeated read-only graph call (same tool and arguments) returns a short `[ax cache hit]` reference (under 100 tokens) instead of the full answer again; `ax_expand` with its id returns the original byte-for-byte. Every lookup rechecks the content hash of each cited file on disk and a fingerprint of the whole index, so an edit or any re-index makes it a miss. Pass `fresh: true` to rerun, or set `AX_CONTEXT_CACHE=off` to disable it. `ax_preflight` lists what the conversation already knows in `<ax_session_context>`, each entry once. Cap: `AX_REUSE_CACHE_BYTES` (2 MB per conversation). See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/#conversation-cache).
-
-**Working context:** `ax_session` stores the small snapshot a later turn should see without rebuilding it: objective, facts, files, symbols, decisions, and open questions. `add` appends, `update` replaces the sections you send, `compact` replaces the whole snapshot (you write the shorter text), and `clear` deletes it. `fork` copies the notes to a new session. `handoff` starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. Preflight shows `<ax_working_context>` inside `<ax_section name="session">` (800 tokens at most), or one `unchanged` line when the agent passes the hash it has as `known_context`, and nudges for `compact` after 5 quiet turns inside `<ax_section name="nudge">`. A changed index marks the notes stale instead of deleting them; `compact` confirms them. At most 200 snapshots per project, 30 days unused. Both caches follow the `session` id that preflight prints in `<ax_chat session=… graph=…>`; a preflight without one starts a new chat. The same switch, `AX_CONTEXT_CACHE=off`, disables it. `ax_durable` is the transcript next to those notes: `append` and `read` keep the conversation, `compact` hides older entries from `read` while `search` still finds them, `fork` reads the parent up to an entry and copies documents, `handoff` starts a clean transcript from a note, and `task_resume` returns the last checkpoint after a restart. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/#working-context).
-
-**Verbose MCP logging:** always records inbound args, preflight enrichment steps and outbound payloads in the project's daily `<project>/.ax/mcp-verbose-YYYY-MM-DD.log`; existing `AX_MCP_VERBOSE=1` client configurations remain compatible. The Command Center **Logging** page follows newest events, loads prior days when scrolling down and summarizes JSON/domain activity. Select a row for the Call Inspector and its original raw line. Run `ax savings hook install` so verbose lines tag `session=<uuid>` for `ax mcp audit` correlation. Traces never alter agent-facing tool responses. See the [MCP server reference](https://getax.wenneker.io/reference/mcp-server/).
-
-### Transport
-
-- **stdio** — default when launched by an agent (`ax serve --mcp`)
-- **Daemon** — shared per-project daemon (TCP / named pipe / Unix socket) for multiple MCP clients
-- Watchdogs: PPID + liveness child processes; set `AX_NO_WATCHDOG=1` to disable
-
-Per-project indexes: pass `projectPath` when the workspace root differs from cwd (monorepos).
-
----
-
-## Architecture (Rust workspace)
-
-| Crate | Role |
-|-------|------|
-| `ax-cli` | CLI entry point, terminal UX (colors, progress, spinners) |
-| `ax-core` | `Ax` facade — open, index, explore, graph queries |
-| `ax-extraction` | tree-sitter parsing, orchestrator, parallel parse pool |
-| `ax-resolution` | Reference resolution + framework synthesizers |
-| `ax-db` | SQLite schema, migrations, FTS5 |
-| `ax-graph` | BFS/DFS traversal, petgraph cycle detection |
-| `ax-context` | Explore formatting, task context builder |
-| `ax-sync` | File watcher, git hooks, incremental sync |
-| `ax-mcp` | MCP server, daemon, query pool, tool handlers |
-| `ax-telemetry` | Opt-in anonymous usage events |
-| `ax-reasoning` | Optional BYO LLM offload for explore |
-| `ax-policy` | Rules/skills parse, index, match, guard |
-| `ax-agent` | Cursor auth session management (save/restore profiles) |
-| `ax-pi` | Pi observer: events, context advice, tool economics. Pi keeps the agent loop |
-| `ax-ship` | Quality-gate pipeline, SonarQube orchestration, draft PRs |
-| `ax-web` | Embedded web UI (graph + policy management + Command Center) |
-| `ax-desktop-client` | Native wgpu Command Center (`ax-desktop` binary; embeds `ax-web`) |
-| `ax-types` | Shared types (`Node`, `Edge`, `ExploreResult`, …) |
-| `ax-utils` | Errors, paths, config helpers, encoding checks |
-
-Build:
-
-```bash
-cargo build --release -p ax-cli
-./target-dev/release/ax --version
-```
-
-Native desktop Command Center (`ax desktop` embeds `ax-web` — see [Desktop Client guide](https://getax.wenneker.io/guides/desktop-client/)):
-
-```bash
-ax desktop
-ax desktop --port 17070
-cargo run -p ax-desktop-client -- .   # standalone binary
-```
-
-Run MCP (hidden command):
-
-```bash
-ax serve --mcp          # stdio transport
-ax serve --mcp --daemon # background daemon
-```
-
----
-
-## Policy engine
-
-IDE-agnostic **rules** and **skills** for agents — not tied to Cursor or any single IDE format. Items live in layered **scopes** (company → workspace → project → private); agents get policy through **MCP** (or the Claude prompt-hook), **not** by reading policy files on disk.
-
-| Path / scope | Purpose |
-|------|---------|
-| `~/.ax/global_policy/` (`company`) | Org-wide rules/skills (never packed) |
-| `.agents/rules/*.mdc` (`project` / `workspace`) | YAML frontmatter + markdown constraints |
-| `.agents/skills/*/SKILL.md` | Triggered workflows (deploy, review, …) |
-| `~/.ax/private_policy/` / `.ax/policy-private/` | Personal overlays (never packed) |
-| `.ax/policy-inactive/` | Disabled items (local only, gitignored) |
-
-```bash
-ax policy index
-ax policy match "deploy to production"
-ax policy pack export          # project/workspace → .ax/policy/shared/
-ax policy pack install --list  # built-in packs (e.g. azdo-fullstack)
-ax web --open                  # edit rules/skills; Policy → Sync / Review
-```
-
-### Architecture — source to agent context
-
-```mermaid
-flowchart LR
-  subgraph repo["Repo"]
-    R["rules/*.mdc"]
-    S["skills/*/SKILL.md"]
-  end
-  subgraph index["Index"]
-    I["ax policy index"]
-    DB[("ax.db")]
-  end
-  subgraph agent["Agent turn"]
-    PF["ax_preflight"]
-    INJ["inject block"]
-  end
-  R --> I
-  S --> I
-  I --> DB
-  DB --> PF
-  PF --> INJ
-```
-
-### Single turn flow
-
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant A as Agent
-  participant MCP as ax MCP
-  U->>A: prompt
-  A->>MCP: ax_preflight(prompt, files)
-  MCP-->>A: inject with full rule/skill bodies
-  A->>MCP: ax_guard(path) before writes
-  A->>U: response
-```
-
-| Delivery | Cursor | Claude Code |
-|----------|--------|-------------|
-| MCP `ax_preflight` (agent calls) | Yes | Yes |
-| Prompt-hook auto-inject | No | Yes |
-| `ax_skill` / `ax_guard` | Yes | Yes |
-
-**Policy vs code:** `ax_preflight` = rules/skills. `ax_explore` / `ax_context` = code graph — different tools.
-
-MCP: `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`. Full guide: [docs/POLICY_ENGINE.md](docs/POLICY_ENGINE.md) and [getax policy docs](https://getax.wenneker.io/guides/policy-engine/).
-
----
-
-## Explore offload (optional)
-
-`ax explore` returns deterministic graph output. Optionally synthesize a narrative via your own OpenAI-compatible API:
-
-```bash
-ax offload set-endpoint https://api.openai.com/v1 --key-env OPENAI_API_KEY
-ax offload status
-ax offload clear
-```
-
-Or set `AX_OFFLOAD_URL` and `AX_OFFLOAD_KEY` environment variables.
-
----
-
-## Telemetry
-
-Anonymous, opt-in usage metrics (command names, coarse buckets — never source code or paths).
-
-```bash
-ax telemetry status
-ax telemetry on
-ax telemetry off
-```
-
-Also disabled by `DO_NOT_TRACK=1` or `AX_TELEMETRY=0`. See [docs/TELEMETRY.md](docs/TELEMETRY.md).
-
----
+Install or upgrade also runs `ax init --all`. Prebuilt releases ship six binaries: Windows x64/arm64, macOS Intel/Apple Silicon, Linux x64/arm64.
+
+Next: [Quickstart](https://getax.wenneker.io/getting-started/quickstart/) · [Installation](https://getax.wenneker.io/getting-started/installation/) · [Your first graph](https://getax.wenneker.io/getting-started/your-first-graph/).
+
+## Documentation
+
+The site is the product guide. This README follows that map.
+
+### Getting started
+
+- [Introduction](https://getax.wenneker.io/getting-started/introduction/)
+- [Quickstart](https://getax.wenneker.io/getting-started/quickstart/)
+- [Installation](https://getax.wenneker.io/getting-started/installation/)
+- [Configuration](https://getax.wenneker.io/getting-started/configuration/)
+- [Your first graph](https://getax.wenneker.io/getting-started/your-first-graph/)
+- [Next steps](https://getax.wenneker.io/getting-started/next-steps/)
+
+### Core concepts
+
+- [How it works](https://getax.wenneker.io/core-concepts/how-it-works/)
+- [The knowledge graph](https://getax.wenneker.io/core-concepts/knowledge-graph/)
+- [Resolution and frameworks](https://getax.wenneker.io/core-concepts/resolution/)
+
+### Guides
+
+- [Indexing a project](https://getax.wenneker.io/guides/indexing/)
+- [Workspaces (monorepo)](https://getax.wenneker.io/guides/workspaces/)
+- [Extractor plugins](https://getax.wenneker.io/guides/plugins/)
+- [LSP enrichment](https://getax.wenneker.io/guides/lsp/)
+- [Architecture insights](https://getax.wenneker.io/guides/architecture-insights/)
+- [Open Knowledge Format](https://getax.wenneker.io/guides/okf/)
+- [Policy engine](https://getax.wenneker.io/guides/policy-engine/)
+- [Remote policy share](https://getax.wenneker.io/guides/policy-sharing/)
+- [Framework routes](https://getax.wenneker.io/guides/framework-routes/)
+- [Affected tests in CI](https://getax.wenneker.io/guides/affected-tests/)
+- [Dependency lifecycle security](https://getax.wenneker.io/guides/dependency-lifecycle/)
+- [Command Center](https://getax.wenneker.io/guides/command-center/)
+- [Command Center walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/)
+- [Desktop client](https://getax.wenneker.io/guides/desktop-client/)
+- [Share Command Center](https://getax.wenneker.io/guides/share/)
+- [MCP Logging and Quality](https://getax.wenneker.io/guides/mcp-quality/)
+- [Memory vault](https://getax.wenneker.io/guides/memory/)
+- [Obsidian vault](https://getax.wenneker.io/guides/obsidian-vault/)
+- [Token savings](https://getax.wenneker.io/guides/token-savings/)
+- [Smart Output](https://getax.wenneker.io/guides/smart-output/)
+- [Standalone server and replicas](https://getax.wenneker.io/guides/standalone-ax/)
+- [Remote MCP and OAuth](https://getax.wenneker.io/guides/remote-mcp/)
+- [Expose Command Center with Cloudflare](https://getax.wenneker.io/guides/cloudflare/)
+- [Agent budget](https://getax.wenneker.io/guides/budget/)
+- [Pi integration](https://getax.wenneker.io/guides/pi/)
+
+### Reference
+
+- [MCP server](https://getax.wenneker.io/reference/mcp-server/)
+- [Integrations](https://getax.wenneker.io/reference/integrations/)
+- [CLI](https://getax.wenneker.io/reference/cli/)
+- [Command Center HTTP API](https://getax.wenneker.io/reference/web-api/)
+- [Rust API](https://getax.wenneker.io/reference/api/)
+- [Languages](https://getax.wenneker.io/reference/languages/)
+- [Troubleshooting](https://getax.wenneker.io/troubleshooting/)
+
+## What you get locally
+
+Each indexed project gets a `.ax/` directory: `ax.db` (graph, FTS5, policy), `ax.json`, and `ship.toml`. Team rules and skills live in `.agents/` and reach the agent through MCP, not by reading those files on disk.
+
+Command Center (`ax web`) is the local UI for that project: rules and skills, memory, the graph, Logging, quality gates, and Settings. Optional sign-in, passkeys, and member roles are configured under Settings when you want a published web origin. Remote MCP adds authenticated HTTPS access. Replication shares an enrolled project’s graph, memory, and policy between a primary and replicas. A Cloudflare tunnel can publish the local Command Center without opening the ax port on the public internet. Those flows are documented on the pages linked above.
+
+Sharing a docs URL previews that page. The site build screenshots it and stamps the CLI source version from `Cargo.toml` on the card.
 
 ## Development
 
 ```bash
-# Run tests
 cargo test
-
-# Smoke test on hello-world fixture
-cargo test -p ax-smoke-tests
-
-# Release packaging (maintainer — all six platforms required)
-bash scripts/verify-release-assets.sh dist/
-bash scripts/publish-getax-releases.sh v2.0.14
+cargo build --release -p ax-cli
+./target-dev/release/ax --version
 ```
 
-See [docs/PRODUCTION.md](docs/PRODUCTION.md) for GitHub Releases, Netlify docs site, and telemetry worker setup.
+Cargo writes to `target-dev/`, not `target/debug/`. Maintainer notes for releases, the docs site, and the telemetry worker are in [docs/PRODUCTION.md](docs/PRODUCTION.md).
 
----
+Dependabot proposes dependency updates. A separate monitor audits Rust and npm lockfiles. Safe npm fixes can be opened as review-only pull requests after a 7-day release-age gate. Nothing is merged or deployed automatically. Details: [Dependency lifecycle](https://getax.wenneker.io/guides/dependency-lifecycle/).
 
 ## License
 
-See repository license file. ax is local intelligence for AI agents — knowledge graph, policy engine, and Command Center in one Rust binary.
+See the repository license file.
 
-<!-- ax = Aero Xecution -->
-<sub><abbr title="Aero Xecution">ax</abbr> · Aero Xecution</sub>
-
-### Project-safe minimal context
-
-MCP validates explicit project and session identities before accessing state. Each
-connection owns a context epoch independently of its durable chat session. After
-compaction, call `ax_preflight` with `context_reset: true` or a new `context_epoch`;
-required policy and working notes are rehydrated, while graph retrieval starts
-fresh. A reconnect also starts fresh even when the client repeats an epoch.
-
-Set `context.budgetTokens` in `ax.json` to select complete optional blocks. The
-reported budget includes text, structured metadata, separators and omission
-instructions. Required policy is preserved even below its minimum;
-`contextBudget.overBudget` and `requiredMinimum` explain that case. Use graph
-queries and `ax_expand` for additional source instead of enlarging every preflight.
-
-`ax_policy_index({ action: "audit" })` inventories policy and memory origins and
-compares disk/database hashes without changing their authority. Database policy
-is not overwritten by stale exports; explicit file-owned overrides still refresh.
-Background dedup reports candidates without promoting project content globally.
-See [the implementation contract](docs/archive/specs/minimal-project-safe-context.md).
-
-### Primary setup in Command Center
-
-Settings → Replication shows setup only without a saved configuration. Start Primary can generate empty cluster/project IDs and a credential; saved credentials have eye and copy controls and use the OS credential store. Web and MCP startup automatically start or reuse the configured service, including IDE refreshes. Replica setup lists UDP-discovered services automatically; choose one or enter its HTTPS origin, then connect explicitly. Remove local configuration stops the service and returns setup while preserving project data. See the [standalone guide](site/src/content/docs/guides/standalone-ax.md#configure-nodes-from-settings). These controls ship in v8.1.0.
-
-Pairing preserves existing knowledge even when the Primary is empty: authenticated exchange contributes the Replica’s memories, rules and skills and distributes the combined state. Native records are unchanged, missing records never delete local copies, and accepted source revisions are retained on the Primary. Settings applies received memories under separate IDs; policies require review. Both nodes must use the current preserve-and-exchange build. See the [data-preservation guide](site/src/content/docs/guides/standalone-ax.md#empty-primary-existing-replica-and-conflicts).
-
-Review queues use compact rows with expandable Current/Incoming comparisons. If the serving Ax backend cannot provide a verified comparison, approval is blocked and the page asks you to update and restart that process. Replication reports peer app-version differences in Settings; compatible protocol 3 peers continue syncing with a warning, while incompatible protocols stop before applying data. No automatic server upgrade is performed.
-
-Command Center column-based lists share independent drag/keyboard resizing, remembered browser widths, heading sorting and per-column filters for loaded rows. Narrow layouts keep readable cards and a compact Columns menu. Logging shows readable Workspace/Memory/Ship actions and counts/timing beside Time/Context columns, with a separate marker gutter and no dotted connector between unrelated events. Raw-field searches, live arrivals and keyboard navigation remain available; full entries open in its inspector. See the [Command Center guide](https://getax.wenneker.io/guides/command-center/).
-
-For current pages, Settings groups, logging controls and connection workflows, see the [Command Center walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/).
-
-
-### Optional Command Center authentication
-
-Command Center supports **optional human sign-in**, **passkeys (WebAuthn)**, and **multiple roles per team member**. Configure `AX_WEB_AUTH_ORIGIN` to the canonical HTTPS origin when publishing a web interface. On the trusted local Command Center, open **Settings → Security & passkeys**, enroll the Owner, then enable sign-in. Every member may register more than one passkey. **Settings → Users & roles** edits each member's role set. MCP client tokens, Remote MCP OAuth and replication credentials keep their independent access models. See the [Command Center walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/) and [Web API reference](https://getax.wenneker.io/reference/web-api/).
+<sub>ax · Aero Xecution</sub>

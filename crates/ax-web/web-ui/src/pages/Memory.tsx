@@ -47,6 +47,7 @@ import {
   type FileChange,
 } from '../memoryDetail';
 import { memoryRowAge, memoryRowCounts, memoryRowHeadline } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import { wikiLinksToMarkdown, type ItemLinks } from '../wikilinks';
 import { MEMORY_CATEGORIES, memoryCategory } from '../memoryCategory';
 import { useTheme } from '../hooks/useTheme';
@@ -65,8 +66,8 @@ const KIND_ICONS: Record<string, string> = {
 
 const KIND_OPTIONS = ['note', 'decision', 'bug_fix', 'architecture', 'convention'];
 
-function fmtMemoryTime(ts: number): string {
-  return formatInstantInZone(ts, browserTimeZone()).time.replace(/\.\d{3}$/, '');
+function fmtMemoryTime(ts: number, now: number): string {
+  return memoryRowAge(ts, now);
 }
 
 const ROW_TAG_LIMIT = 3;
@@ -78,6 +79,7 @@ function rowTagLabels(source: string | undefined, tags: string[]): { shown: stri
 }
 
 export default function MemoryPage() {
+  const now = useNow();
   const portal = useTheme().layout === 'portal';
   const [memories, setMemories] = useState<MemoryRow[]>([]);
   const [matches, setMatches] = useState<MemoryMatch[] | null>(null);
@@ -498,7 +500,7 @@ export default function MemoryPage() {
                     {portal && <div className="portal-data-header"><span>Title</span><span>Kind</span><span>Source</span><span>Updated</span><span>Enabled</span></div>}
                     {shown.map((m, i) => {
                       const tags = rowTagLabels(m.source, m.tags);
-                      const age = memoryRowAge(m.updated_at, Date.now());
+                      const age = memoryRowAge(m.updated_at, now);
                       const conv = convLinks[i];
                       const images = memoryImageCount(m.body);
                       return (
@@ -512,23 +514,18 @@ export default function MemoryPage() {
                         }`}
                         style={conv ? ({ '--conv-hue': conv.hue } as CSSProperties) : undefined}
                         title={memoryRowHeadline(m)}
-                        listValues={[memoryRowHeadline(m), m.kind.replace(/_/g, ' '), m.source || '—', fmtMemoryTime(m.updated_at), m.enabled !== false ? 'enabled' : 'disabled']}
-                        subtitle={[
-                          m.kind,
-                          fmtMemoryTime(m.updated_at),
-                          memoryRowCounts(m),
-                          m.score != null ? `score ${m.score.toFixed(1)}` : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
+                        listValues={[memoryRowHeadline(m), m.kind.replace(/_/g, ' '), m.source || '—', fmtMemoryTime(m.updated_at, now), m.enabled !== false ? 'enabled' : 'disabled']}
                         portalColumns={portal ? [m.kind.replace(/_/g, ' '), m.source || '—', age] : undefined}
                         portalLabels={['Kind', 'Source', 'Age']}
                         meta={age}
-                        metaTitle={fmtMemoryTime(m.updated_at)}
+                        metaTitle={fmtMemoryTime(m.updated_at, now)}
                         selected={selectedId === m.id}
                         onClick={() => setSelectedId(m.id === selectedId ? '' : m.id)}
                         badges={
                           <>
+                            {memoryRowCounts(m) && (
+                              <span className="page-item-badge">{memoryRowCounts(m)}</span>
+                            )}
                             {m.source === 'git' ? (
                               <span className="page-item-badge" title="Captured from a git commit. This is the source, not a tag.">
                                 <Codicon name="git-branch" className="badge-icon" />
@@ -663,6 +660,7 @@ function MemoryBlade({
   onClose: () => void;
   onDelete: () => void;
 }) {
+  const now = useNow();
   const [fileChanges, setFileChanges] = useState<Record<string, FileChange>>({});
   const [fileLinks, setFileLinks] = useState<Record<string, string>>({});
   const [zoomImage, setZoomImage] = useState<{ src: string; alt: string } | null>(null);
@@ -747,11 +745,11 @@ function MemoryBlade({
           </div>
           <div className="detail-kv">
             <span className="detail-key">Created</span>
-            <span className="detail-val">{fmtMemoryTime(memory.created_at)}</span>
+            <span className="detail-val" title={formatInstantInZone(memory.created_at, browserTimeZone()).time}>{fmtMemoryTime(memory.created_at, now)}</span>
           </div>
           <div className="detail-kv">
             <span className="detail-key">Updated</span>
-            <span className="detail-val">{fmtMemoryTime(memory.updated_at)}</span>
+            <span className="detail-val" title={formatInstantInZone(memory.updated_at, browserTimeZone()).time}>{fmtMemoryTime(memory.updated_at, now)}</span>
           </div>
           <div className="detail-kv">
             <span className="detail-key">Confidence</span>

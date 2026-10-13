@@ -11,11 +11,14 @@ import {
 } from './calmRows.ts';
 
 describe('trace time', () => {
-  it('drops milliseconds', () => {
-    assert.equal(formatTraceTime('2026-09-28 14:03:21.005'), '2026-09-28 14:03:21');
+  const at = Date.parse('2026-09-28T14:03:21.005Z');
+
+  it('shows minutes for a recent log line', () => {
+    assert.equal(formatTraceTime('2026-09-28 14:03:21.005', at + 9 * 60_000), '9m ago');
   });
-  it('keeps a time without milliseconds', () => {
-    assert.equal(formatTraceTime('2026-09-28 14:03:21'), '2026-09-28 14:03:21');
+  it('shows a calendar date after one day and leaves junk unchanged', () => {
+    assert.equal(formatTraceTime('2026-09-28 14:03:21', at + 26 * 3_600_000), new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }));
+    assert.equal(formatTraceTime('not-a-time', at), 'not-a-time');
   });
 });
 
