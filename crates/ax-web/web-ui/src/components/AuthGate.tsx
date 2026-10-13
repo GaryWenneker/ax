@@ -12,6 +12,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<'loading' | 'open' | 'login' | 'error'>('loading');
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inspect = useCallback(async () => {
@@ -27,6 +28,13 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => { void inspect(); }, [inspect]);
   useEffect(() => {
+    if (mode !== 'open') return;
+    const interval = window.setInterval(() => { void inspect(); }, 30_000);
+    const visible = () => { if (document.visibilityState === 'visible') void inspect(); };
+    document.addEventListener('visibilitychange', visible);
+    return () => { window.clearInterval(interval); document.removeEventListener('visibilitychange', visible); };
+  }, [inspect, mode]);
+  useEffect(() => {
     const listener = () => { void inspect(); };
     window.addEventListener('ax-web-auth-changed', listener);
     return () => window.removeEventListener('ax-web-auth-changed', listener);
@@ -35,9 +43,9 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     event.preventDefault();
     setBusy(true); setError(null);
     try {
-      await checkedJson('/api/web-auth/login', {
+      await checkedJson(useRecovery ? '/api/web-auth/recovery/login' : '/api/web-auth/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identity, password }),
+        body: JSON.stringify(useRecovery ? { identity, code: password } : { identity, password }),
       });
       setPassword(''); await inspect();
     } catch (e) { setError(e instanceof Error ? e.message : 'Sign in failed'); }
@@ -61,12 +69,15 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       <label htmlFor="auth-identity">User name or email</label>
       <input id="auth-identity" autoComplete="username webauthn" required value={identity}
         onChange={event => setIdentity(event.target.value)} className="settings-input" />
-      <label htmlFor="auth-password">Password</label>
-      <input id="auth-password" type="password" autoComplete="current-password" value={password}
+      <label htmlFor="auth-password">{useRecovery ? 'Recovery code' : 'Password'}</label>
+      <input id="auth-password" type="password" autoComplete={useRecovery ? 'off' : 'current-password'} value={password}
         onChange={event => setPassword(event.target.value)} className="settings-input" />
-      <button type="submit" className="btn primary" disabled={busy || !identity.trim() || !password}>Sign in</button>
+      <button type="submit" className="btn primary" disabled={busy || !identity.trim() || !password}>{useRecovery ? 'Recover account' : 'Sign in'}</button>
       <button type="button" className="btn auth-passkey" disabled={busy || !identity.trim()} onClick={() => void submitPasskey()}>
         <i className="codicon codicon-key" aria-hidden="true" /> Sign in with passkey
+      </button>
+      <button type="button" className="btn" disabled={busy} onClick={() => { setUseRecovery(!useRecovery); setPassword(''); setError(null); }}>
+        {useRecovery ? 'Use password instead' : 'Use a recovery code'}
       </button>
       <small>Passkeys use Touch ID, Face ID, Windows Hello or a security key, depending on your device.</small>
     </form>
