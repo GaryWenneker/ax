@@ -16,7 +16,7 @@
   "dependencies": {
     "@tiptap/extension-link": "^3.31.4",
     "@tiptap/extension-list": "^3.31.3",
-    "@tiptap/extension-table": "^3.31.3",
+    "@tiptap/extension-table": "^3.31.4",
     "@tiptap/markdown": "^3.31.3",
     "@tiptap/pm": "^3.31.3",
     "@tiptap/react": "^3.31.3",
