@@ -793,7 +793,8 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     }
     let readonly =
         std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1") || opts.share_token.is_some();
-    let hub = WebHub::open(opts.root.clone(), readonly, opts.port).await?;
+    let mut hub = WebHub::open(opts.root.clone(), readonly, opts.port).await?;
+    hub.local_only = matches!(opts.bind.as_str(), "127.0.0.1" | "localhost" | "::1" | "[::1]");
     if !readonly {
         if let Err(error) = replication_setup::auto_start(&opts.root).await {
             tracing::warn!("replication automatic startup failed: {error}");
