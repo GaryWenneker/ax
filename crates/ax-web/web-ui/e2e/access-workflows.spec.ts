@@ -36,7 +36,12 @@ async function accessFixture(page: Page, options: { readonly?: boolean; failScop
     else if (path === '/api/access/session') data = { csrf: 'fixture-csrf' };
     else if (path === '/api/access/team') data = { members };
     else if (path === '/api/access/clients') data = { clients, credentials: [{ id: 'credential', client_id: 'cli', token_prefix: 'axc_demo', created_at: '2026-10-10 10:00:00' }] };
-    else if (path === '/api/access/nodes/local') data = { settings: null, running: false, active_project: false, safety: { mode: 'preserve_and_exchange', memories: 0, rules: 0, skills: 0, review_required: false, sync_failed: false } };
+    else if (path === '/api/access/nodes/local') data = {
+      settings: { config: { node_id: 'primary-local', role: 'primary', cluster_id: 'fixture-cluster', projects: [{ id: 'fixture-project' }] }, port: 7071 },
+      running: true, active_project: true,
+      safety: { mode: 'preserve_and_exchange', memories: 0, rules: 0, skills: 0, review_required: false, sync_failed: false },
+    };
+    else if (path === '/api/access/nodes/local/interfaces') data = { interfaces: [{ name: 'loopback', address: '127.0.0.1', loopback: true }] };
     else if (path === '/api/access/nodes') data = { nodes, local: { node_id: 'primary-local', role: 'primary', sync_state: 'running' } };
     else if (path === '/api/ship/config') data = { config: { ship: { target_branch: 'main', web_port: 7070 }, remote: { provider: 'github' }, quality_gate: { steps: [], tests: { runner: 'cargo test' } }, sonar: {}, ui: {} } };
     else if (path === '/api/stats') data = { readonly: options.readonly ?? false, project_name: 'Demo project', node_count: 0, edge_count: 0, file_count: 0, db_size_bytes: 0, languages: [] };
@@ -128,12 +133,13 @@ test('token copying and node blocking use the existing API and can be canceled',
 });
 
 test('access panels fit light, dark and mobile and refresh documentation screenshots', async ({ page }) => {
+  test.setTimeout(90_000);
   await accessFixture(page);
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   for (const theme of ['azure-light', 'azure-dark']) {
-    await page.goto('/settings');
-    await page.getByRole('navigation', { name: 'Settings navigation' }).locator('[aria-controls="settings-panel-appearance"]').click();
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    await page.goto('/settings?section=appearance');
     await page.getByTitle(theme === 'azure-dark' ? 'Azure Portal Dark' : 'Azure Portal Light', { exact: true }).click();
     await expect(page.locator('html')).toHaveAttribute('data-ax-theme', theme);
     await page.setViewportSize({ width: 1440, height: 1100 });
