@@ -499,3 +499,8 @@ Review queues use compact rows with expandable Current/Incoming comparisons. If 
 Command Center column-based lists share independent drag/keyboard resizing, remembered browser widths, heading sorting and per-column filters for loaded rows. Narrow layouts keep readable cards and a compact Columns menu. Logging shows readable Workspace/Memory/Ship actions and counts/timing beside Time/Context columns, with a separate marker gutter and no dotted connector between unrelated events. Raw-field searches, live arrivals and keyboard navigation remain available; full entries open in its inspector. See the [Command Center guide](https://getax.wenneker.io/guides/command-center/).
 
 For current pages, Settings groups, logging controls and connection workflows, see the [Command Center walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/).
+
+
+### Optional Command Center authentication
+
+Command Center supports **optional human sign-in**, **passkeys (WebAuthn)**, and **multiple roles per team member**. Configure `AX_WEB_AUTH_ORIGIN` to the canonical HTTPS origin when publishing a web interface. On the trusted local Command Center, open **Settings → Security & passkeys**, enroll the Owner, then enable sign-in. Every member may register more than one passkey. **Settings → Users & roles** edits each member's role set. MCP client tokens, Remote MCP OAuth and replication credentials keep their independent access models. See the [Command Center walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/) and [Web API reference](https://getax.wenneker.io/reference/web-api/).
