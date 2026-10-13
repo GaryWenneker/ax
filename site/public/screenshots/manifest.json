@@ -1119,18 +1119,355 @@
     "capturedAt": "2026-10-13T06:30:13.920Z"
   },
   {
-    "file": "cc-logging-dark-mobile.png",
-    "imageHash": "50e0a1fbcba3474e52d0401e856780c4ae0c697582ae8ca5e0d46d6d23691b0d",
-    "route": "/logging",
-    "state": {},
+    "file": "cc-mobile-settings.png",
+    "imageHash": "f693df41b767677059e2d6e1b76a5501df688844423f3595fc58dfc25d102a8b",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/settings",
+    "state": {
+      "action": "page"
+    },
     "theme": "azure-dark",
     "viewport": {
-      "width": 393,
-      "height": 900,
+      "width": 390,
+      "height": 844,
       "deviceScaleFactor": 1
     },
-    "data": "synthetic",
-    "sourceHash": "2974c664f60556c934634c00cf2f89aaaeec8e80531db14c0af243f53fe1a5f3",
-    "capturedAt": "2026-10-13T06:30:18.504Z"
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:05.040Z"
+  },
+  {
+    "file": "cc-mobile-settings-sections.png",
+    "imageHash": "bb4c3ed20cc3a62071afe886b8c34f462b013cf0d4b6823bcfb545d61054bf3d",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/settings",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:06.015Z"
+  },
+  {
+    "file": "cc-mobile-nodes.png",
+    "imageHash": "0bb0aeae1621b4e2a523d7cefe1629eec4562c6850768a526c2fecc5175f7915",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/nodes",
+    "state": {
+      "action": "page"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:06.836Z"
+  },
+  {
+    "file": "cc-mobile-filters.png",
+    "imageHash": "2555b0519708501d51337f1d0e4e161de1275b2f652745236eb60248237b481d",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/nodes",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:07.724Z"
+  },
+  {
+    "file": "cc-mobile-details.png",
+    "imageHash": "2c6fd4f6910981fedb03867cec54678a0dc023cd91983cb1de542ce5f2e5b186",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/nodes",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:08.579Z"
+  },
+  {
+    "file": "cc-mobile-navigation.png",
+    "imageHash": "603b316cdf96d50a8fcdb01e04de7af444cb2c9d6bf15919e1fa678af8ca9b22",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/stats",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:09.636Z"
+  },
+  {
+    "file": "cc-logging-dark-mobile.png",
+    "imageHash": "9c113a9cbffd17e778229af1e43e29dd0080eabdad4d10a1232abe96e33f32c8",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/logging",
+    "state": {
+      "action": "page"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:10.458Z"
+  },
+  {
+    "file": "cc-mobile-logging-filters.png",
+    "imageHash": "aad12648c5953af7c8ea9456313b916adb0a82f5bcd7e8a9b6a9a5388b7db16d",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/logging",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:11.333Z"
+  },
+  {
+    "file": "cc-mobile-sort-filter.png",
+    "imageHash": "c0b9639abb62b4ba3b3dfe36a54f4b2e390ad0ce9d171dee79a1bfa1d299c848",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/nodes",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:12.203Z"
+  },
+  {
+    "file": "cc-mobile-memory-form.png",
+    "imageHash": "b4abb4079bc3d4fc3dc1f37364556d296ee435596059809853a6af9da97a0ad8",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/memory",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:13.173Z"
+  },
+  {
+    "file": "cc-mobile-files-preview.png",
+    "imageHash": "64230a1cbb0f8f2ff6bfcd572fd12704637aa7fd90a2ce1d83f21a3858e60c91",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/files",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:14.131Z"
+  },
+  {
+    "file": "cc-mobile-graph-settings.png",
+    "imageHash": "875840b89c98838530e095874105a57f7537f82ee0024c5e75fca04338e9335e",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/graph",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:15.038Z"
+  },
+  {
+    "file": "cc-mobile-savings.png",
+    "imageHash": "542ee251ba1eacb3370ee067a790a8ba98d31b1193708e630539e4feacb20f3f",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/savings",
+    "state": {
+      "action": "page"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:15.820Z"
+  },
+  {
+    "file": "cc-mobile-review-filters.png",
+    "imageHash": "72f403772f174518668c7718b73de9bd9ae88365c559caef30796fe9e3428694",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/policy/review",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:16.699Z"
+  },
+  {
+    "file": "cc-mobile-review-details.png",
+    "imageHash": "8ffb0e6f1ecff3233318244758d1abafa1137c67ed65f48dd77707a5c902b3de",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/policy/review",
+    "state": {
+      "action": "opened control"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:17.572Z"
+  },
+  {
+    "file": "cc-mobile-editor.png",
+    "imageHash": "1b851834c2b68ded3d196c8ad6e2c695c3bcd9ff106d92d434755ca77208983d",
+    "sourceHash": "176deb000a2b9cbf64adc22d6d2239577a4db6ded0309032c62350991a8466fc",
+    "route": "/policy/rules/edit",
+    "state": {
+      "action": "page"
+    },
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 1
+    },
+    "viewportOrigin": "fixture-declared",
+    "imageSize": {
+      "width": 390,
+      "height": 844
+    },
+    "data": "public synthetic fixtures",
+    "capturedAt": "2026-10-13T08:03:18.407Z"
   }
 ]

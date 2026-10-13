@@ -1,0 +1,82 @@
+[
+  {
+    "command": "npm",
+    "args": [
+      "run",
+      "build"
+    ],
+    "cwd": "crates/ax-web/web-ui",
+    "exitCode": 0
+  },
+  {
+    "command": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "args": [
+      "docs/specs/mobile-command-center/unit-check.mjs"
+    ],
+    "cwd": "",
+    "exitCode": 0
+  },
+  {
+    "command": "npm",
+    "args": [
+      "test",
+      "--prefix",
+      "site"
+    ],
+    "cwd": "",
+    "exitCode": 0
+  },
+  {
+    "command": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "args": [
+      "docs/specs/list-columns/ui-check.mjs"
+    ],
+    "cwd": "",
+    "exitCode": 0
+  },
+  {
+    "command": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "args": [
+      "docs/specs/list-columns/ui-check.mjs"
+    ],
+    "cwd": "",
+    "exitCode": 0
+  },
+  {
+    "command": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "args": [
+      "docs/specs/mobile-command-center/audit.mjs"
+    ],
+    "cwd": "",
+    "exitCode": 0
+  },
+  {
+    "command": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "args": [
+      "docs/specs/mobile-command-center/capture.mjs"
+    ],
+    "cwd": "",
+    "exitCode": 0
+  },
+  {
+    "command": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "args": [
+      "site/scripts/audit-documentation.mjs"
+    ],
+    "cwd": "",
+    "exitCode": 0
+  },
+  {
+    "command": "git",
+    "args": [
+      "diff",
+      "--check",
+      "HEAD",
+      "--",
+      ".",
+      ":(exclude)crates/ax-web/web-ui/dist"
+    ],
+    "cwd": "",
+    "exitCode": 0
+  }
+]

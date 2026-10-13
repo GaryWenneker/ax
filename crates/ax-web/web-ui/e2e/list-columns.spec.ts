@@ -32,9 +32,9 @@ test('headings sort numeric values and column filters preserve row actions',asyn
  await page.getByRole('button',{name:'Edit Alpha',exact:true}).click();await expect(page.getByRole('heading',{name:'Edit rule: Alpha',exact:true})).toBeVisible();
 });
 
-test('mobile Columns menu offers sort and filters without row overflow',async({page})=>{
+test('mobile sort and filter sheet offers sort and filters without row overflow',async({page})=>{
  await page.setViewportSize({width:393,height:900});await page.goto('/policy/rules');
- const tools=page.locator('.column-tools').first();await tools.locator('summary').click();await tools.getByRole('button',{name:'Sort Name',exact:true}).click();await tools.getByRole('textbox',{name:'Filter Name',exact:true}).fill('Zulu');
+ await page.getByRole('button',{name:'Sort and filter',exact:true}).first().click();const tools=page.getByRole('dialog',{name:'Sort and filter',exact:true});await tools.getByRole('button',{name:'Sort Name',exact:true}).click();await tools.getByRole('textbox',{name:'Filter Name',exact:true}).fill('Zulu');await tools.getByRole('button',{name:'Done',exact:true}).click();
  await expect(page.locator('.portal-data-row')).toHaveCount(1);
  expect(await page.locator('.portal-data-row').evaluate(e=>e.scrollWidth<=e.clientWidth+1)).toBe(true);
 });

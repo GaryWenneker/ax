@@ -1,3 +1,4 @@
+import MobileControls from '../components/ui/MobileControls';
 import { PageHero } from '../components/ui/PageLayout';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -1357,7 +1358,7 @@ export default function GraphPage() {
             </span>
           )}
         </div>
-        <div className="graph-toolbar-right">
+        <MobileControls className="graph-toolbar-right" title="Graph controls">
           <input
             type="search"
             className="graph-search"
@@ -1441,7 +1442,7 @@ export default function GraphPage() {
           <button type="button" className="btn-secondary" onClick={() => (viewMode === 'domain' ? void loadDomain() : load(true))}>
             {viewMode === 'domain' ? 'Reload overlay' : 'Recompute communities'}
           </button>
-        </div>
+        </MobileControls>
       </div>
       {(exportErr || exportSummary) && (
         <div

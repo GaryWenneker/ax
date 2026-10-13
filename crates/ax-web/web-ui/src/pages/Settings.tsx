@@ -1,3 +1,5 @@
+import useMobile from '../hooks/useMobile';
+import ModalShell from '../components/ModalShell';
 import AccessSettingsSection from '../components/AccessSettingsSection';
 import { useEffect, useState, type ReactNode } from 'react';
 
@@ -110,6 +112,8 @@ function Toggle({
 }
 
 export default function SettingsPage() {
+  const mobile = useMobile();
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [config, setConfig] = useState<ShipConfig>(DEFAULT_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -268,14 +272,7 @@ export default function SettingsPage() {
     (window.location.port === String(config.ship.web_port) ||
       (!window.location.port && config.ship.web_port === 80));
 
-  return (
-    <div className="page settings-page settings-hub">
-      <PageHero title="Settings" subtitle="Workspace configuration, connections, and appearance." />
-
-      {msg && <div className="settings-toast settings-toast--ok">{msg}</div>}
-      {err && <div className="settings-toast settings-toast--err">{err}</div>}
-
-      <div className="settings-hub-layout">
+  const settingsNavigation = (
         <nav className="settings-navigation" aria-label="Settings navigation">
           <label className="settings-navigation-filter">
             <i className="codicon codicon-search" aria-hidden="true" />
@@ -289,7 +286,7 @@ export default function SettingsPage() {
               {items.map((item) => <button key={item.id} type="button"
                 className={`settings-navigation-item${section === item.id ? ' active' : ''}`}
                 aria-current={section === item.id ? 'page' : undefined} aria-controls={`settings-panel-${item.id}`}
-                onClick={() => setSection(item.id)}>
+                onClick={() => {setSection(item.id);setNavigationOpen(false);}}>
                 <i className={`codicon codicon-${item.icon}`} aria-hidden="true" />{item.label}
               </button>)}
             </div>;
@@ -297,6 +294,22 @@ export default function SettingsPage() {
           {!SETTINGS_GROUPS.some((group) => group.items.some((item) => `${group.label} ${item.label}`.toLowerCase().includes(settingsFilter.trim().toLowerCase()))) &&
             <p className="settings-navigation-empty" role="status">No matching settings</p>}
         </nav>
+  );
+
+  return (
+    <div className="page settings-page settings-hub">
+      <PageHero title="Settings" subtitle="Workspace configuration, connections, and appearance." />
+
+      {msg && <div className="settings-toast settings-toast--ok">{msg}</div>}
+      {err && <div className="settings-toast settings-toast--err">{err}</div>}
+
+      <div className="settings-hub-layout">
+        {mobile ? <div className="mobile-settings-selector">
+          <button type="button" className="btn" aria-label="Choose settings section" aria-haspopup="dialog" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}>
+            {SETTINGS_GROUPS.flatMap(group => group.items).find(item => item.id === section)?.label} <span aria-hidden="true">⌄</span>
+          </button>
+          {navigationOpen && <ModalShell title="Settings sections" onClose={() => setNavigationOpen(false)}>{settingsNavigation}</ModalShell>}
+        </div> : settingsNavigation}
         <div className="settings-hub-content">
         <AccessSettingsSection section={section} />
         <div id="settings-panel-appearance" hidden={section !== 'appearance'}>

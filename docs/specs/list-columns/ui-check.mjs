@@ -18,7 +18,7 @@ async function unusedPort() {
 async function streamFixture(upstream) {
   // One Playwright worker owns this loopback-only network fixture.
   const clients = new Set();
-  let lines=[];
+  let lines=process.env.AX_UI_DEMO === '1' ? JSON.parse(screenshotResponse('http://fixture/api/usage/mcp-trace/events').body.match(/data: (.+)/)[1]) : [];
   const server = createHttpServer(async(req,res) => {
     res.setHeader('Content-Type','text/plain; charset=utf-8');
     try {
@@ -79,7 +79,8 @@ async function main() {
     }
     if(!ready) throw Error('Vite preview did not become ready');
     const specs=process.env.AX_UI_SPECS ? process.env.AX_UI_SPECS.split(',') : ['e2e/column-accessibility.spec.ts','e2e/list-columns.spec.ts','e2e/logging-layout.spec.ts','e2e/focus-row-density.spec.ts','e2e/admin-brand-home.spec.ts','e2e/control-spacing.spec.ts'];
-    const args=['exec','--','playwright','test',...specs,'--project=desktop-chrome','--project=mobile-chrome'];
+    const projects=(process.env.AX_UI_PROJECTS??'desktop-chrome,mobile-chrome').split(',');
+    const args=['exec','--','playwright','test',...specs,...projects.map(project=>`--project=${project}`)];
     if(process.env.AX_COLUMN_OUTPUT) args.push('--output',process.env.AX_COLUMN_OUTPUT,'--reporter=list');
     if(process.env.AX_DENSITY_GREP) args.push('--grep',process.env.AX_DENSITY_GREP);
     const captureStartedAt=Date.now();

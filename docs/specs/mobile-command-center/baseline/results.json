@@ -1,0 +1,518 @@
+{
+  "provenance": "compiled UI, synthetic public API fixtures",
+  "targets": [
+    "/stats",
+    "/nodes",
+    "/graph",
+    "/files",
+    "/search",
+    "/memory",
+    "/sonar",
+    "/settings",
+    "/logging",
+    "/savings",
+    "/prices",
+    "/unresolved",
+    "/policy/rules",
+    "/policy/rules/edit",
+    "/policy/skills",
+    "/policy/skills/edit",
+    "/policy/match",
+    "/policy/review",
+    "/policy/sync",
+    "/settings?section=appearance",
+    "/settings?section=command-center",
+    "/settings?section=agents",
+    "/settings?section=remote",
+    "/settings?section=plugins",
+    "/settings?section=team",
+    "/settings?section=clients",
+    "/settings?section=nodes",
+    "/settings?section=replication",
+    "/settings?section=sharing",
+    "/settings?section=policy-sharing",
+    "/settings?section=vault",
+    "/settings?section=export",
+    "/settings?section=embeddings"
+  ],
+  "results": [
+    {
+      "width": 390,
+      "path": "/stats",
+      "actualPath": "/stats",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/nodes",
+      "actualPath": "/nodes",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/graph",
+      "actualPath": "/graph",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/files",
+      "actualPath": "/files",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/search",
+      "actualPath": "/search",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/memory",
+      "actualPath": "/memory",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": [
+        {
+          "tag": "BUTTON",
+          "class": "info-hover-trigger",
+          "text": "i"
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "path": "/sonar",
+      "actualPath": "/stats",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/logging",
+      "actualPath": "/logging",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/savings",
+      "actualPath": "/savings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": [
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "class": "sv-hm-cell sv-hm-cell--0",
+          "text": ""
+        }
+      ]
+    },
+    {
+      "width": 390,
+      "path": "/prices",
+      "actualPath": "/prices",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/unresolved",
+      "actualPath": "/unresolved",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/policy/rules",
+      "actualPath": "/policy/rules",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/policy/rules/edit",
+      "actualPath": "/policy/rules/edit",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/policy/skills",
+      "actualPath": "/policy/skills",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/policy/skills/edit",
+      "actualPath": "/policy/skills/edit",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/policy/match",
+      "actualPath": "/policy/match",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/policy/review",
+      "actualPath": "/policy/review",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/policy/sync",
+      "actualPath": "/policy/sync",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=appearance",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=command-center",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=agents",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=remote",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=plugins",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=team",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=clients",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=nodes",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=replication",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=sharing",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=policy-sharing",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=vault",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=export",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "path": "/settings?section=embeddings",
+      "actualPath": "/settings",
+      "errors": [],
+      "missing": [],
+      "viewport": 390,
+      "documentWidth": 390,
+      "mainWidth": 390,
+      "mainScrollWidth": 390,
+      "clipped": []
+    }
+  ]
+}

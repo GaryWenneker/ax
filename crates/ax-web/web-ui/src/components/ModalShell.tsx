@@ -1,7 +1,8 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
+import {containOverlayFocus} from '../lib/overlayFocus';
 
 export interface ModalShellProps {
   title: string;
@@ -23,22 +24,17 @@ export default function ModalShell({
   size = 'md',
   ariaLabel,
 }: ModalShellProps) {
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => {close.current = onClose;}, [onClose]);
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [onClose]);
+    if (panel.current) return containOverlayFocus(panel.current, () => close.current());
+  }, []);
 
   return createPortal(
     <div className="ax-modal-overlay" role="presentation" onMouseDown={onClose}>
       <div
+        ref={panel}
         className={`ax-modal ax-modal--${size}`}
         role="dialog"
         aria-modal="true"

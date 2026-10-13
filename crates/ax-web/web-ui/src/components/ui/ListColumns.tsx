@@ -1,5 +1,7 @@
 import {createContext, isValidElement, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type KeyboardEvent} from 'react';
 import {clampWidth, orderRows, validWidths, type ColumnSort, type ColumnValue} from '../../lib/columnModel';
+import MobileControls from './MobileControls';
+import useMobile from '../../hooks/useMobile';
 
 export interface ListColumn { label: string; header?: ReactNode; sortable?: boolean; filterable?: boolean; minWidth?: number }
 export const ItemColumnContext = createContext<{trace: boolean; labels: readonly string[]} | null>(null);
@@ -97,9 +99,10 @@ function ColumnFilter({controls, index}: {controls: ListColumnControls; index: n
 }
 
 export function ColumnTools({controls}: {controls: ListColumnControls}) {
+  const mobile = useMobile();
   const active = controls.sort !== null || Object.values(controls.filters).some(v => v.trim());
   const widths = controls.widths;
-  return <details className="column-tools" onKeyDown={filterKeys}><summary>Columns{active ? ' · active' : ''}</summary><div className="column-tools-panel">
+  const panel = <div className="column-tools-panel">
     <span className="column-tools-note">Sort and filter loaded rows.</span>
     {controls.columns.map((column, index) => <div className="column-tool" key={column.label}>
       <span>{column.label}</span>
@@ -108,7 +111,9 @@ export function ColumnTools({controls}: {controls: ListColumnControls}) {
       {widths && <input type="number" min={column.minWidth ?? 64} max="1600" aria-label={`${column.label} column width`} value={widths[index]} onChange={e => { const value = e.target.valueAsNumber; if (Number.isFinite(value)) controls.resize(widths.map((w, i) => i === index ? clampWidth(value, column.minWidth ?? 64) : w)); }} />}
     </div>)}
     <button type="button" className="btn" onClick={controls.clear}>Reset columns</button>
-  </div></details>;
+  </div>;
+  return mobile ? <MobileControls className="mobile-column-tools" title="Sort and filter" active={active}>{panel}</MobileControls>
+    : <details className="column-tools" onKeyDown={filterKeys}><summary>Columns{active ? ' · active' : ''}</summary>{panel}</details>;
 }
 
 export function ColumnHeading({controls, index}: {controls: ListColumnControls; index: number}) {

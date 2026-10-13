@@ -1,3 +1,4 @@
+import MobileControls from '../components/ui/MobileControls';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { useLive, useNewKeys } from '../lib/useLive';
@@ -916,7 +917,7 @@ export default function SavingsPage() {
             : 'Measured token savings from ax graph MCP tools vs full file reads.'
         }
         actions={
-          <div className="sv-period-bar">
+          <MobileControls className="sv-period-bar" title="Time period" triggerLabel="Period" icon="calendar">
             <select
               className="settings-select"
               value={period}
@@ -937,7 +938,7 @@ export default function SavingsPage() {
               {importing ? <BusyLabel label="Importing…" /> : 'Import sessions'}
             </button>
             {loading && <span className="page-hint" aria-live="polite">Loading…</span>}
-          </div>
+          </MobileControls>
         }
       />
 

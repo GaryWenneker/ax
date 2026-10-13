@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 import type { SortDir } from './policyListUtils';
+import MobileControls from './MobileControls';
 
 export function PolicyToolbar({ children }: { children: ReactNode }) {
-  return <div className="policy-toolbar">{children}</div>;
+  return <MobileControls className="policy-toolbar">{children}</MobileControls>;
 }
 
 export function PolicySortControl<K extends string>({

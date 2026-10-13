@@ -1,3 +1,5 @@
+import MobileControls from '../components/ui/MobileControls';
+import ResponsiveDetails from '../components/ui/ResponsiveDetails';
 import { useEffect, useState } from 'react';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { approvePolicyReview, fetchPolicyReview, rejectPolicyReview } from '../policyApi';
@@ -69,13 +71,13 @@ export default function PolicyReviewPage() {
     <PageToasts err={error || null} ok={message || null} />
     {!loading && items.some(item => !canCompare(item)) && <p role="alert" className="review-compatibility-warning">This review server{serverVersion ? ` (Ax ${serverVersion})` : ''} does not provide full policy comparisons for every item. Update and restart the Ax process serving this page, then Refresh. Approval stays disabled for unverified items. Updating only the primary does not repair an outdated review server.</p>}
     {loading ? <PageLoading label="Loading review queue…" /> : <PageStack><PageCard title="Pending changes" description={`${items.length} awaiting a decision. Approval activates incoming policy; rejection keeps current policy.`}><PageCardBody>
-      <div className="review-toolbar">
+      <MobileControls className="review-toolbar">
         <input className="settings-input" aria-label="Search review items" placeholder="Search ID or description" value={search} onChange={e => setSearch(e.target.value)} />
         <select className="settings-select" aria-label="Review kind" value={kind} onChange={e => setKind(e.target.value)}><option value="all">All types</option><option value="rule">Rules</option><option value="skill">Skills</option></select>
         <select className="settings-select" aria-label="Review effect" value={effect} onChange={e => setEffect(e.target.value)}><option value="all">All changes</option><option value="new">New items</option><option value="duplicate">Duplicates</option><option value="replacement">Replacements</option></select>
         <button className="btn" disabled={busy || !visible.length} onClick={() => setSelected(prev => new Set([...prev, ...visible.map(keyOf)]))}>Select filtered ({visible.length})</button>
         <button className="btn" disabled={busy || !selected.size} onClick={() => setSelected(new Set())}>Clear selection</button>
-      </div>
+      </MobileControls>
       <div className="review-toolbar">
         <span>{chosen.length} selected in this filter</span>
         <button className="btn primary" disabled={busy || !chosen.length || chosen.some(item => !canCompare(item))} onClick={() => setConfirmation({ action: 'approve', items: chosen })}>Approve selected</button>
@@ -84,11 +86,11 @@ export default function PolicyReviewPage() {
       </div>
       {!visible.length ? <PageEmpty title={items.length ? 'No matching items' : 'Queue empty'}>No pending rules or skills in this filter.</PageEmpty> : <div className="review-column-list" style={columns.style}><ColumnTools controls={columns} /><ColumnHeader controls={columns} className="review-item-heading" /><div className="review-list">{visible.map(item => <article key={keyOf(item)} className={`review-item${fresh.has(keyOf(item)) ? ' live-new' : ''}`}>
         <div className="review-item-heading"><input type="checkbox" aria-label={`Select ${item.kind} ${item.id}`} disabled={busy} checked={selected.has(keyOf(item))} onChange={() => toggle(item)} /><strong title={item.id}>{item.id}</strong><span>{item.kind} · {item.scope ?? 'Scope unavailable'}{item.kind === 'rule' && ['CRITICAL', 'WARNING', 'INFO'].includes(item.levelOrDescription) ? ` · ${item.levelOrDescription}` : ''}</span><span className="review-effect">{canCompare(item) ? effectLabel(item) : 'Comparison unavailable'}</span><div className="review-actions"><button className="btn primary" disabled={busy || !canCompare(item)} onClick={() => setConfirmation({ action: 'approve', items: [item] })}>Approve</button><button className="btn" disabled={busy} onClick={() => setConfirmation({ action: 'reject', items: [item] })}>Reject</button></div></div>
-        <details><summary>Inspect content and source</summary>
+        <ResponsiveDetails title="Inspect content and source">
         <p>{item.levelOrDescription}</p>
         {!!item.changedFields?.length && <p><strong>Changed:</strong> {item.changedFields.join(', ')}</p>}
         <p>{item.effect === 'new' ? 'No current item with this identity exists. Approval adds it.' : item.effect === 'duplicate' ? 'Active content and policy settings match, ignoring review status. Approval clears the pending copy.' : item.effect === 'replacement' ? 'An active item has this identity with different content or settings. Approval saves the incoming version in its configured scope and storage.' : 'The server has not supplied a verified comparison for this item.'}</p>
-<p>{item.origin ?? 'Origin was not recorded'} · Queue file: {item.path}</p><div className="review-comparison"><section><h3>Current</h3><pre>{item.currentContent ?? (canCompare(item) ? 'No current item' : 'Current content was not supplied by this server')}</pre></section><section><h3>Incoming</h3><pre>{item.incomingContent ?? `Preview only — full incoming content was not supplied.\n${item.preview}`}</pre></section></div></details>
+<p>{item.origin ?? 'Origin was not recorded'} · Queue file: {item.path}</p><div className="review-comparison"><section><h3>Current</h3><pre>{item.currentContent ?? (canCompare(item) ? 'No current item' : 'Current content was not supplied by this server')}</pre></section><section><h3>Incoming</h3><pre>{item.incomingContent ?? `Preview only — full incoming content was not supplied.\n${item.preview}`}</pre></section></div></ResponsiveDetails>
 
       </article>)}</div></div>}
     </PageCardBody></PageCard></PageStack>}

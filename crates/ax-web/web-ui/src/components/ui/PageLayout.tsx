@@ -1,5 +1,6 @@
 import {useContext, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode} from 'react';
 import {ItemColumnContext} from './ListColumns';
+import MobileControls from './MobileControls';
 import type {ColumnValue} from '../../lib/columnModel';
 
 import Codicon from '../Codicon';
@@ -166,7 +167,7 @@ export function StatusPanel({
 }
 
 export function FilterBar({ children }: { children: ReactNode }) {
-  return <div className="page-filter-bar">{children}</div>;
+  return <MobileControls className="page-filter-bar">{children}</MobileControls>;
 }
 
 export function PageEmpty({ title, children }: { title: string; children?: ReactNode }) {

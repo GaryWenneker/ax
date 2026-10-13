@@ -1,4 +1,6 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
+import useMobile from '../../hooks/useMobile';
+import ModalShell from '../ModalShell';
 
 /**
  * Small "i" badge that reveals an explanatory tooltip on hover / focus / tap.
@@ -6,6 +8,8 @@ import { useCallback, useRef, useState, type ReactNode } from 'react';
  * overflow containers.
  */
 export function InfoHover({ label = 'More info', children }: { label?: string; children: ReactNode }) {
+  const mobile = useMobile();
+  const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
@@ -25,18 +29,22 @@ export function InfoHover({ label = 'More info', children }: { label?: string; c
         type="button"
         className="info-hover-trigger"
         aria-label={label}
-        onMouseEnter={show}
+        aria-haspopup={mobile ? 'dialog' : undefined}
+        aria-expanded={mobile ? open : undefined}
+        onMouseEnter={mobile ? undefined : show}
         onMouseLeave={hide}
-        onFocus={show}
+        onFocus={mobile ? undefined : show}
         onBlur={hide}
         onClick={(e) => {
           e.preventDefault();
+          if (mobile) {setOpen(true);return;}
           if (pos) hide();
           else show();
         }}
       >
         i
       </button>
+      {mobile && open && <ModalShell title={label} onClose={() => setOpen(false)}>{children}</ModalShell>}
       {pos && (
         <span className="info-hover-tip" role="tooltip" style={{ top: pos.top, left: pos.left }}>
           {children}
