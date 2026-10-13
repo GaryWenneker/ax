@@ -48,7 +48,9 @@ interface Props {
   filters: PolicyCalmFilters;
   onRowClick: (e: MouseEvent, id: string) => void;
   onRowContext: (e: MouseEvent, id: string) => void;
-  onCheck: (id: string, checked: boolean) => void;
+  onCheck: (id: string, checked: boolean, shiftKey?: boolean) => void;
+  visibleSelected?: boolean;
+  onToggleVisible?: () => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
   onToggleStorage: (id: string, current: 'files' | 'database') => void;
   onEdit: (id: string) => void;
@@ -72,9 +74,9 @@ export function PolicyCalmList(props: Props) {
             <ItemGroupHeader label={g.label} count={g.items.length} open={open} onToggle={() => props.onToggleGroup(g.id)} />
             {open && (
               <ItemList className={`calm-list${portal ? ' portal-data-list portal-policy-list' : ''}`}>
-                {portal && <div className="portal-data-header"><span>Name</span><span>Level</span><span>Scope</span><span>Priority</span><span>Enabled / actions</span></div>}
+                {portal && <div className="portal-data-header"><span data-column-label="Select" data-column-min={28}><input type="checkbox" aria-label="Select visible rows" checked={Boolean(props.visibleSelected)} onChange={() => props.onToggleVisible?.()} /></span><span>Name</span><span>Level</span><span>Scope</span><span>Priority</span><span>Enabled / actions</span></div>}
                 {g.items.map((item) => (
-                  <PolicyCalmRow key={item.key} item={item} {...props} listValues={[item.id, item.level ?? '', normalizePolicyScope(item.scope), Number(item.meta.replace(/^p/, '')), item.enabled ? 'enabled' : 'disabled']} />
+                  <PolicyCalmRow key={item.key} item={item} {...props} listValues={['', item.id, item.level ?? '', normalizePolicyScope(item.scope), Number(item.meta.replace(/^p/, '')), item.enabled ? 'enabled' : 'disabled']} />
                 ))}
               </ItemList>
             )}
@@ -96,6 +98,16 @@ function PolicyCalmRow({ item, listValues: _listValues, ...p }: Props & { item: 
       className={`policy-calm-row${item.global ? ' policy-calm-row--global' : ''}${p.fresh?.has(item.key) ? ' live-new' : ''}`}
       title={item.id}
       subtitle={item.subtitle}
+      leading={
+        <input
+          type="checkbox"
+          className={`calm-row-check${selected ? ' on' : ''}`}
+          checked={selected}
+          aria-label={`Select ${item.id}`}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => p.onCheck(item.id, e.target.checked, e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey)}
+        />
+      }
       meta={item.meta}
       portalColumns={portal ? [
         item.level ? <LevelBadge level={item.level} onClick={p.filters.onLevel ? () => p.filters.onLevel?.(item.level ?? '') : undefined} active={p.filters.level === item.level} /> : '—',
@@ -175,13 +187,6 @@ function PolicyCalmRow({ item, listValues: _listValues, ...p }: Props & { item: 
               )}
             </>
           )}
-          <input
-            type="checkbox"
-            className={`calm-row-check${selected ? ' on' : ''}`}
-            checked={selected}
-            aria-label={`Select ${item.id}`}
-            onChange={(e) => p.onCheck(item.id, e.target.checked)}
-          />
           {item.global ? (
             <span className="calm-row-slot calm-row-slot--toggle" aria-hidden="true" />
           ) : (

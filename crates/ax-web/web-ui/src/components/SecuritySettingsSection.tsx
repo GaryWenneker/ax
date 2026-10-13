@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { registerPasskey } from '../lib/passkeys';
+import { instantMs, memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 
 type Passkey = { id: string; label: string; created_at: string; revoked: boolean };
 type Status = { enabled: boolean; passkeys: boolean; origin?: string };
@@ -12,6 +14,7 @@ async function request(url: string, init?: RequestInit) {
   return data;
 }
 export default function SecuritySettingsSection() {
+  const now = useNow();
   const [status, setStatus] = useState<Status | null>(null);
   const [keys, setKeys] = useState<Passkey[]>([]);
   const [sessions, setSessions] = useState<WebSession[]>([]);
@@ -108,7 +111,7 @@ export default function SecuritySettingsSection() {
       <div className="settings-card-body">
         {sessions.map(session => <div className="settings-row" key={session.id}>
           <div className="settings-row-label"><strong>{session.current ? 'This browser' : 'Other browser'}</strong>
-            <p>Last active {new Date(session.last_seen_at * 1000).toLocaleString()}</p>
+            <p>Last active {memoryRowAge(session.last_seen_at * 1000, now)}</p>
           </div>
           <button className="btn danger" type="button" disabled={busy} onClick={() => void revokeSession(session.id)}>End session</button>
         </div>)}
@@ -125,7 +128,7 @@ export default function SecuritySettingsSection() {
           onClick={() => void execute(registerPasskey, 'Passkey registered.')}>Add passkey</button>
         <div className="access-client-list">{keys.filter(key => !key.revoked).map(key =>
           <div key={key.id} className="settings-row">
-            <div className="settings-row-label"><strong>{key.label}</strong><small>Created {key.created_at}</small></div>
+            <div className="settings-row-label"><strong>{key.label}</strong><small>Created {(() => { const ms = instantMs(key.created_at); return ms == null ? key.created_at : memoryRowAge(ms, now); })()}</small></div>
             <div className="settings-row-control access-actions">
               <button type="button" className="btn" disabled={busy} onClick={() => {
                 const label = window.prompt('Passkey name', key.label);

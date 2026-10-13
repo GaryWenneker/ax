@@ -1,4 +1,6 @@
 import { accessJson } from '../lib/accessApi';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import Codicon from './Codicon';
 import ReplicationSetup from './ReplicationSetup';
@@ -50,7 +52,8 @@ function timestamp(value?: string | null) {
 
 function DateLabel({ value, empty = 'Never' }: { value?: string | null; empty?: string }) {
   const date = timestamp(value);
-  return date ? <time dateTime={date.toISOString()}>{date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time> : <>{empty}</>;
+  const now = useNow();
+  return date ? <time dateTime={date.toISOString()} title={date.toLocaleString()}>{memoryRowAge(date.getTime(), now)}</time> : <>{empty}</>;
 }
 
 function Status({ label, good = false }: { label: string; good?: boolean }) {

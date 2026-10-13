@@ -23,6 +23,11 @@ import {
 } from '../lib/mcpTraceEvents';
 import type { TraceKind } from '../lib/mcpTrace';
 import { navigateRoute, pageFromNavId } from '../lib/routes';
+import { MCP_TRACE_EVENTS_URL } from '../lib/mcpTrace';
+import { subscribeSharedEventSource } from '../lib/sharedEventSource';
+import { NewArrivalPill } from './ui/NewArrivalPill';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import { currentThemeAccent, THEME_CHANGED } from '../lib/themes';
 import { WORKSPACE_SWITCHED } from '../workspaceEvents';
 import { useLive } from '../lib/useLive';
@@ -116,15 +121,9 @@ function formatBytes(b: number) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatRelative(ts: number) {
+function formatRelative(ts: number, now: number) {
   if (!ts) return 'never';
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs <= 24) return `${hrs}h ago`;
-  return new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return memoryRowAge(ts, now);
 }
 
 function formatFullDate(ts: number) {
@@ -236,6 +235,7 @@ function ShareReadonlyBadge() {
 }
 
 export default function StatusBar() {
+  const now = useNow();
   const { pageContext } = useUiContext();
   const isLogging = pageContext.view === 'Logging';
   const [stats, setStats] = useState<Stats | null>(null);
@@ -246,6 +246,8 @@ export default function StatusBar() {
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [accent, setAccent] = useState(() => currentThemeAccent());
   const [themeId, setThemeId] = useState(() => document.documentElement.dataset.axTheme ?? 'ax');
+  const [logArrivals, setLogArrivals] = useState(0);
+  const [pageArrivals, setPageArrivals] = useState(0);
   const barRef = useRef<HTMLElement>(null);
   const mcpTrace = useMcpTraceStatus();
   const offline = isLogging && !logStats.live;
@@ -295,6 +297,38 @@ export default function StatusBar() {
 
   useEffect(() => {
     if (!isLogging) setLogStats(emptyMcpTraceStats());
+    setLogArrivals(0);
+    setPageArrivals(0);
+  }, [isLogging]);
+
+  useEffect(() => {
+    if (isLogging) return;
+    return subscribeSharedEventSource(MCP_TRACE_EVENTS_URL, {
+      events: {
+        line: () => setLogArrivals((count) => count + 1),
+      },
+    });
+  }, [isLogging]);
+
+  useEffect(() => {
+    if (isLogging) return;
+    function onPageArrivals(ev: Event) {
+      const count = (ev as CustomEvent<{ count?: number }>).detail?.count ?? 0;
+      if (count <= 0) return;
+      const scroller = document.querySelector('.workspace > .container');
+      if (!(scroller instanceof HTMLElement) || scroller.scrollTop <= 48) return;
+      setPageArrivals((current) => current + count);
+    }
+    function onScroll() {
+      const scroller = document.querySelector('.workspace > .container');
+      if (scroller instanceof HTMLElement && scroller.scrollTop <= 48) setPageArrivals(0);
+    }
+    window.addEventListener('ax-page-arrivals', onPageArrivals);
+    document.querySelector('.workspace > .container')?.addEventListener('scroll', onScroll);
+    return () => {
+      window.removeEventListener('ax-page-arrivals', onPageArrivals);
+      document.querySelector('.workspace > .container')?.removeEventListener('scroll', onScroll);
+    };
   }, [isLogging]);
 
   useEffect(() => {
@@ -332,6 +366,33 @@ export default function StatusBar() {
       };
 
   return (
+    <>
+    {!isLogging && (
+      <>
+        <NewArrivalPill
+          className="ax-new-pill--dock"
+          count={logArrivals}
+          noun="event"
+          onJump={() => {
+            setLogArrivals(0);
+            publishMcpTraceAction({ jumpToNew: true });
+            navigateTo('logging');
+          }}
+          onDismiss={() => setLogArrivals(0)}
+        />
+        <NewArrivalPill
+          className="ax-new-pill--dock ax-new-pill--dock-page"
+          count={pageArrivals}
+          noun="item"
+          onJump={() => {
+            const scroller = document.querySelector('.workspace > .container');
+            if (scroller instanceof HTMLElement) scroller.scrollTop = 0;
+            setPageArrivals(0);
+          }}
+          onDismiss={() => setPageArrivals(0)}
+        />
+      </>
+    )}
     <footer
       className={`statusbar status-bar${isLogging ? ' statusbar--logging' : ''}${
         offline ? ' statusbar--offline' : ''
@@ -828,7 +889,7 @@ export default function StatusBar() {
               }
             >
               <IconClock />
-              <span className="status-lbl">{stats ? formatRelative(stats.last_indexed_at) : '—'}</span>
+              <span className="status-lbl">{stats ? formatRelative(stats.last_indexed_at, now) : '—'}</span>
             </StatusChip>
             <StatusChip
               id="db"
@@ -896,5 +957,6 @@ export default function StatusBar() {
       </div>
       </div>
     </footer>
+    </>
   );
 }

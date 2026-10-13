@@ -170,18 +170,22 @@ html[data-ax-layout="portal"] body :is(.page-item:not(.mcp-trace-row):not(.mcp-b
 html[data-ax-layout="portal"] body :is(.portal-data-row,.portal-data-header) { padding:4px 12px;min-height:34px; }
 html[data-ax-layout="portal"] .page-table :is(th,td) { padding-block:5px; }
 html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(0,1.6fr) minmax(0,5.5rem) minmax(0,6rem) minmax(0,4.5rem) minmax(0,1fr);min-width:0;column-gap:8px; }
+html[data-ax-layout="portal"] body .page-item-list.portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:28px minmax(0,1.6fr) minmax(0,5.5rem) minmax(0,6rem) minmax(0,4.5rem) minmax(0,1fr); }
 html[data-ax-layout="portal"] body .portal-memory-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(180px,1fr) 100px 100px 120px 110px;min-width:0; }
 html[data-ax-layout="portal"] .portal-data-row > *,
 html[data-ax-layout="portal"] .portal-data-header > * { min-width:0;overflow:hidden; }
 html[data-ax-layout="portal"] .portal-data-name { display:grid;grid-template-columns:minmax(7rem,28%) minmax(0,1fr);align-items:center;gap:2px 12px;min-width:0;overflow:hidden; }
 html[data-ax-layout="portal"] .portal-data-name .page-item-sub { text-align:left;justify-self:stretch;min-width:0; }
 html[data-ax-layout="portal"] .portal-data-name .page-item-sub { margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display:block; }
+html[data-ax-layout="portal"] .portal-memory-list .portal-data-name,
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { display:flex; flex-direction:row; align-items:center; gap:8px; grid-template-columns:none; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .page-item-title { flex:0 0 auto; min-width:8rem; max-width:70%; overflow:hidden; text-overflow:ellipsis; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .page-item-sub { flex:1 1 0; min-width:0; }
 html[data-ax-layout="portal"] .portal-memory-list .page-item-title { flex:1 1 auto;min-width:0; }
 html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:1/-1;margin:0; }
 @container ax-list (min-width:1000px) {
   html[data-ax-layout="portal"] .portal-data-name { grid-template-columns:minmax(7rem,24%) minmax(0,1fr) max-content;gap:12px; }
-  html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display:block;grid-template-columns:none; }
+  html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display:flex; flex-direction:row; align-items:center; gap:8px; grid-template-columns:none; }
   html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:auto; }
   html[data-ax-layout="portal"] .page-item:not(.portal-data-row):not(.mcp-trace-row):not(.mcp-blade-step) .page-item-body { display:flex;align-items:center;gap:12px;min-width:0; }
   html[data-ax-layout="portal"] .page-item:not(.portal-data-row):not(.mcp-trace-row):not(.mcp-blade-step) .page-item-sub { margin:0;min-width:0;flex:1; }
@@ -189,7 +193,10 @@ html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:
 @container ax-list (max-width:640px) {
   html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { min-width:0;grid-template-columns:minmax(0,1fr) minmax(0,4.5rem);gap:4px 8px; }
   html[data-ax-layout="portal"] .portal-data-header { display:none; }
+  html[data-ax-layout="portal"] .portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns: 28px minmax(0,1fr) minmax(0,4.5rem); }
   html[data-ax-layout="portal"] .portal-data-name { grid-column:1/-1;display:flex;flex-direction:column;align-items:stretch;gap:2px; }
+  html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { grid-column: 2; }
+  html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { flex-direction: row; align-items: center; }
   html[data-ax-layout="portal"] .portal-data-name .page-item-sub { white-space:nowrap; }
   html[data-ax-layout="portal"] .portal-data-cell:not(.portal-data-name):not(.portal-data-actions) { display:none; }
   html[data-ax-layout="portal"] .portal-data-actions { justify-self:end; }
@@ -234,6 +241,7 @@ html[data-ax-layout="portal"] .settings-hero-actions { max-width:100%;min-width:
 .column-table th>.column-heading{font:inherit}
 .column-table td{overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere}
 html[data-ax-layout="portal"] body .column-list--resized :is(.portal-data-row,.portal-data-header){grid-template-columns:var(--list-columns);min-width:var(--column-total)}
+html[data-ax-layout="portal"] body .column-list--resized.portal-policy-list :is(.portal-data-row,.portal-data-header){grid-template-columns:var(--list-columns)}
 .item-column-header,.item-column-row{display:grid!important;grid-template-columns:var(--list-columns,minmax(180px,1fr) minmax(140px,.8fr) minmax(100px,.5fr));gap:8px;padding:4px 12px;min-width:var(--column-total,0px);box-sizing:border-box;align-items:center}
 .item-column-name,.item-column-detail,.item-column-context{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .item-column-name{display:flex;align-items:center;gap:6px}
@@ -244,14 +252,16 @@ html[data-ax-layout="portal"] body .mcp-trace-calm :is(.item-column-row,.item-co
 html[data-ax-layout="portal"] body :is(.mcp-trace-calm,.mcp-blade-steps) :is(.item-column-row,.item-column-header){padding-left:40px}
 /* Column rows are independent events. Explicit related-call groups keep their own connectors. */
 .column-list .item-column-row.page-item--graph::before{display:none}
-html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-body{display:flex;flex-direction:column;align-items:stretch;gap:1px}
-.mcp-trace-calm .item-column-row>.page-item-meta{margin:0;font-size:11px}
+html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-body{display:flex;flex-direction:row;align-items:center;gap:12px;min-width:0}
+html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-title{flex:0 0 auto;min-width:8rem;max-width:70%}
+html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-sub{flex:1 1 0;min-width:0;margin:0}
+.mcp-trace-calm .item-column-row>.page-item-meta{margin:0;font:400 13px var(--font-ui);font-variant-numeric:tabular-nums}
 .mcp-trace-calm .item-column-context{overflow:visible}
 .mcp-blade-steps :is(.item-column-row,.item-column-header){grid-template-columns:var(--list-columns,minmax(120px,1fr) 70px 70px)}
 .mcp-blade-steps .page-item-meta{margin:0}
 @container ax-list (max-width:745px){
  .column-list .column-header{display:none!important}
- html[data-ax-layout="portal"] body .column-list--resized .portal-data-row{min-width:0;grid-template-columns:minmax(0,1fr) minmax(0,4.5rem)}
+ html[data-ax-layout="portal"] body .column-list--resized:not(.portal-policy-list) .portal-data-row{min-width:0;grid-template-columns:minmax(0,1fr) minmax(0,4.5rem)}
  html[data-ax-layout="portal"] body .column-list .item-column-row{min-width:0;grid-template-columns:minmax(0,1fr);gap:3px;padding:6px 12px}
  html[data-ax-layout="portal"] body :is(.mcp-trace-calm,.mcp-blade-steps) .item-column-row{padding-left:40px}
  html[data-ax-layout="portal"] body :is(.mcp-trace-calm,.mcp-blade-steps) .item-column-row{grid-template-columns:minmax(140px,1fr) minmax(0,auto)}

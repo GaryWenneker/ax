@@ -151,6 +151,12 @@ export function subscribeSharedEventSource(
   if (opts.onError) hub.errorHandlers.add(opts.onError);
   if (opts.onOpen) hub.openHandlers.add(opts.onOpen);
 
+  // A connection opened for another subscriber already sent its snapshot.
+  // Late listeners, such as Logging after the status bar, would otherwise
+  // miss that snapshot and fall back to yesterday's file.
+  if (opts.events?.batch && hub.es && hub.es.readyState !== EventSource.CLOSED) {
+    tearDownEs(hub);
+  }
   ensureConnected(hub);
 
   return () => {

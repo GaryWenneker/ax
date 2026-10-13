@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { chooseSelect } from './chooseSelect';
 
 if (process.env.AX_CHROME_EXECUTABLE) {
   test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
@@ -98,8 +99,8 @@ test('member and client forms send email and role-limited defaults', async ({ pa
   await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Clients & tokens', exact: true }).click();
   await page.getByRole('button', { name: 'Add client', exact: true }).click();
   await dialog.getByLabel('Client name').fill('Read-only integration');
-  await dialog.getByLabel('Application type').selectOption('custom');
-  await dialog.getByLabel('Team member').selectOption('new-member');
+  await chooseSelect(dialog.getByLabel('Application type'), 'custom');
+  await chooseSelect(dialog.getByLabel('Team member'), 'new-member');
   await dialog.getByRole('button', { name: 'Add client', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(calls.find(call => call.path === '/api/access/clients' && call.method === 'POST')?.body.scopes).toEqual(['memory:read', 'preflight:read', 'context:read']);
