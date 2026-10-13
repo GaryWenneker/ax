@@ -276,13 +276,17 @@ async fn configure(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<Socket
             .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Session unavailable"))?;
         if recent.is_none() {return Err(err(StatusCode::FORBIDDEN,"Reauthenticate before disabling login"));}
     }
+    let mut transaction = pool.begin().await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot update authentication"))?;
     sqlx::query("INSERT INTO web_auth_settings(singleton,enabled) VALUES (1,?)
                  ON CONFLICT(singleton) DO UPDATE SET enabled=excluded.enabled")
-        .bind(body.enabled).execute(&pool).await
+        .bind(body.enabled).execute(&mut *transaction).await
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot update authentication"))?;
     sqlx::query("UPDATE web_sessions SET revoked_at=unixepoch() WHERE revoked_at IS NULL")
-        .execute(&pool).await
+        .execute(&mut *transaction).await
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot revoke sessions"))?;
+    transaction.commit().await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot finalize authentication change"))?;
     let _=access::audit(&pool,Some(&actor),None,"web_auth.config_updated","installation","1",&serde_json::json!({"enabled":body.enabled})).await;
     Ok(Json(serde_json::json!({"enabled":body.enabled})))
 }
