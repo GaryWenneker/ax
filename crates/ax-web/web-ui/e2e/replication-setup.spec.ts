@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { chooseSelect } from './chooseSelect';
 
 async function fixture(page: Page, options: { readonly?: boolean; failPairing?: boolean; conflicts?: boolean; syncFailed?: boolean; configuredRole?: 'primary' | 'replica'; stopped?: boolean } = {}) {
   const calls: { path: string; body: any }[] = [];
@@ -81,7 +82,7 @@ test('empty Primary setup generates IDs, hides the form, masks credentials and c
 
 test('discovery lists distinct primaries and only an explicit selection and connect sends pairing', async ({ page }) => {
   const { calls } = await fixture(page); await page.getByRole('button', { name: 'Set up replication', exact: true }).click();
-  await page.getByLabel('Local node role').selectOption('replica');
+  await chooseSelect(page.getByLabel('Local node role'), 'replica');
   await expect(page.getByRole('button', {name:'Find nearby Primaries'})).toHaveCount(0);
   const choices = page.getByRole('group', {name:'Available Primaries'});
   await expect(choices.getByRole('button')).toHaveCount(2);
@@ -98,7 +99,7 @@ test('discovery lists distinct primaries and only an explicit selection and conn
   expect(calls.find(c => c.path === '/api/access/nodes/local')?.body.primary_url).toBe('https://secondary.example.com');
 });
 test('manual hosted pairing failures remain editable and do not claim a connection', async ({ page }) => {
-  await fixture(page, { failPairing: true }); await page.getByRole('button', { name: 'Set up replication', exact: true }).click(); await page.getByLabel('Local node role').selectOption('replica');
+  await fixture(page, { failPairing: true }); await page.getByRole('button', { name: 'Set up replication', exact: true }).click(); await chooseSelect(page.getByLabel('Local node role'), 'replica');
   await page.getByLabel('Primary URL', { exact: true }).fill('https://hosted.example.com');
   await page.getByLabel('Replication credential', { exact: true }).fill('b'.repeat(64));
   await page.getByRole('button', { name: 'Connect to Primary', exact: true }).click();

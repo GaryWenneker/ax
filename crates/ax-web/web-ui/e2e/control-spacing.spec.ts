@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { chooseSelect } from './chooseSelect';
 import { SETTINGS_GROUPS } from '../src/lib/settingsNavigation';
 
 function localExport(client: string) {
@@ -32,8 +33,8 @@ test('shared dropdowns and paragraph action gaps work in both themes', async ({ 
     await page.locator('[aria-controls="settings-panel-remote"]').click();
     const app=page.getByLabel('Local MCP app');
     await expect(app).toBeEnabled();
-    await app.selectOption('vscode');
-    await expect(app).toHaveValue('vscode');
+    await chooseSelect(app, 'vscode');
+    await expect(app).toHaveAttribute('data-value', 'vscode');
     await expect(page.locator('.local-mcp-config')).toContainText('.vscode/mcp.json');
     for (const {id:section} of SETTINGS_GROUPS.flatMap(group=>group.items)) {
       await page.locator(`[aria-controls="settings-panel-${section}"]`).click();
