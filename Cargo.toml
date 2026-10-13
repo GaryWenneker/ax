@@ -49,7 +49,7 @@ leiden-rs = { version = "0.8", default-features = false }
 pulldown-cmark = { version = "0.12", default-features = false }
 blake3 = "1"
 rayon = "1"
-notify = "6"
+notify = "8"
 walkdir = "2"
 ignore = "0.4"
 clap = { version = "4", features = ["derive", "color"] }
