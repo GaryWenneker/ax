@@ -145,6 +145,16 @@ CREATE TABLE IF NOT EXISTS team_members (
     last_active_at TIMESTAMP
 );
 
+-- A member can hold multiple roles. Existing team_members.role remains a
+-- strongest-role compatibility projection for older client access code.
+CREATE TABLE IF NOT EXISTS member_roles (
+    member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK(role IN ('owner', 'admin', 'member', 'readonly')),
+    assigned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (member_id, role)
+);
+CREATE INDEX IF NOT EXISTS idx_member_roles_role ON member_roles(role);
+
 CREATE TABLE IF NOT EXISTS clients (
     id TEXT PRIMARY KEY,
     member_id TEXT NOT NULL,
