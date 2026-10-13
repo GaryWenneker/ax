@@ -27,6 +27,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Synchronize merged security fixes from main before full-repo OSV review
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
       - name: Generate only eligible registry versions
         shell: bash
         working-directory: site
