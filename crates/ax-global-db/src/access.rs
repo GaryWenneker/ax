@@ -162,6 +162,7 @@ type MemberRow = (
     String,
     String,
     Option<String>,
+    Option<String>,
 );
 type ClientRow = (
     String,
@@ -1109,6 +1110,36 @@ pub async fn audit(
 mod tests {
     use super::*;
     use crate::open_and_init;
+
+    #[tokio::test]
+    async fn multiple_roles_migrate_and_last_owner_stays_safe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("global.db");
+        let pool = crate::open_and_init(&path).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None).await.unwrap();
+        create_member(&pool, "teammate", "Teammate", None, MemberRole::Member).await.unwrap();
+        update_member_roles(
+            &pool, "teammate",
+            &[MemberRole::Readonly, MemberRole::Admin, MemberRole::Member, MemberRole::Admin],
+            "active",
+        ).await.unwrap();
+        let members = list_members(&pool).await.unwrap();
+        let member = members.iter().find(|m| m.id == "teammate").unwrap();
+        assert_eq!(member.role, MemberRole::Admin);
+        assert_eq!(member.roles.len(), 3);
+        assert!(member.roles.contains(&MemberRole::Member));
+        assert!(member.roles.contains(&MemberRole::Readonly));
+        assert!(update_member_roles(&pool, "owner", &[MemberRole::Member], "active").await.is_err());
+        crate::database::initialize_schema(&pool).await.unwrap();
+        let after_restart = list_members(&pool).await.unwrap();
+        assert_eq!(after_restart.iter().find(|m| m.id == "teammate").unwrap().roles.len(), 3);
+        update_member_roles(&pool, "teammate", &[MemberRole::Owner], "active").await.unwrap();
+        update_member_roles(&pool, "owner", &[MemberRole::Member], "active").await.unwrap();
+        assert_eq!(
+            list_members(&pool).await.unwrap().iter().filter(|m| m.role == MemberRole::Owner).count(),
+            1
+        );
+    }
 
     #[tokio::test]
     async fn member_safety_and_effective_scopes() {
