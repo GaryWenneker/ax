@@ -111,6 +111,7 @@ The [docs](https://getax.wenneker.io/) follow the same product. These are the pa
 - **Command Center.** Local UI for policy, memory, the graph, MCP Logging and Quality, and savings. Optional sign-in, passkeys, and member roles. A native desktop client embeds the same UI. [Command Center](https://getax.wenneker.io/guides/command-center/), [walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/), [desktop](https://getax.wenneker.io/guides/desktop-client/).
 - **Reach.** Authenticated remote MCP for another IDE or ChatGPT, a primary and replicas across machines, a LAN share, or a Cloudflare tunnel onto the local server. [Remote MCP](https://getax.wenneker.io/guides/remote-mcp/), [replicas](https://getax.wenneker.io/guides/standalone-ax/), [Cloudflare](https://getax.wenneker.io/guides/cloudflare/).
 - **Cost.** Compact replies, a project token budget for optional context, and a local monthly agent budget that quotes usage without blocking the provider. [Smart Output](https://getax.wenneker.io/guides/smart-output/), [token savings](https://getax.wenneker.io/guides/token-savings/), [agent budget](https://getax.wenneker.io/guides/budget/).
+- **Clear instructions.** Opt into `textStyle: "ste-inspired"` on `ax_preflight` for explicit AX-authored instructions and clear-English guidance. Stored policy and source remain intact; the renderer makes no model call. [Writing style](https://getax.wenneker.io/guides/smart-output/#optional-writing-style).
 
 ## What you get locally
 
