@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import { Publication, PublicationList, publicationRequest, isRemoteClient, ConnectionExport, RemoteClient, RemoteExport, RemoteMcpError, RemoteTransport } from '../remoteMcpApi';
 import { WORKSPACE_SWITCHED } from '../workspaceEvents';
 import './RemoteMcpPublishSection.css';
@@ -15,6 +17,7 @@ const clients: { id: RemoteClient; label: string }[] = [
 ];
 const guide = 'https://getax.wenneker.io/guides/remote-mcp/';
 export default function RemoteMcpPublishSection() {
+  const now = useNow();
   const [data, setData] = useState<PublicationList | null>(null);
   const [selected, setSelected] = useState('');
   const [client, setClient] = useState<RemoteClient>('cursor');
@@ -174,7 +177,7 @@ export default function RemoteMcpPublishSection() {
     {publication && <>
       <dl className="remote-publish-details"><dt>Publisher</dt><dd>{publication.publisherLabel}</dd><dt>Remote project ID</dt><dd>{publication.remoteProjectId}</dd><dt>MCP URL</dt><dd>{publication.endpointUrl}</dd></dl>
       <p className="remote-publish-state"><ServiceStatus state={runtime === 'running' ? 'running' : runtime === 'stopped' ? 'stopped' : 'warning'} label={runtime === 'running' ? 'Running' : runtime === 'stopped' ? 'Stopped' : 'Status unknown'} /> {runtime === 'running' ? 'Local server running. Public endpoint has not been verified.' : runtime === 'stopped' ? 'Server stopped. You can copy the configuration and start the server separately.' : 'Runtime status unknown. The last local heartbeat is stale.'}
-        {publication.lastHeartbeatAt && <span> Last heartbeat: {new Date(publication.lastHeartbeatAt * 1000).toLocaleString()}.</span>}</p>
+        {publication.lastHeartbeatAt && <span> Last heartbeat: {memoryRowAge(publication.lastHeartbeatAt * 1000, now)}.</span>}</p>
       <div className="remote-publish-controls"><label>Client<SettingsSelect aria-label="MCP client" value={client} disabled={busy} onChange={e => {
         const next = e.target.value; if (!isRemoteClient(next)) return; setOutput(null); setClient(next); setTransport(next === 'cline' || next === 'axProxy' ? 'proxy' : 'direct');
       }}>{clients.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</SettingsSelect></label>

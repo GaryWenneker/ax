@@ -139,18 +139,27 @@ export function ColumnHeading({controls, index}: {controls: ListColumnControls; 
   return <div ref={cell} className="column-heading" style={{minWidth:column.minWidth ?? 64}} role="group" aria-label={`${column.label} column`}>
     {column.sortable === false ? <span title={column.label}>{column.header ?? column.label}</span> : <button type="button" className="column-sort" onClick={() => controls.toggleSort(index)} aria-label={`Sort ${column.label}`} aria-pressed={controls.sort?.column === index} title={`${controls.sort?.column === index ? `Sorted ${controls.sort.direction}. ` : ''}Click to sort loaded rows; click again to reverse, then restore original order`}>{column.label}{controls.sort?.column === index ? controls.sort.direction === 'asc' ? ' ↑' : ' ↓' : ''}</button>}
     {column.filterable !== false && <ColumnFilter controls={controls} index={index} />}
-    <span className="column-resizer" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.label} column`} aria-valuemin={column.minWidth ?? 64} aria-valuemax={1600} aria-valuenow={controls.widths?.[index] ?? measuredWidth} tabIndex={0} title="Drag or use arrow keys to resize. Double-click or Home restores automatic widths."
+    {(column.sortable !== false || column.filterable !== false) && <span className="column-resizer" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.label} column`} aria-valuemin={column.minWidth ?? 64} aria-valuemax={1600} aria-valuenow={controls.widths?.[index] ?? measuredWidth} tabIndex={0} title="Drag or use arrow keys to resize. Double-click or Home restores automatic widths."
       onPointerDown={e => {if(e.button !== 0) return; e.preventDefault(); e.stopPropagation(); e.currentTarget.focus({preventScroll:true}); drag.current = {x: e.clientX, widths: measured()}; e.currentTarget.setPointerCapture(e.pointerId);}}
       onPointerMove={e => {if(drag.current) resize(e.clientX-drag.current.x, drag.current.widths);}}
       onPointerUp={e => {drag.current = null; if(e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);}}
       onLostPointerCapture={() => {drag.current = null;}}
       onDoubleClick={() => controls.resize(null)}
-      onKeyDown={e => {if(e.key === 'ArrowLeft' || e.key === 'ArrowRight') {e.preventDefault(); e.stopPropagation(); resize(e.key === 'ArrowRight' ? 10 : -10);} else if(e.key === 'Home') {e.preventDefault(); e.stopPropagation(); controls.resize(null);}}} />
+      onKeyDown={e => {if(e.key === 'ArrowLeft' || e.key === 'ArrowRight') {e.preventDefault(); e.stopPropagation(); resize(e.key === 'ArrowRight' ? 10 : -10);} else if(e.key === 'Home') {e.preventDefault(); e.stopPropagation(); controls.resize(null);}}} />}
   </div>;
 }
 
 export function ColumnHeader({controls, className = ''}: {controls: ListColumnControls; className?: string}) {
   return <div className={`column-header ${className}`} role="group" aria-label="List columns">{controls.columns.map((column, index) => <ColumnHeading key={column.label} controls={controls} index={index} />)}</div>;
+}
+
+/** A selection header is a fixed column, not a sortable field. */
+export function columnFromHeader(child: ReactNode): ListColumn {
+  if (isValidElement<{children?: ReactNode; 'data-column-label'?: string; 'data-column-min'?: number}>(child)) {
+    const label = child.props['data-column-label'];
+    if (label) return {label, header: child.props.children, sortable: false, filterable: false, minWidth: child.props['data-column-min'] ?? 28};
+  }
+  return {label: columnText(child)};
 }
 
 /** Extract text from rendered cell children without invoking components or their hooks. */

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import ModalShell from './ModalShell';
 import { fetchPolicyRevisions, restorePolicyRevision, type PolicyRevisionRow } from '../policyApi';
 import { revisionHashPrefix, revisionSourceLabel } from '../policyRevisions';
@@ -10,6 +12,7 @@ interface Props {
 }
 
 export default function PolicyRevisionHistory({ kind, itemId, onRestored }: Props) {
+  const now = useNow();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<PolicyRevisionRow[]>([]);
   const [error, setError] = useState('');
@@ -73,7 +76,7 @@ export default function PolicyRevisionHistory({ kind, itemId, onRestored }: Prop
                 <li key={row.id} className="policy-rev-row">
                   <div>
                     <div className="policy-rev-meta">
-                      {new Date(row.createdAt).toLocaleString()} · {revisionSourceLabel(row.source)}
+                      {memoryRowAge(new Date(row.createdAt).getTime(), now)} · {revisionSourceLabel(row.source)}
                     </div>
                     <div className="mono muted">{revisionHashPrefix(row.contentHash)}</div>
                   </div>
