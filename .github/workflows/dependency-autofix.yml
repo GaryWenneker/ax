@@ -91,17 +91,34 @@ jobs:
         if: steps.candidate.outputs.eligible == 'true'
         run: python scripts/check_dependency_age.py --base HEAD
 
-      - name: Reject candidates with known OSV vulnerabilities
+      - name: Skip unsafe candidates; fail on incomplete OSV review
+        id: osv
         if: steps.candidate.outputs.eligible == 'true'
-        run: python scripts/check_dependency_advisories.py --base HEAD
+        shell: bash
+        run: |
+          set +e
+          python scripts/check_dependency_advisories.py --base HEAD --candidate
+          osv_exit=$?
+          set -e
+          if [ "$osv_exit" -eq 2 ]; then
+            echo "safe=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=LCM candidate skipped::Known OSV advisory blocks this remediation. No branch or PR will be changed."
+            echo "### Skipped unsafe remediation for ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Known advisory in proposed version. No pull request created; the independent dependency monitor still reports vulnerabilities." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$osv_exit" -ne 0 ]; then
+            echo "::error title=OSV review failed::Security metadata could not be verified; no PR will be created."
+            exit "$osv_exit"
+          else
+            echo "safe=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Verify package lock remains installable
-        if: steps.candidate.outputs.eligible == 'true'
+        if: steps.candidate.outputs.eligible == 'true' && steps.osv.outputs.safe == 'true'
         working-directory: ${{ matrix.path }}
         run: npm ci --dry-run --ignore-scripts --no-audit --no-fund
 
       - name: Create or update review-only pull request
-        if: steps.candidate.outputs.eligible == 'true'
+        if: steps.candidate.outputs.eligible == 'true' && steps.osv.outputs.safe == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.AX_LCM_PR_TOKEN || github.token }}
