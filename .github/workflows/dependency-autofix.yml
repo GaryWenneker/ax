@@ -121,14 +121,12 @@ jobs:
           git add -- "${lockfile}"
           git commit -m "fix(deps): apply safe LCM remediation for ${PROJECT_NAME}"
 
-          if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
-            if git diff --quiet "refs/remotes/origin/${branch}" HEAD -- "${lockfile}"; then
-              echo "No new changes compared to existing automated PR branch."
-              exit 0
-            fi
+          if git show-ref --verify --quiet "refs/remotes/origin/${branch}" &&
+             git diff --quiet "refs/remotes/origin/${branch}" HEAD -- "${lockfile}"; then
+            echo "Existing bot branch already has the fix; checking whether its PR exists."
+          else
+            git push --force-with-lease origin "HEAD:refs/heads/${branch}"
           fi
-
-          git push --force-with-lease origin "HEAD:refs/heads/${branch}"
 
           existing="$(gh pr list --state open --base main --head "${branch}" --json number --jq '.[0].number // empty')"
           if [ -n "$existing" ]; then
