@@ -23,7 +23,7 @@
     "@tiptap/starter-kit": "^3.31.3",
     "@tiptap/suggestion": "^3.31.3",
     "@uiw/react-md-editor": "^4.0.4",
-    "@vscode/codicons": "^0.0.36",
+    "@vscode/codicons": "^0.0.45",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "d3-force": "^3.0.0",
