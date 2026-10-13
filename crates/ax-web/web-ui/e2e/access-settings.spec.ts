@@ -40,7 +40,7 @@ test('access management sends CSRF and shows new tokens only until dismissed', a
   const teamNav = page.locator('.settings-navigation-item[aria-controls="settings-panel-team"]');
   if (await teamNav.count()) await teamNav.click();
   const team = page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Team', exact: true }) });
-  await team.getByRole('group', { name: 'Roles for Demo member' }).getByLabel('Read-only').check();
+  await team.getByRole('group', { name: 'Roles for Demo member' }).getByLabel('Read-only').click();
   await expect.poll(() => (member as typeof member & { roles?: string[] }).roles).toContain('readonly');
   const clientsNav = page.locator('.settings-navigation-item[aria-controls="settings-panel-clients"]');
   if (await clientsNav.count()) await clientsNav.click();
