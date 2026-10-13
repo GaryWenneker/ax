@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { registerPasskey } from '../lib/passkeys';
 
 type Passkey = { id: string; label: string; created_at: string; revoked: boolean };
-type Status = { enabled: boolean; passkeys: boolean };
+type Status = { enabled: boolean; passkeys: boolean; origin?: string };
 type WebSession = { id: string; current: boolean; created_at: number; last_seen_at: number; expires_at: number };
 async function request(url: string, init?: RequestInit) {
   const result = await fetch(url, { cache: 'no-store', credentials: 'same-origin',
@@ -118,7 +118,10 @@ export default function SecuritySettingsSection() {
     <section className="settings-card">
       <div className="settings-card-header"><h2>My passkeys</h2><p>Register Touch ID, Face ID, Windows Hello or a hardware security key. You can add more than one.</p></div>
       <div className="settings-card-body">
-        <button className="btn primary" type="button" disabled={busy || !status?.passkeys}
+        {status?.origin && status.origin !== window.location.origin &&
+          <p className="access-note">Passkeys require the configured origin. <a href={status.origin}>Open {status.origin}</a> to register or use passkeys.</p>}
+        <button className="btn primary" type="button"
+          disabled={busy || !status?.passkeys || Boolean(status?.origin && status.origin !== window.location.origin)}
           onClick={() => void execute(registerPasskey, 'Passkey registered.')}>Add passkey</button>
         <div className="access-client-list">{keys.filter(key => !key.revoked).map(key =>
           <div key={key.id} className="settings-row">
