@@ -452,7 +452,27 @@ pub async fn gate(State(hub):State<WebHub>,mut req:Request,next:Next)->Response 
             return err(StatusCode::FORBIDDEN,"Untrusted request origin").into_response();
         }
     }
-    // Effective scopes and resource ACLs are still checked by each API router.
+    // Coarse Command Center permissions are enforced here before resource-level ACLs.
+    // All write operations require a writable human role, and management APIs
+    // require Admin or Owner. Client token scopes remain independent.
+    let Some((_, role))=session_member(&pool,req.headers()).await else {
+        return err(StatusCode::UNAUTHORIZED,"Sign in required").into_response();
+    };
+    let admin_path = path.starts_with("/api/access/")
+        || path.starts_with("/api/ops/")
+        || path.starts_with("/api/ship/")
+        || path.starts_with("/api/workspace/")
+        || path.starts_with("/api/plugins/")
+        || path.starts_with("/api/policy/share")
+        || path.starts_with("/api/vault/")
+        || path.starts_with("/api/actions/");
+    if admin_path && !role.permits("admin:team") {
+        return err(StatusCode::FORBIDDEN,"Administrative role required").into_response();
+    }
+    if req.method()!=Method::GET && req.method()!=Method::HEAD
+        && !role.permits("memory:write") {
+        return err(StatusCode::FORBIDDEN,"Write permission required").into_response();
+    }
     req.extensions_mut().insert(member_id);
     next.run(req).await
 }
