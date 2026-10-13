@@ -7,6 +7,7 @@ on:
       - "site/package.json"
       - "site/puppeteer.config.cjs"
       - "site/tests/puppeteer-config.test.ts"
+      - "site/tests/design-coherence.test.ts"
       - ".github/workflows/lcm-site-tooling-repair-once.yml"
 permissions:
   contents: write
