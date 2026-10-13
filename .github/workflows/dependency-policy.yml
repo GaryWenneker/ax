@@ -1,0 +1,48 @@
+# Automatically checks dependency changes without enabling the suspended CI/release pipelines.
+name: Dependency Policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  minimum-release-age:
+    name: minimum-release-age-7-days
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify minimum release-age checker
+        run: python -m unittest discover -s scripts -p 'test_dependency_age.py'
+      - name: Reject newly locked packages published less than 7 days ago
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python scripts/check_dependency_age.py
+
+  review:
+    name: dependency-vulnerability-review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test OSV vulnerability review
+        run: python -m unittest discover -s scripts -p 'test_dependency_advisories.py'
+      - name: Block new dependencies with known OSV advisories
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: python scripts/check_dependency_advisories.py

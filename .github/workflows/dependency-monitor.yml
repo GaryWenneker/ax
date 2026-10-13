@@ -1,0 +1,58 @@
+# Runs independently of the deliberately suspended build and deployment workflows.
+name: Dependency Lifecycle Monitor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "**/package-lock.json"
+      - ".github/dependabot.yml"
+      - ".github/workflows/dependency-monitor.yml"
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-monitor
+  cancel-in-progress: false
+
+jobs:
+  rustsec:
+    name: rustsec-advisories
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit Cargo.lock against RustSec
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  npm:
+    name: npm-audit-${{ matrix.project }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: site
+            path: site
+          - project: telemetry
+            path: telemetry-worker
+          - project: command-center
+            path: crates/ax-web/web-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Audit all locked npm dependencies
+        working-directory: ${{ matrix.path }}
+        run: npm audit --package-lock-only --audit-level=moderate
