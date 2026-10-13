@@ -124,7 +124,7 @@ test('settings fits phone width and primary menu stays usable', async ({ page })
 });
 
 test('IDE embed keeps docked navigation and omits portal header', async ({ page }) => {
-  await page.setViewportSize({ width: 800, height: 700 }); await page.goto('/settings?embed=1');
+  await page.setViewportSize({ width: 1280, height: 800 }); await page.goto('/settings?embed=1');
   await expect(page.locator('.titlebar')).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeInViewport();
   await expect(page.locator('.workspace')).toBeInViewport();
