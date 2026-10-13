@@ -1,4 +1,6 @@
-# ax — Graph it. Remember it. Ship it.
+# ax — Agent Xpansion
+
+**The context layer for AI agents.**
 
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
@@ -465,8 +467,8 @@ See [docs/PRODUCTION.md](docs/PRODUCTION.md) for GitHub Releases, Netlify docs s
 
 See repository license file. ax is local intelligence for AI agents — knowledge graph, policy engine, and Command Center in one Rust binary.
 
-<!-- ax = Aero Xecution -->
-<sub><abbr title="Aero Xecution">ax</abbr> · Aero Xecution</sub>
+<!-- ax = Agent Xpansion -->
+<sub><abbr title="Agent Xpansion">ax</abbr> · Agent Xpansion</sub>
 
 ### Project-safe minimal context
 
