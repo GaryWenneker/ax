@@ -2,6 +2,14 @@
 name: Dependency Lifecycle Monitor
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "**/package-lock.json"
+      - ".github/dependabot.yml"
+      - ".github/workflows/dependency-monitor.yml"
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
