@@ -98,10 +98,41 @@ def classify_findings(
     return advisories, errors
 
 
+def classify_findings(queries: list[dict], results: list[dict]) -> tuple[list[str], list[str]]:
+    """Keep verified advisories separate from incomplete or untrusted OSV data."""
+    advisories, errors = [], []
+    if len(queries) != len(results):
+        return advisories, ["Incomplete OSV batch response"]
+    for query, result in zip(queries, results):
+        ecosystem = query["package"]["ecosystem"]
+        name = query["package"]["name"]
+        version = query["version"]
+        identity = f"{ecosystem}:{name}@{version}"
+        if not isinstance(result, dict):
+            errors.append(f"Incomplete OSV result for {identity}")
+            continue
+        vulns = result.get("vulns", [])
+        if not isinstance(vulns, list) or result.get("next_page_token"):
+            errors.append(f"Incomplete/paginated OSV result for {identity}")
+        elif vulns:
+            ids = []
+            for vuln in vulns:
+                advisory_id = vuln.get("id") if isinstance(vuln, dict) else None
+                if not isinstance(advisory_id, str) or not advisory_id.strip():
+                    errors.append(f"Malformed OSV advisory for {identity}")
+                    break
+                ids.append(advisory_id)
+            else:
+                advisories.append(f"{identity} has known vulnerabilities: {', '.join(ids)}")
+        else:
+            print(f"PASS {identity}: no known OSV advisories")
+    return advisories, errors
+
+
 def findings(queries: list[dict], results: list[dict]) -> list[str]:
-    """Backward-compatible strict PR review: all OSV problems block the change."""
+    """Backward-compatible strict findings used by PR policy regression tests."""
     advisories, errors = classify_findings(queries, results)
-    return errors + advisories
+    return advisories + errors
 
 
 def main() -> int:
@@ -109,8 +140,7 @@ def main() -> int:
     parser.add_argument("--base", default="origin/" + os.environ.get("GITHUB_BASE_REF", "main"))
     parser.add_argument(
         "--candidate", action="store_true",
-        help="Return 2 for a known-vulnerable auto-remediation candidate; "
-             "operational/security-evidence failures remain exit 1.",
+        help="Return 2 for known-vulnerable auto-remediation candidates (1 remains a validation failure)",
     )
     args = parser.parse_args()
     try:
@@ -118,13 +148,13 @@ def main() -> int:
         advisories, errors = [], []
         for offset in range(0, len(additions), 100):
             batch = additions[offset:offset + 100]
-            batch_advisories, batch_errors = classify_findings(batch, fetch_batch(batch))
-            advisories.extend(batch_advisories)
-            errors.extend(batch_errors)
+            found, invalid = classify_findings(batch, fetch_batch(batch))
+            advisories.extend(found)
+            errors.extend(invalid)
         for error in errors:
-            print(f"::error title=OSV review incomplete::{error}", file=sys.stderr)
+            print(f"::error title=OSV review failed::{error}", file=sys.stderr)
         for advisory in advisories:
-            level = "warning" if args.candidate else "error"
+            level = "warning" if args.candidate and not errors else "error"
             print(f"::{level} title=Dependency vulnerability::{advisory}", file=sys.stderr)
         print(f"OSV checked {len(additions)} newly locked versions.")
         if errors:
