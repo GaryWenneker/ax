@@ -296,6 +296,41 @@ async fn password_login(ConnectInfo(peer): ConnectInfo<SocketAddr>,
     login_attempts().lock().await.remove(&limit_key);
     establish(&pool,&row.expect("valid account has a password").0,&headers,secure_origin()).await
 }
+async fn user_password(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<SocketAddr>,
+    headers:HeaderMap,Path(target):Path<String>,Json(body):Json<SetupBody>)
+    -> Result<Json<serde_json::Value>,ErrorResponse> {
+    let pool=db().await?;
+    if hub.readonly {return Err(err(StatusCode::FORBIDDEN,"Read-only"));}
+    let actor=browser_member(&pool,&headers,peer,&hub).await?;
+    require_owner(&pool,&actor).await?;
+    let req_origin=headers.get(header::ORIGIN).and_then(|value|value.to_str().ok());
+    let trusted=local_request(&headers,peer,hub.port)
+        || origin().is_ok_and(|url|req_origin==Some(url.as_str().trim_end_matches('/')));
+    if !trusted {return Err(err(StatusCode::FORBIDDEN,"Untrusted request origin"));}
+    if body.password.len()<12 || body.password.len()>1024 {
+        return Err(err(StatusCode::BAD_REQUEST,"Password must be 12-1024 characters"));
+    }
+    let exists:Option<(String,)>=sqlx::query_as(
+        "SELECT id FROM team_members WHERE id=? AND status='active'"
+    ).bind(&target).fetch_optional(&pool).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"User lookup failed"))?;
+    if exists.is_none() {return Err(err(StatusCode::NOT_FOUND,"Active user not found"));}
+    let salt=SaltString::generate(&mut OsRng);
+    let verifier=Argon2::default().hash_password(body.password.as_bytes(),&salt)
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Password setup failed"))?.to_string();
+    let mut tx=pool.begin().await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Password update failed"))?;
+    sqlx::query("INSERT INTO web_password_credentials(member_id,password_hash) VALUES (?,?)
+         ON CONFLICT(member_id) DO UPDATE SET password_hash=excluded.password_hash")
+        .bind(&target).bind(verifier).execute(&mut *tx).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Password update failed"))?;
+    sqlx::query("UPDATE web_sessions SET revoked_at=unixepoch() WHERE member_id=? AND revoked_at IS NULL")
+        .bind(&target).execute(&mut *tx).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Sessions unavailable"))?;
+    tx.commit().await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Password update failed"))?;
+    let _=access::audit(&pool,Some(&actor),None,"web_auth.password_reset","member",&target,&serde_json::json!({})).await;
+    Ok(Json(serde_json::json!({"updated":true})))
+}
 async fn logout(headers:HeaderMap) -> Result<Response,ErrorResponse> {
     let pool=db().await?;
     if let Some(token)=cookie_value(&headers) {
@@ -518,6 +553,7 @@ pub fn router(hub:WebHub)->Router {
         .route("/config",post(configure))
         .route("/login",post(password_login))
         .route("/logout",post(logout))
+        .route("/users/{id}/password",post(user_password))
         .route("/passkeys",get(passkeys))
         .route("/passkeys/registration/start",post(register_start))
         .route("/passkeys/registration/finish",post(register_finish))
