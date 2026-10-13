@@ -1,0 +1,44 @@
+{
+  "published_implementation_sha": "e278a087b04be71771d33759223d5483eaf08b8b",
+  "local_implementation_sha": "a95fb76a79347205959a7880e14c8f3a8a7ae114",
+  "implementation_tree_sha": "4a9255719f6732bc672e409533c5c0deccb568ea",
+  "affected_rust_tests_passed": 471,
+  "removal_contract_tests_passed": 4,
+  "full_mode_contract_tests_passed": 4,
+  "coverage_checker_controls_passed": 4,
+  "site_tests_passed": 55,
+  "local_documentation_pages": 46,
+  "coverage": {
+    "covered": 33,
+    "total": 33,
+    "missing": [],
+    "declaration_only_files": [],
+    "scope": "changed executable line coverage; not branch coverage"
+  },
+  "mutants": [
+    {
+      "name": "selector-left-in-schema",
+      "test": "preflight_schema_has_no_writing_style_selector",
+      "source_sha256": "174ee92f6f9aeb7b6db58a62124bf1db04d9bec419c2921735fc717efb10c5f1",
+      "exit_code": 101,
+      "killed": true
+    },
+    {
+      "name": "guidance-left-in-output",
+      "test": "raw_preflight_keeps_standard_output_with_obsolete_arguments",
+      "source_sha256": "8c6cf84ec0babde944773bcd2fae0ab1eb18c09fa24f8778fe4deea1a2a0e444",
+      "exit_code": 101,
+      "killed": true
+    },
+    {
+      "name": "embedded-style-validation-left",
+      "test": "embedded_preflight_ignores_obsolete_style_validation",
+      "source_sha256": "114403aa3e14edc6aa0af0995195c43d19cc6f2cfdc37e790af2db857efd6ea1",
+      "exit_code": 101,
+      "killed": true
+    }
+  ],
+  "full_workspace_runtime": "unverified; affected MCP/policy suites substituted",
+  "hosted_ci": "not dispatched",
+  "independent_verifier": "not performed"
+}

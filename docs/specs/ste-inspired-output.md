@@ -243,3 +243,8 @@ Current evidence consists of source inspection and one live preflight response. 
 - R8, 2026-10-13: final evidence records tested implementation `3de29cd22e99450f128fe528f2522f8b829dae31` and adds `docs/evidence/ste-inspired-output.md` plus `docs/evidence/ste-output-metrics.json`. The opt-in release criteria passed for the affected surface; broad runtime/provider, randomized-order and cross-platform limits are disclosed rather than promoted to passes. No default rollout or billed model-quality/savings claim is made.
 
 - R9, 2026-10-13: source published through the connected GitHub API because terminal Git lacks push credentials. Public implementation commit `2294a8ab6fcce44226ff2910c54242d9b75c3a81` has tree `cb36150bc96b5f18ddaa4d27b9980c7d307091a5`, exactly matching the tested local source tree. Evidence references retain the local SHA and add the reachable public SHA; executable code is unchanged.
+
+
+## R10 — experiment withdrawn
+
+On 2026-10-13, after the token investigation, the owner instructed: “I suggest keeping it out.” The optional style is removed under `remove-ste-inspired-output.md`. This SPEC and the original evidence remain historical records. Current documentation and runtime no longer expose the experiment.

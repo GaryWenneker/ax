@@ -1,5 +1,7 @@
 # Evidence — STE-inspired preflight output
 
+Historical experiment: withdrawn at the owner's request on 2026-10-13. The current product no longer supports this optional style. This report records the original implementation, not current functionality. To reproduce its original checks, use implementation commit `2294a8ab6fcce44226ff2910c54242d9b75c3a81`. The subsequent token investigation isolated 67–68 extra o200k projection tokens after removing a three-token session-label bias and incidental epoch noise; whole-agent savings remained unverified. See `remove-ste-inspired-output.md` beside this report for removal verification.
+
 Date: 2026-10-13. Tier 3. Implementation is an opt-in presentation change.
 
 - SPEC approval: obtained. The user approved the displayed plan with “Do it” and then explicitly authorized “Implement, test, merge”.

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SPEC = importlib.util.spec_from_file_location("ste_coverage", Path(__file__).with_name("check_ste_output_coverage.py"))
+SPEC = importlib.util.spec_from_file_location("mcp_removal_coverage", Path(__file__).with_name("check_mcp_removal_coverage.py"))
 coverage = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(coverage)
 
@@ -42,7 +42,7 @@ class CoverageGateTests(unittest.TestCase):
             coverage.check(data, diff.replace("mod helper;", "fn unchecked() {}"), Path("/fixture"))
 
     def test_cli_rejects_uncovered_source_and_unreadable_reports(self):
-        script = Path(__file__).with_name("check_ste_output_coverage.py").resolve()
+        script = Path(__file__).with_name("check_mcp_removal_coverage.py").resolve()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for command in [

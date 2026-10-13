@@ -22,7 +22,6 @@ pub async fn call_tool(engine: &mut McpEngine, name: &str, args: Value) -> Resul
     let root = crate::server::resolve_request_project_root(engine)
         .ok_or("no initialized project for MCP request")?;
     crate::request_context::validate(&root, &args)?;
-    crate::text_style::PreflightTextStyle::validate_tool(name, &args)?;
     if is_policy_tool(name) {
         if let Err(e) = engine.ensure_policy_fresh().await {
             tracing::warn!("ensure_policy_fresh failed (tool {name} continues): {e}");
