@@ -31,7 +31,7 @@ AX has two complementary automated proposal paths:
    `crates/ax-web/web-ui/`. It only creates or updates a PR when the affected
    project's vulnerability count strictly decreases at one or more severity
    levels, no severity count increases, the candidate passes a full 168-hour
-   registry publication-age check, and `npm ci --dry-run` succeeds.
+   registry publication-age check, the new versions have no known OSV advisories, and `npm ci --dry-run` succeeds.
    It creates stable `automation/lcm-*` branches, rather than duplicate
    PRs every day.
 
