@@ -45,9 +45,22 @@ fn cookie_value(headers: &HeaderMap) -> Option<&str> {
         .split(';')
         .find_map(|part| part.trim().strip_prefix("ax_web_session="))
 }
+fn forwarded_client_is_remote(headers: &HeaderMap) -> bool {
+    let Some(value) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    let client = value.split(',').next().unwrap_or("").trim();
+    client
+        .parse::<std::net::IpAddr>()
+        .map(|ip| !ip.is_loopback())
+        .unwrap_or(!client.is_empty())
+}
+
 fn local_request(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
-    // The reverse proxy connects from this machine and sets the public Host.
-    peer.ip().is_loopback() && crate::local_owner::browser_serves(headers, port)
+    // A loopback proxy is not the local Owner when it forwards a public client.
+    peer.ip().is_loopback()
+        && !forwarded_client_is_remote(headers)
+        && crate::local_owner::browser_serves(headers, port)
 }
 async fn db() -> Result<SqlitePool, ErrorResponse> {
     let path = global_db_path()
