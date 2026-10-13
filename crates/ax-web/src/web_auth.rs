@@ -576,21 +576,25 @@ async fn remove_key(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<Socke
     let pool=db().await?;
     let actor=browser_member(&pool,&headers,peer,&hub).await?;
     require_recent_if_enabled(&pool, &headers).await?;
-    // Never strand the final Owner without a remaining sign-in method.
-    let owner: Option<(String,)> = sqlx::query_as("SELECT role FROM team_members WHERE id=?")
-        .bind(&actor).fetch_optional(&pool).await.ok().flatten();
-    if owner.is_some_and(|(role,)|role=="owner") {
-        let password: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM web_password_credentials WHERE member_id=?")
-            .bind(&actor).fetch_one(&pool).await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Credential lookup failed"))?;
-        let keys: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM web_passkeys WHERE member_id=? AND revoked_at IS NULL")
-            .bind(&actor).fetch_one(&pool).await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Credential lookup failed"))?;
-        if password.0==0 && keys.0<=1 { return Err(err(StatusCode::CONFLICT,"Cannot remove final Owner login method")); }
-    }
-    let result=sqlx::query("UPDATE web_passkeys SET revoked_at=unixepoch()
-        WHERE id=? AND member_id=? AND revoked_at IS NULL")
-        .bind(&id).bind(&actor).execute(&pool).await
+    // A single conditional statement serializes the final-Owner check with the
+    // revocation. Two concurrent requests cannot both remove the last keys.
+    let result=sqlx::query(
+        "UPDATE web_passkeys SET revoked_at=unixepoch()
+         WHERE id=? AND member_id=? AND revoked_at IS NULL
+           AND (NOT EXISTS (
+                    SELECT 1 FROM team_members WHERE id=? AND role='owner' AND status='active'
+                ) OR EXISTS (
+                    SELECT 1 FROM web_password_credentials WHERE member_id=?
+                ) OR EXISTS (
+                    SELECT 1 FROM web_passkeys AS other
+                    WHERE other.member_id=? AND other.id!=? AND other.revoked_at IS NULL
+                ))"
+    ).bind(&id).bind(&actor).bind(&actor).bind(&actor).bind(&actor).bind(&id)
+        .execute(&pool).await
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot revoke passkey"))?;
-    if result.rows_affected()!=1 {return Err(err(StatusCode::NOT_FOUND,"Passkey not found"));}
+    if result.rows_affected()!=1 {
+        return Err(err(StatusCode::CONFLICT,"Passkey not found or final Owner login method"));
+    }
     let _=access::audit(&pool,Some(&actor),None,"web_auth.passkey_revoked","passkey",&id,&serde_json::json!({})).await;
     Ok(Json(serde_json::json!({"revoked":true})))
 }
