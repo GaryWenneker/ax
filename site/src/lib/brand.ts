@@ -6,4 +6,5 @@ export const NPM_URL = `https://www.npmjs.com/package/${NPM_PACKAGE.replace('/',
 export const DOCS_SITE = 'https://getax.wenneker.io';
 
 /** Full product name — hover/title easter egg, not primary UI chrome. */
-export const AX_FULL_NAME = 'Aero Xecution';
+export const AX_FULL_NAME = 'Agent Xpansion';
+export const AX_TAGLINE = 'The context layer for AI agents';
