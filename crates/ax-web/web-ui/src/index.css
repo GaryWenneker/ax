@@ -992,36 +992,58 @@ html, body {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
+html[data-ax-layout="portal"] .ax-modal--full:has(.policy-inline-pane--props),
 .ax-modal--full:has(.policy-inline-pane--props) {
   width: min(820px, 68vw);
   max-width: 68vw;
-  height: auto;
-  max-height: min(820px, 78vh);
+  /* A definite height, not only max-height, so the form can shrink and scroll. */
+  height: min(860px, 86vh);
+  max-height: min(860px, 86vh);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  background: color-mix(in srgb, var(--bg-panel, var(--bg)) 32%, transparent);
   -webkit-backdrop-filter: blur(18px) saturate(1.15);
   backdrop-filter: blur(18px) saturate(1.15);
   border-color: color-mix(in srgb, var(--accent-text) 40%, var(--border));
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
+html[data-ax-layout="portal"] .ax-modal--full:has(.policy-inline-pane--props) :is(.ax-modal-header, .ax-modal-body, .ax-modal-footer) {
+  background: transparent;
+}
 .ax-modal--full:has(.policy-inline-pane--props) .ax-modal-title { color: var(--accent-text); }
-.ax-modal--full:has(.policy-inline-pane--props) :is(.ax-modal-header, .ax-modal-footer) { flex: none; }
+.ax-modal--full:has(.policy-inline-pane--props) :is(.ax-modal-header, .ax-modal-footer) { flex: none; background: transparent; }
 .ax-modal--full:has(.policy-inline-pane--props) .ax-modal-body {
-  overflow: auto;
-  display: block;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  max-height: calc(78vh - 132px);
-  overscroll-behavior: contain;
+  max-height: none;
+  background: transparent;
 }
-.ax-modal--full:has(.policy-inline-pane--props) .policy-inline-pane { height: auto; overflow: visible; border: 0; }
+.ax-modal--full:has(.policy-inline-pane--props) .policy-inline-pane {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  background: transparent;
+}
 .ax-modal--full:has(.policy-inline-pane--props) .settings-card-body {
   display: flex;
   flex-direction: column;
   gap: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 4px 8px 16px;
+  background: transparent;
 }
 .ax-modal--full:has(.policy-inline-pane--props) .settings-row:has(.policy-chips) { grid-column: 1 / -1; }
 .ax-modal--full:has(.policy-inline-pane--props) .settings-row-title {
@@ -8375,11 +8397,9 @@ button.linkish {
 }
 :is(.memory-vault-list, .calm-list) .page-item--graph:hover { background: #2a2d2e; }
 :is(.memory-vault-list, .calm-list) .page-item--selected.page-item--graph {
-  background-color: #243840;
-  background-color: color-mix(in srgb, var(--accent-text) 18%, var(--bg-panel));
-  border: 1px solid var(--accent-text);
-  border-left-color: var(--accent-text);
-  box-shadow: none;
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 0;
+  box-shadow: inset 2px 0 0 var(--accent-text);
 }
 :is(.memory-vault-list, .calm-list) .page-item--graph:hover .page-item-node {
   background: #2a2d2e;

@@ -1,13 +1,15 @@
 ---
 name: dotnet-code-review
-description: Principal .NET architecture and code review for .NET 8/9+, C# 10-13, naming, EF Core, ASP.NET Core, security, and performance. Use for a C# or .NET code review, Git diff, or pull request.
-triggers: ["code review", ".net review", "csharp review", "c# review", "pull request review", "dotnet"]
-tags: ["dotnet", "csharp", "review"]
+description: "Principal .NET architecture and code review for .NET 8/9+, C# 10-13, naming, EF Core, ASP.NET Core, security, and performance. Use for a C# or .NET code review, Git diff, or pull request."
+alwaysApply: false
+triggers: ["code review",".net review","csharp review","c# review","pull request review","dotnet"]
+tags: ["dotnet","csharp","review","shared"]
 priority: 70
 enabled: true
 status: approved
 scope: project
 share: true
+group: implementation-quality
 ---
 
 # .NET code review

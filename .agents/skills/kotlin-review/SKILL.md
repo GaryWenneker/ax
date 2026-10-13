@@ -1,13 +1,15 @@
 ---
 name: kotlin-review
-description: Principal review of modern Kotlin (1.9/2.x) covering naming and structure, null safety, immutability and data classes, sealed types, coroutines and structured concurrency, Flow, collections, Android specifics, Java interop, security, and testing. Use for a Kotlin code review, Git diff, or pull request.
+description: "Principal review of modern Kotlin (1.9/2.x) covering naming and structure, null safety, immutability and data classes, sealed types, coroutines and structured concurrency, Flow, collections, Android specifics, Java interop, security, and testing. Use for a Kotlin code review, Git diff, or pull request."
+alwaysApply: false
 triggers: ["kotlin"]
-tags: ["kotlin"]
+tags: ["kotlin","shared"]
 priority: 60
 enabled: true
 status: approved
 scope: project
 share: true
+group: implementation-quality
 ---
 
 # Kotlin review

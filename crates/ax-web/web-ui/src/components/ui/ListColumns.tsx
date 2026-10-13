@@ -6,7 +6,8 @@ import useMobile from '../../hooks/useMobile';
 export interface ListColumn { label: string; header?: ReactNode; sortable?: boolean; filterable?: boolean; minWidth?: number }
 export const ItemColumnContext = createContext<{trace: boolean; labels: readonly string[]} | null>(null);
 export function useListColumns(columns: readonly ListColumn[], id: string) {
-  const storageKey = `ax-list-columns:v1:${window.location.pathname}:${id}:${columns.map(c => c.label).join('|')}`;
+  // v2: widths saved under the fixed-track layout do not fit the content-measured columns.
+  const storageKey = `ax-list-columns:v2:${window.location.pathname}:${id}:${columns.map(c => c.label).join('|')}`;
   const minimumsKey = columns.map(c => c.minWidth ?? 64).join(',');
   const minimums = minimumsKey.split(',').map(Number);
   const [widths, setWidths] = useState<number[] | null>(() => {
@@ -33,7 +34,7 @@ export function useListColumns(columns: readonly ListColumn[], id: string) {
     setSort(current => current?.column !== index ? {column: index, direction: 'asc'} : current.direction === 'asc' ? {column: index, direction: 'desc'} : null);
   }
   const style = widths ? {'--list-columns': widths.map(w => `${w}px`).join(' '), '--column-total': `${widths.reduce((sum, width) => sum + width, 0) + (columns.length - 1) * 8 + 24}px`} as CSSProperties : undefined;
-  return {columns, widths, resize, sort, filters, toggleSort, setFilter: (index: number, value: string) => setFilters(current => ({...current, [index]: value})), clear: () => {setSort(null); setFilters({}); resize(null);}, style,
+  return {columns, widths, minimums, key: storageKey, resize, sort, filters, toggleSort, setFilter: (index: number, value: string) => setFilters(current => ({...current, [index]: value})), clear: () => {setSort(null); setFilters({}); resize(null);}, style,
     order: <T extends {values: readonly ColumnValue[]}>(rows: readonly T[]) => orderRows(rows, sort, filters)};
 }
 export type ListColumnControls = ReturnType<typeof useListColumns>;

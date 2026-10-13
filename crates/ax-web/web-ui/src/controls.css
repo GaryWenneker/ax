@@ -167,33 +167,41 @@ html[data-ax-layout] .portal-data-cell:focus-within { overflow:visible; }
 /* Respond to panel width, so an open detail pane gets the same compact fallback. */
 html[data-ax-layout="portal"] .page-item-list { container-type:inline-size;container-name:ax-list; }
 html[data-ax-layout="portal"] body :is(.page-item:not(.mcp-trace-row):not(.mcp-blade-step),.list-item,.edge-item) { padding-block:4px;min-height:34px; }
-html[data-ax-layout="portal"] body :is(.portal-data-row,.portal-data-header) { padding:4px 12px;min-height:34px; }
+html[data-ax-layout="portal"] body :is(.portal-data-row,.portal-data-header) { padding:4px 12px;min-height:34px;width:100%;min-width:0;box-sizing:border-box; }
 html[data-ax-layout="portal"] .page-table :is(th,td) { padding-block:5px; }
-html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(0,1.6fr) minmax(0,5.5rem) minmax(0,6rem) minmax(0,4.5rem) minmax(0,1fr);min-width:0;column-gap:8px; }
-html[data-ax-layout="portal"] body .page-item-list.portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:28px minmax(0,1.6fr) minmax(0,5.5rem) minmax(0,6rem) minmax(0,4.5rem) minmax(0,1fr); }
+/* Name takes the spare width. Level and scope match the 100px chips.
+   Priority fits its heading. Actions fits the buttons, not the leftover row. */
+html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(0,1fr) max(104px,8rem) max(104px,8rem) max(120px,9rem) max(140px,11rem);min-width:0;column-gap:8px; }
+html[data-ax-layout="portal"] body .page-item-list.portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:28px minmax(0,1fr) max(104px,8rem) max(104px,8rem) max(120px,9rem) max(140px,11rem); }
 html[data-ax-layout="portal"] body .portal-memory-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(180px,1fr) 100px 100px 120px 110px;min-width:0; }
 html[data-ax-layout="portal"] .portal-data-row > *,
 html[data-ax-layout="portal"] .portal-data-header > * { min-width:0;overflow:hidden; }
 html[data-ax-layout="portal"] .portal-data-name { display:grid;grid-template-columns:minmax(7rem,28%) minmax(0,1fr);align-items:center;gap:2px 12px;min-width:0;overflow:hidden; }
 html[data-ax-layout="portal"] .portal-data-name .page-item-sub { text-align:left;justify-self:stretch;min-width:0; }
 html[data-ax-layout="portal"] .portal-data-name .page-item-sub { margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-html[data-ax-layout="portal"] .portal-memory-list .portal-data-name,
-html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { display:flex; flex-direction:row; align-items:center; gap:8px; grid-template-columns:none; }
-html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .page-item-title { flex:0 0 auto; min-width:8rem; max-width:70%; overflow:hidden; text-overflow:ellipsis; }
-html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .page-item-sub { flex:1 1 0; min-width:0; }
-html[data-ax-layout="portal"] .portal-memory-list .page-item-title { flex:1 1 auto;min-width:0; }
+/* Shares of the list width, not a fixed 16rem title. The list is the viewport minus the sidebar. */
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { display:grid; grid-template-columns:var(--title-track,fit-content(18cqw)) minmax(0,1fr); align-items:center; gap:8px; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .page-item-title { grid-column:1; grid-row:1; width:auto; max-width:var(--title-track,18cqw); min-width:0; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name :is(.page-item-sub, .portal-data-tags) { grid-column:2; width:100%; min-width:0; text-align:left; justify-self:stretch; }
+html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display:flex; align-items:center; gap:12px; }
+html[data-ax-layout="portal"] .portal-memory-list .portal-data-name .page-item-title { flex:0 1 auto; width:auto; max-width:100%; min-width:0; }
+html[data-ax-layout="portal"] .portal-memory-list .portal-data-tags { flex:0 0 auto; width:max-content; max-width:28cqw; }
+html[data-ax-layout="portal"] body :is(.calm-list, .memory-vault-list) :is(.portal-data-header, .portal-data-row) { padding-left:40px; }
+html[data-ax-layout="portal"] .portal-data-lead { display:flex; align-items:center; justify-content:flex-start; width:28px; }
+html[data-ax-layout="portal"] .portal-data-lead .calm-row-check { margin:0; }
 html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:1/-1;margin:0; }
 @container ax-list (min-width:1000px) {
   html[data-ax-layout="portal"] .portal-data-name { grid-template-columns:minmax(7rem,24%) minmax(0,1fr) max-content;gap:12px; }
-  html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display:flex; flex-direction:row; align-items:center; gap:8px; grid-template-columns:none; }
-  html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:auto; }
+  html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { grid-template-columns:var(--title-track,fit-content(18cqw)) minmax(0,1fr); }
+  html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display:flex; }
+  html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .portal-data-tags { grid-column:2; }
   html[data-ax-layout="portal"] .page-item:not(.portal-data-row):not(.mcp-trace-row):not(.mcp-blade-step) .page-item-body { display:flex;align-items:center;gap:12px;min-width:0; }
   html[data-ax-layout="portal"] .page-item:not(.portal-data-row):not(.mcp-trace-row):not(.mcp-blade-step) .page-item-sub { margin:0;min-width:0;flex:1; }
 }
 @container ax-list (max-width:640px) {
-  html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { min-width:0;grid-template-columns:minmax(0,1fr) minmax(0,4.5rem);gap:4px 8px; }
+  html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { min-width:0;grid-template-columns:minmax(0,1fr) max(140px,11rem);gap:4px 8px; }
   html[data-ax-layout="portal"] .portal-data-header { display:none; }
-  html[data-ax-layout="portal"] .portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns: 28px minmax(0,1fr) minmax(0,4.5rem); }
+  html[data-ax-layout="portal"] body .page-item-list.portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns: 28px minmax(0,1fr) max(140px,11rem); }
   html[data-ax-layout="portal"] .portal-data-name { grid-column:1/-1;display:flex;flex-direction:column;align-items:stretch;gap:2px; }
   html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { grid-column: 2; }
   html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { flex-direction: row; align-items: center; }
@@ -242,19 +250,23 @@ html[data-ax-layout="portal"] .settings-hero-actions { max-width:100%;min-width:
 .column-table td{overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere}
 html[data-ax-layout="portal"] body .column-list--resized :is(.portal-data-row,.portal-data-header){grid-template-columns:var(--list-columns);min-width:var(--column-total)}
 html[data-ax-layout="portal"] body .column-list--resized.portal-policy-list :is(.portal-data-row,.portal-data-header){grid-template-columns:var(--list-columns)}
+/* Fitted lists: widths measured from the content client-side (useColumnFit) and summing to the list width. */
+html[data-ax-layout="portal"] body .page-item-list.column-list--fitted :is(.portal-data-row,.portal-data-header){grid-template-columns:var(--list-columns);min-width:0}
+.column-list--fitted .portal-data-name{overflow:hidden}
 .item-column-header,.item-column-row{display:grid!important;grid-template-columns:var(--list-columns,minmax(180px,1fr) minmax(140px,.8fr) minmax(100px,.5fr));gap:8px;padding:4px 12px;min-width:var(--column-total,0px);box-sizing:border-box;align-items:center}
 .item-column-name,.item-column-detail,.item-column-context{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .item-column-name{display:flex;align-items:center;gap:6px}
 .item-column-detail{font-size:11px;color:var(--text-dim);white-space:nowrap}
 .item-column-context{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .item-column-context .page-item-badge{max-width:100%;overflow:hidden;text-overflow:ellipsis}
-html[data-ax-layout="portal"] body .mcp-trace-calm :is(.item-column-row,.item-column-header){grid-template-columns:var(--list-columns,minmax(180px,1fr) 160px minmax(120px,.35fr))}
+html[data-ax-layout="portal"] body .mcp-trace-calm :is(.item-column-row,.item-column-header){grid-template-columns:var(--list-columns,minmax(0,1fr) 7.5rem minmax(8rem,14rem));width:100%;min-width:0}
 html[data-ax-layout="portal"] body :is(.mcp-trace-calm,.mcp-blade-steps) :is(.item-column-row,.item-column-header){padding-left:40px}
 /* Column rows are independent events. Explicit related-call groups keep their own connectors. */
 .column-list .item-column-row.page-item--graph::before{display:none}
-html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-body{display:flex;flex-direction:row;align-items:center;gap:12px;min-width:0}
-html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-title{flex:0 0 auto;min-width:8rem;max-width:70%}
-html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-sub{flex:1 1 0;min-width:0;margin:0}
+html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-body{display:grid;grid-template-columns:var(--title-track,minmax(0,1.5fr)) minmax(0,1fr);align-items:center;gap:12px;min-width:0}
+html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-title-line{min-width:0;overflow:hidden}
+html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-title{width:100%;max-width:none;min-width:0}
+html[data-ax-layout="portal"] body .mcp-trace-calm .page-item-sub{width:100%;min-width:0;margin:0;text-align:left;overflow:hidden;text-overflow:ellipsis}
 .mcp-trace-calm .item-column-row>.page-item-meta{margin:0;font:400 13px var(--font-ui);font-variant-numeric:tabular-nums}
 .mcp-trace-calm .item-column-context{overflow:visible}
 .mcp-blade-steps :is(.item-column-row,.item-column-header){grid-template-columns:var(--list-columns,minmax(120px,1fr) 70px 70px)}

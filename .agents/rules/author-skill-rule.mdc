@@ -2,13 +2,14 @@
 id: author-skill-rule
 level: WARNING
 alwaysApply: false
-globs: [".agents/skills/**/SKILL.md", ".agents/rules/**/*.mdc", ".cursor/skills/**/SKILL.md", ".cursor/rules/**/*.mdc"]
-triggers: ["create a skill", "create a rule", "write a skill", "write a rule", "maak een skill", "maak een rule", "schrijf een skill", "schrijf een rule", "nieuwe skill", "nieuwe rule", "skill opstellen", "regel opstellen", "pas de skill aan", "pas de rule aan", "te algemeen", "too general", "geen bloat", "no bloat", "op hiaten", "SKILL.md"]
-tags: ["policy", "authoring"]
+globs: [".agents/skills/**/SKILL.md",".agents/rules/**/*.mdc",".cursor/skills/**/SKILL.md",".cursor/rules/**/*.mdc"]
+triggers: ["create a skill","create a rule","write a skill","write a rule","maak een skill","maak een rule","schrijf een skill","schrijf een rule","nieuwe skill","nieuwe rule","skill opstellen","regel opstellen","pas de skill aan","pas de rule aan","te algemeen","too general","geen bloat","no bloat","op hiaten","SKILL.md"]
+tags: ["policy","authoring"]
 priority: 72
 enabled: true
 status: approved
 scope: project
+storage: files
 group: session-protocol
 ---
 

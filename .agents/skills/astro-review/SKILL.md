@@ -9,6 +9,7 @@ enabled: true
 status: approved
 scope: project
 share: true
+group: implementation-quality
 ---
 
 # Astro review

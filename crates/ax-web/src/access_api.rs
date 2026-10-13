@@ -614,6 +614,49 @@ async fn update_member(
     }
 }
 
+async fn remove_member(Extension(actor): Extension<Actor>, Path(id): Path<String>) -> Response {
+    let db = match pool().await {
+        Ok(db) => db,
+        Err(_) => {
+            return failure(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Access database unavailable",
+            )
+        }
+    };
+    let members = match access::list_members(&db).await {
+        Ok(members) => members,
+        Err(_) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"),
+    };
+    if actor.role != access::MemberRole::Owner
+        && members
+            .iter()
+            .any(|member| member.id == id && member.roles.contains(&access::MemberRole::Owner))
+    {
+        return failure(StatusCode::FORBIDDEN, "Only an owner can remove an owner");
+    }
+    match access::delete_member(&db, &id).await {
+        Ok(()) => {
+            let actor_id = (actor.member_id != id).then_some(actor.member_id.as_str());
+            let _ = access::audit(
+                &db,
+                actor_id,
+                actor.client_id.as_deref(),
+                "member.deleted",
+                "member",
+                &id,
+                &serde_json::json!({}),
+            )
+            .await;
+            Json(serde_json::json!({"deleted": true})).into_response()
+        }
+        Err(_) => failure(
+            StatusCode::BAD_REQUEST,
+            "Member not found or the last active owner cannot be removed",
+        ),
+    }
+}
+
 async fn update_scopes(
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
@@ -751,7 +794,7 @@ async fn allow_reenrollment(
 pub fn router(hub: WebHub) -> Router {
     Router::new()
         .route("/session", get(session))
-        .route("/team/{id}", axum::routing::patch(update_member))
+        .route("/team/{id}", axum::routing::patch(update_member).delete(remove_member))
         .route("/clients/{id}/scopes", axum::routing::patch(update_scopes))
         .route("/clients/{id}/rotate", post(rotate_token))
         .route("/credentials/{id}/revoke", post(revoke_token))

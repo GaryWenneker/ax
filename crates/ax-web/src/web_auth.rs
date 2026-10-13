@@ -56,11 +56,48 @@ fn forwarded_client_is_remote(headers: &HeaderMap) -> bool {
         .unwrap_or(!client.is_empty())
 }
 
+fn local_owner_can_manage_without_session(trusted_local: bool, local: bool) -> bool {
+    trusted_local && local
+}
+
+fn loopback_host(headers: &HeaderMap, port: u16) -> bool {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    host == format!("127.0.0.1:{port}")
+        || host == format!("localhost:{port}")
+        || host == format!("[::1]:{port}")
+}
+
 fn local_request(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
-    // A loopback proxy is not the local Owner when it forwards a public client.
+    // Opening the loopback URL is the person at this computer, even if a
+    // proxy header is also present. A public hostname stays untrusted when
+    // it forwards someone else's address.
     peer.ip().is_loopback()
-        && !forwarded_client_is_remote(headers)
         && crate::local_owner::browser_serves(headers, port)
+        && (loopback_host(headers, port) || !forwarded_client_is_remote(headers))
+}
+
+fn proxied_browser(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
+    // The reverse proxy runs on this computer and forwards the operator's
+    // browser. The public host is accepted only when that browser names it.
+    peer.ip().is_loopback()
+        && !loopback_host(headers, port)
+        && crate::local_owner::browser_serves(headers, port)
+}
+
+fn served_operator(headers: &HeaderMap, peer: SocketAddr, port: u16) -> bool {
+    local_request(headers, peer, port) || proxied_browser(headers, peer, port)
+}
+
+fn password_owner_without_session(
+    local_only: bool,
+    proxied: bool,
+    trusted_local: bool,
+    local: bool,
+) -> bool {
+    local_owner_can_manage_without_session(trusted_local, local) || (local_only && proxied)
 }
 async fn db() -> Result<SqlitePool, ErrorResponse> {
     let path = global_db_path()
@@ -162,7 +199,14 @@ async fn browser_member(
     if let Some(id) = member_for_session(pool, headers).await {
         return Ok(id);
     }
-    if !enabled(pool).await? && trusted_local_mode(hub) && local_request(headers, peer, hub.port) {
+    // The person at this computer can set a password before any web session
+    // exists. The reverse proxy on this machine is that same person.
+    if password_owner_without_session(
+        hub.local_only,
+        proxied_browser(headers, peer, hub.port),
+        trusted_local_mode(hub),
+        local_request(headers, peer, hub.port),
+    ) {
         return access::list_members(pool)
             .await
             .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?
@@ -406,7 +450,7 @@ async fn setup(
     if enabled(&pool).await? {
         return Err(err(StatusCode::FORBIDDEN, "Already enabled"));
     }
-    if hub.readonly || !trusted_local_mode(&hub) || !local_request(&headers, peer, hub.port) {
+    if hub.readonly || !hub.local_only || !served_operator(&headers, peer, hub.port) {
         return Err(err(StatusCode::FORBIDDEN, "Local Owner required"));
     }
     if body.password.len() < 12 || body.password.len() > 1024 {
@@ -452,7 +496,7 @@ async fn configure(
     let current = enabled(&pool).await?;
     let actor = browser_member(&pool, &headers, peer, &hub).await?;
     require_owner(&pool, &actor).await?;
-    if !hub.local_only || !local_request(&headers, peer, hub.port) {
+    if !hub.local_only || !served_operator(&headers, peer, hub.port) {
         return Err(err(
             StatusCode::FORBIDDEN,
             "Change authentication only at local Command Center",
@@ -621,11 +665,14 @@ async fn user_password(
     }
     let actor = browser_member(&pool, &headers, peer, &hub).await?;
     require_owner(&pool, &actor).await?;
-    require_recent_if_enabled(&pool, &headers).await?;
+    if member_for_session(&pool, &headers).await.is_some() {
+        require_recent_if_enabled(&pool, &headers).await?;
+    }
     let req_origin = headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok());
     let trusted = local_request(&headers, peer, hub.port)
+        || proxied_browser(&headers, peer, hub.port)
         || origin().is_ok_and(|url| req_origin == Some(url.as_str().trim_end_matches('/')));
     if !trusted {
         return Err(err(StatusCode::FORBIDDEN, "Untrusted request origin"));
@@ -1376,12 +1423,21 @@ mod tests {
         }
     }
     #[test]
+    fn local_owner_can_set_a_password_without_a_web_session() {
+        assert!(local_owner_can_manage_without_session(true, true));
+        assert!(!local_owner_can_manage_without_session(true, false));
+        assert!(!local_owner_can_manage_without_session(false, true));
+    }
+    #[test]
     fn invalid_origins_and_cookie_parsing() {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, "localhost:7070".parse().unwrap());
         let peer = "127.0.0.1:23456".parse().unwrap();
         assert!(local_request(&headers, peer, 7070));
         headers.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+        assert!(local_request(&headers, peer, 7070));
+        headers.insert(header::HOST, "admin.example.com".parse().unwrap());
+        headers.insert(header::ORIGIN, "https://admin.example.com".parse().unwrap());
         assert!(!local_request(&headers, peer, 7070));
         assert!(!local_request(&HeaderMap::new(), peer, 7070));
         assert!(!local_request(
@@ -1391,5 +1447,34 @@ mod tests {
         ));
         assert!(session_cookie("abc", true).contains("HttpOnly"));
         assert!(session_cookie("abc", true).contains("Secure"));
+    }
+
+    #[test]
+    fn reverse_proxy_browser_can_set_a_password_without_a_session() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, "admin.example.com".parse().unwrap());
+        headers.insert(header::ORIGIN, "https://admin.example.com".parse().unwrap());
+        headers.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+        let peer = "127.0.0.1:23456".parse().unwrap();
+        assert!(proxied_browser(&headers, peer, 7070));
+        assert!(served_operator(&headers, peer, 7070));
+        assert!(!local_request(&headers, peer, 7070));
+        assert!(password_owner_without_session(true, true, false, false));
+        assert!(!password_owner_without_session(false, true, false, false));
+        assert!(!password_owner_without_session(true, false, false, false));
+        let mut local = HeaderMap::new();
+        local.insert(header::HOST, "127.0.0.1:7070".parse().unwrap());
+        assert!(!proxied_browser(&local, peer, 7070));
+        headers.insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+        assert!(!proxied_browser(&headers, peer, 7070));
+        headers.remove(header::ORIGIN);
+        headers.insert("sec-fetch-site", "cross-site".parse().unwrap());
+        assert!(!proxied_browser(&headers, peer, 7070));
+        assert!(!proxied_browser(
+            &headers,
+            "203.0.113.7:23456".parse().unwrap(),
+            7070
+        ));
     }
 }

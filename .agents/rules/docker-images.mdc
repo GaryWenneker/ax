@@ -2,14 +2,15 @@
 id: docker-images
 level: WARNING
 alwaysApply: false
-globs: ["**/Dockerfile*", "**/*.dockerfile", "**/docker-compose*.yml", "**/compose*.yaml", "**/.dockerignore"]
-triggers: ["docker", "dockerfile", "container", "image", "compose"]
-tags: ["docker", "containers"]
+globs: ["**/Dockerfile*","**/*.dockerfile","**/docker-compose*.yml","**/compose*.yaml","**/.dockerignore"]
+triggers: ["docker","dockerfile","container","image","compose"]
+tags: ["docker","containers","shared"]
 priority: 80
 enabled: true
 status: approved
 scope: project
 share: true
+group: cicd
 ---
 
 # Container images

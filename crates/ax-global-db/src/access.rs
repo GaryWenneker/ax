@@ -317,6 +317,54 @@ pub async fn update_member(
     update_member_roles(pool, id, &[role], status).await
 }
 
+pub async fn delete_member(pool: &SqlitePool, id: &str) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT role, status FROM team_members WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((role, status)) = row else {
+        bail!("member not found");
+    };
+    if role == "owner" && status == "active" {
+        let (others,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM team_members
+             WHERE id != ? AND role = 'owner' AND status = 'active'",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if others == 0 {
+            bail!("last active owner cannot be deleted");
+        }
+    }
+    sqlx::query(
+        "DELETE FROM client_credentials
+         WHERE client_id IN (SELECT id FROM clients WHERE member_id = ?)",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM clients WHERE member_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE security_audit_log SET actor_member_id = NULL WHERE actor_member_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let removed = sqlx::query("DELETE FROM team_members WHERE id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    if removed.rows_affected() != 1 {
+        bail!("member not found");
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn update_client_scopes(pool: &SqlitePool, id: &str, scopes: &[String]) -> Result<()> {
     let (role,): (String,) = sqlx::query_as(
         "SELECT tm.role FROM clients c JOIN team_members tm ON tm.id = c.member_id
@@ -1453,5 +1501,37 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(list_nodes(&pool).await.unwrap()[0].trust_state, "revoked");
+    }
+
+    #[tokio::test]
+    async fn delete_member_removes_roles_and_keeps_the_last_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::open_and_init(&dir.path().join("global.db"))
+            .await
+            .unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_member(&pool, "teammate", "Teammate", None, MemberRole::Member)
+            .await
+            .unwrap();
+        update_member_roles(
+            &pool,
+            "teammate",
+            &[MemberRole::Admin, MemberRole::Member],
+            "active",
+        )
+        .await
+        .unwrap();
+        delete_member(&pool, "teammate").await.unwrap();
+        let members = list_members(&pool).await.unwrap();
+        assert!(members.iter().all(|member| member.id != "teammate"));
+        let roles: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM member_roles WHERE member_id='teammate'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(roles, 0);
+        assert!(delete_member(&pool, "owner").await.is_err());
+        assert_eq!(list_members(&pool).await.unwrap().len(), 1);
     }
 }

@@ -1,13 +1,15 @@
 ---
 name: java-review
-description: Principal review of modern Java (17/21+) covering naming and structure, null safety and Optional, immutability and records, exceptions, collections and streams, concurrency, Spring and dependency injection, JPA persistence, performance, security, build and dependencies, and testing. Use for a Java code review, Git diff, or pull request.
-triggers: ["java", "maven", "gradle", "code review"]
-tags: ["java"]
+description: "Principal review of modern Java (17/21+) covering naming and structure, null safety and Optional, immutability and records, exceptions, collections and streams, concurrency, Spring and dependency injection, JPA persistence, performance, security, build and dependencies, and testing. Use for a Java code review, Git diff, or pull request."
+alwaysApply: false
+triggers: ["java","maven","gradle","code review"]
+tags: ["java","shared"]
 priority: 70
 enabled: true
 status: approved
 scope: project
 share: true
+group: implementation-quality
 ---
 
 # Java review

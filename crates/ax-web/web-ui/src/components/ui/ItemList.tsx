@@ -1,6 +1,7 @@
-import {Children, isValidElement, useMemo, type ReactNode, type ReactElement} from 'react';
+import {Children, isValidElement, useMemo, useRef, type ReactNode, type ReactElement} from 'react';
 import {ColumnHeader, ColumnTools, ItemColumnContext, columnFromHeader, columnText, useListColumns, type ListColumn} from './ListColumns';
 import type {ColumnValue} from '../../lib/columnModel';
+import {useColumnFit} from '../../hooks/useColumnFit';
 
 export function ItemList({ children, className = '', columns: suppliedColumns, listId = '' }: { children: ReactNode; className?: string; columns?: readonly ListColumn[]; listId?: string }) {
   const trace = /mcp-trace-calm|mcp-blade-steps/.test(className);
@@ -16,9 +17,13 @@ export function ItemList({ children, className = '', columns: suppliedColumns, l
   const display = controls.order(records);
   const labelsKey = columns.map(c => c.label).join("|");
   const context = useMemo(() => ({trace, labels: labelsKey.split("|")}), [trace, labelsKey]);
+  const list = useRef<HTMLDivElement>(null);
+  // Without manual widths the columns fit their content client-side and fill the list exactly.
+  const auto = useColumnFit(list, controls.key, columns.length, controls.minimums, controls.widths !== null, `${records.length}:${display.length}`);
+  const fitted = controls.widths === null && auto.fit !== null;
   return <ItemColumnContext.Provider value={context}>
     <div className="column-list-container"><ColumnTools controls={controls} />
-    <div className={`page-item-list column-list${className ? ` ${className}` : ''}${controls.widths ? ' column-list--resized' : ''}${controls.sort || Object.values(controls.filters).some(v => v.trim()) ? ' column-list--custom-order' : ''}`} style={controls.style}>
+    <div ref={list} className={`page-item-list column-list${className ? ` ${className}` : ''}${controls.widths ? ' column-list--resized' : ''}${fitted ? ' column-list--fitted' : ''}${controls.sort || Object.values(controls.filters).some(v => v.trim()) ? ' column-list--custom-order' : ''}`} style={controls.style ?? auto.style}>
       <ColumnHeader controls={controls} className={legacyHeader ? 'portal-data-header' : 'item-column-header'} />
       {display.map(row => row.element)}
       {records.length > 0 && display.length === 0 && <p className="column-empty" role="status">No loaded rows match the column filters.</p>}

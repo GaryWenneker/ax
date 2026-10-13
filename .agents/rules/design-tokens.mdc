@@ -2,14 +2,15 @@
 id: design-tokens
 level: WARNING
 alwaysApply: false
-globs: ["**/*.css", "**/*.scss", "**/*.module.scss", "**/*.module.css"]
-triggers: ["css", "scss", "styling", "design tokens", "theme"]
-tags: ["css", "styling"]
+globs: ["**/*.css","**/*.scss","**/*.module.scss","**/*.module.css"]
+triggers: ["css","scss","styling","design tokens","theme"]
+tags: ["css","styling","shared"]
 priority: 70
 enabled: true
 status: approved
 scope: project
 share: true
+group: design
 ---
 
 # Design tokens and styling

@@ -2,14 +2,15 @@
 id: css-layers
 level: WARNING
 alwaysApply: false
-globs: ["**/*.module.css", "**/*.css"]
-triggers: ["css", "cascade", "layer", "design system"]
-tags: ["css"]
+globs: ["**/*.module.css","**/*.css"]
+triggers: ["css","cascade","layer","design system"]
+tags: ["css","shared"]
 priority: 70
 enabled: true
 status: approved
 scope: project
 share: true
+group: design
 ---
 
 # CSS cascade layers

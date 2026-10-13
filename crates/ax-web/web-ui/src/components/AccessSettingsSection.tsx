@@ -280,6 +280,12 @@ export default function AccessSettingsSection({ section }: { section: string }) 
                   if (member.status !== 'active') { void mutate(`/api/access/team/${member.id}`, 'PATCH', { roles: member.roles ?? [member.role], status: 'active' }, `${member.display_name} enabled.`); return; }
                   setConfirmation({ title: `Disable ${member.display_name}?`, description: 'Their clients will lose access until this member is enabled again.', label: 'Disable member', action: async () => { await mutate(`/api/access/team/${member.id}`, 'PATCH', { roles: member.roles ?? [member.role], status: 'disabled' }, `${member.display_name} disabled.`); } });
                 }}>{member.status === 'active' ? 'Disable' : 'Enable'}</button>
+                <button type="button" className="btn danger" disabled={locked || lastOwner} onClick={() => setConfirmation({
+                  title: `Remove ${member.display_name}?`,
+                  description: 'This deletes the person and every role assigned to them. Their clients, sessions, password and passkeys are removed. This cannot be undone.',
+                  label: 'Remove member',
+                  action: async () => { await mutate(`/api/access/team/${member.id}`, 'DELETE', undefined, `${member.display_name} removed.`); },
+                })}>Remove</button>
               </div>
             </div>;
           })}
