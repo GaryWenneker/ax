@@ -22,6 +22,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: auth-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     name: Rust auth build and tests
@@ -31,12 +35,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Compile Command Center and global DB
-        run: cargo check -p ax-web -p ax-global-db
+      - name: Rust format gate
+        run: cargo fmt --all -- --check
+      - name: Compile Command Center and global DB with locked dependencies
+        run: cargo check --locked -p ax-web -p ax-global-db
+      - name: Clippy with warnings denied
+        run: cargo clippy --locked -p ax-web -p ax-global-db --all-targets -- -D warnings
       - name: Run role migration and security tests
         run: |
-          cargo test -p ax-global-db multiple_roles_migrate_and_last_owner_stays_safe
-          cargo test -p ax-web web_auth::tests
+          cargo test --locked -p ax-global-db multiple_roles_migrate_and_last_owner_stays_safe
+          cargo test --locked -p ax-web web_auth::tests
+          cargo test --locked -p ax-web access_api
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -74,3 +83,5 @@ jobs:
           exit 1
       - name: Check authenticated desktop and mobile layouts
         run: npx playwright test e2e/command-center-auth.spec.ts --project=desktop-chrome --project=mobile-chrome
+      - name: Regression test team and client permissions
+        run: npx playwright test e2e/access-settings.spec.ts e2e/access-workflows.spec.ts --project=desktop-chrome
