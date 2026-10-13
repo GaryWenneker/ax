@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import { fetchNodes, fetchSource } from '../api';
 import type { SourceSlice } from '../api';
 import Codicon from './Codicon';
@@ -22,6 +24,7 @@ interface Props {
 }
 
 export default function FilePreview({ file, onClose, onNodeSelect, selectedNodeId }: Props) {
+  const now = useNow();
   const [nodes, setNodes] = useState<NodeRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -89,7 +92,7 @@ export default function FilePreview({ file, onClose, onNodeSelect, selectedNodeI
               <div><dt>Language</dt><dd>{file.language}</dd></div>
               <div><dt>Size</dt><dd>{formatBytes(file.size)}</dd></div>
               <div><dt>Nodes</dt><dd>{file.node_count}</dd></div>
-              <div><dt>Indexed</dt><dd>{new Date(file.indexed_at).toLocaleString()}</dd></div>
+              <div><dt>Indexed</dt><dd title={new Date(file.indexed_at).toLocaleString()}>{memoryRowAge(new Date(file.indexed_at).getTime(), now)}</dd></div>
             </dl>
           </div>
         </div>

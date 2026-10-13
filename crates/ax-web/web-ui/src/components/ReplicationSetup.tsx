@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { accessJson } from '../lib/accessApi';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import ModalShell from './ModalShell';
 import Codicon from './Codicon';
 import ServiceStatus, { type ServiceState } from './ServiceStatus';
@@ -12,6 +14,7 @@ type Dataset = { origin: string; nodes: number; edges: number; files: number; so
 type State = { active_replicas?: number; runtime_error?: string; datasets?: Dataset[]; sync?: { compatibility_warning?: string | null; status?: string; last_error?: string; last_success_unix_seconds?: number }; settings: Settings | null; running: boolean; active_project: boolean; safety?: { mode: string; memories: number; rules: number; skills: number; review_required?: boolean; sync_failed?: boolean } };
 
 export default function ReplicationSetup({ locked, onChanged }: { locked: boolean; onChanged: () => Promise<void> }) {
+  const now = useNow();
   const [state, setState] = useState<State | null>(null);
   const [role, setRole] = useState<'primary' | 'replica'>('primary');
   const [cluster, setCluster] = useState('');
@@ -140,7 +143,7 @@ export default function ReplicationSetup({ locked, onChanged }: { locked: boolea
       </div>
       <div className="access-node-local"><h3>Local {saved.config.role === 'primary' ? 'Primary' : 'Replica'}</h3><p>{saved.config.node_id}</p>
         <p>Sync state: {state?.safety?.sync_failed ? 'Failed' : complete ? 'All datasets synchronized' : 'Waiting for synchronization'}</p>
-        <p>Last successful sync: {state?.sync?.last_success_unix_seconds ? new Date(state.sync.last_success_unix_seconds * 1000).toLocaleString() : 'Never'}</p>
+        <p>Last successful sync: {state?.sync?.last_success_unix_seconds ? memoryRowAge(state.sync.last_success_unix_seconds * 1000, now) : 'Never'}</p>
         {state?.sync?.compatibility_warning && <p role="status" className="access-note">{state.sync.compatibility_warning}</p>}
         {state?.sync?.last_error && <p role="alert">{state.sync.last_error}</p>}
         {state?.datasets?.map(dataset => <p key={dataset.origin}><strong>Node {dataset.origin}</strong>: {dataset.nodes} nodes · {dataset.edges} relationships · {dataset.files} files · {dataset.logFiles} log files · {dataset.agentSessions} agent sessions · {dataset.historyRows} conversation and log records</p>)}

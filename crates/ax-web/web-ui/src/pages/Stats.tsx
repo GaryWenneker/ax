@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { memoryRowAge } from '../memoryHeadline';
+import { useNow } from '../lib/useNow';
 import { useLive } from '../lib/useLive';
 import { fetchStats } from '../api';
 import { navigateRoute } from '../lib/routes';
@@ -34,17 +36,8 @@ function formatBytes(b: number) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDate(ts: number) {
-  return new Date(ts).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 export default function StatsPage() {
+  const now = useNow();
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,7 +72,7 @@ export default function StatsPage() {
           stats ? (
             <>
               <strong>{stats.project_name}</strong>
-              {stats.readonly ? ' · read-only' : ''} · last indexed {formatDate(stats.last_indexed_at)}
+              {stats.readonly ? ' · read-only' : ''} · last indexed {stats.last_indexed_at ? memoryRowAge(stats.last_indexed_at, now) : 'never'}
             </>
           ) : (
             'Index overview for the current project.'

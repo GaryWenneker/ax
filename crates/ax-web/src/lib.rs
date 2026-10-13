@@ -31,6 +31,7 @@ mod plugins_api;
 mod policy;
 mod policy_share;
 mod pricing_api;
+mod context_budget_api;
 mod project_purge;
 mod queries;
 mod remote_mcp;
