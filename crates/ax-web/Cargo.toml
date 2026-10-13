@@ -46,7 +46,7 @@ dirs = { workspace = true }
 reqwest = { workspace = true }
 futures-util = { workspace = true }
 async-stream = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 argon2 = "0.5"
 blake3 = { workspace = true }
 webauthn-rs = "0.5.5"

@@ -4,7 +4,7 @@ version = "8.1.0"
 edition = "2021"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 ax-types = { workspace = true }
 ax-utils = { workspace = true }
 ax-global-db = { workspace = true }

@@ -14,7 +14,7 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 dirs = { workspace = true }
 sqlx = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 walkdir = { workspace = true }
 
 [dev-dependencies]

@@ -926,7 +926,7 @@ dependencies = [
  "ax-usage",
  "ax-utils",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "dirs",
  "fs2",
  "hex",
@@ -1022,7 +1022,7 @@ version = "8.1.0"
 dependencies = [
  "ax-types",
  "ax-utils",
- "base64 0.22.1",
+ "base64 0.23.1",
  "reqwest",
  "serde",
  "serde_json",
@@ -1052,7 +1052,7 @@ dependencies = [
  "ax-quality",
  "ax-types",
  "ax-utils",
- "base64 0.22.1",
+ "base64 0.23.1",
  "octocrab",
  "reqwest",
  "serde",
@@ -1086,7 +1086,7 @@ dependencies = [
  "ax-memory",
  "ax-policy",
  "ax-utils",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blake3",
  "dirs",
  "reqwest",
@@ -1255,7 +1255,7 @@ dependencies = [
  "ax-usage",
  "ax-utils",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blake3",
  "bytes",
  "chrono",
@@ -4820,7 +4820,7 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.21.7",
  "chrono",
  "getrandom 0.2.17",
  "http",
