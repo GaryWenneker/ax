@@ -11,7 +11,7 @@ export default defineConfig({
 		starlight({
 			title: 'ax',
 			description:
-				'Understand code. Preserve context. Guide every agent. Ax connects code intelligence, memory, policy and MCP.',
+				'Agent Xpansion (AX) — the context layer for AI agents. Local-first code intelligence, persistent memory, policy and MCP integration.',
 			favicon: '/logo.png',
 				head: [
 					{
