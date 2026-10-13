@@ -20,7 +20,7 @@
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "astro": "^6.3.1",
     "jose": "^5.9.6",
-    "sharp": "^0.34.5"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@netlify/functions": "^4.3.0",
