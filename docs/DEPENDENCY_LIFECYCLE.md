@@ -76,7 +76,7 @@ merging PRs to `main`. Enable notifications for security alerts and failed
 workflow runs.
 
 Only `dependency-policy.yml` (pull requests) and
-`dependency-monitor.yml` (daily schedule) are automatically triggered.
+`dependency-monitor.yml` (daily schedule and dependency pushes to `main`) are automatically triggered.
 Existing CI, release and deployment workflows retain their prior owners'
 suspension and are not reactivated.
 
