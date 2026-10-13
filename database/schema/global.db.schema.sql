@@ -176,6 +176,7 @@ CREATE TABLE IF NOT EXISTS web_passkeys (
 );
 CREATE INDEX IF NOT EXISTS idx_web_passkeys_member ON web_passkeys(member_id,revoked_at);
 CREATE TABLE IF NOT EXISTS web_sessions (
+    id TEXT NOT NULL UNIQUE,
     token_hash TEXT PRIMARY KEY,
     member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -185,6 +186,14 @@ CREATE TABLE IF NOT EXISTS web_sessions (
     revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_web_sessions_member ON web_sessions(member_id,revoked_at);
+CREATE TABLE IF NOT EXISTS web_recovery_codes (
+    member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+    verifier TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    consumed_at INTEGER,
+    PRIMARY KEY (member_id, verifier)
+);
+CREATE INDEX IF NOT EXISTS idx_web_recovery_member ON web_recovery_codes(member_id,consumed_at);
 CREATE TABLE IF NOT EXISTS clients (
     id TEXT PRIMARY KEY,
     member_id TEXT NOT NULL,
