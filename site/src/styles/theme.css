@@ -343,8 +343,10 @@ h1#_top,.sl-markdown-content h2,.sl-markdown-content h3{
 .main-pane .content-panel::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(90deg,rgba(8,10,9,.94) 0%,rgba(8,10,9,.9) 58%,rgba(8,10,9,.4) 82%,transparent 100%);backdrop-filter:blur(18px);mask-image:linear-gradient(90deg,#000 0%,#000 64%,transparent 100%);-webkit-mask-image:linear-gradient(90deg,#000 0%,#000 64%,transparent 100%)}
 .right-sidebar{z-index:4;background:transparent;pointer-events:none}
 .right-sidebar-panel{position:relative;isolation:isolate;pointer-events:auto}
-.right-sidebar-panel::before{content:"";position:absolute;z-index:-1;top:-8px;bottom:-12px;left:-14px;width:calc(var(--sl-sidebar-width) - 1.5rem);pointer-events:none;background:rgba(8,10,9,.82);mask-image:linear-gradient(90deg,transparent,#000 14%,#000 80%,transparent),linear-gradient(180deg,transparent,#000 8%,#000 92%,transparent);mask-composite:intersect;-webkit-mask-image:linear-gradient(90deg,transparent,#000 14%,#000 80%,transparent),linear-gradient(180deg,transparent,#000 8%,#000 92%,transparent);-webkit-mask-composite:source-in}
-.right-sidebar-panel h2,.right-sidebar-panel a{color:#f0f3ed}
+.right-sidebar{--sl-sidebar-width:18rem}
+.right-sidebar-panel{overflow:hidden}
+.right-sidebar-panel::before{content:"";position:absolute;z-index:-1;top:-8px;bottom:-12px;left:0;right:0;width:auto;pointer-events:none;background:rgba(18,22,20,.45);mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent),linear-gradient(180deg,transparent,#000 8%,#000 92%,transparent);mask-composite:intersect;-webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent),linear-gradient(180deg,transparent,#000 8%,#000 92%,transparent);-webkit-mask-composite:source-in}
+.right-sidebar-panel h2,.right-sidebar-panel a,starlight-toc a{color:#f0f3ed;overflow-wrap:anywhere;white-space:normal}
 .right-sidebar-panel a[aria-current="true"]{color:var(--ax-lime)}
 :root[data-theme='light'] .main-pane .content-panel::before{background:linear-gradient(90deg,rgba(255,255,255,.96) 0%,rgba(255,255,255,.9) 58%,rgba(255,255,255,.4) 82%,transparent 100%)}
 :root[data-theme='light'] .right-sidebar-panel::before{background:rgba(255,255,255,.88)}

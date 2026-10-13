@@ -1,3 +1,5 @@
+import { instantMs, memoryRowAge } from '../memoryHeadline.ts';
+
 export interface RuleRowFacts {
   alwaysApply?: boolean;
   globs?: string[];
@@ -69,8 +71,16 @@ export function traceDirectionLabel(dir: TraceDirection): string {
   return DIRECTION_LABELS[dir];
 }
 
-export function formatTraceTime(time: string): string {
-  return time.replace(/\.\d+$/, '');
+export function formatTraceTime(time: string, nowMs = Date.now()): string {
+  const ms = instantMs(time);
+  if (ms == null) return time.replace(/\.\d+$/, '');
+  return memoryRowAge(ms, nowMs);
+}
+
+/** Age from the parsed log instant. The display string is already in the user's zone and must not be parsed again. */
+export function traceAge(instant: number | null | undefined, time: string, nowMs = Date.now()): string {
+  if (instant != null && Number.isFinite(instant)) return memoryRowAge(instant, nowMs);
+  return formatTraceTime(time, nowMs);
 }
 
 export function traceRowSubtitle(tool: string | undefined, kindLabel: string, meta: string): string {

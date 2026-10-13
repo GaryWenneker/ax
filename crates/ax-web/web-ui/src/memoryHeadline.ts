@@ -25,6 +25,21 @@ export function memoryRowAge(updatedAtMs: number, nowMs: number): string {
   return new Date(updatedAtMs).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/** Parse an ISO, SQLite UTC, unix-second, or unix-ms timestamp. */
+export function instantMs(value: string | number | null | undefined): number | null {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return value > 1e12 ? value : value * 1000;
+  }
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return instantMs(Number(trimmed));
+  const normalized = trimmed.replace(' ', 'T');
+  const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized) ? normalized : `${normalized}Z`;
+  const ms = Date.parse(zoned);
+  return Number.isNaN(ms) ? null : ms;
+}
+
 function countCommits(body: string): number {
   const beforeOutcome = body.split('\n\nOutcome: ')[0];
   const start = beforeOutcome.indexOf('\n\nCommits:');

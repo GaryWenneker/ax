@@ -336,7 +336,7 @@ function AppShell() {
               </span>
             </div>
             {portalLayout && (
-              <form className="portal-search" role="search" onSubmit={(event) => {
+              <form className={`portal-search${portalQuery ? ' portal-search--open' : ''}`} role="search" onSubmit={(event) => {
                 event.preventDefault();
                 const query = portalQuery.trim();
                 const item = navSections.flatMap((section) => section.items)

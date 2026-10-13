@@ -41,7 +41,7 @@ export default function MarkdownPreview({
           if (node.type !== 'element' || !node.properties) return;
           if (openLinksInNewTab && node.tagName === 'a') {
             node.properties.target = '_blank';
-            node.properties.rel = 'noopener noreferrer';
+            node.properties.rel = ['noopener', 'noreferrer'];
           }
           if (imageSrc && node.tagName === 'img' && typeof node.properties.src === 'string') {
             const next = imageSrc(node.properties.src);

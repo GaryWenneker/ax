@@ -5,6 +5,9 @@ module.exports = {
   'chrome-headless-shell': {
     skipDownload: process.platform !== 'linux',
   },
+  // Explicit settings, independently testable under Puppeteer 25+.
+  chrome: { skipDownload: false },
+  firefox: { skipDownload: true },
   // Restricted Linux runners deliberately launch headless: 'shell'.
   // Keep that download there, and retain Chrome for Testing on all platforms.
 };

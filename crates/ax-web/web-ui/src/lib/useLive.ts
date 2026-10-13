@@ -97,6 +97,7 @@ export function useFreshMarks(): [ReadonlySet<string>, (keys: readonly string[])
   const mark = useCallback((keys: readonly string[]) => {
     if (keys.length === 0) return;
     setFresh((cur) => new Set([...cur, ...keys]));
+    window.dispatchEvent(new CustomEvent('ax-page-arrivals', { detail: { count: keys.length } }));
     const t = setTimeout(() => {
       timers.current.delete(t);
       setFresh((cur) => {

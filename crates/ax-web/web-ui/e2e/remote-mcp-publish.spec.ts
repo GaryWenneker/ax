@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { chooseSelect } from './chooseSelect';
 import { readFileSync } from 'node:fs';
 
 if (process.env.AX_CHROME_EXECUTABLE) test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
@@ -66,7 +67,7 @@ test('copies and downloads the exact client JSON and distinguishes endpoint reac
   await expect(section.getByRole('heading', { name: 'Share this project' })).toBeVisible();
   await expect(section).toContainText('Server stopped');
   await expect(section.getByLabel('Generated MCP configuration')).toContainText(endpoint);
-  await section.getByLabel('MCP client').selectOption('vscode');
+  await chooseSelect(section.getByLabel('MCP client'), 'vscode');
   const preview = section.getByLabel('Generated MCP configuration'); await expect(preview).toContainText('"servers"');
   const content = await preview.inputValue();
   await section.getByRole('button', { name: 'Copy configuration', exact: true }).click();
@@ -76,20 +77,20 @@ test('copies and downloads the exact client JSON and distinguishes endpoint reac
   expect(download.suggestedFilename()).toBe('mcp.json'); expect(readFileSync((await download.path())!, 'utf8')).toBe(content);
   await section.getByRole('button', { name: 'Verify endpoint' }).click(); await expect(section).toContainText('Endpoint reachable, sign-in required. Project access has not been verified.');
   await section.getByRole('button', { name: 'Copy MCP URL' }).click(); await expect(section.getByRole('status').filter({ hasText: 'MCP URL copied.' })).toBeVisible(); expect(await page.evaluate(() => localStorage.getItem('fixture-copied'))).toBe(endpoint);
-  await section.getByLabel('MCP client').selectOption('chatgpt'); await expect(preview).toHaveValue(endpoint);
+  await chooseSelect(section.getByLabel('MCP client'), 'chatgpt'); await expect(preview).toHaveValue(endpoint);
   await expect(section.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  if (process.env.AX_REMOTE_SCREENSHOTS) { await section.getByLabel('MCP client').selectOption('cursor'); await expect(preview).toContainText('mcpServers'); await page.setViewportSize({ width: info.project.name.startsWith('mobile') ? 393 : 1280, height: info.project.name.startsWith('mobile') ? 1700 : 1150 }); await page.evaluate(() => document.querySelectorAll('*').forEach(el => { if (el instanceof HTMLElement && el.scrollTop) el.scrollTop = 0; })); await page.screenshot({ scale: 'css', path: `../../../site/public/screenshots/remote-mcp-project-${info.project.name.startsWith('mobile') ? 'mobile' : 'desktop'}.png`, fullPage: true }); }
+  if (process.env.AX_REMOTE_SCREENSHOTS) { await chooseSelect(section.getByLabel('MCP client'), 'cursor'); await expect(preview).toContainText('mcpServers'); await page.setViewportSize({ width: info.project.name.startsWith('mobile') ? 393 : 1280, height: info.project.name.startsWith('mobile') ? 1700 : 1150 }); await page.evaluate(() => document.querySelectorAll('*').forEach(el => { if (el instanceof HTMLElement && el.scrollTop) el.scrollTop = 0; })); await page.screenshot({ scale: 'css', path: `../../../site/public/screenshots/remote-mcp-project-${info.project.name.startsWith('mobile') ? 'mobile' : 'desktop'}.png`, fullPage: true }); }
 });
 
 test('requires publisher selection and uses Cline proxy with no invented native login command', async ({ page }) => {
   await fixture(page, { multiple: true, noNative: true }); await page.goto('/settings?section=remote'); const section = page.locator('.remote-mcp-publish');
-  await expect(section.getByLabel('Publisher')).toHaveValue(''); await expect(section.getByLabel('Generated MCP configuration')).toHaveCount(0);
-  await section.getByLabel('Publisher').selectOption('second'); await expect(section.getByLabel('Generated MCP configuration')).toContainText('office.example');
-  await section.getByLabel('MCP client').selectOption('cline'); await expect(section.getByLabel('MCP transport')).toHaveValue('proxy');
+  await expect(section.getByLabel('Publisher')).toHaveAttribute('data-value', ''); await expect(section.getByLabel('Generated MCP configuration')).toHaveCount(0);
+  await chooseSelect(section.getByLabel('Publisher'), 'second'); await expect(section.getByLabel('Generated MCP configuration')).toContainText('office.example');
+  await chooseSelect(section.getByLabel('MCP client'), 'cline'); await expect(section.getByLabel('MCP transport')).toHaveAttribute('data-value', 'proxy');
   await expect(section.getByLabel('Generated MCP configuration')).toContainText('"command": "ax"');
   await expect(section.getByRole('button', { name: 'Copy login command (POSIX)' })).toBeDisabled();
-  await section.getByLabel('MCP transport').selectOption('direct'); await expect(section.getByLabel('Generated MCP configuration')).toContainText('streamableHttp');
+  await chooseSelect(section.getByLabel('MCP transport'), 'direct'); await expect(section.getByLabel('Generated MCP configuration')).toContainText('streamableHttp');
 });
 
 test('clipboard denial selects manual text without a copied confirmation', async ({ page }) => {

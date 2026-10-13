@@ -709,7 +709,22 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                       const r = ruleById.get(id);
                       if (r) onRuleContext(e, r);
                     }}
-                    onCheck={(id, checked) => {
+                    visibleSelected={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
+                    onToggleVisible={() => setSelectedIds(toggleVisibleSelection(visibleRowIds, selectedIds))}
+                    onCheck={(id, checked, shiftKey) => {
+                      if (shiftKey) {
+                        const next = nextRowSelection({
+                          id,
+                          visibleIds: visibleRowIds,
+                          selected: selectedIds,
+                          anchor: anchorId,
+                          metaKey: false,
+                          shiftKey: true,
+                        });
+                        setSelectedIds(next.selected);
+                        setAnchorId(next.anchor);
+                        return;
+                      }
                       const next = new Set(selectedIds);
                       if (checked) next.add(id);
                       else next.delete(id);
