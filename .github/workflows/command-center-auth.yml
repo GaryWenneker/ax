@@ -1,15 +1,6 @@
 name: Command Center Authentication
 
 on:
-  push:
-    branches: [feature/command-center-auth-passkeys-spec]
-    paths:
-      - 'crates/ax-web/**'
-      - 'crates/ax-global-db/**'
-      - 'database/schema/global.db.schema.sql'
-      - '.github/workflows/command-center-auth.yml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
   pull_request:
     paths:
       - 'crates/ax-web/**'
