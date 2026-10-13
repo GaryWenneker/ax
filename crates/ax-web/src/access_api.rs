@@ -73,6 +73,16 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
             client_id: Some(principal.client_id),
             role: principal.role,
         }
+    } else if crate::web_auth::web_login_enabled(&db).await {
+        let Some((member_id, role)) = crate::web_auth::session_member(&db, req.headers()).await
+        else {
+            return failure(StatusCode::UNAUTHORIZED, "Sign in required");
+        };
+        if mutation && req.headers().get("x-ax-access-csrf")
+            .and_then(|v| v.to_str().ok()) != Some(csrf()) {
+            return failure(StatusCode::FORBIDDEN, "Missing CSRF token");
+        }
+        Actor { member_id, client_id: None, role }
     } else {
         let host = req
             .headers()
