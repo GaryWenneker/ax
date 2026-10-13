@@ -29,7 +29,7 @@ Confidence is limited to the exercised controls and CI evidence below.
 
 ## Limitations and pending real-world proof
 
-- `Dependency Auto-Remediation` runs only from the default branch after merge; its first scheduled/push run must be inspected separately.
+- **First real run:** [Actions 38390956441](https://github.com/GaryWenneker/ax/actions/runs/38390956441) found safe-fix candidates for Command Center and telemetry; the website had no eligible candidate. GitHub Actions successfully pushed two bot branches, but PR creation failed because the repository disallows Actions-created PRs. PR #104 was created via the connected GitHub account for the passing Command Center candidate. The telemetry candidate was rejected by downstream OSV PR checks (sharp@0.35.4, GHSA-wq5f-xc86-pv6w); PR #105 was closed without merging. A follow-up OSV pre-PR gate prevents this class of rejected proposal from being created in future runs.
 - The linked account cannot change repository Actions PR-creation settings or configure `AX_LCM_PR_TOKEN`. Without that setting and/or a token with PR permissions, automatic creation may fail.
 - No Rust/Cargo auto-repair beyond Dependabot, no major upgrades, no automatic merges.
 - Full Rust workspace builds, Netlify builds, application e2e tests, static coverage calculation and mutation gauntlets were not run for this GitHub-workflow-only change.

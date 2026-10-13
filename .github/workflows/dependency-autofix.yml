@@ -91,6 +91,10 @@ jobs:
         if: steps.candidate.outputs.eligible == 'true'
         run: python scripts/check_dependency_age.py --base HEAD
 
+      - name: Reject candidates with known OSV vulnerabilities
+        if: steps.candidate.outputs.eligible == 'true'
+        run: python scripts/check_dependency_advisories.py --base HEAD
+
       - name: Verify package lock remains installable
         if: steps.candidate.outputs.eligible == 'true'
         working-directory: ${{ matrix.path }}
