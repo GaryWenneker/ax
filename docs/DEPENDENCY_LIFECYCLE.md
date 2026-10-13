@@ -52,7 +52,7 @@ python3.12 scripts/check_dependency_age.py --base origin/main
   RustSec against `Cargo.lock` and `npm audit` for the three npm lockfiles.
   A failed scan is an actionable warning, not proof that a release is compromised.
 - [PR dependency review](https://github.com/GaryWenneker/ax/actions/workflows/dependency-policy.yml):
-  block newly introduced known **moderate, high, or critical** vulnerabilities.
+  block newly introduced versions with **any known OSV advisory**, without requiring GitHub Dependency Graph.
 - [Dependabot alerts](https://github.com/GaryWenneker/ax/security/dependabot):
   severity, advisory, affected version and fix availability; prioritize critical
   and high vulnerabilities, malicious releases, and unmaintained packages.
@@ -63,6 +63,8 @@ python3.12 scripts/check_dependency_age.py --base origin/main
   review release history, replacement projects and upstream maintenance notices.
 
 ## One-time GitHub repository settings
+
+The initial PR run confirmed GitHub Dependency Graph was disabled. The independent OSV checker operates without it, but native Dependabot alerts require the GitHub security settings below.
 
 Under **Settings → Security and quality → Advanced Security**, make sure
 **Dependency graph**, **Dependabot alerts** and **Dependabot security updates**
