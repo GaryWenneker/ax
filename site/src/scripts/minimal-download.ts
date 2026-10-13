@@ -18,7 +18,7 @@ export const installerShell = (os: InstallOS): string => os === 'windows' ? 'Pow
 export function mountMinimalDownload(): void {
   const root = document.querySelector<HTMLElement>('[data-ax-downloader]');
   if (!root || root.dataset.ready === 'true') return;
-  const main = root.querySelector<HTMLAnchorElement>('[data-ax-download]');
+  const main = root.querySelector<HTMLButtonElement>('[data-ax-download]');
   const title = root.querySelector<HTMLElement>('[data-ax-download-label]');
   const icon = root.querySelector<HTMLElement>('[data-ax-main-icon]');
   const summary = root.querySelector<HTMLElement>('[data-ax-platform-label]');
@@ -44,9 +44,8 @@ export function mountMinimalDownload(): void {
     if (!title || !summary || !main || !icon || !code || !instruction || !status) return;
     buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.axOs === os)));
     status.textContent = '';
-    title.textContent = os ? `Install for ${osLabel[os]}` : 'Choose your platform';
+    title.textContent = os ? `Copy ${osLabel[os]} install command` : 'Choose your platform';
     summary.textContent = os ? `${osLabel[os]} · ${installerShell(os)}` : 'Select your development computer';
-    main.href = '#ax-install-command';
     icon.innerHTML = os ? icons.get(os) || '' : '';
     code.textContent = os ? installerCommand(os) : '';
     instruction.textContent = os ? `Copy and run in ${installerShell(os)}. The installer detects your CPU architecture.` : 'Choose the OS of the computer where Ax will run.';
@@ -56,24 +55,25 @@ export function mountMinimalDownload(): void {
     if (selected !== 'macos' && selected !== 'linux' && selected !== 'windows' && selected !== 'wsl2') return;
     os = selected;
     render();
-    install.hidden = false;
     openPanel(false);
+    copyCommand(selected);
   }));
   toggle.addEventListener('click', () => openPanel(panel.hidden));
-  main.addEventListener('click', event => {
-    event.preventDefault();
-    if (!os) { openPanel(true); return; }
+  function copyCommand(selected: InstallOS): void {
     install.hidden = false;
-    install.scrollIntoView({ block: 'nearest' });
-    copy.focus({ preventScroll: true });
-  });
-  copy.addEventListener('click', () => {
-    if (!os) return;
-    const selected = os;
+    code.textContent = installerCommand(selected);
     void navigator.clipboard?.writeText(installerCommand(selected)).then(() => {
       if (os === selected) status.textContent = 'Install command copied. Paste into your terminal and press Enter.';
     }).catch(() => { if (os === selected) status.textContent = 'Select and copy the command above.'; });
     if (!navigator.clipboard) status.textContent = 'Select and copy the command above.';
+  }
+  main.addEventListener('click', () => {
+    if (!os) { openPanel(true); return; }
+    copyCommand(os);
+  });
+  copy.addEventListener('click', () => {
+    if (!os) return;
+    copyCommand(os);
   });
   document.addEventListener('pointerdown', event => {
     if (event.target instanceof Node && !root.contains(event.target)) openPanel(false);

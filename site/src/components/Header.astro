@@ -11,4 +11,12 @@ import Default from "@astrojs/starlight/components/Header.astro";
     <span class="ax-halftone-dots ax-halftone-screen-three"></span>
   </div></div>
 </div>
+<script is:inline>
+  function axParkDocMoire() {
+    var field = document.querySelector('.ax-doc-moire');
+    if (field && field.parentElement !== document.body) document.body.append(field);
+  }
+  axParkDocMoire();
+  document.addEventListener('astro:page-load', axParkDocMoire);
+</script>
 <Default {...Astro.props} />

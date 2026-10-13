@@ -335,12 +335,20 @@ h1#_top,.sl-markdown-content h2,.sl-markdown-content h3{
   font-weight:550
 }
 /* Homepage CMY screens are shared through minimal-home.css. */
-.ax-doc-moire{--ax-lime:#b9ff6a;position:fixed;inset:var(--sl-nav-height,4.5rem) 0 0 0;z-index:1;pointer-events:none;overflow:hidden}
+.ax-doc-moire{--ax-lime:#b9ff6a;position:fixed;inset:var(--sl-nav-height,4.5rem) 0 0 0;z-index:0;pointer-events:none;overflow:hidden}
 .ax-doc-moire.ax-landing .ax-halftone{inset:0 0 0 20%;opacity:.75}
 .header,.sidebar-pane{z-index:3}
 .main-pane{position:relative;z-index:2;background:transparent}
-.main-pane .content-panel{background:rgba(8,10,9,.88);backdrop-filter:blur(8px)}
-:root[data-theme='light'] .main-pane .content-panel{background:rgba(255,255,255,.94)}
+.main-pane .content-panel{position:relative;isolation:isolate;background:transparent}
+.main-pane .content-panel::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(90deg,rgba(8,10,9,.94) 0%,rgba(8,10,9,.9) 58%,rgba(8,10,9,.4) 82%,transparent 100%);backdrop-filter:blur(18px);mask-image:linear-gradient(90deg,#000 0%,#000 64%,transparent 100%);-webkit-mask-image:linear-gradient(90deg,#000 0%,#000 64%,transparent 100%)}
+.right-sidebar{z-index:4;background:transparent;pointer-events:none}
+.right-sidebar-panel{position:relative;isolation:isolate;pointer-events:auto}
+.right-sidebar-panel::before{content:"";position:absolute;z-index:-1;top:-8px;bottom:-12px;left:-14px;width:calc(var(--sl-sidebar-width) - 1.5rem);pointer-events:none;background:rgba(8,10,9,.82);mask-image:linear-gradient(90deg,transparent,#000 14%,#000 80%,transparent),linear-gradient(180deg,transparent,#000 8%,#000 92%,transparent);mask-composite:intersect;-webkit-mask-image:linear-gradient(90deg,transparent,#000 14%,#000 80%,transparent),linear-gradient(180deg,transparent,#000 8%,#000 92%,transparent);-webkit-mask-composite:source-in}
+.right-sidebar-panel h2,.right-sidebar-panel a{color:#f0f3ed}
+.right-sidebar-panel a[aria-current="true"]{color:var(--ax-lime)}
+:root[data-theme='light'] .main-pane .content-panel::before{background:linear-gradient(90deg,rgba(255,255,255,.96) 0%,rgba(255,255,255,.9) 58%,rgba(255,255,255,.4) 82%,transparent 100%)}
+:root[data-theme='light'] .right-sidebar-panel::before{background:rgba(255,255,255,.88)}
+:root[data-theme='light'] .right-sidebar-panel h2,:root[data-theme='light'] .right-sidebar-panel a{color:#20281d}
 @media(max-width:600px){.ax-doc-moire.ax-landing .ax-halftone{opacity:.4}}
 
 /* Content is visible by default; JS only arms reveal when motion is enabled. */

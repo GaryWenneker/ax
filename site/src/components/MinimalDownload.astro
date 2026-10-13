@@ -9,15 +9,14 @@ const osOptions = [
   { id:'windows', label:'Windows', icon: platformIcons.Windows },
   { id:'wsl2', label:'WSL2', icon: platformIcons.Linux },
 ];
-const initialUrl = '#ax-install-command';
 ---
 <div class="ax-download" data-ax-downloader data-ax-reveal>
   <div class="ax-download-row">
-    <a class="ax-download-primary" href={initialUrl} data-ax-download>
+    <button class="ax-download-primary" type="button" data-ax-download>
       <span class="ax-os-icon" data-ax-main-icon set:html={platformIcons.macOS} />
-      <span data-ax-download-label>Install for macOS</span>
-      <span class="ax-download-glyph" aria-hidden="true">↓</span>
-    </a>
+      <span data-ax-download-label>Copy macOS install command</span>
+      <span class="ax-download-glyph" aria-hidden="true">⧉</span>
+    </button>
     <div class="ax-download-controls">
       <button class="ax-other-platforms" type="button" data-ax-platform-toggle aria-expanded="false" aria-controls="ax-platform-menu">
         Other platforms <span aria-hidden="true">⌄</span>

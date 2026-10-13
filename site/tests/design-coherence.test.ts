@@ -17,8 +17,11 @@ test('docs use the landing graphite/lime theme and responsive moving overprint',
   assert.match(header, /import '..\/styles\/minimal-home.css'/);
   assert.match(header, /class="ax-doc-moire ax-landing"/);
   for (const screen of ['one', 'two', 'three']) assert.ok(header.includes(`ax-halftone-screen-${screen}`));
-  assert.match(theme, /content-panel\{background:rgba\(8,10,9,\.88\)/);
-  assert.match(theme, /data-theme='light'.*content-panel\{background:rgba\(255,255,255,\.94\)/);
+  assert.match(header, /axParkDocMoire/);
+  assert.match(theme, /content-panel::before\{[^}]*linear-gradient\(90deg,rgba\(8,10,9,\.94\)/);
+  assert.match(theme, /\.right-sidebar-panel::before\{[^}]*background:rgba\(8,10,9,\.82\)[^}]*mask-composite:intersect/);
+  assert.match(theme, /\.right-sidebar\{z-index:4;background:transparent;pointer-events:none\}/);
+  assert.match(theme, /data-theme='light'.*content-panel::before\{background:linear-gradient\(90deg,rgba\(255,255,255,\.96\)/);
   assert.match(title, /cg-site-title__wordmark">Ax<span>_<\/span>/);
   assert.match(astro, /@fontsource-variable\/oxanium\/wght\.css/);
 });
