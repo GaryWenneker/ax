@@ -158,7 +158,7 @@ use crate::workspace_state::WebHub;
 struct CreateMember {
     display_name: String,
     email: Option<String>,
-    role: String,
+    role: Option<String>,
     roles: Option<Vec<String>>,
 }
 
@@ -238,7 +238,10 @@ async fn create_member(
     };
     let parsed_roles: Result<Vec<_>, _> = body.roles.as_ref()
         .map(|roles| roles.iter().map(|r| role(r)).collect())
-        .unwrap_or_else(|| role(&body.role).map(|r| vec![r]));
+        .unwrap_or_else(|| body.role.as_deref()
+            .ok_or_else(|| "At least one role required".to_string())
+            .and_then(role)
+            .map(|r| vec![r]));
     let roles = match parsed_roles {
         Ok(roles) if !roles.is_empty() => roles,
         _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Invalid role set"}))),
