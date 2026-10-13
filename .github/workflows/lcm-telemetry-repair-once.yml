@@ -48,6 +48,7 @@ jobs:
         working-directory: telemetry-worker
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
+          cp .dev.vars.example .dev.vars
           npm run check
       - name: Commit verified lockfile and remove temporary workflow
         shell: bash
