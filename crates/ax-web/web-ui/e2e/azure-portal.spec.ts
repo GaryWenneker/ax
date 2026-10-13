@@ -106,11 +106,12 @@ test('settings filter works and draft pipeline edits survive section changes', a
 test('portal search navigates and replaces an existing code query', async ({ page }) => {
   const search = page.getByRole('combobox', { name: 'Search code or open a page' });
   const code = page.getByPlaceholder('Search symbols, functions, classes…');
-  await search.fill('firstSymbol'); await search.press('Enter');
+  const openSearch = async () => { await page.getByRole('search').hover(); };
+  await openSearch(); await search.fill('firstSymbol'); await search.press('Enter');
   await expect(page).toHaveURL(/\/search/); await expect(code).toHaveValue('firstSymbol');
-  await search.fill('secondSymbol'); await search.press('Enter');
+  await openSearch(); await search.fill('secondSymbol'); await search.press('Enter');
   await expect(code).toHaveValue('secondSymbol');
-  await search.fill('Settings'); await search.press('Enter');
+  await openSearch(); await search.fill('Settings'); await search.press('Enter');
   await expect(page).toHaveURL(/\/settings/);
 });
 
