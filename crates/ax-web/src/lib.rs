@@ -1,13 +1,12 @@
 //! ax-web: local HTTP server exposing the ax code graph + policy editor.
 
-pub mod replication_setup;
-mod server_network;
 mod remote_host;
+pub mod replication_setup;
 pub mod server_config;
 pub mod server_discovery;
+mod server_network;
 
 mod access_api;
-mod web_auth;
 mod actions;
 mod agent;
 mod agent_pty;
@@ -19,8 +18,8 @@ mod folder_picker;
 mod global_policy;
 mod graph_export;
 mod links_api;
-mod local_owner;
 mod local_mcp_export;
+mod local_owner;
 mod lsp_api;
 mod mcp_ops;
 mod mcp_quality;
@@ -42,6 +41,7 @@ mod share_auth;
 mod ship;
 mod sonar_proxy;
 mod vault_folders;
+mod web_auth;
 mod workspace;
 mod workspace_state;
 
@@ -353,40 +353,54 @@ async fn handle_source(
         Ok(r) => r,
         Err(e) => return api_err(format!("project root unavailable: {e}")).into_response(),
     };
-    let replicated=ax_db::replication::is_replica(&p.path);
-    let text=if replicated {
-        match sqlx::query_scalar::<_,String>("SELECT content FROM file_contents WHERE path=?").bind(&p.path).fetch_optional(&ws.graph_pool).await {
-            Ok(Some(text))=>text,Ok(None)=>return (StatusCode::NOT_FOUND,Json(ApiError{error:"Replicated source is not stored in the received index".into()})).into_response(),Err(e)=>return api_err(e.to_string()).into_response(),
+    let replicated = ax_db::replication::is_replica(&p.path);
+    let text = if replicated {
+        match sqlx::query_scalar::<_, String>("SELECT content FROM file_contents WHERE path=?")
+            .bind(&p.path)
+            .fetch_optional(&ws.graph_pool)
+            .await
+        {
+            Ok(Some(text)) => text,
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError {
+                        error: "Replicated source is not stored in the received index".into(),
+                    }),
+                )
+                    .into_response()
+            }
+            Err(e) => return api_err(e.to_string()).into_response(),
         }
     } else {
-    // Reject traversal: resolve the candidate and require it stays inside the root.
-    let candidate = root.join(p.path.replace('\\', "/"));
-    let resolved = match candidate.canonicalize() {
-        Ok(r) => r,
-        Err(_) => {
+        // Reject traversal: resolve the candidate and require it stays inside the root.
+        let candidate = root.join(p.path.replace('\\', "/"));
+        let resolved = match candidate.canonicalize() {
+            Ok(r) => r,
+            Err(_) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError {
+                        error: format!("file not found: {}", p.path),
+                    }),
+                )
+                    .into_response()
+            }
+        };
+        if !resolved.starts_with(&root) {
             return (
-                StatusCode::NOT_FOUND,
+                StatusCode::FORBIDDEN,
                 Json(ApiError {
-                    error: format!("file not found: {}", p.path),
+                    error: "path outside project root".into(),
                 }),
             )
-                .into_response()
+                .into_response();
         }
-    };
-    if !resolved.starts_with(&root) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(ApiError {
-                error: "path outside project root".into(),
-            }),
-        )
-            .into_response();
-    }
 
-    match tokio::fs::read_to_string(&resolved).await {
-        Ok(t) => t,
-        Err(e) => return api_err(format!("cannot read {}: {e}", p.path)).into_response(),
-    }
+        match tokio::fs::read_to_string(&resolved).await {
+            Ok(t) => t,
+            Err(e) => return api_err(format!("cannot read {}: {e}", p.path)).into_response(),
+        }
     };
     let lines: Vec<&str> = text.lines().collect();
     let total = lines.len() as i64;
@@ -794,7 +808,10 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     let readonly =
         std::env::var("AX_WEB_READONLY").ok().as_deref() == Some("1") || opts.share_token.is_some();
     let mut hub = WebHub::open(opts.root.clone(), readonly, opts.port).await?;
-    hub.local_only = matches!(opts.bind.as_str(), "127.0.0.1" | "localhost" | "::1" | "[::1]");
+    hub.local_only = matches!(
+        opts.bind.as_str(),
+        "127.0.0.1" | "localhost" | "::1" | "[::1]"
+    );
     if !readonly {
         if let Err(error) = replication_setup::auto_start(&opts.root).await {
             tracing::warn!("replication automatic startup failed: {error}");
@@ -853,10 +870,13 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     actions::publish("web", "server started", None);
     ax_usage::spawn_ensure_daily_pricing_sync();
 
-    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|e| e.to_string())
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(|e| e.to_string())
 }
 
 fn guess_lan_ip() -> Option<String> {

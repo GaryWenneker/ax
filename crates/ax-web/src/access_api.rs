@@ -78,8 +78,13 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
         else {
             return failure(StatusCode::UNAUTHORIZED, "Sign in required");
         };
-        if mutation && req.headers().get("x-ax-access-csrf")
-            .and_then(|v| v.to_str().ok()) != Some(csrf()) {
+        if mutation
+            && req
+                .headers()
+                .get("x-ax-access-csrf")
+                .and_then(|v| v.to_str().ok())
+                != Some(csrf())
+        {
             return failure(StatusCode::FORBIDDEN, "Missing CSRF token");
         }
         let required_scope = if req.uri().path().contains("/team") {
@@ -92,7 +97,11 @@ async fn authorize(State(hub): State<WebHub>, mut req: Request, next: Next) -> R
         if !role.permits(required_scope) {
             return failure(StatusCode::FORBIDDEN, "Insufficient member permissions");
         }
-        Actor { member_id, client_id: None, role }
+        Actor {
+            member_id,
+            client_id: None,
+            role,
+        }
     } else {
         let host = req
             .headers()
@@ -236,15 +245,25 @@ async fn create_member(
             )
         }
     };
-    let parsed_roles: Result<Vec<_>, _> = body.roles.as_ref()
+    let parsed_roles: Result<Vec<_>, _> = body
+        .roles
+        .as_ref()
         .map(|roles| roles.iter().map(|r| role(r)).collect())
-        .unwrap_or_else(|| body.role.as_deref()
-            .ok_or_else(|| "At least one role required".to_string())
-            .and_then(role)
-            .map(|r| vec![r]));
+        .unwrap_or_else(|| {
+            body.role
+                .as_deref()
+                .ok_or_else(|| "At least one role required".to_string())
+                .and_then(role)
+                .map(|r| vec![r])
+        });
     let roles = match parsed_roles {
         Ok(roles) if !roles.is_empty() => roles,
-        _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Invalid role set"}))),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"Invalid role set"})),
+            )
+        }
     };
     if roles.contains(&access::MemberRole::Owner) && actor.role != access::MemberRole::Owner {
         return (
@@ -253,9 +272,18 @@ async fn create_member(
         );
     }
     let id = Uuid::new_v4().to_string();
-    let created = access::create_member(&pool, &id, &body.display_name, body.email.as_deref(), roles[0]).await;
+    let created = access::create_member(
+        &pool,
+        &id,
+        &body.display_name,
+        body.email.as_deref(),
+        roles[0],
+    )
+    .await;
     let created = match created {
-        Ok(()) if roles.len() > 1 => access::update_member_roles(&pool, &id, &roles, "active").await,
+        Ok(()) if roles.len() > 1 => {
+            access::update_member_roles(&pool, &id, &roles, "active").await
+        }
         other => other,
     };
     match created {
@@ -570,7 +598,7 @@ async fn update_member(
         None => match body.role.as_deref().map(role) {
             Some(Ok(role)) => vec![role],
             _ => return failure(StatusCode::BAD_REQUEST, "Invalid role"),
-        }
+        },
     };
     let members = match access::list_members(&db).await {
         Ok(m) => m,

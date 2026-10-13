@@ -183,10 +183,15 @@ impl WebHub {
                 crate::share_auth::share_token_middleware,
             ))
             .layer(cors)
-            .merge(crate::dav::router(hub.clone()).layer(axum::middleware::from_fn(
-                crate::share_auth::share_token_middleware,
-            )))
-            .layer(axum::middleware::from_fn_with_state(hub, crate::web_auth::gate))
+            .merge(
+                crate::dav::router(hub.clone()).layer(axum::middleware::from_fn(
+                    crate::share_auth::share_token_middleware,
+                )),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                hub,
+                crate::web_auth::gate,
+            ))
     }
 }
 

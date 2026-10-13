@@ -218,7 +218,9 @@ pub async fn bootstrap_owner(
     .await?;
     if result.rows_affected() == 1 {
         sqlx::query("INSERT OR IGNORE INTO member_roles(member_id, role) VALUES (?, 'owner')")
-            .bind(id).execute(pool).await?;
+            .bind(id)
+            .execute(pool)
+            .await?;
     }
     Ok(result.rows_affected() == 1)
 }
@@ -241,7 +243,10 @@ pub async fn create_member(
     .execute(pool)
     .await?;
     sqlx::query("INSERT INTO member_roles(member_id, role) VALUES (?, ?)")
-        .bind(id).bind(role.as_str()).execute(pool).await?;
+        .bind(id)
+        .bind(role.as_str())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -258,8 +263,10 @@ pub async fn update_member_roles(
     }
     let mut unique = roles.to_vec();
     unique.sort_by_key(|role| match role {
-        MemberRole::Owner => 0, MemberRole::Admin => 1,
-        MemberRole::Member => 2, MemberRole::Readonly => 3,
+        MemberRole::Owner => 0,
+        MemberRole::Admin => 1,
+        MemberRole::Member => 2,
+        MemberRole::Readonly => 3,
     });
     unique.dedup();
     let strongest = unique[0];
@@ -276,10 +283,15 @@ pub async fn update_member_roles(
         bail!("member not found or last active owner cannot be changed");
     }
     sqlx::query("DELETE FROM member_roles WHERE member_id = ?")
-        .bind(id).execute(&mut *tx).await?;
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     for role in unique {
         sqlx::query("INSERT INTO member_roles(member_id,role) VALUES (?,?)")
-            .bind(id).bind(role.as_str()).execute(&mut *tx).await?;
+            .bind(id)
+            .bind(role.as_str())
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -287,7 +299,10 @@ pub async fn update_member_roles(
 
 /// Compatibility API for existing single-role clients.
 pub async fn update_member(
-    pool: &SqlitePool, id: &str, role: MemberRole, status: &str,
+    pool: &SqlitePool,
+    id: &str,
+    role: MemberRole,
+    status: &str,
 ) -> Result<()> {
     update_member_roles(pool, id, &[role], status).await
 }
@@ -405,13 +420,26 @@ pub async fn list_members(pool: &SqlitePool) -> Result<Vec<TeamMember>> {
     .await?;
     rows.into_iter()
         .map(
-            |(id, display_name, email, role, status, created_at, last_active_at, roles): (String, String, Option<String>, String, String, String, Option<String>, Option<String>)| {
+            |(id, display_name, email, role, status, created_at, last_active_at, roles): (
+                String,
+                String,
+                Option<String>,
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+            )| {
                 Ok(TeamMember {
                     id,
                     display_name,
                     email,
                     role: MemberRole::parse(&role)?,
-                    roles: roles.unwrap_or(role).split(',').map(MemberRole::parse).collect::<Result<Vec<_>>>()?,
+                    roles: roles
+                        .unwrap_or(role)
+                        .split(',')
+                        .map(MemberRole::parse)
+                        .collect::<Result<Vec<_>>>()?,
                     status,
                     created_at,
                     last_active_at,
@@ -1116,27 +1144,60 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("global.db");
         let pool = crate::open_and_init(&path).await.unwrap();
-        bootstrap_owner(&pool, "owner", "Owner", None).await.unwrap();
-        create_member(&pool, "teammate", "Teammate", None, MemberRole::Member).await.unwrap();
+        bootstrap_owner(&pool, "owner", "Owner", None)
+            .await
+            .unwrap();
+        create_member(&pool, "teammate", "Teammate", None, MemberRole::Member)
+            .await
+            .unwrap();
         update_member_roles(
-            &pool, "teammate",
-            &[MemberRole::Readonly, MemberRole::Admin, MemberRole::Member, MemberRole::Admin],
+            &pool,
+            "teammate",
+            &[
+                MemberRole::Readonly,
+                MemberRole::Admin,
+                MemberRole::Member,
+                MemberRole::Admin,
+            ],
             "active",
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         let members = list_members(&pool).await.unwrap();
         let member = members.iter().find(|m| m.id == "teammate").unwrap();
         assert_eq!(member.role, MemberRole::Admin);
         assert_eq!(member.roles.len(), 3);
         assert!(member.roles.contains(&MemberRole::Member));
         assert!(member.roles.contains(&MemberRole::Readonly));
-        assert!(update_member_roles(&pool, "owner", &[MemberRole::Member], "active").await.is_err());
+        assert!(
+            update_member_roles(&pool, "owner", &[MemberRole::Member], "active")
+                .await
+                .is_err()
+        );
         crate::database::initialize_schema(&pool).await.unwrap();
         let after_restart = list_members(&pool).await.unwrap();
-        assert_eq!(after_restart.iter().find(|m| m.id == "teammate").unwrap().roles.len(), 3);
-        update_member_roles(&pool, "teammate", &[MemberRole::Owner], "active").await.unwrap();
-        update_member_roles(&pool, "owner", &[MemberRole::Member], "active").await.unwrap();
         assert_eq!(
-            list_members(&pool).await.unwrap().iter().filter(|m| m.role == MemberRole::Owner).count(),
+            after_restart
+                .iter()
+                .find(|m| m.id == "teammate")
+                .unwrap()
+                .roles
+                .len(),
+            3
+        );
+        update_member_roles(&pool, "teammate", &[MemberRole::Owner], "active")
+            .await
+            .unwrap();
+        update_member_roles(&pool, "owner", &[MemberRole::Member], "active")
+            .await
+            .unwrap();
+        assert_eq!(
+            list_members(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|m| m.role == MemberRole::Owner)
+                .count(),
             1
         );
     }
