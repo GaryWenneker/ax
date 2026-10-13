@@ -612,7 +612,7 @@ fn excluded(path:&str)->bool {
         || path=="/api/web-auth/sessions" || path.starts_with("/api/web-auth/sessions/")
         || path.starts_with("/api/web-auth/users/")
         || path=="/api/web-auth/passkeys" || path.starts_with("/api/web-auth/passkeys/")
-        || path.starts_with("/api/remote-mcp") || path.starts_with("/api/auth/")
+        || path.starts_with("/api/auth/")
         || path.starts_with("/mcp") || path.starts_with("/api/share")
         || path.starts_with("/dav") || path.starts_with("/api/dav")
 }
@@ -661,7 +661,8 @@ pub async fn gate(State(hub):State<WebHub>,mut req:Request,next:Next)->Response 
     let Some((_, role))=session_member(&pool,req.headers()).await else {
         return err(StatusCode::UNAUTHORIZED,"Sign in required").into_response();
     };
-    let admin_path = path.starts_with("/api/access/")
+    let admin_path = path.starts_with("/api/remote-mcp/")
+        || path.starts_with("/api/access/")
         || path.starts_with("/api/ops/")
         || path.starts_with("/api/ship/")
         || path.starts_with("/api/workspace/")
