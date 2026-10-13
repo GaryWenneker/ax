@@ -40,6 +40,19 @@ jobs:
           # The following OSV and npm audit steps must verify the fresh tree.
       - name: Ensure npm did not alter manifest outside reviewed changes
         run: git diff --exit-code -- site/package.json
+      - name: Explain resolved esbuild dependency versions
+        shell: bash
+        run: |
+          node - <<'JS'
+          const lock = require('./site/package-lock.json');
+          const root = require('./site/package.json');
+          console.log('NPM overrides:', JSON.stringify(root.overrides));
+          for (const [path, data] of Object.entries(lock.packages)) {
+            if (path.endsWith('/esbuild') || path === 'node_modules/esbuild') {
+              console.log('ESBUILD:', path, data.version);
+            }
+          }
+          JS
       - name: Enforce 168-hour release age
         run: python scripts/check_dependency_age.py --base origin/main
       - name: Reject new known OSV advisories
