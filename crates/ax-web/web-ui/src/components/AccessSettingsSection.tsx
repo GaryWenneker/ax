@@ -76,6 +76,8 @@ export default function AccessSettingsSection({ section }: { section: string }) 
   const [memberName, setMemberName] = useState('');
   const [memberEmail, setMemberEmail] = useState('');
   const [memberRoles, setMemberRoles] = useState<Role[]>(['member']);
+  const [passwordFor, setPasswordFor] = useState<Member | null>(null);
+  const [newMemberPassword, setNewMemberPassword] = useState('');
   const [clientName, setClientName] = useState('');
   const [clientType, setClientType] = useState('custom');
   const [clientMember, setClientMember] = useState('');
@@ -167,6 +169,14 @@ export default function AccessSettingsSection({ section }: { section: string }) 
     }
   }
 
+  async function setMemberPassword(event: FormEvent) {
+    event.preventDefault();
+    if (!passwordFor || newMemberPassword.length < 12) return;
+    const updated = await mutate(`/api/web-auth/users/${passwordFor.id}/password`, 'POST',
+      { password: newMemberPassword }, `Sign-in password configured for ${passwordFor.display_name}.`);
+    if (updated) { setNewMemberPassword(''); setPasswordFor(null); }
+  }
+
   async function addClient(event: FormEvent) {
     event.preventDefault();
     const member = members.find(item => item.id === clientMember && item.status === 'active');
@@ -250,6 +260,10 @@ export default function AccessSettingsSection({ section }: { section: string }) 
                     </label>;
                   })}
                 </fieldset>
+                <button type="button" className="btn" disabled={locked || member.status !== 'active'}
+                  onClick={() => { setPasswordFor(member); setNewMemberPassword(''); }}>
+                  Set password
+                </button>
                 <button type="button" className="btn" disabled={locked || lastOwner} onClick={() => {
                   if (member.status !== 'active') { void mutate(`/api/access/team/${member.id}`, 'PATCH', { roles: member.roles ?? [member.role], status: 'active' }, `${member.display_name} enabled.`); return; }
                   setConfirmation({ title: `Disable ${member.display_name}?`, description: 'Their clients will lose access until this member is enabled again.', label: 'Disable member', action: async () => { await mutate(`/api/access/team/${member.id}`, 'PATCH', { roles: member.roles ?? [member.role], status: 'disabled' }, `${member.display_name} disabled.`); } });
@@ -324,6 +338,17 @@ export default function AccessSettingsSection({ section }: { section: string }) 
       </div>
     </section>
 
+    {passwordFor && <ModalShell title={`Set password for ${passwordFor.display_name}`} onClose={() => !busy && setPasswordFor(null)}>
+      <form className="access-form" onSubmit={setMemberPassword}>
+        <p className="access-note">Setting a password revokes this member’s existing web sessions. Share the initial password securely and ask the member to enroll a passkey.</p>
+        <label>New password<input className="settings-input" type="password" autoComplete="new-password" required minLength={12}
+          value={newMemberPassword} onChange={event => setNewMemberPassword(event.target.value)} disabled={busy} /></label>
+        <div className="access-actions">
+          <button type="button" className="btn" onClick={() => setPasswordFor(null)} disabled={busy}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={busy || newMemberPassword.length < 12}>Save password</button>
+        </div>
+      </form>
+    </ModalShell>}
     {form && <ModalShell title={form === 'member' ? 'Add team member' : 'Add client'} onClose={() => !busy && setForm(null)}>
       <form className="access-form" onSubmit={form === 'member' ? addMember : addClient}>
         {error && <p role="alert" className="settings-toast settings-toast--err">{error}</p>}
