@@ -607,6 +607,9 @@ fn excluded(path:&str)->bool {
         || path=="/api/web-auth/passkeys/authentication/start"
         || path=="/api/web-auth/passkeys/authentication/finish"
         || path=="/api/web-auth/setup" || path=="/api/web-auth/config"
+        || path=="/api/web-auth/recovery/login" || path=="/api/web-auth/recovery/rotate"
+        || path=="/api/web-auth/sessions" || path.starts_with("/api/web-auth/sessions/")
+        || path.starts_with("/api/web-auth/users/")
         || path=="/api/web-auth/passkeys" || path.starts_with("/api/web-auth/passkeys/")
         || path.starts_with("/api/remote-mcp") || path.starts_with("/api/auth/")
         || path.starts_with("/mcp") || path.starts_with("/api/share")
