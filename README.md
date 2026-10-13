@@ -2,6 +2,8 @@
 
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
+[![Supply-chain LCM: 7-day gate](assets/dependency-lifecycle.svg)](docs/DEPENDENCY_LIFECYCLE.md)
+[![Dependency Lifecycle Monitor](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml/badge.svg?branch=main)](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml)
 
 **Download the [latest release](https://github.com/GaryWenneker/ax/releases/latest)** — six-platform binaries (Windows, macOS, Linux/WSL2).
 
