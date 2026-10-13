@@ -5,7 +5,7 @@ description: What ax is — knowledge graph, memory vault, policy engine, and Co
 
 ![ax Command Center — Rules page with the Policy, Code, Activity, and System sidebar](/screenshots/cc-policy-rules-dark.png)
 
-**ax** is **local-first intelligence for AI coding agents** — written in Rust, installed as a single binary, with no cloud index and no API keys.
+**AX (Agent Xpansion)** is **the context layer for AI agents** — local-first intelligence for AI coding agents — written in Rust, installed as a single binary, with no cloud index and no API keys.
 
 Four layers work together in every project:
 
@@ -48,4 +48,4 @@ Sharing a page URL uses a preview of that page. The site build screenshots the p
 
 Ready to try it? Head to the [Quickstart](/getting-started/quickstart/).
 
-<sub>ax · Aero Xecution</sub>
+<sub>AX · Agent Xpansion · The context layer for AI agents</sub>
