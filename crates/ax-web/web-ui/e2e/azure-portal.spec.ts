@@ -21,6 +21,7 @@ const memories = ['Azure design system', 'Preserve workspace preferences', 'Impr
 const graphNodes = Array.from({ length: 24 }, (_, i) => ({ id: i + 1, name: ['App', 'Settings', 'Theme', 'Policy', 'Memory', 'Graph'][i % 6] + i,
   kind: 'function', file_path: `src/module${i % 4}.ts`, community_id: i % 4, community_label: `Module ${i % 4}`, degree: 3 }));
 const fixtures: Record<string, unknown> = {
+  '/api/web-auth/status': { enabled: false, passkeys: true },
   '/api/policy/settings': { policySync: false, requireReview: true, storage: 'files', roots: [] },
   '/api/policy/rules': { rules }, '/api/policy/skills': { skills: [] },
   '/api/memory': { memories, total: memories.length },
