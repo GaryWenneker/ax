@@ -1,0 +1,56 @@
+# Temporary, branch-scoped Rust desktop accessibility vulnerability remediation.
+name: Desktop Rust LCM Validation
+
+on:
+  push:
+    branches: [fix/security-desktop-accesskit]
+    paths:
+      - "crates/ax-desktop-client/Cargo.toml"
+      - "crates/ax-desktop-client/src/main.rs"
+      - ".github/workflows/lcm-desktop-repair-once.yml"
+
+permissions:
+  contents: write
+  checks: write
+
+concurrency:
+  group: desktop-lcm-remediation
+  cancel-in-progress: false
+
+jobs:
+  check-and-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve coordinated desktop egui and AT-SPI upgrade
+        run: |
+          set -euo pipefail
+          cargo update -p eframe
+          cargo update -p egui_extras
+      - name: Enforce minimum seven-day publication age
+        run: python scripts/check_dependency_age.py --base origin/main
+      - name: Reject newly introduced known OSV vulnerabilities
+        run: python scripts/check_dependency_advisories.py --base origin/main
+      - name: Compile desktop application
+        run: cargo check --locked -p ax-desktop-client
+      - name: Verify the last two RustSec vulnerabilities are absent
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit generated lockfile and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git rm .github/workflows/lcm-desktop-repair-once.yml
+          git commit -m "fix(deps): lock patched desktop accessibility dependencies"
+          git push origin HEAD:fix/security-desktop-accesskit
