@@ -14,10 +14,12 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const [password, setPassword] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [passkeyOrigin, setPasskeyOrigin] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inspect = useCallback(async () => {
     try {
-      const status = await checkedJson('/api/web-auth/status') as { enabled: boolean };
+      const status = await checkedJson('/api/web-auth/status') as { enabled: boolean; origin?: string };
+      setPasskeyOrigin(status.origin ?? null);
       if (!status.enabled) { setMode('open'); return; }
       const session = await fetch('/api/web-auth/session', { cache: 'no-store' });
       setMode(session.ok ? 'open' : session.status === 401 ? 'login' : 'error');
@@ -73,7 +75,11 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       <input id="auth-password" type="password" autoComplete={useRecovery ? 'off' : 'current-password'} value={password}
         onChange={event => setPassword(event.target.value)} className="settings-input" />
       <button type="submit" className="btn primary" disabled={busy || !identity.trim() || !password}>{useRecovery ? 'Recover account' : 'Sign in'}</button>
-      <button type="button" className="btn auth-passkey" disabled={busy || !identity.trim()} onClick={() => void submitPasskey()}>
+      {passkeyOrigin && passkeyOrigin !== window.location.origin &&
+        <p>Passkeys are tied to <a href={passkeyOrigin}>{passkeyOrigin}</a>. Open that address to sign in with a passkey.</p>}
+      <button type="button" className="btn auth-passkey"
+        disabled={busy || !identity.trim() || (passkeyOrigin !== null && passkeyOrigin !== window.location.origin)}
+        onClick={() => void submitPasskey()}>
         <i className="codicon codicon-key" aria-hidden="true" /> Sign in with passkey
       </button>
       <button type="button" className="btn" disabled={busy} onClick={() => { setUseRecovery(!useRecovery); setPassword(''); setError(null); }}>
