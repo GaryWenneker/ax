@@ -1,10 +1,14 @@
-# ax — Graph it. Remember it. Ship it.
+# ax
+
+## Your context. Your rules. Your control.
+
+Local-first code intelligence, persistent memory, MCP integration and policy-driven development. One native binary.
 
 [![Latest release](https://img.shields.io/github/v/release/GaryWenneker/ax?label=ax)](https://github.com/GaryWenneker/ax/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-getax.wenneker.io-blue)](https://getax.wenneker.io)
 [![Dependency Lifecycle Monitor](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml/badge.svg?branch=main)](https://github.com/GaryWenneker/ax/actions/workflows/dependency-monitor.yml)
 
-**ax** is local-first intelligence for AI coding agents: one Rust binary, no cloud index, no API keys. Four layers work in every project.
+Open source, MIT, native Rust. No cloud index and no API keys. The source stays on your machine unless you explicitly publish Command Center or enroll a project in replication.
 
 | Layer | What it does |
 |---|---|
@@ -96,6 +100,17 @@ The site is the product guide. This README follows that map.
 - [Rust API](https://getax.wenneker.io/reference/api/)
 - [Languages](https://getax.wenneker.io/reference/languages/)
 - [Troubleshooting](https://getax.wenneker.io/troubleshooting/)
+
+## What the site covers
+
+The [docs](https://getax.wenneker.io/) follow the same product. These are the parts worth knowing before you read a single page:
+
+- **Context.** A tree-sitter graph of symbols, calls, imports, and routes, queried through MCP instead of searching the tree. [How it works](https://getax.wenneker.io/core-concepts/how-it-works/), [architecture insights](https://getax.wenneker.io/guides/architecture-insights/), and [affected tests](https://getax.wenneker.io/guides/affected-tests/).
+- **Rules.** IDE-agnostic rules and skills in `.agents/`, injected each turn. Share them over git or OneDrive. [Policy engine](https://getax.wenneker.io/guides/policy-engine/), [remote policy share](https://getax.wenneker.io/guides/policy-sharing/).
+- **Memory.** Decisions, fixes, and conventions, recalled with the next turn and captured from git. [Memory vault](https://getax.wenneker.io/guides/memory/). The same notes open in Obsidian over WebDAV, with no note files on disk. [Obsidian vault](https://getax.wenneker.io/guides/obsidian-vault/).
+- **Command Center.** Local UI for policy, memory, the graph, MCP Logging and Quality, and savings. Optional sign-in, passkeys, and member roles. A native desktop client embeds the same UI. [Command Center](https://getax.wenneker.io/guides/command-center/), [walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/), [desktop](https://getax.wenneker.io/guides/desktop-client/).
+- **Reach.** Authenticated remote MCP for another IDE or ChatGPT, a primary and replicas across machines, a LAN share, or a Cloudflare tunnel onto the local server. [Remote MCP](https://getax.wenneker.io/guides/remote-mcp/), [replicas](https://getax.wenneker.io/guides/standalone-ax/), [Cloudflare](https://getax.wenneker.io/guides/cloudflare/).
+- **Cost.** Compact replies, a project token budget for optional context, and a local monthly agent budget that quotes usage without blocking the provider. [Smart Output](https://getax.wenneker.io/guides/smart-output/), [token savings](https://getax.wenneker.io/guides/token-savings/), [agent budget](https://getax.wenneker.io/guides/budget/).
 
 ## What you get locally
 
