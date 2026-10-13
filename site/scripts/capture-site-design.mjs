@@ -92,8 +92,8 @@ try {
           rows: lines.map(el => el.getBoundingClientRect().top),
         };
       });
-      if (hero.lines.join(' ') !== 'Your context. Your rules. Your control.' || !hero.font || hero.clipped ||
-          hero.colors[2] !== hero.accent || hero.colors.slice(0, 2).some(color => color === hero.accent) ||
+      if (hero.lines.join(' ') !== 'The context layer for AI agents' || !hero.font || hero.clipped ||
+          hero.colors[1] !== hero.accent || hero.colors.slice(0, 1).some(color => color === hero.accent) ||
           !hero.rows.every((top, i) => i === 0 || top > hero.rows[i - 1])) {
         throw new Error(name + ': incorrect slogan, font, accent or layout: ' + JSON.stringify(hero));
       }
@@ -160,7 +160,7 @@ try {
   await page.setViewport({ width: 1440, height: 900 });
   await page.goto("http://127.0.0.1:4422/", { waitUntil: "networkidle0" });
   const text = await page.$eval("h1", el => el.textContent);
-  if (!["Your context.", "Your rules.", "Your control."].every(line => text.includes(line))) {
+  if (!["The context layer", "for AI agents"].every(line => text.includes(line))) {
     throw new Error("Expected minimal homepage headline is missing");
   }
   if ((await page.$$(".signal-ambient, .ax-ares-architecture, .integrated-console")).length) {
