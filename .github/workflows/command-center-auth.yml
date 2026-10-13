@@ -89,5 +89,11 @@ jobs:
           exit 1
       - name: Check authenticated desktop and mobile layouts
         run: npx playwright test e2e/command-center-auth.spec.ts --project=desktop-chrome --project=mobile-chrome
-      - name: Regression test team and client permissions
-        run: npx playwright test e2e/access-settings.spec.ts e2e/access-workflows.spec.ts --project=desktop-chrome
+      - name: Regression test existing Settings, roles and Remote MCP flows
+        run: |
+          npx playwright test \
+            e2e/access-settings.spec.ts \
+            e2e/access-workflows.spec.ts \
+            e2e/remote-mcp.spec.ts \
+            e2e/azure-portal.spec.ts \
+            --project=desktop-chrome
