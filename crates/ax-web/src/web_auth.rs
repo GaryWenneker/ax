@@ -53,6 +53,17 @@ async fn enabled(pool: &SqlitePool) -> Result<bool, ErrorResponse> {
         .map(|v| v.unwrap_or(0) != 0)
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Authentication configuration unavailable"))
 }
+pub(crate) async fn web_login_enabled(pool: &SqlitePool) -> bool {
+    // A database error must never silently disable protection.
+    enabled(pool).await.unwrap_or(true)
+}
+pub(crate) async fn session_member(pool: &SqlitePool, headers: &HeaderMap)
+    -> Option<(String, access::MemberRole)> {
+    let id=member_for_session(pool,headers).await?;
+    let members=access::list_members(pool).await.ok()?;
+    let role=members.into_iter().find(|m|m.id==id && m.status=="active")?.role;
+    Some((id,role))
+}
 async fn member_for_session(pool: &SqlitePool, headers: &HeaderMap) -> Option<String> {
     let token = cookie_value(headers)?;
     if token.len() != 64 || !token.bytes().all(|c| c.is_ascii_hexdigit()) { return None; }
@@ -282,7 +293,10 @@ async fn register_start(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<S
     let actor=browser_member(&pool,&headers,peer,&hub).await?;
     let user=access::list_members(&pool).await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Members unavailable"))?
         .into_iter().find(|m|m.id==actor).ok_or_else(||err(StatusCode::FORBIDDEN,"Unknown user"))?;
-    let user_id=Uuid::parse_str(&actor).unwrap_or_else(|_|Uuid::new_v5(&Uuid::NAMESPACE_OID,actor.as_bytes()));
+    let user_id=Uuid::parse_str(&actor).unwrap_or_else(|_| {
+        let digest=blake3::hash(actor.as_bytes());
+        Uuid::from_bytes(digest.as_bytes()[..16].try_into().expect("16 bytes"))
+    });
     let (options,state)=webauthn()?.start_passkey_registration(user_id,
         user.email.as_deref().unwrap_or(&user.display_name),&user.display_name,None)
         .map_err(|_|err(StatusCode::BAD_REQUEST,"Cannot start passkey registration"))?;
@@ -363,6 +377,16 @@ async fn remove_key(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<Socke
     headers:HeaderMap,Path(id):Path<String>) -> Result<Json<serde_json::Value>,ErrorResponse> {
     let pool=db().await?;
     let actor=browser_member(&pool,&headers,peer,&hub).await?;
+    // Never strand the final Owner without a remaining sign-in method.
+    let owner: Option<(String,)> = sqlx::query_as("SELECT role FROM team_members WHERE id=?")
+        .bind(&actor).fetch_optional(&pool).await.ok().flatten();
+    if owner.is_some_and(|(role,)|role=="owner") {
+        let password: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM web_password_credentials WHERE member_id=?")
+            .bind(&actor).fetch_one(&pool).await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Credential lookup failed"))?;
+        let keys: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM web_passkeys WHERE member_id=? AND revoked_at IS NULL")
+            .bind(&actor).fetch_one(&pool).await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Credential lookup failed"))?;
+        if password.0==0 && keys.0<=1 { return Err(err(StatusCode::CONFLICT,"Cannot remove final Owner login method")); }
+    }
     let result=sqlx::query("UPDATE web_passkeys SET revoked_at=unixepoch()
         WHERE id=? AND member_id=? AND revoked_at IS NULL")
         .bind(&id).bind(&actor).execute(&pool).await
@@ -396,13 +420,17 @@ fn excluded(path:&str)->bool {
 }
 pub async fn gate(State(hub):State<WebHub>,mut req:Request,next:Next)->Response {
     let pool=match db().await {
-        Ok(pool)=>pool, Err((s,j))=>(return (s,j).into_response()),
+        Ok(pool)=>pool, Err((s,j))=>return (s,j).into_response(),
     };
     let active=match enabled(&pool).await {
         Ok(value)=>value,Err((s,j))=>return (s,j).into_response(),
     };
     let path=req.uri().path();
-    if excluded(path) {return next.run(req).await;}
+    if excluded(path) || !path.starts_with("/api/") {
+        // Static SPA assets and its unauthenticated login shell contain no user data;
+        // every data API remains behind the server-side gate.
+        return next.run(req).await;
+    }
     // Machine bearer clients keep scope checks in their dedicated resource routers.
     let bearer=req.headers().get(header::AUTHORIZATION).and_then(|v|v.to_str().ok())
         .is_some_and(|value|value.starts_with("Bearer axc_"));
