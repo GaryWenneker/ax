@@ -131,6 +131,26 @@ Use the local Command Center on the hosting computer to create/export remote hos
 
 For an unconfigured Primary, open **Replication → Set up replication → Start Primary**. Empty identifiers and credentials can be generated. A saved configuration replaces the setup form; its credential is masked with reveal/copy actions. Removing local configuration makes setup available again without deleting synchronized project data. Follow the [replication guide](/guides/standalone-ax/) for joining a replica and outage recovery.
 
+## Secure Command Center sign-in and passkeys
+
+Command Center can optionally require a human sign-in. Existing loopback-only standalone installations keep their local Owner experience until an Owner enables web authentication. Configure a stable origin for the browser, especially when using HTTPS behind a reverse proxy:
+
+```bash
+AX_WEB_AUTH_ORIGIN=https://admin.example.com ax web --open
+```
+
+The configured origin must exactly match the address used in the browser. Passkeys must be registered on the same stable hostname where they will later be used. For local development, `http://localhost:7070` works with browsers' localhost secure-context exception. Do not use arbitrary forwarded Host values as RP identity.
+
+1. Open **Settings → Security & passkeys** on the trusted local Command Center.
+2. Set the existing Owner's password (at least 12 characters) or register a passkey.
+3. Choose **Enable sign-in**. Existing browser sessions are revoked.
+4. Sign in with user name/email and password, or **Sign in with passkey**.
+5. In **My passkeys**, register additional device/platform passkeys; revoke lost keys. A registered passkey may be used for future passwordless sign-in.
+6. Open **Settings → Users & roles** to assign multiple roles to a team member. Roles combine their permissions. At least one active Owner is always preserved.
+7. To turn web sign-in off, reauthenticate as Owner and disable it from a trusted local management session. This does not delete users, roles, or passkeys.
+
+**Security boundaries:** the interactive browser session is separate from MCP client tokens, OAuth, share tokens and Primary/Replica node credentials. Disabling web sign-in does not grant anonymous access to a remotely hosted Command Center.
+
 ## CLI, MCP and HTTP features
 
 The web UI is one way to use Ax. The [CLI reference](/reference/cli/) covers installation, graph queries, memory, policy, indexing, LSP, exports, budgets, server/replica operation and remote MCP. The [MCP reference](/reference/mcp-server/) covers agent tools, preflight, source retrieval, conversation/durable context, policy and operations. The [HTTP reference](/reference/web-api/) describes the web endpoints, permissions and streaming responses. For an agent integration, start with [Integrations](/reference/integrations/) and [Smart Output](/guides/smart-output/).
