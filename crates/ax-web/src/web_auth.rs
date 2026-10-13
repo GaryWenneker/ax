@@ -141,8 +141,8 @@ async fn establish(pool: &SqlitePool, member_id: &str, headers: &HeaderMap, secu
             .bind(hash(existing)).execute(pool).await;
     }
     let token = fresh_secret();
-    sqlx::query("INSERT INTO web_sessions (token_hash,member_id,expires_at) VALUES (?,?,unixepoch()+28800)")
-        .bind(hash(&token)).bind(member_id).execute(pool).await
+    sqlx::query("INSERT INTO web_sessions (id,token_hash,member_id,expires_at) VALUES (?,?,?,unixepoch()+28800)")
+        .bind(Uuid::new_v4().to_string()).bind(hash(&token)).bind(member_id).execute(pool).await
         .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot establish session"))?;
     Ok(cookie_response(serde_json::json!({"authenticated":true}),session_cookie(&token,secure)))
 }
@@ -355,6 +355,108 @@ async fn user_password(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<So
     tx.commit().await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Password update failed"))?;
     let _=access::audit(&pool,Some(&actor),None,"web_auth.password_reset","member",&target,&serde_json::json!({})).await;
     Ok(Json(serde_json::json!({"updated":true})))
+}
+#[derive(Deserialize)]
+struct RecoveryLogin { identity: String, code: String }
+
+async fn list_sessions(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<SocketAddr>,
+    headers: HeaderMap) -> Result<Json<serde_json::Value>,ErrorResponse> {
+    let pool=db().await?;
+    let member=browser_member(&pool,&headers,peer,&hub).await?;
+    let rows:Vec<(String,i64,i64,i64)> = sqlx::query_as(
+        "SELECT id,created_at,last_seen_at,expires_at FROM web_sessions
+         WHERE member_id=? AND revoked_at IS NULL AND expires_at>unixepoch()
+         ORDER BY created_at DESC LIMIT 100"
+    ).bind(member).fetch_all(&pool).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Sessions unavailable"))?;
+    let current_hash=hash(cookie_value(&headers).unwrap_or(""));
+    let current_id:Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM web_sessions WHERE token_hash=? AND revoked_at IS NULL"
+    ).bind(current_hash).fetch_optional(&pool).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Sessions unavailable"))?;
+    let active=current_id.map(|(id,)|id);
+    Ok(Json(serde_json::json!({"sessions":rows.into_iter()
+        .map(|(id,created_at,last_seen_at,expires_at)|serde_json::json!({
+            "id":id,"current":active.as_deref()==Some(id.as_str()),
+            "created_at":created_at,"last_seen_at":last_seen_at,"expires_at":expires_at
+        })).collect::<Vec<_>>()})))
+}
+async fn revoke_session(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<SocketAddr>,
+    headers:HeaderMap,Path(id):Path<String>) -> Result<Json<serde_json::Value>,ErrorResponse> {
+    let pool=db().await?;
+    let actor=browser_member(&pool,&headers,peer,&hub).await?;
+    require_recent_if_enabled(&pool,&headers).await?;
+    let result=sqlx::query("UPDATE web_sessions SET revoked_at=unixepoch()
+        WHERE id=? AND member_id=? AND revoked_at IS NULL")
+        .bind(&id).bind(&actor).execute(&pool).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Cannot revoke session"))?;
+    if result.rows_affected()==0 {return Err(err(StatusCode::NOT_FOUND,"Session unavailable"));}
+    let _=access::audit(&pool,Some(&actor),None,"web_auth.session_revoked",
+        "web_session",&id,&serde_json::json!({})).await;
+    Ok(Json(serde_json::json!({"revoked":true})))
+}
+async fn rotate_recovery(State(hub):State<WebHub>,ConnectInfo(peer):ConnectInfo<SocketAddr>,
+    headers:HeaderMap) -> Result<Json<serde_json::Value>,ErrorResponse> {
+    let pool=db().await?;
+    let actor=browser_member(&pool,&headers,peer,&hub).await?;
+    require_recent_if_enabled(&pool,&headers).await?;
+    let mut tx=pool.begin().await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Recovery storage unavailable"))?;
+    sqlx::query("DELETE FROM web_recovery_codes WHERE member_id=?")
+        .bind(&actor).execute(&mut *tx).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Recovery storage unavailable"))?;
+    let mut codes=Vec::with_capacity(10);
+    for _ in 0..10 {
+        let code=format!("axr-{}",fresh_secret());
+        sqlx::query("INSERT INTO web_recovery_codes (member_id,verifier) VALUES (?,?)")
+            .bind(&actor).bind(hash(&code)).execute(&mut *tx).await
+            .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Recovery storage unavailable"))?;
+        codes.push(code);
+    }
+    tx.commit().await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Recovery storage unavailable"))?;
+    let _=access::audit(&pool,Some(&actor),None,"web_auth.recovery_rotated",
+        "member",&actor,&serde_json::json!({"count":10})).await;
+    Ok(Json(serde_json::json!({"codes":codes})))
+}
+async fn recover_login(ConnectInfo(peer):ConnectInfo<SocketAddr>,headers:HeaderMap,
+    Json(body):Json<RecoveryLogin>) -> Result<Response,ErrorResponse> {
+    let pool=db().await?;
+    if !enabled(&pool).await? {return Err(err(StatusCode::CONFLICT,"Sign-in disabled"));}
+    let identity=body.identity.trim();
+    if !body.code.starts_with("axr-") || body.code.len()>100 || identity.is_empty() {
+        return Err(err(StatusCode::UNAUTHORIZED,"Invalid recovery code"));
+    }
+    let limit_key=format!("recovery:{}:{}",peer.ip(),hash(identity));
+    {
+        let attempts=login_attempts().lock().await;
+        if attempts.get(&limit_key).is_some_and(|(count,since)|
+            *count>=5 && since.elapsed()<Duration::from_secs(300)) {
+            return Err(err(StatusCode::TOO_MANY_REQUESTS,"Too many attempts"));
+        }
+    }
+    let mut tx=pool.begin().await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Recovery unavailable"))?;
+    let row:Option<(String,)> =sqlx::query_as(
+        "SELECT m.id FROM team_members m JOIN web_recovery_codes c ON c.member_id=m.id
+         WHERE m.status='active' AND (m.id=? OR m.email=? OR m.display_name=?)
+         AND c.verifier=? AND c.consumed_at IS NULL LIMIT 1"
+    ).bind(identity).bind(identity).bind(identity).bind(hash(&body.code))
+        .fetch_optional(&mut *tx).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Recovery unavailable"))?;
+    let Some((member_id,))=row else {
+        let mut attempts=login_attempts().lock().await;
+        let attempt=attempts.entry(limit_key).or_insert((0,Instant::now()));
+        if attempt.1.elapsed()>=Duration::from_secs(300) { *attempt=(0,Instant::now()); }
+        attempt.0+=1;
+        return Err(err(StatusCode::UNAUTHORIZED,"Invalid recovery code"));
+    };
+    let updated=sqlx::query("UPDATE web_recovery_codes SET consumed_at=unixepoch()
+        WHERE member_id=? AND verifier=? AND consumed_at IS NULL")
+        .bind(&member_id).bind(hash(&body.code)).execute(&mut *tx).await
+        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Recovery unavailable"))?;
+    if updated.rows_affected()!=1 {return Err(err(StatusCode::UNAUTHORIZED,"Recovery code already used"));}
+    tx.commit().await.map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Recovery unavailable"))?;
+    let _=access::audit(&pool,Some(&member_id),None,"web_auth.recovery_used",
+        "member",&member_id,&serde_json::json!({})).await;
+    establish(&pool,&member_id,&headers,secure_origin()).await
 }
 async fn logout(headers:HeaderMap) -> Result<Response,ErrorResponse> {
     let pool=db().await?;
@@ -581,6 +683,10 @@ pub fn router(hub:WebHub)->Router {
         .route("/config",post(configure))
         .route("/login",post(password_login))
         .route("/logout",post(logout))
+        .route("/recovery/login",post(recover_login))
+        .route("/recovery/rotate",post(rotate_recovery))
+        .route("/sessions",get(list_sessions))
+        .route("/sessions/{id}",axum::routing::delete(revoke_session))
         .route("/users/{id}/password",post(user_password))
         .route("/passkeys",get(passkeys))
         .route("/passkeys/registration/start",post(register_start))
