@@ -1,0 +1,63 @@
+# Temporary Command Center dependency security verification; no deployment.
+name: Command Center Vite LCM Validation
+on:
+  push:
+    branches: [fix/security-command-center-vite]
+    paths:
+      - "crates/ax-web/web-ui/package.json"
+      - ".github/workflows/lcm-webui-repair-once.yml"
+permissions:
+  contents: write
+concurrency:
+  group: webui-lcm-repair
+  cancel-in-progress: false
+jobs:
+  verify-and-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Synchronize latest main security fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+      - name: Regenerate eligible npm versions
+        working-directory: crates/ax-web/web-ui
+        shell: bash
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')"
+          rm -- package-lock.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --before="$cutoff"
+      - name: Enforce seven-day minimum for every new version
+        run: python scripts/check_dependency_age.py --base origin/main
+      - name: Reject any newly introduced OSV advisory
+        run: python scripts/check_dependency_advisories.py --base origin/main
+      - name: Require zero moderate/high/critical npm audit findings
+        working-directory: crates/ax-web/web-ui
+        run: npm audit --package-lock-only --audit-level=moderate
+      - name: Install, typecheck, build, and test Command Center
+        working-directory: crates/ax-web/web-ui
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+          npm run build
+      - name: Commit security lockfile and remove temporary workflow
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/ax-web/web-ui/package-lock.json
+          git rm .github/workflows/lcm-webui-repair-once.yml
+          git commit -m "fix(deps): lock patched Command Center Vite dependencies"
+          git push origin HEAD:fix/security-command-center-vite
