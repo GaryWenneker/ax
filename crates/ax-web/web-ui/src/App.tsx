@@ -29,6 +29,7 @@ import { initBladeWidth } from './components/BladeResize';
 import { NavIcon, adjustUiScale, initUiScale, loadUiScale } from './components/NavIcons';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { UiProvider } from './context/UiContext';
+import AuthGate from './components/AuthGate';
 import { initTheme, loadThemeId, themeById, THEME_CHANGED } from './lib/themes';
 import { saveString } from './lib/uiStorage';
 import { AX_FULL_NAME } from './lib/brand';
@@ -520,7 +521,7 @@ function AppShell() {
 export default function App() {
   return (
     <UiProvider>
-      <AppShell />
+      <AuthGate><AppShell /></AuthGate>
     </UiProvider>
   );
 }
