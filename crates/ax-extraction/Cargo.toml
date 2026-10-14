@@ -20,7 +20,7 @@ serde_yaml = "0.9"
 anyhow = { workspace = true }
 tree-sitter = { workspace = true }
 tree-sitter-rust = "0.23"
-tree-sitter-python = "0.23"
+tree-sitter-python = "0.25"
 tree-sitter-go = "0.23"
 tree-sitter-java = "0.23"
 tree-sitter-c-sharp = "=0.23.1"
