@@ -636,7 +636,12 @@ async fn n1_vault_writes_leave_no_files_on_disk() {
         )
         .await,
     );
-    assert_eq!(disk_files(&fx.root), before);
+    // `.ax` holds the database, its lock, and audit records. Unix drops the lock file when
+    // the handle closes; a write can add an audit record. Neither is a vault file on disk.
+    let project_files = |files: Vec<PathBuf>| {
+        files.into_iter().filter(|path| !path.starts_with(".ax")).collect::<Vec<_>>()
+    };
+    assert_eq!(project_files(disk_files(&fx.root)), project_files(before));
 }
 
 #[tokio::test]
