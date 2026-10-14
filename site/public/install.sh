@@ -17,6 +17,13 @@ DOWNLOAD_BASE="${AX_DOWNLOAD_BASE:-https://getax.wenneker.io/releases}"
 INSTALL_DIR="${AX_INSTALL_DIR:-$HOME/.ax}"
 BIN_DIR="${AX_BIN_DIR:-$HOME/.local/bin}"
 
+# PATH components and the install-target list cannot contain these separators.
+case "$BIN_DIR" in
+  *:*|*'
+'*) echo "ax: unsupported AX_BIN_DIR (colon or newline); choose another binary directory." >&2; exit 1 ;;
+esac
+case "$BIN_DIR" in /*) ;; *) BIN_DIR="$(pwd)/$BIN_DIR" ;; esac
+
 stop_ax_processes() {
   if command -v pkill >/dev/null 2>&1; then
     pkill -9 -x ax 2>/dev/null || true
@@ -216,9 +223,56 @@ EOF
 
 update_session_path() {
   case ":${PATH}:" in
-    *":$BIN_DIR:"*) PATH="$(echo "$PATH" | tr ':' '\n' | grep -vx "$BIN_DIR" | tr '\n' ':' | sed 's/:$//')" ;;
+    *":$BIN_DIR:"*) PATH="$(printf '%s\n' "$PATH" | tr ':' '\n' | grep -Fvx "$BIN_DIR" | tr '\n' ':' | sed 's/:$//')" ;;
   esac
   export PATH="$BIN_DIR:$PATH"
+}
+
+quote_shell_path() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+append_path_profile() {
+  ax_profile="$1"
+  ax_quoted_bin="$(quote_shell_path "$BIN_DIR")"
+  ax_path_line="case \"\$PATH:\" in $ax_quoted_bin:*|*:$ax_quoted_bin:*) ;; *) export PATH=$ax_quoted_bin:\"\$PATH\" ;; esac"
+  if [ -f "$ax_profile" ] && grep -Fqx "$ax_path_line" "$ax_profile"; then
+    echo "PATH configured: $ax_profile (already present)"
+    return 0
+  fi
+  if ! mkdir -p "$(dirname "$ax_profile")" || ! printf '\n# ax PATH\n%s\n' "$ax_path_line" >> "$ax_profile"; then
+    echo "ax: cannot update $ax_profile; manual PATH setup is required." >&2
+    return 1
+  fi
+  echo "PATH configured: $ax_profile"
+}
+
+persist_shell_path() {
+  ax_login_shell="${SHELL:-}"
+  ax_login_shell="${ax_login_shell##*/}"
+  if [ -z "$ax_login_shell" ]; then
+    if [ "$os" = darwin ]; then ax_login_shell=zsh; else ax_login_shell=sh; fi
+  fi
+  case "$ax_login_shell" in
+    zsh) append_path_profile "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash)
+      append_path_profile "$HOME/.bashrc" || return 1
+      if [ -f "$HOME/.bash_profile" ]; then
+        append_path_profile "$HOME/.bash_profile"
+      elif [ -f "$HOME/.bash_login" ]; then
+        append_path_profile "$HOME/.bash_login"
+      else
+        append_path_profile "$HOME/.profile"
+      fi
+      ;;
+    sh|dash) append_path_profile "$HOME/.profile" ;;
+    *) echo "ax: shell $ax_login_shell needs manual PATH setup; no startup file was changed." >&2; return 1 ;;
+  esac
+}
+
+show_session_path() {
+  echo "Open a new terminal, or for sh/bash/zsh in this terminal run:"
+  printf '  export PATH=%s:"$PATH"\n' "$(quote_shell_path "$BIN_DIR")"
 }
 
 # Kill stale ax and remove previous install before download.
@@ -259,6 +313,10 @@ mkdir -p "$BIN_DIR"
 sync_local_ax_instances "$dest/ax"
 update_session_path
 confirm_ax_install "$version" || exit 1
+if ! persist_shell_path; then
+  echo "ax: the binary is installed; complete the manual PATH setup shown below." >&2
+fi
+show_session_path
 
 if [ "${AX_SKIP_PROJECT_INIT:-}" = "1" ]; then
   echo "Skipping project discovery (AX_SKIP_PROJECT_INIT=1)."

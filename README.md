@@ -42,6 +42,8 @@ ax web --open       # local Command Center
 
 Install or upgrade also runs `ax init --all`. Prebuilt releases ship six binaries: Windows x64/arm64, macOS Intel/Apple Silicon, Linux x64/arm64.
 
+The shell installer saves the binary directory in your shell's startup configuration. Open a new terminal after installation, or run the printed `export PATH=...` command in the current terminal. On macOS with zsh, it updates `${ZDOTDIR:-$HOME}/.zshrc` without replacing existing settings. If profile setup fails, it reports the file and manual recovery instructions.
+
 Next: [Quickstart](https://getax.wenneker.io/getting-started/quickstart/) · [Installation](https://getax.wenneker.io/getting-started/installation/) · [Your first graph](https://getax.wenneker.io/getting-started/your-first-graph/).
 
 ## Documentation
