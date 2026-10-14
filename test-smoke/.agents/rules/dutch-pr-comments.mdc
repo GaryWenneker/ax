@@ -1,0 +1,23 @@
+---
+id: dutch-pr-comments
+level: CRITICAL
+alwaysApply: true
+tags: ["language", "pull-request"]
+priority: 110
+---
+
+# Pull request comment language
+
+Comments the agent posts on a pull request are written in the language from ax settings `reviews.commentLanguage`. Preflight states it as `PR review comments: <language>`. When that line is missing, the language is English.
+
+## Scope
+
+- Review comments on someone else's pull request
+- Replies on existing threads, including "fixed" replies
+- Suggested-change text posted on the pull request
+
+## Rules
+
+1. Draft texts, posted comments, and thread replies use the configured language.
+2. Chat with the user, docs, commit messages, and code stay English.
+3. This overrides `english-only` for the pull-request comment surface only.

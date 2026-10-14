@@ -15,6 +15,14 @@ export interface Stats {
   policy_skills_count: number;
   readonly: boolean;
   project_name: string;
+  systems?: GraphSystemStats[];
+}
+
+export interface GraphSystemStats {
+  origin: string;
+  node_count: number;
+  edge_count: number;
+  file_count: number;
 }
 
 export interface NodeRow {

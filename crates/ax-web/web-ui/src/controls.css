@@ -180,9 +180,10 @@ html[data-ax-layout="portal"] .portal-data-name { display:grid;grid-template-col
 html[data-ax-layout="portal"] .portal-data-name .page-item-sub { text-align:left;justify-self:stretch;min-width:0; }
 html[data-ax-layout="portal"] .portal-data-name .page-item-sub { margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 /* Shares of the list width, not a fixed 16rem title. The list is the viewport minus the sidebar. */
-html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { display:grid; grid-template-columns:var(--title-track,fit-content(18cqw)) minmax(0,1fr); align-items:center; gap:8px; }
-html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .page-item-title { grid-column:1; grid-row:1; width:auto; max-width:var(--title-track,18cqw); min-width:0; }
-html[data-ax-layout="portal"] .portal-policy-list .portal-data-name :is(.page-item-sub, .portal-data-tags) { grid-column:2; width:100%; min-width:0; text-align:left; justify-self:stretch; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { display:grid; grid-template-columns:var(--title-track,fit-content(18cqw)) minmax(0,1fr) max-content; align-items:center; align-content:center; gap:8px; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .page-item-title { grid-column:1; grid-row:1; place-self:center start; width:auto; height:auto; max-width:var(--title-track,18cqw); min-width:0; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .page-item-sub { grid-column:2; grid-row:1; align-self:center; width:100%; min-width:0; margin:0; text-align:left; justify-self:stretch; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .portal-data-tags { grid-column:3; grid-row:1; align-self:center; justify-self:start; width:max-content; max-width:min(28cqw,100%); min-width:0; margin:0; }
 html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display:flex; align-items:center; gap:12px; }
 html[data-ax-layout="portal"] .portal-memory-list .portal-data-name .page-item-title { flex:0 1 auto; width:auto; max-width:100%; min-width:0; }
 html[data-ax-layout="portal"] .portal-memory-list .portal-data-tags { flex:0 0 auto; width:max-content; max-width:28cqw; }
@@ -192,9 +193,9 @@ html[data-ax-layout="portal"] .portal-data-lead .calm-row-check { margin:0; }
 html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:1/-1;margin:0; }
 @container ax-list (min-width:1000px) {
   html[data-ax-layout="portal"] .portal-data-name { grid-template-columns:minmax(7rem,24%) minmax(0,1fr) max-content;gap:12px; }
-  html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { grid-template-columns:var(--title-track,fit-content(18cqw)) minmax(0,1fr); }
+  html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { grid-template-columns:var(--title-track,fit-content(18cqw)) minmax(0,1fr) max-content; }
   html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display:flex; }
-  html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .portal-data-tags { grid-column:2; }
+  html[data-ax-layout="portal"] .portal-policy-list .portal-data-name .portal-data-tags { grid-column:3; }
   html[data-ax-layout="portal"] .page-item:not(.portal-data-row):not(.mcp-trace-row):not(.mcp-blade-step) .page-item-body { display:flex;align-items:center;gap:12px;min-width:0; }
   html[data-ax-layout="portal"] .page-item:not(.portal-data-row):not(.mcp-trace-row):not(.mcp-blade-step) .page-item-sub { margin:0;min-width:0;flex:1; }
 }

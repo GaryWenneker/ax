@@ -62,9 +62,9 @@ export function traceDirection(kind: string): TraceDirection {
 }
 
 const DIRECTION_LABELS: Record<TraceDirection, string> = {
-  in: 'Prompt in',
-  out: 'Returned to agent',
-  internal: '',
+  in: 'Inbound',
+  out: 'Outbound',
+  internal: 'Internal',
 };
 
 export function traceDirectionLabel(dir: TraceDirection): string {

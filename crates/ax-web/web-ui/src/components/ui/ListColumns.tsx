@@ -1,5 +1,6 @@
 import {createContext, isValidElement, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type KeyboardEvent} from 'react';
 import {clampWidth, orderRows, validWidths, type ColumnSort, type ColumnValue} from '../../lib/columnModel';
+import {pinPopover} from '../../lib/placePopover';
 import MobileControls from './MobileControls';
 import useMobile from '../../hooks/useMobile';
 
@@ -53,11 +54,13 @@ function positionFilter(details: HTMLDetailsElement, panel: HTMLDivElement): voi
   const anchor = details.querySelector('summary')?.getBoundingClientRect();
   if (!anchor) return;
   const bounds = details.closest('.page-item-list,.page-table-wrap,.review-column-list')?.getBoundingClientRect();
-  const left = Math.max(8, bounds?.left ?? 8);
-  const right = Math.min(window.innerWidth - 8, bounds?.right ?? window.innerWidth - 8);
-  const width = Math.min(190, Math.max(100, right - left));
-  Object.assign(panel.style, {position:'fixed', margin:'0', right:'auto', bottom:'auto', width:`${width}px`, left:`${Math.max(left, Math.min(anchor.right - width, right - width))}px`});
-  panel.style.top = `${Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - panel.getBoundingClientRect().height - 8))}px`;
+  const leftBound = Math.max(8, bounds?.left ?? 8);
+  const rightBound = Math.min(window.innerWidth - 8, bounds?.right ?? window.innerWidth - 8);
+  const width = Math.min(190, Math.max(100, rightBound - leftBound));
+  panel.style.width = `${width}px`;
+  pinPopover(anchor, panel, {prefer: 'below', align: 'end'});
+  const left = Math.max(leftBound, Math.min(parseFloat(panel.style.left), rightBound - width));
+  panel.style.left = `${left}px`;
 }
 
 function ColumnFilter({controls, index}: {controls: ListColumnControls; index: number}) {

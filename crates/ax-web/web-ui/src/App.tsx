@@ -30,6 +30,7 @@ import { NavIcon, adjustUiScale, initUiScale, loadUiScale } from './components/N
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { UiProvider } from './context/UiContext';
 import AuthGate from './components/AuthGate';
+import ProfileMenu from './components/ProfileMenu';
 import { initTheme, loadThemeId, themeById, THEME_CHANGED } from './lib/themes';
 import { saveString } from './lib/uiStorage';
 import { AX_FULL_NAME } from './lib/brand';
@@ -74,6 +75,7 @@ function AppShell() {
   const [themeId, setThemeId] = useState(loadThemeId);
   const [searchRequest, setSearchRequest] = useState(0);
   const [portalQuery, setPortalQuery] = useState('');
+  const [accountSignedIn, setAccountSignedIn] = useState(false);
   const portalLayout = themeById(themeId).layout === 'portal';
   const [mcpReloadBusy, setMcpReloadBusy] = useState(false);
   const [mcpToast, setMcpToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -356,7 +358,8 @@ function AppShell() {
             <div className="titlebar-tools">
               {portalLayout && <button type="button" className="portal-settings-button portal-mobile-search" aria-label="Search code" onClick={() => navigate('search')}><i className="codicon codicon-search" aria-hidden="true" /></button>}
               <LoggingProjectSwitch variant="header" />
-              {portalLayout && <button type="button" className="portal-settings-button" aria-label="Open settings"
+              <ProfileMenu onSettings={() => navigate('settings')} onSignedIn={setAccountSignedIn} />
+              {portalLayout && !accountSignedIn && <button type="button" className="portal-settings-button" aria-label="Open settings"
                 onClick={() => navigate('settings')}><i className="codicon codicon-settings-gear" aria-hidden="true" /></button>}
               <div className="font-ctrl">
                 <button type="button" className="font-btn" onClick={() => adjFont(-SCALE_STEP)} title="Smaller text" aria-label="Smaller text">

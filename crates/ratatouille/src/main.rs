@@ -1,5 +1,5 @@
 use std::env;
-use std::io::{self, stdout, Write};
+use std::io::{self, stdout, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -24,13 +24,24 @@ fn main() -> ExitCode {
 }
 
 fn menu() -> io::Result<i32> {
-    let _restore = TermRestore;
     let root = repo_root()?;
     let host = host();
+    match fullscreen(&root, host) {
+        Ok(code) => Ok(code),
+        Err(error) if terminal_unavailable(&error) => {
+            eprintln!("Full-screen menu unavailable ({error}).");
+            text_menu(&root, host)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn fullscreen(root: &Path, host: Host) -> io::Result<i32> {
+    let mut terminal = enter()?;
+    let _restore = TermRestore;
     let mut selected = 0usize;
     let mut confirming = false;
     let mut publish: Option<Result<Decision, String>> = None;
-    let mut terminal = enter()?;
     loop {
         let publish_note = match &publish {
             Some(Ok(decision)) => decision.summary(),
@@ -132,6 +143,88 @@ fn run_action(
     run_steps(&steps)
 }
 
+fn terminal_unavailable(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(6)
+        || matches!(
+            error.kind(),
+            io::ErrorKind::Unsupported | io::ErrorKind::NotConnected | io::ErrorKind::BrokenPipe
+        )
+}
+
+fn plain_menu(confirming: bool, publish_note: &str) -> String {
+    let mut out = String::from("ratatouille\n\n");
+    for (index, action) in Action::ALL.iter().enumerate() {
+        out.push_str(&format!("  {}  {}\n", index + 1, action.title()));
+        out.push_str(&format!("      {}\n", action.detail()));
+    }
+    out.push('\n');
+    if confirming {
+        if !publish_note.is_empty() {
+            out.push_str(publish_note);
+            out.push_str("\n\n");
+        }
+        out.push_str("Run this against production?  y confirm    n cancel\n");
+    } else {
+        out.push_str("Type a number and press Enter. q quits.\n");
+    }
+    out
+}
+
+fn text_menu(root: &Path, host: Host) -> io::Result<i32> {
+    loop {
+        println!("{}", plain_menu(false, ""));
+        io::stdout().flush()?;
+        let choice = read_line()?;
+        let choice = choice.trim();
+        if choice.eq_ignore_ascii_case("q") {
+            return Ok(0);
+        }
+        let Some(index) = choice.parse::<usize>().ok() else {
+            println!("Type a number from 1 to {}, or q to quit.", Action::ALL.len());
+            continue;
+        };
+        let Some(action) = index.checked_sub(1).and_then(|i| Action::ALL.get(i).copied()) else {
+            println!("Type a number from 1 to {}, or q to quit.", Action::ALL.len());
+            continue;
+        };
+        let publish = if action.needs_confirm() {
+            let publish = if action == Action::Publish {
+                Some(inspect(root).map_err(|error| error.to_string()))
+            } else {
+                None
+            };
+            let note = match &publish {
+                Some(Ok(decision)) => decision.summary(),
+                Some(Err(error)) => format!("Could not read the changes: {error}"),
+                None => String::new(),
+            };
+            println!("{}", plain_menu(true, &note));
+            print!("Run this against production? [y/n] ");
+            io::stdout().flush()?;
+            let answer = read_line()?;
+            if !matches!(answer.trim(), "y" | "Y") {
+                continue;
+            }
+            publish
+        } else {
+            None
+        };
+        let code = run_action(action, root, host, publish.as_ref())?;
+        if code != 0 {
+            println!("exited {code}");
+        }
+        pause()?;
+    }
+}
+
+fn read_line() -> io::Result<String> {
+    let mut line = String::new();
+    if io::stdin().read_line(&mut line)? == 0 {
+        return Ok("q".to_string());
+    }
+    Ok(line)
+}
+
 fn pause() -> io::Result<()> {
     println!();
     print!("Press Enter to return to the menu.");
@@ -194,6 +287,12 @@ impl Drop for TermRestore {
 }
 
 fn enter() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "stdout is not a terminal",
+        ));
+    }
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
@@ -211,6 +310,30 @@ fn host() -> Host {
         Host::Windows
     } else {
         Host::Unix
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_not_configured_is_a_terminal_failure() {
+        let error = io::Error::from_raw_os_error(6);
+        assert!(terminal_unavailable(&error));
+    }
+
+    #[test]
+    fn plain_menu_lists_every_action() {
+        let text = plain_menu(false, "");
+        for action in Action::ALL {
+            assert!(
+                text.contains(action.title()),
+                "missing {}",
+                action.title()
+            );
+        }
+        assert!(text.contains("q quits"));
     }
 }
 

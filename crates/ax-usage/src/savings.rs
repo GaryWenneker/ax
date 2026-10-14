@@ -696,6 +696,13 @@ pub struct ModelSavingsRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SystemSavingsRow {
+    pub origin: String,
+    pub calls: i64,
+    pub tokens_saved_est: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct RecentCallRow {
     pub id: i64,
     pub tool: String,
@@ -710,6 +717,8 @@ pub struct RecentCallRow {
     pub created_at: i64,
     /// True when a response or counterfactual preview is stored for chip view.
     pub has_preview: bool,
+    /// Sending replica node. Empty for calls recorded on this installation.
+    pub replica_origin: String,
 }
 
 /// Per-call token-chip payload for the Savings detail blade.
@@ -726,6 +735,7 @@ pub struct CallTokenDetail {
     pub savings_eligible: bool,
     pub duration_ms: Option<i64>,
     pub created_at: i64,
+    pub replica_origin: String,
     pub response_preview: Option<String>,
     pub counterfactual_preview: Option<String>,
     pub response_tokens: TokenizeResult,
@@ -835,6 +845,7 @@ pub struct SavingsSummary {
     pub by_hour: Vec<HourSavingsRow>,
     pub timeline: Vec<TimelineBucket>,
     pub daily: Vec<DailySavings>,
+    pub by_system: Vec<SystemSavingsRow>,
     pub recent_calls: Vec<RecentCallRow>,
     pub agent_sessions: Vec<AgentSessionRow>,
     /// Model, agent, token, and spend totals for every session in the period.
@@ -1106,11 +1117,12 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         i64,
         Option<String>,
         Option<String>,
+        Option<String>,
     );
     let recent_calls: Vec<RecentCallRow> = sqlx::query_as::<_, RecentTuple>(
         "SELECT id, tool, project, tokens_saved_est, counterfactual_tokens_est, response_tokens_est,
                 counterfactual_files, ok, savings_eligible, duration_ms, created_at,
-                response_preview, counterfactual_preview
+                response_preview, counterfactual_preview, replica_origin
          FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
          ORDER BY created_at DESC LIMIT 40",
     )
@@ -1135,6 +1147,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
             created_at,
             response_preview,
             counterfactual_preview,
+            replica_origin,
         )| {
             let has_preview = response_preview
                 .as_ref()
@@ -1153,6 +1166,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
                 duration_ms,
                 created_at,
                 has_preview,
+                replica_origin: replica_origin.unwrap_or_default(),
             }
         },
     )
@@ -1316,6 +1330,26 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         0
     };
 
+    let by_system: Vec<SystemSavingsRow> = sqlx::query_as::<_, (String, i64, i64)>(
+        "SELECT COALESCE(replica_origin, ''),
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0)
+         FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?
+         GROUP BY 1 ORDER BY 2 DESC",
+    )
+    .bind(range.from_ms)
+    .bind(range.to_ms)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .into_iter()
+    .map(|(origin, calls, tokens_saved_est)| SystemSavingsRow {
+        origin,
+        calls,
+        tokens_saved_est,
+    })
+    .collect();
+
     let reference = reference_pricing();
     Ok(SavingsSummary {
         period: range.period,
@@ -1351,6 +1385,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         by_hour,
         timeline,
         daily,
+        by_system,
         recent_calls,
         agent_sessions,
         session_cost,
@@ -1375,11 +1410,12 @@ pub async fn query_call_token_detail(id: i64) -> Result<CallTokenDetail, String>
         i64,
         Option<String>,
         Option<String>,
+        Option<String>,
     );
     let row = sqlx::query_as::<_, DetailTuple>(
         "SELECT id, tool, project, tokens_saved_est, counterfactual_tokens_est, response_tokens_est,
                 counterfactual_files, ok, savings_eligible, duration_ms, created_at,
-                response_preview, counterfactual_preview
+                response_preview, counterfactual_preview, replica_origin
          FROM mcp_call_log WHERE id = ?",
     )
     .bind(id)
@@ -1402,6 +1438,7 @@ pub async fn query_call_token_detail(id: i64) -> Result<CallTokenDetail, String>
         created_at,
         response_preview,
         counterfactual_preview,
+        replica_origin,
     ) = row;
 
     let response_tokens = tokenize_text(response_preview.as_deref().unwrap_or(""));
@@ -1419,6 +1456,7 @@ pub async fn query_call_token_detail(id: i64) -> Result<CallTokenDetail, String>
         savings_eligible: savings_eligible != 0,
         duration_ms,
         created_at,
+        replica_origin: replica_origin.unwrap_or_default(),
         response_preview,
         counterfactual_preview,
         response_tokens,

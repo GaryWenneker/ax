@@ -102,6 +102,46 @@ export default function StatsPage() {
             </StatusPanel>
           </PageCard>
 
+          {stats.systems && stats.systems.length > 0 && (
+            <PageCard title="Other systems" description="Graphs received through replication. Counts stay separate from this installation.">
+              <PageCardBody>
+                <DataTable>
+                  <thead>
+                    <tr>
+                      <th>System</th>
+                      <th>Nodes</th>
+                      <th>Edges</th>
+                      <th>Files</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.systems.map((system) => (
+                      <tr key={system.origin}>
+                        <td>{system.origin}</td>
+                        <td>{system.node_count.toLocaleString()}</td>
+                        <td>{system.edge_count.toLocaleString()}</td>
+                        <td>{system.file_count.toLocaleString()}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-compact"
+                            onClick={() => {
+                              saveString('graph-system', system.origin);
+                              navigateRoute({ page: 'graph', ruleId: null, skillName: null, kind: null, sonarTab: 'dashboard' });
+                            }}
+                          >
+                            Open
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </DataTable>
+              </PageCardBody>
+            </PageCard>
+          )}
+
           <PageCard
             title="Language breakdown"
             description={`${stats.languages.length} languages detected in the index.`}

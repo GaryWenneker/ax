@@ -468,6 +468,24 @@ pub async fn rotate_client_credential(
     })
 }
 
+pub async fn member_avatar(pool: &SqlitePool, id: &str) -> Result<Option<String>> {
+    let image: Option<String> =
+        sqlx::query_scalar("SELECT avatar_image FROM team_members WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(image.filter(|value| !value.is_empty()))
+}
+
+pub async fn set_member_avatar(pool: &SqlitePool, id: &str, image: Option<&str>) -> Result<()> {
+    sqlx::query("UPDATE team_members SET avatar_image = ? WHERE id = ?")
+        .bind(image)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn list_members(pool: &SqlitePool) -> Result<Vec<TeamMember>> {
     let rows: Vec<MemberRow> = sqlx::query_as(
         "SELECT id, display_name, email, role, status, created_at, last_active_at,

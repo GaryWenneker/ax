@@ -102,6 +102,7 @@ export function originQs(q?: { origin?: string; projectId?: number }): string {
 export type PolicyMenuId =
   | 'open'
   | 'edit'
+  | 'properties'
   | 'enable'
   | 'disable'
   | 'move-global'
@@ -117,6 +118,7 @@ export function policyOverviewMenuItems(origin: string | undefined, enabled: boo
     return [
       { id: 'open', label: 'Open' },
       { id: 'edit', label: 'Edit' },
+      { id: 'properties', label: 'Properties' },
       { id: 'move-project', label: 'Move to this project (ax.db)' },
       { id: 'delete', label: 'Delete from global.db', danger: true },
     ];
@@ -125,6 +127,7 @@ export function policyOverviewMenuItems(origin: string | undefined, enabled: boo
   return [
     { id: 'open', label: 'Open' },
     { id: 'edit', label: 'Edit' },
+    { id: 'properties', label: 'Properties' },
     { id: on ? 'disable' : 'enable', label: on ? 'Disable' : 'Enable' },
     { id: 'move-global', label: 'Move to global.db' },
     { id: 'delete', label: 'Delete', danger: true },

@@ -431,10 +431,7 @@ pub async fn export(root: &Path, origin: &str, _pool: &SqlitePool) -> Result<Dat
         for entry in std::fs::read_dir(root_owned.join(".ax"))? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
-            if valid_log(&name)
-                && (name == "mcp-verbose.log" || name.len() == 26)
-                && entry.file_type()?.is_file()
-            {
+            if valid_log(&name) && entry.file_type()?.is_file() {
                 logs.insert(name, file_manifest(&root_owned, &entry.path())?);
             }
         }
@@ -804,7 +801,14 @@ pub fn retain_logs(root: &Path, old: &Dataset, new: &mut Dataset) -> Result<()> 
                     let stem = name.strip_suffix(".log").context("invalid log name")?;
                     let segment = format!("{stem}.{}.log", file.digest);
                     ensure!(valid_log(&segment), "invalid retained log segment");
-                    new.logs.insert(segment, file.clone());
+                    new.logs.insert(segment.clone(), file.clone());
+                    let dest = root.join(".ax").join(&segment);
+                    if !dest.exists() {
+                        let mut out = std::fs::File::create(&dest)?;
+                        for hash in &file.chunks {
+                            out.write_all(&read_chunk(root, hash)?)?;
+                        }
+                    }
                 }
             }
         }

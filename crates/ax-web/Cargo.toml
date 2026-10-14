@@ -49,7 +49,7 @@ async-stream = { workspace = true }
 base64 = "0.22"
 argon2 = "0.5"
 blake3 = { workspace = true }
-webauthn-rs = "0.5.5"
+webauthn-rs = { version = "0.5.5", features = ["conditional-ui"] }
 # webauthn-rs links OpenSSL. Cross builds (Linux arm64, macOS Intel) and Windows
 # runners have no usable system library for the target, so compile the vendored copy.
 openssl = { version = "0.10.81", features = ["vendored"] }

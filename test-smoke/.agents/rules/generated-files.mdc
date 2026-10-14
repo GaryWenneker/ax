@@ -1,0 +1,17 @@
+---
+id: generated-files
+level: WARNING
+alwaysApply: false
+globs: []
+triggers: ["generated", "openapi", "swagger", "client", "do not edit", "codegen"]
+tags: ["codegen"]
+priority: 70
+enabled: true
+status: approved
+scope: project
+share: true
+---
+
+# Generated files
+
+Before editing an API client or contract file, read the header. If the file says it is generated or must not be edited, do not edit it. Regenerate it with the project's generator. If the user already generated it, keep that output. For a contract mismatch, change the non-generated source or ask the user to regenerate. Do not patch the generated file to make the mismatch disappear.

@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { pinPopover } from '../../lib/placePopover';
 import useMobile from '../../hooks/useMobile';
 import ModalShell from '../ModalShell';
 
@@ -11,7 +12,15 @@ export function InfoHover({ label = 'More info', children }: { label?: string; c
   const mobile = useMobile();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
+  const tipRef = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!pos) return;
+    const rect = ref.current?.getBoundingClientRect();
+    const tip = tipRef.current;
+    if (!rect || !tip) return;
+    pinPopover(rect, tip, { prefer: 'below', align: 'start' });
+  }, [pos]);
 
   const show = useCallback(() => {
     const r = ref.current?.getBoundingClientRect();
@@ -46,7 +55,7 @@ export function InfoHover({ label = 'More info', children }: { label?: string; c
       </button>
       {mobile && open && <ModalShell title={label} onClose={() => setOpen(false)}>{children}</ModalShell>}
       {pos && (
-        <span className="info-hover-tip" role="tooltip" style={{ top: pos.top, left: pos.left }}>
+        <span ref={tipRef} className="info-hover-tip" role="tooltip" style={{ top: pos.top, left: pos.left }}>
           {children}
         </span>
       )}

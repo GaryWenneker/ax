@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { usePinnedPopover } from '../lib/placePopover';
 import { fetchStats, fetchVersion } from '../api';
 import { useMcpTraceStatus } from '../hooks/useMcpTraceStatus';
 import ActivityStatusChip from './ActivityStatusChip';
@@ -163,6 +164,9 @@ function StatusChip({
   panel?: ReactNode;
 }) {
   const isOpen = openPanel === id;
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  usePinnedPopover(Boolean(panel) && isOpen, wrapRef, panelRef, { prefer: 'above', align: 'start' });
 
   function handleClick() {
     if (panel) {
@@ -173,7 +177,7 @@ function StatusChip({
   }
 
   return (
-    <span className={`status-chip-wrap${isOpen ? ' status-chip-wrap--open' : ''}`}>
+    <span ref={wrapRef} className={`status-chip-wrap${isOpen ? ' status-chip-wrap--open' : ''}`}>
       <button
         type="button"
         className={`status-item status-item--clickable${className ? ` ${className}` : ''}${isOpen ? ' status-item--active' : ''}`}
@@ -185,7 +189,7 @@ function StatusChip({
       </button>
       {panel && isOpen && (
         <ResponsiveSheet title={title} onClose={() => onTogglePanel(null)}>
-        <div className="status-panel" role="region" aria-label={title}>
+        <div ref={panelRef} className="status-panel" role="region" aria-label={title}>
           {panel}
         </div>
         </ResponsiveSheet>

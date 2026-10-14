@@ -36,9 +36,9 @@ describe('trace direction', () => {
     }
   });
   it('labels each direction', () => {
-    assert.equal(traceDirectionLabel('in'), 'Prompt in');
-    assert.equal(traceDirectionLabel('out'), 'Returned to agent');
-    assert.equal(traceDirectionLabel('internal'), '');
+    assert.equal(traceDirectionLabel('in'), 'Inbound');
+    assert.equal(traceDirectionLabel('out'), 'Outbound');
+    assert.equal(traceDirectionLabel('internal'), 'Internal');
   });
 });
 

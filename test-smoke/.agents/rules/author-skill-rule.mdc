@@ -1,0 +1,57 @@
+---
+id: author-skill-rule
+level: WARNING
+alwaysApply: false
+globs: [".agents/skills/**/SKILL.md", ".agents/rules/**/*.mdc", ".cursor/skills/**/SKILL.md", ".cursor/rules/**/*.mdc"]
+triggers: ["create a skill", "create a rule", "write a skill", "write a rule", "maak een skill", "maak een rule", "schrijf een skill", "schrijf een rule", "nieuwe skill", "nieuwe rule", "skill opstellen", "regel opstellen", "pas de skill aan", "pas de rule aan", "te algemeen", "too general", "geen bloat", "no bloat", "op hiaten", "SKILL.md"]
+tags: ["policy", "authoring"]
+priority: 72
+enabled: true
+status: approved
+scope: project
+group: session-protocol
+---
+
+# Author one skill or one rule
+
+The user supplies the goal, the hard boundaries, and the situations. You write one skill or one rule, cut bloat, and check for gaps. The user accepts or rejects that version.
+
+A workflow with ordered steps is a skill. A constraint that must hold in named situations is a rule.
+
+## Required
+
+- Copy three lists from the user's message: the goal (the decision the text must change), the hard boundaries (each must and each never they stated), and the situations (the cases and exceptions they named). On a revision, also copy hard boundaries already in the open skill or rule. Do not fill those lists from any other file.
+- If a skill or rule file is already open, that is the path. If they did not name a path and no such file is open, ask once: personal `~/.cursor/skills/<name>/SKILL.md`, or this repo `.agents/skills/<name>/SKILL.md` or `.agents/rules/<name>.mdc`. Wait for the answer.
+- When this repo already symlinks `.cursor/skills/<name>` to `.agents/skills/<name>`, add that symlink for a new skill. Do not invent that symlink in a repo that has none.
+- If one hard boundary cannot be written until they choose, ask that one question and wait.
+- When policy capture also matches, ask that interview once, fold the answers into the three lists, and do not add questions of your own.
+- In the skill or rule, the only severity words are `must` and `never`. One word per concept: do not call the same constraint a boundary in one section and a requirement in another.
+- A skill in `.agents/skills` copies the frontmatter fields of one sibling skill in that folder. A skill outside that folder has `name` and `description` only. The description is third person, states what the skill does, and names the situations that should load it. `alwaysApply` is false unless they said it applies on every turn.
+- A rule copies the frontmatter fields of one sibling rule in the same folder. Do not invent fields. `alwaysApply` is false unless they said it applies on every turn. Each trigger is a multi-word phrase from the situations they named.
+- Sections, in this order, skipping a section that would have no lines. Skill: In, Out, Hard boundaries, Steps, Exceptions. Rule: Required, Forbidden, Exceptions.
+- In a skill, In lists the situations they named. Out lists only exclusions they named. Each instruction names the situation, the action, and the stop.
+- An instruction that remains true after the goal is swapped for a different goal is too general. Rewrite it so it names this goal, or delete it.
+- Every hard boundary and every named situation has an instruction.
+- Write in the language an existing project language rule requires. If there is no language rule, use the language of the hard boundaries they wrote.
+- Delete a sentence from the skill or rule when the agent would take the same action without it. Delete these hedges wherever they appear: "consider", "where appropriate", "best practice", "in general", "etc.".
+- After the skill or rule is on disk, compare it to the three lists. Fix only a missing hard boundary, a named situation with no instruction, an instruction missing a situation or an action or a stop, a description or trigger the body does not cover, a body the description would not load, a line that remains true for a different goal, a sentence the bloat cut should have deleted, or an empty section. Add no topic while fixing.
+- In the reply, give the absolute path, each deleted sentence, and each gap fixed. If the gap check finds none of those, say so.
+- On a revision, keep every hard boundary already in the text unless they retract it.
+- A later correction is new context. Apply it, then run the bloat cut and the gap check again.
+- Acceptance is only `yes`, `ja`, `accept`, `akkoord`, or `opslaan` referring to this version. Do not call `ax_policy_capture` with `action: "save"` before that. On a skill or rule in this repo, `status` is `pending` until that acceptance, then `approved`.
+
+## Forbidden
+
+- A second skill or rule that restates the first.
+- A topic, tool, stakeholder, or edge case they did not state.
+- A general default in place of a choice they have not made.
+- A lone trigger: `skill`, `rule`, `create`, `update`, `write`, `zorgen`, `geen`, or `aanmaken`.
+- A design interview on top of the three lists and one unanswered choice.
+- Reading other skills or rules to pad this one. The only lookup is the file being revised, plus one sibling of the same kind when copying frontmatter fields.
+- The gap report inside the skill or the rule.
+- Treating any other reply as acceptance.
+
+## Exceptions
+
+- `alwaysApply: true` only when they said the constraint holds on every turn.
+- A section with no lines is omitted, not filled.

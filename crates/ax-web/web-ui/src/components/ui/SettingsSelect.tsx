@@ -3,12 +3,15 @@ import {
   isValidElement,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
   type ReactNode,
   type SelectHTMLAttributes,
 } from 'react';
+import { createPortal } from 'react-dom';
+import { usePinnedPopover } from '../../lib/placePopover';
 
 type Opt = { value: string; label: string; disabled?: boolean };
 
@@ -53,12 +56,26 @@ export default function SettingsSelect({
   const current = options.find((opt) => opt.value === String(value ?? '')) ?? options[0];
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLUListElement>(null);
   const menuId = useId();
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const rect = button.current?.getBoundingClientRect();
+    const el = menu.current;
+    if (!rect || !el) return;
+    el.style.minWidth = `${Math.round(rect.width)}px`;
+    el.style.width = 'max-content';
+  }, [open, options.length]);
+  usePinnedPopover(open, button, menu, { prefer: 'below', align: 'start', watch: options.length });
 
   useEffect(() => {
     if (!open) return;
     function onPointer(event: MouseEvent) {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (root.current?.contains(target) || menu.current?.contains(target)) return;
+      setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
       if (event.key === 'Escape') setOpen(false);
@@ -79,6 +96,7 @@ export default function SettingsSelect({
   return (
     <div className="settings-select-wrap" ref={root}>
       <button
+        ref={button}
         type="button"
         id={id}
         className={['settings-select', 'settings-select-btn', className].filter(Boolean).join(' ')}
@@ -93,8 +111,8 @@ export default function SettingsSelect({
         <span>{current?.label ?? ''}</span>
         <i className="codicon codicon-chevron-down" aria-hidden="true" />
       </button>
-      {open && (
-        <ul id={menuId} className="settings-select-menu" role="listbox" aria-label={ariaLabel}>
+      {open && createPortal(
+        <ul ref={menu} id={menuId} className="settings-select-menu" role="listbox" aria-label={ariaLabel}>
           {options.map((opt) => (
             <li key={opt.value}>
               <button
@@ -111,7 +129,8 @@ export default function SettingsSelect({
               </button>
             </li>
           ))}
-        </ul>
+        </ul>,
+        document.body,
       )}
     </div>
   );

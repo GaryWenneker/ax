@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS mcp_call_log (
   ok INTEGER NOT NULL,
   savings_eligible INTEGER NOT NULL DEFAULT 0,
   counterfactual_exact_files INTEGER,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  replica_origin TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_call_log_created_at ON mcp_call_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_mcp_call_log_tool ON mcp_call_log(tool);
@@ -162,6 +163,7 @@ CREATE TABLE IF NOT EXISTS agent_usage_event (
   cache_write_tokens INTEGER,
   confidence TEXT NOT NULL,
   created_at INTEGER NOT NULL,
+  replica_origin TEXT,
   UNIQUE(agent, session_id, turn_id)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_usage_event_created ON agent_usage_event(created_at);
@@ -182,6 +184,8 @@ const MIGRATION_ADD_COLUMNS: &[&str] = &[
     "ALTER TABLE agent_session_log ADD COLUMN cache_read_tokens INTEGER",
     "ALTER TABLE agent_session_log ADD COLUMN cache_write_tokens INTEGER",
     "ALTER TABLE model_price_daily ADD COLUMN cache_write_per_mtok REAL",
+    "ALTER TABLE mcp_call_log ADD COLUMN replica_origin TEXT",
+    "ALTER TABLE agent_usage_event ADD COLUMN replica_origin TEXT",
 ];
 
 const PRICING_SCHEMA: &str = "

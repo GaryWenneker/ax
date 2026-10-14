@@ -70,6 +70,8 @@ pub struct ExportQuery {
     pub format: String,
     #[serde(default = "default_export_limit")]
     pub limit: i64,
+    #[serde(default)]
+    pub origin: String,
 }
 
 fn default_format() -> String {
@@ -103,7 +105,7 @@ pub async fn handle_export(
         .unwrap_or("project")
         .to_string();
     let limit = p.limit.clamp(1, graph_max_limit());
-    let payload = match queries::get_graph(&ws.graph_pool, limit).await {
+    let payload = match queries::get_graph(&ws.graph_pool, limit, &p.origin).await {
         Ok(p) => p,
         Err(e) => {
             return (

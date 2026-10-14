@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import { pinPopover } from '../../lib/placePopover';
 import type { PolicyMenuId } from './policyListUtils';
 
 export function PolicyContextMenu({
@@ -14,6 +15,12 @@ export function PolicyContextMenu({
   onPick: (id: PolicyMenuId) => void;
   onClose: () => void;
 }) {
+  const menuRef = useRef<HTMLUListElement>(null);
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    pinPopover(new DOMRect(x, y, 0, 0), menu, { prefer: 'below', align: 'start' });
+  }, [x, y, items.length]);
   useEffect(() => {
     const close = () => onClose();
     const onKey = (e: KeyboardEvent) => {
@@ -29,6 +36,7 @@ export function PolicyContextMenu({
 
   return (
     <ul
+      ref={menuRef}
       className="policy-context-menu"
       role="menu"
       style={{ left: x, top: y }}

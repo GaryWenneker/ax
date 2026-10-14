@@ -20,6 +20,9 @@ const TABLES: &[&str] = &[
     "ax_durable_hook",
     "agent_usage_event",
     "agent_session_log",
+    "model_price_daily",
+    "model_benchmark_daily",
+    "coding_agent_daily",
 ];
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -60,6 +63,14 @@ fn conversations() -> String {
     "SELECT conversation FROM native.ax_durable_scope WHERE project=?1 AND session NOT GLOB 'replica_*'".into()
 }
 fn filter(table: &str) -> String {
+    if matches!(
+        table,
+        "model_price_daily" | "model_benchmark_daily" | "coding_agent_daily"
+    ) {
+        // Catalog rows are global reference data. The project bind stays so
+        // every export uses the same parameter shape.
+        return "?1 = ?1".into();
+    }
     let owned = conversations();
     let sessions="SELECT session FROM native.ax_durable_scope WHERE project=?1 AND session NOT GLOB 'replica_*' UNION SELECT substr(scope,1,length(scope)-length(?1)-1) FROM native.mcp_working_context WHERE substr(scope,-length(?1))=?1 AND scope NOT GLOB 'replica_*'";
     let core=match table {
@@ -363,6 +374,7 @@ async fn project_with(
         let select=names[table].iter().map(|c| {
             let column=format!("r.\"{c}\"");
             if c=="project" {return format!("'{}'",quote(&project));}
+            if c=="replica_origin" {return format!("'{}'",quote(origin));}
             if (table==&"mcp_working_context" && c=="scope") || (table==&"mcp_reuse_cache" && c=="conversation") {return format!("(SELECT local FROM ax_replica_strings WHERE kind='session' AND remote={column})||char(31)||'{}'",quote(&project));}
             if c=="index_fingerprint" {return format!("'replica:{}'",quote(origin));}
             if let Some(kind)=string_kind(table,c) {return format!("CASE WHEN {column} IS NULL THEN NULL ELSE (SELECT local FROM ax_replica_strings WHERE kind='{kind}' AND remote={column}) END");}
@@ -527,6 +539,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(calls, 1);
+        let stamped: String = sqlx::query_scalar("SELECT replica_origin FROM mcp_call_log")
+            .fetch_one(&received)
+            .await
+            .unwrap();
+        assert_eq!(stamped, "a_1");
         let session = mapped("a_1", "session", "session");
         let key = format!("{session}\u{1f}{}", crate::project_scope(target.path()));
         let objective: String =

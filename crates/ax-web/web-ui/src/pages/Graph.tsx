@@ -18,6 +18,7 @@ import NodeDetailPanel from '../components/NodeDetail';
 import GraphOnboard, { suggestedQuestionsFromGraph } from '../components/GraphOnboard';
 import { Spinner } from '../components/ui/Spinner';
 import { usePersistedNumber } from '../hooks/usePersistedState';
+import { loadString, saveString } from '../lib/uiStorage';
 import { layoutDomainGraph } from '../lib/domainLayout';
 import {
   forceCollide,
@@ -225,6 +226,8 @@ export default function GraphPage() {
   const limit = GRAPH_NODE_STEPS[stepIndex];
 
   const [meta, setMeta] = useState<GraphStreamMeta | null>(null);
+  const [system, setSystem] = useState(() => loadString('graph-system', ''));
+  const [systems, setSystems] = useState<{ origin: string; node_count: number }[]>([]);
   const [loadedNodes, setLoadedNodes] = useState(0);
   const [edgeCount, setEdgeCount] = useState(0);
   const [legendNodes, setLegendNodes] = useState<GraphNode[]>([]);
@@ -271,7 +274,7 @@ export default function GraphPage() {
     filename: string;
     summary: string;
   }> {
-    const url = `/api/graph/export?format=${encodeURIComponent(exportFormat)}&limit=${limit}`;
+    const url = `/api/graph/export?format=${encodeURIComponent(exportFormat)}&limit=${limit}${system ? `&origin=${encodeURIComponent(system)}` : ''}`;
     const res = await fetch(url);
     if (!res.ok) {
       let msg = `Export failed (${res.status})`;
@@ -416,9 +419,12 @@ export default function GraphPage() {
     setError(null);
 
     abortRef.current = streamGraph(
-      { limit, recompute },
+      { limit, recompute, origin: system },
       {
-        onMeta: (m) => setMeta(m),
+        onMeta: (m) => {
+          setMeta(m);
+          if (m.systems) setSystems(m.systems);
+        },
         onNodes: (batch) => {
           addNodes(batch);
           setLoadedNodes(simNodesRef.current.length);
@@ -447,7 +453,7 @@ export default function GraphPage() {
     const requestedAt = Date.now();
     let payload;
     try {
-      const [top, recent] = await Promise.all([fetchGraph({ limit }), fetchRecentGraph(liveSinceRef.current)]);
+      const [top, recent] = await Promise.all([fetchGraph({ limit, origin: system }), fetchRecentGraph(liveSinceRef.current)]);
       const topIds = new Set(top.nodes.map((n) => n.id));
       payload = {
         nodes: top.nodes.concat(recent.nodes.filter((n) => !topIds.has(n.id))),
@@ -632,7 +638,7 @@ export default function GraphPage() {
       if (abortRef.current) abortRef.current();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit, viewMode]);
+  }, [limit, viewMode, system]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1351,6 +1357,24 @@ export default function GraphPage() {
               Domain
             </button>
           </div>
+          {systems.some((item) => item.origin) && (
+            <label className="graph-limit">
+              System:
+              <SettingsSelect
+                value={system}
+                onChange={(e) => {
+                  setSystem(e.target.value);
+                  saveString('graph-system', e.target.value);
+                }}
+              >
+                {systems.map((item) => (
+                  <option key={item.origin || 'local'} value={item.origin}>
+                    {item.origin ? item.origin : 'This system'} ({item.node_count})
+                  </option>
+                ))}
+              </SettingsSelect>
+            </label>
+          )}
           {meta && (
             <span className="graph-meta">
               {nodesShown} of {totalNodes} nodes · {edgeCount} edges

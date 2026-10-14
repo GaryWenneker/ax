@@ -365,9 +365,8 @@ enum Ceremony {
         member_id: String,
         state: PasskeyRegistration,
     },
-    Authenticate {
-        member_id: String,
-        state: PasskeyAuthentication,
+    Discover {
+        state: DiscoverableAuthentication,
     },
 }
 async fn store_challenge(ceremony: Ceremony) -> String {
@@ -403,9 +402,21 @@ struct CeremonyBody {
     credential: serde_json::Value,
 }
 #[derive(Deserialize)]
-struct StartBody {
-    identity: String,
+struct AvatarBody {
+    image: Option<String>,
 }
+
+fn acceptable_avatar(image: &str) -> bool {
+    const PREFIX: &str = "data:image/jpeg;base64,";
+    let Some(body) = image.strip_prefix(PREFIX) else {
+        return false;
+    };
+    (1..=65_536).contains(&image.len())
+        && base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .is_ok()
+}
+
 #[derive(Deserialize)]
 struct PasskeyLabel {
     label: String,
@@ -436,8 +447,14 @@ async fn session(headers: HeaderMap) -> Result<Json<serde_json::Value>, ErrorRes
         .into_iter()
         .find(|m| m.id == id)
         .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Invalid session"))?;
+    let mut member = serde_json::to_value(&user)
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?;
+    let avatar = access::member_avatar(&pool, &id)
+        .await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Members unavailable"))?;
+    member["avatar"] = serde_json::json!(avatar);
     Ok(Json(
-        serde_json::json!({"authenticated":true,"member":user}),
+        serde_json::json!({"authenticated":true,"member":member}),
     ))
 }
 async fn setup(
@@ -1050,40 +1067,37 @@ async fn register_finish(
     .await;
     Ok(Json(serde_json::json!({"id":id,"created":true})))
 }
+fn discoverable_challenge(mut options: RequestChallengeResponse) -> serde_json::Value {
+    options.mediation = None;
+    options.public_key.allow_credentials.clear();
+    let mut value = serde_json::to_value(&options).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(public_key) = value.get_mut("publicKey").and_then(|item| item.as_object_mut()) {
+        if public_key
+            .get("allowCredentials")
+            .and_then(|item| item.as_array())
+            .is_some_and(|items| items.is_empty())
+        {
+            public_key.remove("allowCredentials");
+        }
+    }
+    value
+}
+
 async fn auth_start(
     headers: HeaderMap,
-    Json(body): Json<StartBody>,
 ) -> Result<Json<serde_json::Value>, ErrorResponse> {
     let pool = db().await?;
     if !enabled(&pool).await? {
         return Err(err(StatusCode::CONFLICT, "Login disabled"));
     }
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM team_members WHERE status='active' AND (id=? OR email=? OR display_name=?) LIMIT 1"
-    ).bind(&body.identity).bind(&body.identity).bind(&body.identity).fetch_optional(&pool).await
-        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Sign-in unavailable"))?;
-    let (member_id,) = row.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "No available passkey"))?;
-    let raw: Vec<(String,)> = sqlx::query_as(
-        "SELECT credential_json FROM web_passkeys WHERE member_id=? AND revoked_at IS NULL",
-    )
-    .bind(&member_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Passkeys unavailable"))?;
-    let credentials = raw
-        .iter()
-        .filter_map(|(s,)| serde_json::from_str::<Passkey>(s).ok())
-        .collect::<Vec<_>>();
-    if credentials.is_empty() {
-        return Err(err(StatusCode::UNAUTHORIZED, "No available passkey"));
-    }
     let (options, state) = webauthn(&headers)?
-        .start_passkey_authentication(&credentials)
+        .start_discoverable_authentication()
         .map_err(|_| err(StatusCode::BAD_REQUEST, "Cannot start passkey sign-in"))?;
-    let ceremony = store_challenge(Ceremony::Authenticate { member_id, state }).await;
-    Ok(Json(
-        serde_json::json!({"ceremony":ceremony,"options":options}),
-    ))
+    let ceremony = store_challenge(Ceremony::Discover { state }).await;
+    Ok(Json(serde_json::json!({
+        "ceremony": ceremony,
+        "options": discoverable_challenge(options),
+    })))
 }
 async fn auth_finish(
     headers: HeaderMap,
@@ -1093,8 +1107,35 @@ async fn auth_finish(
     if !enabled(&pool).await? {
         return Err(err(StatusCode::CONFLICT, "Login disabled"));
     }
-    let (member_id, state) = match consume_challenge(&body.ceremony).await {
-        Some(Ceremony::Authenticate { member_id, state }) => (member_id, state),
+    let ceremony = consume_challenge(&body.ceremony).await;
+    let credential: PublicKeyCredential = serde_json::from_value(body.credential)
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "Malformed assertion"))?;
+    let (member_id, verified, mut passkey, record_id) = match ceremony {
+        Some(Ceremony::Discover { state }) => {
+            let id = URL_SAFE_NO_PAD.encode(credential.get_credential_id());
+            let stored: Option<(String, String, String)> = sqlx::query_as(
+                "SELECT p.id, p.credential_json, p.member_id
+                 FROM web_passkeys p
+                 JOIN team_members m ON m.id = p.member_id
+                 WHERE p.credential_id=? AND p.revoked_at IS NULL AND m.status='active'",
+            )
+            .bind(&id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Credential lookup failed"))?;
+            let (record_id, json, member_id) =
+                stored.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "No available passkey"))?;
+            let passkey: Passkey = serde_json::from_str(&json)
+                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Stored key malformed"))?;
+            let verified = webauthn(&headers)?
+                .finish_discoverable_authentication(
+                    &credential,
+                    state,
+                    &[DiscoverableKey::from(&passkey)],
+                )
+                .map_err(|_| err(StatusCode::UNAUTHORIZED, "Passkey assertion rejected"))?;
+            (member_id, verified, passkey, record_id)
+        }
         _ => {
             return Err(err(
                 StatusCode::BAD_REQUEST,
@@ -1102,23 +1143,9 @@ async fn auth_finish(
             ))
         }
     };
-    let credential: PublicKeyCredential = serde_json::from_value(body.credential)
-        .map_err(|_| err(StatusCode::BAD_REQUEST, "Malformed assertion"))?;
-    let verified = webauthn(&headers)?
-        .finish_passkey_authentication(&credential, &state)
-        .map_err(|_| err(StatusCode::UNAUTHORIZED, "Passkey assertion rejected"))?;
     if !verified.user_verified() {
         return Err(err(StatusCode::UNAUTHORIZED, "User verification required"));
     }
-    let id = URL_SAFE_NO_PAD.encode(verified.cred_id());
-    let stored:Option<(String,String)>=sqlx::query_as(
-        "SELECT id,credential_json FROM web_passkeys WHERE credential_id=? AND member_id=? AND revoked_at IS NULL"
-    ).bind(id).bind(&member_id).fetch_optional(&pool).await
-        .map_err(|_|err(StatusCode::INTERNAL_SERVER_ERROR,"Credential lookup failed"))?;
-    let (record_id, json) =
-        stored.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Passkey revoked"))?;
-    let mut passkey: Passkey = serde_json::from_str(&json)
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Stored key malformed"))?;
     if passkey.update_credential(&verified).is_none() {
         return Err(err(StatusCode::UNAUTHORIZED, "Passkey identity mismatch"));
     }
@@ -1216,10 +1243,30 @@ async fn rename_key(
     }
     Ok(Json(serde_json::json!({"updated":true})))
 }
+async fn save_avatar(
+    headers: HeaderMap,
+    Json(body): Json<AvatarBody>,
+) -> Result<Json<serde_json::Value>, ErrorResponse> {
+    let pool = db().await?;
+    let id = member_for_session(&pool, &headers)
+        .await
+        .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "Sign in required"))?;
+    let image = match body.image.as_deref() {
+        None | Some("") => None,
+        Some(value) if acceptable_avatar(value) => Some(value),
+        Some(_) => return Err(err(StatusCode::BAD_REQUEST, "Invalid photo")),
+    };
+    access::set_member_avatar(&pool, &id, image)
+        .await
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot save photo"))?;
+    Ok(Json(serde_json::json!({"saved": true})))
+}
+
 /// Public paths and machine principals retain their existing authentication.
 fn excluded(path: &str) -> bool {
     path == "/api/web-auth/status"
         || path == "/api/web-auth/session"
+        || path == "/api/web-auth/avatar"
         || path == "/api/web-auth/login"
         || path == "/api/web-auth/logout"
         || path == "/api/web-auth/passkeys/authentication/start"
@@ -1333,6 +1380,7 @@ pub fn router(hub: WebHub) -> Router {
     Router::new()
         .route("/status", get(status))
         .route("/session", get(session))
+        .route("/avatar", post(save_avatar))
         .route("/setup", post(setup))
         .route("/config", post(configure))
         .route("/login", post(password_login))
@@ -1421,6 +1469,22 @@ mod tests {
             .unwrap();
             assert_eq!(result.rows_affected(), expected);
         }
+    }
+    #[test]
+    fn discoverable_sign_in_challenge_names_no_account() {
+        let url = Url::parse("http://localhost:7070").unwrap();
+        let webauthn = WebauthnBuilder::new("localhost", &url)
+            .unwrap()
+            .build()
+            .unwrap();
+        let (options, _state) = webauthn.start_discoverable_authentication().unwrap();
+        let value = discoverable_challenge(options);
+        let public_key = &value["publicKey"];
+        assert!(public_key["challenge"]
+            .as_str()
+            .is_some_and(|challenge| !challenge.is_empty()));
+        assert!(public_key.get("allowCredentials").is_none());
+        assert!(value.get("mediation").is_none());
     }
     #[test]
     fn local_owner_can_set_a_password_without_a_web_session() {

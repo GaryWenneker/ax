@@ -1,5 +1,6 @@
 import {ResponsiveSheet} from './ui/MobileControls';
 import { useEffect, useRef, useState } from 'react';
+import { usePinnedPopover } from '../lib/placePopover';
 import { subscribeSharedEventSource } from '../lib/sharedEventSource';
 import Codicon from './Codicon';
 import { navigateRoute } from '../lib/routes';
@@ -40,6 +41,9 @@ export default function ActivityStatusChip({ openPanel, onTogglePanel }: Props) 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const isOpen = openPanel === 'activity';
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  usePinnedPopover(isOpen, wrapRef, panelRef, { prefer: 'above', align: 'end' });
   const openRef = useRef(isOpen);
   openRef.current = isOpen;
 
@@ -73,7 +77,7 @@ export default function ActivityStatusChip({ openPanel, onTogglePanel }: Props) 
   const latest = events[0];
 
   return (
-    <span className={`status-chip-wrap${isOpen ? ' status-chip-wrap--open' : ''}`}>
+    <span ref={wrapRef} className={`status-chip-wrap${isOpen ? ' status-chip-wrap--open' : ''}`}>
       <button
         type="button"
         className={`status-item status-item--clickable status-activity${isOpen ? ' status-item--active' : ''}${unread > 0 ? ' status-activity--unread' : ''}`}
@@ -89,6 +93,7 @@ export default function ActivityStatusChip({ openPanel, onTogglePanel }: Props) 
       {isOpen && (
         <ResponsiveSheet title="Live activity" onClose={() => onTogglePanel(null)}>
         <div
+          ref={panelRef}
           className="status-panel status-panel--activity"
           role="region"
           aria-label="Live activity"

@@ -44,16 +44,17 @@ export async function registerPasskey(): Promise<void> {
     },
   });
 }
-export async function signInPasskey(identity: string): Promise<void> {
+export async function signInPasskey(): Promise<void> {
   if (!window.PublicKeyCredential) throw new Error('Passkeys are not supported in this browser');
-  const start = await requestJson<Ceremony>('/api/web-auth/passkeys/authentication/start', { identity });
+  const start = await requestJson<Ceremony>('/api/web-auth/passkeys/authentication/start', {});
   const options = start.options.publicKey;
+  const listed = (options.allowCredentials ?? []) as { type: PublicKeyCredentialType; id: string; transports?: AuthenticatorTransport[] }[];
   const publicKey = {
     ...options,
     challenge: decode(options.challenge as string),
-    allowCredentials: ((options.allowCredentials ?? []) as { id: string }[])
-      .map(item => ({ ...item, id: decode(item.id) })),
   } as PublicKeyCredentialRequestOptions;
+  if (listed.length === 0) delete publicKey.allowCredentials;
+  else publicKey.allowCredentials = listed.map(item => ({ ...item, id: decode(item.id) }));
   const credential = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
   if (!credential) throw new Error('Passkey sign-in cancelled');
   const response = credential.response as AuthenticatorAssertionResponse;

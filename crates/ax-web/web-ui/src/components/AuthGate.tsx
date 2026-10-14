@@ -55,7 +55,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
   async function submitPasskey() {
     setBusy(true); setError(null);
-    try { await signInPasskey(identity); await inspect(); }
+    try { await signInPasskey(); await inspect(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Passkey sign-in failed'); }
     finally { setBusy(false); }
   }
@@ -78,7 +78,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       {passkeyOrigin && passkeyOrigin !== window.location.origin &&
         <p>Passkeys are tied to <a href={passkeyOrigin}>{passkeyOrigin}</a>. Open that address to sign in with a passkey.</p>}
       <button type="button" className="btn auth-passkey"
-        disabled={busy || !identity.trim() || (passkeyOrigin !== null && passkeyOrigin !== window.location.origin)}
+        disabled={busy || (passkeyOrigin !== null && passkeyOrigin !== window.location.origin)}
         onClick={() => void submitPasskey()}>
         <i className="codicon codicon-key" aria-hidden="true" /> Sign in with passkey
       </button>

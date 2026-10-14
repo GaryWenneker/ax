@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePinnedPopover } from '../lib/placePopover';
 
 import Codicon from './Codicon';
 import {
@@ -41,8 +42,8 @@ export default function LoggingProjectSwitch({
   const menuRef = useRef<HTMLDivElement>(null);
   const isInline = variant === 'inline';
   const isHeader = variant === 'header';
-  const [menuBox, setMenuBox] = useState<{ top: number; right: number } | null>(null);
   const [purge, setPurge] = useState<RecentProject | null>(null);
+  usePinnedPopover(open && !isInline, btnRef, menuRef, { prefer: 'below', align: 'end', watch: recent.length });
 
   const refresh = useCallback(async () => {
     const [cur, rec] = await Promise.all([fetchWorkspaceCurrent(), fetchWorkspaceRecent()]);
@@ -74,25 +75,6 @@ export default function LoggingProjectSwitch({
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open, refresh, isInline]);
-
-  useLayoutEffect(() => {
-    if (!isHeader || !open) return;
-    function place() {
-      const rect = btnRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      setMenuBox({
-        top: rect.bottom + 6,
-        right: Math.max(8, window.innerWidth - rect.right),
-      });
-    }
-    place();
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
-    };
-  }, [isHeader, open]);
 
   async function doSwitch(nextPath: string) {
     if (!nextPath || nextPath === path) {
@@ -173,11 +155,6 @@ export default function LoggingProjectSwitch({
       className="logging-proj-switch-menu"
       role="listbox"
       aria-label="Recent projects"
-      style={
-        isHeader && menuBox
-          ? { position: 'fixed', top: menuBox.top, right: menuBox.right, left: 'auto', zIndex: 200 }
-          : undefined
-      }
     >
       <div className="logging-proj-switch-menu-title">Switch project</div>
       {list}
@@ -206,7 +183,7 @@ export default function LoggingProjectSwitch({
         <Codicon name={open ? 'chevron-up' : 'chevron-down'} />
       </button>
 
-      {isHeader && menu ? createPortal(menu, document.body) : menu}
+      {!isInline && menu ? createPortal(menu, document.body) : null}
       {purge && (
         <ProjectPurgeModal
           project={purge}

@@ -142,7 +142,10 @@ CREATE TABLE IF NOT EXISTS team_members (
     role TEXT NOT NULL CHECK(role IN ('owner', 'admin', 'member', 'readonly')),
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_active_at TIMESTAMP
+    last_active_at TIMESTAMP,
+    -- Resized profile photo (data URL). Same installation as the member row.
+    -- Project replication does not copy team_members.
+    avatar_image TEXT
 );
 
 -- A member can hold multiple roles. Existing team_members.role remains a

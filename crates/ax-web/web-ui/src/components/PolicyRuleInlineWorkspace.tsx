@@ -19,6 +19,9 @@ interface Props {
   projectId?: number;
   onClose: () => void;
   onSaved?: () => void;
+  /** Open the properties popup as soon as this rule is shown. */
+  openProperties?: boolean;
+  propertiesTick?: number;
 }
 
 function parseCsv(s: string): string[] {
@@ -39,7 +42,7 @@ function normalizeRuleFm(fm: RuleFrontmatter): RuleFrontmatter {
   };
 }
 
-export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, onClose, onSaved }: Props) {
+export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0 }: Props) {
   const [fm, setFm] = useState<RuleFrontmatter | null>(null);
   const [body, setBody] = useState('');
   const links = useItemLinks('rule', ruleId, origin, body);
@@ -49,7 +52,7 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [propsOpen, setPropsOpen] = useState(false);
+  const [propsOpen, setPropsOpen] = useState(openProperties);
   /** Reveal content when switching rows; first open uses the blade slide-in only. */
   const [reveal, setReveal] = useState(false);
   const prevRuleIdRef = useRef<string | null>(null);
@@ -83,6 +86,10 @@ export default function PolicyRuleInlineWorkspace({ ruleId, origin, projectId, o
       cancelled = true;
     };
   }, [ruleId, origin, projectId]);
+
+  useEffect(() => {
+    if (openProperties) setPropsOpen(true);
+  }, [openProperties, ruleId, propertiesTick]);
 
   async function save() {
     if (!fm) return;

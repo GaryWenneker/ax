@@ -441,6 +441,8 @@ struct GraphQuery {
     limit: i64,
     #[serde(default)]
     recompute: bool,
+    #[serde(default)]
+    origin: String,
 }
 
 fn default_graph_limit() -> i64 {
@@ -468,7 +470,7 @@ async fn load_graph_payload(hub: &WebHub, p: GraphQuery) -> Result<queries::Grap
     if let Err(e) = node_tracker::observe(&ws.graph_pool, &ws.db_path).await {
         tracing::debug!("node tracker snapshot failed: {e}");
     }
-    queries::get_graph(&ws.graph_pool, limit)
+    queries::get_graph(&ws.graph_pool, limit, &p.origin)
         .await
         .map_err(|e| e.to_string())
 }
@@ -543,6 +545,7 @@ async fn handle_graph_stream(
             "node_count": payload.nodes.len(),
             "edge_count": payload.edges.len(),
             "palette": if palette.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(palette) },
+            "systems": payload.systems,
         });
         yield Ok::<Event, std::convert::Infallible>(Event::default().data(meta.to_string()));
 

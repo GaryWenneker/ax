@@ -339,6 +339,7 @@ function RecentCallsTable({
           <th>When</th>
           <th>Tool</th>
           <th>Project</th>
+          <th>System</th>
           <th>Without ax</th>
           <th>With ax</th>
           <th>Saved</th>
@@ -367,6 +368,7 @@ function RecentCallsTable({
               {r.has_preview && <span className="sv-preview-dot" title="Has token preview" />}
             </td>
             <td className="mono">{r.project ?? '—'}</td>
+            <td className="mono">{r.replica_origin ? r.replica_origin : 'This system'}</td>
             <td className="num">{r.savings_eligible ? fmtCompact(r.counterfactual_tokens_est) : '—'}</td>
             <td className="num">{fmtCompact(r.response_tokens_est)}</td>
             <td className="num">{r.tokens_saved_est > 0 ? fmtCompact(r.tokens_saved_est) : '—'}</td>
@@ -434,6 +436,10 @@ function CallTokenBlade({
                   <span className="detail-val">
                     {fmtCompact(detail.counterfactual_tokens_est)} / {fmtCompact(detail.response_tokens_est)}
                   </span>
+                </div>
+                <div className="detail-kv">
+                  <span className="detail-key">System</span>
+                  <span className="detail-val mono">{detail.replica_origin ? detail.replica_origin : 'This system'}</span>
                 </div>
                 <div className="detail-kv">
                   <span className="detail-key">Files</span>
@@ -1304,6 +1310,31 @@ export default function SavingsPage() {
               )}
             </PageCardBody>
           </PageCard>
+
+          {(data.by_system ?? []).some((row) => row.origin) && (
+            <PageCard title="By system" description="Calls recorded here and calls received from another installation.">
+              <PageCardBody>
+                <DataTable>
+                  <thead>
+                    <tr>
+                      <th>System</th>
+                      <th>Calls</th>
+                      <th>Saved</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data.by_system ?? []).map((row) => (
+                      <tr key={row.origin || 'local'}>
+                        <td>{row.origin ? row.origin : 'This system'}</td>
+                        <td className="num">{row.calls.toLocaleString()}</td>
+                        <td className="num">{fmtCompact(row.tokens_saved_est)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </DataTable>
+              </PageCardBody>
+            </PageCard>
+          )}
 
           {data.by_project.length > 0 && (
             <PageCard

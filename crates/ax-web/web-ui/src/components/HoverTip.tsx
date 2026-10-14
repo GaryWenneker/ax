@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { pinPopover } from '../lib/placePopover';
 
 /**
  * Wraps any element and shows a fixed-position tip on hover / focus.
@@ -18,7 +19,15 @@ export function HoverTip({
   prefer?: 'above' | 'below';
 }) {
   const ref = useRef<HTMLSpanElement>(null);
+  const tipRef = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number; place: 'above' | 'below' } | null>(null);
+  useLayoutEffect(() => {
+    if (!pos) return;
+    const rect = ref.current?.getBoundingClientRect();
+    const tip = tipRef.current;
+    if (!rect || !tip) return;
+    pinPopover(rect, tip, { prefer });
+  }, [pos, prefer]);
 
   const show = useCallback(() => {
     const r = ref.current?.getBoundingClientRect();
@@ -47,6 +56,7 @@ export function HoverTip({
       {children}
       {pos && (
         <span
+          ref={tipRef}
           className={`hover-tip hover-tip--${pos.place}`}
           role="tooltip"
           style={{ top: pos.top, left: pos.left }}

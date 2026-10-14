@@ -9,7 +9,7 @@ import { ItemList, ItemRow } from './ui/PageLayout';
 import { liveClass, useFreshMarks } from '../lib/useLive';
 import { traceGroupLinks } from '../traceGroups';
 import { traceAge, traceDirection, traceDirectionLabel, traceRowSubtitle } from '../lib/calmRows';
-import { loggingRowPresentation } from '../lib/loggingPresentation';
+import { loggingRowView, loggingToolLabel, traceSessionId } from '../lib/loggingPresentation';
 import {
   computeMcpTraceStats,
   filterTraceEntries,
@@ -24,7 +24,6 @@ import {
   classifyFieldValue,
   colorizeTraceMessage,
   entryHasTextPayload,
-  entryHeadline,
   entryMeta,
   entryTextPayloads,
   extractFields,
@@ -82,10 +81,6 @@ const KIND_LABELS: Record<TraceKind, string> = {
 type Props = {
   variant?: 'page' | 'embedded';
 };
-
-function traceHeadline(entry: TraceEntry): string {
-  return entryHeadline(entry) || [entry.tool, KIND_LABELS[entry.kind]].filter(Boolean).join(' · ');
-}
 
 const KIND_ICONS: Record<TraceKind, string> = {
   inbound: 'arrow-down',
@@ -366,16 +361,15 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
   });
   const [dateFilter, setDateFilter] = useState('');
   const [toolFilter, setToolFilter] = useState('');
+  const [sessionFilter, setSessionFilter] = useState('');
   const [query, setQuery] = useState('');
   /** Keep only rows with a promoted text option (prompt/query/text/…). */
   const [hasTextFilter, setHasTextFilter] = useState(() => {
     const sp = new URLSearchParams(window.location.search);
     return sp.get('hasText') === '1' || sp.get('hasQuery') === '1';
   });
-  /** On phone, filters start collapsed so the log table owns the viewport. */
-  const [filtersOpen, setFiltersOpen] = useState(() =>
-    typeof window !== 'undefined' ? !window.matchMedia('(max-width: 899px)').matches : true,
-  );
+  /** Filters stay closed until the Filters button opens them. */
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   /** Intersection target at the bottom — load older history when reached. */
   const historySentinelRef = useRef<HTMLDivElement>(null);
@@ -419,8 +413,8 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
         q: query,
         date: dateFilter,
         hasText: hasTextFilter,
-      }),
-    [entries, kindFilter, toolFilter, query, dateFilter, hasTextFilter],
+      }).filter((entry) => !sessionFilter || traceSessionId(entry) === sessionFilter),
+    [entries, kindFilter, toolFilter, query, dateFilter, hasTextFilter, sessionFilter],
   );
   /** Newest first for the table / keyboard navigation. `entries` stays chronological. */
   const displayEntries = useMemo(
@@ -435,19 +429,9 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     kindFilter.size > 0 ||
     dateFilter.trim().length > 0 ||
     toolFilter.trim().length > 0 ||
+    sessionFilter.length > 0 ||
     query.trim().length > 0 ||
     hasTextFilter;
-
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 899px)');
-    function onChange() {
-      // Desktop/tablet wide: always show filters. Narrow: leave user toggle as-is
-      // when entering mobile; expand when leaving mobile.
-      if (!mq.matches) setFiltersOpen(true);
-    }
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
 
   const textPayloadCount = useMemo(
     () => entries.reduce((n, e) => n + (entryHasTextPayload(e) ? 1 : 0), 0),
@@ -527,6 +511,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     setKindFilter(new Set());
     setDateFilter('');
     setToolFilter('');
+    setSessionFilter('');
     setQuery('');
     setHasTextFilter(false);
   }
@@ -544,6 +529,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
         setKindFilter(new Set());
         setDateFilter('');
         setToolFilter('');
+        setSessionFilter('');
         setQuery('');
         setHasTextFilter(false);
         return;
@@ -969,11 +955,20 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     }
 
     window.addEventListener('keydown', onKey);
+    function onOutsideBlade(event: MouseEvent) {
+      if (!selectedId) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('.mcp-blade, .mcp-trace-row')) return;
+      setSelectedId(null);
+    }
+    document.addEventListener('mousedown', onOutsideBlade);
     const lockScroll = maximized || Boolean(selectedId);
     if (lockScroll) document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = '';
       window.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onOutsideBlade);
     };
   }, [
     maximized,
@@ -1102,18 +1097,6 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
             </span>
           </div>
           <div className="mcp-trace-header-actions">
-            {isPage && (
-              <button
-                type="button"
-                className="btn btn-compact mcp-trace-icon-btn mcp-trace-back-btn"
-                title="Back to Command Center"
-                aria-label="Back to Command Center"
-                onClick={() => void backToApp()}
-              >
-                <Codicon name="arrow-left" />
-                <span className="mcp-trace-btn-label">Back</span>
-              </button>
-            )}
             <button
               type="button"
               className={`btn btn-compact mcp-trace-icon-btn mcp-trace-filters-toggle${
@@ -1127,6 +1110,18 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
               <Codicon name="filter" />
               <span className="mcp-trace-btn-label">Filters</span>
             </button>
+            {filtersActive && !filtersOpen && (
+              <button
+                type="button"
+                className="btn btn-compact mcp-trace-icon-btn"
+                title="Clear all filters"
+                aria-label="Clear all filters"
+                onClick={clearFilters}
+              >
+                <Codicon name="close" />
+                <span className="mcp-trace-btn-label">Clear</span>
+              </button>
+            )}
             {isPage && (
               <button
                 type="button"
@@ -1287,7 +1282,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
               <option value="">All tools</option>
               {toolOptions.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {loggingToolLabel(t)}
                 </option>
               ))}
             </SettingsSelect>
@@ -1361,14 +1356,13 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
           </div>
         ) : (
           <>
-          <div className="mcp-dir-legend" aria-label="Row colors">
-            <span className="mcp-dir-legend-item mcp-dir-legend-item--in">Prompt in</span>
-            <span className="mcp-dir-legend-item mcp-dir-legend-item--out">Returned to agent</span>
+          <div className="mcp-dir-legend" aria-label="Direction">
+            <span className="mcp-dir-legend-item mcp-dir-legend-item--in">Inbound</span>
+            <span className="mcp-dir-legend-item mcp-dir-legend-item--out">Outbound</span>
             <span className="mcp-dir-legend-item mcp-dir-legend-item--internal">Internal</span>
           </div>
           <ItemList className="calm-list mcp-trace-calm">
             {displayEntries.map((e, i) => {
-              const headline = traceHeadline(e);
               const group = cacheGroups[i];
               const meta = entryMeta(e);
               const textPrimary = primaryTextPayload(e);
@@ -1376,11 +1370,11 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
               const isCursor = cursorId === e.id;
               const isOpen = selectedId === e.id;
               const dir = traceDirection(e.kind);
-              const presentation = loggingRowPresentation(e, {
-                title: headline || '—',
+              const view = loggingRowView(e);
+              const presentation = {
+                title: view.title,
                 subtitle: traceRowSubtitle(traceDirectionLabel(dir) || undefined, KIND_LABELS[e.kind], meta),
-                text: textPrimary?.value ? (textPrimary.value.length > 96 ? `${textPrimary.value.slice(0, 96)}…` : textPrimary.value) : undefined,
-              });
+              };
               const duplicateTool = e.tool?.toLowerCase() === e.kind;
               return (
                 <ItemRow
@@ -1434,18 +1428,33 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                           {group.lane} {group.position}/{group.count}
                         </span>
                       )}
-                      {e.tool && !duplicateTool && (
+                      {e.tool && (
                         <button
                           type="button"
                           className="page-item-badge page-item-badge--btn mcp-col-tool"
-                          title={`Filter tool ${e.tool}`}
+                          title={`Filter ${view.label}`}
+                          aria-pressed={toolFilter === e.tool}
                           onClick={(ev) => {
                             ev.stopPropagation();
                             setToolFilter((prev) => (prev === e.tool ? '' : e.tool ?? ''));
                           }}
                         >
                           <Codicon name="symbol-misc" className="badge-icon" />
-                          {e.tool}
+                          {view.label}
+                        </button>
+                      )}
+                      {view.sessionShort && (
+                        <button
+                          type="button"
+                          className="page-item-badge page-item-badge--btn"
+                          title={`Filter session ${view.sessionId}`}
+                          aria-pressed={sessionFilter === view.sessionId}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            setSessionFilter((prev) => (prev === view.sessionId ? '' : view.sessionId ?? ''));
+                          }}
+                        >
+                          {view.sessionShort}
                         </button>
                       )}
                       {textPrimary && (
@@ -1506,7 +1515,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
             <div className="detail-header">
               <span className="detail-title memory-blade-title">
                 <Codicon name={KIND_ICONS[selected.kind]} className="detail-title-icon" />
-                <span>{inspectedTool ?? 'Log event'}</span>
+                <span>{selected ? loggingToolLabel(selected.tool, selected.kind) : 'Log event'}</span>
               </span>
               <span className="mcp-blade-nav">
                 <button
@@ -1551,7 +1560,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                 {inspectedTool && (
                   <div className="detail-kv">
                     <span className="detail-key">Tool</span>
-                    <span className="detail-val">{inspectedTool}</span>
+                    <span className="detail-val">{loggingToolLabel(inspectedTool, selected?.kind)}</span>
                   </div>
                 )}
                 {hasTimeline && (
@@ -1567,7 +1576,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
                   <div className="detail-section-title">Steps</div>
                   <ItemList className="calm-list mcp-blade-steps">
                     {entries.slice(cluster.start, cluster.end + 1).map((step) => {
-                      const presentation = loggingRowPresentation(step, {title: traceHeadline(step), subtitle: '', text: primaryTextPayload(step)?.value});
+                      const presentation = {title: loggingRowView(step).title, subtitle: ''};
                       return (
                       <ItemRow
                         key={step.id}

@@ -1,4 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
+import { usePinnedPopover } from '../../lib/placePopover';
 
 export interface LabelAutocompleteProps {
   options: string[];
@@ -27,6 +29,7 @@ export function LabelAutocomplete({
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
 
@@ -44,9 +47,21 @@ export function LabelAutocomplete({
     setActive(0);
   }, [query, open, suggestions.length]);
 
+  const menuOpen = open && suggestions.length > 0;
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const rect = rootRef.current?.getBoundingClientRect();
+    const el = menuRef.current;
+    if (!rect || !el) return;
+    el.style.width = `${Math.round(rect.width)}px`;
+  }, [menuOpen, suggestions.length]);
+  usePinnedPopover(menuOpen, rootRef, menuRef, { prefer: 'below', align: 'start', watch: suggestions.length });
+
   useEffect(() => {
     function onDocPointer(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
     }
     document.addEventListener('mousedown', onDocPointer);
     return () => document.removeEventListener('mousedown', onDocPointer);
@@ -144,8 +159,8 @@ export function LabelAutocomplete({
           onKeyDown={onKeyDown}
         />
       </div>
-      {open && suggestions.length > 0 && (
-        <ul id={listId} className="label-ac-menu" role="listbox">
+      {menuOpen && createPortal(
+        <ul ref={menuRef} id={listId} className="label-ac-menu" role="listbox">
           {suggestions.map((opt, i) => (
             <li key={opt} role="option" aria-selected={i === active}>
               <button
@@ -161,7 +176,8 @@ export function LabelAutocomplete({
               </button>
             </li>
           ))}
-        </ul>
+        </ul>,
+        document.body,
       )}
     </div>
   );

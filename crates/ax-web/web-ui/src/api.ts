@@ -397,12 +397,14 @@ export interface GraphPayload {
   edges: GraphEdge[];
   total_nodes: number;
   truncated: boolean;
+  systems?: { origin: string; node_count: number }[];
 }
 
-export function fetchGraph(params: { limit?: number; recompute?: boolean } = {}): Promise<GraphPayload> {
+export function fetchGraph(params: { limit?: number; recompute?: boolean; origin?: string } = {}): Promise<GraphPayload> {
   const sp = new URLSearchParams();
   if (params.limit != null) sp.set('limit', String(params.limit));
   if (params.recompute) sp.set('recompute', 'true');
+  if (params.origin) sp.set('origin', params.origin);
   const qs = sp.toString();
   return get<GraphPayload>(`/graph${qs ? `?${qs}` : ''}`);
 }
@@ -418,6 +420,7 @@ export interface GraphStreamMeta {
   node_count: number;
   edge_count: number;
   palette?: string | null;
+  systems?: { origin: string; node_count: number }[];
 }
 
 export interface GraphStreamHandlers {
@@ -433,13 +436,14 @@ export interface GraphStreamHandlers {
  * Returns an abort function that cancels the in-flight stream.
  */
 export function streamGraph(
-  params: { limit?: number; recompute?: boolean },
+  params: { limit?: number; recompute?: boolean; origin?: string },
   handlers: GraphStreamHandlers,
 ): () => void {
   const ctrl = new AbortController();
   const sp = new URLSearchParams();
   if (params.limit != null) sp.set('limit', String(params.limit));
   if (params.recompute) sp.set('recompute', 'true');
+  if (params.origin) sp.set('origin', params.origin);
   const qs = sp.toString();
 
   (async () => {
@@ -456,6 +460,7 @@ export function streamGraph(
           truncated: p.truncated,
           node_count: p.nodes.length,
           edge_count: p.edges.length,
+          systems: p.systems,
         });
         handlers.onNodes?.(p.nodes);
         handlers.onEdges?.(p.edges);
@@ -653,6 +658,7 @@ export interface RecentCallRow {
   duration_ms: number | null;
   created_at: number;
   has_preview: boolean;
+  replica_origin?: string;
 }
 
 export interface TokenizeResult {
@@ -674,6 +680,7 @@ export interface CallTokenDetail {
   savings_eligible: boolean;
   duration_ms: number | null;
   created_at: number;
+  replica_origin?: string;
   response_preview: string | null;
   counterfactual_preview: string | null;
   response_tokens: TokenizeResult;
@@ -813,9 +820,16 @@ export interface SavingsSummary {
   by_hour: HourSavingsRow[];
   timeline: TimelineBucket[];
   daily: DailySavingsRow[];
+  by_system?: SystemSavingsRow[];
   recent_calls: RecentCallRow[];
   agent_sessions: AgentSessionRow[];
   db_path: string;
+}
+
+export interface SystemSavingsRow {
+  origin: string;
+  calls: number;
+  tokens_saved_est: number;
 }
 
 function asArray<T>(value: T[] | null | undefined): T[] {
@@ -833,6 +847,7 @@ export function normalizeSavingsSummary(raw: SavingsSummary): SavingsSummary {
     by_hour: asArray(raw.by_hour),
     timeline: asArray(raw.timeline),
     daily: asArray(raw.daily),
+    by_system: asArray(raw.by_system),
     recent_calls: asArray(raw.recent_calls),
     agent_sessions: asArray(raw.agent_sessions),
   };

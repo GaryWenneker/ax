@@ -45,6 +45,7 @@ import {
   type SortDir,
 } from '../components/ui/policyListUtils';
 import { usePageContext } from '../context/UiContext';
+import Codicon from '../components/Codicon';
 import { POLICY_SCOPES, type CaptureProposal, type PolicyRuleRow } from '../policyTypes';
 import { visibleRuleGroups, toggleCollapsed, ruleResolvedGroup } from '../skillGroups';
 import {
@@ -156,12 +157,15 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: PolicyRuleRow } | null>(null);
+  const [propertiesFor, setPropertiesFor] = useState<string | null>(null);
+  const [propertiesTick, setPropertiesTick] = useState(0);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [capturePrompt, setCapturePrompt] = useState('');
   const [captureProposal, setCaptureProposal] = useState<CaptureProposal | null>(null);
   const [captureError, setCaptureError] = useState('');
   const [captureLoading, setCaptureLoading] = useState(false);
 
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [q, setQ] = useState('');
   const [level, setLevel] = useState('');
   const [scope, setScope] = useState('');
@@ -360,6 +364,11 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
           selectRule(row.id, row);
         }
         if (action === 'edit' && targets.length === 1) onEditFull(row.id, row.origin, row.projectId);
+        if (action === 'properties' && targets.length === 1) {
+          selectRule(row.id, row);
+          setPropertiesFor(row.id);
+          setPropertiesTick((n) => n + 1);
+        }
         if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, true);
         if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, false);
         if (action === 'move-global' && !isGlobalPolicy(row)) {
@@ -482,6 +491,19 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
         subtitle="Durable instructions matched by globs, triggers, or always-apply."
         actions={
           <>
+            <button
+              type="button"
+              className={`btn btn-compact mcp-trace-icon-btn mcp-trace-filters-toggle${
+                filtersOpen ? ' mcp-trace-icon-btn--active' : ''
+              }${q.trim() || level || scope || origin || always || tags.length > 0 || groupIds.length > 0 ? ' mcp-trace-filters-toggle--lit' : ''}`}
+              title={filtersOpen ? 'Hide filters' : 'Show filters'}
+              aria-label={filtersOpen ? 'Hide filters' : 'Show filters'}
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((open) => !open)}
+            >
+              <Codicon name="filter" />
+              <span className="mcp-trace-btn-label">Filters</span>
+            </button>
             <label className="policy-storage-default" title="Project default storage (per-item overrides keep their own mode)">
               <span className="muted">Default</span>
               <span className={`policy-storage-label${projectStorage === 'files' ? ' active' : ''}`}>MD</span>
@@ -587,6 +609,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
         )}
 
         <PageCard title="All rules" description="Grouped by catalog folders. Empty groups stay hidden until a rule is assigned.">
+          {filtersOpen && (
           <PolicyToolbar>
             <LabelAutocomplete
               options={tagOptions}
@@ -667,6 +690,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
             <PolicyCount shown={visible.length} total={listed.length} />
             <PolicyDbLegend />
           </PolicyToolbar>
+          )}
 
           <PageCardBody>
             {listed.length === 0 ? (
@@ -757,6 +781,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                         ruleId={selectedId}
                         origin={openOrigin}
                         projectId={openProjectId}
+                        openProperties={propertiesFor === selectedId}
+                        propertiesTick={propertiesTick}
                         onClose={() => requestCloseBlade()}
                         onSaved={reloadRules}
                       />

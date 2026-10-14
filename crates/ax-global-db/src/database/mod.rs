@@ -28,23 +28,31 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
     for table in ["global_policy_rules", "global_policy_skills"] {
         add_level_column(pool, table).await?;
     }
+    add_column_if_missing(pool, "team_members", "avatar_image", "TEXT").await?;
     Ok(())
 }
 
 /// Tables created before the `level` column existed: every row they hold is global.
 async fn add_level_column(pool: &SqlitePool, table: &str) -> Result<()> {
+    add_column_if_missing(pool, table, "level", "TEXT NOT NULL DEFAULT 'global'").await
+}
+
+async fn add_column_if_missing(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
     let has: Option<(String,)> = sqlx::query_as(&format!(
-        "SELECT name FROM pragma_table_info('{table}') WHERE name = 'level'"
+        "SELECT name FROM pragma_table_info('{table}') WHERE name = '{column}'"
     ))
     .fetch_optional(pool)
     .await?;
     if has.is_none() {
-        sqlx::query(&format!(
-            "ALTER TABLE {table} ADD COLUMN level TEXT NOT NULL DEFAULT 'global'"
-        ))
-        .execute(pool)
-        .await
-        .with_context(|| format!("add level column to {table}"))?;
+        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+            .execute(pool)
+            .await
+            .with_context(|| format!("add {column} column to {table}"))?;
     }
     Ok(())
 }

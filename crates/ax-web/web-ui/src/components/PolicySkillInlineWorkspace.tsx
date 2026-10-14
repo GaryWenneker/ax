@@ -19,6 +19,9 @@ interface Props {
   projectId?: number;
   onClose: () => void;
   onSaved?: () => void;
+  /** Open the properties popup as soon as this skill is shown. */
+  openProperties?: boolean;
+  propertiesTick?: number;
 }
 
 function parseCsv(s: string): string[] {
@@ -38,7 +41,7 @@ function normalizeSkillFm(fm: SkillFrontmatter): SkillFrontmatter {
   };
 }
 
-export default function PolicySkillInlineWorkspace({ skillName, origin, projectId, onClose, onSaved }: Props) {
+export default function PolicySkillInlineWorkspace({ skillName, origin, projectId, onClose, onSaved, openProperties = false, propertiesTick = 0 }: Props) {
   const [fm, setFm] = useState<SkillFrontmatter | null>(null);
   const [body, setBody] = useState('');
   const links = useItemLinks('skill', skillName, origin, body);
@@ -47,7 +50,7 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [propsOpen, setPropsOpen] = useState(false);
+  const [propsOpen, setPropsOpen] = useState(openProperties);
   /** Reveal content when switching rows; first open uses the blade slide-in only. */
   const [reveal, setReveal] = useState(false);
   const prevSkillNameRef = useRef<string | null>(null);
@@ -80,6 +83,10 @@ export default function PolicySkillInlineWorkspace({ skillName, origin, projectI
       cancelled = true;
     };
   }, [skillName, origin, projectId]);
+
+  useEffect(() => {
+    if (openProperties) setPropsOpen(true);
+  }, [openProperties, skillName, propertiesTick]);
 
   async function save() {
     if (!fm) return;

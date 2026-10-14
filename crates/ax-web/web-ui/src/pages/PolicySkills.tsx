@@ -43,6 +43,7 @@ import {
   type SortDir,
 } from '../components/ui/policyListUtils';
 import { usePageContext } from '../context/UiContext';
+import Codicon from '../components/Codicon';
 import { POLICY_SCOPES, type PolicySkillRow } from '../policyTypes';
 import { visibleSkillGroups, toggleCollapsed, skillResolvedGroup } from '../skillGroups';
 import {
@@ -87,6 +88,8 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: PolicySkillRow } | null>(null);
+  const [propertiesFor, setPropertiesFor] = useState<string | null>(null);
+  const [propertiesTick, setPropertiesTick] = useState(0);
   const [selectedName, setSelectedName] = useState<string | null>(selectedNameFromRoute);
   const [graphOpen, setGraphOpen] = useState(false);
   const [autoGroupOpen, setAutoGroupOpen] = useState(false);
@@ -99,6 +102,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [q, setQ] = useState('');
   const [scope, setScope] = useState('');
   const [origin, setOrigin] = useState('');
@@ -344,6 +348,11 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
           selectSkill(row.name, row);
         }
         if (action === 'edit' && targets.length === 1) onEditFull(row.name, row.origin, row.projectId);
+        if (action === 'properties' && targets.length === 1) {
+          selectSkill(row.name, row);
+          setPropertiesFor(row.name);
+          setPropertiesTick((n) => n + 1);
+        }
         if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.name, true);
         if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.name, false);
         if (action === 'move-global' && !isGlobalPolicy(row)) {
@@ -418,6 +427,19 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
         subtitle="Task-specific instructions agents can load via ax_skill."
         actions={
           <>
+            <button
+              type="button"
+              className={`btn btn-compact mcp-trace-icon-btn mcp-trace-filters-toggle${
+                filtersOpen ? ' mcp-trace-icon-btn--active' : ''
+              }${q.trim() || scope || origin || tags.length > 0 || groupIds.length > 0 ? ' mcp-trace-filters-toggle--lit' : ''}`}
+              title={filtersOpen ? 'Hide filters' : 'Show filters'}
+              aria-label={filtersOpen ? 'Hide filters' : 'Show filters'}
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((open) => !open)}
+            >
+              <Codicon name="filter" />
+              <span className="mcp-trace-btn-label">Filters</span>
+            </button>
             <label className="policy-storage-default" title="Project default storage (per-item overrides keep their own mode)">
               <span className="muted">Default</span>
               <span className={`policy-storage-label${projectStorage === 'files' ? ' active' : ''}`}>MD</span>
@@ -463,6 +485,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
 
       <PageStack>
         <PageCard title="All skills" description="Grouped by catalog folders. Empty groups stay hidden until a skill is assigned.">
+          {filtersOpen && (
           <PolicyToolbar>
             <LabelAutocomplete
               options={tagOptions}
@@ -522,6 +545,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
             <PolicyCount shown={visible.length} total={listed.length} />
             <PolicyDbLegend />
           </PolicyToolbar>
+          )}
 
           <PageCardBody>
             {listed.length === 0 ? (
@@ -611,6 +635,8 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
                         skillName={selectedName}
                         origin={openOrigin}
                         projectId={openProjectId}
+                        openProperties={propertiesFor === selectedName}
+                        propertiesTick={propertiesTick}
                         onClose={() => requestCloseBlade()}
                         onSaved={reloadSkills}
                       />
