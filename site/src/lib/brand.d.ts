@@ -5,4 +5,4 @@ export declare const NPM_PACKAGE = "@garywenneker/ax";
 export declare const NPM_URL: string;
 export declare const DOCS_SITE = "https://getax.wenneker.io";
 /** Full product name — hover/title easter egg, not primary UI chrome. */
-export declare const AX_FULL_NAME = "Aero Xecution";
+export declare const AX_FULL_NAME = "AgentXpansion";

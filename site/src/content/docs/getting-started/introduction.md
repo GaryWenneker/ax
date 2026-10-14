@@ -48,4 +48,4 @@ Sharing a page URL uses a preview of that page. The site build screenshots the p
 
 Ready to try it? Head to the [Quickstart](/getting-started/quickstart/).
 
-<sub>ax · Aero Xecution</sub>
+<sub>AX · AgentXpansion</sub>

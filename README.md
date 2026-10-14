@@ -138,4 +138,4 @@ Dependabot proposes dependency updates. A separate monitor audits Rust and npm l
 
 See the repository license file.
 
-<sub>ax · Aero Xecution</sub>
+<sub>AX · AgentXpansion</sub>
