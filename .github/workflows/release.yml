@@ -222,6 +222,8 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: site/package-lock.json
+      - name: Install zsh for PATH persistence tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
       - name: Build and test released documentation
         working-directory: site
         run: |

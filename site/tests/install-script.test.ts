@@ -103,9 +103,11 @@ function runInstaller(installer: string, env: NodeJS.ProcessEnv) {
 }
 
 function freshZsh(f: ReturnType<typeof fixture>) {
-  return spawnSync('zsh', ['-i', '-c', 'command -v ax && ax version'], {
+  const result = spawnSync('zsh', ['-i', '-c', 'command -v ax && ax version'], {
     cwd: f.root, env: { ...f.env, PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 10_000,
   });
+  if (result.error) throw result.error;
+  return result;
 }
 
 for (const installer of installers) {
@@ -239,7 +241,7 @@ test('an unset login shell uses the platform startup file', () => {
   for (const os of ['Darwin', 'Linux']) {
     const f = fixture({ os });
     try {
-      delete f.env.SHELL;
+      f.env.SHELL = '';
       assert.equal(runInstaller(installers[0], f.env).status, 0);
       const filename = os === 'Darwin' ? '.zshrc' : '.profile';
       assert.match(readFileSync(join(f.userHome, filename), 'utf8'), /# ax PATH/);
