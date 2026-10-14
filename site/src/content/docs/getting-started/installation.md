@@ -78,6 +78,24 @@ If the website still serves an older installer, use the current repository copy.
 curl -fsSL https://raw.githubusercontent.com/GaryWenneker/ax/main/install.sh | sh
 ```
 
+The shell installer adds the installed binary directory to your shell's startup configuration. For zsh, this is `${ZDOTDIR:-$HOME}/.zshrc`. Existing settings are preserved, and reinstalling does not duplicate the same PATH block. Open a new Terminal window, or run the `export PATH=...` command printed by the installer to update your already open terminal. An installer running through `curl | sh` cannot change its parent terminal's environment.
+
+For an existing standard install that reports `command not found: ax`, verify the binary and repair your zsh PATH:
+
+```zsh
+"$HOME/.local/bin/ax" version
+ax_shell_rc="${ZDOTDIR:-$HOME}/.zshrc"
+ax_path_line='export PATH="$HOME/.local/bin:$PATH"'
+grep -Fqx "$ax_path_line" "$ax_shell_rc" 2>/dev/null ||
+  printf '\n%s\n' "$ax_path_line" >> "$ax_shell_rc"
+export PATH="$HOME/.local/bin:$PATH"
+rehash
+command -v ax
+ax version
+```
+
+If you downloaded an archive manually, `./ax version` runs the executable from its extracted directory. `ax` alone searches PATH. Executable files can appear red in a terminal listing; their color is not a diagnostic error. If running the full path returns an error, diagnose that error before changing PATH. The PATH steps do not address an incompatible architecture or a blocked binary.
+
 ### Linux
 
 Run in your Linux shell:
@@ -85,6 +103,8 @@ Run in your Linux shell:
 ```bash
 curl -fsSL https://getax.wenneker.io/install.sh | sh
 ```
+
+For Bash, the installer updates `.bashrc` and the first applicable login file (`.bash_profile`, `.bash_login`, or `.profile`). For sh/dash it updates `.profile`. Other shells receive a manual setup notice. A startup-file write failure leaves the verified binary installed and prints recovery guidance instead of claiming that future terminals are configured. `AX_BIN_DIR` values containing a colon or newline are rejected before installation because these characters are separators in PATH or the install-target list.
 
 ### WSL2
 

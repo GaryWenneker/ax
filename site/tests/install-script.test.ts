@@ -24,13 +24,15 @@ for (const installer of installers) {
   }
 }
 
-function fixture(options: { os?: string; arch?: string; withoutPython?: boolean; stalePin?: boolean } = {}) {
+function fixture(options: { os?: string; arch?: string; withoutPython?: boolean; stalePin?: boolean; loginShell?: string; binName?: string; binaryVersion?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ax-installer-test-'));
+  const userHome = join(root, 'user-home');
+  mkdirSync(userHome);
   const bin = join(root, 'mock-bin');
   const trace = join(root, 'requests.jsonl');
   mkdirSync(bin);
   mkdirSync(join(root, 'payload'));
-  writeFileSync(join(root, 'payload/ax'), '#!/bin/sh\necho "ax 8.1.0"\n', { mode: 0o755 });
+  writeFileSync(join(root, 'payload/ax'), `#!/bin/sh\necho "ax ${options.binaryVersion ?? '8.1.0'}"\n`, { mode: 0o755 });
   const archive = join(root, 'ax.tar.gz');
   const packed = spawnSync('tar', ['-czf', archive, '-C', root, 'payload'], { encoding: 'utf8' });
   assert.equal(packed.status, 0, packed.stderr);
@@ -66,17 +68,20 @@ else if(name==='sort') {
   for (const name of ['uname', 'curl', 'sort', 'pkill', 'sleep', ...(options.withoutPython ? ['python3'] : []), ...(options.stalePin ? ['powershell.exe'] : [])]) {
     symlinkSync(mock, join(bin, name));
   }
+  const binaryDir = join(root, options.binName ?? 'linked');
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    HOME: userHome, SHELL: options.loginShell ?? '/bin/zsh',
     PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
-    AX_INSTALL_DIR: join(root, 'install'), AX_BIN_DIR: join(root, 'linked'),
+    AX_INSTALL_DIR: join(root, 'install'), AX_BIN_DIR: binaryDir,
     AX_KEEP_CARGO_BIN: '1', AX_SKIP_PROJECT_INIT: '1',
     AX_TEST_OS: options.os ?? 'Darwin', AX_TEST_ARCH: options.arch ?? 'arm64',
     AX_TEST_TRACE: trace, AX_TEST_ARCHIVE: archive, AX_TEST_SORT: realSort,
   };
   delete env.AX_VERSION;
+  delete env.ZDOTDIR;
   if (options.stalePin) env.AX_VERSION = 'v99.0.0';
-  return { root, trace, env };
+  return { root, userHome, trace, binaryDir, env };
 }
 
 for (const os of ['Darwin', 'Linux']) {
@@ -92,6 +97,171 @@ for (const os of ['Darwin', 'Linux']) {
     });
   }
 }
+
+function runInstaller(installer: string, env: NodeJS.ProcessEnv) {
+  return spawnSync('sh', ['-s'], { env, input: readFileSync(installer, 'utf8'), encoding: 'utf8', timeout: 30_000 });
+}
+
+function freshZsh(f: ReturnType<typeof fixture>) {
+  return spawnSync('zsh', ['-i', '-c', 'command -v ax && ax version'], {
+    cwd: f.root, env: { ...f.env, PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 10_000,
+  });
+}
+
+for (const installer of installers) {
+  test(`${installer} persists PATH for a fresh zsh and preserves existing configuration`, () => {
+    const f = fixture();
+    try {
+      const rc = join(f.userHome, '.zshrc');
+      const original = '# café user configuration\nexport AX_USER_SETTING=kept';
+      writeFileSync(rc, original);
+      const installed = runInstaller(installer, f.env);
+      assert.equal(installed.status, 0, installed.stderr);
+      assert.ok(readFileSync(rc, 'utf8').startsWith(original));
+      const fresh = freshZsh(f);
+      assert.equal(fresh.status, 0, fresh.stderr);
+      assert.ok(fresh.stdout.includes(`${f.env.AX_BIN_DIR}/ax`));
+      assert.match(fresh.stdout, /ax 8\.1\.0/);
+      assert.match(installed.stdout, /this terminal/);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  });
+}
+
+test('reinstall keeps a single PATH block and honors ZDOTDIR', () => {
+  const f = fixture();
+  try {
+    const dotdir = join(f.root, 'zsh configuration');
+    mkdirSync(dotdir);
+    f.env.ZDOTDIR = dotdir;
+    for (let run = 0; run < 2; run++) {
+      const installed = runInstaller(installers[0], f.env);
+      assert.equal(installed.status, 0, installed.stderr);
+    }
+    const rc = readFileSync(join(dotdir, '.zshrc'), 'utf8');
+    assert.equal(rc.split('# ax PATH').length - 1, 1);
+    assert.equal(freshZsh(f).status, 0);
+    assert.throws(() => readFileSync(join(f.userHome, '.zshrc')));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('shell-sensitive binary paths are literal data in the profile', () => {
+  for (const binName of ['bin with spaces', "bin'quote", 'bin[$cash]*', 'bin`touch AX_INJECTION`', 'bin$(touch AX_INJECTION)']) {
+    const f = fixture({ binName });
+    try {
+      const installed = runInstaller(installers[0], f.env);
+      assert.equal(installed.status, 0, installed.stderr);
+      const fresh = freshZsh(f);
+      assert.equal(fresh.status, 0, fresh.stderr);
+      assert.ok(fresh.stdout.includes(`${f.env.AX_BIN_DIR}/ax`));
+      assert.throws(() => readFileSync(join(f.root, 'AX_INJECTION')));
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('Bash configures interactive and the first applicable login profile', () => {
+  for (const existing of ['.bash_profile', '.bash_login', '.profile']) {
+    const f = fixture({ loginShell: '/bin/bash' });
+    try {
+      writeFileSync(join(f.userHome, existing), '# existing configuration\n');
+      assert.equal(runInstaller(installers[0], f.env).status, 0);
+      for (const filename of ['.bashrc', existing]) {
+        const configured = spawnSync('bash', ['--noprofile', '--norc', '-c', 'source "$1"; command -v ax; ax version', 'path-test', join(f.userHome, filename)], {
+          env: { ...f.env, PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 10_000,
+        });
+        assert.equal(configured.status, 0, configured.stderr);
+        assert.match(configured.stdout, /ax 8\.1\.0/);
+      }
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('POSIX shells receive a profile while unknown shells receive manual guidance', () => {
+  for (const loginShell of ['/bin/sh', '/bin/dash', '/bin/fish']) {
+    const f = fixture({ loginShell });
+    try {
+      const installed = runInstaller(installers[0], f.env);
+      assert.equal(installed.status, 0, installed.stderr);
+      if (loginShell.endsWith('fish')) {
+        assert.match(installed.stderr, /manual PATH/);
+        assert.throws(() => readFileSync(join(f.userHome, '.profile')));
+      } else {
+        const fresh = spawnSync('sh', ['-c', '. "$1"; command -v ax; ax version', 'path-test', join(f.userHome, '.profile')], {
+          env: { ...f.env, PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 10_000,
+        });
+        assert.equal(fresh.status, 0, fresh.stderr);
+      }
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('failed profile writes are reported honestly while the binary remains installed', () => {
+  for (const blocked of ['zshrc', 'zsh-parent', 'bashrc']) {
+    const f = fixture({ loginShell: blocked === 'bashrc' ? '/bin/bash' : '/bin/zsh' });
+    try {
+      if (blocked === 'zsh-parent') {
+        const parent = join(f.root, 'blocked-parent');
+        writeFileSync(parent, 'not a directory');
+        f.env.ZDOTDIR = join(parent, 'child');
+      } else {
+        mkdirSync(join(f.userHome, blocked === 'bashrc' ? '.bashrc' : '.zshrc'));
+      }
+      const installed = runInstaller(installers[0], f.env);
+      assert.equal(installed.status, 0, installed.stderr);
+      assert.match(installed.stderr, /manual PATH/);
+      assert.doesNotMatch(installed.stdout, /PATH configured/);
+      assert.equal(spawnSync(join(f.binaryDir, 'ax'), ['version'], { encoding: 'utf8' }).status, 0);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('invalid PATH components are rejected before install side effects', () => {
+  for (const binName of ['bin:colon', 'bin\nnewline']) {
+    const f = fixture({ binName });
+    try {
+      const installed = runInstaller(installers[0], f.env);
+      assert.notEqual(installed.status, 0);
+      assert.match(installed.stderr, /unsupported AX_BIN_DIR/);
+      assert.throws(() => readFileSync(f.trace));
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('failed binary verification never updates shell configuration', () => {
+  const f = fixture({ binaryVersion: '7.0.0' });
+  try {
+    const installed = runInstaller(installers[0], f.env);
+    assert.notEqual(installed.status, 0);
+    assert.throws(() => readFileSync(join(f.userHome, '.zshrc')));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('an unset login shell uses the platform startup file', () => {
+  for (const os of ['Darwin', 'Linux']) {
+    const f = fixture({ os });
+    try {
+      delete f.env.SHELL;
+      assert.equal(runInstaller(installers[0], f.env).status, 0);
+      const filename = os === 'Darwin' ? '.zshrc' : '.profile';
+      assert.match(readFileSync(join(f.userHome, filename), 'utf8'), /# ax PATH/);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('a relative binary directory is resolved before persisting PATH', () => {
+  const f = fixture();
+  try {
+    f.env.AX_BIN_DIR = 'relative-bin';
+    const installed = spawnSync('sh', ['-s'], {
+      cwd: f.root, env: f.env, input: readFileSync(installers[0], 'utf8'), encoding: 'utf8', timeout: 30_000,
+    });
+    assert.equal(installed.status, 0, installed.stderr);
+    const fresh = spawnSync('zsh', ['-i', '-c', 'command -v ax && ax version'], {
+      cwd: f.userHome, env: { ...f.env, PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 10_000,
+    });
+    assert.equal(fresh.status, 0, fresh.stderr);
+    assert.ok(fresh.stdout.includes(join(f.root, 'relative-bin/ax')));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
 
 for (const options of [{}, { withoutPython: true }, { stalePin: true }]) {
   test(`piped Apple Silicon installation completes with ${JSON.stringify(options)}`, () => {
