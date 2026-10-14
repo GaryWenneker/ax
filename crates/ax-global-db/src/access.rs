@@ -1544,10 +1544,11 @@ mod tests {
         delete_member(&pool, "teammate").await.unwrap();
         let members = list_members(&pool).await.unwrap();
         assert!(members.iter().all(|member| member.id != "teammate"));
-        let roles: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM member_roles WHERE member_id='teammate'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let roles: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM member_roles WHERE member_id='teammate'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(roles, 0);
         assert!(delete_member(&pool, "owner").await.is_err());
         assert_eq!(list_members(&pool).await.unwrap().len(), 1);

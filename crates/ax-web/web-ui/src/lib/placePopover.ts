@@ -55,7 +55,7 @@ export function pinPopover(
   element.style.left = `${box.left}px`;
   element.style.maxHeight = `${box.maxHeight}px`;
   element.style.overflow = 'auto';
-  element.style.zIndex = '4000';
+  element.style.zIndex = '5500';
 }
 
 /** Re-pin while `open`. Scroll and resize keep the popover inside the viewport. */

@@ -63,7 +63,7 @@ fn fullscreen(root: &Path, host: Host) -> io::Result<i32> {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                     confirming = false;
                     leave(&mut terminal)?;
-                    let code = run_action(Action::ALL[selected], &root, host, publish.as_ref())?;
+                    let code = run_action(Action::ALL[selected], root, host, publish.as_ref())?;
                     pause()?;
                     terminal = enter()?;
                     if code != 0 {
@@ -94,7 +94,7 @@ fn fullscreen(root: &Path, host: Host) -> io::Result<i32> {
                 let action = Action::ALL[selected];
                 if action.needs_confirm() {
                     publish = if action == Action::Publish {
-                        Some(inspect(&root).map_err(|error| error.to_string()))
+                        Some(inspect(root).map_err(|error| error.to_string()))
                     } else {
                         None
                     };
@@ -102,7 +102,7 @@ fn fullscreen(root: &Path, host: Host) -> io::Result<i32> {
                     continue;
                 }
                 leave(&mut terminal)?;
-                let code = run_action(action, &root, host, None)?;
+                let code = run_action(action, root, host, None)?;
                 pause()?;
                 terminal = enter()?;
                 let _ = code;
@@ -180,11 +180,20 @@ fn text_menu(root: &Path, host: Host) -> io::Result<i32> {
             return Ok(0);
         }
         let Some(index) = choice.parse::<usize>().ok() else {
-            println!("Type a number from 1 to {}, or q to quit.", Action::ALL.len());
+            println!(
+                "Type a number from 1 to {}, or q to quit.",
+                Action::ALL.len()
+            );
             continue;
         };
-        let Some(action) = index.checked_sub(1).and_then(|i| Action::ALL.get(i).copied()) else {
-            println!("Type a number from 1 to {}, or q to quit.", Action::ALL.len());
+        let Some(action) = index
+            .checked_sub(1)
+            .and_then(|i| Action::ALL.get(i).copied())
+        else {
+            println!(
+                "Type a number from 1 to {}, or q to quit.",
+                Action::ALL.len()
+            );
             continue;
         };
         let publish = if action.needs_confirm() {
@@ -313,30 +322,6 @@ fn host() -> Host {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn device_not_configured_is_a_terminal_failure() {
-        let error = io::Error::from_raw_os_error(6);
-        assert!(terminal_unavailable(&error));
-    }
-
-    #[test]
-    fn plain_menu_lists_every_action() {
-        let text = plain_menu(false, "");
-        for action in Action::ALL {
-            assert!(
-                text.contains(action.title()),
-                "missing {}",
-                action.title()
-            );
-        }
-        assert!(text.contains("q quits"));
-    }
-}
-
 fn repo_root() -> io::Result<PathBuf> {
     let mut dir = env::current_dir()?;
     loop {
@@ -351,5 +336,25 @@ fn repo_root() -> io::Result<PathBuf> {
                 "run ratatouille from the ax checkout",
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_not_configured_is_a_terminal_failure() {
+        let error = io::Error::from_raw_os_error(6);
+        assert!(terminal_unavailable(&error));
+    }
+
+    #[test]
+    fn plain_menu_lists_every_action() {
+        let text = plain_menu(false, "");
+        for action in Action::ALL {
+            assert!(text.contains(action.title()), "missing {}", action.title());
+        }
+        assert!(text.contains("q quits"));
     }
 }

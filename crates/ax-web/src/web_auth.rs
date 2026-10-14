@@ -1071,7 +1071,10 @@ fn discoverable_challenge(mut options: RequestChallengeResponse) -> serde_json::
     options.mediation = None;
     options.public_key.allow_credentials.clear();
     let mut value = serde_json::to_value(&options).unwrap_or_else(|_| serde_json::json!({}));
-    if let Some(public_key) = value.get_mut("publicKey").and_then(|item| item.as_object_mut()) {
+    if let Some(public_key) = value
+        .get_mut("publicKey")
+        .and_then(|item| item.as_object_mut())
+    {
         if public_key
             .get("allowCredentials")
             .and_then(|item| item.as_array())
@@ -1083,9 +1086,7 @@ fn discoverable_challenge(mut options: RequestChallengeResponse) -> serde_json::
     value
 }
 
-async fn auth_start(
-    headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, ErrorResponse> {
+async fn auth_start(headers: HeaderMap) -> Result<Json<serde_json::Value>, ErrorResponse> {
     let pool = db().await?;
     if !enabled(&pool).await? {
         return Err(err(StatusCode::CONFLICT, "Login disabled"));
@@ -1122,7 +1123,12 @@ async fn auth_finish(
             .bind(&id)
             .fetch_optional(&pool)
             .await
-            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Credential lookup failed"))?;
+            .map_err(|_| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Credential lookup failed",
+                )
+            })?;
             let (record_id, json, member_id) =
                 stored.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "No available passkey"))?;
             let passkey: Passkey = serde_json::from_str(&json)

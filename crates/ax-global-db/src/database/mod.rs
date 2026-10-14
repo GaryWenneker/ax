@@ -49,10 +49,12 @@ async fn add_column_if_missing(
     .fetch_optional(pool)
     .await?;
     if has.is_none() {
-        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"))
-            .execute(pool)
-            .await
-            .with_context(|| format!("add {column} column to {table}"))?;
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        ))
+        .execute(pool)
+        .await
+        .with_context(|| format!("add {column} column to {table}"))?;
     }
     Ok(())
 }

@@ -794,7 +794,10 @@ async fn allow_reenrollment(
 pub fn router(hub: WebHub) -> Router {
     Router::new()
         .route("/session", get(session))
-        .route("/team/{id}", axum::routing::patch(update_member).delete(remove_member))
+        .route(
+            "/team/{id}",
+            axum::routing::patch(update_member).delete(remove_member),
+        )
         .route("/clients/{id}/scopes", axum::routing::patch(update_scopes))
         .route("/clients/{id}/rotate", post(rotate_token))
         .route("/credentials/{id}/revoke", post(revoke_token))
