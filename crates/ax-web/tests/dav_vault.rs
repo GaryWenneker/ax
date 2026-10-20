@@ -588,10 +588,13 @@ async fn skill_page_round_trip_and_body_only_save() {
             .status,
         StatusCode::CREATED
     );
-    assert!(propfind(&fx.app, "/dav/skills/")
-        .await
-        .body
-        .contains("/dav/skills/deploy.md"));
+    let listed = propfind(&fx.app, "/dav/skills/").await;
+    let page = get(&fx.app, "/dav/skills/deploy.md").await;
+    assert!(
+        listed.body.contains("/dav/skills/deploy.md"),
+        "propfind {} {}\nget {} {}",
+        listed.status, listed.body, page.status, page.body
+    );
     assert_ok(&put(&fx.app, "/dav/skills/deploy.md", "New steps.").await);
     let page = get(&fx.app, "/dav/skills/deploy.md").await;
     assert!(page.body.contains("name: deploy"), "{}", page.body);
