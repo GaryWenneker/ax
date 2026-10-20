@@ -14,7 +14,7 @@
     "test:e2e:mobile": "playwright test --project=mobile-chrome"
   },
   "dependencies": {
-    "@tiptap/extension-link": "^3.31.4",
+    "@tiptap/extension-link": "^3.32.0",
     "@tiptap/extension-list": "^3.31.3",
     "@tiptap/extension-table": "^3.31.4",
     "@tiptap/markdown": "^3.31.3",
