@@ -741,9 +741,12 @@ fn replace_binary_unix(current_exe: &Path, new_bytes: &[u8]) -> Result<(), Strin
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 const STAGING_DIR_PREFIX: &str = "upgrade-staging-";
+#[cfg(any(windows, test))]
 const PROMOTION_TTL: std::time::Duration = std::time::Duration::from_secs(180);
 
+#[cfg(any(windows, test))]
 fn previous_install_path(dest: &Path) -> PathBuf {
     let mut name = dest.file_name().unwrap_or_default().to_os_string();
     name.push(".old");
@@ -753,16 +756,19 @@ fn previous_install_path(dest: &Path) -> PathBuf {
     }
 }
 
+#[cfg(any(windows, test))]
 fn rename_dir(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::rename(from, to).map_err(|e| e.to_string())
 }
 
+#[cfg(any(windows, test))]
 /// Move `staging` onto `dest`. An existing `dest` is parked as `dest.old` and
 /// restored if the incoming rename fails.
 fn activate_staged_install(staging: &Path, dest: &Path) -> Result<(), String> {
     activate_staged_install_with(staging, dest, rename_dir)
 }
 
+#[cfg(any(windows, test))]
 fn activate_staged_install_with(
     staging: &Path,
     dest: &Path,
@@ -800,6 +806,7 @@ fn activate_staged_install_with(
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn bundle_exe(dir: &Path) -> PathBuf {
     let bin = dir.join("bin").join("ax.exe");
     if bin.is_file() {
@@ -809,6 +816,7 @@ fn bundle_exe(dir: &Path) -> PathBuf {
     }
 }
 
+#[cfg(any(windows, test))]
 fn sole_leftover_staging(install_root: &Path) -> Result<Option<PathBuf>, String> {
     let entries = match std::fs::read_dir(install_root) {
         Ok(entries) => entries,
@@ -842,6 +850,7 @@ fn sole_leftover_staging(install_root: &Path) -> Result<Option<PathBuf>, String>
     }
 }
 
+#[cfg(any(windows, test))]
 fn copy_helper_exe(source: &Path, launch_dir: &Path) -> Result<PathBuf, String> {
     if !source.is_file() {
         return Err(format!("upgrade helper missing: {}", source.display()));
@@ -864,6 +873,7 @@ fn copy_helper_exe(source: &Path, launch_dir: &Path) -> Result<PathBuf, String> 
     Ok(dest)
 }
 
+#[cfg(any(windows, test))]
 fn external_helper(source: &Path, staging: &Path, launch_dir: &Path) -> Result<PathBuf, String> {
     let helper = copy_helper_exe(source, launch_dir)?;
     if helper.starts_with(staging) {
@@ -872,10 +882,12 @@ fn external_helper(source: &Path, staging: &Path, launch_dir: &Path) -> Result<P
     Ok(helper)
 }
 
+#[cfg(any(windows, test))]
 fn upgrade_status_path(install_root: &Path) -> PathBuf {
     install_root.join("upgrade-status.txt")
 }
 
+#[cfg(any(windows, test))]
 fn write_upgrade_status(install_root: &Path, result: &Result<(), String>) -> Result<(), String> {
     let body = match result {
         Ok(()) => "ok\n".to_string(),
@@ -888,6 +900,7 @@ fn write_upgrade_status(install_root: &Path, result: &Result<(), String>) -> Res
     std::fs::write(path, body).map_err(|e| format!("write upgrade status: {e}"))
 }
 
+#[cfg(any(windows, test))]
 fn upgrade_status_message(text: &str) -> Option<String> {
     let mut lines = text.lines();
     match lines.next().map(str::trim) {
@@ -904,6 +917,7 @@ fn upgrade_status_message(text: &str) -> Option<String> {
     }
 }
 
+#[cfg(any(windows, test))]
 fn take_upgrade_status(install_root: &Path) -> Option<String> {
     let path = upgrade_status_path(install_root);
     let text = std::fs::read_to_string(&path).ok()?;
@@ -915,6 +929,7 @@ fn take_upgrade_status(install_root: &Path) -> Option<String> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg(any(windows, test))]
 enum StagingRecovery {
     Idle,
     Promote,
@@ -922,6 +937,7 @@ enum StagingRecovery {
     Ambiguous(String),
 }
 
+#[cfg(any(windows, test))]
 fn staging_recovery(
     current_bin_exists: bool,
     running_inside_staging: bool,
@@ -938,6 +954,7 @@ fn staging_recovery(
     }
 }
 
+#[cfg(any(windows, test))]
 fn upgrade_cmd_batch(
     parent_pid: u32,
     staging: &Path,
@@ -999,6 +1016,7 @@ fn upgrade_cmd_batch(
     )
 }
 
+#[cfg(any(windows, test))]
 fn publish_bin_exe(dest: &Path) -> Result<PathBuf, String> {
     let root_exe = dest.join("ax.exe");
     if !root_exe.is_file() {
@@ -1020,10 +1038,12 @@ fn publish_bin_exe(dest: &Path) -> Result<PathBuf, String> {
     Ok(bin_exe)
 }
 
+#[cfg(any(windows, test))]
 fn promotion_flag(install_root: &Path) -> PathBuf {
     install_root.join("upgrade-promoting")
 }
 
+#[cfg(any(windows, test))]
 fn claim_promotion(install_root: &Path) -> bool {
     let flag = promotion_flag(install_root);
     if flag.is_file() {
@@ -1049,6 +1069,7 @@ fn claim_promotion(install_root: &Path) -> bool {
         .is_ok()
 }
 
+#[cfg(any(windows, test))]
 fn clear_promotion(install_root: &Path) {
     let _ = std::fs::remove_file(promotion_flag(install_root));
 }
@@ -1146,7 +1167,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let staging = root.path().join("upgrade-staging-3");
         let source = staging.join("bin").join("ax.exe");
-        marker(&source.parent().unwrap(), "ax.exe", "bytes");
+        marker(source.parent().unwrap(), "ax.exe", "bytes");
         let launch = root.path().join("helper");
         let helper = external_helper(&source, &staging, &launch).unwrap();
         assert!(!helper.starts_with(&staging));
@@ -1158,7 +1179,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let staging = root.path().join("upgrade-staging-3");
         let source = staging.join("bin").join("ax.exe");
-        marker(&source.parent().unwrap(), "ax.exe", "bytes");
+        marker(source.parent().unwrap(), "ax.exe", "bytes");
         let err = external_helper(&source, &staging, &staging.join("again")).unwrap_err();
         assert!(err.contains("must not run from inside"), "{err}");
     }
