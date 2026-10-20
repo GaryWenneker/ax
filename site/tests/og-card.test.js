@@ -84,6 +84,7 @@ test('the shot hides docs chrome and forces the landing hero visible', () => {
     assert.match(src, /header\.nav/);
     assert.match(src, /revealed/);
     assert.match(src, /opacity:\s*1/);
+    assert.match(src, /\.ax-reveal[^{}]*\{[^{}]*opacity:\s*1/);
 });
 test('the site no longer points every page at the v5 card', () => {
     const config = readFileSync(path.join(siteDir, 'astro.config.mjs'), 'utf8');

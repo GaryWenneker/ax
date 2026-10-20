@@ -47,7 +47,8 @@ async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
     let mut config = RemoteConfig {
         public_url: "https://ax.example.com".into(),
         oauth: OAuthConfig {
-            built_in: false, issuer: "https://issuer.example.com/".into(),
+            built_in: false,
+            issuer: "https://issuer.example.com/".into(),
             jwks_uri: "https://issuer.example.com/jwks".into(),
         },
         projects,

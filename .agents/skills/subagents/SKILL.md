@@ -5,6 +5,7 @@ triggers: ["Task tool", "subagent", "background agent", "run_in_background", "ex
 tags: ["subagents", "preflight"]
 priority: 95
 seedVersion: 5
+group: agent-orchestration
 ---
 # ax Subagent Protocol
 

@@ -161,7 +161,7 @@ html[data-ax-layout="portal"] .calm-row-action--remove:hover { color: var(--dang
 html[data-ax-layout="portal"] .portal-data-list { display: block; overflow-x: auto; }
 html[data-ax-layout="portal"] :is(.portal-data-row, .portal-data-header) { display: grid; grid-template-columns: minmax(0, 1fr) max(104px, 8rem) max(104px, 8rem) max(120px, 9rem) max(140px, 11rem); min-width: 0; align-items: center; column-gap: 12px; padding: 10px 16px; min-height: 44px; }
 html[data-ax-layout="portal"] .portal-memory-list :is(.portal-data-row, .portal-data-header) { grid-template-columns: minmax(0, 1fr) 105px 95px 85px 55px; min-width: 0; }
-html[data-ax-layout="portal"] .portal-policy-list :is(.portal-data-row, .portal-data-header) { grid-template-columns: 28px minmax(0, 1fr) max(104px, 8rem) max(104px, 8rem) max(88px, 7rem) max(140px, 11rem); }
+html[data-ax-layout="portal"] .portal-policy-list :is(.portal-data-row, .portal-data-header) { grid-template-columns: 28px minmax(0, 1fr) max(104px, 8rem) max(104px, 8rem) max(88px, 7rem) max-content; }
 /* Title, then its chips right after it; the title yields when the column is too narrow for both. */
 html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { display: flex; align-items: center; gap: 12px; min-width: 0; }
 html[data-ax-layout="portal"] .portal-memory-list .page-item-title { flex: 0 1 auto; width: auto; max-width: 100%; min-width: 0; }
@@ -176,6 +176,7 @@ html[data-ax-layout="portal"] .portal-data-tags { margin-top: 5px; flex-wrap: wr
 html[data-ax-layout="portal"] .portal-data-tags :is(.page-level-badge, .page-scope-badge) { display: none; }
 html[data-ax-layout="portal"] .portal-data-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 html[data-ax-layout="portal"] .portal-data-actions { display: flex; justify-content: flex-start; align-items: center; gap: 6px; width: max-content; max-width: 100%; }
+html[data-ax-layout="portal"] .portal-policy-list .portal-data-actions { justify-content: flex-end; width: 100%; overflow: visible; }
 html[data-ax-layout="portal"] .portal-data-actions :is(.calm-row-action, .calm-row-check, .settings-toggle) { opacity: 1 !important; }
 html[data-ax-layout="portal"] .portal-data-row .calm-row-aside { gap: 4px; }
 html[data-ax-layout="portal"] :is(.memory-page, .policy-rules-page, .policy-skills-page) .settings-card-body:has(.portal-data-list) { padding: 0; }

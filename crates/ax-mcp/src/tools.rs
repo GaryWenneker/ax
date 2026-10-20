@@ -791,6 +791,11 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     if policy_error.is_some() {
         policy_inject.push_str(&result.inject);
     }
+    if let Ok(audits) = ax_skill_catalog::project_briefs(ax.project_root()) {
+        if !audits.is_empty() {
+            policy_inject.push_str(&audits);
+        }
+    }
     let mut policy_blocks = Vec::new();
     for r in result
         .rules
@@ -1077,29 +1082,48 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     }
     // ICE is opt-in until retrieval quality and budget gates are verified.
     // It cannot call ax_reasoning, an external model, or read the working tree.
-    let context_mode = params.get("contextMode").and_then(Value::as_str).unwrap_or("auto");
-    let ice_enabled = context_mode != "off" &&
-        (params.get("contextMode").and_then(Value::as_str).is_some()
+    let context_mode = params
+        .get("contextMode")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    let ice_enabled = context_mode != "off"
+        && (params.get("contextMode").and_then(Value::as_str).is_some()
             || std::env::var("AX_ICE_ENABLE").ok().as_deref() == Some("1"));
     let mut ice_context = None;
     let mut ice_error: Option<String> = None;
     if ice_enabled && !prompt.trim().is_empty() {
         let max_blocks = if context_mode == "expanded" { 6 } else { 3 };
-        let max_chars = if context_mode == "expanded" { 3000 } else { 1500 };
+        let max_chars = if context_mode == "expanded" {
+            3000
+        } else {
+            1500
+        };
         let mut hints = ax_context::retrieval::RetrievalHints {
-            paths: files.iter().filter_map(|f|
-                ax_context::task_analyzer::safe_relative_path(f)).collect(),
+            paths: files
+                .iter()
+                .filter_map(|f| ax_context::task_analyzer::safe_relative_path(f))
+                .collect(),
             ..Default::default()
         };
         // Approved/matched rules may supply optional retrieval preferences.
         // Rule bodies remain policy, never assertions of code relationships.
         for rule in &result.rules {
-            if let Some(values) = rule.properties.get("contextTerms").and_then(Value::as_array) {
+            if let Some(values) = rule
+                .properties
+                .get("contextTerms")
+                .and_then(Value::as_array)
+            {
                 for value in values.iter().filter_map(Value::as_str).take(12) {
-                    if value.len() <= 100 { hints.terms.push(value.to_string()); }
+                    if value.len() <= 100 {
+                        hints.terms.push(value.to_string());
+                    }
                 }
             }
-            if let Some(values) = rule.properties.get("contextPaths").and_then(Value::as_array) {
+            if let Some(values) = rule
+                .properties
+                .get("contextPaths")
+                .and_then(Value::as_array)
+            {
                 for value in values.iter().filter_map(Value::as_str).take(12) {
                     if let Some(path) = ax_context::task_analyzer::safe_relative_path(value) {
                         hints.paths.push(path);
@@ -1111,8 +1135,14 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         hints.paths.sort();
         hints.paths.dedup();
         match ax_context::retrieval::retrieve_with_hints(
-            ax.queries(), &prompt, max_blocks, max_chars, &hints
-        ).await {
+            ax.queries(),
+            &prompt,
+            max_blocks,
+            max_chars,
+            &hints,
+        )
+        .await
+        {
             Ok(found) => ice_context = Some(found),
             Err(err) => ice_error = Some(err.to_string()),
         }
@@ -1144,7 +1174,11 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         Ok(rows) => rows,
         Err(error) => {
             let message = format!("Policy provenance unavailable: {error}");
-            blocks.push(ax_usage::ContextBlock { id:"policy-provenance-error".into(), class:ax_usage::ContextClass::HardRequired, text:message.clone() });
+            blocks.push(ax_usage::ContextBlock {
+                id: "policy-provenance-error".into(),
+                class: ax_usage::ContextClass::HardRequired,
+                text: message.clone(),
+            });
             policy_error = Some(message);
             (Vec::new(), Vec::new())
         }
@@ -1157,11 +1191,15 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .map(|s| json!({"kind":"skill","id":s.name,"scope":s.scope,"sourcePath":s.source_path,
             "origin":s.source,"rootId":s.root_id,"bodyHash":ax_policy::revisions::content_hash(&s.body)})));
     for source in source_candidates {
-        let key = format!("source:{}:{}",source["kind"].as_str().unwrap_or_default(),source["id"].as_str().unwrap_or_default());
+        let key = format!(
+            "source:{}:{}",
+            source["kind"].as_str().unwrap_or_default(),
+            source["id"].as_str().unwrap_or_default()
+        );
         let hash = ax_policy::format::content_hash(&source.to_string());
         if session_delivered.as_ref().and_then(|d| d.get(&key)) != Some(&hash) {
             sources.push(source);
-            delivered.push((key,hash));
+            delivered.push((key, hash));
         }
     }
     let mut out = json!({
@@ -1610,13 +1648,38 @@ async fn rules(ax: &mut Ax, params: Value) -> Result<Value, String> {
             changed_files: vec![],
         };
         let result = ax.match_policy(input).await.map_err(|e| e.to_string())?;
-        Ok(json!({ "rules": result.rules }))
+        let ids: Vec<String> = result.rules.iter().map(|rule| rule.id.clone()).collect();
+        Ok(json!({ "rules": result.rules, "audits": rule_audit_briefs(ax, &ids) }))
     } else {
         let all = ax_policy::list_rules(ax.db_pool())
             .await
             .map_err(|e| e.to_string())?;
-        Ok(json!({ "rules": all }))
+        let ids: Vec<String> = all.iter().map(|rule| rule.id.clone()).collect();
+        Ok(json!({ "rules": all, "audits": rule_audit_briefs(ax, &ids) }))
     }
+}
+
+fn rule_audit_briefs(ax: &Ax, ids: &[String]) -> serde_json::Map<String, Value> {
+    let mut audits = serde_json::Map::new();
+    let root = ax.project_root().join(".ax").join("rule-audits");
+    for id in ids {
+        let Ok(Some(report)) = ax_skill_catalog::load_latest(&root, id) else {
+            continue;
+        };
+        if !ax_skill_catalog::needs_edit(&report) {
+            continue;
+        }
+        let file = if report.edit_file.is_empty() {
+            format!("{}/{id}.mdc", report.directory)
+        } else {
+            report.edit_file.clone()
+        };
+        audits.insert(
+            id.clone(),
+            json!(ax_skill_catalog::agent_brief(&report, &file)),
+        );
+    }
+    audits
 }
 
 async fn policy_capture(ax: &mut Ax, params: Value) -> Result<Value, String> {
@@ -1714,17 +1777,35 @@ async fn skill(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .and_then(|d| d.get(&key))
         .and_then(Value::as_u64);
     if seen == Some(hash) {
-        return Ok(json!({
+        let mut value = json!({
             "text": format!("Skill '{name}' is unchanged since you loaded it earlier in this session; use the copy in your context."),
             "name": name,
             "unchanged": true,
-        }));
+        });
+        attach_skill_audit(&mut value, ax, name, &row.source_path);
+        return Ok(value);
     }
+    let source_path = row.source_path.clone();
     let mut value = json!(row);
+    attach_skill_audit(&mut value, ax, name, &source_path);
     if session.is_some() {
         value[crate::server::DELIVERED_KEY] = json!([[key, hash]]);
     }
     Ok(value)
+}
+
+fn attach_skill_audit(value: &mut Value, ax: &Ax, name: &str, source_path: &str) {
+    let Ok(Some(report)) =
+        ax_skill_catalog::load_latest(&ax.project_root().join(".ax").join("skill-audits"), name)
+    else {
+        return;
+    };
+    let file = if source_path.is_empty() {
+        format!("{}/SKILL.md", report.directory)
+    } else {
+        source_path.to_string()
+    };
+    value["audit"] = json!(ax_skill_catalog::agent_brief(&report, &file));
 }
 
 async fn guard(ax: &mut Ax, params: Value) -> Result<Value, String> {

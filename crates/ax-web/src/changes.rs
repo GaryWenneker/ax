@@ -4,8 +4,8 @@
 //! database files every second and runs its fingerprint queries only when a
 //! file (or its WAL) changed, so an idle project costs one `stat` per file.
 
-use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -116,7 +116,10 @@ impl SidePools {
 
 async fn collect_versions(project: &SqlitePool, side: &SidePools) -> Versions {
     let (global_rules, global_skills) = match &side.global {
-        Some(pool) => (scalar(pool, GLOBAL_RULES_SQL).await, scalar(pool, GLOBAL_SKILLS_SQL).await),
+        Some(pool) => (
+            scalar(pool, GLOBAL_RULES_SQL).await,
+            scalar(pool, GLOBAL_SKILLS_SQL).await,
+        ),
         None => (String::new(), String::new()),
     };
     let usage = match &side.usage {
@@ -126,8 +129,14 @@ async fn collect_versions(project: &SqlitePool, side: &SidePools) -> Versions {
     let mut out = Versions::new();
     out.insert("graph", digest(&[&scalar(project, GRAPH_SQL).await]));
     out.insert("memory", digest(&[&scalar(project, MEMORY_SQL).await]));
-    out.insert("rules", digest(&[&scalar(project, RULES_SQL).await, &global_rules]));
-    out.insert("skills", digest(&[&scalar(project, SKILLS_SQL).await, &global_skills]));
+    out.insert(
+        "rules",
+        digest(&[&scalar(project, RULES_SQL).await, &global_rules]),
+    );
+    out.insert(
+        "skills",
+        digest(&[&scalar(project, SKILLS_SQL).await, &global_skills]),
+    );
     out.insert("usage", digest(&[&usage]));
     out
 }
@@ -207,7 +216,10 @@ mod tests {
     use super::*;
 
     fn v(pairs: &[(&'static str, &str)]) -> Versions {
-        pairs.iter().map(|(k, val)| (*k, (*val).to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, val)| (*k, (*val).to_string()))
+            .collect()
     }
 
     #[test]

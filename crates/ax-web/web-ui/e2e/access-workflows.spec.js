@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { chooseSelect } from './chooseSelect';
 if (process.env.AX_CHROME_EXECUTABLE) {
     test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
 }
@@ -35,6 +36,8 @@ async function accessFixture(page, options = {}) {
             if (path === '/api/access/clients')
                 clients.push({ id: 'new-client', status: 'active', created_at: '2026-10-11 12:00:00', ...body });
         }
+        else if (path === '/api/web-auth/status')
+            data = { enabled: false, passkeys: true };
         else if (path === '/api/share/status')
             data = { readonly: options.readonly ?? false, sharing: false, port: 7070 };
         else if (path === '/api/access/session')
@@ -43,6 +46,14 @@ async function accessFixture(page, options = {}) {
             data = { members };
         else if (path === '/api/access/clients')
             data = { clients, credentials: [{ id: 'credential', client_id: 'cli', token_prefix: 'axc_demo', created_at: '2026-10-10 10:00:00' }] };
+        else if (path === '/api/access/nodes/local')
+            data = {
+                settings: { config: { node_id: 'primary-local', role: 'primary', cluster_id: 'fixture-cluster', projects: [{ id: 'fixture-project' }] }, port: 7071 },
+                running: true, active_project: true,
+                safety: { mode: 'preserve_and_exchange', memories: 0, rules: 0, skills: 0, review_required: false, sync_failed: false },
+            };
+        else if (path === '/api/access/nodes/local/interfaces')
+            data = { interfaces: [{ name: 'loopback', address: '127.0.0.1', loopback: true }] };
         else if (path === '/api/access/nodes')
             data = { nodes, local: { node_id: 'primary-local', role: 'primary', sync_state: 'running' } };
         else if (path === '/api/ship/config')
@@ -62,15 +73,15 @@ test('only the selected access panel loads and direct links survive reload', asy
     await page.goto('/settings');
     await expect(page.getByRole('heading', { name: 'Appearance', exact: true })).toBeVisible();
     expect(calls.some(call => call.path.startsWith('/api/access/'))).toBe(false);
-    await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Team', exact: true }).click();
-    await expect(page.getByLabel('Role for Demo developer')).toBeVisible();
+    await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Users & roles', exact: true }).click();
+    await expect(page.getByRole('group', { name: 'Roles for Demo developer' })).toBeVisible();
     expect(calls.some(call => call.path === '/api/access/nodes' || call.path === '/api/access/clients')).toBe(false);
-    await expect(page.getByLabel('Role for Local owner')).toBeDisabled();
+    await expect(page.getByRole('group', { name: 'Roles for Local owner' }).getByLabel('Owner')).toBeDisabled();
     await expect(page).toHaveURL(/section=team/);
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Team', exact: true })).toBeVisible();
     await page.getByLabel('Filter settings').fill('access');
-    await expect(page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button')).toHaveCount(3);
+    await expect(page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button')).toHaveCount(4);
 });
 test('a failed permission save preserves the draft and role restrictions', async ({ page }) => {
     const { calls } = await accessFixture(page, { failScopes: true, role: 'readonly' });
@@ -92,15 +103,16 @@ test('member and client forms send email and role-limited defaults', async ({ pa
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('Name', { exact: true }).fill('Read-only colleague');
     await dialog.getByLabel('Email (optional)').fill('colleague@example.com');
-    await dialog.getByLabel('Role', { exact: true }).selectOption('readonly');
+    await dialog.getByLabel('Read-only', { exact: true }).check();
+    await dialog.getByLabel('Member', { exact: true }).uncheck();
     await dialog.getByRole('button', { name: 'Add member', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     expect(members.find(member => member.display_name === 'Read-only colleague')?.email).toBe('colleague@example.com');
     await page.getByRole('navigation', { name: 'Settings navigation' }).getByRole('button', { name: 'Clients & tokens', exact: true }).click();
     await page.getByRole('button', { name: 'Add client', exact: true }).click();
     await dialog.getByLabel('Client name').fill('Read-only integration');
-    await dialog.getByLabel('Application type').selectOption('custom');
-    await dialog.getByLabel('Team member').selectOption('new-member');
+    await chooseSelect(dialog.getByLabel('Application type'), 'custom');
+    await chooseSelect(dialog.getByLabel('Team member'), 'new-member');
     await dialog.getByRole('button', { name: 'Add client', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     expect(calls.find(call => call.path === '/api/access/clients' && call.method === 'POST')?.body.scopes).toEqual(['memory:read', 'preflight:read', 'context:read']);
@@ -131,13 +143,15 @@ test('token copying and node blocking use the existing API and can be canceled',
     await expect(page.getByRole('button', { name: 'Allow re-enrollment' })).toBeVisible();
 });
 test('access panels fit light, dark and mobile and refresh documentation screenshots', async ({ page }) => {
+    test.setTimeout(90_000);
     await accessFixture(page);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     for (const theme of ['azure-light', 'azure-dark']) {
-        await page.goto('/settings');
-        if (theme === 'azure-dark')
-            await page.getByRole('button', { name: 'Azure Portal Dark', exact: true }).click();
+        await page.setViewportSize({ width: 1440, height: 1100 });
+        await page.goto('/settings?section=appearance');
+        await page.getByRole('button', { name: theme === 'azure-dark' ? /^Dark(?: \(current\))?$/ : /^Light(?: \(current\))?$/ }).click();
+        await expect(page.locator('html')).toHaveAttribute('data-ax-theme', theme);
         await page.setViewportSize({ width: 1440, height: 1100 });
         for (const section of ['team', 'clients', 'nodes']) {
             await page.getByRole('navigation', { name: 'Settings navigation' }).locator(`[aria-controls="settings-panel-${section}"]`).click();
@@ -145,8 +159,11 @@ test('access panels fit light, dark and mobile and refresh documentation screens
             await expect(panel.locator('.access-note').first()).not.toContainText('Loading');
             await expect(panel).toBeVisible();
             expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-            if (process.env.AX_ACCESS_SCREENSHOTS)
+            if (process.env.AX_ACCESS_SCREENSHOTS) {
+                if (section === 'nodes')
+                    await panel.getByRole('heading', { name: 'Office replica', exact: true }).scrollIntoViewIfNeeded();
                 await page.screenshot({ path: `../../../site/public/screenshots/cc-access-${section}${theme === 'azure-dark' ? '-dark' : ''}.png` });
+            }
             await page.setViewportSize({ width: 393, height: 851 });
             expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
             expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);

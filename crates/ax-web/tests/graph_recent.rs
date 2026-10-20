@@ -36,7 +36,11 @@ async fn open_project(nodes: &[(&str, i64)]) -> Project {
     std::fs::create_dir_all(root.join(".ax")).unwrap();
     let db = root.join(".ax").join("ax.db");
     ax_db::Database::open(&db).await.unwrap();
-    let project = Project { hub: WebHub::open(root, false, 0).await.unwrap(), db, _dir: dir };
+    let project = Project {
+        hub: WebHub::open(root, false, 0).await.unwrap(),
+        db,
+        _dir: dir,
+    };
     write_nodes(&project, nodes, &[]).await;
     project
 }
@@ -78,8 +82,13 @@ async fn get(p: &Project, uri: &str) -> (StatusCode, Value) {
         .await
         .unwrap();
     let status = res.status();
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 fn ids(body: &Value, key: &str, field: &str) -> Vec<String> {
@@ -127,7 +136,12 @@ async fn the_first_snapshot_marks_nothing_new() {
 async fn limit_is_respected() {
     let p = open_project(&[]).await;
     load_graph(&p).await;
-    write_nodes(&p, &[("a", 5_000), ("b", 5_001), ("c", 5_002), ("d", 5_003)], &[]).await;
+    write_nodes(
+        &p,
+        &[("a", 5_000), ("b", 5_001), ("c", 5_002), ("d", 5_003)],
+        &[],
+    )
+    .await;
     let (status, body) = get(&p, "/api/graph/recent?since=0&limit=2").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(ids(&body, "nodes", "id").len(), 2);
@@ -136,6 +150,12 @@ async fn limit_is_respected() {
 #[tokio::test]
 async fn a_missing_or_invalid_since_is_rejected() {
     let p = open_project(&[]).await;
-    assert_eq!(get(&p, "/api/graph/recent").await.0, StatusCode::BAD_REQUEST);
-    assert_eq!(get(&p, "/api/graph/recent?since=abc").await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        get(&p, "/api/graph/recent").await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        get(&p, "/api/graph/recent?since=abc").await.0,
+        StatusCode::BAD_REQUEST
+    );
 }

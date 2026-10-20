@@ -6,6 +6,7 @@ triggers: ["sync", "index", "reindex", "lsp", "enrich", "ship", "quality gate", 
 tags: ["mcp", "ops", "workflow"]
 priority: 85
 seedVersion: 5
+group: tooling
 ---
 # Prefer MCP ops tools (not shell CLI)
 

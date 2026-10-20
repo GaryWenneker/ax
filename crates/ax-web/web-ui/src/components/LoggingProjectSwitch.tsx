@@ -11,6 +11,7 @@ import {
 } from '../workspaceApi';
 import { notifyWorkspaceSwitched } from '../workspaceEvents';
 import ProjectPurgeModal from './ProjectPurgeModal';
+import { chromeAfterTrashClick } from './projectSwitchChrome';
 
 type Props = {
   /** Highlight the active project path when known. */
@@ -43,7 +44,8 @@ export default function LoggingProjectSwitch({
   const isInline = variant === 'inline';
   const isHeader = variant === 'header';
   const [purge, setPurge] = useState<RecentProject | null>(null);
-  usePinnedPopover(open && !isInline, btnRef, menuRef, { prefer: 'below', align: 'end', watch: recent.length });
+  const menuShown = open && purge == null;
+  usePinnedPopover(menuShown && !isInline, btnRef, menuRef, { prefer: 'below', align: 'end', watch: recent.length });
 
   const refresh = useCallback(async () => {
     const [cur, rec] = await Promise.all([fetchWorkspaceCurrent(), fetchWorkspaceRecent()]);
@@ -65,7 +67,7 @@ export default function LoggingProjectSwitch({
   }, [refresh]);
 
   useEffect(() => {
-    if (isInline || !open) return;
+    if (isInline || !menuShown) return;
     void refresh();
     function onDoc(e: MouseEvent) {
       const target = e.target as Node;
@@ -74,7 +76,7 @@ export default function LoggingProjectSwitch({
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
-  }, [open, refresh, isInline]);
+  }, [menuShown, refresh, isInline]);
 
   async function doSwitch(nextPath: string) {
     if (!nextPath || nextPath === path) {
@@ -127,7 +129,9 @@ export default function LoggingProjectSwitch({
                     disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setPurge(p);
+                      const next = chromeAfterTrashClick(p);
+                      setOpen(next.menuOpen);
+                      setPurge(next.project);
                     }}
                   >
                     <Codicon name="trash" />
@@ -149,7 +153,7 @@ export default function LoggingProjectSwitch({
     );
   }
 
-  const menu = open ? (
+  const menu = menuShown ? (
     <div
       ref={menuRef}
       className="logging-proj-switch-menu"
@@ -166,21 +170,21 @@ export default function LoggingProjectSwitch({
       ref={wrapRef}
       className={`logging-proj-switch logging-proj-switch--banner${
         isHeader ? ' logging-proj-switch--header' : ''
-      }${open ? ' logging-proj-switch--open' : ''}`}
+      }${menuShown ? ' logging-proj-switch--open' : ''}`}
     >
       <button
         ref={btnRef}
         type="button"
         className="btn btn-compact logging-proj-switch-btn"
         title="Switch project"
-        aria-expanded={open}
+        aria-expanded={menuShown}
         aria-haspopup="listbox"
         disabled={busy}
         onClick={() => setOpen((v) => !v)}
       >
         <Codicon name="folder" />
         <span className="logging-proj-switch-label">{label || 'Project'}</span>
-        <Codicon name={open ? 'chevron-up' : 'chevron-down'} />
+        <Codicon name={menuShown ? 'chevron-up' : 'chevron-down'} />
       </button>
 
       {!isInline && menu ? createPortal(menu, document.body) : null}

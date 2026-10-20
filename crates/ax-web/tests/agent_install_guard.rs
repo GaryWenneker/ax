@@ -113,9 +113,20 @@ async fn install_routes_are_local_only_and_report_what_they_changed() {
             .and_then(|a| a.iter().find(|t| t["id"] == id))
             .map(|t| t["panel"].clone())
     };
-    assert_eq!(panel("cursor"), Some(Value::Bool(false)), "C5 panel for an IDE: {status_body}");
-    assert_eq!(panel("claude"), Some(Value::Null), "C5 no panel for a terminal agent: {status_body}");
-    assert!(panel("jetbrains").is_some(), "D1 jetbrains target listed: {status_body}");
+    assert_eq!(
+        panel("cursor"),
+        Some(Value::Bool(false)),
+        "C5 panel for an IDE: {status_body}"
+    );
+    assert_eq!(
+        panel("claude"),
+        Some(Value::Null),
+        "C5 no panel for a terminal agent: {status_body}"
+    );
+    assert!(
+        panel("jetbrains").is_some(),
+        "D1 jetbrains target listed: {status_body}"
+    );
 
     let (status, text) = send(&app, "POST", "/api/agent/uninstall", &[], body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{text}");

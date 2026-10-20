@@ -1,6 +1,6 @@
 [package]
 name = "ax-cli"
-version = "8.3.2"
+version = "8.3.4"
 edition = "2021"
 
 [[bin]]
@@ -30,6 +30,7 @@ ax-telemetry = { workspace = true }
 ax-usage = { workspace = true }
 ax-reasoning = { workspace = true }
 ax-policy = { workspace = true }
+ax-skill-catalog = { workspace = true }
 ax-share = { workspace = true }
 ax-memory = { workspace = true }
 ax-git = { workspace = true }

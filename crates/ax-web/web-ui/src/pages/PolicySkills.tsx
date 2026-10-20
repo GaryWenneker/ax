@@ -25,6 +25,7 @@ import { PolicyDbLegend } from '../components/PolicyMetaView';
 import PolicySkillInlineWorkspace from '../components/PolicySkillInlineWorkspace';
 import { PolicyListResizeHandle } from '../components/PolicyEditorResize';
 import PolicyZipPackageButtons from '../components/PolicyZipPackageModals';
+import SkillCatalogBar, { auditOneSkill } from '../components/SkillCatalogBar';
 import { LabelAutocomplete } from '../components/ui/LabelAutocomplete';
 import { PolicyCount, PolicySortControl, PolicyToolbar } from '../components/ui/PolicyTable';
 import { PolicyCalmList } from '../components/ui/PolicyCalmList';
@@ -86,6 +87,9 @@ interface Props {
 export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, origin: routeOrigin, projectId: routeProjectId, onSelect, onEditFull, onMatch }: Props) {
   const [skills, setSkills] = useState<PolicySkillRow[]>([]);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [auditBrief, setAuditBrief] = useState('');
+  const [auditHints, setAuditHints] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: PolicySkillRow } | null>(null);
   const [propertiesFor, setPropertiesFor] = useState<string | null>(null);
@@ -192,12 +196,29 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+    loadAuditHints();
   }, []);
+
+  function loadAuditHints() {
+    void fetch('/api/policy/skills/catalog/audits')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((rows: { name: string; verdict?: string | null; mechanical_warns: number; mechanical_fails: number }[]) => {
+        const next: Record<string, string> = {};
+        for (const row of rows) {
+          next[row.name] = row.verdict
+            ? `audit ${row.verdict}`
+            : `audit ${row.mechanical_warns} warn, ${row.mechanical_fails} fail`;
+        }
+        setAuditHints(next);
+      })
+      .catch(() => undefined);
+  }
 
   function reloadSkills() {
     fetchPolicySkills()
       .then((r) => setSkills(r.skills))
       .catch((e: Error) => setError(e.message));
+    loadAuditHints();
   }
 
   useLive('skills', reloadSkills);
@@ -427,6 +448,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
         subtitle="Task-specific instructions agents can load via ax_skill."
         actions={
           <>
+            <SkillCatalogBar onInstalled={() => void reloadSkills()} />
             <button
               type="button"
               className={`btn btn-compact mcp-trace-icon-btn mcp-trace-filters-toggle${
@@ -481,7 +503,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
         }
       />
 
-      <PageToasts err={error || null} />
+      <PageToasts ok={notice || null} err={error || null} copy={auditBrief || null} />
 
       <PageStack>
         <PageCard title="All skills" description="Grouped by catalog folders. Empty groups stay hidden until a skill is assigned.">
@@ -562,7 +584,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
                       items: g.skills.map((s) => ({
                         key: s.rowKey ?? s.name,
                         id: s.name,
-                        subtitle: skillRowSubtitle(s, projectStorage),
+                        subtitle: [skillRowSubtitle(s, projectStorage), auditHints[s.name]].filter(Boolean).join(' · '),
                         meta: priorityMeta(s.priority),
                         scope: s.scope,
                         origin: s.origin,
@@ -614,6 +636,17 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
                     onEdit={(id) => {
                       const s = skillByName.get(id);
                       onEditFull(id, s?.origin, s?.projectId);
+                    }}
+                    onAudit={(id) => {
+                      setError('');
+                      void auditOneSkill(id).then(
+                        (result) => {
+                          setNotice(result.summary);
+                          setAuditBrief(result.brief);
+                          loadAuditHints();
+                        },
+                        (err: unknown) => setError(err instanceof Error ? err.message : 'Audit failed'),
+                      );
                     }}
                     onDelete={(id) => {
                       const s = skillByName.get(id);

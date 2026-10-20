@@ -9,6 +9,7 @@ priority: 85
 enabled: true
 status: approved
 scope: project
+group: architecture
 ---
 
 # ax ↔ CodeGraph parity (mandatory)

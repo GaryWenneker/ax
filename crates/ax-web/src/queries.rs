@@ -54,37 +54,58 @@ pub struct GraphPayload {
 /// The nodes in `ids` (in that order) and every semantic edge that touches one of them.
 pub async fn get_graph_for_ids(pool: &SqlitePool, ids: &[String]) -> anyhow::Result<GraphPayload> {
     if ids.is_empty() {
-        return Ok(GraphPayload { nodes: Vec::new(), edges: Vec::new(), total_nodes: 0, truncated: false, palette: None, systems: Vec::new() });
+        return Ok(GraphPayload {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            total_nodes: 0,
+            truncated: false,
+            palette: None,
+            systems: Vec::new(),
+        });
     }
     let placeholders = vec!["?"; ids.len()].join(",");
     let sql = format!(
         "SELECT n.id, n.name, n.kind, n.file_path, nc.community_id, nc.community_label \
          FROM nodes n LEFT JOIN node_communities nc ON nc.node_id = n.id WHERE n.id IN ({placeholders})"
     );
-    let mut query = sqlx::query_as::<_, (String, String, String, String, Option<i64>, Option<String>)>(&sql);
+    let mut query =
+        sqlx::query_as::<_, (String, String, String, String, Option<i64>, Option<String>)>(&sql);
     for id in ids {
         query = query.bind(id);
     }
     let mut node_rows = query.fetch_all(pool).await?;
-    let order: std::collections::HashMap<&str, usize> = ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+    let order: std::collections::HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
     node_rows.sort_by_key(|r| order.get(r.0.as_str()).copied().unwrap_or(usize::MAX));
 
     let nodes: Vec<GraphNode> = node_rows
         .into_iter()
-        .map(|(id, name, kind, file_path, community_id, community_label)| GraphNode {
-            id,
-            name,
-            kind,
-            file_path,
-            community_id: community_id.unwrap_or(-1),
-            community_label,
-            degree: 0,
-            shared: false,
-            selected: false,
-        })
+        .map(
+            |(id, name, kind, file_path, community_id, community_label)| GraphNode {
+                id,
+                name,
+                kind,
+                file_path,
+                community_id: community_id.unwrap_or(-1),
+                community_label,
+                degree: 0,
+                shared: false,
+                selected: false,
+            },
+        )
         .collect();
     if nodes.is_empty() {
-        return Ok(GraphPayload { nodes, edges: Vec::new(), total_nodes: 0, truncated: false, palette: None, systems: Vec::new() });
+        return Ok(GraphPayload {
+            nodes,
+            edges: Vec::new(),
+            total_nodes: 0,
+            truncated: false,
+            palette: None,
+            systems: Vec::new(),
+        });
     }
 
     let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
@@ -96,10 +117,22 @@ pub async fn get_graph_for_ids(pool: &SqlitePool, ids: &[String]) -> anyhow::Res
     let edges: Vec<GraphEdge> = edge_rows
         .into_iter()
         .filter(|(s, t, _, _)| id_set.contains(s.as_str()) || id_set.contains(t.as_str()))
-        .map(|(source, target, kind, confidence)| GraphEdge { source, target, kind, confidence })
+        .map(|(source, target, kind, confidence)| GraphEdge {
+            source,
+            target,
+            kind,
+            confidence,
+        })
         .collect();
     let total_nodes = nodes.len() as i64;
-    Ok(GraphPayload { nodes, edges, total_nodes, truncated: false, palette: None, systems: Vec::new() })
+    Ok(GraphPayload {
+        nodes,
+        edges,
+        total_nodes,
+        truncated: false,
+        palette: None,
+        systems: Vec::new(),
+    })
 }
 
 fn graph_scope(origin: &str) -> anyhow::Result<(&'static str, String)> {
@@ -138,17 +171,32 @@ async fn graph_systems(pool: &SqlitePool) -> anyhow::Result<Vec<GraphSystem>> {
         .collect())
 }
 
-pub async fn get_graph(pool: &SqlitePool, limit: i64, origin: &str) -> anyhow::Result<GraphPayload> {
+pub async fn get_graph(
+    pool: &SqlitePool,
+    limit: i64,
+    origin: &str,
+) -> anyhow::Result<GraphPayload> {
     let (op, pattern) = graph_scope(origin)?;
     let systems = graph_systems(pool).await?;
-    let total_nodes: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM nodes WHERE id {op} ?"))
-        .bind(&pattern)
-        .fetch_one(pool)
-        .await?;
+    let total_nodes: i64 =
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM nodes WHERE id {op} ?"))
+            .bind(&pattern)
+            .fetch_one(pool)
+            .await?;
 
-    let node_rows = sqlx::query_as::<_, (String, String, String, String, Option<i64>, Option<String>, i64)>(
-        &format!(
-            r#"
+    let node_rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            Option<i64>,
+            Option<String>,
+            i64,
+        ),
+    >(&format!(
+        r#"
         WITH deg AS (
             SELECT id, SUM(cnt) AS degree FROM (
                 SELECT source AS id, COUNT(*) AS cnt FROM edges
@@ -170,8 +218,7 @@ pub async fn get_graph(pool: &SqlitePool, limit: i64, origin: &str) -> anyhow::R
         ORDER BY degree DESC, n.name ASC
         LIMIT ?
         "#
-        ),
-    )
+    ))
     .bind(&pattern)
     .bind(&pattern)
     .bind(&pattern)
@@ -272,17 +319,19 @@ pub struct LangStat {
 }
 
 pub async fn get_stats(pool: &SqlitePool) -> anyhow::Result<Stats> {
-    let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes WHERE id NOT GLOB 'ax-replica/*'")
-        .fetch_one(pool)
-        .await?;
+    let node_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM nodes WHERE id NOT GLOB 'ax-replica/*'")
+            .fetch_one(pool)
+            .await?;
     let edge_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM edges WHERE source NOT GLOB 'ax-replica/*' AND target NOT GLOB 'ax-replica/*'",
     )
     .fetch_one(pool)
     .await?;
-    let file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files WHERE path NOT GLOB 'ax-replica/*'")
-        .fetch_one(pool)
-        .await?;
+    let file_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM files WHERE path NOT GLOB 'ax-replica/*'")
+            .fetch_one(pool)
+            .await?;
 
     let rows = sqlx::query_as::<_, (String, i64)>(
         "SELECT language, COUNT(*) AS count FROM nodes WHERE id NOT GLOB 'ax-replica/*' GROUP BY language ORDER BY count DESC",
@@ -294,19 +343,18 @@ pub async fn get_stats(pool: &SqlitePool) -> anyhow::Result<Stats> {
         .map(|(language, count)| LangStat { language, count })
         .collect();
 
-    let last_indexed_at: Option<i64> = sqlx::query_scalar(
-        "SELECT MAX(indexed_at) FROM files WHERE path NOT GLOB 'ax-replica/*'",
-    )
-        .fetch_one(pool)
-        .await?;
+    let last_indexed_at: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(indexed_at) FROM files WHERE path NOT GLOB 'ax-replica/*'")
+            .fetch_one(pool)
+            .await?;
     let last_indexed_at = last_indexed_at.unwrap_or(0);
 
     let unresolved_ref_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM unresolved_refs WHERE from_node_id NOT GLOB 'ax-replica/*'",
     )
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
     let unresolved_ref_count = if unresolved_ref_count > 0 {
         Some(unresolved_ref_count)
     } else {

@@ -593,7 +593,10 @@ async fn skill_page_round_trip_and_body_only_save() {
     assert!(
         listed.body.contains("/dav/skills/deploy.md"),
         "propfind {} {}\nget {} {}",
-        listed.status, listed.body, page.status, page.body
+        listed.status,
+        listed.body,
+        page.status,
+        page.body
     );
     assert_ok(&put(&fx.app, "/dav/skills/deploy.md", "New steps.").await);
     let page = get(&fx.app, "/dav/skills/deploy.md").await;
@@ -642,7 +645,10 @@ async fn n1_vault_writes_leave_no_files_on_disk() {
     // `.ax` holds the database, its lock, and audit records. Unix drops the lock file when
     // the handle closes; a write can add an audit record. Neither is a vault file on disk.
     let project_files = |files: Vec<PathBuf>| {
-        files.into_iter().filter(|path| !path.starts_with(".ax")).collect::<Vec<_>>()
+        files
+            .into_iter()
+            .filter(|path| !path.starts_with(".ax"))
+            .collect::<Vec<_>>()
     };
     assert_eq!(project_files(disk_files(&fx.root)), project_files(before));
 }

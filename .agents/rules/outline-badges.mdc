@@ -9,6 +9,7 @@ priority: 80
 enabled: true
 status: approved
 scope: project
+group: design
 ---
 
 # Command Center lists, nodes, and badges

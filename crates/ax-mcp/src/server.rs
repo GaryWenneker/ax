@@ -268,10 +268,13 @@ fn resolve_chat(engine: &mut McpEngine, name: &str, args: &Value) -> String {
     let chat = resolve_session(
         kind,
         ax_usage::session_from_args(args),
-        engine.project_root().filter(|_| !engine.is_remote()).and_then(|root| {
-            let window = args.get("window_id").and_then(Value::as_str)?;
-            ax_usage::read_bound_cursor_session(root, window, ax_usage::HOOK_SESSION_MAX_AGE)
-        }),
+        engine
+            .project_root()
+            .filter(|_| !engine.is_remote())
+            .and_then(|root| {
+                let window = args.get("window_id").and_then(Value::as_str)?;
+                ax_usage::read_bound_cursor_session(root, window, ax_usage::HOOK_SESSION_MAX_AGE)
+            }),
         engine.policy_sessions().connection_session().as_deref(),
         mint_session,
     );
@@ -1783,9 +1786,10 @@ mod reuse_integration {
 
     async fn stored_row(root: &std::path::Path, tool: &str) -> (i64, String) {
         let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
-        let pool = sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&db))
-            .await
-            .unwrap();
+        let pool =
+            sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&db))
+                .await
+                .unwrap();
         sqlx::query_as(
             "SELECT hits, cache_id FROM mcp_reuse_cache WHERE tool = ? AND conversation LIKE ?",
         )
@@ -2153,9 +2157,10 @@ mod reuse_integration {
         assert_eq!(meta["tokensAvoided"].as_i64(), Some(original - sent));
 
         let db = std::env::var("AX_USAGE_DB").expect("isolated usage db");
-        let pool = sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&db))
-            .await
-            .unwrap();
+        let pool =
+            sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&db))
+                .await
+                .unwrap();
         let (hits, avoided): (i64, i64) =
             sqlx::query_as("SELECT hits, tokens_avoided FROM mcp_reuse_cache WHERE cache_id = ? AND conversation LIKE ?")
                 .bind(meta["contextCacheHit"].as_str().unwrap())

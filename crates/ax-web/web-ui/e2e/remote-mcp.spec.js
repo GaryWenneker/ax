@@ -3,6 +3,11 @@ import { expect, test } from '@playwright/test';
 if (process.env.AX_CHROME_EXECUTABLE) {
     test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
 }
+test.beforeEach(async ({ page }) => {
+    await page.route('**/api/web-auth/status', route => route.fulfill({
+        json: { enabled: false, passkeys: true },
+    }));
+});
 test('remote Settings sends CSRF, shows the browser fallback, and disconnects saved credentials', async ({ page, context }) => {
     let connected = false;
     let polls = 0;

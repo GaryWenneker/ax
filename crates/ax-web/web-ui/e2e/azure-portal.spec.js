@@ -19,6 +19,7 @@ const memories = ['Azure design system', 'Preserve workspace preferences', 'Impr
 const graphNodes = Array.from({ length: 24 }, (_, i) => ({ id: i + 1, name: ['App', 'Settings', 'Theme', 'Policy', 'Memory', 'Graph'][i % 6] + i,
     kind: 'function', file_path: `src/module${i % 4}.ts`, community_id: i % 4, community_label: `Module ${i % 4}`, degree: 3 }));
 const fixtures = {
+    '/api/web-auth/status': { enabled: false, passkeys: true },
     '/api/policy/settings': { policySync: false, requireReview: true, storage: 'files', roots: [] },
     '/api/policy/rules': { rules }, '/api/policy/skills': { skills: [] },
     '/api/memory': { memories, total: memories.length },
@@ -66,18 +67,18 @@ test('all pages retain portal chrome in light and dark, including offline states
     }
     expect(errors).toEqual([]);
 });
-test('portal themes update chrome, survive reload, and return to legacy presets', async ({ page }) => {
+test('Light and Dark update chrome, survive reload, and remove legacy presets', async ({ page }) => {
     await expect(page.locator('html')).toHaveAttribute('data-ax-layout', 'portal');
     await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
-    await page.getByRole('button', { name: 'Azure Portal Dark', exact: true }).click();
+    await page.getByRole('button', { name: 'Dark', exact: true }).click();
     await expect(page.locator('html')).toHaveAttribute('data-ax-theme', 'azure-dark');
     await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
     await expect(page.locator('.statusbar')).toHaveCSS('background-color', 'rgb(32, 32, 32)');
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-ax-theme', 'azure-dark');
-    await page.getByRole('button', { name: 'ax Mint', exact: true }).click();
-    await expect(page.locator('html')).toHaveAttribute('data-ax-layout', 'workbench');
-    await page.getByRole('button', { name: 'Azure Portal Light', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'ax Mint', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'macOS', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Light', exact: true }).click();
     await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
 });
 test('settings filter works and draft pipeline edits survive section changes', async ({ page }) => {
@@ -99,13 +100,17 @@ test('settings filter works and draft pipeline edits survive section changes', a
 test('portal search navigates and replaces an existing code query', async ({ page }) => {
     const search = page.getByRole('combobox', { name: 'Search code or open a page' });
     const code = page.getByPlaceholder('Search symbols, functions, classes…');
+    const openSearch = async () => { await page.getByRole('search').hover(); };
+    await openSearch();
     await search.fill('firstSymbol');
     await search.press('Enter');
     await expect(page).toHaveURL(/\/search/);
     await expect(code).toHaveValue('firstSymbol');
+    await openSearch();
     await search.fill('secondSymbol');
     await search.press('Enter');
     await expect(code).toHaveValue('secondSymbol');
+    await openSearch();
     await search.fill('Settings');
     await search.press('Enter');
     await expect(page).toHaveURL(/\/settings/);
@@ -121,7 +126,7 @@ test('settings fits phone width and primary menu stays usable', async ({ page })
     await expect(page.locator('.sidebar')).not.toHaveClass(/open/);
 });
 test('IDE embed keeps docked navigation and omits portal header', async ({ page }) => {
-    await page.setViewportSize({ width: 800, height: 700 });
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/settings?embed=1');
     await expect(page.locator('.titlebar')).toHaveCount(0);
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeInViewport();

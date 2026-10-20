@@ -172,7 +172,7 @@ html[data-ax-layout="portal"] .page-table :is(th,td) { padding-block:5px; }
 /* Name takes the spare width. Level and scope match the 100px chips.
    Priority fits its heading. Actions fits the buttons, not the leftover row. */
 html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(0,1fr) max(104px,8rem) max(104px,8rem) max(120px,9rem) max(140px,11rem);min-width:0;column-gap:8px; }
-html[data-ax-layout="portal"] body .page-item-list.portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:28px minmax(0,1fr) max(104px,8rem) max(104px,8rem) max(120px,9rem) max(140px,11rem); }
+html[data-ax-layout="portal"] body .page-item-list.portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:28px minmax(0,1fr) max(104px,8rem) max(104px,8rem) max(120px,9rem) max-content; }
 html[data-ax-layout="portal"] body .portal-memory-list :is(.portal-data-row,.portal-data-header) { grid-template-columns:minmax(180px,1fr) 100px 100px 120px 110px;min-width:0; }
 html[data-ax-layout="portal"] .portal-data-row > *,
 html[data-ax-layout="portal"] .portal-data-header > * { min-width:0;overflow:hidden; }
@@ -202,7 +202,7 @@ html[data-ax-layout="portal"] .portal-data-name .portal-data-tags { grid-column:
 @container ax-list (max-width:640px) {
   html[data-ax-layout="portal"] body .page-item-list :is(.portal-data-row,.portal-data-header) { min-width:0;grid-template-columns:minmax(0,1fr) max(140px,11rem);gap:4px 8px; }
   html[data-ax-layout="portal"] .portal-data-header { display:none; }
-  html[data-ax-layout="portal"] body .page-item-list.portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns: 28px minmax(0,1fr) max(140px,11rem); }
+  html[data-ax-layout="portal"] body .page-item-list.portal-policy-list :is(.portal-data-row,.portal-data-header) { grid-template-columns: 28px minmax(0,1fr) max-content; }
   html[data-ax-layout="portal"] .portal-data-name { grid-column:1/-1;display:flex;flex-direction:column;align-items:stretch;gap:2px; }
   html[data-ax-layout="portal"] .portal-policy-list .portal-data-name { grid-column: 2; }
   html[data-ax-layout="portal"] .portal-memory-list .portal-data-name { flex-direction: row; align-items: center; }

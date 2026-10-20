@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEvent } from 'react';
+import { useEffect, useState, type CSSProperties, type MouseEvent } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import Codicon from '../Codicon';
 import { OriginDbBadge, TagList } from '../PolicyMetaView';
@@ -55,6 +55,8 @@ interface Props {
   onToggleStorage: (id: string, current: 'files' | 'database') => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  onPublish?: (id: string) => void;
+  onAudit?: (id: string) => void;
   /** Row keys that just appeared (live updates); they glow briefly. */
   fresh?: ReadonlySet<string>;
 }
@@ -65,6 +67,16 @@ function isControl(e: MouseEvent) {
 
 export function PolicyCalmList(props: Props) {
   const portal = useTheme().layout === 'portal';
+  const [pressedKey, setPressedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pressedKey) return;
+    const clear = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest('.calm-row-action')) setPressedKey(null);
+    };
+    document.addEventListener('pointerdown', clear);
+    return () => document.removeEventListener('pointerdown', clear);
+  }, [pressedKey]);
   return (
     <div className="calm-groups">
       {props.groups.map((g) => {
@@ -76,7 +88,7 @@ export function PolicyCalmList(props: Props) {
               <ItemList className={`calm-list${portal ? ' portal-data-list portal-policy-list' : ''}`}>
                 {portal && <div className="portal-data-header"><span data-column-label="Select" data-column-min={28}><input type="checkbox" aria-label="Select visible rows" checked={Boolean(props.visibleSelected)} onChange={() => props.onToggleVisible?.()} /></span><span>Name</span><span>Level</span><span>Scope</span><span>Priority</span><span>Enabled / actions</span></div>}
                 {g.items.map((item) => (
-                  <PolicyCalmRow key={item.key} item={item} {...props} listValues={['', item.id, item.level ?? '', normalizePolicyScope(item.scope), Number(item.meta.replace(/^p/, '')), item.enabled ? 'enabled' : 'disabled']} />
+                  <PolicyCalmRow key={item.key} item={item} pressedKey={pressedKey} onPress={setPressedKey} {...props} listValues={['', item.id, item.level ?? '', normalizePolicyScope(item.scope), Number(item.meta.replace(/^p/, '')), item.enabled ? 'enabled' : 'disabled']} />
                 ))}
               </ItemList>
             )}
@@ -87,11 +99,13 @@ export function PolicyCalmList(props: Props) {
   );
 }
 
-function PolicyCalmRow({ item, listValues: _listValues, ...p }: Props & { item: PolicyCalmItem; listValues: readonly ColumnValue[] }) {
+function PolicyCalmRow({ item, listValues: _listValues, pressedKey, onPress, ...p }: Props & { item: PolicyCalmItem; listValues: readonly ColumnValue[]; pressedKey: string | null; onPress: (key: string) => void }) {
   const portal = useTheme().layout === 'portal';
   const selected = p.selectedIds.has(item.id);
   const shownTags = item.tags.slice(0, SHOWN_TAGS);
   const hiddenTags = item.tags.slice(SHOWN_TAGS);
+  const press = (action: string) => onPress(`${item.id}:${action}`);
+  const pressed = (action: string) => pressedKey === `${item.id}:${action}`;
   return (
     <ItemRow
       variant="graph"
@@ -158,13 +172,23 @@ function PolicyCalmRow({ item, listValues: _listValues, ...p }: Props & { item: 
         <div className="calm-row-aside">
           {!p.compact && (
             <>
-              <button type="button" className="calm-row-action" onClick={() => p.onEdit(item.id)} aria-label={`Edit ${item.id}`} title="Edit">
+              <button type="button" className={`calm-row-action${pressed('edit') ? ' is-pressed' : ''}`} onClick={() => { press('edit'); p.onEdit(item.id); }} aria-label={`Edit ${item.id}`} title="Edit">
                 <Codicon name="edit" />
               </button>
+              {p.onAudit && (
+                <button type="button" className={`calm-row-action${pressed('audit') ? ' is-pressed' : ''}`} onClick={() => { press('audit'); p.onAudit?.(item.id); }} aria-label={`Audit ${item.id}`} title="Audit">
+                  <Codicon name="checklist" />
+                </button>
+              )}
+              {p.onPublish && (
+                <button type="button" className={`calm-row-action${pressed('publish') ? ' is-pressed' : ''}`} onClick={() => { press('publish'); p.onPublish?.(item.id); }} aria-label={`Publish ${item.id}`} title="Publish this skill">
+                  <Codicon name="cloud-upload" />
+                </button>
+              )}
               <button
                 type="button"
-                className="calm-row-action calm-row-action--remove"
-                onClick={() => p.onDelete(item.id)}
+                className={`calm-row-action calm-row-action--remove${pressed('delete') ? ' is-pressed' : ''}`}
+                onClick={() => { press('delete'); p.onDelete(item.id); }}
                 aria-label={`Delete ${item.id}`}
                 title="Delete"
               >
@@ -177,8 +201,8 @@ function PolicyCalmRow({ item, listValues: _listValues, ...p }: Props & { item: 
                   type="button"
                   role="switch"
                   aria-checked={item.storage === 'database'}
-                  className={`calm-row-action calm-row-storage${item.storage === 'database' ? ' on' : ''}`}
-                  onClick={() => p.onToggleStorage(item.id, item.storage)}
+                  className={`calm-row-action calm-row-storage${item.storage === 'database' ? ' on' : ''}${pressed('storage') ? ' is-pressed' : ''}`}
+                  onClick={() => { press('storage'); p.onToggleStorage(item.id, item.storage); }}
                   aria-label={`Storage for ${item.id}`}
                   title={item.storage === 'database' ? 'Database — click for Files (MD)' : 'Files (MD) — click for Database'}
                 >

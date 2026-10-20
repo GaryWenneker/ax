@@ -43,6 +43,7 @@ pub mod savings;
 pub mod session_hook;
 pub mod share;
 pub mod ship;
+pub mod skill_catalog;
 pub mod status;
 pub mod stop_hook;
 pub mod sync;

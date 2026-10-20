@@ -35,7 +35,9 @@ pub async fn run() -> Result<(), String> {
         .unwrap_or("")
         .to_string();
     let cwd = input
-        .get("cwd").and_then(|v| v.as_str()).map(PathBuf::from)
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
         .unwrap_or_else(|| resolve_path(None));
     if !prompt.is_empty() {
         if let (Some(root), Some(session)) = (
@@ -43,7 +45,9 @@ pub async fn run() -> Result<(), String> {
             ax_usage::parse_cursor_hook_session_id(&input),
         ) {
             if ax_usage::session_from_args(&serde_json::json!({"session":session})).is_some() {
-                let _ = ax_usage::note_project_tool_if_open(&root, &session, "user_prompt", &prompt).await;
+                let _ =
+                    ax_usage::note_project_tool_if_open(&root, &session, "user_prompt", &prompt)
+                        .await;
             }
         }
     }

@@ -1,4 +1,4 @@
-import {useContext, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode} from 'react';
+import {useContext, useEffect, useState, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode} from 'react';
 import {ItemColumnContext} from './ListColumns';
 import MobileControls from './MobileControls';
 import type {ColumnValue} from '../../lib/columnModel';
@@ -32,10 +32,27 @@ export function PageHero({
   );
 }
 
-export function PageToasts({ ok, err }: { ok?: string | null; err?: string | null }) {
+export function PageToasts({ ok, err, copy }: { ok?: string | null; err?: string | null; copy?: string | null }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => setCopied(false), [copy]);
   return (
     <>
-      {ok && <div className="settings-toast settings-toast--ok">{ok}</div>}
+      {ok && (
+        <div className="settings-toast settings-toast--ok">
+          <span>{ok}</span>
+          {copy ? (
+            <button
+              type="button"
+              className="btn btn-subtle settings-toast-copy"
+              onClick={() => {
+                void navigator.clipboard.writeText(copy).then(() => setCopied(true));
+              }}
+            >
+              {copied ? 'Copied' : 'Copy report'}
+            </button>
+          ) : null}
+        </div>
+      )}
       {err && <div className="settings-toast settings-toast--err">{err}</div>}
     </>
   );

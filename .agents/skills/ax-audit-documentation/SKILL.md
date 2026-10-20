@@ -1,6 +1,7 @@
 ---
 name: ax-audit-documentation
 description: Audit Ax product functionality against its website documentation, repair stale walkthroughs, capture current UI screenshots and run a second verification pass. Use for Ax documentation refreshes, feature coverage reviews, logging/UI changes and screenshot maintenance.
+group: documentation
 ---
 
 # Audit Ax documentation

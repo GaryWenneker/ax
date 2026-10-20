@@ -218,6 +218,12 @@ The Agent terminal and Quality Gates pages have been removed. Old `/agent` and `
 
 The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, skills, and memories), **Auto-group**, **Test match**, **Package**, **Restore package**, **Capture**, and **New rule** / **New skill**. The **Default MD / DB** switch picks where new items are stored: Markdown files in the policy folder, or the project database.
 
+**Search more online** sits to the left of Filters on Skills. It opens a panel, searches the public skills catalog, and installs one skill at a time. The installed skill is usable immediately. The receipt prints the source, the pinned commit, and the content hash. Audit stays disabled until that skill is installed. **Report installs** is off until you turn the switch on.
+
+**Audit** on an installed skill, or on a rule, stores a quality report and leaves the item enabled. **Copy report** on the green result copies an agent brief: the file to edit, the findings, and the edit instructions. A path such as `skills/<name>/SKILL.md` is present when that skill file exists in a policy folder or the skill is stored in the project or global database. Placeholder paths and directories are not reported as missing files. Clicking an action keeps a dark mark on that button and a darker wash on its row until you click elsewhere.
+
+The same checks are available from the CLI: `ax skill search`, `ax skill add`, `ax skill audit`, `ax skill brief`, and `ax policy quality <id>`. See [ax skill](/reference/cli/#ax-skill).
+
 ![Review — staged policy imports waiting for Accept or Reject](/screenshots/cc-policy-review-dark.png)
 
 ![Prices — provider groups, jump legend, and input/output rate colors](/screenshots/cc-prices-dark.png)

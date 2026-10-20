@@ -25,6 +25,7 @@ import {
 } from '../components/ui/PageLayout';
 import { PolicyCount, PolicySortControl, PolicyToolbar } from '../components/ui/PolicyTable';
 import { PolicyCalmList } from '../components/ui/PolicyCalmList';
+import { auditOneRule } from '../components/SkillCatalogBar';
 import { PolicyContextMenu } from '../components/ui/PolicyContextMenu';
 import { PolicyDbLegend } from '../components/PolicyMetaView';
 import { priorityMeta, ruleRowSubtitle } from '../lib/calmRows';
@@ -155,6 +156,9 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
     setOpenProjectId(t.projectId);
   }, [selectedIdFromRoute, routeOrigin, routeProjectId, rules]);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [auditBrief, setAuditBrief] = useState('');
+  const [auditHints, setAuditHints] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: PolicyRuleRow } | null>(null);
   const [propertiesFor, setPropertiesFor] = useState<string | null>(null);
@@ -204,7 +208,23 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+    loadRuleAuditHints();
   }, []);
+
+  function loadRuleAuditHints() {
+    void fetch('/api/policy/rules/catalog/audits')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((rows: { name: string; verdict?: string | null; mechanical_warns: number; mechanical_fails: number }[]) => {
+        const next: Record<string, string> = {};
+        for (const row of rows) {
+          next[row.name] = row.verdict
+            ? `audit ${row.verdict}`
+            : `audit ${row.mechanical_warns} warn, ${row.mechanical_fails} fail`;
+        }
+        setAuditHints(next);
+      })
+      .catch(() => undefined);
+  }
 
   function reloadRules() {
     fetchPolicyRules()
@@ -546,7 +566,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
         }
       />
 
-      <PageToasts err={error || captureError || null} />
+      <PageToasts ok={notice || null} err={error || captureError || null} copy={auditBrief || null} />
 
       <PageStack>
         {captureOpen && (
@@ -707,7 +727,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                       items: g.rules.map((r) => ({
                         key: r.rowKey ?? r.id,
                         id: r.id,
-                        subtitle: ruleRowSubtitle(r, projectStorage),
+                        subtitle: [ruleRowSubtitle(r, projectStorage), auditHints[r.id]].filter(Boolean).join(' · '),
                         meta: priorityMeta(r.priority),
                         level: r.level,
                         scope: r.scope,
@@ -757,6 +777,17 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                     }}
                     onToggleEnabled={(id, enabled) => void toggleEnabled(id, enabled)}
                     onToggleStorage={(id, current) => void toggleItemStorage(id, current)}
+                    onAudit={(id) => {
+                      setError('');
+                      void auditOneRule(id).then(
+                        (result) => {
+                          setNotice(result.summary);
+                          setAuditBrief(result.brief);
+                          loadRuleAuditHints();
+                        },
+                        (err: unknown) => setError(err instanceof Error ? err.message : 'Audit failed'),
+                      );
+                    }}
                     onEdit={(id) => {
                       const r = ruleById.get(id);
                       onEditFull(id, r?.origin, r?.projectId);

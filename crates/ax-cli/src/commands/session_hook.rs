@@ -55,10 +55,21 @@ pub async fn run() -> Result<(), String> {
             .to_string();
         if !prompt.is_empty() {
             let session = parse_cursor_hook_session_id(&input);
-            if let (Some(session), Some(cwd)) = (session, input.get("cwd").and_then(|v| v.as_str())) {
-                if let Some(root) = ax_context::directory::find_nearest_ax_root(std::path::Path::new(cwd)) {
-                    if ax_usage::session_from_args(&serde_json::json!({"session":session})).is_some() {
-                        let _ = ax_usage::note_project_tool_if_open(&root, &session, "user_prompt", &prompt).await;
+            if let (Some(session), Some(cwd)) = (session, input.get("cwd").and_then(|v| v.as_str()))
+            {
+                if let Some(root) =
+                    ax_context::directory::find_nearest_ax_root(std::path::Path::new(cwd))
+                {
+                    if ax_usage::session_from_args(&serde_json::json!({"session":session}))
+                        .is_some()
+                    {
+                        let _ = ax_usage::note_project_tool_if_open(
+                            &root,
+                            &session,
+                            "user_prompt",
+                            &prompt,
+                        )
+                        .await;
                     }
                 }
             }

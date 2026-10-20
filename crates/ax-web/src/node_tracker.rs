@@ -59,7 +59,9 @@ fn now_ms() -> i64 {
 
 /// Snapshot the node ids of the graph at `db_path` into its tracker.
 pub async fn observe(pool: &SqlitePool, db_path: &Path) -> anyhow::Result<()> {
-    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM nodes").fetch_all(pool).await?;
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM nodes")
+        .fetch_all(pool)
+        .await?;
     let mut all = trackers().lock().unwrap_or_else(|e| e.into_inner());
     all.entry(db_path.to_path_buf())
         .or_default()

@@ -4,6 +4,7 @@ description: Extract an opt-in business-domain overlay (domains, flows, steps) a
 triggers: ["domain", "business logic", "business process", "understand-domain", "domain graph", "process flow"]
 tags: ["graph", "domain", "onboarding"]
 priority: 70
+group: architecture
 ---
 # Domain overlay (opt-in)
 

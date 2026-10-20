@@ -1280,6 +1280,29 @@ ax policy skills
 ax policy skill startup
 ```
 
+### `ax skill`
+
+Search the skills.sh catalog and install a skill from GitHub, GitLab, Azure Repos, a well-known URL, or a local directory. Publish sends one named skill.
+
+```bash
+ax skill search react
+ax skill add vercel-labs/agent-skills --skill web-design-guidelines
+ax skill add https://gitlab.com/group/repo
+ax skill add https://dev.azure.com/org/project/_git/repo
+ax skill add https://example.com/.well-known/agent-skills/pdf
+ax skill list
+ax skill publish pdf --remote https://github.com/you/skills.git
+ax skill audit pdf
+ax skill audit pdf --verdict verdict.json
+ax skill audit pdf --source owner/repo
+ax skill brief
+ax skill brief pdf
+ax policy quality english-only
+ax skill report-installs --on
+```
+
+Installed skills are usable immediately. `ax skill audit` stores a quality report for one skill and does not hide it. `ax skill brief` prints the edits for skills and rules. `ax policy quality <id>` audits one rule file and stores the same kind of report. Preflight includes both, and `ax_rules` returns rule briefs in `audits`. The agent edits the named file and leaves the skill or rule enabled. `--source` audits a catalog candidate without installing it. An agent submits a verdict JSON file with `verdict` (`pass`, `revise`, or `reject`), scores `clarity`, `trigger`, `steps`, `files`, and `safety` from 1 to 5, and findings whose `evidence` quotes the skill text. Reporting an install to skills.sh stays off until `ax skill report-installs --on` or the Report installs switch on the Skills page.
+
 ### `ax policy skill <name> [path]`
 
 Print one skill body (markdown). `~/.ax/global.db` wins over the project `ax.db` on the same name.

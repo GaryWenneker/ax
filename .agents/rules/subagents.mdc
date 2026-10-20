@@ -6,6 +6,7 @@ tags: ["subagents", "preflight", "mcp"]
 priority: 105
 triggers: ["Task tool", "subagent", "background agent", "run_in_background"]
 seedVersion: 5
+group: agent-orchestration
 ---
 # ax — Task subagents (background agents)
 

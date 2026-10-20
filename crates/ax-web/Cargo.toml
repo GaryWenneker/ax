@@ -1,6 +1,6 @@
 [package]
 name = "ax-web"
-version = "8.3.2"
+version = "8.3.4"
 edition = "2021"
 
 [dependencies]
@@ -41,6 +41,7 @@ ax-mcp = { workspace = true }
 ax-docs-catalog = { workspace = true }
 ax-global-db = { workspace = true }
 ax-core = { workspace = true }
+ax-skill-catalog = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }
 reqwest = { workspace = true }

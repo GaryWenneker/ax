@@ -4,6 +4,7 @@ description: Design, change, or review an HTTP/JSON API surface — endpoints, r
 triggers: ["api", "endpoint", "rest", "http", "json", "openapi", "route", "pagination", "idempotency", "rate limit", "old-coder-api", "breaking change"]
 tags: ["old-coder", "api", "http"]
 priority: 85
+group: apis-contracts
 ---
 
 # old-coder-api

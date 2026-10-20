@@ -8,8 +8,7 @@
 
 use crate::{
     server_config::{NodeRole, ServerConfig},
-    server_replica,
-    server_snapshot,
+    server_replica, server_snapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -63,7 +62,9 @@ fn sign(message: &Datagram, token: &str) -> String {
         message.revision.as_deref().unwrap_or(""),
     );
     let key = blake3::derive_key("ax-standalone-udp-notification-v1", token.as_bytes());
-    blake3::keyed_hash(&key, data.as_bytes()).to_hex().to_string()
+    blake3::keyed_hash(&key, data.as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 fn packet(
@@ -96,12 +97,7 @@ fn valid_id(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-fn decode(
-    raw: &[u8],
-    config: &ServerConfig,
-    kind: &str,
-    token: &str,
-) -> Option<Datagram> {
+fn decode(raw: &[u8], config: &ServerConfig, kind: &str, token: &str) -> Option<Datagram> {
     if raw.len() > MAX_MESSAGE_BYTES {
         return None;
     }
@@ -120,19 +116,26 @@ fn decode(
     if message.timestamp.abs_diff(now_seconds()) > CLOCK_SKEW_SECS {
         return None;
     }
-    if message.signature.len() != 64
-        || !message.signature.bytes().all(|b| b.is_ascii_hexdigit())
-    {
+    if message.signature.len() != 64 || !message.signature.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    if !bool::from(sign(&message, token).as_bytes().ct_eq(message.signature.as_bytes())) {
+    if !bool::from(
+        sign(&message, token)
+            .as_bytes()
+            .ct_eq(message.signature.as_bytes()),
+    ) {
         return None;
     }
     match kind {
         "register" if message.revision.is_none() => Some(message),
-        "changed" if message.revision.as_ref().is_some_and(|v| {
-            v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())
-        }) => Some(message),
+        "changed"
+            if message
+                .revision
+                .as_ref()
+                .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())) =>
+        {
+            Some(message)
+        }
         _ => None,
     }
 }
@@ -200,8 +203,7 @@ pub async fn primary(config: ServerConfig, udp_port: u16) -> Result<(), String> 
             let Some(token) = token_for(&receive_config, &untrusted.project_id) else {
                 continue;
             };
-            let Some(message) = decode(&buf[..length], &receive_config, "register", &token)
-            else {
+            let Some(message) = decode(&buf[..length], &receive_config, "register", &token) else {
                 continue;
             };
             if let Err(error) = ax_global_db::access::register_trusted_replica(
@@ -313,7 +315,9 @@ pub async fn replica(
         .filter(|address| local_lan(address.ip()))
         .collect();
     if primary_addresses.is_empty() {
-        return Err("UDP notifications are LAN-only; use periodic HTTPS sync for remote primary".into());
+        return Err(
+            "UDP notifications are LAN-only; use periodic HTTPS sync for remote primary".into(),
+        );
     }
     let socket = Arc::new(
         UdpSocket::bind(("0.0.0.0", 0))
@@ -364,7 +368,8 @@ pub async fn replica(
             continue;
         }
         previous_change.insert(message.project_id, revision);
-        if let Err(error) = server_replica::sync_with_apply(&config_path, auto_apply_memories).await {
+        if let Err(error) = server_replica::sync_with_apply(&config_path, auto_apply_memories).await
+        {
             tracing::warn!("UDP-triggered replica sync failed: {}", error);
             // Periodic polling will retry; an identical later notification
             // should also be able to retry, so forget the failed revision.
@@ -391,27 +396,69 @@ mod tests {
     #[test]
     fn registration_is_authenticated_per_project() {
         let config = config(NodeRole::Replica);
-        let message = packet("register", &config, "work", None, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let message = packet(
+            "register",
+            &config,
+            "work",
+            None,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
         let bytes = serde_json::to_vec(&message).unwrap();
         let primary = ServerConfig {
             node_id: "other".into(),
             role: NodeRole::Primary,
             ..config
         };
-        assert!(decode(&bytes, &primary, "register", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_some());
-        assert!(decode(&bytes, &primary, "register", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").is_none());
-        assert!(decode(&bytes, &primary, "changed", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_none());
+        assert!(decode(
+            &bytes,
+            &primary,
+            "register",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+        .is_some());
+        assert!(decode(
+            &bytes,
+            &primary,
+            "register",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        )
+        .is_none());
+        assert!(decode(
+            &bytes,
+            &primary,
+            "changed",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+        .is_none());
     }
 
     #[test]
     fn rejects_forged_or_cross_cluster_notifications() {
         let sender = config(NodeRole::Primary);
-        let msg = packet("changed", &sender, "project", Some("a".repeat(64)), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let msg = packet(
+            "changed",
+            &sender,
+            "project",
+            Some("a".repeat(64)),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
         let mut receiver = config(NodeRole::Replica);
         receiver.node_id = "replica".into();
-        assert!(decode(&serde_json::to_vec(&msg).unwrap(), &receiver, "changed", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_some());
+        assert!(decode(
+            &serde_json::to_vec(&msg).unwrap(),
+            &receiver,
+            "changed",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+        .is_some());
         receiver.cluster_id = "another".into();
-        assert!(decode(&serde_json::to_vec(&msg).unwrap(), &receiver, "changed", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_none());
+        assert!(decode(
+            &serde_json::to_vec(&msg).unwrap(),
+            &receiver,
+            "changed",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+        .is_none());
     }
 
     #[test]

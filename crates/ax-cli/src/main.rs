@@ -8,8 +8,8 @@ mod installer;
 use ax_web::server_config;
 mod server_apply;
 mod server_cli;
-mod server_exchange;
 mod server_data;
+mod server_exchange;
 mod server_http;
 mod server_replica;
 mod server_snapshot;
@@ -532,6 +532,11 @@ enum Commands {
     Policy {
         #[command(subcommand)]
         action: PolicyCommands,
+    },
+    /// Search, install, and publish Agent Skills
+    Skill {
+        #[command(subcommand)]
+        action: commands::skill_catalog::SkillCommands,
     },
     /// Authentication for remote share providers
     Auth {
@@ -1179,6 +1184,16 @@ enum PolicyCommands {
     },
     /// Show one skill body
     Skill { name: String, path: Option<String> },
+    /// Audit one rule and store the report. The rule stays enabled.
+    Quality {
+        id: String,
+        /// JSON verdict file from an agent
+        #[arg(long)]
+        verdict: Option<String>,
+        #[arg(long)]
+        json: bool,
+        path: Option<String>,
+    },
     /// Pre-write guard check
     Guard {
         #[arg(help = "File path relative to project root")]
@@ -1839,6 +1854,7 @@ async fn async_main() {
                 CursorAuthCommands::Show { name, json } => commands::cursor::run_show(name, json),
             },
         },
+        Some(Commands::Skill { action }) => commands::skill_catalog::run(action).await,
         Some(Commands::Policy { action }) => match action {
             PolicyCommands::Index { path, force } => commands::policy::run_index(path, force).await,
             PolicyCommands::Import { path } => commands::policy::run_import(path).await,
@@ -1861,6 +1877,12 @@ async fn async_main() {
             PolicyCommands::Rules { path, json } => commands::policy::run_rules(path, json).await,
             PolicyCommands::Skills { path, json } => commands::policy::run_skills(path, json).await,
             PolicyCommands::Skill { name, path } => commands::policy::run_skill(path, name).await,
+            PolicyCommands::Quality {
+                id,
+                verdict,
+                json,
+                path,
+            } => commands::skill_catalog::audit_rule(id, verdict, json, path).await,
             PolicyCommands::Guard {
                 file,
                 path,
@@ -2387,6 +2409,7 @@ fn cli_command_name(cmd: &Option<Commands>) -> Option<String> {
         Some(Commands::Share { .. }) => Some("share".into()),
         Some(Commands::Lsp { .. }) => Some("lsp".into()),
         Some(Commands::Cursor { .. }) => Some("cursor".into()),
+        Some(Commands::Skill { .. }) => Some("skill".into()),
         Some(Commands::Policy { .. }) => Some("policy".into()),
         Some(Commands::Auth { .. }) => Some("auth".into()),
         Some(Commands::PromptHook) => None,

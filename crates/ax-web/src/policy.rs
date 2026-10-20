@@ -110,6 +110,7 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/review/{id}/approve", post(review_approve))
         .route("/review/{id}/reject", post(review_reject))
         .route("/settings", get(policy_settings).put(put_policy_settings))
+        .merge(crate::skill_catalog_api::routes())
         .layer(DefaultBodyLimit::max(ZIP_PACKAGE_MAX_BYTES))
         .with_state(hub)
 }

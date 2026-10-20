@@ -39,9 +39,15 @@ pub fn init(
         }],
     };
     config.validate()?;
-    let parent = config_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let parent = config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     if !parent.is_dir() {
-        return Err(format!("configuration directory does not exist: {}", parent.display()));
+        return Err(format!(
+            "configuration directory does not exist: {}",
+            parent.display()
+        ));
     }
     let mut file = OpenOptions::new()
         .write(true)
@@ -72,8 +78,8 @@ pub fn init(
 }
 
 pub fn load(path: &Path) -> Result<ServerConfig, String> {
-    let source = fs::read_to_string(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let source =
+        fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let config: ServerConfig =
         serde_json::from_str(&source).map_err(|e| format!("invalid configuration JSON: {e}"))?;
     config.validate()?;
@@ -103,7 +109,10 @@ pub fn status(config_path: &Path) -> Result<(), String> {
         "projects": projects,
         "server_state": "not_started",
     });
-    println!("{}", serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -117,14 +126,16 @@ mod tests {
         let project = tmp.path().join("work");
         fs::create_dir_all(project.join(".ax")).unwrap();
         let target = tmp.path().join("server.json");
-        let create = || init(
-            &target,
-            NodeRole::Primary,
-            "my-cluster".into(),
-            "my-project".into(),
-            project.clone(),
-            None,
-        );
+        let create = || {
+            init(
+                &target,
+                NodeRole::Primary,
+                "my-cluster".into(),
+                "my-project".into(),
+                project.clone(),
+                None,
+            )
+        };
         create().unwrap();
         let original = fs::read_to_string(&target).unwrap();
         assert!(create().is_err());

@@ -5,6 +5,7 @@ alwaysApply: true
 triggers: ["CallMcpTool", "MCP", "GetMcpTools", "ax_preflight", "preflight failed", "toolName", "server: Required"]
 tags: ["mcp", "preflight", "cursor", "bootstrap"]
 priority: 98
+group: tooling
 ---
 # MCP CallMcpTool — correct call shape
 

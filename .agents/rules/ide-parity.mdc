@@ -9,6 +9,7 @@ priority: 50
 enabled: true
 status: approved
 scope: project
+group: tooling
 ---
 
 # IDE parity

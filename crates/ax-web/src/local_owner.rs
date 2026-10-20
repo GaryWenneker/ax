@@ -23,11 +23,20 @@ pub(crate) fn browser_serves(headers: &HeaderMap, port: u16) -> bool {
     ];
     let origin = headers.get("origin").and_then(|v| v.to_str().ok());
     if loopback.iter().any(|item| item == host) {
-        return origin.is_none_or(|value| loopback.iter().any(|item| value == format!("http://{item}")));
+        return origin.is_none_or(|value| {
+            loopback
+                .iter()
+                .any(|item| value == format!("http://{item}"))
+        });
     }
     match origin {
         Some(value) => origin_names_host(value, host),
-        None => headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https"),
+        None => {
+            headers
+                .get("x-forwarded-proto")
+                .and_then(|v| v.to_str().ok())
+                == Some("https")
+        }
     }
 }
 
