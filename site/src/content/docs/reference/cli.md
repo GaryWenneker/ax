@@ -84,7 +84,7 @@ ax uninstall
 
 ### `ax init [path]`
 
-`ax init --all` is what the installer and `ax upgrade` run after the binary is in place. It walks four levels under your home directory, skips hidden folders and dependency folders, and initializes every directory that has git, a project manifest, or `.ax/ax.db`. It does not prompt. A nested package inside a discovered project is left to that project. `AX_SKIP_PROJECT_INIT=1` skips the scan.
+`ax init --all` is what the installer and `ax upgrade` run after the binary is in place. It walks four levels under your home directory, skips hidden folders and dependency folders, and refreshes every directory that already has `.ax/ax.db`. A git repository or other software project without that database is left untouched. It does not prompt. A nested package inside an existing ax project is left to that project. `AX_SKIP_PROJECT_INIT=1` skips the scan. Create a new ax project with `ax init` in that directory.
 
 Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the project, install git hooks, install the Cursor savings hook (`ax savings hook install`), import Claude and Cursor savings logs (`ax savings import --all`), then offer the agent installer. A workspace init runs the savings steps once, after every member.
 

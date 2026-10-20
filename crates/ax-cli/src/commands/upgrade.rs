@@ -133,13 +133,15 @@ pub async fn run(
         println!(
             "{}",
             ok_line(format!(
-                "Updated to {} — install finishes in a few seconds after exit.",
+                "Staged {} — the install finishes after this process exits.",
                 strip_v(&target_version)
             ))
         );
         println!(
             "{}",
-            info_line("Open a new terminal and run `ax version` to verify.")
+            info_line(
+                "Open a new terminal and run `ax version`. If the install failed, the next ax command prints why."
+            )
         );
         std::process::exit(0);
     }
@@ -301,27 +303,22 @@ pub fn run_upgrade_apply(parent_pid: u32, staging: PathBuf, dest: PathBuf) -> Re
     let _ = stop_other_ax_processes(std::process::id());
     std::thread::sleep(std::time::Duration::from_secs(1));
 
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest).map_err(|e| format!("remove old install: {e}"))?;
+    let install_root = dest
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| dest.clone());
+    let finished = activate_staged_install(&staging, &dest).and_then(|_| {
+        let init_exe = publish_bin_exe(&dest)?;
+        sync_cargo_shadow(&dest.join("ax.exe"));
+        remove_leftover_staging(&install_root);
+        Ok(init_exe)
+    });
+    let status = finished.as_ref().map(|_| ()).map_err(Clone::clone);
+    if let Err(error) = write_upgrade_status(&install_root, &status) {
+        tracing::debug!("{error}");
     }
-    std::fs::rename(&staging, &dest).map_err(|e| format!("activate new install: {e}"))?;
-
-    let bin_dir = dest.join("bin");
-    std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
-    let bin_exe = bin_dir.join("ax.exe");
-    let bin_new = bin_dir.join("ax.new.exe");
-    let _ = std::fs::remove_file(&bin_new);
-    std::fs::copy(dest.join("ax.exe"), &bin_new).map_err(|e| format!("stage ax.exe: {e}"))?;
-    if std::fs::rename(&bin_new, &bin_exe).is_err() {
-        // bin/ax.exe may still be locked — apply_pending_upgrade swaps ax.new.exe on next launch.
-        tracing::debug!("bin/ax.exe locked; leaving ax.new.exe for next startup swap");
-    }
-    sync_cargo_shadow(&dest.join("ax.exe"));
-    let init_exe = if bin_exe.is_file() {
-        bin_exe
-    } else {
-        dest.join("ax.exe")
-    };
+    clear_promotion(&install_root);
+    let init_exe = finished?;
     match std::process::Command::new(&init_exe)
         .args(["init", "--all"])
         .status()
@@ -468,6 +465,27 @@ fn sync_cargo_shadow(from_bin: &Path) {
 
 #[cfg(windows)]
 fn apply_pending_upgrade_windows() {
+    swap_pending_bin_exe();
+    // `upgrade` replaces the bundle itself. `upgrade-apply` is the helper that
+    // performs the swap and must not promote a staging dir before its parent exits.
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("upgrade") | Some("upgrade-apply")
+    ) {
+        return;
+    }
+    let root = windows_install_root();
+    if let Some(message) = take_upgrade_status(&root) {
+        eprintln!(
+            "ax: Windows install did not finish: {message}\n\
+             Re-run: irm https://getax.wenneker.io/install.ps1 | iex"
+        );
+    }
+    recover_leftover_staging(&root);
+}
+
+#[cfg(windows)]
+fn swap_pending_bin_exe() {
     let root = windows_install_root();
     let bin_exe = root.join("current").join("bin").join("ax.exe");
     let staged = bin_exe.with_file_name("ax.new.exe");
@@ -492,6 +510,100 @@ fn apply_pending_upgrade_windows() {
 }
 
 #[cfg(windows)]
+fn remove_leftover_staging(install_root: &Path) {
+    let Ok(entries) = std::fs::read_dir(install_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(STAGING_DIR_PREFIX) {
+            // A directory still locked by a running ax.exe is removed on a later launch.
+            if let Err(error) = std::fs::remove_dir_all(entry.path()) {
+                tracing::debug!("leave leftover staging: {error}");
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn recover_leftover_staging(root: &Path) {
+    let dest = root.join("current");
+    let current_bin_exists = dest.join("bin").join("ax.exe").is_file();
+    let leftover = sole_leftover_staging(root);
+    let running_inside = match (&leftover, std::env::current_exe()) {
+        (Ok(Some(staging)), Ok(exe)) => exe.starts_with(staging),
+        _ => false,
+    };
+    let action = staging_recovery(
+        current_bin_exists,
+        running_inside,
+        leftover
+            .as_ref()
+            .map(|path| path.as_ref().map(|_| ()))
+            .map_err(Clone::clone),
+    );
+    match action {
+        StagingRecovery::Idle => {}
+        StagingRecovery::Ambiguous(message) => eprintln!("ax: {message}"),
+        StagingRecovery::Promote => {
+            let Some(staging) = leftover.ok().flatten() else {
+                return;
+            };
+            if !claim_promotion(root) {
+                return;
+            }
+            let result = activate_staged_install(&staging, &dest).and_then(|_| {
+                publish_bin_exe(&dest)?;
+                sync_cargo_shadow(&dest.join("ax.exe"));
+                remove_leftover_staging(root);
+                Ok(())
+            });
+            if let Err(error) = write_upgrade_status(root, &result) {
+                tracing::debug!("write upgrade status: {error}");
+            }
+            clear_promotion(root);
+            match result {
+                Ok(()) => eprintln!(
+                    "ax: finished a pending Windows install in {}",
+                    dest.display()
+                ),
+                Err(error) => {
+                    eprintln!("ax: could not finish the pending Windows install: {error}")
+                }
+            }
+        }
+        StagingRecovery::WaitForExit => {
+            let Some(staging) = leftover.ok().flatten() else {
+                return;
+            };
+            if !claim_promotion(root) {
+                return;
+            }
+            if let Err(error) = schedule_external_helper(&staging, &dest, std::process::id()) {
+                clear_promotion(root);
+                if let Err(status_error) = write_upgrade_status(root, &Err(error.clone())) {
+                    tracing::debug!("write upgrade status: {status_error}");
+                }
+                eprintln!("ax: could not finish the pending Windows install: {error}");
+            } else {
+                eprintln!(
+                    "ax: this process is running from an unfinished install. It moves into {} after exit.",
+                    dest.display()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn schedule_external_helper(staging: &Path, dest: &Path, parent_pid: u32) -> Result<(), String> {
+    let launch_dir = std::env::temp_dir().join(format!("ax-upgrade-helper-{parent_pid}"));
+    let helper = external_helper(&bundle_exe(staging), staging, &launch_dir)?;
+    spawn_upgrade_apply_helper(&helper, parent_pid, staging, dest)
+}
+
+#[cfg(windows)]
 fn same_path(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
@@ -505,15 +617,6 @@ fn resolve_comspec() -> PathBuf {
         .map(PathBuf::from)
         .filter(|p| p.is_file())
         .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\cmd.exe"))
-}
-
-#[cfg(windows)]
-fn staging_helper_exe(staging: &Path) -> PathBuf {
-    let bin = staging.join("bin").join("ax.exe");
-    if bin.is_file() {
-        return bin;
-    }
-    staging.join("ax.exe")
 }
 
 #[cfg(windows)]
@@ -568,36 +671,8 @@ fn spawn_upgrade_cmd_batch(parent_pid: u32, staging: &Path, dest: &Path) -> Resu
         .map(|h| h.join(".cargo").join("bin").join("ax.exe"))
         .unwrap_or_default();
     let batch_path = std::env::temp_dir().join(format!("ax-upgrade-{parent_pid}.cmd"));
-
-    let batch = format!(
-        "@echo off\r\n\
-         setlocal EnableExtensions\r\n\
-         set \"PARENT={parent_pid}\"\r\n\
-         set \"STAGING={staging}\"\r\n\
-         set \"DEST={dest}\"\r\n\
-         set \"BINDIR={bin_dir}\"\r\n\
-         set \"CARGOAX={cargo_ax}\"\r\n\
-         :wait_parent\r\n\
-         tasklist /FI \"PID eq %PARENT%\" 2>nul | find \" %PARENT% \" >nul && (\r\n\
-           timeout /t 1 /nobreak >nul\r\n\
-           goto wait_parent\r\n\
-         )\r\n\
-         timeout /t 2 /nobreak >nul\r\n\
-         taskkill /IM ax.exe /F >nul 2>&1\r\n\
-         timeout /t 1 /nobreak >nul\r\n\
-         if exist \"%DEST%\" rmdir /s /q \"%DEST%\"\r\n\
-         move /Y \"%STAGING%\" \"%DEST%\" >nul\r\n\
-         if not exist \"%BINDIR%\" mkdir \"%BINDIR%\" >nul\r\n\
-         copy /Y \"%DEST%\\ax.exe\" \"%BINDIR%\\ax.new.exe\" >nul\r\n\
-         move /Y \"%BINDIR%\\ax.new.exe\" \"%BINDIR%\\ax.exe\" >nul 2>&1\r\n\
-         if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" copy /Y \"%DEST%\\ax.exe\" \"%CARGOAX%\" >nul\r\n\
-         if exist \"%BINDIR%\\ax.exe\" (\"%BINDIR%\\ax.exe\" init --all) else (\"%DEST%\\ax.exe\" init --all)\r\n\
-         del \"%~f0\" >nul 2>&1\r\n",
-        staging = staging.display(),
-        dest = dest.display(),
-        bin_dir = bin_dir.display(),
-        cargo_ax = cargo_ax.display(),
-    );
+    let status_file = dest.parent().unwrap_or(dest).join("upgrade-status.txt");
+    let batch = upgrade_cmd_batch(parent_pid, staging, dest, &bin_dir, &cargo_ax, &status_file);
     std::fs::write(&batch_path, batch).map_err(|e| format!("write upgrade batch: {e}"))?;
 
     let comspec = resolve_comspec();
@@ -619,15 +694,25 @@ fn spawn_upgrade_cmd_batch(parent_pid: u32, staging: &Path, dest: &Path) -> Resu
 #[cfg(windows)]
 fn schedule_windows_bundle_upgrade(bytes: &[u8], bundle: &str) -> Result<(), String> {
     let root = windows_install_root();
-    let staging = root.join(format!("upgrade-staging-{}", std::process::id()));
+    let staging = root.join(format!("{STAGING_DIR_PREFIX}{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
     extract_zip_bundle(bytes, &staging, bundle)?;
 
     let dest = root.join("current");
     let parent_pid = std::process::id();
-    let helper = staging_helper_exe(&staging);
-
-    spawn_upgrade_apply_helper(&helper, parent_pid, &staging, &dest).map_err(|e| {
+    if !claim_promotion(&root) {
+        // Another helper still owns the install directory. Drop this extract
+        // so a second `upgrade-staging-*` is not left behind.
+        if let Err(error) = std::fs::remove_dir_all(&staging) {
+            tracing::debug!("leave staging after lost claim: {error}");
+        }
+        return Err("another Windows upgrade is still finishing".into());
+    }
+    schedule_external_helper(&staging, &dest, parent_pid).map_err(|e| {
+        clear_promotion(&root);
+        if let Err(error) = std::fs::remove_dir_all(&staging) {
+            tracing::debug!("leave staging after failed schedule: {error}");
+        }
         format!(
             "{e}\n\
              Or run: $env:AX_VERSION='v{}'; irm https://getax.wenneker.io/install.ps1 | iex",
@@ -656,9 +741,326 @@ fn replace_binary_unix(current_exe: &Path, new_bytes: &[u8]) -> Result<(), Strin
     Ok(())
 }
 
+const STAGING_DIR_PREFIX: &str = "upgrade-staging-";
+const PROMOTION_TTL: std::time::Duration = std::time::Duration::from_secs(180);
+
+fn previous_install_path(dest: &Path) -> PathBuf {
+    let mut name = dest.file_name().unwrap_or_default().to_os_string();
+    name.push(".old");
+    match dest.parent() {
+        Some(parent) => parent.join(name),
+        None => PathBuf::from(name),
+    }
+}
+
+fn rename_dir(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::rename(from, to).map_err(|e| e.to_string())
+}
+
+/// Move `staging` onto `dest`. An existing `dest` is parked as `dest.old` and
+/// restored if the incoming rename fails.
+fn activate_staged_install(staging: &Path, dest: &Path) -> Result<(), String> {
+    activate_staged_install_with(staging, dest, rename_dir)
+}
+
+fn activate_staged_install_with(
+    staging: &Path,
+    dest: &Path,
+    rename: impl Fn(&Path, &Path) -> Result<(), String>,
+) -> Result<(), String> {
+    if !staging.is_dir() {
+        return Err(format!("staging directory missing: {}", staging.display()));
+    }
+    let previous = previous_install_path(dest);
+    let mut parked = false;
+    if dest.exists() {
+        if previous.exists() {
+            std::fs::remove_dir_all(&previous)
+                .map_err(|e| format!("remove leftover {}: {e}", previous.display()))?;
+        }
+        rename(dest, &previous).map_err(|e| format!("park current install: {e}"))?;
+        parked = true;
+    }
+    if let Err(error) = rename(staging, dest) {
+        if parked {
+            if let Err(restore) = rename(&previous, dest) {
+                return Err(format!(
+                    "activate new install: {error}; restore previous install failed: {restore}"
+                ));
+            }
+        }
+        return Err(format!("activate new install: {error}"));
+    }
+    if previous.exists() {
+        // The new tree is already at `dest`. Keeping `dest.old` is harmless.
+        if let Err(error) = std::fs::remove_dir_all(&previous) {
+            tracing::debug!("leave parked install: {error}");
+        }
+    }
+    Ok(())
+}
+
+fn bundle_exe(dir: &Path) -> PathBuf {
+    let bin = dir.join("bin").join("ax.exe");
+    if bin.is_file() {
+        bin
+    } else {
+        dir.join("ax.exe")
+    }
+}
+
+fn sole_leftover_staging(install_root: &Path) -> Result<Option<PathBuf>, String> {
+    let entries = match std::fs::read_dir(install_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("read {}: {error}", install_root.display())),
+    };
+    let mut found = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(STAGING_DIR_PREFIX) {
+            continue;
+        }
+        let path = entry.path();
+        if bundle_exe(&path).is_file() {
+            found.push(path);
+        }
+    }
+    found.sort();
+    match found.len() {
+        0 => Ok(None),
+        1 => Ok(found.pop()),
+        count => Err(format!(
+            "{count} leftover upgrade-staging directories under {}; not promoting",
+            install_root.display()
+        )),
+    }
+}
+
+fn copy_helper_exe(source: &Path, launch_dir: &Path) -> Result<PathBuf, String> {
+    if !source.is_file() {
+        return Err(format!("upgrade helper missing: {}", source.display()));
+    }
+    let name = source
+        .file_name()
+        .ok_or_else(|| format!("upgrade helper has no file name: {}", source.display()))?;
+    std::fs::create_dir_all(launch_dir).map_err(|e| format!("create helper dir: {e}"))?;
+    let dest = launch_dir.join(name);
+    std::fs::copy(source, &dest).map_err(|e| format!("copy upgrade helper: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&dest)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&dest, perms).map_err(|e| e.to_string())?;
+    }
+    Ok(dest)
+}
+
+fn external_helper(source: &Path, staging: &Path, launch_dir: &Path) -> Result<PathBuf, String> {
+    let helper = copy_helper_exe(source, launch_dir)?;
+    if helper.starts_with(staging) {
+        return Err("upgrade helper must not run from inside the staging directory".into());
+    }
+    Ok(helper)
+}
+
+fn upgrade_status_path(install_root: &Path) -> PathBuf {
+    install_root.join("upgrade-status.txt")
+}
+
+fn write_upgrade_status(install_root: &Path, result: &Result<(), String>) -> Result<(), String> {
+    let body = match result {
+        Ok(()) => "ok\n".to_string(),
+        Err(error) => format!("error\n{error}\n"),
+    };
+    let path = upgrade_status_path(install_root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, body).map_err(|e| format!("write upgrade status: {e}"))
+}
+
+fn upgrade_status_message(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    match lines.next().map(str::trim) {
+        Some("error") => {
+            let detail = lines.collect::<Vec<_>>().join("\n");
+            let detail = detail.trim();
+            if detail.is_empty() {
+                Some("Windows install did not finish".into())
+            } else {
+                Some(detail.to_string())
+            }
+        }
+        _ => None,
+    }
+}
+
+fn take_upgrade_status(install_root: &Path) -> Option<String> {
+    let path = upgrade_status_path(install_root);
+    let text = std::fs::read_to_string(&path).ok()?;
+    // A failed delete repeats the message on the next launch.
+    if let Err(error) = std::fs::remove_file(&path) {
+        tracing::debug!("remove upgrade status: {error}");
+    }
+    upgrade_status_message(&text)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum StagingRecovery {
+    Idle,
+    Promote,
+    WaitForExit,
+    Ambiguous(String),
+}
+
+fn staging_recovery(
+    current_bin_exists: bool,
+    running_inside_staging: bool,
+    leftover: Result<Option<()>, String>,
+) -> StagingRecovery {
+    if current_bin_exists {
+        return StagingRecovery::Idle;
+    }
+    match leftover {
+        Ok(None) => StagingRecovery::Idle,
+        Err(error) => StagingRecovery::Ambiguous(error),
+        Ok(Some(())) if running_inside_staging => StagingRecovery::WaitForExit,
+        Ok(Some(())) => StagingRecovery::Promote,
+    }
+}
+
+fn upgrade_cmd_batch(
+    parent_pid: u32,
+    staging: &Path,
+    dest: &Path,
+    bin_dir: &Path,
+    cargo_ax: &Path,
+    status_file: &Path,
+) -> String {
+    let previous = previous_install_path(dest);
+    format!(
+        "@echo off\r\n\
+         setlocal EnableExtensions\r\n\
+         set \"PARENT={parent_pid}\"\r\n\
+         set \"STAGING={staging}\"\r\n\
+         set \"DEST={dest}\"\r\n\
+         set \"PREVIOUS={previous}\"\r\n\
+         set \"BINDIR={bin_dir}\"\r\n\
+         set \"CARGOAX={cargo_ax}\"\r\n\
+         set \"STATUS={status}\"\r\n\
+         :wait_parent\r\n\
+         tasklist /FI \"PID eq %PARENT%\" 2>nul | find \" %PARENT% \" >nul && (\r\n\
+           timeout /t 1 /nobreak >nul\r\n\
+           goto wait_parent\r\n\
+         )\r\n\
+         timeout /t 2 /nobreak >nul\r\n\
+         taskkill /IM ax.exe /F >nul 2>&1\r\n\
+         timeout /t 1 /nobreak >nul\r\n\
+         if exist \"%DEST%\" (\r\n\
+           if exist \"%PREVIOUS%\" rmdir /s /q \"%PREVIOUS%\"\r\n\
+           move /Y \"%DEST%\" \"%PREVIOUS%\" >nul\r\n\
+           if errorlevel 1 (\r\n\
+             echo error> \"%STATUS%\"\r\n\
+             echo park current install failed>> \"%STATUS%\"\r\n\
+             goto done\r\n\
+           )\r\n\
+         )\r\n\
+         move /Y \"%STAGING%\" \"%DEST%\" >nul\r\n\
+         if errorlevel 1 (\r\n\
+           if exist \"%PREVIOUS%\" move /Y \"%PREVIOUS%\" \"%DEST%\" >nul\r\n\
+           echo error> \"%STATUS%\"\r\n\
+           echo activate new install failed>> \"%STATUS%\"\r\n\
+           goto done\r\n\
+         )\r\n\
+         if exist \"%PREVIOUS%\" rmdir /s /q \"%PREVIOUS%\"\r\n\
+         if not exist \"%BINDIR%\" mkdir \"%BINDIR%\" >nul\r\n\
+         copy /Y \"%DEST%\\ax.exe\" \"%BINDIR%\\ax.new.exe\" >nul\r\n\
+         move /Y \"%BINDIR%\\ax.new.exe\" \"%BINDIR%\\ax.exe\" >nul 2>&1\r\n\
+         if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" copy /Y \"%DEST%\\ax.exe\" \"%CARGOAX%\" >nul\r\n\
+         if exist \"%BINDIR%\\ax.exe\" (\"%BINDIR%\\ax.exe\" init --all) else (\"%DEST%\\ax.exe\" init --all)\r\n\
+         echo ok> \"%STATUS%\"\r\n\
+         :done\r\n\
+         del \"%~f0\" >nul 2>&1\r\n",
+        staging = staging.display(),
+        dest = dest.display(),
+        previous = previous.display(),
+        bin_dir = bin_dir.display(),
+        cargo_ax = cargo_ax.display(),
+        status = status_file.display(),
+    )
+}
+
+fn publish_bin_exe(dest: &Path) -> Result<PathBuf, String> {
+    let root_exe = dest.join("ax.exe");
+    if !root_exe.is_file() {
+        return Err(format!("ax.exe not found in {}", dest.display()));
+    }
+    let bin_dir = dest.join("bin");
+    std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+    let bin_exe = bin_dir.join("ax.exe");
+    let bin_new = bin_dir.join("ax.new.exe");
+    let _ = std::fs::remove_file(&bin_new);
+    std::fs::copy(&root_exe, &bin_new).map_err(|e| format!("stage ax.exe: {e}"))?;
+    if std::fs::rename(&bin_new, &bin_exe).is_err() {
+        tracing::debug!("bin/ax.exe locked; leaving ax.new.exe for next startup swap");
+        if bin_exe.is_file() {
+            return Ok(bin_exe);
+        }
+        return Ok(bin_new);
+    }
+    Ok(bin_exe)
+}
+
+fn promotion_flag(install_root: &Path) -> PathBuf {
+    install_root.join("upgrade-promoting")
+}
+
+fn claim_promotion(install_root: &Path) -> bool {
+    let flag = promotion_flag(install_root);
+    if flag.is_file() {
+        let fresh = std::fs::metadata(&flag)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .map(|age| age < PROMOTION_TTL)
+            .unwrap_or(true);
+        if fresh {
+            return false;
+        }
+        let _ = std::fs::remove_file(&flag);
+    }
+    if let Some(parent) = flag.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&flag)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, b"1"))
+        .is_ok()
+}
+
+fn clear_promotion(install_root: &Path) {
+    let _ = std::fs::remove_file(promotion_flag(install_root));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn marker(dir: &Path, name: &str, text: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(name), text).unwrap();
+    }
 
     #[test]
     fn bundle_names() {
@@ -667,5 +1069,187 @@ mod tests {
                 || release_bundle_target().starts_with("linux-")
                 || release_bundle_target().starts_with("darwin-")
         );
+    }
+
+    #[test]
+    fn activate_replaces_current_and_drops_the_parked_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("current");
+        let staging = root.path().join("upgrade-staging-4");
+        marker(&dest, "marker", "old");
+        marker(&staging, "marker", "new");
+        activate_staged_install(&staging, &dest).unwrap();
+        assert_eq!(std::fs::read_to_string(dest.join("marker")).unwrap(), "new");
+        assert!(!staging.exists());
+        assert!(!previous_install_path(&dest).exists());
+    }
+
+    #[test]
+    fn activate_places_staging_when_current_is_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("current");
+        let staging = root.path().join("upgrade-staging-9");
+        marker(&staging, "marker", "new");
+        activate_staged_install(&staging, &dest).unwrap();
+        assert_eq!(std::fs::read_to_string(dest.join("marker")).unwrap(), "new");
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn activate_restores_current_when_the_staging_rename_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("current");
+        let staging = root.path().join("upgrade-staging-5");
+        marker(&dest, "marker", "old");
+        marker(&staging, "marker", "new");
+        let err = activate_staged_install_with(&staging, &dest, |from, to| {
+            if from == staging && to == dest {
+                return Err("sharing violation".into());
+            }
+            std::fs::rename(from, to).map_err(|e| e.to_string())
+        })
+        .unwrap_err();
+        assert!(err.contains("sharing violation"), "{err}");
+        assert_eq!(std::fs::read_to_string(dest.join("marker")).unwrap(), "old");
+        assert_eq!(
+            std::fs::read_to_string(staging.join("marker")).unwrap(),
+            "new"
+        );
+        assert!(!previous_install_path(&dest).exists());
+    }
+
+    #[test]
+    fn one_staging_bundle_is_the_only_recovery_candidate() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("upgrade-staging-empty")).unwrap();
+        let staging = root.path().join("upgrade-staging-7");
+        marker(&staging.join("bin"), "ax.exe", "exe");
+        std::fs::write(root.path().join("upgrade-staging-file"), "nope").unwrap();
+        assert_eq!(sole_leftover_staging(root.path()).unwrap(), Some(staging));
+    }
+
+    #[test]
+    fn two_staging_bundles_are_not_promoted() {
+        let root = tempfile::tempdir().unwrap();
+        marker(&root.path().join("upgrade-staging-1"), "ax.exe", "a");
+        marker(
+            &root.path().join("upgrade-staging-2").join("bin"),
+            "ax.exe",
+            "b",
+        );
+        let err = sole_leftover_staging(root.path()).unwrap_err();
+        assert!(err.contains("2 leftover"), "{err}");
+    }
+
+    #[test]
+    fn helper_copy_lives_outside_staging() {
+        let root = tempfile::tempdir().unwrap();
+        let staging = root.path().join("upgrade-staging-3");
+        let source = staging.join("bin").join("ax.exe");
+        marker(&source.parent().unwrap(), "ax.exe", "bytes");
+        let launch = root.path().join("helper");
+        let helper = external_helper(&source, &staging, &launch).unwrap();
+        assert!(!helper.starts_with(&staging));
+        assert_eq!(std::fs::read(&helper).unwrap(), b"bytes");
+    }
+
+    #[test]
+    fn helper_inside_staging_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let staging = root.path().join("upgrade-staging-3");
+        let source = staging.join("bin").join("ax.exe");
+        marker(&source.parent().unwrap(), "ax.exe", "bytes");
+        let err = external_helper(&source, &staging, &staging.join("again")).unwrap_err();
+        assert!(err.contains("must not run from inside"), "{err}");
+    }
+
+    #[test]
+    fn error_status_is_reported_once_and_ok_is_silent() {
+        let root = tempfile::tempdir().unwrap();
+        write_upgrade_status(root.path(), &Err("activate new install: locked".into())).unwrap();
+        assert_eq!(
+            take_upgrade_status(root.path()).as_deref(),
+            Some("activate new install: locked")
+        );
+        assert!(take_upgrade_status(root.path()).is_none());
+        write_upgrade_status(root.path(), &Ok(())).unwrap();
+        assert!(take_upgrade_status(root.path()).is_none());
+        assert!(!upgrade_status_path(root.path()).exists());
+    }
+
+    #[test]
+    fn recovery_depends_on_current_and_where_the_process_runs() {
+        assert_eq!(
+            staging_recovery(true, true, Ok(Some(()))),
+            StagingRecovery::Idle
+        );
+        assert_eq!(
+            staging_recovery(false, false, Ok(Some(()))),
+            StagingRecovery::Promote
+        );
+        assert_eq!(
+            staging_recovery(false, true, Ok(Some(()))),
+            StagingRecovery::WaitForExit
+        );
+        assert_eq!(
+            staging_recovery(false, false, Ok(None)),
+            StagingRecovery::Idle
+        );
+        assert_eq!(
+            staging_recovery(false, false, Err("2 leftover".into())),
+            StagingRecovery::Ambiguous("2 leftover".into())
+        );
+    }
+
+    #[test]
+    fn cmd_batch_parks_current_before_moving_staging() {
+        let script = upgrade_cmd_batch(
+            4,
+            Path::new(r"C:\Users\gary\AppData\Local\ax\upgrade-staging-4"),
+            Path::new(r"C:\Users\gary\AppData\Local\ax\current"),
+            Path::new(r"C:\Users\gary\AppData\Local\ax\current\bin"),
+            Path::new(r"C:\Users\gary\.cargo\bin\ax.exe"),
+            Path::new(r"C:\Users\gary\AppData\Local\ax\upgrade-status.txt"),
+        );
+        let park = script
+            .find(r#"move /Y "%DEST%" "%PREVIOUS%""#)
+            .expect("park");
+        let activate = script
+            .find(r#"move /Y "%STAGING%" "%DEST%""#)
+            .expect("activate");
+        assert!(park < activate, "{script}");
+        assert!(
+            script.contains(r#"move /Y "%PREVIOUS%" "%DEST%""#),
+            "{script}"
+        );
+        assert!(!script.contains(r#"rmdir /s /q "%DEST%""#), "{script}");
+        let dest_guard = script.find(r#"if exist "%DEST%""#).expect("dest guard");
+        let wipe_previous = script
+            .find(r#"rmdir /s /q "%PREVIOUS%""#)
+            .expect("wipe previous");
+        assert!(
+            dest_guard < wipe_previous,
+            "parked install is removed only while current still exists:\n{script}"
+        );
+        assert!(script.contains("upgrade-status.txt"), "{script}");
+    }
+
+    #[test]
+    fn publish_bin_exe_copies_the_root_binary_into_bin() {
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("current");
+        marker(&dest, "ax.exe", "fresh");
+        let published = publish_bin_exe(&dest).unwrap();
+        assert_eq!(published, dest.join("bin").join("ax.exe"));
+        assert_eq!(std::fs::read(published).unwrap(), b"fresh");
+    }
+
+    #[test]
+    fn a_fresh_promotion_claim_blocks_a_second_claim() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(claim_promotion(root.path()));
+        assert!(!claim_promotion(root.path()));
+        clear_promotion(root.path());
+        assert!(claim_promotion(root.path()));
     }
 }

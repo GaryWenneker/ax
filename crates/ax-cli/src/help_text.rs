@@ -66,14 +66,16 @@ Use `ax index` or `ax index --force` when you need a full rebuild.
 Refuses home directory / filesystem roots unless you pass --force on index.
 
 `ax init --all` walks the home directory (four levels, skipping hidden and
-dependency folders) and initializes every project it finds: a git repo, a
-project manifest, or an existing .ax database. It does not ask questions.
-Install and upgrade run this automatically. Set AX_SKIP_PROJECT_INIT=1 to skip.
+dependency folders) and refreshes directories that already contain `.ax/ax.db`.
+A git repo or other software project without that database is left untouched.
+It does not ask questions. Install and upgrade run this automatically.
+Set AX_SKIP_PROJECT_INIT=1 to skip. Use `ax init` in a directory to create a
+new ax project.
 
 Examples:
   ax init                  Init + index current directory
   ax init ./services/api   Init a subdirectory
-  ax init --all            Init every discovered project under the home directory
+  ax init --all            Refresh existing ax projects under the home directory
   ax index --force         Rebuild the index from scratch";
 
 pub const UNINIT_LONG: &str = "Remove ax from a project by deleting the .ax/ directory.

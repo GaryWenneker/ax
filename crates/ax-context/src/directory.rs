@@ -8,14 +8,35 @@ pub const DB_FILENAME: &str = "ax.db";
 pub const CONFIG_FILENAME: &str = "ax.json";
 
 const WORKSPACE_ROOT_MANIFESTS: &[&str] = &[
-    "package.json", "pnpm-workspace.yaml", "lerna.json", "nx.json", "turbo.json",
-    "go.work", "go.mod", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts",
-    "settings.gradle", "pyproject.toml", "composer.json", "Gemfile", "rush.json",
-    "WORKSPACE", "WORKSPACE.bazel",
+    "package.json",
+    "pnpm-workspace.yaml",
+    "lerna.json",
+    "nx.json",
+    "turbo.json",
+    "go.work",
+    "go.mod",
+    "Cargo.toml",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "pyproject.toml",
+    "composer.json",
+    "Gemfile",
+    "rush.json",
+    "WORKSPACE",
+    "WORKSPACE.bazel",
 ];
 
 const SUBPROJECT_SCAN_SKIP: &[&str] = &[
-    "node_modules", "target", "dist", "build", ".git", "vendor", "tmp", "temp",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".git",
+    "vendor",
+    "tmp",
+    "temp",
 ];
 
 #[derive(Debug, Clone, Default)]
@@ -76,9 +97,24 @@ pub fn has_structural_keyword(prompt: &str) -> bool {
     }
     let lower = prompt.to_lowercase();
     let keywords = [
-        "call graph", "impact", "callers", "callees", "dependency", "flow",
-        "architecture", "who calls", "what calls", "affected", "blast radius",
-        "trace", "path", "structure", "how does", "where is", "wired", "implement",
+        "call graph",
+        "impact",
+        "callers",
+        "callees",
+        "dependency",
+        "flow",
+        "architecture",
+        "who calls",
+        "what calls",
+        "affected",
+        "blast radius",
+        "trace",
+        "path",
+        "structure",
+        "how does",
+        "where is",
+        "wired",
+        "implement",
     ];
     if keywords.iter().any(|k| lower.contains(k)) {
         return true;
@@ -160,7 +196,7 @@ fn install_project(dir: &Path) -> bool {
     if unsafe_index_root_reason(dir).is_some() {
         return false;
     }
-    is_initialized(dir) || dir.join(".git").exists() || looks_like_project_root(dir)
+    is_initialized(dir)
 }
 
 fn visit_install_projects(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
@@ -265,7 +301,11 @@ pub fn plan_frontload_full(cwd: &Path, prompt: &str) -> FrontloadPlan {
     for s in &subs {
         let rel = s.strip_prefix(&base).unwrap_or(s).to_string_lossy();
         let rel_lc = rel.replace('\\', "/").to_lowercase();
-        let name = s.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        let name = s
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
         let mut score = 0;
         if !rel_lc.is_empty() && p.contains(&rel_lc) {
             score = 10;
@@ -360,24 +400,24 @@ mod discover_tests {
     }
 
     #[test]
-    fn finds_a_git_repo_and_skips_a_plain_folder() {
+    fn skips_a_git_repo_that_is_not_an_ax_project() {
         let root = scratch("git");
         let repo = root.join("alpha");
         fs::create_dir_all(repo.join(".git")).unwrap();
         fs::create_dir_all(root.join("plain")).unwrap();
         let found = discover_projects_for_init(&root, 2);
-        assert_eq!(names(&found), vec!["alpha".to_string()]);
+        assert_eq!(names(&found), Vec::<String>::new());
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn finds_a_manifest_without_git() {
+    fn skips_a_manifest_that_is_not_an_ax_project() {
         let root = scratch("manifest");
         let app = root.join("app");
         fs::create_dir_all(&app).unwrap();
         fs::write(app.join("Cargo.toml"), b"[package]\nname = \"app\"\n").unwrap();
         let found = discover_projects_for_init(&root, 2);
-        assert_eq!(names(&found), vec!["app".to_string()]);
+        assert_eq!(names(&found), Vec::<String>::new());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -385,12 +425,26 @@ mod discover_tests {
     fn does_not_descend_into_a_project() {
         let root = scratch("nested");
         let repo = root.join("mono");
-        fs::create_dir_all(repo.join(".git")).unwrap();
+        fs::create_dir_all(repo.join(".ax")).unwrap();
+        fs::write(repo.join(".ax").join("ax.db"), b"x").unwrap();
         let nested = repo.join("crates").join("leaf");
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("Cargo.toml"), b"[package]\nname = \"leaf\"\n").unwrap();
         let found = discover_projects_for_init(&root, 4);
         assert_eq!(names(&found), vec!["mono".to_string()]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn finds_an_ax_project_nested_in_a_git_repo() {
+        let root = scratch("wrap");
+        let repo = root.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let inner = repo.join("pkg");
+        fs::create_dir_all(inner.join(".ax")).unwrap();
+        fs::write(inner.join(".ax").join("ax.db"), b"x").unwrap();
+        let found = discover_projects_for_init(&root, 4);
+        assert_eq!(names(&found), vec!["pkg".to_string()]);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -427,8 +481,11 @@ mod discover_tests {
         let root = scratch("home");
         fs::write(root.join("package.json"), b"{}\n").unwrap();
         let child = root.join("app");
-        fs::create_dir_all(&child).unwrap();
-        fs::write(child.join("go.mod"), b"module app\n").unwrap();
+        fs::create_dir_all(child.join(".ax")).unwrap();
+        fs::write(child.join(".ax").join("ax.db"), b"x").unwrap();
+        let other = root.join("plain-mod");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("go.mod"), b"module app\n").unwrap();
         let canon = root.canonicalize().unwrap();
         let prev_home = std::env::var("HOME").ok();
         let prev_profile = std::env::var("USERPROFILE").ok();

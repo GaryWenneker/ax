@@ -196,7 +196,7 @@ Install and `ax upgrade` already run:
 ax init --all
 ```
 
-That walks four levels under your home directory and initializes every git repository, project manifest, or existing ax project it finds. It does not ask questions. A project that already has `.ax/ax.db` gets an incremental sync. Run the same command again any time.
+That walks four levels under your home directory and refreshes directories that already contain `.ax/ax.db`. A git repository or other software project without that database is left untouched. It does not ask questions. Run `ax init` inside a directory to create an ax project there.
 
 To initialize one directory yourself, and to choose stacks and IDEs in a menu:
 

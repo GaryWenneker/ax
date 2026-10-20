@@ -28,7 +28,7 @@ pub async fn run(path: Option<String>, workspace: bool, all: bool) -> Result<(),
     run_inner(path, workspace, true, true).await
 }
 
-/// Scan the home directory and initialize every discovered project.
+/// Refresh every existing ax project under the home directory.
 /// `AX_SKIP_PROJECT_INIT=1` leaves projects untouched.
 pub async fn refresh_discovered_projects() -> Result<(), String> {
     if std::env::var("AX_SKIP_PROJECT_INIT").ok().as_deref() == Some("1") {
@@ -46,14 +46,14 @@ pub async fn refresh_discovered_projects() -> Result<(), String> {
     if projects.is_empty() {
         println!(
             "{}",
-            info_line("No projects found under the home directory.")
+            info_line("No existing ax projects found under the home directory.")
         );
         return Ok(());
     }
     println!(
         "{}",
         info_line(format!(
-            "Initializing {} discovered project(s)…",
+            "Refreshing {} existing ax project(s)…",
             projects.len()
         ))
     );

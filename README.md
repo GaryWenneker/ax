@@ -35,7 +35,7 @@ Have Node? `npx @garywenneker/ax` downloads the native binary. Open a new termin
 
 ```bash
 ax install          # wire MCP into detected agents
-ax init --all       # find and index projects under your home directory
+ax init --all       # refresh ax projects already under your home directory
 cd your-project && ax init
 ax web --open       # local Command Center
 ```

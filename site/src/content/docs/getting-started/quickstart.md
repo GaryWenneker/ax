@@ -32,7 +32,7 @@ Configures Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, A
 
 ## 3. Projects initialize themselves
 
-Installing or upgrading ax runs `ax init --all`. That finds projects under your home directory (four levels; git repos, project manifests, and existing ax projects) and initializes each one without questions. Run the same command again to pick up a new checkout.
+Installing or upgrading ax runs `ax init --all`. That refreshes ax projects already under your home directory (four levels, directories that contain `.ax/ax.db`) without questions. A new checkout is not seeded until you run `ax init` there.
 
 ```bash
 ax init --all
