@@ -1,6 +1,6 @@
 [package]
 name = "ax-resolution"
-version = "8.3.1"
+version = "8.3.2"
 edition = "2021"
 
 [dependencies]
