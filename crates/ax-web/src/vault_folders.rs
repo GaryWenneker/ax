@@ -18,6 +18,7 @@ use crate::workspace_state::WebHub;
 
 pub const FOLDERS_DIR: &str = "folders";
 const CONFIG_FILE: &str = "vault-folders.json";
+const MAX_FOLDERS: usize = 64;
 const WRITE_RESYNC_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,8 +60,11 @@ pub fn find(project_root: &Path, name: &str) -> Option<VaultFolder> {
 
 /// Check names and paths; paths come back canonical.
 pub fn validate(list: Vec<VaultFolder>) -> Result<Vec<VaultFolder>, String> {
+    if list.len() > MAX_FOLDERS {
+        return Err(format!("at most {MAX_FOLDERS} vault folders"));
+    }
     let mut seen = HashSet::new();
-    let mut out = Vec::with_capacity(list.len());
+    let mut out = Vec::new();
     for mut folder in list {
         folder.name = folder.name.trim().to_string();
         if !crate::dav::mount::valid_name(&folder.name) {
@@ -98,6 +102,24 @@ fn save(project_root: &Path, list: &[VaultFolder]) -> std::io::Result<()> {
     }
     let text = serde_json::to_string_pretty(list).map_err(std::io::Error::other)?;
     std::fs::write(path, text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn more_than_64_vault_folders_are_rejected() {
+        let list = (0..65)
+            .map(|i| VaultFolder {
+                name: format!("folder{i}"),
+                path: PathBuf::from(format!("/tmp/ax-vault-{i}")),
+                index: false,
+            })
+            .collect();
+        let err = validate(list).expect_err("65 folders");
+        assert!(err.contains("64"), "{err}");
+    }
 }
 
 fn now_ms() -> i64 {

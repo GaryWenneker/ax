@@ -54,6 +54,7 @@ Security audit patterns (OWASP Top 10, LLM Top 10 2025, CWE Top 25 2025, CVSS v4
 - [ ] Headers HSTS + X-Content-Type-Options; dependencies scanned
 - [ ] Open LCM pull requests (Dependabot version bumps and `automation/lcm-*`) merged, closed, or named with a blocker
 - [ ] Open Dependabot alerts on the security tab fixed, or named with a blocker
+- [ ] Open code scanning alerts fixed, or dismissed only when the finding cannot happen, with the reason recorded
 - [ ] Open GitHub issues read; in-scope security issues closed with the fix, or named with a blocker
 
 ## GitHub Actions Security
@@ -129,6 +130,43 @@ Handle each open alert in number order:
 5. Leave the alert open only when this run cannot land the fix. Name the alert number and the blocker.
 
 List open alerts again at the end. Every alert is gone from the open list, or named with a blocker.
+
+## Code scanning (ax)
+
+A security audit of this repository is unfinished while an alert is open on <https://github.com/GaryWenneker/ax/security/code-scanning>. Code scanning is CodeQL on the default branch. It is a different queue from Dependabot alerts and from the dependency monitor.
+
+List open alerts before changing anything:
+
+```bash
+gh api --paginate "repos/GaryWenneker/ax/code-scanning/alerts?state=open&per_page=100" \
+  --jq '.[] | {number, rule: .rule.id, severity: .rule.security_severity_level, cwe: [.rule.tags[] | select(startswith("external/cwe/"))], path: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line, message: .most_recent_instance.message.text, url: .html_url}'
+```
+
+A 403, or a body that says code scanning is disabled, is a blocker. It is not an empty queue. Name that failure. Do not report zero alerts unless this command printed no rows.
+
+Handle each open alert in number order. Record the number, rule, severity, CWE tags, path, line, and message.
+
+1. Fix the code when the described harm can still happen. A missing workflow `permissions` block, an unbounded allocation taken from a request, a download that can reach a private or loopback address, and a replace that leaves later copies of the character in place are fixes. Land the fix on the default branch. Default setup closes the alert on its next analysis. Do not dismiss it to make the page empty while the code still does the thing.
+2. Dismiss when the finding is no longer a vulnerability in this repository. The reason is one of `false positive`, `used in tests`, or `won't fix`, and the comment says which guard, test, or protocol makes the harm impossible. Dismiss these:
+   - a test, e2e spec, or docs harness that is not the shipped program
+   - a value that is already constrained to a safe token (`valid_id`, `valid_hash`, an allowlisted directory name) before it becomes a path
+   - a command argument that is one argv element after URL validation, with no shell
+   - a CLI print of an account name or session id the operator just supplied
+   - a protocol that requires an empty password field and does not hard-code a secret, such as a SonarQube token sent as the username
+   - a URL that configuration validation already requires to be `https`
+
+```bash
+gh api -X PATCH "repos/GaryWenneker/ax/code-scanning/alerts/<number>" \
+  -f state=dismissed \
+  -f dismissed_reason=false_positive \
+  -f dismissed_comment="<why this finding cannot happen>"
+```
+
+`dismissed_reason` is `false positive`, `won't fix`, or `used in tests`. Write the comment in the language from ax settings `reviews.commentLanguage`.
+
+3. Leave the alert open only when this run cannot land the fix or prove the dismissal. Name the number and the blocker.
+
+List open alerts again at the end. Every alert is gone from the open list, or named with a blocker. Do not delete a workflow, a test, or a docs harness just to remove its alert.
 
 ## GitHub issues (ax)
 

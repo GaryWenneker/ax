@@ -1,4 +1,5 @@
 use crate::source::{GitHost, SkillSource};
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -206,7 +207,17 @@ pub fn http_text(url: &str) -> Result<String, String> {
 }
 
 pub fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let response = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
+    let target = vetted_download(url)?;
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            match vetted_download(attempt.url().as_str()) {
+                Ok(_) => attempt.follow(),
+                Err(error) => attempt.error(std::io::Error::other(error)),
+            }
+        }))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client.get(target).send().map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("GET {url} returned {}", response.status()));
     }
@@ -215,6 +226,66 @@ pub fn http_bytes(url: &str) -> Result<Vec<u8>, String> {
         return Err("download is larger than 25 MiB".into());
     }
     Ok(bytes.to_vec())
+}
+
+fn vetted_download(url: &str) -> Result<reqwest::Url, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| e.to_string())?;
+    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+        return Err("skill downloads use http or https".into());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("skill download urls cannot embed credentials".into());
+    }
+    let host = parsed
+        .host_str()
+        .filter(|host| !host.is_empty())
+        .ok_or("skill download url has no host")?;
+    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    if name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local") {
+        return Err("skill downloads cannot target a local host".into());
+    }
+    if let Ok(ip) = name.parse::<std::net::IpAddr>() {
+        if private_ip(ip) {
+            return Err("skill downloads cannot target a private address".into());
+        }
+        return Ok(parsed);
+    }
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let mut resolved = false;
+    for addr in (host, port)
+        .to_socket_addrs()
+        .map_err(|e| e.to_string())?
+    {
+        resolved = true;
+        if private_ip(addr.ip()) {
+            return Err("skill downloads cannot target a private address".into());
+        }
+    }
+    if !resolved {
+        return Err("skill download host did not resolve".into());
+    }
+    Ok(parsed)
+}
+
+fn private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.is_unspecified()
+                || ip.is_documentation()
+                || ip.is_multicast()
+        }
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_unicast_link_local()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
 }
 
 pub fn encode(value: &str) -> String {
@@ -229,4 +300,24 @@ pub fn encode(value: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vetted_download;
+
+    #[test]
+    fn skill_downloads_reject_private_and_non_http_targets() {
+        for url in [
+            "http://127.0.0.1/latest",
+            "http://169.254.169.254/latest/meta-data",
+            "https://10.1.2.3/index.json",
+            "https://[::1]/index.json",
+            "file:///etc/passwd",
+            "https://user:secret@example.com/index.json",
+            "http://localhost/index.json",
+        ] {
+            assert!(vetted_download(url).is_err(), "{url}");
+        }
+    }
 }
