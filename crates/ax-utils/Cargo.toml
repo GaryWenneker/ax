@@ -1,6 +1,6 @@
 [package]
 name = "ax-utils"
-version = "8.3.6"
+version = "8.3.7"
 edition = "2021"
 
 [dependencies]
