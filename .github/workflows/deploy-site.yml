@@ -82,12 +82,3 @@ jobs:
           fi
       - id: deployment
         uses: actions/deploy-pages@v4
-      - name: Require the GitHub Pages deployment to be green
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for _ in 1 2 3 4 5 6; do
-            python3 scripts/github_pages_status.py && exit 0
-            sleep 10
-          done
-          exit 1

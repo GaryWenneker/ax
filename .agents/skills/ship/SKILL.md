@@ -144,7 +144,9 @@ https://github.com/GaryWenneker/ax/deployments/github-pages
 python3 scripts/github_pages_status.py
 ```
 
-`release.yml` deploys the docs mirror after the release docs job. `deploy-site.yml` deploys it when that workflow is run. Both fail the workflow unless the newest status is `success`.
+`release.yml` deploys the docs mirror after the release docs job. `deploy-site.yml` deploys it when that workflow is run. `actions/deploy-pages` must finish successfully. Do not fail that job while the deployment status is still `in_progress`: a failed job marks the deployment failed.
+
+After the workflow completes, run the check. Retry it until the newest status is terminal. `in_progress` is not done. `failure` or `error` means the release is not done.
 
 If the Pages site does not exist yet (`gh api repos/GaryWenneker/ax/pages` returns 404), enable it, then run **Build docs site** and wait for the check:
 
