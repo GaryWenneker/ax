@@ -85,6 +85,57 @@ gh api -X PATCH "repos/GaryWenneker/ax/dependabot/alerts/<number>" \
 
 The last action before the release section is the list commands. Each open count is zero. A 404 from the code-quality or secret-scanning alerts API means that product has no alert list. A 403 is retried until the command returns a list. It is not reported as zero.
 
+## Findings the next run already knows (ax)
+
+These are the ways this repository has kept a queue open after the code and the lock were already clean. The next run handles each one. It does not stop to report it.
+
+### The dependency graph is behind Cargo.lock
+
+Dependabot reads GitHub's dependency graph, not the lock on the default branch. The graph can still list the vulnerable crate and its parent after the lock no longer does. On 2026-10-21 the graph still had `octocrab` 0.43.0, `ratatui` 0.29.0, `jsonwebtoken` 9.3.1, and `lru` 0.12.5, while `Cargo.lock` at `af134325` had `jsonwebtoken` 10.3.0 and `lru` 0.18.5 only. The alert `updated_at` stayed on the day the alert opened. The push line "GitHub found N vulnerabilities" is that graph. It is not the dependency monitor.
+
+Prove it before dismissing. The vulnerable version must be absent from the manifest the alert names, and `cargo tree -i <package>@<version>` must be empty. Two versions of one crate can be locked at once; removing one does not remove the other.
+
+```bash
+gh api repos/GaryWenneker/ax/dependency-graph/sbom \
+  --jq '.sbom.packages[] | select(.name=="<package>") | "\(.SPDXID) \(.versionInfo)"'
+```
+
+`creationInfo.created` is the time the API built that document. It is not the time GitHub scanned the lock. A fresh timestamp with the old versions still means the graph is behind.
+
+When the lock is clean and the alert is still `open`, dismiss it as `not_used` with the comment in the review language. List again. The open list can still return the alert in the moment after the PATCH.
+
+Do not dismiss while the vulnerable version is still in the lock. Fix the lock first.
+
+### A caret pin selects a release that is still inside 168 hours
+
+`jsonwebtoken` 9.3.1 was pulled by `octocrab` 0.43. `octocrab` 0.49 and later depend on `jsonwebtoken` ^10. The first patched `jsonwebtoken` is 10.3.0. `octocrab = "0.54.4"` is a caret and selected 0.54.5, published 2026-10-17, which was inside 168 hours on 2026-10-21. The pin that stays outside that window is `octocrab = "=0.54.4"`, then `cargo update -p octocrab --precise 0.54.4`.
+
+`lru` 0.12.5 was pulled by `ratatui` 0.29. `ratatui` 0.30.2 does not depend on it. The workspace copy `lru` 0.18.5 is not that alert. `cargo audit` does not fail the monitor on the unsound warning. Dependabot still opens an alert for the 0.12.5 copy, so the copy has to leave the lock.
+
+### A direct bump that is old enough still locks young transitive crates
+
+Check the publish time of every version added to the lock, not only the direct package. `cargo update --precise` takes one package per invocation. On the `ratatui` 0.30.2 bump the young crates were `kasuari` 0.4.13, `num_threads` 0.1.8, and `pest` 2.9.4. Pin each back to the newest release that is at least 168 hours old. Downgrade the crate that requires the young version first: `pest_derive` 2.9.4 requires `pest` ^2.9.4, so `pest_derive` moves to 2.9.2 before `pest`.
+
+### One package in a peer set does not land
+
+`@tiptap/*` 3.32.0 each require `@tiptap/core` at that same version. Pull requests #147–#151 each bumped one package, failed `npm ERESOLVE` on the peer, and were closed. Close that shape of pull request. Move the set in one change, or leave the split pull requests closed.
+
+### CodeQL keeps the old commit until that language finishes
+
+`most_recent_instance.commit_sha` stays on the previous commit until an analysis of the fix commit is uploaded. On the "Push on main" run, actions, Go, Java, Python, and JavaScript finish while Rust is still running. Rust is the job that moves a Rust alert. Do not dismiss a fix that is waiting on that job. List again when the analysis for that SHA exists. `results_count` includes dismissed alerts, so it is not the open count.
+
+### The monitor does not run on every push
+
+The workflow starts on a push that changes `Cargo.lock`, `**/Cargo.toml`, `**/package-lock.json`, `.github/dependabot.yml`, or `.github/workflows/dependency-monitor.yml`. A code fix or a skill edit does not start it. Dispatch it and read `headSha`. A green run on an older SHA is not a green run on the commit you are about to release.
+
+The rustsec job has one `permissions` block. A second `issues:` key is a duplicate YAML key. GitHub then runs zero jobs and the run is not a passing monitor.
+
+The monitor audits npm for `site`, `telemetry-worker`, and `crates/ax-web/web-ui` only. `ide/vscode/package-lock.json` can put `jsonwebtoken` 9.0.3 on the dependency graph without failing those three audits. An open Dependabot alert for that manifest is still handled. A green monitor does not clear the Dependabot page.
+
+### An advisory with no patched release is removed
+
+`RUSTSEC-2023-0071` (`rsa` 0.9.10) has `patched = []`. The crate leaves the tree. The remote MCP tests generate the RS256 key with vendored `openssl`. Do not add a cargo-audit ignore, and do not keep the crate because it is a dev-dependency.
+
 ## GitHub Actions Security
 
 - **NEVER** interpolate `${{ inputs.* }}` / `${{ github.event.* }}` in `run:` — use `env:`
@@ -100,7 +151,7 @@ For every finding that fails that workflow:
 2. Take the patched release when one exists. A missing patch means remove the dependency. Do not add a cargo-audit ignore, and do not dismiss the advisory, to turn the job green.
 3. Unmaintained and unsound warnings stay visible. They do not fail the monitor. A warning that is also a vulnerability does.
 
-When the monitor is green on `main`, bump the patch version, let CI pass, publish the six release assets, then point `site/public/releases/latest.txt` and `site/netlify/latest-version.json` at that tag. The site pointer waits until all six assets exist. The same monitor run must still be green after the bump.
+The release section is the only place that bumps and publishes. It runs when the monitor is green on the commit that will be released and every open count in this skill is zero. The site pointer waits until all six assets exist. The same monitor run must still be green after the bump. `site/netlify/latest-version.json` is generated and gitignored. The committed pointer is `site/public/releases/latest.txt`.
 
 ## Lifecycle pull requests (ax)
 
@@ -131,6 +182,7 @@ Keep the rows that match the scope above. Handle each one in number order:
    - the release-age check failed because a new version is still inside the 168-hour window
    - the dependency is unused, so the bump is unnecessary
    - the branch conflicts with `main` and rebasing it would not be the same bump
+   - one package in a peer set, so the install fails until the set moves together (`npm ERESOLVE` on `@tiptap/core`)
    Close with `gh pr close <number> --repo GaryWenneker/ax --comment "<reason>"`.
 4. A pull request that still cannot be merged or closed is not an ending. Close it with the reason. A workflow pin the token cannot update is changed on the default branch in a commit, then the pull request is closed as already applied.
 
@@ -147,7 +199,7 @@ gh api --paginate "repos/GaryWenneker/ax/dependabot/alerts?state=open&per_page=1
   --jq '.[] | {number, state, ghsa: .security_advisory.ghsa_id, cve: .security_advisory.cve_id, severity: .security_advisory.severity, package: .dependency.package.name, ecosystem: .dependency.package.ecosystem, manifest: .dependency.manifest_path, vulnerable: .security_vulnerability.vulnerable_version_range, patched: .security_vulnerability.first_patched_version.identifier, url: .html_url}'
 ```
 
-A 403, or a body that says Dependabot alerts are disabled, is a blocker. It is not an empty queue. Name that failure. Do not report zero alerts unless this command printed no rows.
+A 403, or a body that says Dependabot alerts are disabled, is not an empty queue. Retry until the command returns a list. Do not report zero alerts unless this command printed no rows, and do not end the run on the 403.
 
 Handle each open alert in number order:
 
@@ -170,7 +222,7 @@ gh api --paginate "repos/GaryWenneker/ax/code-scanning/alerts?state=open&per_pag
   --jq '.[] | {number, rule: .rule.id, severity: .rule.security_severity_level, cwe: [.rule.tags[] | select(startswith("external/cwe/"))], path: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line, message: .most_recent_instance.message.text, url: .html_url}'
 ```
 
-A 403, or a body that says code scanning is disabled, is a blocker. It is not an empty queue. Name that failure. Do not report zero alerts unless this command printed no rows.
+A 403, or a body that says code scanning is disabled, is not an empty queue. Retry until the command returns a list. Do not report zero alerts unless this command printed no rows, and do not end the run on the 403.
 
 Handle each open alert in number order. Record the number, rule, severity, CWE tags, path, line, and message.
 
