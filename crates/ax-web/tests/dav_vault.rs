@@ -580,6 +580,24 @@ async fn b20_options_advertises_locking_and_lock_works() {
 }
 
 #[tokio::test]
+async fn skill_directory_on_disk_is_listed_without_a_database_row() {
+    let fx = fixture().await;
+    let dir = fx.root.join(".agents").join("skills").join("from-disk");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: from-disk\ndescription: from-disk\n---\n\nOn disk.\n",
+    )
+    .unwrap();
+    let listed = propfind(&fx.app, "/dav/skills/").await;
+    assert!(
+        listed.body.contains("/dav/skills/from-disk.md"),
+        "{}",
+        listed.body
+    );
+}
+
+#[tokio::test]
 async fn skill_page_round_trip_and_body_only_save() {
     let fx = fixture().await;
     assert_eq!(

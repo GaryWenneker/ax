@@ -175,6 +175,30 @@ async fn stored_put(
     Ok(())
 }
 
+/// Skill directories GET can open even when the database row was pruned.
+fn disk_skill_names(root: &std::path::Path) -> Vec<String> {
+    let mut names = Vec::new();
+    for layer in ax_policy::policy_layers(root) {
+        let Ok(entries) = std::fs::read_dir(layer.dir.join("skills")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if !entry.path().join("SKILL.md").is_file() {
+                continue;
+            }
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            if name.is_empty() || names.iter().any(|existing| existing == name) {
+                continue;
+            }
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
 fn like_prefix(dir: &str) -> String {
     let escaped = dir
         .replace('\\', "\\\\")
@@ -502,14 +526,23 @@ impl DavVault {
             }
             Area::Skills => {
                 let ws = self.hub.read().await;
-                ws.policy
+                let mut names: Vec<String> = ws
+                    .policy
                     .store
                     .list_skills()
                     .await
                     .map_err(db_err)?
                     .into_iter()
                     .map(|s| s.name)
-                    .collect()
+                    .collect();
+                let root = ws.policy.store.project_root().to_path_buf();
+                drop(ws);
+                for name in disk_skill_names(&root) {
+                    if !names.iter().any(|existing| existing == &name) {
+                        names.push(name);
+                    }
+                }
+                names
             }
             Area::Memories => {
                 let rows = self.memories().await?;
