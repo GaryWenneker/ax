@@ -15,7 +15,11 @@ pub fn run_impacted_tests(config: &ShipConfig, tia: &TiaResult) -> bool {
 
     let mut by_runner: HashMap<String, Vec<&str>> = HashMap::new();
     for t in &tia.tests {
-        let key = runner_family(&t.runner_hint, &t.file_path, &config.quality_gate.tests.runner);
+        let key = runner_family(
+            &t.runner_hint,
+            &t.file_path,
+            &config.quality_gate.tests.runner,
+        );
         by_runner.entry(key).or_default().push(t.name.as_str());
     }
 
@@ -35,7 +39,13 @@ fn runner_family(hint: &str, file_path: &str, configured: &str) -> String {
         "cargo".into()
     } else if h.starts_with("pytest") || p.ends_with(".py") {
         "pytest".into()
-    } else if h.contains("jest") || h.contains("vitest") || p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".js") || p.ends_with(".jsx") {
+    } else if h.contains("jest")
+        || h.contains("vitest")
+        || p.ends_with(".ts")
+        || p.ends_with(".tsx")
+        || p.ends_with(".js")
+        || p.ends_with(".jsx")
+    {
         if h.contains("jest") || configured.to_ascii_lowercase().contains("jest") {
             "jest".into()
         } else {
@@ -52,27 +62,55 @@ fn run_family(family: &str, names: &[&str], config: &ShipConfig) -> bool {
     if names.is_empty() {
         return true;
     }
-    let filter = names.join("|");
-    let cmdline = match family {
-        "cargo" => format!("cargo test {} -- --exact", names.join(" ")),
-        "pytest" => format!("pytest -k \"{}\"", names.join(" or ")),
-        "jest" => format!("npx jest -t \"{}\"", filter),
-        "vitest" => format!("npx vitest run -t \"{}\"", filter),
-        "go" => format!("go test ./... -run \"{}\"", filter),
-        _ => format!(
-            "{} -- {} -- --exact",
-            config.quality_gate.tests.runner, filter
-        ),
-    };
+    let status = family_command(family, names, config).status();
+    matches!(status, Ok(status) if status.success())
+}
 
-    let status = if cfg!(windows) {
-        Command::new("cmd")
-            .args(["/C", &cmdline])
-            .status()
-    } else {
-        Command::new("sh").arg("-c").arg(&cmdline).status()
-    };
-    matches!(status, Ok(s) if s.success())
+fn family_command(family: &str, names: &[&str], config: &ShipConfig) -> Command {
+    let filter = names.join("|");
+    match family {
+        "cargo" => {
+            let mut command = Command::new("cargo");
+            command.arg("test");
+            for name in names {
+                command.arg(*name);
+            }
+            command.args(["--", "--exact"]);
+            command
+        }
+        "pytest" => {
+            let mut command = Command::new("pytest");
+            command.arg("-k").arg(names.join(" or "));
+            command
+        }
+        "jest" => {
+            let mut command = Command::new("npx");
+            command.args(["jest", "-t", &filter]);
+            command
+        }
+        "vitest" => {
+            let mut command = Command::new("npx");
+            command.args(["vitest", "run", "-t", &filter]);
+            command
+        }
+        "go" => {
+            let mut command = Command::new("go");
+            command.args(["test", "./...", "-run", &filter]);
+            command
+        }
+        _ => configured_command(&config.quality_gate.tests.runner, &filter),
+    }
+}
+
+fn configured_command(runner: &str, filter: &str) -> Command {
+    let mut parts = runner.split_whitespace();
+    let program = parts.next().unwrap_or("cargo");
+    let mut command = Command::new(program);
+    for arg in parts {
+        command.arg(arg);
+    }
+    command.arg("--").arg(filter).arg("--").arg("--exact");
+    command
 }
 
 #[cfg(test)]
@@ -93,5 +131,18 @@ mod tests {
             runner_family("pytest -k test_x", "tests/test_x.py", "cargo test"),
             "pytest"
         );
+    }
+
+    #[test]
+    fn pytest_filter_stays_one_argument() {
+        let hostile = "ok; touch /tmp/ax-ship-pwned";
+        let command = family_command("pytest", &[hostile], &ShipConfig::default());
+        let program = command.get_program().to_string_lossy();
+        assert_eq!(program, "pytest");
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["-k", hostile]);
     }
 }

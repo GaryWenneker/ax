@@ -12,7 +12,7 @@ ax share --open
 ax share --port 7070 --bind 0.0.0.0 --token mysecret
 ```
 
-Clients must pass `?token=…`, `Authorization: Bearer …`, or the `ax_share` cookie set after the first successful request.
+A browser that opens `?token=…` receives an `HttpOnly` `ax_share` cookie and continues at the same path without the token in the address. Scripts can send `Authorization: Bearer …` or the `ax_share` cookie.
 
 For remote collaborators, wrap localhost with a tunnel:
 

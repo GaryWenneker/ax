@@ -18,6 +18,7 @@ export function memoryRowAge(updatedAtMs: number, nowMs: number): string {
   if (!Number.isFinite(updatedAtMs) || !Number.isFinite(nowMs)) return '';
   const delta = nowMs - updatedAtMs;
   if (delta < 45_000) return 'just now';
+  if (delta < 60_000) return `${Math.floor(delta / 1000)}s ago`;
   const minutes = Math.floor(delta / 60_000);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);

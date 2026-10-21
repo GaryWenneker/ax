@@ -1241,7 +1241,7 @@ ax policy export --out ./policy-backup
 
 ### `ax policy match <prompt> [path]`
 
-Test which rules/skills match a prompt.
+Policy search. Test which indexed rules and skills match a prompt. This does not search the public skills catalog; that is [`ax skill search`](#ax-skill).
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -1282,7 +1282,7 @@ ax policy skill startup
 
 ### `ax skill`
 
-Search the skills.sh catalog and install a skill from GitHub, GitLab, Azure Repos, a well-known URL, or a local directory. Publish sends one named skill.
+Skill search. `ax skill search <query>` queries the public skills catalog. Install a skill from GitHub, GitLab, Azure Repos, a well-known URL, or a local directory. Publish sends one named skill. Searching rules and skills already in the project is [`ax policy match`](#ax-policy-match-prompt-path).
 
 ```bash
 ax skill search react

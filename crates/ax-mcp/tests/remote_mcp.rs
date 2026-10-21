@@ -12,7 +12,7 @@ use axum::{
 use jsonwebtoken::{encode, jwk::JwkSet, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tower::ServiceExt;
 
 async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
@@ -68,9 +68,7 @@ async fn fixture() -> (tempfile::TempDir, Router, Arc<RemoteConfig>) {
 }
 
 fn verifier(config: Arc<RemoteConfig>) -> TokenVerifier {
-    let keys: JwkSet =
-        serde_json::from_str(include_str!("fixtures/remote-test-jwks.json")).unwrap();
-    TokenVerifier::with_keys(config, keys, reqwest::Client::new())
+    TokenVerifier::with_keys(config, test_material().jwks.clone(), reqwest::Client::new())
 }
 
 fn claims(sub: &str) -> Value {
@@ -82,9 +80,56 @@ fn token(claims: &Value) -> String {
     encode(
         &header,
         claims,
-        &EncodingKey::from_rsa_pem(include_bytes!("fixtures/remote-test-key.pem")).unwrap(),
+        &EncodingKey::from_rsa_pem(test_material().pem.as_bytes()).unwrap(),
     )
     .unwrap()
+}
+
+struct TestMaterial {
+    pem: String,
+    jwks: JwkSet,
+}
+
+fn test_material() -> &'static TestMaterial {
+    static MATERIAL: OnceLock<TestMaterial> = OnceLock::new();
+    MATERIAL.get_or_init(|| {
+        use base64::Engine;
+        use rsa::pkcs8::EncodePrivateKey;
+        use rsa::traits::PublicKeyParts;
+        let mut rng = rand::thread_rng();
+        let key = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("test key");
+        let pem = key
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("pem")
+            .to_string();
+        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.n().to_bytes_be());
+        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.e().to_bytes_be());
+        let jwks = serde_json::from_value(json!({
+            "keys": [{
+                "kty": "RSA",
+                "alg": "RS256",
+                "use": "sig",
+                "kid": "ax-test-key",
+                "n": n,
+                "e": e
+            }]
+        }))
+        .expect("jwks");
+        TestMaterial { pem, jwks }
+    })
+}
+
+#[test]
+fn signing_key_is_not_committed() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    assert!(
+        !root.join("remote-test-key.pem").exists(),
+        "generate the remote MCP test key in memory"
+    );
+    assert!(
+        !root.join("remote-test-jwks.json").exists(),
+        "generate the matching public key with the private key"
+    );
 }
 
 async fn post(

@@ -643,6 +643,13 @@ fn sse_from_channel(
 }
 
 pub fn router_hub(hub: WebHub) -> Router {
+    let terminal = Router::new()
+        .route("/pty/ws", get(crate::agent_pty::handle_pty_ws))
+        .with_state(hub.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            hub.clone(),
+            crate::agent_pty::reject_untrusted_origin,
+        ));
     Router::new()
         .route("/status", get(handle_status))
         .route("/install", post(handle_install))
@@ -664,6 +671,6 @@ pub fn router_hub(hub: WebHub) -> Router {
             post(handle_mark_authenticated),
         )
         .route("/chat/stream", post(handle_chat_stream))
-        .route("/pty/ws", get(crate::agent_pty::handle_pty_ws))
+        .merge(terminal)
         .with_state(hub)
 }

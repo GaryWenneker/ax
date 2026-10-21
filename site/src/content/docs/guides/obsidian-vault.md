@@ -5,6 +5,8 @@ description: Open your ax rules, skills, and memories in Obsidian as normal note
 
 `ax web` serves your project's rules, skills, and memories as a WebDAV share at `http://127.0.0.1:7070/ax/` (the older `http://127.0.0.1:7070/dav/` still works). Mount it on macOS, Windows, or Linux and open it in Obsidian as a vault. You get the normal Obsidian editor, backlinks, search, and graph, and every save goes straight into `ax.db`. Agents see the change on their next `ax_preflight`.
 
+When Command Center login is turned on, `/ax` and `/dav` require that browser session. A desktop mount is not the browser, so it needs a valid share token while login is on. Login left off keeps the vault on localhost as it is today.
+
 ## Connect from Settings
 
 In the Command Center, open **Settings → Vault connection** and click **Connect as "ax"**. ax runs the connect command that ships with your system:

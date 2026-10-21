@@ -37,6 +37,12 @@ describe('memory row age', () => {
     assert.equal(memoryRowAge(now + 5_000, now), 'just now');
   });
 
+  it('uses seconds between just now and one minute', () => {
+    assert.equal(memoryRowAge(now - 45_000, now), '45s ago');
+    assert.equal(memoryRowAge(now - 50_000, now), '50s ago');
+    assert.equal(memoryRowAge(now - 60_000, now), '1m ago');
+  });
+
   it('uses minutes and hours through one day, then a date', () => {
     assert.equal(memoryRowAge(now - 5 * 60_000, now), '5m ago');
     assert.equal(memoryRowAge(now - 18 * 3_600_000, now), '18h ago');

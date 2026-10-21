@@ -1289,8 +1289,15 @@ fn excluded(path: &str) -> bool {
         || path.starts_with("/api/auth/")
         || path.starts_with("/mcp")
         || path.starts_with("/api/share")
-        || path.starts_with("/dav")
-        || path.starts_with("/api/dav")
+}
+
+fn is_vault_path(path: &str) -> bool {
+    path == "/dav"
+        || path.starts_with("/dav/")
+        || path == "/ax"
+        || path.starts_with("/ax/")
+        || path == "/api/dav"
+        || path.starts_with("/api/dav/")
 }
 pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Response {
     let pool = match db().await {
@@ -1304,7 +1311,7 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
     let path = req.uri().path();
     // All JSON data routes require the gate. The static SPA shell itself can
     // load to display a login without exposing any indexed project data.
-    if excluded(path) || (!path.starts_with("/api/") && path != "/api") {
+    if excluded(path) || (!is_vault_path(path) && !path.starts_with("/api/") && path != "/api") {
         // Static SPA assets and its unauthenticated login shell contain no user data;
         // every data API remains behind the server-side gate.
         return next.run(req).await;
@@ -1328,6 +1335,16 @@ pub async fn gate(State(hub): State<WebHub>, mut req: Request, next: Next) -> Re
     // Login is opt-in. Until an Owner turns it on, APIs keep their existing
     // access rules. A public host must not be locked until that setup exists.
     if !active {
+        return next.run(req).await;
+    }
+    let share_token = std::env::var("AX_SHARE_TOKEN").ok();
+    if is_vault_path(path)
+        && crate::share_auth::request_has_share_token(
+            req.headers(),
+            req.uri().query(),
+            share_token.as_deref(),
+        )
+    {
         return next.run(req).await;
     }
     let Some(member_id) = member_for_session(&pool, req.headers()).await else {

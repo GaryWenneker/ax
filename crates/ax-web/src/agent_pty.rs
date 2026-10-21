@@ -27,10 +27,21 @@ fn default_profile() -> String {
 }
 
 pub async fn handle_pty_ws(
-    ws: WebSocketUpgrade,
+    headers: axum::http::HeaderMap,
     State(hub): State<WebHub>,
     Query(query): Query<PtyQuery>,
+    ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+    if !crate::browser_origin::browser_origin_allowed(origin, hub.port, hub.local_only) {
+        return axum::response::Response::builder()
+            .status(403)
+            .body(axum::body::Body::from("Untrusted origin"))
+            .unwrap()
+            .into_response();
+    }
     if hub.readonly {
         return axum::response::Response::builder()
             .status(403)
@@ -39,6 +50,24 @@ pub async fn handle_pty_ws(
             .into_response();
     }
     ws.on_upgrade(move |socket| handle_pty_socket(socket, hub, query))
+}
+
+pub(crate) async fn reject_untrusted_origin(
+    State(hub): State<WebHub>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let origin = req
+        .headers()
+        .get(axum::http::header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+    if !crate::browser_origin::browser_origin_allowed(origin, hub.port, hub.local_only) {
+        return axum::response::Response::builder()
+            .status(403)
+            .body(axum::body::Body::from("Untrusted origin"))
+            .unwrap();
+    }
+    next.run(req).await
 }
 
 async fn handle_pty_socket(socket: WebSocket, hub: WebHub, query: PtyQuery) {

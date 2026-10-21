@@ -3,7 +3,7 @@ title: Command Center
 description: Local web UI for policy, memory, the code graph, MCP logging, and savings.
 ---
 
-ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, skills, memory), the code graph, MCP logging and savings, with CLI quality gates and optional draft PRs (Azure DevOps or GitHub).
+ax ships a **Command Center** (`ax web`) — a local web UI for policy (rules, skills, memory), the code graph, MCP logging and savings, with CLI quality gates and optional draft PRs (Azure DevOps or GitHub). The API answers the browser that loaded it. Another website cannot read it.
 
 Follow the [page-by-page walkthrough](/guides/command-center-walkthrough/) for every page and Settings group.
 
@@ -218,11 +218,23 @@ The Agent terminal and Quality Gates pages have been removed. Old `/agent` and `
 
 The Rules and Skills pages have a toolbar with **Graph** (link graph of rules, skills, and memories), **Auto-group**, **Test match**, **Package**, **Restore package**, **Capture**, and **New rule** / **New skill**. The **Default MD / DB** switch picks where new items are stored: Markdown files in the policy folder, or the project database.
 
-**Search more online** sits to the left of Filters on Skills. It opens a panel, searches the public skills catalog, and installs one skill at a time. The installed skill is usable immediately. The receipt prints the source, the pinned commit, and the content hash. Audit stays disabled until that skill is installed. **Report installs** is off until you turn the switch on.
+### Skill search
+
+**Search more online** sits to the left of Filters on Skills. It opens a panel, searches the public skills catalog, and installs one skill at a time. Each result shows the summary, star count, first-seen date, and security audits that belong to that skill. The installed skill is usable immediately. The receipt prints the source, the pinned commit, and the content hash. Audit stays disabled until that skill is installed. **Report installs** is off until you turn the switch on.
+
+From the terminal, skill search is `ax skill search react`. Add one hit with `ax skill add <source> --skill <name>`. See [ax skill](/reference/cli/#ax-skill).
+
+### Policy search
+
+Policy search looks through the rules and skills already in this project. It does not search the public catalog.
+
+On Rules and on Skills, **Filters** narrow the list you already have. Type a label to see suggestions, add tag chips (every selected tag must match), and click a tag in the table to toggle it. **Groups** filters by catalog folder.
+
+**Test match** on the toolbar is the other policy search. Type a prompt and see which rules and skills would be injected, the same matcher `ax_preflight` uses. The CLI is `ax policy match "prompt text"`. `ax policy rules` and `ax policy skills` list what is indexed. See [Policy search](/guides/policy-engine/#policy-search).
 
 **Audit** on an installed skill, or on a rule, stores a quality report and leaves the item enabled. **Copy report** on the green result copies an agent brief: the file to edit, the findings, and the edit instructions. A path such as `skills/<name>/SKILL.md` is present when that skill file exists in a policy folder or the skill is stored in the project or global database. Placeholder paths and directories are not reported as missing files. Clicking an action keeps a dark mark on that button and a darker wash on its row until you click elsewhere.
 
-The same checks are available from the CLI: `ax skill search`, `ax skill add`, `ax skill audit`, `ax skill brief`, and `ax policy quality <id>`. See [ax skill](/reference/cli/#ax-skill).
+The same checks are available from the CLI: `ax skill audit`, `ax skill brief`, and `ax policy quality <id>`.
 
 ![Review — staged policy imports waiting for Accept or Reject](/screenshots/cc-policy-review-dark.png)
 
@@ -336,7 +348,7 @@ Open **Settings** in the sidebar (or from Command Center) to manage `.ax/ship.to
 - **Command Center** — target branch, git repositories, dashboard port, test runner, index scope, **Review comment language**, and the PR provider (Azure DevOps organization / project / repository ID / token env var, or GitHub)
 - **Appearance** — choose Light/Dark and an accent; the browser remembers the selection. Header/footer backgrounds retain their theme; Dark is neutral and Light uses a blue header. Show Savings and log Timezone live here. Empty/local timezone uses browser-local display and host-local file rotation; line timestamps stay UTC. Verbose logging is always enabled.
 - **Sharing** — policy sync, live share status card (badge, port, copy URL), How to share, Enable PWA / Install
-- **Vault connection** — mount rules, skills, and memories as a WebDAV drive for Obsidian or any editor — see [Obsidian Vault](/guides/obsidian-vault/)
+- **Vault connection** — mount rules, skills, and memories as a WebDAV drive for Obsidian or any editor — see [Obsidian Vault](/guides/obsidian-vault/). With login on, the browser vault uses that session and a desktop mount needs the share token.
 - **Open Knowledge Format (OKF)** — **Generate OKF bundle** / **Validate** (and optional wiki publish) via `/api/okf/*`; writes Markdown under `okf.outDir` from `ax.json` — see [OKF](/guides/okf/)
 - **Plugins** — live extractor table from `GET /api/plugins` (name, mode, extensions, entry) with Refresh
 - **Embeddings** — memory embed backend (`hash` / `onnx` / …), onnx Cargo feature, model + tokenizer paths from `GET /api/memory/embed-status` with Re-probe

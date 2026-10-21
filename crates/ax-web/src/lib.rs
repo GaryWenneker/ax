@@ -10,6 +10,7 @@ mod access_api;
 mod actions;
 mod agent;
 mod agent_pty;
+mod browser_origin;
 mod changes;
 mod context_budget_api;
 mod dav;
@@ -62,7 +63,6 @@ use axum::{
 };
 use include_dir::Dir;
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{Any, CorsLayer};
 
 include!(concat!(env!("OUT_DIR"), "/web_dist.rs"));
 const _: &str = env!("AX_WEB_DIST_STAMP");
@@ -824,10 +824,7 @@ pub async fn serve_with(opts: ServeOptions) -> Result<(), String> {
     }
     let _ = ax_agent::config::touch_recent_project(&opts.root, true);
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = browser_origin::command_center_cors(&opts.bind, opts.port);
 
     if !readonly {
         let sync_hub = hub.clone();

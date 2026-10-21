@@ -623,7 +623,19 @@ In the rule/skill editor, drag the handle between **Metadata** and the markdown 
 
 ![Policy Skills — task-specific instructions agents load on demand via ax_skill](/screenshots/cc-policy-skills-dark.png)
 
-Use **Test match** to preview which rules and skills would inject for a given prompt — the same matcher that runs during `ax_preflight`:
+## Policy search
+
+Policy search looks through rules and skills that are already indexed. It is separate from [skill search](/guides/command-center/#skill-search), which queries the public catalog.
+
+On **Policy → Rules** and **Policy → Skills**, **Filters** search the list: label suggestions, tag chips (every selected tag must match), and a click on a table tag toggles that tag. **Groups** limits the list to a catalog folder.
+
+**Test match** previews which rules and skills would inject for a given prompt — the same matcher that runs during `ax_preflight`. From the terminal:
+
+```bash
+ax policy match "deploy to production" --file src/ship.rs
+ax policy rules
+ax policy skills
+```
 
 ![Test match — simulate a prompt and preview the full policy inject output](/screenshots/cc-policy-match-dark.png)
 
