@@ -92,7 +92,7 @@ ax-share = { path = "crates/ax-share" }
 serde_yaml = "0.9"
 globset = "0.4"
 gix = { version = "0.68", default-features = false, features = ["max-performance-safe"] }
-octocrab = "0.43"
+octocrab = "=0.54.4"
 toml = "0.8"
 futures-util = "0.3"
 async-stream = "0.3"

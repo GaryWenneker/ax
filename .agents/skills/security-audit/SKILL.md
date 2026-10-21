@@ -55,7 +55,11 @@ Security audit patterns (OWASP Top 10, LLM Top 10 2025, CWE Top 25 2025, CVSS v4
 - [ ] Open LCM pull requests (Dependabot version bumps and `automation/lcm-*`) merged, closed, or named with a blocker
 - [ ] Open Dependabot alerts on the security tab fixed, or named with a blocker
 - [ ] Open code scanning alerts fixed, or dismissed only when the finding cannot happen, with the reason recorded
-- [ ] Open GitHub issues read; in-scope security issues closed with the fix, or named with a blocker
+- [ ] No open pull requests
+- [ ] No open issues
+- [ ] No open items on Security or Code quality (Dependabot, code scanning, secret scanning, code quality)
+- [ ] Local commits pushed to the remote
+- [ ] When those queues and the dependency monitor are green, and the LCM pull requests are merged or closed: bump, build, publish the six packages, then point the site at that tag
 
 ## GitHub Actions Security
 
@@ -168,9 +172,33 @@ gh api -X PATCH "repos/GaryWenneker/ax/code-scanning/alerts/<number>" \
 
 List open alerts again at the end. Every alert is gone from the open list, or named with a blocker. Do not delete a workflow, a test, or a docs harness just to remove its alert.
 
+## Pull requests (ax)
+
+A run of this skill is unfinished while any pull request is open on <https://github.com/GaryWenneker/ax/pulls>. LCM pull requests follow the lifecycle section. Every other open pull request is handled in number order the same way: merge when the diff is the intended change and the required checks are green; close, with a comment in the language from ax settings `reviews.commentLanguage`, when the pull request cannot land (red required check, peer-dependency break, conflict that is not the same change, or a release younger than 168 hours). Do not admin-merge a red check.
+
+List open pull requests again at the end. The list is empty, or each remaining number is named with a blocker.
+
+## Security and quality (ax)
+
+A run of this skill is unfinished while any of these pages still has an open item:
+
+- Dependabot: <https://github.com/GaryWenneker/ax/security/dependabot>
+- Code scanning: <https://github.com/GaryWenneker/ax/security/code-scanning>
+- Secret scanning: <https://github.com/GaryWenneker/ax/security/secret-scanning>
+- Code quality: <https://github.com/GaryWenneker/ax/security/code-quality>
+
+Secret scanning and code quality use the same rule as Dependabot and code scanning. Fix the finding when the harm can still happen. Dismiss only when it cannot, with `dismissed_reason` and a comment in the language from ax settings `reviews.commentLanguage`. A 403 or a disabled product is a blocker, not an empty page.
+
+```bash
+gh api "repos/GaryWenneker/ax/secret-scanning/alerts?state=open" --jq 'length'
+gh api "repos/GaryWenneker/ax/code-quality/alerts?state=open" --jq 'length'
+```
+
+List each page again at the end. Every open count is zero, or the number is named with a blocker.
+
 ## GitHub issues (ax)
 
-A security audit of this repository is unfinished while an open issue on <https://github.com/GaryWenneker/ax/issues> has not been read. List them before changing anything:
+A run of this skill is unfinished while an issue is open on <https://github.com/GaryWenneker/ax/issues>. List them before changing anything:
 
 ```bash
 gh issue list --repo GaryWenneker/ax --state open --limit 100 \
@@ -198,11 +226,28 @@ Handle each in-scope issue in number order:
 gh issue close <number> --repo GaryWenneker/ax --reason completed --comment "<reason>"
 ```
 
-3. Leave it open only when this run cannot land the fix. Name the number and the blocker. Do not close it to clear the list. Do not run `npm audit fix --force`.
+3. Leave it open only when this run cannot land the fix. Name the number and the blocker. Do not run `npm audit fix --force`.
 
-An issue that matches none of the scope rules stays open. The report names it out of scope with the title and labels that were read. This audit does not close enhancement or roadmap issues.
+An issue that is not one of those security items is still processed. Close it. Use `completed` when the behavior is already in the product. Use `not planned` when it is a roadmap item this run is not implementing. The close comment, in the language from ax settings `reviews.commentLanguage`, names which of those two it is. The open issue list at the end of the run is empty, or each remaining number is named with a blocker.
 
-List open issues again at the end. Every in-scope issue is closed because the fix is on the default branch or the named setting is on, or it is named with a blocker. Every other open issue is named as out of scope. An empty open list is a completed pass: say the queue was empty.
+## Push, then release (ax)
+
+After the fixes, push every local commit on the release branch to `origin`. A dirty tree that is not part of this audit stays uncommitted. Do not start the release while a commit that belongs to the audit is only local.
+
+Start the release only when all of these are true:
+
+- the dependency monitor is green on the commit that will be released
+- LCM pull requests are merged or closed
+- the pull request list, the issue list, Dependabot, code scanning, secret scanning, and code quality have no open items
+
+Then, in this order:
+
+1. Bump the patch version in every workspace `Cargo.toml`, `Cargo.lock`, and `crates/ax-web/web-ui/package.json`.
+2. Push that bump. Let CI pass on that commit. The dependency monitor must still be green.
+3. Publish the six platform packages with the release workflow. Do not point the site at the version before `ax-win32-x64.zip`, `ax-win32-arm64.zip`, `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz`, `ax-darwin-x64.tar.gz`, `ax-darwin-arm64.tar.gz`, and `SHA256SUMS` exist on the GitHub release.
+4. Set `site/public/releases/latest.txt` to that tag and push it. Do not add a What's new section or a changelog. Do not run the Netlify deploy.
+
+If any queue is still open, do not bump and do not publish.
 
 ## PHP runtime
 
