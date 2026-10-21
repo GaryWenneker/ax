@@ -64,7 +64,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 fs2 = "0.4"
-dirs = "5"
+dirs = "7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 self_update = { version = "0.41", default-features = false, features = ["rustls"] }
 zip = { version = "=9.0.3", default-features = false, features = ["deflate"] }
