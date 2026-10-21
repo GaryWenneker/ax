@@ -1081,7 +1081,10 @@ fn read_zip_map(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, ZipPkgError> {
         let mut file = archive
             .by_index(i)
             .map_err(|e| ZipPkgError::BadZip(e.to_string()))?;
-        let name = file.name().replace('\\', "/");
+        let name = file
+            .name()
+            .map_err(|e| ZipPkgError::BadZip(e.to_string()))?
+            .replace('\\', "/");
         if name.ends_with('/') {
             continue;
         }

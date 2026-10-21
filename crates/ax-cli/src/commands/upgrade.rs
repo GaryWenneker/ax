@@ -411,7 +411,7 @@ fn extract_zip_bundle(bytes: &[u8], dest: &Path, bundle: &str) -> Result<(), Str
             continue;
         };
         let out = dest.join(rel);
-        if file.name().ends_with('/') {
+        if file.is_dir() {
             std::fs::create_dir_all(&out).ok();
             continue;
         }

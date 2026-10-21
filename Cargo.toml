@@ -67,7 +67,7 @@ fs2 = "0.4"
 dirs = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 self_update = { version = "0.41", default-features = false, features = ["rustls"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "=9.0.3", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
 

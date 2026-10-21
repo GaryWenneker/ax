@@ -28,6 +28,8 @@ jobs:
     permissions:
       contents: read
       checks: write
+      issues: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - name: Audit Cargo.lock against RustSec
