@@ -9,6 +9,8 @@ env:
 permissions:
   contents: read
   actions: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: docs-${{ github.ref }}
@@ -54,3 +56,38 @@ jobs:
           name: docs-site
           path: site/dist
           if-no-files-found: error
+      - name: Rebuild docs for the GitHub Pages mirror
+        env:
+          SITE_BASE: /ax
+        run: npx astro build && node scripts/render-og.mjs
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure GitHub Pages is enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow
+          fi
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Require the GitHub Pages deployment to be green
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in 1 2 3 4 5 6; do
+            python3 scripts/github_pages_status.py && exit 0
+            sleep 10
+          done
+          exit 1

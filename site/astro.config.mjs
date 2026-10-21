@@ -4,9 +4,12 @@ import starlight from '@astrojs/starlight';
 import { pageLockScript } from './src/lib/page-lock.ts';
 
 // https://getax.wenneker.io
+// GitHub Pages project mirror sets SITE_BASE=/ax. The canonical site stays at /.
+const siteBase = process.env.SITE_BASE || '/';
+
 export default defineConfig({
 	site: 'https://getax.wenneker.io',
-	base: '/',
+	base: siteBase,
 	integrations: [
 		starlight({
 			title: 'ax',

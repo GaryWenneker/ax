@@ -38,6 +38,7 @@ Copy this checklist and track progress:
 - [ ] 4. Local rebuild + deploy (rebuild-web)
 - [ ] 5. Verify all ax.exe copies + version
 - [ ] 6. Restart ax MCP in Cursor
+- [ ] 7. GitHub Pages deployment is green
 ```
 
 ### 1. Quality gate
@@ -132,6 +133,28 @@ Prefer `.\scripts\release-local.ps1` — it syncs and verifies automatically.
 
 - **Restart ax MCP** in Cursor (Settings → MCP) so agents use the new binary.
 - If site/docs changed outside CI: `.\scripts\deploy-netlify.ps1`
+
+### 7. GitHub Pages must be green
+
+The newest deployment on the `github-pages` environment must be `success`. This is a failed release while that status is `failure`, `error`, `in_progress`, `queued`, `inactive`, or missing. Older rows do not count. Do not finish the pipeline, and do not tell the user the release is done, until the check exits 0.
+
+https://github.com/GaryWenneker/ax/deployments/github-pages
+
+```bash
+python3 scripts/github_pages_status.py
+```
+
+`release.yml` deploys the docs mirror after the release docs job. `deploy-site.yml` deploys it when that workflow is run. Both fail the workflow unless the newest status is `success`.
+
+If the Pages site does not exist yet (`gh api repos/GaryWenneker/ax/pages` returns 404), enable it, then run **Build docs site** and wait for the check:
+
+```bash
+gh api -X POST repos/GaryWenneker/ax/pages -f build_type=workflow
+gh workflow run "Build docs site" --repo GaryWenneker/ax --ref main
+```
+
+The canonical docs site stays https://getax.wenneker.io. The Pages mirror is https://garywenneker.github.io/ax/ and is built with `SITE_BASE=/ax`.
+
 ## Version rules
 
 - **patch** — 4.2.0 → 4.2.1
