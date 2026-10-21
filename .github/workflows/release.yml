@@ -243,7 +243,7 @@ jobs:
         working-directory: site
         env:
           SITE_BASE: /ax
-        run: npx astro build && node scripts/render-og.mjs
+        run: npx astro build
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
