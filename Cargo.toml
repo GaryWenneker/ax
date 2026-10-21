@@ -43,7 +43,7 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 tree-sitter = "0.25"
 petgraph = "0.6"
 leiden-rs = { version = "0.8", default-features = false }

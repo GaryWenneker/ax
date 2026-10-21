@@ -632,7 +632,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "walkdir",
 ]
@@ -699,7 +699,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
@@ -1093,7 +1093,7 @@ dependencies = [
  "ax-types",
  "dirs",
  "fs2",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
