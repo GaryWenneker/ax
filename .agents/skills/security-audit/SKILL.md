@@ -61,13 +61,13 @@ Security audit patterns (OWASP Top 10, LLM Top 10 2025, CWE Top 25 2025, CVSS v4
 - [ ] No open issues
 - [ ] No open items on Security or Code quality (Dependabot, code scanning, secret scanning, code quality)
 - [ ] Local commits pushed to the remote
-- [ ] Last step, mandatory: bump when the current version is already published, CI green on that commit, six release assets published, then `site/public/releases/latest.txt` points at that tag. The run is not finished before this.
+- [ ] Last step, mandatory, and the only place a run may stop: the version in `crates/ax-cli/Cargo.toml` is a published non-draft GitHub release that contains `ax-win32-x64.zip`, `ax-win32-arm64.zip`, `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz`, `ax-darwin-x64.tar.gz`, `ax-darwin-arm64.tar.gz`, and `SHA256SUMS`; `site/public/releases/latest.txt` on the default branch is that tag; and `https://getax.wenneker.io/releases/latest.txt` returns that same tag. A git commit is not the website. The run is not finished while any of those three differ.
 
 ## The run does not stop (ax)
 
-A run of this skill is not finished while any of these is still open: a pull request, an issue, a Dependabot alert, a code-scanning alert, a secret-scanning alert, or a code-quality alert.
+A run of this skill is not finished while any of these is still open: a pull request, an issue, a Dependabot alert, a code-scanning alert, a secret-scanning alert, or a code-quality alert. It is also not finished while the version being released is missing a platform asset or `SHA256SUMS`, while that release is a draft, or while `https://getax.wenneker.io/releases/latest.txt` is not that tag.
 
-Do not end the run, and do not tell the user the run stopped, while one of those lists is non-empty. A stale dependency graph, a queued analysis, a release-age wait, and a red check are more work. They are not an ending, and they are not a named blocker that completes the run.
+Do not end the run, and do not tell the user the run stopped, while one of those is unfinished. A stale dependency graph, a queued analysis, a release-age wait, a red check, a missing platform asset, and a website that still serves an older tag are more work. They are not an ending, and they are not a named blocker that completes the run.
 
 - A pull request that cannot merge is closed. The comment is in the language from ax settings `reviews.commentLanguage`.
 - An issue is closed as completed or not planned, as the issues section says.
@@ -153,7 +153,7 @@ For every finding that fails that workflow:
 2. Take the patched release when one exists. A missing patch means remove the dependency. Do not add a cargo-audit ignore, and do not dismiss the advisory, to turn the job green.
 3. Unmaintained and unsound warnings stay visible. They do not fail the monitor. A warning that is also a vulnerability does.
 
-The release section is the only place that bumps and publishes. It runs when the monitor is green on the commit that will be released and every open count in this skill is zero. The site pointer waits until all six assets exist. The same monitor run must still be green after the bump. `site/netlify/latest-version.json` is generated and gitignored. The committed pointer is `site/public/releases/latest.txt`.
+The release section is the only place that bumps and publishes. It runs when the monitor is green on the commit that will be released and every open count in this skill is zero. The site pointer waits until all six assets and `SHA256SUMS` exist. The same monitor run must still be green after the bump. `site/netlify/latest-version.json` is generated and gitignored. The committed pointer is `site/public/releases/latest.txt`. The live pointer is `https://getax.wenneker.io/releases/latest.txt`, and the run stays open until that URL returns the published tag.
 
 ## Lifecycle pull requests (ax)
 
@@ -332,9 +332,11 @@ gh workflow run ci.yml --repo GaryWenneker/ax --ref main
 gh workflow run release.yml --repo GaryWenneker/ax --ref main
 ```
 
-5. Set `site/public/releases/latest.txt` to that tag, commit, and push. Do not add a What's new section or a changelog. Do not run the Netlify deploy. `site/netlify/latest-version.json` is generated and gitignored.
+5. Set `site/public/releases/latest.txt` to that tag, commit, and push. Do not add a What's new section or a changelog. `site/netlify/latest-version.json` is generated and gitignored.
+6. List every non-draft GitHub release and check the six assets plus `SHA256SUMS`. The release this run publishes must have all seven files. An older release that is already missing a file is recorded in the run; it does not replace publishing the current version, and it does not end the run.
+7. Publish the live site. `scripts/deploy-netlify.ps1` builds from a clean `main` whose CI is green and deploys production to `getax.wenneker.io`. Committing `latest.txt` does not change the live site. After the deploy, fetch `https://getax.wenneker.io/releases/latest.txt`. The body must be the tag from step 4. If it is not, publish again and fetch again.
 
-The run is finished when that pointer is on the default branch and those seven files are on the GitHub release. Anything earlier is unfinished.
+The run is finished only when the queues are empty, that release is not a draft and lists all seven files, the default-branch pointer is that tag, and the live URL returns that tag. Anything earlier is unfinished. Do not stop after the queues, the bump, CI, the GitHub release, or the git pointer.
 
 ## PHP runtime
 
