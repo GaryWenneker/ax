@@ -268,4 +268,4 @@ jobs:
             gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow
           fi
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
