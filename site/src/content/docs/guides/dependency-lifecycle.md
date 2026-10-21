@@ -28,6 +28,20 @@ Dependabot independently proposes Rust, GitHub Actions and ordinary npm
 version upgrades. Major or risky changes are not automatically attempted by
 the fix workflow.
 
+The PHP runtime is the exception to the seven-day gate. Scripts that run PHP
+must use the latest stable version from [php.net](https://www.php.net/),
+including a release published the same day. An older PHP patch or minor fails
+even after seven days. Cargo, npm, and GitHub Actions keep the 168-hour wait.
+
+A security audit then processes every open lifecycle pull request. It merges
+a version bump whose required checks are green and whose change is a
+non-breaking patch, minor, or an already-aged security fix. It closes a bump
+that cannot land, including a breaking major, a version still inside the
+seven-day window, an unused dependency, or a conflict that is no longer the
+same bump. A pull request stays open only when the audit cannot finish a
+required check, and the report names that blocker. The workflows that open
+these pull requests still do not merge them.
+
 ### GitHub setup
 
 To permit automatic PR creation, visit **Repository Settings → Actions →

@@ -82,6 +82,20 @@ claim that the change has been application-tested.
   7-day merge check still applies**, by design. A critical vulnerability
   therefore requires deliberate incident response; this policy does not
   silently exempt urgent patches.
+- The PHP runtime is the exception. The interpreter that runs PHP scripts,
+  `shivammathur/setup-php` `php-version` values, and `FROM php:` tags must be
+  the latest stable `x.y.z` from
+  [php.net](https://www.php.net/releases/?json) (highest non-museum release
+  that is not an alpha, beta, or RC). A version published today is required
+  immediately. The 168-hour gate does not apply, and an older PHP patch or
+  minor fails even when it is already more than seven days old. A minor
+  channel is current only when it is the major.minor of that latest stable
+  version. The floating image tag `latest` is not accepted.
+
+```bash
+python3 scripts/check_dependency_age.py --print-latest-php
+python3 scripts/check_dependency_age.py --php-runtime "$(php -r 'echo PHP_VERSION;')" --php-scan .
+```
 - The gate runs in GitHub. It does not prevent local `npm install` or
   `cargo update` commands; to **enforce it against merges**, set the
   `minimum-release-age-7-days` check as a required status check in branch
@@ -108,6 +122,17 @@ python3.12 scripts/check_dependency_age.py --base origin/main
   and high vulnerabilities, malicious releases, and unmaintained packages.
 - [Dependency update PRs](https://github.com/GaryWenneker/ax/pulls?q=is%3Apr+author%3Aapp%2Fdependabot):
   review release notes, maintenance activity, deprecations, and breaking changes.
+- A security audit processes every open LCM pull request before it is done.
+  That set is Dependabot and `app/github-actions` authors, `dependabot/` and
+  `automation/lcm-*` head branches, and titles that are version bumps.
+  Merge a pull request when its required checks are green (including the
+  seven-day release-age check when the diff introduces versions), the bump is
+  a patch, minor, or an already-aged security fix, and the diff stays inside
+  the lockfiles, manifests, or Actions pin it claims. Close a pull request
+  that cannot land: a breaking major or API change, a version still inside
+  the 168-hour window, an unused dependency, or a conflict that is no longer
+  the same bump. Leave one open only when this run cannot finish a required
+  check, and name the blocker. The opening workflows still do not merge.
 - A package reaching end of life, becoming unmaintained or deprecated can lack a
   CVE. Dependabot does not guarantee EOL detection; maintainers still need to
   review release history, replacement projects and upstream maintenance notices.
