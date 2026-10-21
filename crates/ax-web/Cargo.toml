@@ -4,7 +4,7 @@ version = "8.3.6"
 edition = "2021"
 
 [dependencies]
-if-addrs = "0.13"
+if-addrs = "0.15"
 clap = { workspace = true }
 tempfile = "3"
 fs2 = { workspace = true }
