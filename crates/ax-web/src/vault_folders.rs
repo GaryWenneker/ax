@@ -104,24 +104,6 @@ fn save(project_root: &Path, list: &[VaultFolder]) -> std::io::Result<()> {
     std::fs::write(path, text)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn more_than_64_vault_folders_are_rejected() {
-        let list = (0..65)
-            .map(|i| VaultFolder {
-                name: format!("folder{i}"),
-                path: PathBuf::from(format!("/tmp/ax-vault-{i}")),
-                index: false,
-            })
-            .collect();
-        let err = validate(list).expect_err("65 folders");
-        assert!(err.contains("64"), "{err}");
-    }
-}
-
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -315,4 +297,22 @@ pub fn router_hub(hub: WebHub) -> Router {
         .route("/{name}/sync", post(post_sync))
         .route("/{name}", axum::routing::delete(delete_folder))
         .with_state(hub)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn more_than_64_vault_folders_are_rejected() {
+        let list = (0..65)
+            .map(|i| VaultFolder {
+                name: format!("folder{i}"),
+                path: PathBuf::from(format!("/tmp/ax-vault-{i}")),
+                index: false,
+            })
+            .collect();
+        let err = validate(list).expect_err("65 folders");
+        assert!(err.contains("64"), "{err}");
+    }
 }
