@@ -14,6 +14,7 @@ fn env_lock() -> MutexGuard<'static, ()> {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
 async fn login_covers_the_vault_and_a_share_token_still_opens_it() {
     let _lock = env_lock();
     let dir = tempfile::tempdir().unwrap();
@@ -76,6 +77,7 @@ async fn login_covers_the_vault_and_a_share_token_still_opens_it() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // process-global env; the guard must cover the awaits
 async fn foreign_origin_cannot_open_the_terminal_socket() {
     let _lock = env_lock();
     let dir = tempfile::tempdir().unwrap();
