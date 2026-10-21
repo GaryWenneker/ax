@@ -55,7 +55,7 @@ owo-colors = { version = "4", features = ["supports-colors"] }
 dialoguer = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 dirs = { workspace = true }
 reqwest = { workspace = true }
 axum = "0.8"
