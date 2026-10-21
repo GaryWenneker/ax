@@ -61,7 +61,7 @@ Security audit patterns (OWASP Top 10, LLM Top 10 2025, CWE Top 25 2025, CVSS v4
 - [ ] No open issues
 - [ ] No open items on Security or Code quality (Dependabot, code scanning, secret scanning, code quality)
 - [ ] Local commits pushed to the remote
-- [ ] When those queues and the dependency monitor are green, and the LCM pull requests are merged or closed: bump, build, publish the six packages, then point the site at that tag
+- [ ] Last step, mandatory: bump when the current version is already published, CI green on that commit, six release assets published, then `site/public/releases/latest.txt` points at that tag. The run is not finished before this.
 
 ## The run does not stop (ax)
 
@@ -84,6 +84,8 @@ gh api -X PATCH "repos/GaryWenneker/ax/dependabot/alerts/<number>" \
 - A code-scanning alert on lines that already contain the fix stays open until an analysis of that commit exists. List it again after that analysis. If the analysis still reports it and the harm cannot happen, dismiss it with the code-scanning reason. Do not end before that.
 
 The last action before the release section is the list commands. Each open count is zero. A 404 from the code-quality or secret-scanning alerts API means that product has no alert list. A 403 is retried until the command returns a list. It is not reported as zero.
+
+Zero open items is not the end of the run. The release section still has to publish and point the site at that release. Do not stop between those two.
 
 ## Findings the next run already knows (ax)
 
@@ -306,24 +308,33 @@ gh issue close <number> --repo GaryWenneker/ax --reason completed --comment "<re
 
 An issue that is not one of those security items is still processed. Close it. Use `completed` when the behavior is already in the product. Use `not planned` when it is a roadmap item this run is not implementing. The close comment, in the language from ax settings `reviews.commentLanguage`, names which of those two it is. The open issue list at the end of the run is empty.
 
-## Push, then release (ax)
+## Release is the last step (ax)
 
-After the fixes, push every local commit on the release branch to `origin`. A dirty tree that is not part of this audit stays uncommitted. Do not start the release while a commit that belongs to the audit is only local.
+This step is mandatory. A run that leaves the queues at zero and does not publish is not finished. Do not stop after the queues. Do not stop after the bump. Do not stop after CI. Do not hand the user the commands.
 
-Start the release only when all of these are true:
+Push every audit commit first. A dirty tree that is not part of this audit stays uncommitted.
 
-- the dependency monitor is green on the commit that will be released
-- LCM pull requests are merged or closed
-- the pull request list, the issue list, Dependabot, code scanning, secret scanning, and code quality have no open items
+Do this only when the dependency monitor is green on the commit you will release, every LCM pull request is merged or closed, and the pull request, issue, Dependabot, code scanning, secret scanning, and code quality lists have no open items. If one of those is still open, go back and finish it. Do not publish, and do not end the run.
 
-Then, in this order:
+Then, in this order, in the same run:
 
-1. Bump the patch version in every workspace `Cargo.toml`, `Cargo.lock`, and `crates/ax-web/web-ui/package.json`.
-2. Push that bump. Let CI pass on that commit. The dependency monitor must still be green.
-3. Publish the six platform packages with the release workflow. Do not point the site at the version before `ax-win32-x64.zip`, `ax-win32-arm64.zip`, `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz`, `ax-darwin-x64.tar.gz`, `ax-darwin-arm64.tar.gz`, and `SHA256SUMS` exist on the GitHub release.
-4. Set `site/public/releases/latest.txt` to that tag and push it. Do not add a What's new section or a changelog. Do not run the Netlify deploy.
+1. Read `version` in `crates/ax-cli/Cargo.toml`. If `v` + that version has no published GitHub release, or the release is missing one of the six assets or `SHA256SUMS`, that version is the one you publish. Do not bump it again. If that tag is already a complete published release, bump the patch in every workspace `Cargo.toml`, `Cargo.lock`, and `crates/ax-web/web-ui/package.json`, commit `Release x.y.z.`, and push.
+2. Start CI and wait until the successful run's SHA is the commit you will release. Fix a red job and run CI again.
 
-If any queue is still open, do not bump and do not publish. Go back to the open item and finish it. Do not end the run there.
+```bash
+gh workflow run ci.yml --repo GaryWenneker/ax --ref main
+```
+
+3. Dispatch the dependency monitor on that same commit if the push did not start it. It must succeed.
+4. Publish. Wait until the release lists `ax-win32-x64.zip`, `ax-win32-arm64.zip`, `ax-linux-x64.tar.gz`, `ax-linux-arm64.tar.gz`, `ax-darwin-x64.tar.gz`, `ax-darwin-arm64.tar.gz`, and `SHA256SUMS`, and `isDraft` is false.
+
+```bash
+gh workflow run release.yml --repo GaryWenneker/ax --ref main
+```
+
+5. Set `site/public/releases/latest.txt` to that tag, commit, and push. Do not add a What's new section or a changelog. Do not run the Netlify deploy. `site/netlify/latest-version.json` is generated and gitignored.
+
+The run is finished when that pointer is on the default branch and those seven files are on the GitHub release. Anything earlier is unfinished.
 
 ## PHP runtime
 
