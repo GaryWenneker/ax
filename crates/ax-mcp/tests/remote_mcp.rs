@@ -94,16 +94,17 @@ fn test_material() -> &'static TestMaterial {
     static MATERIAL: OnceLock<TestMaterial> = OnceLock::new();
     MATERIAL.get_or_init(|| {
         use base64::Engine;
-        use rsa::pkcs8::EncodePrivateKey;
-        use rsa::traits::PublicKeyParts;
-        let mut rng = rand::thread_rng();
-        let key = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("test key");
-        let pem = key
-            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
-            .expect("pem")
-            .to_string();
-        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.n().to_bytes_be());
-        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.e().to_bytes_be());
+        // The rsa crate has no patched release for RUSTSEC-2023-0071.
+        let key = openssl::rsa::Rsa::generate(2048).expect("test key");
+        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.n().to_vec());
+        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.e().to_vec());
+        let pem = String::from_utf8(
+            openssl::pkey::PKey::from_rsa(key)
+                .expect("pkey")
+                .private_key_to_pem_pkcs8()
+                .expect("pem"),
+        )
+        .expect("pem utf8");
         let jwks = serde_json::from_value(json!({
             "keys": [{
                 "kty": "RSA",
