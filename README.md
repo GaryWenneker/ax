@@ -1,3 +1,5 @@
+![AX — Agent Xpansion. The context layer for AI agents.](docs/images/readme-header.webp)
+
 # ax
 
 ## Your context. Your rules. Your control.
