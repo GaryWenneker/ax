@@ -39,7 +39,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react-swc": "^4.3.3",
     "typescript": "^5.4.5",
-    "typescript-language-server": "^6.0.0",
+    "typescript-language-server": "^6.0.2",
     "vite": "^7.3.6"
   },
   "overrides": {
