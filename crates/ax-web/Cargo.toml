@@ -48,7 +48,7 @@ reqwest = { workspace = true }
 futures-util = { workspace = true }
 async-stream = { workspace = true }
 base64 = "0.22"
-argon2 = "0.5"
+argon2 = "0.6"
 blake3 = { workspace = true }
 webauthn-rs = { version = "0.5.5", features = ["conditional-ui"] }
 # webauthn-rs links OpenSSL. Cross builds (Linux arm64, macOS Intel) and Windows
