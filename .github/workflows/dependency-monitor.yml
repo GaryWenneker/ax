@@ -56,4 +56,6 @@ jobs:
           node-version: "22"
       - name: Audit all locked npm dependencies
         working-directory: ${{ matrix.path }}
-        run: npm audit --package-lock-only --audit-level=moderate
+        run: |
+          npm install -g npm@11.19.1
+          npm audit --package-lock-only --audit-level=moderate
