@@ -367,7 +367,10 @@ html[data-ax-motion="paused"] .ax-reveal-pending { opacity:1; transform:none; }
 :root[data-theme="light"] .sl-markdown-content a:hover{color:#284d00}
 :root[data-theme="light"] .sidebar-content a[aria-current="page"]{background:#e4f1d7;color:#20281d}
 
-.expressive-code .copy .feedback.show {
+.expressive-code .copy .feedback.show,
+.expressive-code .copy [aria-live]:not(:empty) {
+  position: relative;
+  overflow: visible;
   opacity: 1;
   transform: none;
   padding: 6px 12px;
@@ -376,6 +379,25 @@ html[data-ax-motion="paused"] .ax-reveal-pending { opacity:1; transform:none; }
   color: #101510;
   font: 650 12px/1 'IBM Plex Mono', monospace;
 }
+.expressive-code .copy .feedback.show::after,
+.expressive-code .copy [aria-live]:not(:empty)::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  right: -6px;
+  top: -6px;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  background: #101510;
+  clip-path: polygon(50% 0, 63% 37%, 100% 50%, 63% 63%, 50% 100%, 37% 63%, 0 50%, 37% 37%);
+  animation: ax-copied-spark .55s ease-out 3;
+}
+@media (prefers-reduced-motion: reduce) {
+  .expressive-code .copy .feedback.show::after,
+  .expressive-code .copy [aria-live]:not(:empty)::after { animation: none; opacity: 0; }
+}
+@keyframes ax-copied-spark{0%{opacity:1}100%{opacity:0;transform:translateY(-16px) scale(.35);box-shadow:-32px 10px 0 #101510,24px 14px 0 #386900,-18px 16px 0 #101510,28px -8px 0 #386900}}
 .install-block .copy[data-copied="true"] {
   background: #b9ff6a;
   color: #101510;

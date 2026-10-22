@@ -3,7 +3,7 @@ title: Get Started
 description: Get up and running with ax using a published download or the current main source.
 ---
 
-Install the [latest published binary](https://getax.wenneker.io/releases/latest.txt), or [build the current main source](/getting-started/installation/#build-from-main) for the version shown on this site. Knowledge graph, memory vault, policy engine, MCP Logging / Quality, and Command Center run in one binary.
+Install the published binary with the shell below, then run `ax install` and `ax init` in your project. Knowledge graph, memory vault, policy engine, MCP Logging / Quality, and Command Center run in one binary. Building from source is a separate path at the bottom of [Installation](/getting-started/installation/#build-from-main).
 
 ## 1. Install the CLI
 
@@ -28,18 +28,17 @@ ax install
 ax install --yes          # non-interactive
 ```
 
-Configures Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro with the ax MCP server. This step does **not** index code.
+Configures Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, and Kiro with the ax MCP server. This step does **not** index code. After `ax install`, run `ax init` in each directory where you want to use ax.
 
-## 3. Projects initialize themselves
-
-Installing or upgrading ax runs `ax init --all`. That refreshes ax projects already under your home directory (four levels, directories that contain `.ax/ax.db`) without questions. A new checkout is not seeded until you run `ax init` there.
+## 3. Initialize your project
 
 ```bash
-ax init --all
-cd your-project && ax init   # one directory, with the stack and IDE questions
+cd your-project && ax init
 ```
 
-Creates `.ax/`, builds the knowledge graph, and installs git hooks (sync, ship evaluate, memory capture). Your agent uses ax tools automatically when `.ax/` exists.
+After `ax install`, run `ax init` in each directory where you want to use ax. Repeat it for every other directory. You do not need `ax init --all`.
+
+`ax init` creates `.ax/`, builds the knowledge graph, and installs git hooks (sync, ship evaluate, memory capture). It asks which stacks and which IDEs to set up. Your agent uses ax tools automatically when `.ax/` exists.
 
 ## 4. Optional — open Command Center
 

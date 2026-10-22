@@ -3,7 +3,7 @@ title: Your First Graph
 description: Build an index and run your first queries against it.
 ---
 
-Once ax is installed, building and exploring a graph takes a few commands.
+After `ax install`, run `ax init` in each directory where you want to use ax. Building and exploring a graph then takes a few commands.
 
 ## Index a project
 

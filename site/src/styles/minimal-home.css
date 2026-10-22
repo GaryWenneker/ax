@@ -29,7 +29,7 @@ html:has(body.ax-landing),body.ax-landing{height:100svh;overflow:hidden}
 .ax-landing .ax-download-row{display:flex;gap:10px;align-items:stretch}
 .ax-landing .ax-download-primary{min-height:59px;display:flex;align-items:center;gap:17px;padding:0 24px;background:var(--ax-lime);color:#101510;border:1px solid var(--ax-lime);border-radius:9px;font:650 14px/1.4 'IBM Plex Mono',monospace;transition:background .22s ease,transform .22s ease;white-space:nowrap;flex:1}
 .ax-landing .ax-download-primary:hover{background:#d0ffac;transform:translateY(-1px)}
-.ax-landing .ax-download-primary[data-copied="true"],.ax-landing .ax-install-command button[data-copied="true"]{background:#fff;color:#101510}
+.ax-landing .ax-download-primary[data-copied="true"],.ax-landing .ax-install-command button[data-copied="true"]{position:relative;background:#fff;color:#101510}
 .ax-landing .ax-download-primary .ax-os-icon{width:23px;height:23px;flex:none;display:inline-flex;align-items:center;justify-content:center}
 .ax-landing .ax-os-icon svg{display:block;width:100%;height:100%}
 .ax-landing .ax-download-primary .ax-download-glyph{margin-left:auto;font-size:20px;font-weight:400}
@@ -95,7 +95,17 @@ html[data-ax-motion='paused'] .ax-landing .ax-reveal{opacity:1;transform:none;tr
 @media(prefers-reduced-motion:reduce){html:not([data-ax-motion='running']) .ax-landing .ax-reveal{opacity:1;transform:none;transition:none}}
 
 .ax-landing .ax-download{position:relative}
-.ax-landing .ax-install-command{position:absolute;z-index:8;left:0;right:0;bottom:calc(100% + 12px);margin:0;max-height:min(260px,46svh);overflow:auto;padding:18px;background:rgba(8,10,9,.58);border:1px solid rgba(58,68,56,.72);border-radius:11px;font-size:13px;line-height:1.45;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 14px 40px rgba(0,0,0,.45)}
+.ax-landing .ax-install-command{position:absolute;z-index:8;left:0;right:0;bottom:calc(100% + 12px);margin:0;max-height:min(260px,46svh);overflow:auto;padding:18px;background:rgba(8,10,9,.58);border:1px solid rgba(58,68,56,.72);border-radius:11px;font-size:13px;line-height:1.45;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 14px 40px rgba(0,0,0,.45);opacity:1;transition:opacity 0.9s ease}
+.ax-landing .ax-install-command.is-fading{opacity:0;pointer-events:none}
 .ax-landing .ax-install-command[hidden]{display:none!important}
+html[data-ax-motion='paused'] .ax-landing .ax-install-command{transition:none}
+@media(prefers-reduced-motion:reduce){html:not([data-ax-motion='running']) .ax-landing .ax-install-command{transition:none}}
 .ax-landing .ax-install-command code{display:block;overflow-wrap:anywhere;font-family:'IBM Plex Mono',monospace;color:var(--ax-lime);margin:12px 0}
 .ax-landing .ax-install-command button{padding:10px 16px;margin:4px 0 8px;background:var(--ax-lime);color:#101510;border:0;border-radius:4px}
+.ax-landing .ax-download-primary[data-copied="true"]::before,.ax-landing .ax-install-command button[data-copied="true"]::before{content:"";position:absolute;z-index:2;left:16%;top:10px;width:12px;height:12px;pointer-events:none;background:#101510;filter:drop-shadow(0 0 5px #b9ff6a);clip-path:polygon(50% 0,63% 37%,100% 50%,63% 63%,50% 100%,37% 63%,0 50%,37% 37%);box-shadow:0 0 0 #101510;animation:ax-copied-spark .55s ease-out 3;animation-delay:.12s}
+.ax-landing .ax-download-primary[data-copied="true"]::after{content:"";position:absolute;z-index:2;right:16%;top:6px;width:12px;height:12px;pointer-events:none;background:#101510;filter:drop-shadow(0 0 5px #b9ff6a);clip-path:polygon(50% 0,63% 37%,100% 50%,63% 63%,50% 100%,37% 63%,0 50%,37% 37%);box-shadow:0 0 0 #101510;animation:ax-copied-spark .55s ease-out 3}
+.ax-landing .ax-install-command button[data-copied="true"]::after{content:"";position:absolute;z-index:2;right:12px;top:6px;width:12px;height:12px;pointer-events:none;background:#101510;filter:drop-shadow(0 0 5px #b9ff6a);clip-path:polygon(50% 0,63% 37%,100% 50%,63% 63%,50% 100%,37% 63%,0 50%,37% 37%);box-shadow:0 0 0 #101510;animation:ax-copied-spark .55s ease-out 3}
+@keyframes ax-copied-spark{0%{opacity:1}100%{opacity:0;transform:translateY(-16px) scale(.35);box-shadow:-32px 10px 0 #101510,24px 14px 0 #386900,-18px 16px 0 #101510,28px -8px 0 #386900}}
+html[data-ax-motion='paused'] .ax-landing .ax-download-primary[data-copied="true"]::after{animation:none;opacity:0}
+html[data-ax-motion='paused'] .ax-landing .ax-download-primary[data-copied="true"]::before,html[data-ax-motion='paused'] .ax-landing .ax-install-command button[data-copied="true"]::before,html[data-ax-motion='paused'] .ax-landing .ax-install-command button[data-copied="true"]::after{animation:none;opacity:0}
+@media(prefers-reduced-motion:reduce){html:not([data-ax-motion='running']) .ax-landing .ax-download-primary[data-copied="true"]::before,html:not([data-ax-motion='running']) .ax-landing .ax-download-primary[data-copied="true"]::after,html:not([data-ax-motion='running']) .ax-landing .ax-install-command button[data-copied="true"]::before,html:not([data-ax-motion='running']) .ax-landing .ax-install-command button[data-copied="true"]::after{animation:none;opacity:0}}

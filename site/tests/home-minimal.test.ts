@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { releaseAssets, getReleaseAsset, getDefaultArch } from '../src/scripts/minimal-download.ts';
+import { releaseAssets, getReleaseAsset, getDefaultArch, mountMinimalDownload } from '../src/scripts/minimal-download.ts';
 
 const site = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string) => readFileSync(path.join(site, p), 'utf8');
@@ -78,6 +78,153 @@ test('installer offers commands with manual OS selection and keeps optional rele
   assert.equal(getDefaultArch('windows'), 'x64');
 });
 
+test('copied install popup closes for another choice and fades out after 1.5 seconds', async () => {
+  const timers: { fn: () => void; ms: number; dead: boolean }[] = [];
+  const listeners = new Map<string, ((event: { target?: unknown; key?: string }) => void)[]>();
+  function make(selectors: string[], dataset: Record<string, string> = {}) {
+    const el: {
+      selectors: string[];
+      dataset: Record<string, string>;
+      hidden: boolean;
+      textContent: string;
+      innerHTML: string;
+      _kids: ReturnType<typeof make>[];
+      _classes: Set<string>;
+      classList: { add: (c: string) => void; remove: (c: string) => void; contains: (c: string) => boolean };
+      _listeners: Map<string, (() => void)[]>;
+      setAttribute: (name: string, value: string) => void;
+      addEventListener: (type: string, fn: () => void) => void;
+      contains: (node: unknown) => boolean;
+      querySelector: (sel: string) => ReturnType<typeof make> | null;
+      querySelectorAll: (sel: string) => ReturnType<typeof make>[];
+    } = {
+      selectors,
+      dataset: { ...dataset },
+      hidden: selectors.includes('[data-ax-install-panel]') || selectors.includes('[data-ax-platform-panel]'),
+      textContent: '',
+      innerHTML: '',
+      _kids: [],
+      _classes: new Set<string>(),
+      classList: {
+        add: (c: string) => el._classes.add(c),
+        remove: (c: string) => el._classes.delete(c),
+        contains: (c: string) => el._classes.has(c),
+      },
+      _listeners: new Map(),
+      setAttribute() {},
+      addEventListener(type: string, fn: () => void) {
+        const list = el._listeners.get(type) ?? [];
+        list.push(fn);
+        el._listeners.set(type, list);
+      },
+      contains(node: unknown) {
+        return node === el || el._kids.some(kid => kid.contains(node));
+      },
+      querySelector(sel: string) {
+        return el.querySelectorAll(sel)[0] ?? null;
+      },
+      querySelectorAll(sel: string) {
+        const found: ReturnType<typeof make>[] = [];
+        const visit = (node: ReturnType<typeof make>) => {
+          if (node.selectors.includes(sel)) found.push(node);
+          node._kids.forEach(visit);
+        };
+        el._kids.forEach(visit);
+        return found;
+      },
+    };
+    return el;
+  }
+  const root = make(['[data-ax-downloader]']);
+  const main = make(['[data-ax-download]']);
+  const title = make(['[data-ax-download-label]']);
+  const icon = make(['[data-ax-main-icon]']);
+  const summary = make(['[data-ax-platform-label]']);
+  const toggle = make(['[data-ax-platform-toggle]']);
+  const panel = make(['[data-ax-platform-panel]']);
+  const help = make(['[data-ax-platform-help]']);
+  const install = make(['[data-ax-install-panel]']);
+  const code = make(['[data-ax-install-code]']);
+  const instruction = make(['[data-ax-install-instruction]']);
+  const copy = make(['[data-ax-install-copy]']);
+  const status = make(['[data-ax-install-status]']);
+  root._kids.push(main, title, icon, summary, toggle, panel, help, install, code, instruction, copy, status);
+  const previous = {
+    document: globalThis.document,
+    window: globalThis.window,
+    navigator: globalThis.navigator,
+    Node: globalThis.Node,
+  };
+  class DomNode {}
+  function setGlobal(name: 'document' | 'window' | 'navigator' | 'Node', value: unknown) {
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+  }
+  setGlobal('Node', DomNode);
+  setGlobal('navigator', {
+    clipboard: { writeText: async () => {} },
+    platform: 'MacIntel',
+    userAgent: 'Mozilla/5.0 (Macintosh)',
+    maxTouchPoints: 0,
+  });
+  setGlobal('document', {
+    documentElement: { dataset: {} },
+    addEventListener(type: string, fn: (event: { target?: unknown; key?: string }) => void) {
+      const list = listeners.get(type) ?? [];
+      list.push(fn);
+      listeners.set(type, list);
+    },
+    querySelector(sel: string) {
+      return sel === '[data-ax-downloader]' ? root : null;
+    },
+  });
+  setGlobal('window', {
+    setTimeout(fn: () => void, ms: number) {
+      timers.push({ fn, ms, dead: false });
+      return timers.length;
+    },
+    clearTimeout(id: number) {
+      const timer = timers[id - 1];
+      if (timer) timer.dead = true;
+    },
+    matchMedia: () => ({ matches: false }),
+  });
+  function flush(ms: number) {
+    const due = timers.filter(timer => !timer.dead && timer.ms === ms);
+    for (const timer of due) {
+      timer.dead = true;
+      timer.fn();
+    }
+  }
+  function click(el: { _listeners: Map<string, (() => void)[]> }) {
+    for (const fn of el._listeners.get('click') ?? []) fn();
+  }
+  try {
+    mountMinimalDownload();
+    click(main);
+    await Promise.resolve();
+    assert.equal(install.hidden, false);
+    click(toggle);
+    assert.equal(install.hidden, true, 'other platforms closes the copied popup');
+    click(main);
+    await Promise.resolve();
+    assert.equal(install.hidden, false);
+    flush(1500);
+    assert.equal(install.classList.contains('is-fading'), true);
+    flush(900);
+    assert.equal(install.hidden, true);
+    click(main);
+    await Promise.resolve();
+    const outside = new DomNode();
+    for (const fn of listeners.get('pointerdown') ?? []) fn({ target: outside });
+    assert.equal(install.hidden, true, 'a click outside closes the copied popup');
+  } finally {
+    setGlobal('document', previous.document);
+    setGlobal('window', previous.window);
+    setGlobal('navigator', previous.navigator);
+    setGlobal('Node', previous.Node);
+  }
+});
+
 test('phone landing fits the viewport and the platform menu overlays with a blur', () => {
   const phone = css.split('\n').find((line) => line.includes('@media(max-width:600px)') && line.includes('.ax-main'));
   assert.ok(phone, 'missing phone layout');
@@ -87,4 +234,12 @@ test('phone landing fits the viewport and the platform menu overlays with a blur
   assert.doesNotMatch(phone, /position:relative;bottom:auto/);
   assert.match(css, /\.ax-platform-panel\{[^}]*backdrop-filter:blur\(18px\)/);
   assert.match(css, /\.ax-platform-panel\{[^}]*background:rgba\(18,23,19,\.62\)/);
+});
+
+test('copied install button throws sparks so the copy stays visible', () => {
+  assert.match(css, /@keyframes ax-copied-spark\{0%\{opacity:1\}100%\{opacity:0/);
+  assert.match(css, /\.ax-download-primary\[data-copied="true"\]::after\{[^}]*animation:ax-copied-spark/);
+  assert.match(css, /\.ax-install-command button\[data-copied="true"\]::after\{[^}]*animation:ax-copied-spark/);
+  assert.match(css, /data-ax-motion='paused'\] \.ax-landing \.ax-download-primary\[data-copied="true"\]::after\{animation:none/);
+  assert.doesNotMatch(css, /border-radius:50%/);
 });

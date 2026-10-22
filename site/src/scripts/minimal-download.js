@@ -33,11 +33,41 @@ export function mountMinimalDownload() {
     let os = null;
     const buttons = [...root.querySelectorAll('[data-ax-os]')];
     const icons = new Map(buttons.map(button => [button.dataset.axOs, button.querySelector('.ax-os-icon')?.innerHTML || '']));
+    let dismissTimer = 0;
+    function concealInstall(immediate) {
+        window.clearTimeout(dismissTimer);
+        if (!install)
+            return;
+        if (immediate || install.hidden) {
+            install.classList.remove('is-fading');
+            install.hidden = true;
+            return;
+        }
+        install.classList.add('is-fading');
+        const reduced = document.documentElement.dataset.axMotion === 'paused'
+            || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        dismissTimer = window.setTimeout(() => {
+            install.classList.remove('is-fading');
+            install.hidden = true;
+            if (status)
+                status.textContent = '';
+        }, reduced ? 0 : 900);
+    }
+    function revealInstall() {
+        if (!install)
+            return;
+        window.clearTimeout(dismissTimer);
+        install.classList.remove('is-fading');
+        install.hidden = false;
+        dismissTimer = window.setTimeout(() => concealInstall(false), 1500);
+    }
     function openPanel(open) {
         if (!panel || !toggle)
             return;
         panel.hidden = !open;
         toggle.setAttribute('aria-expanded', String(open));
+        if (open)
+            concealInstall(true);
     }
     function render() {
         if (!title || !summary || !main || !icon || !code || !instruction || !status)
@@ -61,7 +91,7 @@ export function mountMinimalDownload() {
     }));
     toggle.addEventListener('click', () => openPanel(panel.hidden));
     function copyCommand(selected) {
-        install.hidden = false;
+        revealInstall();
         code.textContent = installerCommand(selected);
         void navigator.clipboard?.writeText(installerCommand(selected)).then(() => {
             if (os !== selected || !title || !main)
@@ -97,11 +127,17 @@ export function mountMinimalDownload() {
         copyCommand(os);
     });
     document.addEventListener('pointerdown', event => {
-        if (event.target instanceof Node && !root.contains(event.target))
-            openPanel(false);
+        if (!(event.target instanceof Node) || root.contains(event.target))
+            return;
+        openPanel(false);
+        concealInstall(true);
     });
-    document.addEventListener('keydown', event => { if (event.key === 'Escape')
-        openPanel(false); });
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape')
+            return;
+        openPanel(false);
+        concealInstall(true);
+    });
     const nav = navigator;
     os = detectInstallOS(nav.userAgentData?.platform || nav.platform, nav.userAgent, nav.maxTouchPoints);
     render();

@@ -51,7 +51,7 @@ See [Configuration](/getting-started/configuration/) for the full schema.
 
 ### `ax` / `ax install`
 
-Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed). Does **not** index a project. Prompt-hook and stop-hook are Claude Code-specific. The turn hooks for [per-turn memories](/guides/memory/#per-turn-memories) are added for Cursor and Claude Code. The [read-guard hook](#ax-read-guard) is added for every agent that can block a tool call: Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. See [Integrations](/reference/integrations/) for per-agent details.
+Interactive installer — writes MCP config for detected AI agents (Cursor, Claude Code, Codex, opencode, Gemini CLI, Antigravity, Kiro, Hermes, VS Code Copilot, Windsurf, Zed). Does **not** index a project. After `ax install`, run `ax init` in each directory where you want to use ax. Prompt-hook and stop-hook are Claude Code-specific. The turn hooks for [per-turn memories](/guides/memory/#per-turn-memories) are added for Cursor and Claude Code. The [read-guard hook](#ax-read-guard) is added for every agent that can block a tool call: Cursor, Claude Code, VS Code Copilot, Codex, Gemini CLI, and Windsurf. See [Integrations](/reference/integrations/) for per-agent details.
 
 | Argument / flag | Type | Description |
 |---|---|---|
@@ -84,7 +84,7 @@ ax uninstall
 
 ### `ax init [path]`
 
-`ax init --all` is what the installer and `ax upgrade` run after the binary is in place. It walks four levels under your home directory, skips hidden folders and dependency folders, and refreshes every directory that already has `.ax/ax.db`. A git repository or other software project without that database is left untouched. It does not prompt. A nested package inside an existing ax project is left to that project. `AX_SKIP_PROJECT_INIT=1` skips the scan. Create a new ax project with `ax init` in that directory.
+`ax init --all` is what the installer and `ax upgrade` run after the binary is in place. It walks four levels under your home directory, skips hidden folders and dependency folders, and refreshes every directory that already has `.ax/ax.db`. A git repository or other software project without that database is left untouched. It does not prompt. A nested package inside an existing ax project is left to that project. `AX_SKIP_PROJECT_INIT=1` skips the scan. After `ax install`, run `ax init` in each directory where you want to use ax. `--all` does not do that.
 
 Initialize a project: create `.ax/` (database, lock, `ship.toml`), index the project, install git hooks, install the Cursor savings hook (`ax savings hook install`), import Claude and Cursor savings logs (`ax savings import --all`), then offer the agent installer. A workspace init runs the savings steps once, after every member.
 

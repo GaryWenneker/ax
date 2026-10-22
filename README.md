@@ -36,13 +36,12 @@ irm https://getax.wenneker.io/install.ps1 | iex
 Have Node? `npx @garywenneker/ax` downloads the native binary. Open a new terminal so `PATH` updates. WSL2 uses the Linux command inside WSL.
 
 ```bash
-ax install          # wire MCP into detected agents
-ax init --all       # refresh ax projects already under your home directory
-cd your-project && ax init
-ax web --open       # local Command Center
+ax install                 # wire MCP into detected agents
+cd your-project && ax init # required in each directory where you want to use ax
+ax web --open              # local Command Center
 ```
 
-Install or upgrade also runs `ax init --all`. Prebuilt releases ship six binaries: Windows x64/arm64, macOS Intel/Apple Silicon, Linux x64/arm64.
+After `ax install`, run `ax init` in each directory where you want to use ax. `ax init --all` only refreshes directories that already contain `.ax/ax.db`. It does not set up a new directory. Prebuilt releases ship six binaries: Windows x64/arm64, macOS Intel/Apple Silicon, Linux x64/arm64.
 
 The shell installer saves the binary directory in your shell's startup configuration. Open a new terminal after installation, or run the printed `export PATH=...` command in the current terminal. On macOS with zsh, it updates `${ZDOTDIR:-$HOME}/.zshrc` without replacing existing settings. If profile setup fails, it reports the file and manual recovery instructions.
 
