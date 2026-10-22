@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "ax-agent"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-installer",
  "ax-mcp",
@@ -532,7 +532,7 @@ dependencies = [
 
 [[package]]
 name = "ax-cli"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-agent",
  "ax-context",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "ax-context"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-db",
  "ax-graph",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "ax-core"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-context",
  "ax-db",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "ax-db"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "ax-desktop-client"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "anyhow",
  "ax-web",
@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "ax-docs-catalog"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -681,7 +681,7 @@ dependencies = [
 
 [[package]]
 name = "ax-extraction"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "anyhow",
  "ax-db",
@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "ax-git"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -747,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "ax-global-db"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "anyhow",
  "ax-db",
@@ -764,7 +764,7 @@ dependencies = [
 
 [[package]]
 name = "ax-graph"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "ax-installer"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-utils",
  "dirs",
@@ -789,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "ax-lsp"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-db",
  "ax-types",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "ax-mcp"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "async-trait",
  "ax-context",
@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "ax-memory"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-db",
  "ax-utils",
@@ -869,7 +869,7 @@ dependencies = [
 
 [[package]]
 name = "ax-pi"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-usage",
  "blake3",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "ax-plugins"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "ax-policy"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-db",
  "ax-utils",
@@ -917,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "ax-quality"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "ax-reasoning"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-utils",
  "dirs",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "ax-remote"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "async-trait",
  "ax-git",
@@ -963,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "ax-resolution"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "async-trait",
  "ax-db",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "ax-share"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-memory",
  "ax-policy",
@@ -1000,7 +1000,7 @@ dependencies = [
 
 [[package]]
 name = "ax-ship"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "async-stream",
  "ax-core",
@@ -1028,7 +1028,7 @@ dependencies = [
 
 [[package]]
 name = "ax-skill-catalog"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "blake3",
  "flate2",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "ax-smoke-tests"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-core",
  "ax-extraction",
@@ -1054,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "ax-sync"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-types",
  "ax-utils",
@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "ax-telemetry"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-utils",
  "dirs",
@@ -1083,7 +1083,7 @@ dependencies = [
 
 [[package]]
 name = "ax-tia"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-db",
  "ax-git",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "ax-types"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -1107,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "ax-usage"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "ax-db",
  "ax-utils",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "ax-utils"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "anyhow",
  "ax-types",
@@ -1143,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "ax-web"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "anyhow",
  "argon2",
@@ -6105,7 +6105,7 @@ dependencies = [
 
 [[package]]
 name = "ratatouille"
-version = "8.3.7"
+version = "8.3.8"
 dependencies = [
  "libc",
  "ratatui",
