@@ -30,6 +30,27 @@ function Write-Step {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Park-FunctionEmit {
+    param([string]$FunctionsDir)
+    $park = Join-Path ([System.IO.Path]::GetTempPath()) ("ax-fn-emit-" + [guid]::NewGuid().ToString('n'))
+    New-Item -ItemType Directory -Path $park | Out-Null
+    Get-ChildItem -LiteralPath $FunctionsDir -File | Where-Object {
+        $_.Name -like '*.js' -or $_.Name -like '*.js.map' -or $_.Name -like '*.d.ts'
+    } | ForEach-Object {
+        Move-Item -LiteralPath $_.FullName -Destination $park
+    }
+    return $park
+}
+
+function Restore-FunctionEmit {
+    param([string]$Park, [string]$FunctionsDir)
+    if (-not $Park -or -not (Test-Path -LiteralPath $Park)) { return }
+    Get-ChildItem -LiteralPath $Park -File | ForEach-Object {
+        Move-Item -LiteralPath $_.FullName -Destination $FunctionsDir
+    }
+    Remove-Item -LiteralPath $Park -Force
+}
+
 Require-Command 'node'
 Require-Command 'npm'
 Require-Command 'netlify'
@@ -66,6 +87,7 @@ if (-not $Preview) {
     [System.IO.File]::WriteAllText((Join-Path $siteDir 'public/releases/latest.txt'), "$($release.tagName)`n", (New-Object System.Text.UTF8Encoding $false))
 }
 
+$parkedEmit = $null
 Push-Location $siteDir
 try {
     Write-Step "Checking Netlify link"
@@ -93,6 +115,8 @@ From $siteDir run once:
         throw "dist/ not found - run without -SkipBuild first"
     }
 
+    # Compiled .js/.d.ts next to the TypeScript sources become invalid function names.
+    $parkedEmit = Park-FunctionEmit $functionsDir
     Write-Step $(if ($Preview) { 'Deploying preview (draft)' } else { 'Deploying production' })
 
     $deployArgs = @(
@@ -128,5 +152,6 @@ From $siteDir run once:
     Write-Host "Required Netlify env vars (Site settings -> Environment variables):" -ForegroundColor DarkGray
     Write-Host "  POSTHOG_KEY, POSTHOG_PERSONAL_KEY, POSTHOG_PROJECT_ID, ADMIN_SECRET"
 } finally {
+    Restore-FunctionEmit $parkedEmit $functionsDir
     Pop-Location
 }
