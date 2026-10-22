@@ -10,6 +10,7 @@ import {
 	kickerFor,
 	ogImagePath,
 	pathnameFromDistHtml,
+	pngDataUrl,
 	prepareShareShot,
 	readShareMeta,
 	releaseLabel,
@@ -45,6 +46,13 @@ test('release labels must look like v7.0.0', () => {
 	assert.match(releaseLabel(readFileSync(path.join(siteDir, 'public', 'releases', 'latest.txt'), 'utf8')), /^v\d+\.\d+\.\d+$/);
 	assert.throws(() => releaseLabel('5.0.0'), /v7\.0\.0/);
 	assert.throws(() => releaseLabel(''), /v7\.0\.0/);
+});
+
+test('screenshot bytes become a png data url', () => {
+	const header = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+	const url = pngDataUrl(header);
+	assert.equal(url, 'data:image/png;base64,iVBORw0KGgo=');
+	assert.equal(pngDataUrl(Buffer.from(header)), url);
 });
 
 test('the card paints the given release and escapes the page title', () => {

@@ -47,6 +47,11 @@ export function releaseLabel(raw) {
 	return version;
 }
 
+/** Puppeteer screenshots are Uint8Array. Typed arrays ignore a toString encoding. */
+export function pngDataUrl(bytes) {
+	return `data:image/png;base64,${Buffer.from(bytes).toString('base64')}`;
+}
+
 export function escapeHtml(value) {
 	return String(value).replace(/[&<>"']/g, (ch) => {
 		switch (ch) {

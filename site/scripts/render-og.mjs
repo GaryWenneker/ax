@@ -17,6 +17,7 @@ import {
 	kickerFor,
 	ogImagePath,
 	pathnameFromDistHtml,
+	pngDataUrl,
 	prepareShareShot,
 	readShareMeta,
 	releaseLabel,
@@ -151,7 +152,7 @@ async function main() {
 	if (!existsSync(distDir)) throw new Error('dist/ is missing — run astro build first');
 	const version = releaseLabel(readSourceVersion(siteDir));
 	const logo = readFileSync(path.join(siteDir, 'public', 'logo.png'));
-	const logoUrl = `data:image/png;base64,${logo.toString('base64')}`;
+	const logoUrl = pngDataUrl(logo);
 	const pages = pagesToRender();
 	const require = createRequire(import.meta.url);
 	const puppeteer = require('puppeteer');
@@ -164,7 +165,7 @@ async function main() {
 		for (const [image, info] of pages) {
 			const pageUrl = `http://127.0.0.1:${port}${info.pathname}`;
 			const shot = await capturePage(page, pageUrl);
-			const shotUrl = `data:image/png;base64,${shot.toString('base64')}`;
+			const shotUrl = pngDataUrl(shot);
 			await page.setViewport({ width: 1200, height: 630, deviceScaleFactor: 1 });
 			await page.setContent(
 				cardHtml({
@@ -186,8 +187,9 @@ async function main() {
 							reject(new Error('card image missing'));
 							return;
 						}
-						if (img.complete && img.naturalWidth > 0) {
-							resolve();
+						if (img.complete) {
+							if (img.naturalWidth > 0) resolve();
+							else reject(new Error('card image failed to load'));
 							return;
 						}
 						img.onload = () => resolve();
