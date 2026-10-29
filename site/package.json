@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@netlify/functions": "^6.0.2",
-    "puppeteer": "^25.14.0",
+    "puppeteer": "^25.16.0",
     "typescript": "^5.0.0"
   },
   "overrides": {
