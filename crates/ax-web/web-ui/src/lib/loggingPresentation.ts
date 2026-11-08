@@ -100,6 +100,8 @@ export type LoggingRowView = {
   title: string;
   sessionId: string | null;
   sessionShort: string | null;
+  /** Turn memory id from CLI `turn.completed` activity lines (`memory=turn-…`). */
+  memoryId: string | null;
 };
 
 type RowEntry = Readonly<Pick<TraceEntry, 'kind' | 'message' | 'tool'>>;
@@ -337,7 +339,11 @@ function rowTitle(entry: RowEntry, args: Record<string, unknown> | null, label: 
 /** Display-time row. The log line stays the source for search and the detail view. */
 export function loggingRowView(entry: RowEntry): LoggingRowView {
   const args = argsOf(entry);
-  const sessionId = textOf(args?.session) ?? fieldsOf(entry.message).get('session') ?? null;
+  const fields = fieldsOf(entry.message);
+  const sessionId = textOf(args?.session) ?? fields.get('session') ?? null;
+  const memoryRaw = fields.get('memory');
+  const memoryId =
+    memoryRaw && /^turn-[A-Za-z0-9_-]+$/.test(memoryRaw.trim()) ? memoryRaw.trim() : null;
   const label = loggingToolLabel(entry.tool, entry.kind);
   const fact = rowTitle(entry, args, label) || label;
   const title = fact === label || fact.toLowerCase().startsWith(`${label.toLowerCase()} `) ? fact : `${label} · ${fact}`;
@@ -346,5 +352,6 @@ export function loggingRowView(entry: RowEntry): LoggingRowView {
     title,
     sessionId,
     sessionShort: sessionId ? shortSession(sessionId) : null,
+    memoryId,
   };
 }

@@ -53,6 +53,7 @@ import { MEMORY_CATEGORIES, memoryCategory } from '../memoryCategory';
 import { useTheme } from '../hooks/useTheme';
 import { usePageContext } from '../context/UiContext';
 import { formatInstantInZone, browserTimeZone } from '../lib/timeZone';
+import { parseLocation } from '../lib/routes';
 import SettingsSelect from '../components/ui/SettingsSelect';
 
 const KIND_ICONS: Record<string, string> = {
@@ -85,7 +86,7 @@ export default function MemoryPage() {
   const [matches, setMatches] = useState<MemoryMatch[] | null>(null);
   const [total, setTotal] = useState(0);
   const [q, setQ] = usePersistedString('memory-q', '');
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(() => parseLocation().memoryId ?? '');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -113,6 +114,15 @@ export default function MemoryPage() {
   }
 
   useEffect(() => { loadAll(); }, []);
+
+  useEffect(() => {
+    function syncFromRoute() {
+      const id = parseLocation().memoryId;
+      if (id) setSelectedId(id);
+    }
+    window.addEventListener('popstate', syncFromRoute);
+    return () => window.removeEventListener('popstate', syncFromRoute);
+  }, []);
 
   const qRef = useRef(q);
   qRef.current = q;
@@ -254,7 +264,10 @@ export default function MemoryPage() {
   usePageContext('Memory', `${total} memories${q ? ` · "${q}"` : ''}`);
 
   const gitCount = memories.filter((m) => m.source === 'git').length;
-  const manualCount = memories.filter((m) => m.source !== 'git').length;
+  const cliTurnCount = memories.filter((m) => m.source === 'cli-turn').length;
+  const manualCount = memories.filter(
+    (m) => m.source !== 'git' && m.source !== 'cli-turn',
+  ).length;
 
   return (
     <PageShell className="memory-page">
@@ -436,6 +449,17 @@ export default function MemoryPage() {
             </span>
           </div>
           <div className="mem-stat">
+            <span className="mem-stat-value">{cliTurnCount}</span>
+            <span className="mem-stat-label">
+              cli turns
+              <InfoHover label="About CLI turn memories">
+                Research turns finished with <code>ax turn finish</code> (CLI-only or agent loop
+                without IDE hooks). Stored with <code>source=cli-turn</code> in the same vault as
+                MCP and git memories.
+              </InfoHover>
+            </span>
+          </div>
+          <div className="mem-stat">
             <span className="mem-stat-value">hybrid</span>
             <span className="mem-stat-label">
               search mode
@@ -530,6 +554,14 @@ export default function MemoryPage() {
                               <span className="page-item-badge" title="Captured from a git commit. This is the source, not a tag.">
                                 <Codicon name="git-branch" className="badge-icon" />
                                 git
+                              </span>
+                            ) : m.source === 'cli-turn' ? (
+                              <span
+                                className="page-item-badge"
+                                title="Saved by ax turn finish (CLI research turn). Same memory table as MCP turns."
+                              >
+                                <Codicon name="terminal" className="badge-icon" />
+                                cli
                               </span>
                             ) : (
                               <span className="page-item-badge" title={`Kind: ${m.kind}`}>

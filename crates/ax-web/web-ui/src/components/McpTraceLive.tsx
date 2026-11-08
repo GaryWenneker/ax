@@ -1505,6 +1505,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     () => (selected && !hasStructured ? extractFields(selected.message) : []),
     [selected, hasStructured],
   );
+  const selectedMemoryId = selected ? loggingRowView(selected).memoryId : null;
   const hasTimeline = Boolean(cluster && cluster.end > cluster.start);
   const inspectedTool = selected?.tool ?? cluster?.tool;
 
@@ -1608,6 +1609,23 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
               )}
 
                 <div className="mcp-inspect-main">
+                  {selectedMemoryId && (
+                    <div className="mcp-inspect-actions">
+                      <button
+                        type="button"
+                        className="btn btn-compact"
+                        onClick={() =>
+                          navigateRoute({
+                            page: 'memory',
+                            memoryId: selectedMemoryId,
+                          })
+                        }
+                      >
+                        <Codicon name="note" className="badge-icon" />
+                        Open memory
+                      </button>
+                    </div>
+                  )}
                   <TextPayloadSection payloads={entryTextPayloads(selected)} />
                   <PayloadView entry={selected} />
                   {!hasStructured && <TraceFields message={selected.message} />}

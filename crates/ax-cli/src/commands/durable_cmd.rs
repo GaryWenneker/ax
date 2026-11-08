@@ -7,7 +7,6 @@ use serde_json::{json, Value};
 use crate::commands::resolve_path;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum DurableAction {
     Append { kind: String },
     Read,

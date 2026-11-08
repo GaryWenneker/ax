@@ -461,6 +461,10 @@ pub async fn turn_finish(
     snap.finish_receipt = Some(serde_json::to_value(&receipt).unwrap_or(json!({})));
     write_snapshot(root, &snap)?;
 
+    let activity_summary = match &memory_id {
+        Some(mid) => format!("{} memory={mid}", clip(&outcome, 160)),
+        None => clip(&outcome, 200),
+    };
     let _ = record_activity(
         root,
         ActivityRecord {
@@ -470,7 +474,7 @@ pub async fn turn_finish(
             turn_id: Some(turn_id.to_string()),
             operation: "turn.completed".into(),
             status: Some(ActivityStatus::Success),
-            summary: clip(&outcome, 200),
+            summary: activity_summary,
             files: snap.files.clone(),
             commit_ids: commits,
             token_metrics: TokenMetrics::default(),

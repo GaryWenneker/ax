@@ -184,7 +184,7 @@ function AppShell() {
 
   function navigate(
     p: Page,
-    extras?: Partial<Pick<RouteState, 'ruleId' | 'skillName' | 'kind' | 'sonarTab' | 'ruleEditMode' | 'skillEditMode' | 'origin' | 'projectId'>>,
+    extras?: Partial<Pick<RouteState, 'ruleId' | 'skillName' | 'kind' | 'memoryId' | 'sonarTab' | 'ruleEditMode' | 'skillEditMode' | 'origin' | 'projectId'>>,
   ) {
     const keepRules = p === 'policy-rules' || p === 'policy-rule-edit';
     const keepSkills = p === 'policy-skills' || p === 'policy-skill-edit';
@@ -193,6 +193,7 @@ function AppShell() {
       ruleId: extras?.ruleId !== undefined ? extras.ruleId : keepRules ? editRuleId : null,
       skillName: extras?.skillName !== undefined ? extras.skillName : keepSkills ? editSkillName : null,
       kind: extras?.kind !== undefined ? extras.kind : p === 'unresolved' ? route.kind : null,
+      memoryId: extras?.memoryId !== undefined ? extras.memoryId : p === 'memory' ? route.memoryId : null,
       sonarTab: extras?.sonarTab ?? route.sonarTab,
       ruleEditMode: false,
       skillEditMode: false,

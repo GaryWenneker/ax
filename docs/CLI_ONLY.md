@@ -15,13 +15,22 @@ This writes Copilot/Cursor instructions and the shared `.agents/skills/ax-cli` s
 
 ```bash
 SESSION=$(ax session start --json | jq -r .session)
+ax preflight --prompt "$PROMPT" --json >/dev/null
 TURN=$(printf '%s' "$PROMPT" | ax turn begin --session "$SESSION" --prompt-stdin --json | jq -r .turnId)
 # … ax explore / ax query / ax node …
 printf '%s' '{"outcome":"…","decisions":[]}' \
   | ax turn finish --session "$SESSION" --turn "$TURN" --outcome-stdin --json
 ```
 
-Research turns with no file changes still produce history and turn memory.
+Research turns with no file changes still produce history and a Memory row with `source=cli-turn` (Command Center shows a **cli** badge).
+
+Optional durable transcript / handoff:
+
+```bash
+ax durable append --session "$SESSION" --kind user --body-stdin <<<'Continue auth'
+ax durable fork --session "$SESSION" --json
+ax cache status
+```
 
 ## Diagnostics
 

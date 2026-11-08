@@ -59,6 +59,7 @@ Interactive installer — writes MCP config for detected AI agents (Cursor, Clau
 | `--all` | flag | Configure every supported agent, not only detected ones |
 | `--target <id>` | string | Wire a single agent (e.g. `vscode`, `cursor`); ids are case-insensitive |
 | `--path <dir>` | string | Project root for workspace MCP files (default: current directory). |
+| `--mode <mode>` | string | `full` (default) wires MCP/hooks; `cli-only` skips MCP, plugins, IDE hooks, and daemons |
 
 Agent configs and hooks get the first `ax` on your `PATH`, exactly as found there: a shim such as `~/.local/bin/ax` stays the shim, so a later upgrade of the binary behind it needs no reinstall. With no `ax` on `PATH`, the binary running the install is written, and the report says so. When the two differ, the report names both. A Claude Code hook whose `ax` path is stale is repaired in place; your own hooks stay as they are.
 
@@ -68,6 +69,7 @@ ax install --yes
 ax install --yes --all
 ax install --target vscode
 ax install --yes --target vscode --path .
+ax install --mode cli-only --target vscode
 ```
 
 ### `ax uninstall`
@@ -640,6 +642,91 @@ Configure it in `ax.json` under `docsCatalog`. Every key is optional, and there 
   }
 }
 ```
+
+---
+
+## Sessions, turns & CLI-only parity
+
+Shared engines with MCP (`ax_preflight`, `ax_session`, `ax_durable`, stash/expand). No MCP transport required. See also [CLI-only mode](https://github.com/GaryWenneker/ax/blob/main/docs/CLI_ONLY.md) in the repo.
+
+### `ax preflight`
+
+Run the same policy/memory/working-context inject as MCP `ax_preflight`.
+
+```bash
+ax preflight --prompt "How does auth refresh work?"
+printf '%s' "$PROMPT" | ax preflight --prompt-stdin --json
+```
+
+### `ax session`
+
+Working-context notes for a conversation (`add`, `get`, `update`, `compact`, `clear`, `fork`, `handoff`).
+
+```bash
+SESSION=$(ax session start --json | jq -r .session)
+printf '%s' '{"action":"add","facts":["Auth uses SameSite=Lax"]}' \
+  | ax session add --session "$SESSION" --stdin
+ax session get --session "$SESSION"
+```
+
+### `ax durable`
+
+Transcript and task persistence (same engine as `ax_durable`).
+
+```bash
+ax durable append --session "$SESSION" --kind user --body-stdin <<'EOF'
+Continue the auth investigation
+EOF
+ax durable read --session "$SESSION"
+ax durable fork --session "$SESSION" --json
+ax durable handoff --session "$SESSION" --input-stdin <<'EOF'
+{"note":"Hand off to a fresh thread"}
+EOF
+ax durable doc-put --session "$SESSION" --kind brief --body-stdin <<'EOF'
+# Brief
+EOF
+ax durable doc-get --session "$SESSION" --kind brief
+```
+
+### `ax turn`
+
+Explicit turn lifecycle without IDE hooks. Finish writes a memory with `source=cli-turn`.
+
+```bash
+TURN=$(printf '%s' "$PROMPT" | ax turn begin --session "$SESSION" --prompt-stdin --json | jq -r .turnId)
+ax turn event --session "$SESSION" --turn "$TURN" --kind finding --body "cookie cleared on soft reload"
+printf '%s' "Root cause: SameSite mismatch" \
+  | ax turn finish --session "$SESSION" --turn "$TURN" --outcome-stdin --json
+ax turn status --session "$SESSION" --turn "$TURN"
+```
+
+### `ax cache`
+
+Stash and expand large tool results (`ax_stash` / `ax_expand` / `ax_cache_status`).
+
+```bash
+ax cache status
+printf '%s' "$BIG" | ax cache stash --stdin --json
+ax cache expand --id "$ID"
+```
+
+### `ax doctor`
+
+CLI-only or full host diagnostics (covers the MCP `ax_diagnostics` surface).
+
+```bash
+ax doctor --mode cli
+ax doctor --mode all --json
+```
+
+### Guard mapping (`ax_guard`)
+
+MCP `ax_guard` has no dedicated CLI twin. Use:
+
+- `ax read-guard --ide <ide>` — IDE pre-tool hook that redirects whole-file reads to the graph
+- `ax doctor --mode cli` — host/policy diagnostics before a CLI-only run
+
+Policy CRITICAL rules still apply when the CLI invokes shared tools in-process.
 
 ---
 

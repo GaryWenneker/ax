@@ -821,6 +821,50 @@ enum DurableCliAction {
         #[arg(long)]
         json: bool,
     },
+    Fork {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Handoff {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "input-stdin", action = clap::ArgAction::SetTrue)]
+        input_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "doc-put")]
+    DocPut {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long = "body-stdin", action = clap::ArgAction::SetTrue)]
+        body_stdin: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(name = "doc-get")]
+    DocGet {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2245,6 +2289,59 @@ async fn async_main() {
                     input_stdin,
                     json,
                 },
+                DurableCliAction::Fork {
+                    session,
+                    path,
+                    input_stdin,
+                    json,
+                } => DurableArgs {
+                    action: DurableAction::Fork,
+                    session,
+                    path,
+                    body_stdin: false,
+                    input_stdin,
+                    json,
+                },
+                DurableCliAction::Handoff {
+                    session,
+                    path,
+                    input_stdin,
+                    json,
+                } => DurableArgs {
+                    action: DurableAction::Handoff,
+                    session,
+                    path,
+                    body_stdin: false,
+                    input_stdin,
+                    json,
+                },
+                DurableCliAction::DocPut {
+                    session,
+                    kind,
+                    path,
+                    body_stdin,
+                    json,
+                } => DurableArgs {
+                    action: DurableAction::DocPut { kind },
+                    session,
+                    path,
+                    body_stdin,
+                    input_stdin: false,
+                    json,
+                },
+                DurableCliAction::DocGet {
+                    session,
+                    kind,
+                    path,
+                    json,
+                } => DurableArgs {
+                    action: DurableAction::DocGet { kind },
+                    session,
+                    path,
+                    body_stdin: false,
+                    input_stdin: false,
+                    json,
+                },
             };
             commands::durable_cmd::run(mapped).await
         }
@@ -3053,6 +3150,24 @@ async fn async_main() {
                 t.persist_sync();
             }
             ax_telemetry::flush_global(ax_telemetry::DEFAULT_FLUSH_TIMEOUT_MS).await;
+            // Transport-agnostic activity: one central recorder for every CLI command.
+            // Skips hooks (cmd_name is None for those). Session from AX_SESSION when set.
+            let root = commands::resolve_path(None);
+            let session = std::env::var("AX_SESSION").ok().filter(|s| !s.trim().is_empty());
+            let summary = format!(
+                "cli cmd={name} status={}",
+                if result.is_ok() { "ok" } else { "fail" }
+            );
+            // Best-effort observability: never fail the CLI if usage.db is unavailable.
+            let _ = ax_usage::record_cli_command(
+                &root,
+                &name,
+                session.as_deref(),
+                result.is_ok(),
+                None,
+                &summary,
+            )
+            .await;
         }
     }
 

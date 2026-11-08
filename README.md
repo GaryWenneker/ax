@@ -18,8 +18,9 @@ Open source, MIT, native Rust. No cloud index and no API keys. The source stays 
 | **Memory vault** | Durable decisions, fixes, and conventions, with hybrid recall and git auto-capture |
 | **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected each turn |
 | **Command Center** | Policy, memory, graph, quality gates, token savings, MCP Logging and Quality, draft PRs |
+| **CLI-only mode** | Same preflight/session/durable/turn engines without MCP, plugins, hooks, or daemons (`ax install --mode cli-only`) |
 
-Agents query structure through MCP (`ax_explore`, `ax_preflight`, and the rest) instead of fanning out across search and file reads. The documentation describes the current source. Published binaries follow the [latest release](https://github.com/GaryWenneker/ax/releases/latest). [Build from main](https://getax.wenneker.io/getting-started/installation/#build-from-main) when you need source that is newer than that release.
+Agents query structure through MCP (`ax_explore`, `ax_preflight`, and the rest) or the matching CLI commands. The documentation describes the current source. Published binaries follow the [latest release](https://github.com/GaryWenneker/ax/releases/latest). [Build from main](https://getax.wenneker.io/getting-started/installation/#build-from-main) when you need source that is newer than that release.
 
 Full introduction: [getax.wenneker.io](https://getax.wenneker.io/getting-started/introduction/).
 
@@ -37,6 +38,7 @@ Have Node? `npx @garywenneker/ax` downloads the native binary. Open a new termin
 
 ```bash
 ax install                 # wire MCP into detected agents
+# ax install --mode cli-only --target vscode   # same engines, no MCP/hooks
 cd your-project && ax init # required in each directory where you want to use ax
 ax web --open              # local Command Center
 ```

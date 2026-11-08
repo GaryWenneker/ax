@@ -526,7 +526,7 @@ pub async fn record_cli_command(
         "cli:{}:{}:{}",
         command,
         session_id.unwrap_or("-"),
-        now_ms() / 1000
+        now_ms()
     );
     record_activity(
         root,
