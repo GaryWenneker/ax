@@ -63,6 +63,11 @@ pub fn cursor_state_vscdb_path() -> Option<PathBuf> {
         }
     }
 
+    // AX_HOME_DIR sandboxes home for tests — never read the host Cursor DB.
+    if std::env::var_os("AX_HOME_DIR").is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+
     #[cfg(windows)]
     {
         dirs::data_dir().map(|d| {

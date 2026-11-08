@@ -121,9 +121,12 @@ mod tests {
             .join(".cursor/projects/demo/agent-transcripts")
             .join(session);
         std::fs::create_dir_all(&dir).unwrap();
+        let stamp = format!("{}T08:00:00Z", ax_usage::today_iso());
         std::fs::write(
             dir.join(format!("{session}.jsonl")),
-            r#"{"role":"assistant","timestamp":"2026-10-05T08:00:00Z","message":{"model":"grok-4.7","usage":{"input_tokens":42,"output_tokens":7}}}"#,
+            format!(
+                r#"{{"role":"assistant","timestamp":"{stamp}","message":{{"model":"grok-4.7","usage":{{"input_tokens":42,"output_tokens":7}}}}}}"#
+            ),
         )
         .unwrap();
 

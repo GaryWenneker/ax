@@ -568,7 +568,7 @@ async fn save_cli_turn_memory(
     let id = format!("turn-{}", &blake3_hex(&format!("{}:{}", snap.session_id, snap.turn_id))[..16]);
     let files_json = serde_json::to_string(&snap.files).unwrap_or_else(|_| "[]".into());
     let now = now_ms();
-    let result = sqlx::query(
+    sqlx::query(
         r#"INSERT OR IGNORE INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
            VALUES (?, 'turn', ?, ?, '[]', ?, 1.0, ?, ?, ?, NULL, 1)"#,
     )
@@ -583,11 +583,8 @@ async fn save_cli_turn_memory(
     .await
     .map_err(|e| e.to_string())?;
 
-    if result.rows_affected() > 0 {
-        Ok(Some(id))
-    } else {
-        Ok(Some(id)) // already existed — idempotent
-    }
+    // INSERT OR IGNORE — return id whether inserted or already present.
+    Ok(Some(id))
 }
 
 async fn save_semantic_memory(
@@ -673,7 +670,7 @@ pub fn turn_status(
 ) -> Result<Value, String> {
     if let Some(id) = turn_id {
         let snap = read_snapshot(root, session_id, id)?;
-        return Ok(serde_json::to_value(snap).map_err(|e| e.to_string())?);
+        return serde_json::to_value(snap).map_err(|e| e.to_string());
     }
     let dir = turns_dir(root).join(session_id);
     let mut open = Vec::new();

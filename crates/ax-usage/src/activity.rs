@@ -191,7 +191,7 @@ fn now_ms() -> i64 {
 }
 
 fn mint_event_id() -> String {
-    format!("evt_{}", &uuid_ish())
+    format!("evt_{}", uuid_ish())
 }
 
 fn uuid_ish() -> String {

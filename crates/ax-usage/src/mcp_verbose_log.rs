@@ -85,9 +85,18 @@ pub fn read_ship_timezone(project_root: Option<&Path>) -> String {
 }
 
 /// Append trace lines with UTC ISO timestamps (one line per event).
+///
+/// Never creates a project `.ax/` folder. Quiet hooks in uninitialized
+/// checkouts must stay side-effect free (`hooks_without_ax` tests).
 pub fn append_verbose_log(lines: &[String], project_root: Option<&Path>) {
     if lines.is_empty() || !verbose_enabled(project_root) {
         return;
+    }
+    if let Some(root) = project_root {
+        let ax_dir = strip_verbatim_prefix(root).join(".ax");
+        if !ax_dir.is_dir() {
+            return;
+        }
     }
     let _ = migrate_legacy_log(project_root);
     let path = current_log_path(project_root);
