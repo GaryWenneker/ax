@@ -1,7 +1,7 @@
 //! `ax preflight` — shared context engine (same as `ax_preflight` MCP tool).
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde_json::{json, Value};
 
@@ -72,10 +72,10 @@ fn read_stdin() -> Result<String, String> {
 
 /// In-process shared tool runtime (no MCP stdio transport).
 pub async fn invoke_shared_tool(
-    root: &PathBuf,
+    root: &Path,
     name: &str,
     args: Value,
 ) -> Result<Value, String> {
-    let mut engine = ax_mcp::McpEngine::with_project_root(root.clone());
+    let mut engine = ax_mcp::McpEngine::with_project_root(root.to_path_buf());
     ax_mcp::call_tool(&mut engine, name, args).await
 }

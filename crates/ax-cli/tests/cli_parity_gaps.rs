@@ -162,6 +162,7 @@ fn unfinished_turn_stays_incomplete_after_restart() {
 }
 
 #[test]
+#[allow(clippy::await_holding_lock)]
 fn cli_and_mcp_preflight_share_matched_policy_ids() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
