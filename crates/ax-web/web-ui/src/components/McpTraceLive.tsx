@@ -75,6 +75,8 @@ const KIND_LABELS: Record<TraceKind, string> = {
   memory: 'Memory',
   policy: 'Policy',
   cli: 'CLI',
+  hook: 'Hook',
+  agent: 'Agent',
   other: 'Other',
 };
 
@@ -99,6 +101,8 @@ const KIND_ICONS: Record<TraceKind, string> = {
   memory: 'note',
   policy: 'law',
   cli: 'terminal',
+  hook: 'debug',
+  agent: 'account',
   other: 'info',
 };
 
@@ -472,6 +476,8 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       memory: 0,
       policy: 0,
       cli: 0,
+      hook: 0,
+      agent: 0,
       other: 0,
     };
     for (const e of entries) counts[e.kind] += 1;

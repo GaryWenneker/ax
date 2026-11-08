@@ -13,6 +13,8 @@ pub struct InstallOptions {
     pub install_all: bool,
     /// When non-empty, only these target ids are wired (e.g. `vscode`).
     pub targets: Vec<String>,
+    /// Rules/skills/instructions only — no MCP config, plugins, or IDE hooks.
+    pub cli_only: bool,
 }
 
 pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), String> {
@@ -65,7 +67,9 @@ pub fn run_installer(project_root: &Path, opts: InstallOptions) -> Result<(), St
 
     install_log::intro(env!("CARGO_PKG_VERSION"));
 
-    let summary = if !opts.targets.is_empty() {
+    let summary = if opts.cli_only {
+        ax_installer::install_cli_only(project_root, &opts.targets)?
+    } else if !opts.targets.is_empty() {
         ax_installer::install_targets(project_root, &opts.targets)?
     } else {
         ax_installer::install_detected(project_root, opts.install_all || opts.yes)?

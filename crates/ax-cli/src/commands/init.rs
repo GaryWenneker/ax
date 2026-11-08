@@ -849,6 +849,7 @@ fn apply_ide_choice(root: &std::path::Path, choice: IdeChoice) -> Result<(), Str
             yes: true,
             install_all: false,
             targets: choice.chosen,
+            cli_only: false,
         },
     )
 }

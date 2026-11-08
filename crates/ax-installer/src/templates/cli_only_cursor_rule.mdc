@@ -1,0 +1,16 @@
+---
+description: AX CLI-only parity workflow (no MCP required)
+alwaysApply: true
+---
+
+# AX CLI-only
+
+When AX MCP is unavailable or policy forbids MCP/plugins/hooks, use the AX CLI exclusively.
+
+1. `ax session start --json` or resume `--session`.
+2. `ax turn begin --session <id> --prompt-stdin --json`.
+3. Honor returned preflight rules/skills/memories.
+4. Prefer `ax explore` / graph CLI over Grep/Read for structural questions.
+5. Record decisions with `ax turn event` and finish with `ax turn finish` even when no files change.
+
+Do not install or start MCP, plugins, daemons, or network listeners for this workflow.

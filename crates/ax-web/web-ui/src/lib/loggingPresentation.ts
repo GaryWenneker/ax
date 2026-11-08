@@ -91,6 +91,8 @@ const KIND_LABELS: Record<string, string> = {
   memory: 'Memory',
   policy: 'Policy',
   cli: 'CLI',
+  hook: 'Hook',
+  agent: 'Agent',
 };
 
 export type LoggingRowView = {

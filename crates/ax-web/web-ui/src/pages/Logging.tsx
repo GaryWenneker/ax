@@ -9,9 +9,9 @@ import {
 } from '../lib/mcpTraceEvents';
 
 /**
- * Full-page real-time MCP verbose log for <project>/.ax/mcp-verbose-*.log
- * (newest at top). Stays in the app chrome; Full is a button, not the default.
- * Verbose MCP logging is always on.
+ * Transport-agnostic activity log for <project>/.ax/mcp-verbose-*.log
+ * (MCP, CLI, hooks, agent-reported). Newest at top. Verbose logging is always on.
+ * Filter by kind (CLI / MCP inbound / Hook / Agent) in the live toolbar.
  */
 export default function LoggingPage() {
   const [stats, setStats] = useState<McpTraceStats>(emptyMcpTraceStats);
@@ -21,7 +21,7 @@ export default function LoggingPage() {
       ? `${stats.projectLabel} · ${stats.total.toLocaleString()} events · ${
           stats.live ? 'live' : 'offline'
         }`
-      : 'MCP verbose · live stream';
+      : 'Activity · live stream';
 
   usePageContext('Logging', detail);
 

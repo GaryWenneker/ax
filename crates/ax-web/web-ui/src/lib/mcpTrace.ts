@@ -42,6 +42,8 @@ export type TraceKind =
   | 'memory'
   | 'policy'
   | 'cli'
+  | 'hook'
+  | 'agent'
   | 'other';
 
 /** Human-readable text option keys (and leaf path segments) to promote in Logging. */
@@ -587,7 +589,10 @@ function classify(body: string): { kind: TraceKind; badge: string } {
   if (/\baction\b/.test(body)) return { kind: 'action', badge: 'ACT' };
   if (/\bmemory\b/.test(body)) return { kind: 'memory', badge: 'MEM' };
   if (/\bpolicy\b/.test(body)) return { kind: 'policy', badge: 'POL' };
-  if (/\[ax]\s*(?:🪓\s*)?cli\b/.test(body) || /\bcli cmd=/.test(body)) return { kind: 'cli', badge: 'CLI' };
+  if (/\[ax]\s*(?:🪓\s*)?cli\b/.test(body) || /\bcli cmd=/.test(body) || /\bsource=cli\b/.test(body)) return { kind: 'cli', badge: 'CLI' };
+  if (/\[ax]\s*(?:🪓\s*)?hook\b/.test(body) || /\bsource=hook\b/.test(body)) return { kind: 'hook', badge: 'HOOK' };
+  if (/\[ax]\s*(?:🪓\s*)?agent\b/.test(body) || /\bsource=agent\b/.test(body)) return { kind: 'agent', badge: 'AGT' };
+  if (/\bmcp-activity\b/.test(body) || /\bsource=mcp\b/.test(body)) return { kind: 'inbound', badge: 'MCP' };
   return { kind: 'other', badge: 'LOG' };
 }
 

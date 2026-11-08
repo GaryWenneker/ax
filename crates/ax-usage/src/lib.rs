@@ -1,5 +1,6 @@
 //! Context-token savings metrics stored in `~/.ax/usage.db`.
 
+mod activity;
 mod budget;
 mod cache_status;
 mod context_cache;
@@ -21,6 +22,7 @@ mod savings;
 mod store;
 pub mod replication;
 mod tokenizer;
+mod turn_lifecycle;
 mod working_context;
 
 pub use budget::{
@@ -63,8 +65,17 @@ pub use domain_log::{
     log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,
     log_share, log_ship, log_ship_ci, log_workspace,
 };
+pub use activity::{
+    event_to_json, list_activity, record_activity, record_cli_command, ActivityEvent,
+    ActivityRecord, ActivitySource, ActivityStatus, TokenMetrics, ACTIVITY_SCHEMA_VERSION,
+};
 pub use durable::{
     durable_apply, durable_project_apply, note_project_tool_if_open, note_tool_if_open,
+};
+pub use turn_lifecycle::{
+    turn_begin, turn_checkpoint, turn_event, turn_fail, turn_finish, turn_status,
+    SemanticMemoryInput, TurnEventInput, TurnFinishInput, TurnFinishReceipt, TurnSnapshot,
+    TurnState, TURN_SOURCE_CLI,
 };
 pub use log_brand::{format_ax_mcp_trace, format_ax_tagged, AX_LOG_ICON};
 pub use mcp_audit::{
