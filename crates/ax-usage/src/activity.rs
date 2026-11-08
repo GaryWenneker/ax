@@ -590,13 +590,13 @@ fn chrono_like(ms: i64) -> String {
 mod tests {
     use super::*;
     use crate::store::open_pool_at;
-    use std::sync::{atomic::{AtomicUsize, Ordering}, Mutex};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     static SEQ: AtomicUsize = AtomicUsize::new(0);
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    async fn tmp_root() -> (std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
-        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    async fn tmp_root() -> (std::path::PathBuf, tokio::sync::MutexGuard<'static, ()>) {
+        let guard = ENV_LOCK.lock().await;
         let n = SEQ.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("ax-activity-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
