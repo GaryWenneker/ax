@@ -1,6 +1,6 @@
 [package]
 name = "ax-quality"
-version = "8.3.8"
+version = "8.4.0"
 edition = "2021"
 
 [dependencies]
