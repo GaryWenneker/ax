@@ -2,6 +2,7 @@
 
 pub mod ax_command;
 pub mod cli_catalog;
+pub mod cli_only;
 pub mod cli_install;
 pub mod command_center;
 pub mod detect;
@@ -24,6 +25,7 @@ pub use cli_install::{
 pub use cli_catalog::CliInstallMethod;
 pub use ide_choice::{ide_defaults, ide_groups, ides_to_remove, known_ides, pack_refresh_targets, parse_ide_choice};
 pub use report::{FileAction, InstallSummary, TargetReport};
+pub use cli_only::install_cli_only;
 pub use targets::{
     agent_status, catalog_with_status, display_name, install_targets, is_detected,
     uninstall_all, uninstall_targets, AgentTargetStatus, TARGETS,

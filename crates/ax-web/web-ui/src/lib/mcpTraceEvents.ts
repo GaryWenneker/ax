@@ -83,6 +83,8 @@ const EMPTY_COUNTS: Record<TraceKind, number> = {
   memory: 0,
   policy: 0,
   cli: 0,
+  hook: 0,
+  agent: 0,
   other: 0,
 };
 
@@ -103,6 +105,8 @@ export const TRACE_KIND_ORDER: TraceKind[] = [
   'memory',
   'policy',
   'cli',
+  'hook',
+  'agent',
   'other',
 ];
 

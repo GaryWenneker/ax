@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {loggingRowPresentation} from './loggingPresentation.ts';
+import {loggingRowPresentation, loggingRowView} from './loggingPresentation.ts';
 import type {TraceKind} from './mcpTrace';
 
 const cases: [TraceKind, string, string, string][] = [
@@ -43,4 +43,14 @@ test('absent, negative and malformed facts are not invented', () => {
 test('other kinds and empty text keep the fallback without logger decoration', () => {
   const entry={kind:'other' as const,message:'[ax-mcp] 🪓 something unexpected detail=retain',tool:null};
   assert.deepEqual(loggingRowPresentation(entry,{title:entry.message,subtitle:'Other',text:''}),{title:'something unexpected detail=retain',subtitle:'Other'});
+});
+
+test('CLI turn.completed activity exposes memory id for Logging → Memory', () => {
+  const entry = {
+    kind: 'cli' as const,
+    message:
+      '[ax] 🪓 cli activity op=turn.completed status=success source=cli id=e1 key=turn.finish:t1 session=axs_1 turn=t1 summary=Root cause found memory=turn-abcdef0123456789',
+    tool: 'cli',
+  };
+  assert.equal(loggingRowView(entry).memoryId, 'turn-abcdef0123456789');
 });

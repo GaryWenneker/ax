@@ -28,6 +28,8 @@ export interface RouteState {
   ruleId: string | null;
   skillName: string | null;
   kind: string | null;
+  /** Memory vault row id (`/memory?memory=…`), e.g. from Logging CLI turn links. */
+  memoryId?: string | null;
   sonarTab: SonarTab;
   /** Full-page rule editor (policy-rule-edit with an existing id). */
   ruleEditMode?: boolean;
@@ -144,6 +146,7 @@ export function parseLocation(loc: Location = window.location): RouteState & { v
     ruleId: params.get('id'),
     skillName: params.get('name'),
     kind: params.get('kind'),
+    memoryId: params.get('memory'),
     sonarTab,
     ruleEditMode: edit && page === 'policy-rule-edit',
     skillEditMode: edit && page === 'policy-skill-edit',
@@ -173,6 +176,7 @@ export function buildPath(state: Partial<RouteState> & Pick<RouteState, 'page'>)
   }
   if (state.page === 'unresolved' && state.kind) params.set('kind', state.kind);
   if (state.page === 'logging' && state.kind) params.set('kind', state.kind);
+  if (state.page === 'memory' && state.memoryId) params.set('memory', state.memoryId);
   if (state.page === 'sonar' && state.sonarTab === 'setup') params.set('tab', 'setup');
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
@@ -183,6 +187,7 @@ export function navigateRoute(state: Partial<RouteState> & Pick<RouteState, 'pag
     page: state.page,
     ruleId: state.ruleId ?? null,
     skillName: state.skillName ?? null,
+    memoryId: state.memoryId ?? null,
     kind: state.kind ?? null,
     sonarTab: state.sonarTab ?? 'dashboard',
     ruleEditMode: state.ruleEditMode ?? false,
@@ -215,6 +220,7 @@ export function migrateLegacyHash(): string | null {
     ruleId: params.get('id'),
     skillName: params.get('name'),
     kind: params.get('kind'),
+    memoryId: params.get('memory'),
     sonarTab: params.get('tab') === 'setup' ? 'setup' : 'dashboard',
     ruleEditMode: params.get('mode') === 'edit' && page === 'policy-rule-edit',
     skillEditMode: params.get('mode') === 'edit' && page === 'policy-skill-edit',

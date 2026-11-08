@@ -75,6 +75,8 @@ const KIND_LABELS: Record<TraceKind, string> = {
   memory: 'Memory',
   policy: 'Policy',
   cli: 'CLI',
+  hook: 'Hook',
+  agent: 'Agent',
   other: 'Other',
 };
 
@@ -99,6 +101,8 @@ const KIND_ICONS: Record<TraceKind, string> = {
   memory: 'note',
   policy: 'law',
   cli: 'terminal',
+  hook: 'debug',
+  agent: 'account',
   other: 'info',
 };
 
@@ -472,6 +476,8 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
       memory: 0,
       policy: 0,
       cli: 0,
+      hook: 0,
+      agent: 0,
       other: 0,
     };
     for (const e of entries) counts[e.kind] += 1;
@@ -1499,6 +1505,7 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
     () => (selected && !hasStructured ? extractFields(selected.message) : []),
     [selected, hasStructured],
   );
+  const selectedMemoryId = selected ? loggingRowView(selected).memoryId : null;
   const hasTimeline = Boolean(cluster && cluster.end > cluster.start);
   const inspectedTool = selected?.tool ?? cluster?.tool;
 
@@ -1602,6 +1609,23 @@ export default function McpTraceLive({ variant = 'embedded' }: Props) {
               )}
 
                 <div className="mcp-inspect-main">
+                  {selectedMemoryId && (
+                    <div className="mcp-inspect-actions">
+                      <button
+                        type="button"
+                        className="btn btn-compact"
+                        onClick={() =>
+                          navigateRoute({
+                            page: 'memory',
+                            memoryId: selectedMemoryId,
+                          })
+                        }
+                      >
+                        <Codicon name="note" className="badge-icon" />
+                        Open memory
+                      </button>
+                    </div>
+                  )}
                   <TextPayloadSection payloads={entryTextPayloads(selected)} />
                   <PayloadView entry={selected} />
                   {!hasStructured && <TraceFields message={selected.message} />}

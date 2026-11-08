@@ -34,3 +34,10 @@ test('navigateRoute leaves a project item URL bare', () => {
     assert.deepEqual(pushed, ['/policy/rules?id=r1']);
   });
 });
+
+test('navigateRoute opens a CLI turn memory from Logging', () => {
+  withWindow((pushed) => {
+    navigateRoute({ page: 'memory', memoryId: 'turn-abc123def456' });
+    assert.deepEqual(pushed, ['/memory?memory=turn-abc123def456']);
+  });
+});

@@ -167,6 +167,37 @@ CREATE TABLE IF NOT EXISTS agent_usage_event (
   UNIQUE(agent, session_id, turn_id)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_usage_event_created ON agent_usage_event(created_at);
+
+CREATE TABLE IF NOT EXISTS ax_activity_event (
+  event_id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL,
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  timestamp_ms INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  agent TEXT,
+  project_id TEXT NOT NULL,
+  session_id TEXT,
+  turn_id TEXT,
+  parent_event_id TEXT,
+  operation TEXT NOT NULL,
+  status TEXT NOT NULL,
+  duration_ms INTEGER,
+  summary TEXT NOT NULL,
+  files_json TEXT NOT NULL DEFAULT '[]',
+  symbols_json TEXT NOT NULL DEFAULT '[]',
+  commit_ids_json TEXT NOT NULL DEFAULT '[]',
+  token_input INTEGER,
+  token_output INTEGER,
+  token_provenance TEXT NOT NULL DEFAULT 'unknown',
+  error TEXT,
+  UNIQUE(project_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_ax_activity_project_ts
+  ON ax_activity_event(project_id, timestamp_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_ax_activity_session
+  ON ax_activity_event(session_id, timestamp_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_ax_activity_source
+  ON ax_activity_event(source, timestamp_ms DESC);
 ";
 
 const MIGRATION_DROP_TOKEN_USAGE: &str = "DROP TABLE IF EXISTS token_usage";
