@@ -29,7 +29,7 @@ SPEC → RED → GREEN → REFACTOR → GAUNTLET → REVIEW LOOP → EVIDENCE
    - fix every finding and rerun the gauntlet;
    - review again until a round has zero findings.
 
-   There is no round cap. The same loop runs for every code review of the user's own change. For a colleague's pull request, load **`pr-review-comments`** (`ax_skill` / `ax policy skill`) instead: do not fix, and ask one question per comment before posting it.
+   There is no round cap. The same loop runs for every code review of the user's own change. For a colleague's pull request, call **`ax_skill({ name: "pr-review-comments" })`** (CLI-only: `ax policy skill pr-review-comments`) instead: do not fix, and ask one question per comment before posting it.
 5. **EVIDENCE** — deliver a rerunnable evidence report with real numbers from one fresh run, including the review rounds table.
 6. **HTTP/JSON APIs** — also load **`old-coder-api`** (`ax_skill` / `ax policy skill`) and fold API gates into SPEC and EVIDENCE.
 
