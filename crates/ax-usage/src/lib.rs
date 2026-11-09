@@ -11,6 +11,7 @@ mod cursor_state;
 mod domain_log;
 mod durable;
 mod log_brand;
+mod tool_trace;
 mod mcp_audit;
 mod mcp_verbose_log;
 mod period;
@@ -65,6 +66,7 @@ pub use domain_log::{
     log_action, log_cli, log_domain_event, log_embed, log_lsp, log_memory, log_plugin, log_policy,
     log_share, log_ship, log_ship_ci, log_workspace,
 };
+pub use tool_trace::{log_tool_error, log_tool_inbound, log_tool_outbound, ToolTrace};
 pub use activity::{
     event_to_json, list_activity, record_activity, record_cli_command, ActivityEvent,
     ActivityRecord, ActivitySource, ActivityStatus, TokenMetrics, ACTIVITY_SCHEMA_VERSION,

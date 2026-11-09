@@ -13,11 +13,21 @@ pub async fn run_remember(
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(None);
+    let trace = ax_usage::ToolTrace::begin(
+        Some(&root),
+        "ax_remember",
+        &serde_json::json!({
+            "body": text,
+            "title": title,
+            "kind": kind,
+        }),
+    );
     ax_usage::log_memory(Some(&root), "remember start");
     let ax = match ax_core::Ax::open(&root).await {
         Ok(ax) => ax,
         Err(e) => {
             ax_usage::log_memory(Some(&root), "remember fail stage=open");
+            trace.finish_err(&e.to_string());
             return Err(e.to_string());
         }
     };
@@ -37,6 +47,7 @@ pub async fn run_remember(
         Ok(row) => row,
         Err(e) => {
             ax_usage::log_memory(Some(&root), "remember fail");
+            trace.finish_err(&e.to_string());
             return Err(e.to_string());
         }
     };
@@ -45,6 +56,8 @@ pub async fn run_remember(
         Some(&root),
         format!("remember ok id={} kind={}", row.id, row.kind),
     );
+    let summary = format!("Remembered [{}] {}", row.kind, row.title);
+    trace.finish_ok(&summary);
 
     // Near-identical memories are usually duplicates or contradictions.
     let similar = ax_memory::find_similar(
@@ -179,20 +192,34 @@ pub async fn run_history(
 pub async fn run_recall(query: String, limit: Option<u32>, json: bool) -> Result<(), String> {
     let root = resolve_path(None);
     let q_len = query.chars().count();
+    let trace = ax_usage::ToolTrace::begin(
+        Some(&root),
+        "ax_recall",
+        &serde_json::json!({ "query": query, "limit": limit }),
+    );
     ax_usage::log_memory(Some(&root), format!("recall start q_len={q_len}"));
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let ax = match ax_core::Ax::open(&root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            trace.finish_err(&e.to_string());
+            return Err(e.to_string());
+        }
+    };
     let limit = limit.unwrap_or(5).min(50) as usize;
     let matches = match ax_memory::recall(ax.db_pool(), &query, limit).await {
         Ok(m) => m,
         Err(e) => {
             ax_usage::log_memory(Some(&root), "recall fail");
-            return Err(e.to_string());
+            let msg = e.to_string();
+            trace.finish_err(&msg);
+            return Err(msg);
         }
     };
     ax_usage::log_memory(
         Some(&root),
         format!("recall ok hits={} limit={limit}", matches.len()),
     );
+    trace.finish_ok(&format!("{} memories", matches.len()));
 
     if json {
         println!(

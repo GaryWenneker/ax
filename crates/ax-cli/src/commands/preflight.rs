@@ -71,11 +71,30 @@ fn read_stdin() -> Result<String, String> {
 }
 
 /// In-process shared tool runtime (no MCP stdio transport).
+///
+/// Emits CLI-branded inbound/outbound lines so Logging shows the same
+/// directions as MCP without faking the `[ax-mcp]` brand.
 pub async fn invoke_shared_tool(
     root: &Path,
     name: &str,
     args: Value,
 ) -> Result<Value, String> {
+    let trace = ax_usage::ToolTrace::begin(Some(root), name, &args);
     let mut engine = ax_mcp::McpEngine::with_project_root(root.to_path_buf());
-    ax_mcp::call_tool(&mut engine, name, args).await
+    match ax_mcp::call_tool(&mut engine, name, args).await {
+        Ok(result) => {
+            let preview = result
+                .get("text")
+                .and_then(|v| v.as_str())
+                .or_else(|| result.get("inject").and_then(|v| v.as_str()))
+                .map(str::to_string)
+                .unwrap_or_else(|| ax_mcp::format_tool_result(&result));
+            trace.finish_ok(&preview);
+            Ok(result)
+        }
+        Err(e) => {
+            trace.finish_err(&e);
+            Err(e)
+        }
+    }
 }

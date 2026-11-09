@@ -7,17 +7,32 @@ use crate::ui::{dim, info_line, ok_line, warn_line};
 
 pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> {
     let root = resolve_path(path);
+    let trace = ax_usage::ToolTrace::begin(
+        Some(&root),
+        "ax_policy_index",
+        &serde_json::json!({ "force": force }),
+    );
     ax_usage::log_policy(
         Some(&root),
         format!("index start force={}", if force { "1" } else { "0" }),
     );
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let ax = match ax_core::Ax::open(&root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            let msg = e.to_string();
+            ax_usage::log_policy(Some(&root), "index fail");
+            trace.finish_err(&msg);
+            return Err(msg);
+        }
+    };
     let storage = ax_policy::load_policy_config(&root).storage;
     let result = match ax.index_policy(force).await {
         Ok(r) => r,
         Err(e) => {
+            let msg = e.to_string();
             ax_usage::log_policy(Some(&root), "index fail");
-            return Err(e.to_string());
+            trace.finish_err(&msg);
+            return Err(msg);
         }
     };
     ax_usage::log_policy(
@@ -27,6 +42,10 @@ pub async fn run_index(path: Option<String>, force: bool) -> Result<(), String> 
             result.rules_indexed, result.skills_indexed
         ),
     );
+    trace.finish_ok(&format!(
+        "{} rules, {} skills",
+        result.rules_indexed, result.skills_indexed
+    ));
     match storage {
         ax_policy::PolicyStorage::Database if !force => {
             println!(
@@ -237,11 +256,27 @@ pub async fn run_match(
     full: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    let trace = ax_usage::ToolTrace::begin(
+        Some(&root),
+        "ax_rules",
+        &serde_json::json!({
+            "prompt": prompt,
+            "files": files,
+        }),
+    );
     ax_usage::log_policy(
         Some(&root),
         format!("match start prompt_len={}", prompt.chars().count()),
     );
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
+    let ax = match ax_core::Ax::open(&root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            let msg = e.to_string();
+            ax_usage::log_policy(Some(&root), "match fail");
+            trace.finish_err(&msg);
+            return Err(msg);
+        }
+    };
     let input = MatchInput {
         prompt,
         cwd: root.clone(),
@@ -251,8 +286,10 @@ pub async fn run_match(
     let result = match ax.match_policy(input).await {
         Ok(r) => r,
         Err(e) => {
+            let msg = e.to_string();
             ax_usage::log_policy(Some(&root), "match fail");
-            return Err(e.to_string());
+            trace.finish_err(&msg);
+            return Err(msg);
         }
     };
     ax_usage::log_policy(
@@ -263,6 +300,11 @@ pub async fn run_match(
             result.skills.len()
         ),
     );
+    trace.finish_ok(&format!(
+        "{} rules, {} skills",
+        result.rules.len(),
+        result.skills.len()
+    ));
     if json {
         let mut value = serde_json::to_value(&result).map_err(|e| e.to_string())?;
         if !full {
@@ -352,30 +394,81 @@ pub async fn run_rules(path: Option<String>, json: bool) -> Result<(), String> {
 
 pub async fn run_skills(path: Option<String>, json: bool) -> Result<(), String> {
     let root = resolve_path(path);
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let skills = ax.list_policy_skills().await.map_err(|e| e.to_string())?;
+    let trace = ax_usage::ToolTrace::begin(
+        Some(&root),
+        "ax_skill",
+        &serde_json::json!({ "action": "list" }),
+    );
+    ax_usage::log_policy(Some(&root), "skills list start");
+    let ax = match ax_core::Ax::open(&root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "skills list fail");
+            trace.finish_err(&e.to_string());
+            return Err(e.to_string());
+        }
+    };
+    let skills = match ax.list_policy_skills().await {
+        Ok(s) => s,
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "skills list fail");
+            trace.finish_err(&e.to_string());
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_policy(
+        Some(&root),
+        format!("skills list ok count={}", skills.len()),
+    );
+    let summary = format!("{} skills", skills.len());
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&skills).unwrap_or_default()
         );
     } else {
-        for s in skills {
+        for s in &skills {
             println!("{} — {}", s.name, s.description);
         }
     }
+    trace.finish_ok(&summary);
     Ok(())
 }
 
 pub async fn run_skill(path: Option<String>, name: String) -> Result<(), String> {
     let root = resolve_path(path);
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let skill = ax
-        .get_policy_skill(&name)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("skill not found: {name}"))?;
-    println!("{}\n\n{}", skill.description, skill.body);
+    let trace = ax_usage::ToolTrace::begin(
+        Some(&root),
+        "ax_skill",
+        &serde_json::json!({ "name": name }),
+    );
+    ax_usage::log_policy(Some(&root), format!("skill get name={name}"));
+    let ax = match ax_core::Ax::open(&root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "skill get fail");
+            trace.finish_err(&e.to_string());
+            return Err(e.to_string());
+        }
+    };
+    let skill = match ax.get_policy_skill(&name).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            let err = format!("skill not found: {name}");
+            ax_usage::log_policy(Some(&root), "skill get fail");
+            trace.finish_err(&err);
+            return Err(err);
+        }
+        Err(e) => {
+            ax_usage::log_policy(Some(&root), "skill get fail");
+            trace.finish_err(&e.to_string());
+            return Err(e.to_string());
+        }
+    };
+    ax_usage::log_policy(Some(&root), format!("skill get ok name={name}"));
+    let body = format!("{}\n\n{}", skill.description, skill.body);
+    println!("{body}");
+    trace.finish_ok(&body);
     Ok(())
 }
 
@@ -386,16 +479,38 @@ pub async fn run_guard(
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(path);
+    let operation = if delete { "delete" } else { "write" };
+    let trace = ax_usage::ToolTrace::begin(
+        Some(&root),
+        "ax_guard",
+        &serde_json::json!({
+            "path": file_path,
+            "operation": operation,
+        }),
+    );
     ax_usage::log_policy(
         Some(&root),
         format!(
             "guard start op={} path_len={}",
-            if delete { "delete" } else { "write" },
+            operation,
             file_path.chars().count()
         ),
     );
-    let ax = ax_core::Ax::open(&root).await.map_err(|e| e.to_string())?;
-    let _ = ax.ensure_policy_ready().await.map_err(|e| e.to_string())?;
+    let ax = match ax_core::Ax::open(&root).await {
+        Ok(ax) => ax,
+        Err(e) => {
+            let msg = e.to_string();
+            ax_usage::log_policy(Some(&root), "guard fail");
+            trace.finish_err(&msg);
+            return Err(msg);
+        }
+    };
+    if let Err(e) = ax.ensure_policy_ready().await {
+        let msg = e.to_string();
+        ax_usage::log_policy(Some(&root), "guard fail");
+        trace.finish_err(&msg);
+        return Err(msg);
+    }
     let target = root.join(&file_path);
     let content = std::fs::read(&target).ok();
     let op = if delete {
@@ -406,8 +521,10 @@ pub async fn run_guard(
     let result = match ax.guard_operation(&target, op, content.as_deref()).await {
         Ok(r) => r,
         Err(e) => {
+            let msg = e.to_string();
             ax_usage::log_policy(Some(&root), "guard fail");
-            return Err(e.to_string());
+            trace.finish_err(&msg);
+            return Err(msg);
         }
     };
     ax_usage::log_policy(
@@ -418,6 +535,11 @@ pub async fn run_guard(
             result.violations.len()
         ),
     );
+    trace.finish_ok(&format!(
+        "allowed={} violations={}",
+        result.allowed,
+        result.violations.len()
+    ));
     if json {
         println!(
             "{}",
