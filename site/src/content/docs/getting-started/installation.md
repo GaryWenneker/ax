@@ -79,6 +79,18 @@ irm https://getax.wenneker.io/install.ps1 | iex
 
 Open a new PowerShell window afterwards so `ax` is on PATH.
 
+#### Chocolatey (optional)
+
+After the `ax-agent` package is approved on the Chocolatey Community Repository:
+
+```powershell
+choco install ax-agent -y
+```
+
+That installs the same GitHub release zips into `%LOCALAPPDATA%\ax\current` as `install.ps1`. Open a new shell, then run `ax init` in your project.
+
+Package authors do not need Chocolatey on macOS. Stamp, pack, install-test, and optional push run on Windows via `.github/workflows/chocolatey.yml` (`gh workflow run chocolatey.yml -f tag=vX.Y.Z`). Set the `CHOCOLATEY_API_KEY` repository secret before the first `push=true` run.
+
 The Windows installer **self-heals** before it downloads: it stops running `ax` processes, clears stuck `upgrade-status.txt` / `upgrade-staging-*` leftovers, drops an invalid `AX_VERSION` pin, and retries GitHub without a bad `GITHUB_TOKEN` / `GH_TOKEN`. You do not need a separate environment cleanup script on each machine. Re-run the same `irm … | iex` command after a failed upgrade or “Access is denied” park message.
 
 If the website still serves an older installer, use the repository copy (still installs a published release):

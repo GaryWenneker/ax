@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>ax-agent</id>
+    <version>__AX_VERSION__</version>
+    <title>ax (code intelligence CLI)</title>
+    <authors>Gary Wenneker</authors>
+    <owners>Gary Wenneker</owners>
+    <licenseUrl>https://github.com/GaryWenneker/ax/blob/main/packaging/chocolatey/ax-agent/tools/LICENSE.txt</licenseUrl>
+    <projectUrl>https://getax.wenneker.io/</projectUrl>
+    <projectSourceUrl>https://github.com/GaryWenneker/ax</projectSourceUrl>
+    <docsUrl>https://getax.wenneker.io/docs/getting-started/installation/</docsUrl>
+    <bugTrackerUrl>https://github.com/GaryWenneker/ax/issues</bugTrackerUrl>
+    <packageSourceUrl>https://github.com/GaryWenneker/ax/tree/main/packaging/chocolatey/ax-agent</packageSourceUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <summary>Native code-intelligence CLI for AI agents (MCP, graphs, policy).</summary>
+    <description><![CDATA[
+ax is a native Rust CLI for local code intelligence: knowledge graphs, MCP tools,
+policy rules/skills, and Command Center.
+
+This Chocolatey package installs the same Windows release binaries published on
+GitHub (`ax-win32-x64.zip` / `ax-win32-arm64.zip`) into `%LOCALAPPDATA%\ax\current`,
+matching `install.ps1`.
+
+After install, open a new shell and run `ax --version`, then `ax init` in a project.
+
+Authors package and publish from macOS via GitHub Actions (`chocolatey.yml`);
+Chocolatey tooling runs on Windows runners only.
+]]></description>
+    <tags>ax cli mcp code-intelligence developer-tools rust</tags>
+    <releaseNotes>https://github.com/GaryWenneker/ax/releases/tag/v__AX_VERSION__</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

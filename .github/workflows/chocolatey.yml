@@ -1,0 +1,133 @@
+name: Chocolatey
+
+run-name: Chocolatey ${{ inputs.tag }} (push=${{ inputs.push }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published GitHub release tag (e.g. v8.4.3)"
+        required: true
+        type: string
+      push:
+        description: "Push nupkg to Chocolatey Community (needs CHOCOLATEY_API_KEY)"
+        required: false
+        type: boolean
+        default: false
+      run_install_test:
+        description: "Install the packed nupkg on the Windows runner and check ax --version"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chocolatey-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      nupkg: ${{ steps.pack.outputs.nupkg }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate tag and stamp package
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}".Trim()
+          if ($tag -notmatch '^v?\d+\.\d+\.\d+') { throw "Invalid tag: $tag" }
+          $version = if ($tag.StartsWith('v')) { $tag.Substring(1) } else { $tag }
+          $tag = "v$version"
+          # Ensure the release exists and is published.
+          gh release view $tag --repo ${{ github.repository }} --json isDraft,assets `
+            --jq '{draft:.isDraft,assets:[.assets[].name]}' | Tee-Object -Variable raw
+          $info = $raw | ConvertFrom-Json
+          if ($info.draft -eq $true) { throw "Release $tag is still a draft" }
+          foreach ($asset in @('ax-win32-x64.zip','ax-win32-arm64.zip','SHA256SUMS')) {
+            if ($asset -notin $info.assets) { throw "Release $tag missing asset $asset" }
+          }
+          ./scripts/chocolatey-prepare.ps1 -Tag $tag
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: choco pack
+        id: pack
+        shell: pwsh
+        run: |
+          $version = "${{ steps.meta.outputs.version }}"
+          Push-Location packaging/chocolatey/ax-agent
+          choco pack --version $version
+          $nupkg = Get-ChildItem -Filter "ax-agent.$version.nupkg" | Select-Object -First 1
+          if (-not $nupkg) { throw "nupkg not created" }
+          "nupkg=$($nupkg.Name)" >> $env:GITHUB_OUTPUT
+          Write-Host "Packed $($nupkg.FullName) ($([math]::Round($nupkg.Length/1KB,1)) KB)"
+          Pop-Location
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ax-agent-nupkg
+          path: packaging/chocolatey/ax-agent/ax-agent.${{ steps.meta.outputs.version }}.nupkg
+          if-no-files-found: error
+
+  install-test:
+    needs: pack
+    if: ${{ inputs.run_install_test }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ax-agent-nupkg
+          path: nupkg
+
+      - name: Install from local nupkg
+        shell: pwsh
+        run: |
+          $version = "${{ needs.pack.outputs.version }}"
+          $nupkg = Join-Path $pwd "nupkg/ax-agent.$version.nupkg"
+          if (-not (Test-Path $nupkg)) { throw "missing $nupkg" }
+          $src = (Resolve-Path (Join-Path $pwd 'nupkg')).Path
+          choco install ax-agent -y --source $src --version $version --no-progress
+
+          $exe = Join-Path $env:LOCALAPPDATA 'ax\current\bin\ax.exe'
+          if (-not (Test-Path $exe)) { throw "missing $exe after install" }
+          $ver = (& $exe version 2>&1 | Out-String).Trim()
+          Write-Host "ax version: $ver"
+          if ($ver -notmatch [regex]::Escape($version)) {
+            throw "version mismatch: $ver vs $version"
+          }
+
+  push:
+    needs: [pack, install-test]
+    # When install-test is skipped (run_install_test=false), still allow push after a
+    # successful pack. Default GHA skips dependents of skipped jobs without always().
+    if: >-
+      always() &&
+      inputs.push &&
+      needs.pack.result == 'success' &&
+      (needs.install-test.result == 'success' || needs.install-test.result == 'skipped')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ax-agent-nupkg
+          path: nupkg
+
+      - name: choco push
+        shell: pwsh
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          if (-not $env:CHOCOLATEY_API_KEY) {
+            throw "CHOCOLATEY_API_KEY secret is not set. Add it under Settings → Secrets → Actions."
+          }
+          $version = "${{ needs.pack.outputs.version }}"
+          $nupkg = Join-Path $pwd "nupkg/ax-agent.$version.nupkg"
+          choco push $nupkg --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY --no-progress

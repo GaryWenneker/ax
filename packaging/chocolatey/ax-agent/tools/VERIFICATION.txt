@@ -1,0 +1,20 @@
+VERIFICATION
+------------
+
+The ax-agent Chocolatey package downloads official release zips from:
+
+  https://github.com/GaryWenneker/ax/releases
+
+For package version __AX_VERSION__ (tag v__AX_VERSION__):
+
+  ax-win32-x64.zip   SHA256 __AX_SHA256_WIN32_X64__
+  ax-win32-arm64.zip SHA256 __AX_SHA256_WIN32_ARM64__
+
+Checksums are taken from the release asset SHA256SUMS for that tag.
+`scripts/chocolatey-prepare.ps1` stamps these values before `choco pack`.
+
+To verify manually:
+
+  1. Download SHA256SUMS and the matching zip from the GitHub release.
+  2. Confirm the hash matches the value above.
+  3. Confirm `ax.exe --version` reports __AX_VERSION__.
