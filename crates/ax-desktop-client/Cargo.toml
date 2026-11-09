@@ -26,7 +26,7 @@ tracing-subscriber = { workspace = true }
 # quick-xml >= 0.41, and every published atspi-common still depends on an
 # older quick-xml. Leave accesskit off until that chain is patched.
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "wgpu"] }
-egui = "0.31"
+egui = "0.37"
 egui_extras = { version = "0.31", features = ["all_loaders"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 urlencoding = "2"
