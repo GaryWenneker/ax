@@ -57,7 +57,11 @@ When `user-ax` MCP is available:
 1. Call `ax_preflight` once per turn **before** other work.
 2. Pass the user prompt in `arguments.prompt`; optional `arguments.files` for open/changed paths.
 3. Optional `arguments.projectPath` when cwd differs from the indexed MCP root (monorepos).
-4. On failure: report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`, continue best-effort.
+4. On failure: report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`, continue with CLI (`ax preflight` / `ax turn begin`, `ax explore`, …).
+
+## CLI-only / no CallMcpTool
+
+This rule applies only when invoking MCP via `CallMcpTool`. On CLI-only projects (or when MCP is down), skip CallMcpTool shape entirely and use the CLI equivalents (`ax preflight`, `ax explore`, `ax session` / `ax turn`, `ax policy guard`, …). Do not invent nested MCP argument shapes for shell CLI.
 
 ## Forbidden
 
@@ -65,3 +69,4 @@ When `user-ax` MCP is available:
 - Truncated or parameter-less `CallMcpTool` invocations
 - Full MCP catalog discovery when a single server or tool is known
 - Skipping `ax_preflight` when ax MCP is connected (see IDE bootstrap rule `ax`)
+- Skipping `ax preflight` / `ax turn begin` when running CLI-only

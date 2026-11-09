@@ -59,7 +59,7 @@ Interactive installer — writes MCP config for detected AI agents (Cursor, Clau
 | `--all` | flag | Configure every supported agent, not only detected ones |
 | `--target <id>` | string | Wire a single agent (e.g. `vscode`, `cursor`); ids are case-insensitive |
 | `--path <dir>` | string | Project root for workspace MCP files (default: current directory). |
-| `--mode <mode>` | string | `full` (default) wires MCP/hooks; `cli-only` skips MCP, plugins, IDE hooks, and daemons |
+| `--mode <mode>` | string | `full` (default) wires MCP/hooks; `cli-only` seeds IDE instruction files without MCP, plugins, IDE hooks, or daemons (all supported IDEs — see [CLI-only mode](/guides/cli-only/)) |
 
 Agent configs and hooks get the first `ax` on your `PATH`, exactly as found there: a shim such as `~/.local/bin/ax` stays the shim, so a later upgrade of the binary behind it needs no reinstall. With no `ax` on `PATH`, the binary running the install is written, and the report says so. When the two differ, the report names both. A Claude Code hook whose `ax` path is stale is repaired in place; your own hooks stay as they are.
 
@@ -69,8 +69,13 @@ ax install --yes
 ax install --yes --all
 ax install --target vscode
 ax install --yes --target vscode --path .
+ax install --mode cli-only
 ax install --mode cli-only --target vscode
+ax install --mode cli-only --target cursor
+ax install --mode cli-only --target windsurf
 ```
+
+`--mode cli-only` with no `--target` seeds every distinct IDE instruction surface plus the shared `AGENTS.md` / `.agents/skills/ax-cli` skill. It never writes MCP server configs. Full file matrix: [CLI-only mode](/guides/cli-only/).
 
 ### `ax uninstall`
 
@@ -647,7 +652,7 @@ Configure it in `ax.json` under `docsCatalog`. Every key is optional, and there 
 
 ## Sessions, turns & CLI-only parity
 
-Shared engines with MCP (`ax_preflight`, `ax_session`, `ax_durable`, stash/expand). No MCP transport required. See also [CLI-only mode](https://github.com/GaryWenneker/ax/blob/main/docs/CLI_ONLY.md) in the repo.
+Shared engines with MCP (`ax_preflight`, `ax_session`, `ax_durable`, stash/expand). No MCP transport required. Guide: [CLI-only mode](/guides/cli-only/). Repo notes: [`docs/CLI_ONLY.md`](https://github.com/GaryWenneker/ax/blob/main/docs/CLI_ONLY.md).
 
 ### `ax preflight`
 
