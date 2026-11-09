@@ -12,8 +12,8 @@ switch ($osArch) {
   default { throw "Unsupported Windows architecture: $osArch (need x64 or arm64)" }
 }
 
-if ($checksum -like '__AX_*') {
-  throw "Package placeholders were not stamped. Run scripts/chocolatey-prepare.ps1 before choco pack."
+if ($checksum -notmatch '^[0-9a-fA-F]{64}$') {
+  throw "Package checksum placeholders were not stamped. Run scripts/chocolatey-prepare.ps1 before choco pack."
 }
 
 $asset = "ax-win32-$arch.zip"

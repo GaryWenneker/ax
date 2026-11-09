@@ -67,6 +67,20 @@ class ChocolateyPrepareTests(unittest.TestCase):
                 )
             )
 
+    def test_stamp_ignores_powershell_ax_wildcard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "chocolateyInstall.ps1"
+            path.write_text(
+                "$checksum = '__AX_SHA256_WIN32_X64__'\n"
+                "if ($checksum -like '__AX_*') { throw 'unstamped' }\n",
+                encoding="utf-8",
+            )
+            stamp_files("8.4.3", "aa" * 32, "bb" * 32, files=[path])
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("$checksum = '" + "aa" * 32 + "'", text)
+            self.assertIn("__AX_*", text)
+            self.assertNotIn("__AX_SHA256_WIN32_X64__", text)
+
 
 if __name__ == "__main__":
     unittest.main()

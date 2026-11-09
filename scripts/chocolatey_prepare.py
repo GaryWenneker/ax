@@ -83,8 +83,9 @@ def stamp_files(
         original = text
         for key, value in replacements.items():
             text = text.replace(key, value)
-        if "__AX_" in text:
-            leftover = sorted(set(re.findall(r"__AX_[A-Z0-9_]+__", text)))
+        # Only exact placeholders (__AX_FOO__); ignore PowerShell wildcards like '__AX_*'.
+        leftover = sorted(set(re.findall(r"__AX_[A-Z0-9]+(?:_[A-Z0-9]+)*__", text)))
+        if leftover:
             raise RuntimeError(f"{path} still has placeholders: {leftover}")
         if text != original:
             path.write_text(text, encoding="utf-8", newline="\n")
