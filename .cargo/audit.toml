@@ -1,0 +1,9 @@
+# cargo-audit / rustsec audit-check configuration for the Dependency Lifecycle Monitor.
+[advisories]
+ignore = [
+    # Blocked on sqlx: published 0.8.x requires libsqlite3-sys ^0.30.1; 0.9.0 still
+    # resolves to 0.37.x (< 0.39). rusqlite 0.41 would pull a patched 0.39+, but both
+    # crates set links = "sqlite3", so they cannot coexist in one binary. Revisit when
+    # sqlx publishes a release that accepts libsqlite3-sys >= 0.39.
+    "RUSTSEC-2026-0459",
+]
