@@ -51,6 +51,16 @@ Your agent starts the server itself (proxy → shared daemon). Verify the projec
 
 Full playbook: [MCP Logging & Quality](/guides/mcp-quality/#troubleshooting).
 
+## Logging shows only Internal (0 inbound / 0 outbound) when using the CLI
+
+Domain rows such as **Internal · CLI** or **Internal · Policy** are expected for lifecycle detail. **Inbound** and **Outbound** appear when the CLI emits `ToolTrace` lines (`inbound tool=ax_…` / `outbound tool=ax_…`), which shipped in **ax 8.4.4**.
+
+1. Check `ax --version` — upgrade if below 8.4.4 (`ax upgrade`, or re-run `install.ps1` / `install.sh`).
+2. In the project that Logging is watching, run for example `ax explore "auth"` or `ax policy match "deploy"`.
+3. Refresh Logging — status bar **in** / **out** should increase; kind chips for Inbound and Outbound appear when counts are non-zero.
+
+See [Directions: Inbound, Outbound, Internal](/guides/mcp-quality/#directions-inbound-outbound-internal).
+
 ## Grep or Read was denied
 
 The read-guard hook blocks the first whole-file Read of an indexed source file, and the first Grep whose pattern names a symbol the graph already has. A pattern that joins several names with `|` is the same kind of search: each name is checked, and a hit is denied once. The message lists the graph hits and the ax call to use (`ax_search`, `ax_node`, `ax_callers`, `ax_callees`, `ax_impact`).
@@ -236,3 +246,10 @@ npm i -g @garywenneker/ax@latest
 ## Sharing one checkout between Windows and WSL
 
 Don't point both at the same `.ax/` lock and database — SQLite locking across the WSL2/Windows boundary is unreliable. Use separate index dirs per OS if needed.
+
+
+## My rules/skills were overwritten after reinstall
+
+From **ax 8.4.5+** (preserve-user-policy), install/init/`ax policy sync --fix` only create **missing** files. Existing customized rules and skills are kept.
+
+If an older build rewrote your files, restore them from backup or git, then upgrade. Do **not** pass `--force` unless you want templates to replace local edits on purpose.

@@ -400,7 +400,7 @@ pub async fn import_pack_with_origin(
 
     // Refresh every IDE bootstrap (Cursor, Continue, Claude, …) so a teammate on a
     // different agent still gets ax_preflight + Continue MCP after git pull/import.
-    let _ = crate::ide_seed::sync_ide_bootstrap(project_root, true);
+    let _ = crate::ide_seed::sync_ide_bootstrap_with_force(project_root, true, false);
 
     Ok(result)
 }

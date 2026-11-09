@@ -14,7 +14,7 @@ Do not require MCP, plugins, IDE hooks, daemons, or network listeners.
 
 - Record findings: `printf '%s' '{"kind":"finding","body":"..."}' | ax turn event --session <id> --turn <turn> --input-stdin`.
 - Update working context when facts/decisions change: `ax session add --session <id> --input-stdin`.
-- Use `ax policy guard` before risky writes when CRITICAL rules require it.
+- Use `ax policy guard` before risky writes when CRITICAL rules require it; `ax policy capture` / `ax policy skill` for directives and skill bodies.
 
 ## Finish
 

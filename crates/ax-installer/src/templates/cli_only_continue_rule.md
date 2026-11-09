@@ -15,3 +15,5 @@ When AX MCP is unavailable or the project is CLI-only, use the AX CLI exclusivel
 
 Do not install or start MCP, plugins, daemons, or network listeners for this workflow.
 See `.agents/skills/ax-cli/SKILL.md`.
+
+CLI lifecycle (no MCP): `ax preflight` or `ax turn begin` → `ax explore` / `ax query` / `ax node` → `ax policy guard <path>` before writes → `ax policy capture` / `ax policy skill` as needed → `ax sync` after edits → `ax remember` / `ax recall` as needed → `ax turn finish`.

@@ -37,13 +37,13 @@ const CLAUDE_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
 
 Call `ax_preflight` exactly once per turn **before all other work** whenever the ax MCP server is available. Full workflow: see `.claude/rules/ax.md`.
 
-**Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. This works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
+**Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` (or CLI `ax policy capture --yes` after confirm) after the user confirms. This works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
 
 **Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.
 
-**CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
+**CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax policy guard <path>`, `ax policy capture` / `ax policy skill`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
 
 MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; continue with CLI graph/ops commands — do not proceed silently.
 <!-- AX_END -->"#;
@@ -65,7 +65,7 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Working context:** Record a durable fact, file, symbol, decision, or open question with `ax_session` (actions `add`, `update`, `compact`, `clear`, `fork`, `handoff`). Preflight shows `<ax_working_context>`; pass its hash as `known_context` and an unchanged snapshot comes back as one line. Pass the `session` id from `<ax_chat>` to every ax call in this chat; a preflight without it starts a new chat. A changed index marks it stale; `compact` confirms the notes against the current index. fork copies these notes to a new session. handoff starts a new session from the note you send. The old session stays readable, and the graph cache is not copied. `ax_durable` stores this chat's transcript, documents, and checkpointed tasks.
 
-**Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
+**Directive capture:** When the user states a durable rule — `je moet`, `altijd`, `nooit`, `voortaan`, `always`, `never`, `you must`, `@rule` — persist it. `ax_preflight` returns `directiveDetected` + a ready `captureProposal`; ask the questions it lists, then call `ax_policy_capture(action="save", rule)` (or CLI `ax policy capture --yes` after confirm) after the user confirms. Works even if the project has no policy yet (the first save bootstraps it). Never silently ignore such a directive.
 
 **Capability discovery:** ax is actively developed. Do not rely on cached knowledge of ax features — `ax_preflight` returns the latest capabilities, rules, and skills each call. Use any new tools or rules it returns.
 
@@ -73,7 +73,7 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_insights`/`ax_report` for whole-graph architecture, `ax_guard` before writes when CRITICAL rules exist, `ax_diagnostics` for IDE/linter correlation, `ax_policy_capture` for durable rules, `ax_context` for task context, **`ax_sync`** / **`ax_index({force:true})`** for re-index, **`ax_lsp`** for LSP status/enrich, **`ax_ship`** for quality-gate evaluate/ci, **`ax_policy_index`** to refresh rules from disk, **`ax_remember`/`ax_recall`** for memory. Prefer these MCP tools over shelling out to the CLI when MCP is connected.
 
-**CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
+**CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax policy guard <path>`, `ax policy capture` / `ax policy skill`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
 
 Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; continue with CLI graph/ops commands — do not proceed silently.
 <!-- AX_END -->"#;
@@ -224,6 +224,7 @@ fn mcp_callmcp_shape_stale(content: &str) -> bool {
 fn seed_mcp_callmcp_shape_rule(
     project_root: &Path,
     result: &mut IdeSeedResult,
+    force: bool,
 ) -> std::io::Result<()> {
     let cursor_rules = cursor_rules_dir(project_root);
     std::fs::create_dir_all(&cursor_rules)?;
@@ -232,6 +233,10 @@ fn seed_mcp_callmcp_shape_rule(
     let rel = format!(".cursor/rules/{MCP_CALLMCP_SHAPE_FILE}");
 
     if target.exists() {
+        if !force {
+            result.record_skipped(rel);
+            return Ok(());
+        }
         let content = std::fs::read_to_string(&target)?;
         if !mcp_callmcp_shape_stale(&content) {
             result.record_skipped(rel);
@@ -247,7 +252,11 @@ fn seed_mcp_callmcp_shape_rule(
     Ok(())
 }
 
-fn seed_cursor_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+fn seed_cursor_rule(
+    project_root: &Path,
+    result: &mut IdeSeedResult,
+    force: bool,
+) -> std::io::Result<()> {
     let cursor_rules = cursor_rules_dir(project_root);
     std::fs::create_dir_all(&cursor_rules)?;
     remove_legacy_cursor_rule(project_root, result);
@@ -256,6 +265,10 @@ fn seed_cursor_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io:
     let rel = format!(".cursor/rules/{CURSOR_RULE_FILE}");
 
     if target.exists() {
+        if !force {
+            result.record_skipped(rel);
+            return Ok(());
+        }
         let content = std::fs::read_to_string(&target)?;
         if !cursor_bootstrap_stale(&content) {
             result.record_skipped(rel);
@@ -302,7 +315,11 @@ fn continue_mcp_stale(content: &str) -> bool {
     content.trim() != CONTINUE_MCP_BODY.trim()
 }
 
-fn seed_continue_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+fn seed_continue_rule(
+    project_root: &Path,
+    result: &mut IdeSeedResult,
+    force: bool,
+) -> std::io::Result<()> {
     let continue_rules = continue_rules_dir(project_root);
     std::fs::create_dir_all(&continue_rules)?;
 
@@ -310,6 +327,10 @@ fn seed_continue_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::i
     let rel = format!(".continue/rules/{CONTINUE_RULE_FILE}");
 
     if target.exists() {
+        if !force {
+            result.record_skipped(rel);
+            return Ok(());
+        }
         let content = std::fs::read_to_string(&target)?;
         if !continue_bootstrap_stale(&content) {
             result.record_skipped(rel);
@@ -333,12 +354,20 @@ fn seed_continue_rule(project_root: &Path, result: &mut IdeSeedResult) -> std::i
 }
 
 /// Project-scoped Continue MCP server so teammates on Continue pick up ax without a global install.
-fn seed_continue_mcp(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+fn seed_continue_mcp(
+    project_root: &Path,
+    result: &mut IdeSeedResult,
+    force: bool,
+) -> std::io::Result<()> {
     let dir = continue_mcp_dir(project_root);
     std::fs::create_dir_all(&dir)?;
     let target = continue_mcp_path(project_root);
     let rel = format!(".continue/mcpServers/{CONTINUE_MCP_FILE}");
     if target.exists() {
+        if !force {
+            result.record_skipped(rel);
+            return Ok(());
+        }
         let content = std::fs::read_to_string(&target)?;
         if !continue_mcp_stale(&content) {
             result.record_skipped(rel);
@@ -358,8 +387,13 @@ fn write_if_missing_or_stale(
     body: &str,
     rel: &str,
     result: &mut IdeSeedResult,
+    force: bool,
 ) -> std::io::Result<()> {
     if path.exists() {
+        if !force {
+            result.record_skipped(rel);
+            return Ok(());
+        }
         let content = std::fs::read_to_string(path)?;
         let stale =
             !crate::seed::verify_content(&content).is_empty() || content.trim() != body.trim();
@@ -379,13 +413,17 @@ fn write_if_missing_or_stale(
     Ok(())
 }
 
-fn seed_claude_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+fn seed_claude_bootstrap(
+    project_root: &Path,
+    result: &mut IdeSeedResult,
+    force: bool,
+) -> std::io::Result<()> {
     let rule_path = project_root
         .join(".claude")
         .join("rules")
         .join(CLAUDE_RULE_FILE);
     let rule_rel = format!(".claude/rules/{CLAUDE_RULE_FILE}");
-    write_if_missing_or_stale(&rule_path, CLAUDE_RULE_BODY, &rule_rel, result)?;
+    write_if_missing_or_stale(&rule_path, CLAUDE_RULE_BODY, &rule_rel, result, force)?;
 
     let instructions_path = project_root.join(".claude").join("CLAUDE.md");
     let instructions_rel = ".claude/CLAUDE.md";
@@ -462,13 +500,22 @@ fn cline_bootstrap_stale(content: &str) -> bool {
         || content.trim() != CLINE_RULE_BODY.trim()
 }
 
-fn seed_cline_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
+fn seed_cline_bootstrap(
+    project_root: &Path,
+    result: &mut IdeSeedResult,
+    force: bool,
+) -> std::io::Result<()> {
     let path = project_root.join(".clinerules");
     let rel = ".clinerules";
 
     if !path.exists() {
         std::fs::write(&path, format!("{CLINE_RULE_BODY}\n"))?;
         record_upsert(result, rel, UpsertAction::Created);
+        return Ok(());
+    }
+
+    if !force {
+        result.record_skipped(rel);
         return Ok(());
     }
 
@@ -498,17 +545,26 @@ fn seed_cline_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std:
 /// Seeds **all** agent surfaces (Cursor, Continue, Claude, …) so a teammate on a
 /// different IDE still gets `ax_preflight` after pack import / `ax init`.
 pub fn seed_ide_agent_workflow(project_root: &Path) -> std::io::Result<IdeSeedResult> {
+    seed_ide_agent_workflow_with_force(project_root, false)
+}
+
+/// Seed IDE bootstrap files. With `force=false`, existing files are left alone (create-missing).
+/// With `force=true`, stale managed templates may be rewritten.
+pub fn seed_ide_agent_workflow_with_force(
+    project_root: &Path,
+    force: bool,
+) -> std::io::Result<IdeSeedResult> {
     let mut result = IdeSeedResult::default();
-    seed_cursor_rule(project_root, &mut result)?;
-    seed_mcp_callmcp_shape_rule(project_root, &mut result)?;
-    seed_continue_rule(project_root, &mut result)?;
-    seed_continue_mcp(project_root, &mut result)?;
-    seed_claude_bootstrap(project_root, &mut result)?;
+    seed_cursor_rule(project_root, &mut result, force)?;
+    seed_mcp_callmcp_shape_rule(project_root, &mut result, force)?;
+    seed_continue_rule(project_root, &mut result, force)?;
+    seed_continue_mcp(project_root, &mut result, force)?;
+    seed_claude_bootstrap(project_root, &mut result, force)?;
     seed_agents_bootstrap(project_root, &mut result)?;
     seed_gemini_bootstrap(project_root, &mut result)?;
     seed_copilot_bootstrap(project_root, &mut result)?;
     seed_windsurf_bootstrap(project_root, &mut result)?;
-    seed_cline_bootstrap(project_root, &mut result)?;
+    seed_cline_bootstrap(project_root, &mut result, force)?;
     Ok(result)
 }
 
@@ -781,6 +837,15 @@ pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
 
 /// Verify IDE bootstrap files; with `fix`, create or repair via `seed_ide_agent_workflow`.
 pub fn sync_ide_bootstrap(project_root: &Path, fix: bool) -> std::io::Result<SyncResult> {
+    sync_ide_bootstrap_with_force(project_root, fix, false)
+}
+
+/// `fix` creates missing IDE bootstrap files. `force` also rewrites stale templates.
+pub fn sync_ide_bootstrap_with_force(
+    project_root: &Path,
+    fix: bool,
+    force: bool,
+) -> std::io::Result<SyncResult> {
     let mut result = SyncResult::default();
     result.checks = verify_ide_bootstrap(project_root);
     result.fail_count = result
@@ -790,9 +855,7 @@ pub fn sync_ide_bootstrap(project_root: &Path, fix: bool) -> std::io::Result<Syn
         .count();
 
     if fix {
-        // Always re-seed on --fix so template drift is repaired even when
-        // basic verify_content checks still pass (e.g. customized Claude rule).
-        let seed = seed_ide_agent_workflow(project_root)?;
+        let seed = seed_ide_agent_workflow_with_force(project_root, force)?;
         result.fixed.extend(seed.created);
         result.fixed.extend(seed.updated);
         result.checks = verify_ide_bootstrap(project_root);
@@ -821,6 +884,10 @@ mod tests {
             ("cline rules", CLINE_RULE_BODY),
             ("cline block", CLINE_INSTRUCTIONS_BLOCK),
             ("agents", AGENTS_INSTRUCTIONS_BLOCK),
+            (
+                "degraded-continue",
+                include_str!("../templates/rules/degraded-continue.mdc"),
+            ),
             (
                 "explore-before-grep",
                 include_str!("../templates/rules/explore-before-grep.mdc"),
@@ -851,7 +918,22 @@ mod tests {
                 body.contains("ax preflight") || body.contains("`ax preflight`"),
                 "{name}: must name ax preflight CLI fallback"
             );
+            assert!(
+                body.contains("ax policy guard") || body.contains("`ax policy guard`"),
+                "{name}: must name ax policy guard for CLI-only / DEGRADED writes"
+            );
         }
+
+        let capture = include_str!("../templates/rules/policy-capture.mdc");
+        assert!(
+            capture.contains("ax policy capture"),
+            "policy-capture rule must name CLI ax policy capture"
+        );
+        let review_loop = include_str!("../templates/skills/review-loop/SKILL.md");
+        assert!(
+            review_loop.contains("ax policy skill"),
+            "review-loop skill must name CLI ax policy skill"
+        );
     }
 
     /// Every bootstrap an agent may read must say how to fill a gap in a graph
@@ -994,7 +1076,7 @@ mod tests {
         let path = cursor_rule_path(dir.path());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"---\nstale\n---\nno preflight here\n").unwrap();
-        let result = seed_ide_agent_workflow(dir.path()).unwrap();
+        let result = seed_ide_agent_workflow_with_force(dir.path(), true).unwrap();
         assert!(result.updated.iter().any(|p| p.contains("ax.mdc")));
         let content = std::fs::read_to_string(path).unwrap();
         assert!(content.contains("ax_preflight"));

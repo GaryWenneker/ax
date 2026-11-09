@@ -5,7 +5,7 @@ alwaysApply: true
 triggers: ["grep", "read file", "how does", "architecture", "call path", "who calls", "impact", "find code", "search codebase", "where is", "blast radius", "fix", "how works"]
 tags: ["mcp", "tokens", "explore", "quality"]
 priority: 95
-seedVersion: 6
+seedVersion: 7
 ---
 # Explore before Grep/Read
 
@@ -35,7 +35,8 @@ When MCP is unavailable or the project is CLI-only, keep the same order with CLI
 ```text
 1. ax preflight   [or ax turn begin]
 2. ax explore / ax query / ax node / …
-3. Read / Grep only for files the graph already pointed to
+3. ax policy guard <path> before Write/Delete when CRITICAL rules exist
+4. Read / Grep only for files the graph already pointed to
 ```
 
 Do not fall back to Grep-first just because MCP is down.

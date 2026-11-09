@@ -17,6 +17,18 @@ The homepage copies the same shell command. Open **Other platforms** there to ch
 
 ### macOS
 
+#### Homebrew (optional)
+
+```bash
+brew tap GaryWenneker/tap
+brew trust GaryWenneker/tap   # Homebrew 7+
+brew install ax
+```
+
+That installs the same GitHub release archives as the shell installer (Apple Silicon or Intel). Project data stays in each project's `.ax/` directory and user data in `~/.ax/`. Upgrade with `brew upgrade ax`. Starting with the release that includes the Homebrew Cellar guard in the binary, Homebrew-managed installs refuse `ax upgrade` so the Cellar binary is not overwritten. Uninstall with `brew uninstall ax` — that removes only the Homebrew binary. Tap source: [`GaryWenneker/homebrew-tap`](https://github.com/GaryWenneker/homebrew-tap).
+
+#### Shell installer
+
 Run in Terminal on Apple Silicon or Intel Macs:
 
 ```bash
@@ -51,6 +63,18 @@ If you downloaded an archive manually, `./ax version` runs the executable from i
 
 ### Linux
 
+#### Homebrew on Linux (optional)
+
+```bash
+brew tap GaryWenneker/tap
+brew trust GaryWenneker/tap   # Homebrew 7+
+brew install ax
+```
+
+Supported archives are `ax-linux-x64.tar.gz` and `ax-linux-arm64.tar.gz`. Upgrade with `brew upgrade ax`.
+
+#### Shell installer
+
 Run in your Linux shell:
 
 ```bash
@@ -81,15 +105,16 @@ Open a new PowerShell window afterwards so `ax` is on PATH.
 
 #### Chocolatey (optional)
 
-After the `ax-agent` package is approved on the Chocolatey Community Repository:
+Once Chocolatey Community moderation approves the package:
 
 ```powershell
 choco install ax-agent -y
+choco upgrade ax-agent -y
 ```
 
 That installs the same GitHub release zips into `%LOCALAPPDATA%\ax\current` as `install.ps1`. Open a new shell, then run `ax init` in your project.
 
-Package authors do not need Chocolatey on macOS. Stamp, pack, install-test, and optional push run on Windows via `.github/workflows/chocolatey.yml` (`gh workflow run chocolatey.yml -f tag=vX.Y.Z`). Set the `CHOCOLATEY_API_KEY` repository secret before the first `push=true` run.
+Maintainers package from macOS without installing Chocolatey locally: GitHub Actions workflow `chocolatey.yml` (`gh workflow run chocolatey.yml -f tag=vX.Y.Z`) runs `choco pack` / install-test on `windows-latest`, and `choco push` when `-f push=true` with the `CHOCOLATEY_API_KEY` repository secret.
 
 The Windows installer **self-heals** before it downloads: it stops running `ax` processes, clears stuck `upgrade-status.txt` / `upgrade-staging-*` leftovers, drops an invalid `AX_VERSION` pin, and retries GitHub without a bad `GITHUB_TOKEN` / `GH_TOKEN`. You do not need a separate environment cleanup script on each machine. Re-run the same `irm … | iex` command after a failed upgrade or “Access is denied” park message.
 
@@ -230,7 +255,7 @@ Both versions must match the source manifest. If your terminal resolves a differ
 
 ```bash
 ax version
-# ax 8.4.3
+# ax 8.4.4
 ```
 
 Pin a specific published release with `AX_VERSION` when running `install.sh` / `install.ps1`. Confirm that the tag and your platform binary exist on [GitHub Releases](https://github.com/GaryWenneker/ax/releases) before pinning it.

@@ -23,7 +23,7 @@ Run `npx @garywenneker/ax` or `ax install` — see [Installation](/getting-start
 
 VS Code, Windsurf, and Zed are MCP-only integrations for the full install — there is no headless CLI to run these as background agents (unlike Claude Code, Cursor, Codex, opencode, or Gemini CLI), so `ax install` (or **Settings → IDEs & agents** in the Command Center) wires the MCP server, plus the Command Center inside the editor: an extension for the VS Code family, a tool window for JetBrains IDEs, and a browser task for Zed — see [Command Center inside your IDE](/guides/command-center/#command-center-inside-your-ide).
 
-For agents that cannot use MCP, `ax install --mode cli-only` still writes instruction rules/skills for every supported IDE (and shared `AGENTS.md`) without MCP configs — see [CLI-only mode](/guides/cli-only/).
+For agents that cannot use MCP, `ax install --mode cli-only` still writes instruction rules/skills for every supported IDE (and shared `AGENTS.md`) without MCP configs — see [CLI-only mode](/guides/cli-only/). From **ax 8.4.4**, those CLI graph/policy/memory commands still write inbound/outbound Logging rows (same daily verbose file as MCP) — see [MCP Logging & Quality](/guides/mcp-quality/#directions-inbound-outbound-internal).
 
 ## Manual setup
 

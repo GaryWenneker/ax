@@ -12,7 +12,7 @@ Policy files live under `.agents/rules/` and `.agents/skills/`, are indexed into
 ```bash
 ax init                    # creates .agents/ and seeds default preflight rules/skills
 ax policy index            # index policy files into ax.db
-ax policy sync [--fix]     # verify/restore ax_preflight instruction files
+ax policy sync [--fix] [--force]  # verify; --fix restores missing only; --force also overwrites drifted templates
 ax policy match "deploy"   # test which rules/skills match
 ax policy capture "always use mobile-first CSS"   # propose rule from directive language
 ax policy storage status   # show effective files vs database mode
@@ -46,7 +46,7 @@ EVIDENCE includes a table of review rounds. `review-loop` is also stored as a co
 
 ### Reviewing a colleague's pull request
 
-The review loop fixes findings, which is right for your own change but wrong for someone else's pull request. For a colleague's PR, the agent loads `ax_skill({ name: "pr-review-comments" })` instead. It runs the same skill check and stack review, but it does not change any code. Every finding becomes a draft comment, and the agent asks you one question per comment (`AskQuestion` in Cursor, `AskUserQuestion` in Claude Code). Each question offers one or more proposed texts (`Post: …`), `Do not post`, and free text for your own wording. The agent posts only the comments you chose, then lists what it posted and what it skipped. Before the comments, it always tries to link the work item to the pull request (`az repos pr work-item add` on Azure DevOps, or an artifact link on GitHub) and reports the error when that attempt fails. `pr-review-comments` is seeded next to `review-loop` and stored in `~/.ax/global.db` the same way. Comments the agent posts on a pull request are Dutch (`dutch-pr-comments`); chat with the user stays English.
+The review loop fixes findings, which is right for your own change but wrong for someone else's pull request. For a colleague's PR, the agent loads `ax_skill({ name: "pr-review-comments" })` instead. It runs the same skill check and stack review, but it does not change any code. Every finding becomes a draft comment, and the agent asks you one question per comment (`AskQuestion` in Cursor, `AskUserQuestion` in Claude Code). Each question offers one or more proposed texts (`Post: …`), `Do not post`, and free text for your own wording. The agent posts only the comments you chose, then lists what it posted and what it skipped. Before the comments, it always tries to link the work item to the pull request (`az repos pr work-item add` on Azure DevOps, or an artifact link on GitHub) and reports the error when that attempt fails. `pr-review-comments` is seeded next to `review-loop` and stored in `~/.ax/global.db` the same way. Comments the agent posts on a pull request use `reviews.commentLanguage` from ax settings (`dutch-pr-comments` documents that override). Chat with the user, website docs, commit messages, and other product copy stay **English** (`english-only`).
 
 Restart your agent so MCP exposes `ax_preflight`, `ax_rules`, `ax_skill`, `ax_guard`, and `ax_policy_capture`.
 
@@ -723,6 +723,12 @@ ax policy test --json   # machine-readable output
 Do not duplicate team rules in `.cursor/rules/` — delivery is MCP-only.
 
 ---
+
+
+
+## Preserve customized rules and skills
+
+Install, `ax init`, and `ax policy sync --fix` **create missing** rules/skills only. Hand-edited files in `.agents/`, `~/.ax/global_policy/`, and company skills in `global.db` are left alone. Use `ax policy sync --fix --force` only when you intentionally want embedded templates to replace local edits.
 
 ## Related
 

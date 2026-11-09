@@ -113,6 +113,23 @@ pub async fn list_skill_payloads(global: &SqlitePool) -> Result<Vec<(String, Val
     Ok(out)
 }
 
+pub async fn policy_item_exists(
+    global: &SqlitePool,
+    project_id: i64,
+    kind: PolicyKind,
+    item_id: &str,
+) -> Result<bool> {
+    let table = table_for(kind);
+    let row: Option<(i64,)> = sqlx::query_as(&format!(
+        "SELECT 1 FROM {table} WHERE project_id = ? AND item_id = ? LIMIT 1"
+    ))
+    .bind(project_id)
+    .bind(item_id)
+    .fetch_optional(global)
+    .await?;
+    Ok(row.is_some())
+}
+
 pub async fn upsert_policy_item(
     global: &SqlitePool,
     project_id: i64,

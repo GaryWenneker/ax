@@ -1602,9 +1602,14 @@ enum PolicyCommands {
         path: Option<String>,
         #[arg(
             long,
-            help = "Restore missing or drifted managed policy files from embedded templates"
+            help = "Restore missing managed policy files from embedded templates"
         )]
         fix: bool,
+        #[arg(
+            long,
+            help = "Also overwrite drifted/customized managed files with embedded templates (destructive)"
+        )]
+        force: bool,
     },
     /// Propose or save a policy rule from directive language in a prompt
     Capture {
@@ -2716,7 +2721,7 @@ async fn async_main() {
                 delete,
                 json,
             } => commands::policy::run_guard(path, file, delete, json).await,
-            PolicyCommands::Sync { path, fix } => commands::policy::run_sync(path, fix).await,
+            PolicyCommands::Sync { path, fix, force } => commands::policy::run_sync(path, fix, force).await,
             PolicyCommands::Test { path, json } => commands::policy::run_test(path, json).await,
             PolicyCommands::Capture {
                 prompt,

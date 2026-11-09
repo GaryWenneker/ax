@@ -35,10 +35,12 @@ Use **Memory** to recall a decision or convention. **New memory** opens a compos
 
 ## Inspect an agent call
 
-1. Open **Logging**. Confirm the project and live state in the heading.
+1. Open **Logging**. Confirm the project and live state in the heading. The status bar **in** / **out** / **int** counts track **Inbound**, **Outbound**, and **Internal** directions.
 2. Open **Filters** to choose a kind, tool, date or search term. On desktop, resize a heading divider or use the heading filter; mobile uses the **Sort and filter** sheet for column controls.
 3. Select a row to read the payload and call steps. Arrow keys move through the visible order; Enter opens details and Escape closes them.
 4. **Newest** follows incoming events. Scroll into history to load earlier days. **Quality** opens correlation and findings; it does not change your log.
+
+MCP tool calls and CLI graph/policy/memory commands both appear here. From **ax 8.4.4**, CLI writes the same `inbound tool=` / `outbound tool=` bodies MCP uses (branded `[ax]`), so inbound and outbound are not MCP-only. Domain lifecycle detail still shows as **Internal**. If you only see Internal after CLI work, upgrade the binary — see [MCP Logging & Quality](/guides/mcp-quality/#directions-inbound-outbound-internal).
 
 Routine Workspace, Memory and Ship events use readable action titles with counts/timing on a quiet second line. The marker has its own gutter; unrelated events have no dotted connector. Kind/tool labels are not duplicated. **Raw line** in the inspector preserves the original entry, and searches still match raw fields such as `duration_ms=162`.
 

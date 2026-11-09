@@ -1,9 +1,9 @@
 ---
 title: MCP Logging & Quality
-description: End-to-end guide to verbose MCP traces, the Logging page, Quality slide-out, session hooks, and ax mcp audit.
+description: End-to-end guide to verbose MCP and CLI traces, the Logging page, Quality slide-out, session hooks, and ax mcp audit.
 ---
 
-ax ships an **MCP observability loop**: record what agents send and receive, score how well they use ax tools, and turn waste into a fixpack you can paste back into chat.
+ax ships an **observability loop** for both MCP and CLI: record what agents send and receive, score how well they use ax tools, and turn waste into a fixpack you can paste back into chat.
 
 ![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging-dark.png)
 
@@ -27,9 +27,39 @@ Copy fixpack → paste into agent chat to improve policy / habits
 
 Traces **never** alter agent-facing tool responses (`content.text` / `structuredContent`). Logging is side-channel only.
 
+## Directions: Inbound, Outbound, Internal
+
+The Logging status bar and kind chips use three directions:
+
+| Direction | Log shape | Typical source |
+|-----------|-----------|----------------|
+| **Inbound** | `inbound tool=ax_… args=…` | MCP tool request, or CLI `ToolTrace` for the same tool id |
+| **Outbound** | `outbound tool=ax_…` (+ optional preview) | MCP tool response, or CLI `ToolTrace` finish |
+| **Internal** | domain / activity lines (`cli`, `policy`, `memory`, …) | Lifecycle detail that is not a request/response pair |
+
+MCP brands those lines `[ax-mcp]`. CLI brands the same body with `[ax]` so provenance stays honest — Command Center still classifies them as inbound/outbound.
+
+**CLI commands that emit inbound + outbound** (same tool ids agents use over MCP):
+
+| CLI | Tool id on the log line |
+|-----|-------------------------|
+| `ax explore` | `ax_explore` |
+| `ax query` | `ax_search` |
+| `ax node` | `ax_node` |
+| `ax remember` / `ax recall` | `ax_remember` / `ax_recall` |
+| `ax preflight`, `ax session …`, turn helpers via shared engine | `ax_preflight`, `ax_session`, … |
+| `ax policy index` | `ax_policy_index` |
+| `ax policy match` | `ax_rules` |
+| `ax policy guard` | `ax_guard` |
+| `ax policy skill` / `ax policy skills` | `ax_skill` |
+
+Domain lines (`Internal · CLI` / `Internal · Policy` / `Internal · Memory`) still appear for the same runs. A CLI-only session can therefore show all three directions after a single `ax explore` or `ax policy match`.
+
+If Logging shows **0 in / 0 out** and only Internal rows while you use the CLI, upgrade to **ax 8.4.4+** (`ax upgrade` or re-run the shell installer). Older builds wrote domain/activity lines only.
+
 ## Domain events
 
-When Verbose MCP logging is on, the same daily log also receives domain lines for:
+The same daily log also receives domain lines for:
 
 | Prefix | Source |
 |--------|--------|
@@ -192,8 +222,9 @@ Related surfaces:
 
 | Symptom | Fix |
 |---|---|
-| Logging empty | Reconnect MCP with the intended project path; confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows |
-| Q score stuck / muted | Need inbound traffic + verbose file; open Logging and trigger a preflight |
+| Logging empty | Reconnect MCP with the intended project path; confirm today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` grows. CLI-only: run `ax explore "…"` or `ax policy match "…"` in that project |
+| 0 inbound / 0 outbound with CLI-only Internal rows | Need **ax 8.4.4+** for CLI `ToolTrace`. Upgrade, then run a graph or policy command and refresh Logging |
+| Q score stuck / muted | Need inbound traffic + verbose file; open Logging and trigger a preflight (MCP) or `ax preflight` / `ax explore` (CLI) |
 | ExploreBeforeGrep false alarm | Install session hook; prefer timed transcripts; re-run audit after a real ax-heavy chat; quiet/DEGRADED MCP should not flag this |
 | Correlation near 0% | Wrong project; MCP disconnected; missing `session=` (reinstall hook / restart MCP); or audit without matching transcript — pass `--session` |
 | UncorrelatedTool (medium) despite a project log | Usually ax MCP is offline after a reinstall — reconnect MCP; live rolling audits no longer score-penalize this when `verbose_mcp=true` |

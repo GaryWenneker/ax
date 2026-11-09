@@ -1122,6 +1122,8 @@ ax mcp remote logout --url https://ax.example.com/projects/my-project/mcp
 
 Correlate `<project>/.ax/mcp-verbose-*.log` (daily files) with a Cursor agent transcript and score MCP quality (preflight, enrichment, explore-before-grep, correlation). Same engine powers the Command Center **Quality** status-bar chip and slide-out. Persists a snapshot to `.ax/audit/latest.json`. Exit code `2` when critical findings are present.
 
+CLI graph and policy commands (`ax explore`, `ax node`, `ax query`, `ax remember` / `ax recall`, `ax preflight`, `ax policy match|index|guard|skill`, …) append the same inbound/outbound shapes as MCP (branded `[ax]`) from **ax 8.4.4**, plus Internal domain lines. See [MCP Logging & Quality — Directions](/guides/mcp-quality/#directions-inbound-outbound-internal).
+
 Scoring notes:
 
 - Enrichment attaches `enrich` / `enrich done` lines (including `final_inject_chars`) to the open `ax_preflight` cluster so empty-inject false positives are avoided.
@@ -1440,15 +1442,17 @@ ax policy test --json
 
 ### `ax policy sync [path]`
 
-Verify managed policy instruction files (`.ax/policy/skills/startup/SKILL.md`, …) and IDE bootstrap files (`.cursor/rules/ax.mdc`, `.continue/rules/ax.md`, `.continue/mcpServers/ax.json`, `AGENTS.md`, etc.). Required managed files must match the embedded init templates; optional team copies only fail the basic preflight checks.
+Verify managed policy instruction files (`.agents/skills/startup/SKILL.md`, …) and IDE bootstrap files (`.cursor/rules/ax.mdc`, `.continue/rules/ax.md`, `.continue/mcpServers/ax.json`, `AGENTS.md`, etc.). Required managed files are reported when missing or drifted; customized content is not rewritten unless you pass `--force`.
 
 | Flag | Description |
 |---|---|
-| `--fix` | Restore missing or drifted managed files from embedded init templates |
+| `--fix` | Restore **missing** managed files from embedded init templates |
+| `--force` | With `--fix`, also overwrite drifted/customized managed files (destructive) |
 
 ```bash
 ax policy sync
 ax policy sync --fix
+ax policy sync --fix --force
 ```
 
 After `--fix` restores `.ax/policy/` files in database mode, run `ax policy import` so `ax.db` picks up the updated skill bodies.

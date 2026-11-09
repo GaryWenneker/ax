@@ -38,7 +38,7 @@ A workflow with ordered steps is a skill. A constraint that must hold in named s
 - In the reply, give the absolute path, each deleted sentence, and each gap fixed. If the gap check finds none of those, say so.
 - On a revision, keep every hard boundary already in the text unless they retract it.
 - A later correction is new context. Apply it, then run the bloat cut and the gap check again.
-- Acceptance is only `yes`, `ja`, `accept`, `akkoord`, or `opslaan` referring to this version. Do not call `ax_policy_capture` with `action: "save"` before that. On a skill or rule in this repo, `status` is `pending` until that acceptance, then `approved`.
+- Acceptance is only `yes`, `ja`, `accept`, `akkoord`, or `opslaan` referring to this version. Do not call `ax_policy_capture` with `action: "save"` (or CLI `ax policy capture --yes`) before that. On a skill or rule in this repo, `status` is `pending` until that acceptance, then `approved`.
 
 ## Forbidden
 

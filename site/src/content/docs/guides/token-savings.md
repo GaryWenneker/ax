@@ -341,7 +341,7 @@ The sidebar **Prices** tab shows daily OpenRouter rates and price-over-time char
 - **By-project** — savings breakdown per indexed project
 - **Recent calls** — individual graph calls with counterfactual vs actual
 - **Agent sessions** — correlated with imported session logs
-- **MCP quality chip** — live score + tokens at risk; opens the Quality slide-out. Full loop (Logging, checks, fixpack, session hook): [MCP Logging & Quality](/guides/mcp-quality/). CLI: `ax mcp audit`.
+- **MCP quality chip** — live score + tokens at risk; opens the Quality slide-out. Full loop (Logging inbound/outbound/internal for MCP + CLI, checks, fixpack, session hook): [MCP Logging & Quality](/guides/mcp-quality/). CLI: `ax mcp audit`.
 
 ### Agent log import
 
@@ -369,7 +369,7 @@ ax savings import --claude          # Claude Code only
 | `AX_SAVINGS_TOKENS_PER_LINE` | 9 | Tokens per line for unreadable files |
 | `AX_SAVINGS_AVG_FILE_TOKENS` | 3500 | Fallback when no line count or path-only ref |
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every MCP tool |
-| `AX_MCP_VERBOSE` | unset | `1`/`true`/`yes` logs inbound/enrichment/outbound MCP traces to stderr (Cursor Output); same as `[ui] verbose_mcp = true` |
+| `AX_MCP_VERBOSE` | unset | Legacy compatibility flag; MCP and CLI (from 8.4.4) always write inbound/outbound/internal traces to the project verbose log and optionally stderr (Cursor Output). See [MCP Logging & Quality](/guides/mcp-quality/). |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_NEIGHBORS` | 15 | Callers or callees listed per entry in `ax_explore` / `ax_node` text (direct edges first; the heading keeps the full count) |
