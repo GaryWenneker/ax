@@ -6,7 +6,8 @@
 #   curl -fsSL https://getax.wenneker.io/install.sh | sh
 #
 # Always installs the latest published release (highest semver with assets).
-# Stops running ax processes and replaces any previous install under ~/.ax.
+# Self-heals before download: stops ax, clears stuck upgrade-status/staging,
+# drops invalid AX_VERSION pins, and retries GitHub without a bad token.
 # Pin a version: AX_VERSION=v2.0.14 curl -fsSL ... | sh
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: curl -fsSL https://getax.wenneker.io/install.sh | sh -s -- --uninstall
@@ -32,10 +33,43 @@ stop_ax_processes() {
   fi
 }
 
+clear_pending_upgrade_state() {
+  [ -d "$INSTALL_DIR" ] || return 0
+  if [ -f "$INSTALL_DIR/upgrade-status.txt" ]; then
+    rm -f "$INSTALL_DIR/upgrade-status.txt"
+    echo "ax: cleared stuck upgrade-status.txt" >&2
+  fi
+  find "$INSTALL_DIR" -maxdepth 1 -type d -name 'upgrade-staging-*' -exec rm -rf {} + 2>/dev/null || true
+  if [ -d "$INSTALL_DIR/current.old" ]; then
+    rm -rf "$INSTALL_DIR/current.old"
+    echo "ax: removed parked current.old" >&2
+  fi
+}
+
+disable_stale_github_tokens() {
+  clear_user="${1:-}"
+  for name in GITHUB_TOKEN GH_TOKEN; do
+    eval "val=\${$name-}"
+    if [ -n "$val" ]; then
+      unset "$name"
+      echo "ax: ignoring process $name for this install (auth failed)." >&2
+    fi
+  done
+  if [ "$clear_user" = "user" ] && command -v powershell.exe >/dev/null 2>&1; then
+    for name in GITHUB_TOKEN GH_TOKEN; do
+      stored="$(powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable('$name','User')" 2>/dev/null || true)"
+      if [ -n "$stored" ]; then
+        powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('$name', \$null, 'User')" 2>/dev/null || true
+        echo "ax: cleared stale $name from User environment." >&2
+      fi
+    done
+  fi
+}
+
 clean_install_tree() {
   stop_ax_processes
+  clear_pending_upgrade_state
   rm -rf "$INSTALL_DIR/current" "$INSTALL_DIR/versions"
-  find "$INSTALL_DIR" -maxdepth 1 -type d -name 'upgrade-staging-*' -exec rm -rf {} + 2>/dev/null || true
 }
 
 if [ "${1:-}" = "--uninstall" ]; then
@@ -79,11 +113,9 @@ asset_url_ok() {
   return 1
 }
 
-resolve_version_from_api() {
-  asset="ax-${target}.tar.gz"
-  json="$(curl -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: ax-install" \
-    "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null)" || return 1
-  printf '%s' "$json" | python3 -c '
+parse_latest_installable_tag() {
+  asset="$1"
+  python3 -c '
 import json, re, sys
 asset = sys.argv[1]
 data = json.load(sys.stdin)
@@ -97,7 +129,73 @@ def key(t):
     return tuple(int(x) for x in re.sub(r"^v", "", t).split("."))
 if tags:
     print(max(tags, key=key))
-' "$asset" 2>/dev/null || return 1
+' "$asset" 2>/dev/null
+}
+
+fetch_github_releases_json() {
+  # Args: output_path [bearer_token]
+  out="$1"
+  token="${2:-}"
+  if [ -n "$token" ]; then
+    curl -sS -o "$out" -w '%{http_code}' \
+      -H "Accept: application/vnd.github+json" \
+      -H "User-Agent: ax-install" \
+      -H "Authorization: Bearer $token" \
+      "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null || printf '000'
+  else
+    curl -sS -o "$out" -w '%{http_code}' \
+      -H "Accept: application/vnd.github+json" \
+      -H "User-Agent: ax-install" \
+      "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null || printf '000'
+  fi
+}
+
+resolve_version_from_api() {
+  asset="ax-${target}.tar.gz"
+  tmp="$(mktemp)"
+  token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  # First try with token when present; always fall back to anonymous.
+  for attempt in with_token no_token; do
+    if [ "$attempt" = "with_token" ] && [ -z "$token" ]; then
+      continue
+    fi
+    if [ "$attempt" = "with_token" ]; then
+      code="$(fetch_github_releases_json "$tmp" "$token")"
+    else
+      code="$(fetch_github_releases_json "$tmp")"
+    fi
+    case "$code" in
+      200)
+        tag="$(parse_latest_installable_tag "$asset" <"$tmp" || true)"
+        rm -f "$tmp"
+        if [ -n "$tag" ]; then
+          printf '%s\n' "$tag"
+          return 0
+        fi
+        echo "ax: GitHub API returned releases but none include $asset." >&2
+        return 1
+        ;;
+      401|403)
+        echo "ax: GitHub API $attempt failed: HTTP $code" >&2
+        disable_stale_github_tokens user
+        token=""
+        continue
+        ;;
+      *)
+        if [ "$attempt" = "with_token" ]; then
+          echo "ax: GitHub API with token failed (HTTP $code); retrying without token." >&2
+          disable_stale_github_tokens
+          token=""
+          continue
+        fi
+        echo "ax: GitHub API unreachable: HTTP $code" >&2
+        rm -f "$tmp"
+        return 1
+        ;;
+    esac
+  done
+  rm -f "$tmp"
+  return 1
 }
 
 clear_stale_ax_version_pin() {

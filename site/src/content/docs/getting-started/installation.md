@@ -25,6 +25,8 @@ curl -fsSL https://getax.wenneker.io/install.sh | sh
 
 Open a new Terminal window afterwards. The installer adds `~/.local/bin` to your zsh startup file (`${ZDOTDIR:-$HOME}/.zshrc`). Existing settings stay, and reinstalling does not duplicate that block. An installer running through `curl | sh` cannot change the terminal that launched it. If that window still says `command not found: ax`, run the `export PATH=...` line the installer printed, or open a new window.
 
+The shell installer **self-heals** before it downloads: it stops running `ax` processes, clears stuck upgrade leftovers under `~/.ax`, drops an invalid `AX_VERSION` pin, and retries GitHub without a bad token. Re-run the same install command after a failed upgrade — no separate env cleanup.
+
 If the website serves an older installer, use the current repository copy. It still installs a published release. It does not build source:
 
 ```bash
@@ -76,6 +78,14 @@ irm https://getax.wenneker.io/install.ps1 | iex
 ```
 
 Open a new PowerShell window afterwards so `ax` is on PATH.
+
+The Windows installer **self-heals** before it downloads: it stops running `ax` processes, clears stuck `upgrade-status.txt` / `upgrade-staging-*` leftovers, drops an invalid `AX_VERSION` pin, and retries GitHub without a bad `GITHUB_TOKEN` / `GH_TOKEN`. You do not need a separate environment cleanup script on each machine. Re-run the same `irm … | iex` command after a failed upgrade or “Access is denied” park message.
+
+If the website still serves an older installer, use the repository copy (still installs a published release):
+
+```powershell
+irm https://raw.githubusercontent.com/GaryWenneker/ax/main/install.ps1 | iex
+```
 
 ## 2. Run ax install
 
@@ -208,7 +218,7 @@ Both versions must match the source manifest. If your terminal resolves a differ
 
 ```bash
 ax version
-# ax 7.1.0
+# ax 8.4.3
 ```
 
 Pin a specific published release with `AX_VERSION` when running `install.sh` / `install.ps1`. Confirm that the tag and your platform binary exist on [GitHub Releases](https://github.com/GaryWenneker/ax/releases) before pinning it.

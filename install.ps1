@@ -5,7 +5,8 @@
 #   irm https://getax.wenneker.io/install.ps1 | iex
 #
 # Always installs the latest published release (highest semver with assets).
-# Stops running ax processes and replaces any previous install under %LOCALAPPDATA%\ax.
+# Self-heals before download: stops ax, clears stuck upgrade-status/staging,
+# drops invalid AX_VERSION pins, and retries GitHub without a bad token.
 # Pin a version: $env:AX_VERSION = 'v2.0.14'; irm ... | iex
 # Upgrade: ax upgrade  (or re-run this script)
 # Uninstall: remove %LOCALAPPDATA%\ax and its bin entry from user PATH.
@@ -37,11 +38,56 @@ function Stop-AxProcesses {
   }
 }
 
+function Clear-AxPendingUpgradeState {
+  param(
+    [Parameter(Mandatory = $true)][string]$InstallRoot
+  )
+  if (-not (Test-Path $InstallRoot)) { return }
+  $status = Join-Path $InstallRoot 'upgrade-status.txt'
+  if (Test-Path $status) {
+    Remove-Item -Force $status -ErrorAction SilentlyContinue
+    Write-Host "ax: cleared stuck upgrade-status.txt" -ForegroundColor Yellow
+  }
+  Get-ChildItem -Path $InstallRoot -Directory -Filter 'upgrade-staging-*' -ErrorAction SilentlyContinue |
+    ForEach-Object {
+      Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
+      Write-Host "ax: removed leftover $($_.Name)" -ForegroundColor Yellow
+    }
+  # Parked tree from a failed Windows activate (current.old next to current).
+  $parked = Join-Path $InstallRoot 'current.old'
+  if (Test-Path $parked) {
+    Remove-Item -Recurse -Force $parked -ErrorAction SilentlyContinue
+    Write-Host "ax: removed parked current.old" -ForegroundColor Yellow
+  }
+}
+
+function Disable-AxStaleGitHubTokens {
+  param([switch]$ClearUserScope)
+  foreach ($name in @('GITHUB_TOKEN', 'GH_TOKEN')) {
+    if (Test-Path "Env:$name") {
+      Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+      Write-Host "ax: ignoring process $name for this install (auth failed)." -ForegroundColor Yellow
+    }
+    if ($ClearUserScope) {
+      foreach ($scope in @('User', 'Machine')) {
+        $stored = [System.Environment]::GetEnvironmentVariable($name, $scope)
+        if ($stored) {
+          try {
+            [System.Environment]::SetEnvironmentVariable($name, $null, $scope)
+            Write-Host "ax: cleared stale $name from $scope environment." -ForegroundColor Yellow
+          } catch {
+            Write-Host "ax: could not clear $name from $scope (need elevation?). Process token already ignored." -ForegroundColor Yellow
+          }
+        }
+      }
+    }
+  }
+}
+
 function Clear-AxInstallState {
   Stop-AxProcesses
+  Clear-AxPendingUpgradeState -InstallRoot $installDir
   if (Test-Path $installDir) {
-    Get-ChildItem -Path $installDir -Directory -Filter 'upgrade-staging-*' -ErrorAction SilentlyContinue |
-      ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
     $current = Join-Path $installDir 'current'
     if (Test-Path $current) {
       try {
@@ -142,8 +188,15 @@ function Resolve-AxVersionFromGitHubApi {
     } catch {
       $lastError = $_
       $msg = "$_"
-      if ($msg -match '401|403|Unauthorized|Bad credentials|rate limit') {
+      if ($msg -match '401|403|Unauthorized|Bad credentials') {
         Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
+        # Drop bad tokens automatically — no manual env cleanup required.
+        Disable-AxStaleGitHubTokens -ClearUserScope
+        continue
+      }
+      if ($msg -match 'rate limit') {
+        Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
+        Disable-AxStaleGitHubTokens
         continue
       }
       Write-Host "ax: GitHub API unreachable ($($attempt.Label)): $msg" -ForegroundColor Yellow

@@ -1,0 +1,29 @@
+---
+id: install-auto-self-heal
+level: CRITICAL
+alwaysApply: false
+globs: ["install.ps1","install.sh","site/public/install.ps1","site/public/install.sh","**/install*.ps1","**/install*.sh"]
+triggers: ["install","upgrade","AX_VERSION","GITHUB_TOKEN","install.ps1","install.sh"]
+tags: ["install","captured"]
+priority: 80
+enabled: true
+status: approved
+scope: project
+---
+
+# Installer automatic self-heal
+
+> **ABSOLUTE**: `install.ps1` / `install.sh` (and site public copies) must recover a broken install without requiring manual per-machine environment cleanup.
+
+## Required on every install run
+
+1. Stop running `ax` processes (best effort).
+2. Clear stuck upgrade leftovers (`upgrade-status.txt`, `upgrade-staging-*`) under the product install root.
+3. Clear invalid `AX_VERSION` pins (Process + User) when the pin has no platform asset; install the latest installable release instead.
+4. On GitHub API 401/403 from `GITHUB_TOKEN`/`GH_TOKEN`, retry without Authorization and unset those tokens for the install process (clear User/Machine only after confirmed auth failure, with a warning).
+
+## Forbidden
+
+- Documenting a separate “geheim” env-cleanup ritual as the required fix path for these failure modes.
+- Using HTTP HEAD against GitHub release CDN URLs.
+- Touching project `.ax` databases (product install tree only).
