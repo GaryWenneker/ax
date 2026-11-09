@@ -16,7 +16,7 @@ Do not jump into implementation. Clarify what you are building first.
 
 ## Process
 
-1. **Understand context** — check existing code (`ax_explore`), docs, recent commits. Follow existing patterns.
+1. **Understand context** — check existing code (`ax_explore` / `ax explore`), docs, recent commits. Follow existing patterns.
 2. **Ask one question at a time** — purpose, constraints, success criteria. Prefer multiple-choice.
 3. **Propose 2-3 approaches** — with trade-offs and your recommendation. Lead with the recommended option.
 4. **Present design** — scaled to complexity. A config change needs two sentences; a new subsystem needs architecture, data flow, error handling.

@@ -96,6 +96,16 @@ This is the step that wires ax in. The command:
 
 Restart your agent after this so it loads the MCP config.
 
+### CLI-only (no MCP)
+
+If your agent must not load MCP — or you want instruction files without server configs:
+
+```bash
+ax install --mode cli-only
+```
+
+That seeds Cursor, VS Code/Copilot, Windsurf, Continue, Claude, Gemini, Cline/Antigravity, and shared `AGENTS.md` rules/skills. It does **not** write MCP JSON, plugins, daemons, or IDE hooks. See [CLI-only mode](/guides/cli-only/).
+
 ### From the Command Center
 
 Run `ax web` and open **Settings → IDEs & agents**.

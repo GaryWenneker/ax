@@ -4,7 +4,7 @@ description: Runs the mandatory ax session-start sequence (ax_preflight with mat
 triggers: ["session start", "new message", "preflight", "startup", "turn start"]
 tags: ["workflow", "preflight"]
 priority: 100
-seedVersion: 5
+seedVersion: 6
 ---
 # ax Startup Protocol
 
@@ -12,12 +12,20 @@ seedVersion: 5
 
 ## SS-00 — Preflight (unconditional, always first)
 
-> **Run preflight exactly once per turn.** If you already called `ax_preflight` this turn, skip this step. Do not call preflight again after reading this skill.
+> **Run preflight exactly once per turn.** If you already called `ax_preflight` / `ax preflight` this turn, skip this step. Do not call preflight again after reading this skill.
 
-Run as the **very first MCP tool call** on every new user message, before reading files, searching code, or other work:
+**MCP connected:** run as the **very first MCP tool call** on every new user message, before reading files, searching code, or other work:
 
 ```json
 ax_preflight({ "prompt": "<full user intent in English>", "files": ["<open or changed paths relative to project root>"] })
+```
+
+**CLI-only / MCP unavailable:** use the same engine via CLI (or the turn loop):
+
+```bash
+ax session start --json   # or resume --session <id>
+printf '%s' "$PROMPT" | ax preflight --prompt-stdin --session <id> --json
+# preferred loop: ax turn begin … → work → ax turn finish
 ```
 
 - Apply all **CRITICAL** rules from `inject` before editing files.
@@ -104,22 +112,34 @@ When ax MCP is connected, call MCP tools for session ops — do **not** shell ou
 | Refresh policy from disk | `ax_policy_index` |
 | Memories | `ax_remember` / `ax_recall` |
 
-Shell `ax …` is only for **Mode: DEGRADED** or ops with no MCP tool (`install`, `upgrade`, `web`, `share`, `ship --watch`).
+When MCP is **unavailable** or the project is **CLI-only**, use the matching CLI — do not skip the workflow:
+
+| Need | CLI |
+|------|-----|
+| Preflight / turn | `ax preflight` / `ax turn begin` |
+| Code graph | `ax explore` / `ax query` / `ax node` |
+| Guard | `ax policy guard <path>` |
+| Capture directive | `ax policy capture` |
+| Load skill body | `ax policy skill <name>` |
+| Re-index / memory | `ax sync`, `ax remember` / `ax recall` |
+| Cache expand | `ax cache expand` |
+
+Shell `ax …` is also allowed for ops with no MCP tool (`install`, `upgrade`, `web`, `share`, `ship --watch`).
 
 ## SS-03 — Language rule (CRITICAL)
 
 - **All agent responses to the user MUST be in English.**
 - Translate non-English user input for your own reasoning; respond in English.
 
-## SS-04 — MCP failure
+## SS-04 — MCP failure / CLI-only
 
-If the MCP **server is unreachable** (connection error, no tools listed):
+If the MCP **server is unreachable** (connection error, no tools listed) **or** the project is CLI-only:
 
-1. Report: `ax MCP unreachable: [error]`
-2. State: `Mode: DEGRADED — no policy loaded.`
-3. Best-effort with editor tools only.
+1. Report once: `ax MCP unreachable: [error]` and `Mode: DEGRADED` (skip the unreachable line for intentional CLI-only installs).
+2. Continue with the CLI table in SS-02c — **not** editor Grep/Read as the first choice for structural work.
+3. Prefer `ax explore` / `ax turn begin` over skipping graph/policy.
 
-If `ax_preflight` **returns a payload** (including empty inject or `policyError`): continue the turn. Graph and memory tools remain available. Do **not** invent `Mode: PARTIAL` or skip `ax_explore` because policy files failed to parse.
+If `ax_preflight` **returns a payload** (including empty inject or `policyError`): continue the turn. Graph and memory tools remain available. Do **not** invent `Mode: PARTIAL` or skip `ax_explore` / `ax explore` because policy files failed to parse.
 
 Session-start clients may call `ax_preflight` with no `prompt`; that is valid (`prompt` defaults to empty).
 

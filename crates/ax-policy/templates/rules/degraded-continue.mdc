@@ -14,7 +14,7 @@ priority: 95
 
 1. Report once: `ax MCP unreachable: [error]` and `Mode: DEGRADED`.
 2. **Immediately continue** the user's actual request with normal tools (Read, Grep, Shell, edit, Task, browser, etc.).
-3. Skip only ax-only steps that truly need MCP (graph explore, `ax_guard`, policy capture, `ax_sync` / `ax_index` via MCP). Prefer shell CLI for ops when MCP is down.
+3. Prefer shell CLI for ops **and** graph when MCP is down: `ax explore`, `ax query`, `ax node`, `ax sync`, `ax preflight` / `ax turn begin`. Skip only steps that truly have no CLI equivalent (`ax_guard` / policy capture via MCP when those have no CLI).
 4. Do **not** ask the user to "enable ax MCP" before doing the work. Mention reconnect as an optional tip at the end if useful.
 5. Do **not** interpret "do not proceed silently" / "best-effort" as permission to stop. Best-effort means **complete the task without policy/graph assistance**.
 

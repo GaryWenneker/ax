@@ -44,13 +44,17 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Store / search memories | `ax_remember` / `ax_recall` |
 | Build task context | `ax_context` |
 
-**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** run `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index` / `ax remember` via the terminal. Shell CLI is only for DEGRADED mode or ops with no MCP tool (install, upgrade, web, share, ship --watch).
+**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** run `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index` / `ax remember` via the terminal. Shell CLI is for CLI-only projects, DEGRADED mode, or ops with no MCP tool (install, upgrade, web, share, ship --watch).
+
+## CLI-only / MCP unavailable
+
+Prefer MCP when connected. When MCP is unavailable or the project is CLI-only (`ax install --mode cli-only`), use the CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
 
 ## Hard rules
 
 - Never skip step 1 on a new user message.
 - **Run preflight exactly once per turn** — do not re-call after the startup skill.
-- MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`, do not proceed silently.
+- MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`, continue with CLI graph/ops commands — do not proceed silently.
 - For structural code questions (how X works, call paths, blast radius) call `ax_explore` **before** broad Grep/Read — not policy tools and not a Grep-first sweep.
 - Graph answers are source: `ax_explore` and `ax_node` return numbered source from the index; treat it as already read. `ax_node` returns a symbol's full source plus direct callers and callees, so use it instead of Read. A snippet marked truncated → `ax_node` on that symbol. A reply ending in an `[ax context cache]` footer → `ax_expand` with its id. Where the graph covers the code, do not Read or Grep the file to fill the gap. Read is for files the graph does not index (config, docs, generated output) or a file right before you edit it.
 - Conversation cache: A repeated graph call in this conversation returns a short `[ax cache hit]` reference; the answer is already in your context, or `ax_expand` with its id returns it. Read `<ax_session_context>` in preflight before searching again; pass `fresh: true` to force a new query.

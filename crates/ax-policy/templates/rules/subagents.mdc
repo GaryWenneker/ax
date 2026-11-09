@@ -5,11 +5,12 @@ alwaysApply: true
 tags: ["subagents", "preflight", "mcp"]
 priority: 105
 triggers: ["Task tool", "subagent", "background agent", "run_in_background"]
-seedVersion: 5
+seedVersion: 6
+group: agent-orchestration
 ---
 # ax — Task subagents (background agents)
 
-> **ABSOLUTE**: Every agent in this workspace — including **Cursor Task subagents** (`run_in_background`, `explore`, `generalPurpose`, `shell`, `resume`) — must call ax MCP the same way as the parent. Subagents do **not** inherit parent MCP calls.
+> **ABSOLUTE**: Every agent in this workspace — including **Cursor Task subagents** (`run_in_background`, `explore`, `generalPurpose`, `shell`, `resume`) — must run the same ax turn protocol as the parent (MCP when connected, CLI when not). Subagents do **not** inherit parent MCP/CLI calls.
 
 ## Subagent turn order (same as parent)
 
@@ -21,17 +22,19 @@ seedVersion: 5
 3. For code structure: ax_explore (not policy files on disk)
 ```
 
+**CLI-only / MCP unavailable:** same order with CLI — `ax preflight` or `ax turn begin`, `ax explore` / `ax query` / `ax node`, `ax policy guard <path>`, `ax sync` / `ax remember`. Load this skill via `ax policy skill subagents` when MCP `ax_skill` is unavailable.
+
 ## Parent agent — Task tool
 
 Before **every** `Task` invocation:
 
 1. In the Task `prompt`, include:
 
-   > **Read `.ax/policy/skills/subagents/SKILL.md` via `ax_skill({ name: "subagents" })` and follow it as your very first action. ax MCP is mandatory, not optional.**
+   > **Load the `subagents` skill via `ax_skill({ name: "subagents" })` (or `ax policy skill subagents` when CLI-only) and follow it as your very first action. ax workflow is mandatory — MCP when connected, CLI when not.**
 
 2. Include the user's original message verbatim under `## User prompt (verbatim)`.
 
-3. Paste the cache ids from your `<ax_session_context>` that the subagent needs. It runs in its own conversation and cannot see yours; it reads them with `ax_expand`.
+3. Paste the cache ids from your `<ax_session_context>` that the subagent needs. It runs in its own conversation and cannot see yours; it reads them with `ax_expand` (or `ax cache expand` when CLI-only).
 
 Never write `ax_* … if available` in Task prompts.
 
@@ -45,9 +48,9 @@ Record a durable fact, file, symbol, decision, or open question with `ax_session
 
 On session start (you are a subagent if you see this rule and a delegated Task prompt):
 
-1. Call `ax_preflight` with the user prompt and relevant file paths.
-2. Do not treat reading policy files from disk as satisfying preflight — you must **call** the MCP tool.
+1. Call `ax_preflight` (MCP) or `ax preflight` / `ax turn begin` (CLI) with the user prompt and relevant file paths.
+2. Do not treat reading policy files from disk as satisfying preflight — you must **invoke** preflight via MCP or CLI.
 
-## MCP failure
+## MCP failure / CLI-only
 
-Report `ax MCP unreachable`, state `Mode: DEGRADED`, then **fully continue** the user task with normal tools. Never stop or refuse work because MCP is down.
+Report `ax MCP unreachable`, state `Mode: DEGRADED` (skip unreachable wording for intentional CLI-only), then **fully continue** with CLI graph/ops commands. Never stop or refuse work because MCP is down.

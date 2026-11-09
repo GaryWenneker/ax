@@ -43,7 +43,9 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Version freshness:** Call `ax_status` at session start. If the index is stale or a newer version exists, warn the user and suggest `ax upgrade` or re-index.
 
-MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
+**CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
+
+MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; continue with CLI graph/ops commands — do not proceed silently.
 <!-- AX_END -->"#;
 
 const AGENTS_INSTRUCTIONS_BLOCK: &str = r#"<!-- AX_START -->
@@ -71,7 +73,9 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 
 **Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_insights`/`ax_report` for whole-graph architecture, `ax_guard` before writes when CRITICAL rules exist, `ax_diagnostics` for IDE/linter correlation, `ax_policy_capture` for durable rules, `ax_context` for task context, **`ax_sync`** / **`ax_index({force:true})`** for re-index, **`ax_lsp`** for LSP status/enrich, **`ax_ship`** for quality-gate evaluate/ci, **`ax_policy_index`** to refresh rules from disk, **`ax_remember`/`ax_recall`** for memory. Prefer these MCP tools over shelling out to the CLI when MCP is connected.
 
-Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
+**CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
+
+Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; continue with CLI graph/ops commands — do not proceed silently.
 <!-- AX_END -->"#;
 
 const GEMINI_INSTRUCTIONS_BLOCK: &str = AGENTS_INSTRUCTIONS_BLOCK;
@@ -806,6 +810,49 @@ pub fn sync_ide_bootstrap(project_root: &Path, fix: bool) -> std::io::Result<Syn
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// Dual-path: every agent bootstrap names CLI fallback when MCP is unavailable.
+    #[test]
+    fn every_bootstrap_names_cli_fallback() {
+        let surfaces = [
+            ("cursor", CURSOR_RULE_BODY),
+            ("claude", CLAUDE_RULE_BODY),
+            ("continue", CONTINUE_RULE_BODY),
+            ("cline rules", CLINE_RULE_BODY),
+            ("cline block", CLINE_INSTRUCTIONS_BLOCK),
+            ("agents", AGENTS_INSTRUCTIONS_BLOCK),
+            (
+                "explore-before-grep",
+                include_str!("../templates/rules/explore-before-grep.mdc"),
+            ),
+            (
+                "prefer-mcp-ops",
+                include_str!("../templates/rules/prefer-mcp-ops.mdc"),
+            ),
+            (
+                "subagents rule",
+                include_str!("../templates/rules/subagents.mdc"),
+            ),
+            (
+                "startup skill",
+                include_str!("../templates/skills/startup/SKILL.md"),
+            ),
+            (
+                "subagents skill",
+                include_str!("../templates/skills/subagents/SKILL.md"),
+            ),
+        ];
+        for (name, body) in surfaces {
+            assert!(
+                body.contains("ax explore") || body.contains("`ax explore`"),
+                "{name}: must name ax explore for CLI-only / DEGRADED"
+            );
+            assert!(
+                body.contains("ax preflight") || body.contains("`ax preflight`"),
+                "{name}: must name ax preflight CLI fallback"
+            );
+        }
+    }
 
     /// Every bootstrap an agent may read must say how to fill a gap in a graph
     /// answer without falling back to Read/Grep on indexed source.

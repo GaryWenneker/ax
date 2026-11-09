@@ -38,7 +38,7 @@ Have Node? `npx @garywenneker/ax` downloads the native binary. Open a new termin
 
 ```bash
 ax install                 # wire MCP into detected agents
-# ax install --mode cli-only --target vscode   # same engines, no MCP/hooks
+# ax install --mode cli-only   # instruction surfaces for all IDEs, no MCP/hooks
 cd your-project && ax init # required in each directory where you want to use ax
 ax web --open              # local Command Center
 ```

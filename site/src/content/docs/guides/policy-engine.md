@@ -253,14 +253,15 @@ Use `--json` on either step for agent-driven interviews.
 
 ## Delivery by agent type
 
-| Channel | Cursor | Claude Code |
-|---|---|---|
-| MCP — agent calls `ax_preflight` | Required | Supported |
-| Prompt-hook — auto `<ax_policy>` inject | No | Yes |
-| `ax_skill(name)` on demand | Yes | Yes |
-| `ax_guard(path)` before writes | Yes | Yes |
+| Channel | Cursor | Claude Code | CLI-only |
+|---|---|---|---|
+| MCP — agent calls `ax_preflight` | Required | Supported | — |
+| Prompt-hook — auto `<ax_policy>` inject | No | Yes | — |
+| `ax_skill(name)` on demand | Yes | Yes | `ax policy skill <name>` |
+| `ax_guard(path)` before writes | Yes | Yes | `ax policy guard <path>` |
+| Turn / preflight without MCP | — | — | `ax preflight` / `ax turn begin` |
 
-In **Cursor**, policy is **pull-only**: the agent must call `ax_preflight` at turn start. MCP server instructions include this when `.ax/policy/` is indexed.
+In **Cursor**, policy is **pull-only**: the agent must call `ax_preflight` at turn start. MCP server instructions include this when `.ax/policy/` is indexed. On **CLI-only** projects (`ax install --mode cli-only`), agents use the CLI equivalents — see [CLI-only mode](/guides/cli-only/).
 
 Set `AX_NO_POLICY=1` to skip prompt-hook injection. Set `AX_POLICY_MAX_CHARS` to cap **contextual** inject size (default `16000`). Always-apply rules are never hard-truncated: if they exceed the cap, the inject grows so `ax_preflight` still delivers a complete `Rules (always apply)` block. Oversized skills are omitted with an `ax_skill` hint instead of cutting always-apply rules mid-body.
 

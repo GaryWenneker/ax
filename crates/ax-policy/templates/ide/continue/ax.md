@@ -48,14 +48,18 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Rest of a cut reply | `ax_expand` (id from the footer) |
 | Build task context | `ax_context` |
 
-**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** shell `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index`. Shell CLI is only for DEGRADED mode or ops with no MCP tool.
+**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** shell `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index`. Shell CLI is for CLI-only projects, DEGRADED mode, or ops with no MCP tool.
 
 ## Version freshness
 
 If `ax_status` reports a stale index or outdated version, warn immediately and suggest `ax upgrade` or re-index.
 
+## CLI-only / MCP unavailable
+
+Prefer MCP when connected. When MCP is unavailable or the project is CLI-only (`ax install --mode cli-only`), use the CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
+
 ## Degraded mode
 
-MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`. Do not silently proceed without policy checks.
+MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`. Continue with the CLI graph/ops commands above — do not silently proceed without policy checks.
 
 Full guide: [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).

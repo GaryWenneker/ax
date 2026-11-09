@@ -167,6 +167,7 @@ export default defineConfig({
 						{ label: 'Architecture Insights', slug: 'guides/architecture-insights' },
 						{ label: 'Open Knowledge Format (OKF)', slug: 'guides/okf' },
 						{ label: 'Policy Engine', slug: 'guides/policy-engine' },
+						{ label: 'CLI-only mode', slug: 'guides/cli-only' },
 						{ label: 'Remote Policy Share', slug: 'guides/policy-sharing' },
 						{ label: 'Framework Routes', slug: 'guides/framework-routes' },
 						{ label: 'Affected Tests in CI', slug: 'guides/affected-tests' },

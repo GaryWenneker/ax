@@ -4,12 +4,12 @@ description: Mandatory ax MCP workflow for Cursor Task and background subagents.
 triggers: ["Task tool", "subagent", "background agent", "run_in_background", "explore agent"]
 tags: ["subagents", "preflight"]
 priority: 95
-seedVersion: 5
+seedVersion: 6
 group: agent-orchestration
 ---
 # ax Subagent Protocol
 
-> **MANDATORY ax MCP WORKFLOW** — IDE-agnostic policy via `.ax/policy/` + MCP preflight.
+> **MANDATORY ax WORKFLOW** — IDE-agnostic policy via preflight. Prefer MCP when connected; use CLI when MCP is unavailable or the project is CLI-only.
 
 ## Turn order
 
@@ -18,6 +18,15 @@ group: agent-orchestration
 2. Work — CRITICAL rules binding; `ax_guard` (`path` + `operation`) before writes
 3. Code questions — ax_explore (not policy files on disk)
 4. Session ops — MCP tools (`ax_sync`, `ax_lsp`, `ax_ship`, `ax_policy_index`, …), never shell `ax …` while MCP is up
+```
+
+**CLI-only / MCP unavailable:**
+
+```text
+1. ax preflight / ax turn begin
+2. ax policy guard <path> before writes when CRITICAL rules require it
+3. ax explore / ax query / ax node for structural questions
+4. ax sync / ax remember / ax session … for ops
 ```
 
 ## Conversation cache
@@ -40,10 +49,10 @@ Then follow matched CRITICAL rules and any skill workflows from `inject`.
 
 Before every `Task` invocation, paste into the Task `prompt`:
 
-> Read the `subagents` skill via `ax_skill({ name: "subagents" })` and follow it exactly as your very first action. ax MCP is mandatory.
+> Load the `subagents` skill via `ax_skill({ name: "subagents" })` (or `ax policy skill subagents` when CLI-only) and follow it exactly as your very first action. ax workflow is mandatory — MCP when connected, CLI when not.
 
 Include `## User prompt (verbatim)` with the user's full message.
 
-## MCP failure
+## MCP failure / CLI-only
 
-Report `ax MCP unreachable`, state `Mode: DEGRADED`, continue best-effort only.
+Report `ax MCP unreachable`, state `Mode: DEGRADED` (skip unreachable wording for intentional CLI-only), then continue with the CLI turn order above — not Grep-first.

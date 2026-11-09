@@ -5,11 +5,34 @@ Use AX without MCP, plugins, IDE hooks, daemons, or network listeners. The CLI t
 ## Install
 
 ```bash
+# All distinct IDE instruction surfaces + shared AGENTS skill
+ax install --mode cli-only
+
+# Or pick targets
 ax install --mode cli-only --target vscode
 ax install --mode cli-only --target cursor
+ax install --mode cli-only --target windsurf
+ax install --mode cli-only --target continue
+ax install --mode cli-only --target claude
+ax install --mode cli-only --target gemini
+ax install --mode cli-only --target cline
+ax install --mode cli-only --target zed   # shared AGENTS.md only
 ```
 
-This writes Copilot/Cursor instructions and the shared `.agents/skills/ax-cli` skill. It does **not** write MCP configs or install hooks.
+This writes IDE instruction files and the shared `.agents/skills/ax-cli` skill. It does **not** write MCP configs or install hooks.
+
+| Target | Files |
+|---|---|
+| cursor | `.cursor/rules/ax-cli.mdc` |
+| vscode / copilot | `.github/copilot-instructions.md`, `.github/skills/ax-cli/SKILL.md` |
+| windsurf | `.windsurfrules` (AX_CLI markers) |
+| continue | `.continue/rules/ax-cli.md` (no `mcpServers/ax.json`) |
+| claude | `.claude/rules/ax-cli.md`, `.claude/CLAUDE.md` |
+| gemini | `GEMINI.md` |
+| cline / antigravity | `.clinerules` |
+| zed / jetbrains / kiro / codex / hermes / opencode | `AGENTS.md` + `.agents/skills/ax-cli/SKILL.md` |
+| always | `AGENTS.md`, `.agents/skills/ax-cli/SKILL.md` |
+
 
 ## Agent loop
 

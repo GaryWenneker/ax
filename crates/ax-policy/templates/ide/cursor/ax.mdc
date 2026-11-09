@@ -48,14 +48,27 @@ ax is actively developed. **Do not rely on cached knowledge of ax features.** `a
 | Rest of a cut reply | `ax_expand` (id from the footer) |
 | Build task context | `ax_context` |
 
-**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** run `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index` / `ax remember` via the terminal. Shell CLI is only for DEGRADED mode or ops with no MCP tool (install, upgrade, web, share, ship --watch).
+**Prefer MCP over shell:** When ax MCP is connected, call these tools directly — do **not** run `ax sync` / `ax lsp` / `ax ship --ci` / `ax policy index` / `ax remember` via the terminal. Shell CLI is for CLI-only projects, DEGRADED mode, or ops with no MCP tool (install, upgrade, web, share, ship --watch).
 
 ## Version freshness
 
 If `ax_status` reports a stale index or outdated version, warn immediately and suggest `ax upgrade` or re-index.
 
+## CLI-only / MCP unavailable
+
+Prefer MCP when connected. When MCP is unavailable or the project is CLI-only (`ax install --mode cli-only`), use the CLI equivalents — do not skip the workflow:
+
+| Need | CLI |
+|---|---|
+| Turn start / policy | `ax preflight` or `ax turn begin` |
+| Code graph | `ax explore`, `ax query`, `ax node` |
+| Session notes | `ax session …` |
+| Re-index / memory | `ax sync`, `ax remember` / `ax recall` |
+
+See `.agents/skills/ax-cli/SKILL.md` when present. Resume MCP tools as soon as the server is connected.
+
 ## Degraded mode
 
-MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`. Do not silently proceed without policy checks.
+MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`. Continue with the CLI graph/ops commands above — do not silently proceed without policy checks.
 
 Full guide: [Policy Engine](https://getax.wenneker.io/guides/policy-engine/).

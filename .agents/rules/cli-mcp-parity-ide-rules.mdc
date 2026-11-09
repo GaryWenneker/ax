@@ -1,0 +1,23 @@
+---
+id: cli-mcp-parity-ide-rules
+level: CRITICAL
+alwaysApply: true
+globs: []
+triggers: ["cli-only","cli mcp","parity","ide install","ax install","skills","rules"]
+tags: ["cli","mcp","parity","ide"]
+priority: 90
+enabled: true
+status: approved
+scope: project
+---
+
+# CLI↔MCP parity for every IDE
+
+> **ABSOLUTE**: Skills and IDE bootstrap rules must work for **all** ax IDE targets whether MCP is connected or the project is CLI-only.
+
+## Required
+
+1. Prefer MCP tools when the ax MCP server is connected.
+2. When MCP is unavailable or the project is CLI-only, use the matching CLI commands (`ax preflight`, `ax explore`, `ax session` / `ax turn`, `ax sync`, …) — do not skip graph/policy workflow.
+3. `ax install --mode cli-only` must seed instruction surfaces for every supported IDE without writing MCP server configs.
+4. Before claiming CLI-only/IDE parity is done, verify each IDE target gets the expected files and that MCP configs are absent.

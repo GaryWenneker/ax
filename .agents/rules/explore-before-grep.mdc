@@ -5,7 +5,7 @@ alwaysApply: true
 triggers: ["grep", "read file", "how does", "architecture", "call path", "who calls", "impact", "find code", "search codebase", "where is", "blast radius", "fix", "how works"]
 tags: ["mcp", "tokens", "explore", "quality"]
 priority: 95
-seedVersion: 5
+seedVersion: 6
 ---
 # Explore before Grep/Read
 
@@ -26,6 +26,19 @@ Graph answers usually replace many file reads. One `ax_explore` + targeted `ax_n
 ```
 
 Treat numbered source returned by `ax_explore` as already read — do not re-Grep the same symbols.
+
+
+## CLI-only / MCP unavailable
+
+When MCP is unavailable or the project is CLI-only, keep the same order with CLI:
+
+```text
+1. ax preflight   [or ax turn begin]
+2. ax explore / ax query / ax node / …
+3. Read / Grep only for files the graph already pointed to
+```
+
+Do not fall back to Grep-first just because MCP is down.
 
 ## Filling gaps — stay in the graph
 

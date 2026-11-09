@@ -5,14 +5,14 @@ alwaysApply: true
 scope: company
 tags: ["old-coder", "evidence", "tdd", "quality"]
 priority: 90
-seedVersion: 3
+seedVersion: 4
 ---
 
 # Old Coder — mandatory for implementation work
 
 > **ABSOLUTE**: Every code change must follow the [old-coder](https://github.com/AmazingAng/old-coder) evidence-first workflow. Skipping SPEC, gauntlet, or EVIDENCE is a protocol violation.
 
-This rule and the `old-coder` skill inject on **every** `ax_preflight` turn — including empty and one-word prompts.
+This rule and the `old-coder` skill inject on **every** `ax_preflight` / `ax preflight` turn — including empty and one-word prompts.
 
 guard: require-skill: "old-coder"
 
@@ -20,18 +20,18 @@ guard: require-skill: "old-coder"
 
 SPEC → RED → GREEN → REFACTOR → GAUNTLET → REVIEW LOOP → EVIDENCE
 
-1. **`ax_skill({ name: "old-coder" })`** — load the full workflow before writing implementation code (also injected when `alwaysApply` is set on the skill).
+1. **Load old-coder** — MCP: `ax_skill({ name: "old-coder" })`; CLI-only: `ax policy skill old-coder` — before writing implementation code (also injected when `alwaysApply` is set on the skill).
 2. **SPEC first** — write an executable spec; get human approval before coding (unless the user explicitly waived review).
 3. **Gauntlet** — run tests, types/lint, coverage, and domain checks from the skill; never weaken tests to pass.
-4. **Review loop** — call **`ax_skill({ name: "review-loop" })`** and follow it:
+4. **Review loop** — MCP: `ax_skill({ name: "review-loop" })`; CLI-only: `ax policy skill review-loop` — then follow it:
    - check which review skills are usable;
    - review the change per stack;
    - fix every finding and rerun the gauntlet;
    - review again until a round has zero findings.
 
-   There is no round cap. The same loop runs for every code review of the user's own change. For a colleague's pull request, call **`ax_skill({ name: "pr-review-comments" })`** instead: do not fix, and ask one question per comment before posting it.
+   There is no round cap. The same loop runs for every code review of the user's own change. For a colleague's pull request, load **`pr-review-comments`** (`ax_skill` / `ax policy skill`) instead: do not fix, and ask one question per comment before posting it.
 5. **EVIDENCE** — deliver a rerunnable evidence report with real numbers from one fresh run, including the review rounds table.
-6. **HTTP/JSON APIs** — also call **`ax_skill({ name: "old-coder-api" })`** and fold API gates into SPEC and EVIDENCE.
+6. **HTTP/JSON APIs** — also load **`old-coder-api`** (`ax_skill` / `ax policy skill`) and fold API gates into SPEC and EVIDENCE.
 
 ## Scope
 
