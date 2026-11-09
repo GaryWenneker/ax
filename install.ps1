@@ -211,15 +211,18 @@ function Resolve-AxVersionFromGitHubApi {
 
 function Test-AxReleaseAsset {
   param([string]$Tag)
-  try {
-    $rel = Invoke-RestMethod `
-      -Uri "https://api.github.com/repos/$repo/releases/tags/$Tag" `
-      -Headers (Get-GitHubApiHeaders) `
-      -TimeoutSec 15
-    foreach ($a in $rel.assets) {
-      if ($a.name -eq $assetName) { return $true }
-    }
-  } catch { }
+  foreach ($headers in @((Get-GitHubApiHeaders), (Get-GitHubApiHeaders -NoAuth))) {
+    try {
+      $rel = Invoke-RestMethod `
+        -Uri "https://api.github.com/repos/$repo/releases/tags/$Tag" `
+        -Headers $headers `
+        -TimeoutSec 15
+      foreach ($a in $rel.assets) {
+        if ($a.name -eq $assetName) { return $true }
+      }
+      break
+    } catch { }
+  }
   foreach ($base in @(
       "https://github.com/$repo/releases/download/$Tag/$assetName",
       "$downloadBase/$Tag/$assetName"

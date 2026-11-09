@@ -980,12 +980,16 @@ fn upgrade_cmd_batch(
            goto wait_parent\r\n\
          )\r\n\
          timeout /t 2 /nobreak >nul\r\n\
+         set \"PARK_TRIES=0\"\r\n\
+         :park_retry\r\n\
          taskkill /IM ax.exe /F >nul 2>&1\r\n\
-         timeout /t 1 /nobreak >nul\r\n\
+         timeout /t 2 /nobreak >nul\r\n\
          if exist \"%DEST%\" (\r\n\
            if exist \"%PREVIOUS%\" rmdir /s /q \"%PREVIOUS%\"\r\n\
            move /Y \"%DEST%\" \"%PREVIOUS%\" >nul\r\n\
            if errorlevel 1 (\r\n\
+             set /a PARK_TRIES+=1\r\n\
+             if %PARK_TRIES% LSS 5 goto park_retry\r\n\
              echo error> \"%STATUS%\"\r\n\
              echo park current install failed>> \"%STATUS%\"\r\n\
              goto done\r\n\
@@ -1251,6 +1255,10 @@ mod tests {
         assert!(
             dest_guard < wipe_previous,
             "parked install is removed only while current still exists:\n{script}"
+        );
+        assert!(
+            script.contains(":park_retry"),
+            "park must retry after taskkill when Access is denied:\n{script}"
         );
         assert!(script.contains("upgrade-status.txt"), "{script}");
     }

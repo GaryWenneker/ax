@@ -1,6 +1,6 @@
 [package]
 name = "ax-remote"
-version = "8.4.5"
+version = "8.4.6"
 edition = "2021"
 
 [dependencies]

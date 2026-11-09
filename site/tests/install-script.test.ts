@@ -39,7 +39,7 @@ function fixture(options: { os?: string; arch?: string; withoutPython?: boolean;
   const realSort = spawnSync('sh', ['-c', 'command -v sort'], { encoding: 'utf8' }).stdout.trim();
   const mock = join(bin, 'mock.mjs');
   writeFileSync(mock, `#!${process.execPath}
-import { appendFileSync, copyFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 const name=basename(process.argv[1]), args=process.argv.slice(2), env=process.env;
@@ -54,14 +54,24 @@ else if(name==='sort') {
   if(args.at(-1).includes('GetEnvironmentVariable')) console.log('v99.0.0');
 } else if(name==='curl') {
   const url=args.find(a=>a.startsWith('https://'));
+  const outIdx=args.indexOf('-o');
+  const outPath=outIdx>=0?args[outIdx+1]:null;
+  const wantCode=args.some(a=>String(a).includes('%{http_code}'));
   const asset='ax-'+(env.AX_TEST_OS==='Darwin'?'darwin':'linux')+'-'+(env.AX_TEST_ARCH==='x86_64'?'x64':'arm64')+'.tar.gz';
   const release=(tag,extra={})=>({tag_name:tag,draft:false,prerelease:false,assets:[{name:asset}],...extra});
-  if(url?.includes('releases?')) console.log(JSON.stringify([release('v7.9.0'),release('v8.1.0'),release('v50.0.0',{prerelease:true}),release('v100.0.0',{draft:true}),release('v20.0.0',{assets:[]})],null,2));
-  else if(url?.endsWith('releases/latest')) console.log(JSON.stringify(release('v8.1.0')));
-  else if(url?.includes('/releases/tags/')) console.log(JSON.stringify(url.endsWith('v8.1.0')||url.endsWith('v7.9.0')?release('v8.1.0'):{assets:[]}));
-  else if(url?.endsWith('latest.txt')) console.log('8.1.0');
-  else if(args.includes('-r')) {process.stdout.write('404');process.exit(22);}
-  else if(url?.includes('/v8.1.0/')) copyFileSync(env.AX_TEST_ARCHIVE,args[args.indexOf('-o')+1]);
+  const emit=(body,code=200)=>{
+    const text=typeof body==='string'?body:JSON.stringify(body,null,2);
+    if(outPath) writeFileSync(outPath, text);
+    else if(typeof body==='string') process.stdout.write(body);
+    else console.log(text);
+    if(wantCode) process.stdout.write(String(code));
+  };
+  if(url?.includes('releases?')) emit([release('v7.9.0'),release('v8.1.0'),release('v50.0.0',{prerelease:true}),release('v100.0.0',{draft:true}),release('v20.0.0',{assets:[]})]);
+  else if(url?.endsWith('releases/latest')) emit(release('v8.1.0'));
+  else if(url?.includes('/releases/tags/')) emit(url.endsWith('v8.1.0')||url.endsWith('v7.9.0')?release('v8.1.0'):{assets:[]});
+  else if(url?.endsWith('latest.txt')) emit('8.1.0');
+  else if(args.includes('-r')) {if(wantCode) process.stdout.write('404'); process.exit(22);}
+  else if(url?.includes('/v8.1.0/')) {copyFileSync(env.AX_TEST_ARCHIVE,args[args.indexOf('-o')+1]); if(wantCode) process.stdout.write('200');}
   else process.exit(22);
 } else process.exit(1);
 `, { mode: 0o755 });
