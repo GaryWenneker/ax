@@ -8,3 +8,5 @@ When MCP is not available, use the AX CLI for preflight, sessions, turns, memory
 - `ax durable …`, `ax cache …`, `ax doctor --mode cli`
 
 See `.agents/skills/ax-cli/SKILL.md`.
+
+CLI lifecycle (no MCP): `ax preflight` or `ax turn begin` → `ax explore` / `ax query` / `ax node` → `ax policy guard <path>` before writes → `ax policy capture` / `ax policy skill` as needed → `ax sync` after edits → `ax remember` / `ax recall` as needed → `ax turn finish`.

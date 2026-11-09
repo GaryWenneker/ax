@@ -3,7 +3,7 @@ title: Get Started
 description: Get up and running with ax using a published download or the current main source.
 ---
 
-Install the published binary with the shell below, then run `ax install` and `ax init` in your project. Knowledge graph, memory vault, policy engine, MCP Logging / Quality, and Command Center run in one binary. Building from source is a separate path at the bottom of [Installation](/getting-started/installation/#build-from-main).
+Install the published binary with the shell below, then run `ax install` and `ax init` in your project. Knowledge graph, memory vault, policy engine, Logging / Quality (MCP and CLI), and Command Center run in one binary. Building from source is a separate path at the bottom of [Installation](/getting-started/installation/#build-from-main).
 
 ## 1. Install the CLI
 

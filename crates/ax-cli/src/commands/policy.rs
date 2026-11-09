@@ -556,7 +556,7 @@ pub async fn run_guard(
     Ok(())
 }
 
-pub async fn run_sync(path: Option<String>, fix: bool) -> Result<(), String> {
+pub async fn run_sync(path: Option<String>, fix: bool, force: bool) -> Result<(), String> {
     let root = resolve_path(path);
     let ax_dir = root.join(".ax");
     if !ax_dir.is_dir() {
@@ -566,7 +566,8 @@ pub async fn run_sync(path: Option<String>, fix: bool) -> Result<(), String> {
     let mut fail_count = 0usize;
     let mut all_fixed: Vec<String> = Vec::new();
 
-    let policy = ax_policy::sync_instructions(&ax_dir, fix).map_err(|e| e.to_string())?;
+    let policy = ax_policy::sync_instructions_with_force(&ax_dir, fix, force)
+        .map_err(|e| e.to_string())?;
     for check in &policy.checks {
         if check.optional && !check.path.exists() {
             continue;
@@ -580,7 +581,7 @@ pub async fn run_sync(path: Option<String>, fix: bool) -> Result<(), String> {
     fail_count += policy.fail_count;
     all_fixed.extend(policy.fixed);
 
-    let ide = ax_policy::sync_ide_bootstrap(&root, fix).map_err(|e| e.to_string())?;
+    let ide = ax_policy::sync_ide_bootstrap_with_force(&root, fix, force).map_err(|e| e.to_string())?;
     println!("IDE bootstrap:");
     for check in &ide.checks {
         if check.optional && !check.path.exists() {

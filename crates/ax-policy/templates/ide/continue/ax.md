@@ -56,7 +56,7 @@ If `ax_status` reports a stale index or outdated version, warn immediately and s
 
 ## CLI-only / MCP unavailable
 
-Prefer MCP when connected. When MCP is unavailable or the project is CLI-only (`ax install --mode cli-only`), use the CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
+Prefer MCP when connected. When MCP is unavailable or the project is CLI-only (`ax install --mode cli-only`), use the CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax policy guard <path>`, `ax policy capture` / `ax policy skill`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
 
 ## Degraded mode
 

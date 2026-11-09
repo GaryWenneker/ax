@@ -8,9 +8,12 @@ alwaysApply: true
 When AX MCP is unavailable or policy forbids MCP/plugins/hooks, use the AX CLI exclusively.
 
 1. `ax session start --json` or resume `--session`.
-2. `ax turn begin --session <id> --prompt-stdin --json`.
+2. `ax turn begin --session <id> --prompt-stdin --json` (or `ax preflight --prompt-stdin`).
 3. Honor returned preflight rules/skills/memories.
-4. Prefer `ax explore` / graph CLI over Grep/Read for structural questions.
-5. Record decisions with `ax turn event` and finish with `ax turn finish` even when no files change.
+4. Prefer `ax explore` / `ax query` / `ax node` over Grep/Read for structural questions.
+5. Before Write/Delete with CRITICAL rules: `ax policy guard <path>`.
+6. Durable directives: `ax policy capture` (propose) then `--yes` only after confirm; load skills with `ax policy skill <name>`.
+6. After edits: `ax sync`. Store decisions with `ax remember` / `ax recall`.
+7. Record outcomes with `ax turn event` and finish with `ax turn finish` even when no files change.
 
 Do not install or start MCP, plugins, daemons, or network listeners for this workflow.

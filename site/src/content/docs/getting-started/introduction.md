@@ -14,7 +14,7 @@ Four layers work together in every project:
 | **Knowledge graph** | Tree-sitter parsing → SQLite index of symbols, calls, imports, and routes |
 | **Memory vault** | Durable decisions, fixes, and conventions — hybrid recall, git auto-capture, preflight injection |
 | **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected per turn |
-| **Command Center** | Policy editors, memory vault, graph, quality gates, token savings, MCP Logging / Quality, SSE dashboard, draft PRs |
+| **Command Center** | Policy editors, memory vault, graph, quality gates, token savings, Logging / Quality (MCP + CLI inbound/outbound/internal), SSE dashboard, draft PRs |
 
 Agents query structure through MCP (`ax_explore`, `ax_preflight`, …) instead of fanning out across `grep`, `glob`, and `Read`. The win is **surgical context** — fewer tool calls, faster answers, on every codebase.
 

@@ -6,12 +6,14 @@ triggers: ["code review", "review", "findings", "old-coder", "gauntlet", "eviden
 tags: ["old-coder", "review", "quality"]
 priority: 85
 scope: company
-seedVersion: 3
+seedVersion: 4
 ---
 
 # Review loop
 
 The old-coder loop is SPEC → RED → GREEN → REFACTOR → GAUNTLET → **REVIEW LOOP** → EVIDENCE. Run this loop after the gauntlet is green and before EVIDENCE. Also run it whenever the user asks for a code review of their own change. For a colleague's pull request, load `pr-review-comments` instead: findings become proposed comments that the user approves one by one, and you do not fix them.
+
+Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, load skills with `ax policy skill <name>` and use `ax callers` / `ax callees` instead of the MCP tools below.
 
 Every round has four steps.
 
@@ -23,7 +25,7 @@ List the skills this review needs:
 - `old-coder-api` when an HTTP/JSON surface changed.
 - One review skill for each stack the diff touches: `<stack>-review` (for example `rust-review`, `typescript-review`, `react-review`), or a global review skill for that stack (for example `dotnet-code-review`).
 
-Find the stacks from the changed files and `ax.json` `policy.stacks`. Load each skill with `ax_skill({ name })`. Record every skill as:
+Find the stacks from the changed files and `ax.json` `policy.stacks`. Load each skill with `ax_skill({ name })` (or `ax policy skill <name>` when CLI-only). Record every skill as:
 
 - `usable`: the call returned a non-empty body.
 - `missing`: no skill with that name exists.
@@ -33,7 +35,7 @@ Only `usable` skills count. Report `missing` and `empty` skills to the user. A s
 
 ## 2. Stack review
 
-Review only the change: the diff and the code it directly calls or is called by (use `ax_callers` / `ax_callees`). Check it against every section of each usable stack skill.
+Review only the change: the diff and the code it directly calls or is called by (use `ax_callers` / `ax_callees`, or `ax callers` / `ax callees` when CLI-only). Check it against every section of each usable stack skill.
 
 Write each finding as:
 

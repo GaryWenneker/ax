@@ -358,7 +358,11 @@ pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {
     Ok(result)
 }
 
-fn write_skill_bundle(skills_root: &Path, bundle: &SkillBundle) -> std::io::Result<bool> {
+fn write_skill_bundle(
+    skills_root: &Path,
+    bundle: &SkillBundle,
+    force: bool,
+) -> std::io::Result<bool> {
     let skill_dir = skills_root.join(bundle.name);
     let skill_md = skill_dir.join(crate::paths::SKILL_FILENAME);
     let template_skill = bundle
@@ -368,6 +372,9 @@ fn write_skill_bundle(skills_root: &Path, bundle: &SkillBundle) -> std::io::Resu
         .map(|f| f.body)
         .unwrap_or("");
     if skill_md.exists() {
+        if !force {
+            return Ok(false);
+        }
         let existing = std::fs::read_to_string(&skill_md).unwrap_or_default();
         let missing_triggers = !existing.contains("triggers:");
         if !missing_triggers && !seeded_content_needs_upgrade(&existing, template_skill) {
@@ -430,14 +437,19 @@ fn seeded_content_needs_upgrade(existing: &str, template: &str) -> bool {
     false
 }
 
-fn seed_skill_bundles(skills_root: &Path, label_prefix: &str) -> std::io::Result<SeedResult> {
-    seed_bundles(skills_root, label_prefix, GLOBAL_SKILL_BUNDLES.iter())
+fn seed_skill_bundles(
+    skills_root: &Path,
+    label_prefix: &str,
+    force: bool,
+) -> std::io::Result<SeedResult> {
+    seed_bundles(skills_root, label_prefix, GLOBAL_SKILL_BUNDLES.iter(), force)
 }
 
 fn seed_bundles<'a>(
     skills_root: &Path,
     label_prefix: &str,
     bundles: impl Iterator<Item = &'a SkillBundle>,
+    force: bool,
 ) -> std::io::Result<SeedResult> {
     std::fs::create_dir_all(skills_root)?;
     let mut result = SeedResult::default();
@@ -447,7 +459,7 @@ fn seed_bundles<'a>(
             bundle.name,
             crate::paths::SKILL_FILENAME
         );
-        if write_skill_bundle(skills_root, bundle)? {
+        if write_skill_bundle(skills_root, bundle, force)? {
             result.created.push(label);
         } else {
             result.skipped.push(label);
@@ -461,7 +473,7 @@ fn seed_bundles<'a>(
 pub fn seed_cursor_skills(skills_root: &Path) -> std::io::Result<SeedResult> {
     std::fs::create_dir_all(skills_root)?;
     let mut result = SeedResult::default();
-    let bundles = seed_skill_bundles(skills_root, ".cursor/skills")?;
+    let bundles = seed_skill_bundles(skills_root, ".cursor/skills", false)?;
     result.created.extend(bundles.created);
     result.skipped.extend(bundles.skipped);
     Ok(result)
@@ -472,10 +484,11 @@ fn seed_project_bundles(skills_root: &Path) -> std::io::Result<SeedResult> {
         skills_root,
         ".cursor/skills",
         GLOBAL_SKILL_BUNDLES.iter().filter(|b| !b.global_db),
+        false,
     )
 }
 
-fn seed_global_policy_rules(rules_root: &Path) -> std::io::Result<SeedResult> {
+fn seed_global_policy_rules(rules_root: &Path, force: bool) -> std::io::Result<SeedResult> {
     std::fs::create_dir_all(rules_root)?;
     let mut result = SeedResult::default();
     for t in GLOBAL_RULE_TEMPLATES {
@@ -487,6 +500,10 @@ fn seed_global_policy_rules(rules_root: &Path) -> std::io::Result<SeedResult> {
         let dest = rules_root.join(format!("{id}.mdc"));
         let label = format!("~/.ax/global_policy/rules/{id}.mdc");
         if dest.exists() {
+            if !force {
+                result.skipped.push(label);
+                continue;
+            }
             let existing = std::fs::read_to_string(&dest).unwrap_or_default();
             if !seeded_content_needs_upgrade(&existing, t.body) {
                 result.skipped.push(label);
@@ -504,13 +521,23 @@ fn global_policy_root() -> Option<PathBuf> {
 }
 
 /// Seed `~/.ax/global_policy/` with machine-wide rules and skills (company scope via MCP).
+/// Existing files are never overwritten (create-missing only).
 pub fn seed_global_policy() -> std::io::Result<SeedResult> {
+    seed_global_policy_with_force(false)
+}
+
+/// Like [`seed_global_policy`], but `force` may rewrite existing files that need a template upgrade.
+pub fn seed_global_policy_with_force(force: bool) -> std::io::Result<SeedResult> {
     let Some(global) = global_policy_root() else {
         return Ok(SeedResult::default());
     };
     std::fs::create_dir_all(&global)?;
-    let mut result = seed_global_policy_rules(&global.join("rules"))?;
-    let skills = seed_skill_bundles(&global.join("skills"), "~/.ax/global_policy/skills")?;
+    let mut result = seed_global_policy_rules(&global.join("rules"), force)?;
+    let skills = seed_skill_bundles(
+        &global.join("skills"),
+        "~/.ax/global_policy/skills",
+        force,
+    )?;
     result.created.extend(skills.created);
     result.skipped.extend(skills.skipped);
     Ok(result)
@@ -626,6 +653,16 @@ pub fn verify_instructions(ax_dir: &Path) -> Vec<InstructionCheck> {
 
 /// Verify instruction files; with `fix`, restore missing or drifted managed files from embedded templates.
 pub fn sync_instructions(ax_dir: &Path, fix: bool) -> std::io::Result<SyncResult> {
+    sync_instructions_with_force(ax_dir, fix, false)
+}
+
+/// Verify/repair managed instruction files.
+/// `fix` restores missing files; `force` also rewrites drifted templates.
+pub fn sync_instructions_with_force(
+    ax_dir: &Path,
+    fix: bool,
+    force: bool,
+) -> std::io::Result<SyncResult> {
     let policy = shareable_policy_root(ax_dir);
     std::fs::create_dir_all(policy.join("rules"))?;
     std::fs::create_dir_all(policy.join("skills"))?;
@@ -655,7 +692,10 @@ pub fn sync_instructions(ax_dir: &Path, fix: bool) -> std::io::Result<SyncResult
             });
             continue;
         }
-        if fix {
+        let missing = !path.exists() || issues.iter().any(|i| i == "missing");
+        // `fix` alone restores missing files. Drifted content needs `force`.
+        let may_write = fix && (force || missing);
+        if may_write {
             write_template(&policy, rel)?;
             result.fixed.push((*rel).to_string());
             result.checks.push(InstructionCheck {
@@ -858,7 +898,7 @@ mod tests {
     fn global_skill_bundles_include_references() {
         let dir = tempdir().unwrap();
         let skills = dir.path().join("skills");
-        let result = seed_skill_bundles(&skills, "test/skills").unwrap();
+        let result = seed_skill_bundles(&skills, "test/skills", false).unwrap();
         assert_eq!(result.created.len(), GLOBAL_SKILL_BUNDLES.len());
         assert!(skills.join("old-coder/references/gauntlet.md").is_file());
         assert!(skills
@@ -898,10 +938,10 @@ mod tests {
             .iter()
             .find(|b| b.name == "old-coder")
             .unwrap();
-        assert!(write_skill_bundle(skills, bundle).unwrap());
+        assert!(write_skill_bundle(skills, bundle, true).unwrap());
         let body = std::fs::read_to_string(dest_dir.join("SKILL.md")).unwrap();
         assert!(body.to_ascii_lowercase().contains("alwaysapply: true"));
-        assert!(!write_skill_bundle(skills, bundle).unwrap());
+        assert!(!write_skill_bundle(skills, bundle, true).unwrap());
     }
 
     #[test]
@@ -914,7 +954,7 @@ mod tests {
             "---\nid: old-coder-mandatory\nlevel: CRITICAL\nalwaysApply: true\n---\n\nNo guard yet.\n",
         )
         .unwrap();
-        let result = seed_global_policy_rules(&rules).unwrap();
+        let result = seed_global_policy_rules(&rules, true).unwrap();
         assert!(
             result
                 .created
@@ -925,7 +965,7 @@ mod tests {
         );
         let body = std::fs::read_to_string(rules.join("old-coder-mandatory.mdc")).unwrap();
         assert!(body.to_ascii_lowercase().contains("require-skill"));
-        let second = seed_global_policy_rules(&rules).unwrap();
+        let second = seed_global_policy_rules(&rules, false).unwrap();
         assert!(second.created.is_empty());
         assert!(second
             .skipped
@@ -1002,7 +1042,7 @@ mod tests {
     #[test]
     fn global_seed_writes_review_loop_everywhere() {
         let dir = tempdir().unwrap();
-        seed_skill_bundles(&dir.path().join("global"), "g").unwrap();
+        seed_skill_bundles(&dir.path().join("global"), "g", false).unwrap();
         seed_cursor_skills(&dir.path().join("cursor")).unwrap();
         assert!(dir.path().join("global/review-loop/SKILL.md").is_file());
         assert!(dir.path().join("cursor/review-loop/SKILL.md").is_file());
@@ -1057,7 +1097,7 @@ mod tests {
             "---\nid: old-coder-mandatory\nlevel: CRITICAL\nalwaysApply: true\n---\n\nguard: require-skill: \"old-coder\"\nhand edited\n",
         )
         .unwrap();
-        let first = seed_global_policy_rules(&rules).unwrap();
+        let first = seed_global_policy_rules(&rules, true).unwrap();
         assert!(
             first
                 .created
@@ -1067,7 +1107,7 @@ mod tests {
         );
         let body = std::fs::read_to_string(rules.join("old-coder-mandatory.mdc")).unwrap();
         assert!(body.contains("review-loop"));
-        let second = seed_global_policy_rules(&rules).unwrap();
+        let second = seed_global_policy_rules(&rules, false).unwrap();
         assert!(second.created.is_empty(), "{second:?}");
     }
 
@@ -1075,12 +1115,32 @@ mod tests {
     fn current_review_loop_skill_is_not_overwritten() {
         let dir = tempdir().unwrap();
         let bundle = review_loop_bundle();
-        assert!(write_skill_bundle(dir.path(), bundle).unwrap());
+        assert!(write_skill_bundle(dir.path(), bundle, false).unwrap());
         let path = dir.path().join("review-loop/SKILL.md");
         let edited = format!("{}\nlocal note\n", std::fs::read_to_string(&path).unwrap());
         std::fs::write(&path, &edited).unwrap();
-        assert!(!write_skill_bundle(dir.path(), bundle).unwrap());
+        assert!(!write_skill_bundle(dir.path(), bundle, false).unwrap());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    }
+
+    #[test]
+    fn seed_global_keeps_hand_edited_rule_without_force() {
+        let dir = tempdir().unwrap();
+        let rules = dir.path().join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        let dest = rules.join("old-coder-mandatory.mdc");
+        let custom = "---\nid: old-coder-mandatory\nlevel: CRITICAL\nalwaysApply: true\n---\n\nCUSTOM HAND EDIT\n";
+        std::fs::write(&dest, custom).unwrap();
+        let result = seed_global_policy_rules(&rules, false).unwrap();
+        assert!(
+            result.skipped.iter().any(|s| s.contains("old-coder-mandatory")),
+            "custom rule must be skipped, got {result:?}"
+        );
+        assert!(
+            !result.created.iter().any(|s| s.contains("old-coder-mandatory")),
+            "custom rule must not be rewritten, got {result:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), custom);
     }
 
     #[test]
@@ -1183,7 +1243,7 @@ mod tests {
     #[test]
     fn global_seed_writes_pr_review_comments() {
         let dir = tempdir().unwrap();
-        seed_skill_bundles(&dir.path().join("global"), "g").unwrap();
+        seed_skill_bundles(&dir.path().join("global"), "g", false).unwrap();
         seed_cursor_skills(&dir.path().join("cursor")).unwrap();
         let review =
             std::fs::read_to_string(dir.path().join("global/pr-review-comments/SKILL.md")).unwrap();
@@ -1233,7 +1293,7 @@ mod tests {
         let mut body = std::fs::read_to_string(&startup).unwrap();
         body.push_str("\n<!-- drifted -->\n");
         std::fs::write(&startup, body).unwrap();
-        let synced = sync_instructions(&ax, true).unwrap();
+        let synced = sync_instructions_with_force(&ax, true, true).unwrap();
         assert!(
             synced.fixed.iter().any(|r| r.contains("startup")),
             "expected drifted startup skill to be restored from init template"
@@ -1241,6 +1301,26 @@ mod tests {
         let restored = std::fs::read_to_string(&startup).unwrap();
         assert!(restored.contains("paths"));
         assert!(!restored.contains("<!-- drifted -->"));
+    }
+
+    #[test]
+    fn sync_fix_keeps_drifted_startup_without_force() {
+        let dir = tempdir().unwrap();
+        let ax = dir.path().join(".ax");
+        seed_default_policy(&ax).unwrap();
+        let startup = dir.path().join(".agents/skills/startup/SKILL.md");
+        let mut body = std::fs::read_to_string(&startup).unwrap();
+        body.push_str("\n<!-- drifted -->\n");
+        std::fs::write(&startup, &body).unwrap();
+        let synced = sync_instructions(&ax, true).unwrap();
+        assert!(
+            !synced.fixed.iter().any(|r| r.contains("startup")),
+            "drifted startup must not be rewritten without --force"
+        );
+        assert!(std::fs::read_to_string(&startup)
+            .unwrap()
+            .contains("<!-- drifted -->"));
+        assert!(synced.fail_count > 0);
     }
 
     #[test]
@@ -1269,7 +1349,7 @@ mod tests {
             assert!(!old.contains(crate::CONVERSATION_CACHE_SENTENCE));
             std::fs::write(&path, old).unwrap();
         }
-        sync_instructions(&ax, true).unwrap();
+        sync_instructions_with_force(&ax, true, true).unwrap();
         for rel in rels {
             let body = std::fs::read_to_string(dir.path().join(rel)).unwrap();
             assert!(

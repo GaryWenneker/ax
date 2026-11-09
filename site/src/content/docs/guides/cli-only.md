@@ -64,6 +64,12 @@ Prefer MCP tools when the ax MCP server is connected. When MCP is down or the pr
 
 Team rules (`prefer-mcp-ops`, `explore-before-grep`, `startup`, `subagents`) and IDE bootstrap templates document both paths.
 
+## Logging parity with MCP
+
+CLI graph and policy commands write the **same inbound / outbound shapes** MCP uses (branded `[ax]`, not `[ax-mcp]`), plus Internal domain lines (`cli` / `policy` / `memory`). After `ax explore`, `ax remember` / `ax recall`, `ax preflight`, or `ax policy match|index|guard|skill`, open Command Center **Logging** for the project — you should see non-zero **in** and **out** counts as well as Internal rows.
+
+Requires **ax 8.4.4+**. Details: [MCP Logging & Quality — Directions](/guides/mcp-quality/#directions-inbound-outbound-internal).
+
 ## Diagnostics
 
 ```bash
@@ -74,4 +80,5 @@ ax doctor --mode cli --json
 
 - [CLI reference — sessions & turns](/reference/cli/#sessions-turns--cli-only-parity)
 - [Policy Engine](/guides/policy-engine/)
+- [MCP Logging & Quality](/guides/mcp-quality/)
 - Repo guide: [`docs/CLI_ONLY.md`](https://github.com/GaryWenneker/ax/blob/main/docs/CLI_ONLY.md)

@@ -63,6 +63,9 @@ Prefer MCP when connected. When MCP is unavailable or the project is CLI-only (`
 | Turn start / policy | `ax preflight` or `ax turn begin` |
 | Code graph | `ax explore`, `ax query`, `ax node` |
 | Session notes | `ax session …` |
+| Pre-write guard | `ax policy guard <path>` |
+| Capture directive | `ax policy capture` |
+| Load skill body | `ax policy skill <name>` |
 | Re-index / memory | `ax sync`, `ax remember` / `ax recall` |
 
 See `.agents/skills/ax-cli/SKILL.md` when present. Resume MCP tools as soon as the server is connected.

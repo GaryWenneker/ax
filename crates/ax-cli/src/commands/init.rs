@@ -905,6 +905,17 @@ pub(crate) async fn store_seeded_skills_in_global_db(
             .map_err(|e| format!("{e:#}"))?;
         let mut stored = Vec::new();
         for (name, raw) in ax_policy::global_db_seed_skills() {
+            if ax_global_db::policy::policy_item_exists(
+                &pool,
+                project_id,
+                ax_global_db::policy::PolicyKind::Skills,
+                name,
+            )
+            .await
+            .map_err(|e| format!("{e:#}"))?
+            {
+                continue;
+            }
             let path = std::path::Path::new(name).join("SKILL.md");
             let doc =
                 ax_policy::parse_skill_file(&path, raw).map_err(|e| format!("{name}: {e:?}"))?;
@@ -1054,19 +1065,38 @@ mod tests {
             stored,
             vec!["review-loop".to_string(), "pr-review-comments".to_string()]
         );
-        store_seeded_skills_in_global_db(&db, &machine)
+        // Customize the stored body, then re-run seed — must not overwrite.
+        {
+            let pool = ax_global_db::open_and_init(&db).await.unwrap();
+            let project_id = ax_global_db::policy::ensure_project(&pool, &machine)
+                .await
+                .unwrap();
+            let mut payload: serde_json::Value = serde_json::from_str(&skill_rows(&db, "review-loop").await[0].1).unwrap();
+            payload["body"] = serde_json::json!("CUSTOM REVIEW LOOP BODY");
+            ax_global_db::policy::upsert_policy_item(
+                &pool,
+                project_id,
+                ax_global_db::policy::PolicyKind::Skills,
+                "review-loop",
+                &payload,
+            )
             .await
             .unwrap();
-        let rows = skill_rows(&db, "review-loop").await;
-        assert_eq!(
-            rows.len(),
-            1,
-            "a second store updates the row instead of duplicating it"
+            pool.close().await;
+        }
+        let second = store_seeded_skills_in_global_db(&db, &machine)
+            .await
+            .unwrap();
+        assert!(
+            second.is_empty(),
+            "existing company skills must not be re-seeded: {second:?}"
         );
+        let rows = skill_rows(&db, "review-loop").await;
+        assert_eq!(rows.len(), 1, "must not duplicate the row");
         let payload: serde_json::Value = serde_json::from_str(&rows[0].1).unwrap();
         assert_eq!(payload["name"], "review-loop");
         assert_eq!(payload["scope"], "company");
-        assert!(payload["body"].as_str().unwrap().contains("## 4. Repeat"));
+        assert_eq!(payload["body"], "CUSTOM REVIEW LOOP BODY");
         assert_eq!(skill_rows(&db, "pr-review-comments").await.len(), 1);
         cleanup(&dir);
     }

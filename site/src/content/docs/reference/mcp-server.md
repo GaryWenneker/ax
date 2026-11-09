@@ -226,7 +226,7 @@ To watch what each tool receives, how preflight enrichment builds the inject blo
 
 1. Logging is always enabled. Confirm that the MCP server is connected with the intended project path.
 2. Reconnect / restart the ax MCP server in Cursor.
-3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a list of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI).
+3. In Command Center (`ax web`), watch the status bar **Logging** chip (shows the latest tool / activity). Click it to open the **Logging** page — a list of today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the active workspace (**newest at top**; scroll down for earlier days; **Scroll to new** returns to the live top; logs are not cleared from the UI). Kind chips and the status bar separate **Inbound**, **Outbound**, and **Internal**.
 
 ![MCP Logging — live verbose stream with kind filters and Call Inspector](/screenshots/cc-logging-dark.png)
 
@@ -236,7 +236,7 @@ To watch what each tool receives, how preflight enrichment builds the inject blo
 
 5. Optionally also use **View → Output → ax / MCP Logs**, or open the log file directly.
 
-Lines are prefixed with `[ax-mcp]`. They are written to the log file (and optionally Cursor Output). They never append debug text to `content.text` or `structuredContent`. When a Cursor session id is known, lines also include `session=<uuid>` so `ax mcp audit --session <uuid>` can filter the verbose log.
+MCP lines are prefixed with `[ax-mcp]`. From **ax 8.4.4**, matching CLI graph/policy/memory commands write the same `inbound tool=` / `outbound tool=` bodies with an `[ax]` brand into the same daily file, so Logging is not MCP-only. Lines never append debug text to `content.text` or `structuredContent`. When a Cursor session id is known, lines also include `session=<uuid>` so `ax mcp audit --session <uuid>` can filter the verbose log.
 
 `ax_guard` accepts the documented `path` + `operation` shape and common aliases (`paths[]`, `file`, `action=edit|write|delete`) so agents do not burn retries on `path required` validation errors.
 

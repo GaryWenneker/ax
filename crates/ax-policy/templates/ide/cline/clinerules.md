@@ -32,7 +32,7 @@ Call `ax_preflight` exactly once per turn **before all other work** whenever the
 **Tool reference:** `ax_explore`/`ax_search`/`ax_node` for code structure, `ax_impact`/`ax_callers`/`ax_callees` for change impact, `ax_affected` for test coverage, `ax_insights`/`ax_report` for whole-graph architecture, `ax_guard` before writes when CRITICAL rules exist, `ax_diagnostics` for IDE/linter correlation, `ax_policy_capture` for durable rules, `ax_context` for task context, **`ax_sync`** / **`ax_index({force:true})`** for re-index, **`ax_lsp`** for LSP status/enrich, **`ax_ship`** for quality-gate evaluate/ci, **`ax_policy_index`** to refresh rules from disk, **`ax_remember`/`ax_recall`** for memory. Prefer these MCP tools over shelling out to the CLI when MCP is connected.
 
 Run preflight exactly once per turn. MCP unreachable → report `ax MCP unreachable: [error]`, state `Mode: DEGRADED`; do not proceed silently.
-**CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
+**CLI-only / MCP unavailable:** Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use CLI equivalents — do not skip the workflow: `ax preflight` (or `ax turn begin`), `ax explore` / `ax query` / `ax node`, `ax policy guard <path>`, `ax policy capture` / `ax policy skill`, `ax session` / `ax turn`, `ax sync`, `ax remember` / `ax recall`. See `.agents/skills/ax-cli/SKILL.md` when present.
 
 <!-- AX_END -->
 

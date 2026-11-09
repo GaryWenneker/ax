@@ -77,11 +77,11 @@ Allowed codes: `en`, `nl`, `de`, `fr`, `es`, `pt`, `it`, `pl`, `sv`, `da`, `tr`.
 
 ```json
 {
-  "reviews": { "commentLanguage": "nl" }
+  "reviews": { "commentLanguage": "en" }
 }
 ```
 
-Chat, docs, and commit messages stay English.
+Chat replies, website and repo docs, UI strings, and commit messages stay **English** — never Dutch or other non-English product copy. Only pull-request review comments follow `reviews.commentLanguage` (default English when unset).
 
 Re-index (`ax index`) after changing either config file.
 

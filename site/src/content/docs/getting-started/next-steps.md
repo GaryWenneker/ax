@@ -22,11 +22,11 @@ You've got ax installed and a graph built. Here's where to go next.
 - [Affected Tests in CI](/guides/affected-tests/) — run only the tests a change touches (`ax ship --ci`).
 - [Command Center](/guides/command-center/) — policy, graph, memory, logging, and the /ship quality-gate dashboard.
 - [Share Command Center](/guides/share/) — LAN token share, PWA, live action stream.
-- [MCP Logging & Quality](/guides/mcp-quality/) — verbose traces, Logging page, Q slide-out, session hooks, and `ax mcp audit`.
+- [MCP Logging & Quality](/guides/mcp-quality/) — inbound/outbound/internal traces (MCP + CLI), Logging page, Q slide-out, session hooks, and `ax mcp audit`.
+- [CLI-only mode](/guides/cli-only/) — headless graph/policy without MCP, with the same Logging directions from ax 8.4.4.
 - [Token Savings](/guides/token-savings/) — measure context-token savings from graph queries.
 - [Agent budget](/guides/budget/) — quote imported agent turns and plan a local monthly budget.
 - [Pi integration](/guides/pi/) — observe a Pi agent run without taking over the agent loop.
-- [Command Center](/guides/command-center/) — rules, skills, memory, graph, and logging in one local UI.
 - [Architecture Insights](/guides/architecture-insights/) — communities, god nodes, interactive Graph, portable HTML export.
 
 ## Agent instructions

@@ -25,4 +25,4 @@ Non-English input from the user does not change the output language requirement.
 
 ## Exception
 
-Comments posted on a pull request — review comments, thread replies, and suggested-change text — are written in Dutch. See `dutch-pr-comments`. Chat replies, docs, and commit messages stay English.
+Comments posted on a pull request — review comments, thread replies, and suggested-change text — use `reviews.commentLanguage` (default English when unset). See `dutch-pr-comments`. Chat replies, docs, website copy, and commit messages stay English.

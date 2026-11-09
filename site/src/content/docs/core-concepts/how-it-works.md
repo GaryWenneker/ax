@@ -3,7 +3,7 @@ title: How It Works
 description: The extraction, storage, resolution, and auto-sync pipeline.
 ---
 
-ax turns source code into a queryable graph in four stages, and indexes policy (rules and skills) and the memory vault alongside it. See [MCP Logging & Quality](/guides/mcp-quality/) for how agents use it.
+ax turns source code into a queryable graph in four stages, and indexes policy (rules and skills) and the memory vault alongside it. See [MCP Logging & Quality](/guides/mcp-quality/) for how agents and the CLI record inbound/outbound/internal traces.
 
 ```
 files → Extraction (tree-sitter) → DB (nodes/edges/files, schema v7)

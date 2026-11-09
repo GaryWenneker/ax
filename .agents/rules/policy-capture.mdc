@@ -3,15 +3,10 @@ id: policy-capture
 level: WARNING
 alwaysApply: false
 globs: []
-triggers: ["je moet","you must","always use","never use","@rule","#rule","voortaan","from now on","capture rule","save as rule"]
-tags: ["policy","capture"]
+triggers: ["je moet", "you must", "always use", "never use", "@rule", "#rule", "voortaan", "from now on", "capture rule", "save as rule"]
+tags: ["policy", "capture"]
 priority: 70
-enabled: true
-status: approved
-scope: project
-group: session-protocol
 ---
-
 # Policy capture from user directives
 
 When the user gives a **durable** instruction (not a one-off task), propose saving it as a team rule.
@@ -26,8 +21,15 @@ Directive language in the user prompt, for example:
 
 ## Protocol (interview → confirm → save to database)
 
-1. Call `ax_policy_capture({ action: "propose", prompt: "<user message>", files: [...] })`
-2. Show the preview and ask the user each question from `questions[]`:
+Prefer MCP when connected. When MCP is unavailable or the project is CLI-only, use the CLI column — do not skip capture.
+
+| Step | MCP | CLI |
+|---|---|---|
+| Propose | `ax_policy_capture({ action: "propose", prompt: "<user message>", files: [...] })` | `ax policy capture "<user message>"` (add `--json` when scripting) |
+| Save after explicit confirm | `ax_policy_capture({ action: "save", rule: { frontmatter, body } })` | `ax policy capture --yes "<user message>"` only after the user confirms |
+
+1. Propose via MCP or CLI (table above).
+2. Show the preview and ask the user each question from `questions[]` (MCP) or the CLI proposal output:
    - **confirm** — save as durable rule? (yes/no)
    - **id** — keep suggested slug or rename?
    - **level** — INFO, WARNING, or CRITICAL?
@@ -37,9 +39,8 @@ Directive language in the user prompt, for example:
    - **priority** — 0–100 (higher = earlier in inject)
    - **tags** — categorization
    - **body** — refine rule wording (optional)
-3. Apply the user's answers to `rule.frontmatter` and `rule.body`
-4. **Only** when the user explicitly confirms (`ja`, `yes`, `save`, `opslaan`):
-   - Call `ax_policy_capture({ action: "save", rule: { frontmatter, body } })`
+3. Apply the user's answers to `rule.frontmatter` and `rule.body` (MCP save path) or fold them into the confirmed prompt (CLI `--yes` path).
+4. **Only** when the user explicitly confirms (`ja`, `yes`, `save`, `opslaan`): save via MCP or CLI (table above). Never pass `--yes` before that confirmation.
 5. Confirm save destination: in **database mode** the rule is stored in `ax.db` (not a disk-only `.mdc` file)
 
 Never auto-save without confirmation.
@@ -49,7 +50,3 @@ Never auto-save without confirmation.
 - One-off tasks: "fix this bug", "run tests"
 - Questions: "how does X work?"
 - Preferences for the current message only without durable wording
-
-## Related
-
-- [[startup]] — SS-01b runs the same interview

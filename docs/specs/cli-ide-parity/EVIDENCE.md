@@ -78,3 +78,32 @@
 ### Tests after recheck
 
 `cargo test -p ax-policy --lib every_bootstrap` → **2 passed** (startup/subagents included in CLI fallback assertions)
+
+### Recheck — CLI lifecycle items (guard/capture/skill) 2026-11-09 later
+
+User concern: disk rules/skills omit CLI lifecycle for `ax policy guard` / capture / skill.
+
+| Gap found | Fix |
+|---|---|
+| `degraded-continue.mdc` claimed no CLI for ax_guard | seedVersion 2 + CLI fallbacks for guard/capture/skill |
+| IDE bootstrap tables omitted `ax policy guard` | `ide_seed` AGENTS/CLINE strings + guard rows/inline |
+| `explore-before-grep` missing guard CLI step | added step 3 |
+| `cli_only_*` templates thin on lifecycle | strengthened CLI command tables |
+| `every_bootstrap_names_cli_fallback` did not require guard | assert now includes `ax policy guard` |
+
+Gauntlet after fix: `cargo test -p ax-policy --lib every_bootstrap` PASS; `cli_only` PASS.
+
+Ships in **v8.4.5** with preserve-user-policy (create-missing seed; `ax policy sync --fix --force` to refresh).
+
+### Recheck pass 2 — capture / skill surfaces
+
+Additional MCP-only gaps fixed before v8.4.5:
+
+| Surface | Fix |
+|---|---|
+| `policy-capture.mdc` | MCP↔CLI propose/save table (`ax policy capture` / `--yes`) |
+| `author-skill-rule.mdc` | forbids CLI `--yes` before acceptance |
+| `review-loop` skill | `ax policy skill` + `ax callers`/`ax callees` |
+| IDE / cli_only bootstraps | CLI-only lines include capture + skill |
+
+`cargo test -p ax-policy --lib every_bootstrap` asserts `ax policy capture` / `ax policy skill` on those templates.
