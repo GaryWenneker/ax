@@ -83,40 +83,76 @@ $target = "win32-$arch"
 $assetName = "ax-$target.zip"
 
 function Get-GitHubApiHeaders {
+  param([switch]$NoAuth)
   $h = @{
     'User-Agent' = 'ax-install'
     Accept         = 'application/vnd.github+json'
   }
-  if ($env:GITHUB_TOKEN) { $h.Authorization = "Bearer $($env:GITHUB_TOKEN)" }
-  elseif ($env:GH_TOKEN) { $h.Authorization = "Bearer $($env:GH_TOKEN)" }
+  if (-not $NoAuth) {
+    if ($env:GITHUB_TOKEN) { $h.Authorization = "Bearer $($env:GITHUB_TOKEN)" }
+    elseif ($env:GH_TOKEN) { $h.Authorization = "Bearer $($env:GH_TOKEN)" }
+  }
   return $h
+}
+
+function Get-AxReleasesFromGitHubApi {
+  param([hashtable]$Headers)
+  Invoke-RestMethod `
+    -Uri "https://api.github.com/repos/$repo/releases?per_page=30" `
+    -Headers $Headers `
+    -TimeoutSec 15
 }
 
 function Resolve-AxVersionFromGitHubApi {
   param([string]$AssetName)
-  try {
-    $rels = Invoke-RestMethod `
-      -Uri "https://api.github.com/repos/$repo/releases?per_page=30" `
-      -Headers (Get-GitHubApiHeaders) `
-      -TimeoutSec 15
-    $installable = [System.Collections.Generic.List[string]]::new()
-    foreach ($r in $rels) {
-      if ($r.draft -or $r.prerelease) { continue }
-      $tag = "$($r.tag_name)".Trim()
-      if ($tag -notmatch '^v') { $tag = "v$tag" }
-      foreach ($a in $r.assets) {
-        if ($a.name -eq $AssetName) {
-          $installable.Add($tag)
-          break
+  $attempts = @(
+    @{ Headers = (Get-GitHubApiHeaders); Label = 'with token' },
+    @{ Headers = (Get-GitHubApiHeaders -NoAuth); Label = 'without token' }
+  )
+  # Deduplicate when no token is set (both attempts are identical).
+  if (-not $env:GITHUB_TOKEN -and -not $env:GH_TOKEN) {
+    $attempts = @($attempts[1])
+  }
+  $lastError = $null
+  foreach ($attempt in $attempts) {
+    try {
+      $rels = Get-AxReleasesFromGitHubApi -Headers $attempt.Headers
+      # Single-object responses are not enumerable as a list of releases.
+      if ($rels -isnot [System.Array]) { $rels = @($rels) }
+      $installable = [System.Collections.Generic.List[string]]::new()
+      foreach ($r in $rels) {
+        if ($r.draft -or $r.prerelease) { continue }
+        $tag = "$($r.tag_name)".Trim()
+        if (-not $tag -or $tag -eq '') { continue }
+        if ($tag -notmatch '^v') { $tag = "v$tag" }
+        foreach ($a in @($r.assets)) {
+          if ($a.name -eq $AssetName) {
+            $installable.Add($tag)
+            break
+          }
         }
       }
+      if ($installable.Count -gt 0) {
+        return ($installable |
+          Sort-Object { [version]($_.TrimStart('v')) } -Descending |
+          Select-Object -First 1)
+      }
+      Write-Host "ax: GitHub API ($($attempt.Label)) returned releases but none include $AssetName." -ForegroundColor Yellow
+      return $null
+    } catch {
+      $lastError = $_
+      $msg = "$_"
+      if ($msg -match '401|403|Unauthorized|Bad credentials|rate limit') {
+        Write-Host "ax: GitHub API $($attempt.Label) failed: $msg" -ForegroundColor Yellow
+        continue
+      }
+      Write-Host "ax: GitHub API unreachable ($($attempt.Label)): $msg" -ForegroundColor Yellow
+      break
     }
-    if ($installable.Count -gt 0) {
-      return ($installable |
-        Sort-Object { [version]($_.TrimStart('v')) } -Descending |
-        Select-Object -First 1)
-    }
-  } catch { }
+  }
+  if ($lastError) {
+    Write-Host "ax: falling back to Range probes / latest.txt after API failure." -ForegroundColor Yellow
+  }
   return $null
 }
 
@@ -221,7 +257,12 @@ Or pin a published tag: `$env:AX_VERSION = 'v2.1.0'; irm https://getax.wenneker.
     if (Test-AxReleaseAsset -Tag $tag) { return $tag }
   }
 
-  throw "ax: could not resolve a release with downloadable assets; set AX_VERSION or publish releases to GitHub ($repo)"
+  throw @"
+ax: could not resolve a release with downloadable assets for $assetName ($repo).
+GitHub Releases API and download probes both failed from this machine.
+Check: `$env:GITHUB_TOKEN` / `$env:GH_TOKEN` (stale tokens cause 401), firewall/proxy access to api.github.com,
+or pin a known tag: `$env:AX_VERSION = 'v8.4.2'; irm https://getax.wenneker.io/install.ps1 | iex
+"@
 }
 
 function Get-AxInstallTargets {
