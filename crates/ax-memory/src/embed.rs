@@ -30,6 +30,16 @@ fn add_feature(vec: &mut [f32; EMBED_DIM], feature: &[u8], weight: f32) {
     vec[idx] += sign * weight;
 }
 
+/// Embedding plus the model id stored on the row. Recall never compares across ids.
+pub fn embed_labeled(text: &str) -> (Vec<f32>, &'static str) {
+    if let Some(v) = crate::onnx::try_onnx_embed(text) {
+        if v.len() == EMBED_DIM {
+            return (v, "minilm-256");
+        }
+    }
+    (embed_text_hash(text), "hash-v1")
+}
+
 pub fn embed_text(text: &str) -> Vec<f32> {
     static LOGGED: std::sync::Once = std::sync::Once::new();
     if let Some(v) = crate::onnx::try_onnx_embed(text) {
@@ -96,7 +106,9 @@ pub fn blob_to_embedding(blob: &[u8]) -> Option<Vec<f32>> {
         return None;
     }
     Some(
-        blob.as_chunks::<4>().0.iter()
+        blob.as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect(),
     )

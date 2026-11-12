@@ -34,11 +34,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
       <div class="ax-display-word" data-ax-reveal aria-hidden="true">Ax<span>_</span></div>
       <h1 class="ax-headline"><span>Your context.</span><span>Your rules.</span><span class="ax-headline-accent">Your control.</span></h1>
       <div class="ax-feature-strip" data-ax-reveal aria-label="Core capabilities">
-        <span>Context</span><span>Rules</span><span>Control</span><span>One native binary</span>
+        <span>Context</span><span>Rules</span><a href={base + '/guides/memory/'}>Memory</a><span>One native binary</span>
       </div>
       <p class="ax-explainer" data-ax-reveal>
-        Local-first code intelligence, persistent memory, MCP integration and
-        policy-driven development. One native binary.
+        Local-first code intelligence, a brain-style memory that fetches by name,
+        MCP integration and policy-driven development. One native binary.
+        <a href={base + '/guides/memory/'}>How memory works</a>.
       </p>
       <MinimalDownload />
     </div>

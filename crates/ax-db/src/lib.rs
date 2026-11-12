@@ -4,6 +4,7 @@ pub mod migrations;
 pub mod queries;
 pub mod replication;
 pub mod schema;
+pub mod vec_ext;
 
 use std::path::Path;
 use std::time::Duration;
@@ -91,6 +92,7 @@ pub struct Database {
 
 impl Database {
     pub async fn open(path: &Path) -> Result<Self, AxError> {
+        crate::vec_ext::install_sqlite_vec();
         // Drop orphaned writer markers before connecting — dead PIDs must not block WAL recovery.
         if let Some(ax_dir) = path.parent() {
             ax_utils::clear_stale_lock(&ax_dir.join("ax.lock"));

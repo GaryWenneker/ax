@@ -39,7 +39,11 @@ pub fn render_architecture_report(input: &ReportInput) -> String {
     let _ = writeln!(out, "| Modularity | {:.3} |", ins.modularity);
     let _ = writeln!(out, "| God nodes | {} |", ins.god_nodes.len());
     let _ = writeln!(out, "| Dead code candidates | {} |", input.dead_code.len());
-    let _ = writeln!(out, "| Unresolved references | {} |", input.unresolved_total);
+    let _ = writeln!(
+        out,
+        "| Unresolved references | {} |",
+        input.unresolved_total
+    );
     out.push('\n');
 
     // God nodes
@@ -90,7 +94,11 @@ pub fn render_architecture_report(input: &ReportInput) -> String {
                     .collect::<Vec<_>>()
                     .join(", ")
             };
-            let _ = writeln!(out, "| {} | {} | {} | {} |", c.community_id, c.label, c.size, key);
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} |",
+                c.community_id, c.label, c.size, key
+            );
         }
         out.push('\n');
     }
@@ -181,7 +189,10 @@ pub fn render_architecture_report(input: &ReportInput) -> String {
 pub fn suggested_questions(ins: &GraphInsights) -> Vec<String> {
     let mut qs = Vec::new();
     if let Some(g) = ins.god_nodes.first() {
-        qs.push(format!("How does `{}` connect to the rest of the system?", g.name));
+        qs.push(format!(
+            "How does `{}` connect to the rest of the system?",
+            g.name
+        ));
     }
     if ins.god_nodes.len() > 1 {
         qs.push(format!(
@@ -202,7 +213,10 @@ pub fn suggested_questions(ins: &GraphInsights) -> Vec<String> {
         ));
     }
     if let Some(c) = ins.communities.first() {
-        qs.push(format!("What is the responsibility of the `{}` community?", c.label));
+        qs.push(format!(
+            "What is the responsibility of the `{}` community?",
+            c.label
+        ));
     }
     if qs.is_empty() {
         qs.push("Run `ax index` first — the graph appears to be empty.".to_string());

@@ -12,7 +12,7 @@ Four layers work together in every project:
 | Layer | What it does |
 |---|---|
 | **Knowledge graph** | Tree-sitter parsing → SQLite index of symbols, calls, imports, and routes |
-| **Memory vault** | Durable decisions, fixes, and conventions — hybrid recall, git auto-capture, preflight injection |
+| **Memory** | Working notes, named long-term memories, and a permanent archive of turns, graph changes, and logs. A cue fetches the exact memory. MCP and the CLI do the same thing. |
 | **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected per turn |
 | **Command Center** | Policy editors, memory vault, graph, quality gates, token savings, Logging / Quality (MCP + CLI inbound/outbound/internal), SSE dashboard, draft PRs |
 
@@ -28,7 +28,7 @@ When an agent explores a codebase, most of its budget goes to *discovery* — fi
 
 Policy removes another class of waste: re-explaining team conventions every session. Rules load once per turn via `ax_preflight`.
 
-The memory vault removes a third: re-deriving past decisions. Relevant memories arrive with preflight; git hooks capture the "why" from commit messages automatically.
+Memory removes a third: re-deriving past decisions. A name fetches the exact memory. The raw episode stays in a local archive, and recall is bound to the code graph. Preflight still injects only a few current memories. The long guide is [Memory](/guides/memory/).
 
 ## What's in the graph
 

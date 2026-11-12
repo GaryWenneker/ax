@@ -47,6 +47,7 @@ import {
   type FileChange,
 } from '../memoryDetail';
 import { memoryRowAge, memoryRowCounts, memoryRowHeadline } from '../memoryHeadline';
+import { memoryTierLabel, recalledFromArchiveLabel } from '../memoryTier';
 import { useNow } from '../lib/useNow';
 import { wikiLinksToMarkdown, type ItemLinks } from '../wikilinks';
 import { MEMORY_CATEGORIES, memoryCategory } from '../memoryCategory';
@@ -86,6 +87,7 @@ export default function MemoryPage() {
   const [matches, setMatches] = useState<MemoryMatch[] | null>(null);
   const [total, setTotal] = useState(0);
   const [q, setQ] = usePersistedString('memory-q', '');
+  const [archiveOn, setArchiveOn] = useState(false);
   const [selectedId, setSelectedId] = useState(() => parseLocation().memoryId ?? '');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +128,8 @@ export default function MemoryPage() {
 
   const qRef = useRef(q);
   qRef.current = q;
+  const archiveRef = useRef(archiveOn);
+  archiveRef.current = archiveOn;
   const refreshRef = useRef<() => void>(() => {});
   useLive('memory', () => refreshRef.current());
   const fresh = useNewKeys(loading ? null : memories.map((m) => m.id));
@@ -141,7 +145,7 @@ export default function MemoryPage() {
         .catch(() => {});
       const query = qRef.current.trim();
       if (!query) return;
-      recallMemories(query, 25)
+      recallMemories(query, 25, archiveRef.current ? 'archive' : 'hot')
         .then((r) => {
           if (qRef.current.trim() !== query) return;
           setMatches((prev) => (prev && !memoryListChanged(prev, r.matches) ? prev : r.matches));
@@ -162,12 +166,12 @@ export default function MemoryPage() {
     if (debounce.current) clearTimeout(debounce.current);
     if (!q.trim()) { setMatches(null); return; }
     debounce.current = setTimeout(() => {
-      recallMemories(q, 25)
+      recallMemories(q, 25, archiveOn ? 'archive' : 'hot')
         .then((r) => setMatches(r.matches))
         .catch((e: Error) => setError(e.message));
     }, 300);
     return () => { if (debounce.current) clearTimeout(debounce.current); };
-  }, [q]);
+  }, [q, archiveOn]);
 
   async function runCaptureGit() {
     setCapturing(true);
@@ -249,6 +253,7 @@ export default function MemoryPage() {
   }
 
   const shown: Array<MemoryRow & { score?: number }> = matches ?? memories;
+  const archiveSearch = matches !== null && archiveOn;
   const convLinks = useMemo(() => conversationLinks(shown), [shown]);
   const selected = shown.find((m) => m.id === selectedId) ?? null;
 
@@ -496,6 +501,17 @@ export default function MemoryPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
+            <label
+              className="memory-archive-toggle"
+              title="Search the permanent archive. Hits are labeled recalled from archive and are not injected into preflight."
+            >
+              <input
+                type="checkbox"
+                checked={archiveOn}
+                onChange={(e) => setArchiveOn(e.target.checked)}
+              />
+              Archive
+            </label>
             <InfoHover label="About recall search">
               Type a question or keywords. This runs the <strong>same hybrid search</strong> that
               agents use during <code>ax_preflight</code> — FTS5 full-text + vector similarity,
@@ -538,7 +554,7 @@ export default function MemoryPage() {
                         }`}
                         style={conv ? ({ '--conv-hue': conv.hue } as CSSProperties) : undefined}
                         title={memoryRowHeadline(m)}
-                        listValues={[memoryRowHeadline(m), m.kind.replace(/_/g, ' '), m.source || '—', fmtMemoryTime(m.updated_at, now), m.enabled !== false ? 'enabled' : 'disabled']}
+                        listValues={[memoryRowHeadline(m), m.kind.replace(/_/g, ' '), memoryTierLabel(m.tier), m.source || '—', fmtMemoryTime(m.updated_at, now), m.enabled !== false ? 'enabled' : 'disabled']}
                         portalColumns={portal ? [m.kind.replace(/_/g, ' '), m.source || '—', age] : undefined}
                         portalLabels={['Kind', 'Source', 'Age']}
                         meta={age}
@@ -547,6 +563,14 @@ export default function MemoryPage() {
                         onClick={() => setSelectedId(m.id === selectedId ? '' : m.id)}
                         badges={
                           <>
+                            <span className="page-item-badge" title={`Tier: ${memoryTierLabel(m.tier)}`}>
+                              {memoryTierLabel(m.tier)}
+                            </span>
+                            {recalledFromArchiveLabel(m.tier, archiveSearch) && (
+                              <span className="page-item-badge" title="This hit came from the permanent archive and is not injected into preflight.">
+                                recalled from archive
+                              </span>
+                            )}
                             {memoryRowCounts(m) && (
                               <span className="page-item-badge">{memoryRowCounts(m)}</span>
                             )}

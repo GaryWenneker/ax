@@ -17,6 +17,8 @@ pub struct HistoryQuery {
     pub query: String,
     pub since_ms: Option<i64>,
     pub limit: usize,
+    /// When true, include the permanent archive (demoted turns, graph diffs, activity).
+    pub archive: bool,
 }
 
 /// One dated action: an agent turn or a git commit.
@@ -353,6 +355,17 @@ pub async fn history(
             .map(turn_entry)
             .collect()
     };
+    if query.archive {
+        if let Ok(archived) = crate::brain::archive_history(pool, text, query.since_ms).await {
+            let seen: std::collections::BTreeSet<String> =
+                entries.iter().map(|entry| entry.id.clone()).collect();
+            for entry in archived {
+                if !seen.contains(&entry.id) {
+                    entries.push(entry);
+                }
+            }
+        }
+    }
     entries.sort_by_key(|e| std::cmp::Reverse(e.at_ms));
     entries.truncate(limit);
     Ok(entries)

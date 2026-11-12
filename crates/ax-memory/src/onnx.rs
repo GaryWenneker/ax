@@ -37,9 +37,7 @@ pub fn onnx_model_configured() -> bool {
 
 /// True when a tokenizer.json (or `AX_ONNX_TOKENIZER`) is present beside the model.
 pub fn onnx_tokenizer_configured() -> bool {
-    model_path()
-        .and_then(|m| tokenizer_path(&m))
-        .is_some()
+    model_path().and_then(|m| tokenizer_path(&m)).is_some()
 }
 
 /// Resolved model path when present (for status UI / diagnostics).
@@ -152,7 +150,9 @@ mod runtime {
                 let id = id.as_i64().or_else(|| id.as_u64().map(|u| u as i64))?;
                 token_to_id.insert(tok.clone(), id);
             }
-            let unk_id = *token_to_id.get("[UNK]").or_else(|| token_to_id.get("<unk>"))?;
+            let unk_id = *token_to_id
+                .get("[UNK]")
+                .or_else(|| token_to_id.get("<unk>"))?;
             let cls_id = *token_to_id
                 .get("[CLS]")
                 .or_else(|| token_to_id.get("<s>"))

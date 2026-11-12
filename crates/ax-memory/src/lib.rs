@@ -3,6 +3,7 @@
 //! Memories live in the project graph database and are recalled with FTS5
 //! ranking combined with confidence decay, so fresh knowledge outranks stale.
 
+pub mod brain;
 pub mod capture;
 pub mod embed;
 pub mod folder_sync;
@@ -14,6 +15,10 @@ pub mod sync;
 pub mod turns;
 pub mod types;
 
+pub use brain::{
+    capture_activity_engrams, capture_graph_episodes, confirm_memory, consolidate, cues_for,
+    normalize_cue, reembed_stale, search, Depth, SearchRequest,
+};
 pub use capture::{capture_git_history, GitCaptureResult};
 pub use folder_sync::{
     doc_memory_id, is_recall_only, remove_folder_memories, sync_folder, FolderSyncReport, DOC_KIND,
@@ -52,10 +57,54 @@ pub async fn recall_for_prompt(
     prompt: &str,
     limit: usize,
 ) -> Result<Vec<MemoryMatch>, AxError> {
-    let mut matches = recall(pool, prompt, (limit * 4).max(20)).await?;
+    recall_for_prompt_near(pool, prompt, &[], limit).await
+}
+
+/// Same inject as [`recall_for_prompt`], with a named cue outranking vector hits
+/// and open files boosting memories that name those files.
+pub async fn recall_for_prompt_near(
+    pool: &SqlitePool,
+    prompt: &str,
+    files: &[String],
+    limit: usize,
+) -> Result<Vec<MemoryMatch>, AxError> {
+    let mut kept = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for hit in brain::prompt_cues(pool, prompt, limit)
+        .await
+        .unwrap_or_default()
+    {
+        if brain::is_injectable(pool, &hit.memory.id)
+            .await
+            .unwrap_or(false)
+            && seen.insert(hit.memory.id.clone())
+        {
+            kept.push(hit);
+        }
+    }
+    let mut matches = store::recall_scoped(pool, prompt, (limit * 4).max(20), files, false).await?;
     matches.retain(|m| m.score > 0.0 && !is_recall_only(&m.memory.kind));
-    matches.truncate(limit);
-    Ok(matches)
+    for hit in matches {
+        if brain::is_injectable(pool, &hit.memory.id)
+            .await
+            .unwrap_or(false)
+            && seen.insert(hit.memory.id.clone())
+        {
+            kept.push(hit);
+        }
+    }
+    kept.truncate(limit);
+    Ok(kept)
+}
+
+pub async fn remember_with_triggers(
+    pool: &SqlitePool,
+    input: RememberInput,
+    triggers: &[String],
+) -> Result<MemoryRow, AxError> {
+    let row = remember(pool, input).await?;
+    brain::register_cues(pool, &row, triggers).await?;
+    Ok(row)
 }
 
 /// Prompt matches first. Newest durable memories fill any empty slots so the
@@ -80,7 +129,11 @@ pub async fn memories_for_preflight(
         if matched.len() >= limit {
             break;
         }
-        if is_recall_only(&row.kind) || !row.enabled || !seen.insert(row.id.clone()) {
+        if is_recall_only(&row.kind)
+            || !row.enabled
+            || !seen.insert(row.id.clone())
+            || !brain::is_injectable(pool, &row.id).await.unwrap_or(false)
+        {
             continue;
         }
         matched.push(MemoryMatch {
@@ -152,7 +205,11 @@ pub async fn seed_from_graph(pool: &SqlitePool) -> Result<usize, AxError> {
             title: "Top-level directory structure".into(),
             body: format!("Root directories: {}", dirs.join(", ")),
             kind: Some("architecture".into()),
-            tags: vec!["auto-seed".into(), "structure".into()],
+            tags: {
+                let mut tags = vec!["auto-seed".into(), "structure".into()];
+                tags.extend(dirs.iter().map(|dir| (*dir).to_string()));
+                tags
+            },
             files: vec![],
             source: Some("graph-seed".into()),
         };
@@ -176,16 +233,10 @@ pub async fn seed_from_graph(pool: &SqlitePool) -> Result<usize, AxError> {
         if kinds.is_empty() {
             continue;
         }
-        let breakdown: Vec<String> = kinds
-            .iter()
-            .map(|(k, c)| format!("{c} {k}s"))
-            .collect();
+        let breakdown: Vec<String> = kinds.iter().map(|(k, c)| format!("{c} {k}s")).collect();
         let input = RememberInput {
             title: format!("{lang} codebase structure"),
-            body: format!(
-                "{lang}: {count} files containing {}.",
-                breakdown.join(", ")
-            ),
+            body: format!("{lang}: {count} files containing {}.", breakdown.join(", ")),
             kind: Some("architecture".into()),
             tags: vec!["auto-seed".into(), lang.clone()],
             files: vec![],

@@ -5,14 +5,21 @@ use std::path::PathBuf;
 use crate::commands::resolve_path;
 
 pub async fn run_remember(
-    text: String,
+    text: Option<String>,
     title: Option<String>,
     kind: Option<String>,
     tags: Vec<String>,
     files: Vec<String>,
+    triggers: Vec<String>,
+    confirm: Option<String>,
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(None);
+    let text = if confirm.is_none() {
+        Some(text.ok_or("give the memory text, or --confirm ID")?)
+    } else {
+        text
+    };
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_remember",
@@ -20,6 +27,7 @@ pub async fn run_remember(
             "body": text,
             "title": title,
             "kind": kind,
+            "triggers": triggers,
         }),
     );
     ax_usage::log_memory(Some(&root), "remember start");
@@ -31,7 +39,24 @@ pub async fn run_remember(
             return Err(e.to_string());
         }
     };
-    let row = match ax_memory::remember(
+    if let Some(id) = confirm {
+        let confirmed = ax_memory::confirm_memory(ax.db_pool(), &id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({ "ok": confirmed, "id": id, "confirmed": confirmed })
+            );
+        } else if confirmed {
+            println!("Confirmed {id}");
+        } else {
+            println!("No candidate memory with id {id}");
+        }
+        return Ok(());
+    }
+    let text = text.unwrap_or_default();
+    let row = match ax_memory::remember_with_triggers(
         ax.db_pool(),
         ax_memory::RememberInput {
             title: title.unwrap_or_default(),
@@ -41,6 +66,7 @@ pub async fn run_remember(
             files,
             source: Some("manual".into()),
         },
+        &triggers,
     )
     .await
     {
@@ -71,7 +97,14 @@ pub async fn run_remember(
     .unwrap_or_default();
 
     if json {
-        let out = serde_json::json!({ "memory": row, "similar": similar });
+        let out = serde_json::json!({
+            "ok": true,
+            "id": row.id,
+            "title": row.title,
+            "kind": row.kind,
+            "memory": row,
+            "similar": similar
+        });
         println!(
             "{}",
             serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
@@ -147,6 +180,7 @@ pub async fn run_history(
     since: Option<String>,
     limit: Option<u32>,
     id: Option<String>,
+    depth: String,
     json: bool,
 ) -> Result<(), String> {
     let root = resolve_path(None);
@@ -172,6 +206,7 @@ pub async fn run_history(
             query,
             since_ms,
             limit: limit.unwrap_or(20).clamp(1, 50) as usize,
+            archive: ax_memory::Depth::parse(&depth)? == ax_memory::Depth::Archive,
         };
         ax_memory::history(ax.db_pool(), ax.project_root(), &history_query)
             .await
@@ -180,7 +215,7 @@ pub async fn run_history(
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?
+            serde_json::json!({ "entries": entries, "count": entries.len() })
         );
         return Ok(());
     }
@@ -189,13 +224,21 @@ pub async fn run_history(
     Ok(())
 }
 
-pub async fn run_recall(query: String, limit: Option<u32>, json: bool) -> Result<(), String> {
+pub async fn run_recall(
+    query: Option<String>,
+    cue: Option<String>,
+    id: Option<String>,
+    depth: String,
+    limit: Option<u32>,
+    json: bool,
+) -> Result<(), String> {
     let root = resolve_path(None);
+    let query = query.unwrap_or_default();
     let q_len = query.chars().count();
     let trace = ax_usage::ToolTrace::begin(
         Some(&root),
         "ax_recall",
-        &serde_json::json!({ "query": query, "limit": limit }),
+        &serde_json::json!({ "query": query, "cue": cue, "id": id, "depth": depth, "limit": limit }),
     );
     ax_usage::log_memory(Some(&root), format!("recall start q_len={q_len}"));
     let ax = match ax_core::Ax::open(&root).await {
@@ -206,7 +249,22 @@ pub async fn run_recall(query: String, limit: Option<u32>, json: bool) -> Result
         }
     };
     let limit = limit.unwrap_or(5).min(50) as usize;
-    let matches = match ax_memory::recall(ax.db_pool(), &query, limit).await {
+    let depth = ax_memory::Depth::parse(&depth)?;
+    if id.as_deref().unwrap_or("").is_empty()
+        && cue.as_deref().unwrap_or("").is_empty()
+        && query.trim().is_empty()
+    {
+        return Err("give a query, --cue, or --id".into());
+    }
+    let request = ax_memory::SearchRequest {
+        query: query.clone(),
+        cue,
+        id,
+        depth,
+        files: Vec::new(),
+        limit,
+    };
+    let matches = match ax_memory::search(ax.db_pool(), &request).await {
         Ok(m) => m,
         Err(e) => {
             ax_usage::log_memory(Some(&root), "recall fail");
@@ -222,9 +280,13 @@ pub async fn run_recall(query: String, limit: Option<u32>, json: bool) -> Result
     trace.finish_ok(&format!("{} memories", matches.len()));
 
     if json {
+        let cues = match request.id.as_deref().filter(|id| !id.is_empty()) {
+            Some(id) => ax_memory::cues_for(ax.db_pool(), id).await.unwrap_or_default(),
+            None => Vec::new(),
+        };
         println!(
             "{}",
-            serde_json::to_string_pretty(&matches).map_err(|e| e.to_string())?
+            serde_json::json!({ "matches": matches, "cues": cues })
         );
         return Ok(());
     }

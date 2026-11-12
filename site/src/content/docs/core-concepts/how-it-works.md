@@ -43,10 +43,10 @@ The MCP server watches your project using native OS file events (FSEvents / inot
 
 Git hooks installed by `ax init` also run `ax sync --quiet`, `ax ship --evaluate`, and `ax capture-git --quiet` on commit/merge so the graph, ship state, and memory vault stay current.
 
-## 5. Memory vault
+## 5. Memory
 
-Project memories live in the same `.ax/ax.db` SQLite database as the graph. Agents store durable knowledge with `ax_remember`; humans use `ax remember` or the Command Center **Memory** page.
+Memory is one of the reasons to use ax, next to the code graph and the policy engine. It lives in the same local `.ax/ax.db` as the graph.
 
-Recall combines FTS5 keyword search with local vector embeddings (Reciprocal Rank Fusion). `ax_preflight` injects top matches every turn. Post-commit hooks capture non-trivial git commit messages as `kind: git` memories automatically.
+Working notes stay in the session. A durable decision is stored with a trigger name. Preflight injects at most a few of those. Turns, graph diffs, and selected logs move into a permanent archive: a cue or an id still fetches them, and free-text archive search uses FTS plus a local vector index. MCP and the CLI call the same function.
 
-See [Memory vault](/guides/memory/).
+See [Memory](/guides/memory/).

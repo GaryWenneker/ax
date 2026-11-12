@@ -8595,6 +8595,16 @@ button.linkish {
   line-height: 1.5;
 }
 
+.memory-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  white-space: nowrap;
+}
+
 /* Memory — compact overview above the vault list */
 .mem-overview {
   flex-shrink: 0;

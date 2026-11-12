@@ -1,10 +1,10 @@
 //! Ax facade - wires all layers together.
 
-mod project_config;
-pub mod review_language;
 pub mod okf;
 pub mod policy_dedup;
+mod project_config;
 pub mod report;
+pub mod review_language;
 pub mod stats_format;
 pub mod workspace;
 
@@ -18,9 +18,9 @@ use ax_db::queries::QueryBuilder;
 use ax_db::{Database, DB_FILENAME};
 use ax_extraction::orchestrator::{ExtractionOrchestrator, IndexOptions, IndexResult};
 use ax_extraction::EXTRACTION_VERSION;
+use ax_graph::queries::GraphQueryManager;
 use ax_graph::query_parser::parse_query;
 use ax_graph::query_utils::matches_parsed_query;
-use ax_graph::queries::GraphQueryManager;
 use ax_graph::traversal::GraphTraverser;
 use ax_resolution::ReferenceResolver;
 use ax_sync::watcher::{FileWatcher, WatcherOptions};
@@ -443,10 +443,17 @@ impl Ax {
             if let Some(w) = &self.watcher {
                 w.mark_indexing(&ready).await;
             }
-            match self.index_files(&ready, opts.clone(), &mut on_progress).await {
+            match self
+                .index_files(&ready, opts.clone(), &mut on_progress)
+                .await
+            {
                 Ok(r) => {
                     if !opts.quiet {
-                        tracing::info!("auto-sync: {} file(s) in {}ms", r.files_indexed, r.duration_ms);
+                        tracing::info!(
+                            "auto-sync: {} file(s) in {}ms",
+                            r.files_indexed,
+                            r.duration_ms
+                        );
                     }
                 }
                 Err(e) => tracing::warn!("auto-sync failed: {}", e),
@@ -655,7 +662,11 @@ impl Ax {
     ) -> Result<Vec<ax_graph::CallCycle>, ax_utils::errors::AxError> {
         let edges = self.queries.get_all_edges().await?;
         // Over-fetch then drop cycles that only live in bundles/dist.
-        let fetch = if limit == 0 { 0 } else { limit.saturating_mul(8).max(64) };
+        let fetch = if limit == 0 {
+            0
+        } else {
+            limit.saturating_mul(8).max(64)
+        };
         let mut cycles = ax_graph::find_call_cycles(&edges, fetch);
         let mut kept = Vec::new();
         for c in cycles.drain(..) {
@@ -772,8 +783,8 @@ impl Ax {
         &self,
         changed_files: &[String],
     ) -> Result<Vec<String>, ax_utils::errors::AxError> {
-        use std::collections::HashSet;
         use ax_graph::query_utils::is_test_file;
+        use std::collections::HashSet;
 
         let mut affected = HashSet::new();
         for path in changed_files {
@@ -1026,5 +1037,17 @@ async fn finalize_after_extract(
     queries
         .set_metadata("package_version", env!("CARGO_PKG_VERSION"))
         .await?;
+    if let Err(error) = ax_memory::capture_graph_episodes(db.pool()).await {
+        tracing::warn!("graph episode capture failed: {error}");
+    }
+    if let Err(error) = ax_memory::capture_activity_engrams(db.pool()).await {
+        tracing::warn!("activity engram capture failed: {error}");
+    }
+    if let Err(error) = ax_memory::consolidate(db.pool()).await {
+        tracing::warn!("memory consolidation failed: {error}");
+    }
+    if let Err(error) = ax_memory::reembed_stale(db.pool(), 32).await {
+        tracing::warn!("memory re-embed failed: {error}");
+    }
     Ok(())
 }

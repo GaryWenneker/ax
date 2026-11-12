@@ -97,6 +97,8 @@ struct RecallQuery {
     q: String,
     #[serde(default = "default_recall_limit")]
     limit: usize,
+    #[serde(default)]
+    depth: String,
 }
 
 fn default_recall_limit() -> usize {
@@ -108,7 +110,24 @@ async fn handle_recall(
     Query(p): Query<RecallQuery>,
 ) -> impl IntoResponse {
     let ws = hub.read().await;
-    match ax_memory::recall(&ws.graph_pool, &p.q, p.limit.min(50)).await {
+    let depth = if p.depth == "archive" {
+        ax_memory::Depth::Archive
+    } else {
+        ax_memory::Depth::Hot
+    };
+    match ax_memory::search(
+        &ws.graph_pool,
+        &ax_memory::SearchRequest {
+            query: p.q,
+            cue: None,
+            id: None,
+            depth,
+            files: Vec::new(),
+            limit: p.limit.min(50),
+        },
+    )
+    .await
+    {
         Ok(matches) => (
             StatusCode::OK,
             Json(serde_json::json!({ "matches": matches })),

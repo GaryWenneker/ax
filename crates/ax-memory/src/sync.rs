@@ -83,10 +83,7 @@ pub async fn export_shared(
 }
 
 /// Import JSONL memories. Existing ids are updated; new ids are inserted.
-pub async fn import_shared(
-    pool: &SqlitePool,
-    path: &Path,
-) -> Result<MemoryImportResult, AxError> {
+pub async fn import_shared(pool: &SqlitePool, path: &Path) -> Result<MemoryImportResult, AxError> {
     if !path.is_file() {
         return Ok(MemoryImportResult::default());
     }
@@ -98,9 +95,8 @@ pub async fn import_shared(
         if line.is_empty() {
             continue;
         }
-        let row: MemoryRow = serde_json::from_str(line).map_err(|e| {
-            AxError::Other(format!("shared.jsonl line {}: {e}", lineno + 1))
-        })?;
+        let row: MemoryRow = serde_json::from_str(line)
+            .map_err(|e| AxError::Other(format!("shared.jsonl line {}: {e}", lineno + 1)))?;
         match get(pool, &row.id).await? {
             Some(existing) => {
                 if existing.updated_at >= row.updated_at
@@ -211,23 +207,39 @@ mod export_policy_tests {
             enabled,
             created_at: 0,
             updated_at: 0,
+            tier: "t2".into(),
         }
     }
 
     #[test]
     fn shared_tag_cannot_override_private_or_local_flags() {
         for blocked in ["local", "noshare", "private", "LOCAL", "NoShare"] {
-            assert!(!is_shared_export_candidate(&row("note", &["shared", blocked], true), "shared"));
+            assert!(!is_shared_export_candidate(
+                &row("note", &["shared", blocked], true),
+                "shared"
+            ));
         }
-        assert!(is_shared_export_candidate(&row("note", &["ShArEd"], true), "shared"));
-        assert!(!is_shared_export_candidate(&row("note", &["team"], true), "shared"));
+        assert!(is_shared_export_candidate(
+            &row("note", &["ShArEd"], true),
+            "shared"
+        ));
+        assert!(!is_shared_export_candidate(
+            &row("note", &["team"], true),
+            "shared"
+        ));
     }
 
     #[test]
     fn never_exports_disabled_or_recall_only_memories() {
-        assert!(!is_shared_export_candidate(&row("note", &["shared"], false), "shared"));
+        assert!(!is_shared_export_candidate(
+            &row("note", &["shared"], false),
+            "shared"
+        ));
         for kind in ["turn", "doc"] {
-            assert!(!is_shared_export_candidate(&row(kind, &["shared"], true), "shared"));
+            assert!(!is_shared_export_candidate(
+                &row(kind, &["shared"], true),
+                "shared"
+            ));
         }
     }
 }

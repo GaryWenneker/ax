@@ -81,6 +81,7 @@ export interface MemoryRow {
   enabled?: boolean;
   created_at: number;
   updated_at: number;
+  tier?: string;
 }
 
 export interface MemoryMatch extends MemoryRow {
@@ -124,8 +125,12 @@ export function fetchMemory(id: string): Promise<MemoryRow> {
   return get<MemoryRow>(`/memory/${encodeURIComponent(id)}`);
 }
 
-export function recallMemories(q: string, limit = 10): Promise<{ matches: MemoryMatch[] }> {
-  const sp = new URLSearchParams({ q, limit: String(limit) });
+export function recallMemories(
+  q: string,
+  limit = 10,
+  depth: 'hot' | 'archive' = 'hot',
+): Promise<{ matches: MemoryMatch[] }> {
+  const sp = new URLSearchParams({ q, limit: String(limit), depth });
   return get<{ matches: MemoryMatch[] }>(`/memory/recall?${sp}`);
 }
 

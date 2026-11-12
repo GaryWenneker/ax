@@ -6,8 +6,21 @@ fn default_true() -> bool {
     true
 }
 
+fn default_tier() -> String {
+    "t2".into()
+}
+
 /// What kind of knowledge a memory captures.
-pub const MEMORY_KINDS: &[&str] = &["decision", "bug_fix", "architecture", "convention", "note", "git", "turn", "doc"];
+pub const MEMORY_KINDS: &[&str] = &[
+    "decision",
+    "bug_fix",
+    "architecture",
+    "convention",
+    "note",
+    "git",
+    "turn",
+    "doc",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRow {
@@ -26,6 +39,9 @@ pub struct MemoryRow {
     pub enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    /// t0 working, t1 recent, t2 long-term, t3 archive.
+    #[serde(default = "default_tier")]
+    pub tier: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

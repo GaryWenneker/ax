@@ -144,7 +144,7 @@ enum Commands {
     /// Store a durable project memory (decision, fix, convention)
     Remember {
         /// The memory content — what to remember and why
-        text: String,
+        text: Option<String>,
         #[arg(long, help = "Short title (defaults to first line)")]
         title: Option<String>,
         #[arg(long, help = "decision | bug_fix | architecture | convention | note")]
@@ -153,12 +153,22 @@ enum Commands {
         tags: Vec<String>,
         #[arg(long = "file", help = "Related file path (repeatable)")]
         files: Vec<String>,
+        #[arg(long = "trigger", help = "Exact cue name (repeatable). Same as ax_remember triggers.")]
+        triggers: Vec<String>,
+        #[arg(long, help = "Confirm a candidate memory by id. Same as ax_remember action=confirm.")]
+        confirm: Option<String>,
         #[arg(long)]
         json: bool,
     },
-    /// Search project memories by free text
+    /// Search project memories by cue, id, or free text
     Recall {
-        query: String,
+        query: Option<String>,
+        #[arg(long, help = "Exact cue. Same as ax_recall cue.")]
+        cue: Option<String>,
+        #[arg(long, help = "Memory id, including an archived turn. Same as ax_recall id.")]
+        id: Option<String>,
+        #[arg(long, default_value = "hot", help = "hot or archive. Same as ax_recall depth.")]
+        depth: String,
         #[arg(long)]
         limit: Option<u32>,
         #[arg(long)]
@@ -173,6 +183,8 @@ enum Commands {
         limit: Option<u32>,
         #[arg(long, help = "Show one turn memory with its full outcome")]
         id: Option<String>,
+        #[arg(long, default_value = "hot", help = "hot or archive. Same as ax_history depth.")]
+        depth: String,
         #[arg(long)]
         json: bool,
     },
@@ -2049,18 +2061,29 @@ async fn async_main() {
             kind,
             tags,
             files,
+            triggers,
+            confirm,
             json,
-        }) => commands::memory::run_remember(text, title, kind, tags, files, json).await,
-        Some(Commands::Recall { query, limit, json }) => {
-            commands::memory::run_recall(query, limit, json).await
+        }) => {
+            commands::memory::run_remember(text, title, kind, tags, files, triggers, confirm, json)
+                .await
         }
+        Some(Commands::Recall {
+            query,
+            cue,
+            id,
+            depth,
+            limit,
+            json,
+        }) => commands::memory::run_recall(query, cue, id, depth, limit, json).await,
         Some(Commands::History {
             query,
             since,
             limit,
             id,
+            depth,
             json,
-        }) => commands::memory::run_history(query, since, limit, id, json).await,
+        }) => commands::memory::run_history(query, since, limit, id, depth, json).await,
         Some(Commands::CaptureGit { limit, quiet, json }) => {
             commands::memory::run_capture_git(limit, quiet, json).await
         }

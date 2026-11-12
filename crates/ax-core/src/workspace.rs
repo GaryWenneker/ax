@@ -79,7 +79,8 @@ pub fn write_workspace_config(root: &Path, config: &WorkspaceConfig) -> Result<(
     let path = root.join(CONFIG_FILENAME);
     let mut root_val = if path.is_file() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str::<serde_json::Value>(&content).unwrap_or_else(|_| serde_json::json!({}))
+        serde_json::from_str::<serde_json::Value>(&content)
+            .unwrap_or_else(|_| serde_json::json!({}))
     } else {
         serde_json::json!({})
     };

@@ -517,11 +517,13 @@ Store a durable project memory (decision, fix, convention). Flags similar existi
 
 | Argument / flag | Type | Description |
 |---|---|---|
-| `text` | required | The memory content — what to remember and why |
+| `text` | optional | The memory content — what to remember and why. Omit with `--confirm` |
 | `--title` | string | Short title (defaults to first line) |
 | `--kind` | string | `decision` \| `bug_fix` \| `architecture` \| `convention` \| `note` |
 | `--tag` | string (repeat) | Tag |
 | `--file` | string (repeat) | Related file path |
+| `--trigger` | string (repeat) | Exact cue name. Same as `ax_remember` `triggers` |
+| `--confirm` | string | Confirm a candidate memory by id. Same as `ax_remember` `action=confirm` |
 | `--json` | flag | JSON output |
 
 ```bash
@@ -529,19 +531,24 @@ ax remember "We use tiktoken o200k_base for token counts" --kind decision --tag 
 ax remember "Sonar proxy strips Content-Encoding after decompression" --kind bug_fix --file crates/ax-web/src/sonar_proxy.rs
 ```
 
-### `ax recall <query>`
+### `ax recall [query]`
 
-Hybrid search (full-text + vector similarity, confidence-decay weighted) over project memories.
+Exact cue, id, or free-text search. `--cue` and `--id` see every tier, including a demoted turn. `--depth archive` searches only the archive and is not what preflight injects.
 
 | Argument / flag | Type | Default | Description |
 |---|---|---|---|
-| `query` | required | — | Free-text query |
+| `query` | optional | — | Free-text query. Same as `ax_recall` `query` |
+| `--cue` | string | — | Exact trigger, title, or tag. Same as `ax_recall` `cue` |
+| `--id` | string | — | Full body and its cues. Same as `ax_recall` `id` |
+| `--depth` | `hot` \| `archive` | `hot` | `archive` searches the permanent tier. Same as `ax_recall` `depth` |
 | `--limit` | number | `5` | Max results (≤50) |
-| `--json` | flag | — | JSON output |
+| `--json` | flag | — | JSON output (`matches`, `cues`) |
 
 ```bash
+ax recall --cue reinstall-all
 ax recall "why tiktoken"
-ax recall sonar proxy --limit 10 --json
+ax recall --id mem-123 --json
+ax recall "old graph change" --depth archive
 ```
 
 ### `ax history [query]`
@@ -554,7 +561,8 @@ When did I change X: dated agent turns (prompt, outcome, files, commits) and git
 | `--since` | `YYYY-MM-DD` | — | Only entries on or after this date |
 | `--limit` | number | `20` | Max entries (1–50) |
 | `--id` | string | — | Show one turn memory with its full outcome |
-| `--json` | flag | — | JSON output |
+| `--depth` | `hot` \| `archive` | `hot` | `archive` includes demoted turns, graph diffs, and activity. Same as `ax_history` `depth` |
+| `--json` | flag | — | JSON output (`entries`, `count`) |
 
 ```bash
 ax history review_language.rs

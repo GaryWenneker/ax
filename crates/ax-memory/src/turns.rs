@@ -35,10 +35,8 @@ pub async fn save_turn(
     record: &TurnRecord,
     now_ms: i64,
 ) -> Result<bool, AxError> {
-    let embedding = crate::embed::embedding_to_blob(&crate::embed::embed_text(&format!(
-        "{} {}",
-        record.title, record.body
-    )));
+    let (vector, model) = crate::embed::embed_labeled(&format!("{} {}", record.title, record.body));
+    let embedding = crate::embed::embedding_to_blob(&vector);
     let files = serde_json::to_string(&record.files).map_err(|e| AxError::Other(e.to_string()))?;
     let result = sqlx::query(
         r#"INSERT OR IGNORE INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
@@ -56,6 +54,12 @@ pub async fn save_turn(
     .execute(pool)
     .await
     .map_err(db_err)?;
+    if result.rows_affected() > 0 {
+        crate::brain::stamp_memory(pool, &record.id, TURN_KIND, model).await?;
+        if let Some(row) = crate::store::get(pool, &record.id).await? {
+            crate::brain::register_cues(pool, &row, &[]).await?;
+        }
+    }
     Ok(result.rows_affected() > 0)
 }
 
@@ -344,12 +348,19 @@ pub fn parse_unified_diff(text: &str, line_cap: usize) -> ParsedDiff {
     for line in text.lines() {
         if let Some(path) = path_from_git_header(line) {
             push_file(&mut files, current.take());
-            current = Some(DiffFile { path, binary: false, truncated: false, hunks: Vec::new() });
+            current = Some(DiffFile {
+                path,
+                binary: false,
+                truncated: false,
+                hunks: Vec::new(),
+            });
             in_hunk = false;
             used = 0;
             continue;
         }
-        let Some(file) = current.as_mut() else { continue };
+        let Some(file) = current.as_mut() else {
+            continue;
+        };
         if line.starts_with("Binary files ") {
             file.binary = true;
             in_hunk = false;
@@ -360,7 +371,10 @@ pub fn parse_unified_diff(text: &str, line_cap: usize) -> ParsedDiff {
                 in_hunk = false;
                 continue;
             }
-            file.hunks.push(DiffHunk { header: line.to_string(), lines: Vec::new() });
+            file.hunks.push(DiffHunk {
+                header: line.to_string(),
+                lines: Vec::new(),
+            });
             old_no = old_start;
             new_no = new_start;
             in_hunk = true;
@@ -432,7 +446,12 @@ fn classify_diff_line(line: &str, old_no: &mut u32, new_no: &mut u32) -> Option<
         *new_no = new_no.saturating_add(1);
         (DiffLineKind::Context, line_no(old), line_no(new), text)
     };
-    Some(DiffLine { kind, old_no: old, new_no: new, text: text.to_string() })
+    Some(DiffLine {
+        kind,
+        old_no: old,
+        new_no: new,
+        text: text.to_string(),
+    })
 }
 
 fn line_no(n: u32) -> Option<u32> {
@@ -474,8 +493,15 @@ fn normalize_git_remote(remote: &str) -> Option<String> {
         let rest = rest.strip_prefix("git@").unwrap_or(rest);
         return Some(format!("https://{rest}"));
     }
-    if let Some(rest) = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://")) {
-        let scheme = if s.starts_with("https://") { "https" } else { "http" };
+    if let Some(rest) = s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+    {
+        let scheme = if s.starts_with("https://") {
+            "https"
+        } else {
+            "http"
+        };
         let (userhost, path) = rest.split_once('/')?;
         let host = userhost.rsplit('@').next()?;
         return Some(format!("{scheme}://{host}/{path}"));
@@ -518,7 +544,10 @@ fn azure_repo(base: &str) -> Option<(String, String, String)> {
 }
 
 fn encode_git_path(path: &str) -> String {
-    path.split('/').map(encode_component).collect::<Vec<_>>().join("/")
+    path.split('/')
+        .map(encode_component)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn encode_component(value: &str) -> String {
@@ -534,9 +563,9 @@ fn encode_component(value: &str) -> String {
     out
 }
 
-/// Delete `turn` memories created more than `max_age_days` before `now_ms`. Other kinds are kept.
-/// They are first appended to `backup_dir/turn-memories-<today>.jsonl`; nothing is deleted when
-/// that write fails.
+/// Move `turn` memories older than `max_age_days` into the permanent archive.
+/// They stay fetchable by id and by cue. A JSONL copy is written first; nothing
+/// changes when that write fails.
 pub async fn prune_turns(
     pool: &SqlitePool,
     now_ms: i64,
@@ -552,15 +581,20 @@ pub async fn prune_turns(
     let mut tx = pool.begin().await.map_err(db_err)?;
     let mut deleted = 0;
     for row in &expired {
-        let result = sqlx::query("DELETE FROM memories WHERE id = ? AND kind = ?")
-            .bind(&row.id)
-            .bind(TURN_KIND)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+        let result = sqlx::query(
+            "UPDATE memories SET tier = 't3' WHERE id = ? AND kind = ? AND COALESCE(tier, 't1') != 't3'",
+        )
+        .bind(&row.id)
+        .bind(TURN_KIND)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
         deleted += result.rows_affected();
     }
     tx.commit().await.map_err(db_err)?;
+    for row in &expired {
+        crate::brain::index_archive_vector(pool, &row.id).await?;
+    }
     Ok(deleted)
 }
 
@@ -719,7 +753,10 @@ index 111..222 100644
         assert_eq!(parsed.files[0].path, "src/a.rs");
         let lines = &parsed.files[0].hunks[0].lines;
         assert_eq!(lines[0].kind, DiffLineKind::Context);
-        assert_eq!((lines[0].old_no, lines[0].new_no, lines[0].text.as_str()), (Some(10), Some(10), "context"));
+        assert_eq!(
+            (lines[0].old_no, lines[0].new_no, lines[0].text.as_str()),
+            (Some(10), Some(10), "context")
+        );
         assert_eq!(lines[1].kind, DiffLineKind::Removed);
         assert_eq!((lines[1].old_no, lines[1].new_no), (Some(11), None));
         assert_eq!(lines[2].kind, DiffLineKind::Added);
@@ -736,7 +773,8 @@ index 111..222 100644
         assert_eq!(parsed.files[0].hunks[0].lines[0].old_no, None);
         let quoted = "diff --git \"a/my file.rs\" \"b/my file.rs\"\n@@ -1 +1 @@\n-a\n+b\n";
         assert_eq!(parse_unified_diff(quoted, 80).files[0].path, "my file.rs");
-        let binary = "diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
+        let binary =
+            "diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let parsed = parse_unified_diff(binary, 80);
         assert!(parsed.files[0].binary);
         assert!(parsed.files[0].hunks.is_empty());
@@ -803,8 +841,15 @@ diff --git a/b.rs b/b.rs
             Some("https://dev.azure.com/VfPf-NL/Frontends-Algemeen/_git/Pf_Portal?path=%2F.husky%2Fcommit-msg&version=GC9183e498c")
         );
         assert_eq!(
-            git_web_file_url("git@ssh.dev.azure.com:v3/org/project/repo", "abc1234", "src/a.rs").as_deref(),
-            Some("https://dev.azure.com/org/project/_git/repo?path=%2Fsrc%2Fa.rs&version=GCabc1234")
+            git_web_file_url(
+                "git@ssh.dev.azure.com:v3/org/project/repo",
+                "abc1234",
+                "src/a.rs"
+            )
+            .as_deref(),
+            Some(
+                "https://dev.azure.com/org/project/_git/repo?path=%2Fsrc%2Fa.rs&version=GCabc1234"
+            )
         );
         assert_eq!(
             git_web_file_url("https://gitlab.com/group/sub/repo.git", "abc1234", "a.rs").as_deref(),

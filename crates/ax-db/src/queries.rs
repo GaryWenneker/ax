@@ -262,7 +262,9 @@ impl QueryBuilder {
     }
 
     async fn clear_file_inner(&self, file_path: &str, drop_content: bool) -> Result<(), AxError> {
-        if crate::replication::is_replica(file_path) { return Ok(()); }
+        if crate::replication::is_replica(file_path) {
+            return Ok(());
+        }
         let mut tx = self
             .pool
             .begin()
@@ -626,14 +628,18 @@ impl QueryBuilder {
         if !assignments.is_empty() {
             let offset:i64=sqlx::query_scalar("SELECT COALESCE(MAX(community_id)+1,0) FROM node_communities WHERE node_id GLOB 'ax-replica/*'").fetch_one(&mut *tx).await.map_err(db_err)?;
             const CHUNK: usize = 800;
-            let native: Vec<_> = assignments.iter().filter(|(id,_,_)| !crate::replication::is_replica(id)).cloned().collect();
+            let native: Vec<_> = assignments
+                .iter()
+                .filter(|(id, _, _)| !crate::replication::is_replica(id))
+                .cloned()
+                .collect();
             for chunk in native.chunks(CHUNK) {
                 let mut qb = sqlx::QueryBuilder::new(
                     "INSERT OR REPLACE INTO node_communities (node_id, community_id, community_label, computed_at) ",
                 );
                 qb.push_values(chunk, |mut b, (node_id, community_id, label)| {
                     b.push_bind(node_id)
-                        .push_bind(community_id+offset)
+                        .push_bind(community_id + offset)
                         .push_bind(label)
                         .push_bind(now);
                 });

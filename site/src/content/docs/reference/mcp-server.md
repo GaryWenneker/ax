@@ -113,9 +113,9 @@ The [memory vault](/guides/memory/) adds three tools:
 
 | Tool | Purpose |
 |---|---|
-| `ax_remember` | Store a durable project memory (decision, fix, convention). Returns similar existing memories so contradictions get updated instead of duplicated. |
-| `ax_recall` | Hybrid search (full-text + vector similarity) over stored memories |
-| `ax_history` | When did I change X: dated agent turns (prompt, outcome, files, commits) and git commits for a file, symbol, or topic (`query`, `since`, `limit`; `id` for one turn in full) |
+| `ax_remember` | Store a durable memory with `triggers` (CLI: `ax remember --trigger`). Confirm a candidate with `action=confirm` and `id` (CLI: `ax remember --confirm`). |
+| `ax_recall` | Exact `cue` before free-text `query` (CLI: `ax recall --cue`). `id` returns the body and its cues. `depth=archive` searches old memory and is not injected (CLI: `--depth archive`). |
+| `ax_history` | When did I change X. `depth=archive` includes demoted turns, graph diffs, and logs (CLI: `ax history --depth archive`). `id` returns one turn in full. |
 
 `ax_preflight` also adds an `<ax_turn_history>` block with up to 3 past agent turns related to the open files or the prompt, and an `<ax_history_hint>` when the prompt asks when something changed.
 

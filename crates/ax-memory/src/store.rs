@@ -9,8 +9,12 @@ use crate::types::{MemoryMatch, MemoryRow, RememberInput};
 /// Confidence halves every 90 days unless the memory is updated.
 const DECAY_HALF_LIFE_DAYS: f64 = 90.0;
 
-fn db_err(e: impl std::fmt::Display) -> AxError {
+pub(crate) fn db_err(e: impl std::fmt::Display) -> AxError {
     AxError::Database(DatabaseError::new(e.to_string()))
+}
+
+pub(crate) fn db_err_pub(e: impl std::fmt::Display) -> AxError {
+    db_err(e)
 }
 
 fn now_ms() -> i64 {
@@ -32,10 +36,24 @@ type MemoryDbRow = (
     i64,
     i64,
     i64,
+    String,
 );
 
 fn row_from_db(
-    (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled): MemoryDbRow,
+    (
+        id,
+        kind,
+        title,
+        body,
+        tags,
+        files,
+        confidence,
+        source,
+        created_at,
+        updated_at,
+        enabled,
+        tier,
+    ): MemoryDbRow,
 ) -> MemoryRow {
     MemoryRow {
         id,
@@ -49,10 +67,11 @@ fn row_from_db(
         enabled: enabled != 0,
         created_at,
         updated_at,
+        tier,
     }
 }
 
-const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled
+const MEMORY_SELECT: &str = r#"SELECT id, kind, title, body, tags, files, confidence, source, created_at, updated_at, enabled, COALESCE(tier, 't2')
            FROM memories"#;
 
 /// `turn` memories created before `before`, enabled or not, oldest first; at most 10,000 per call.
@@ -61,7 +80,7 @@ pub(crate) async fn expired_turn_rows(
     before: i64,
 ) -> Result<Vec<MemoryRow>, AxError> {
     let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
-        "{MEMORY_SELECT} WHERE kind = ? AND created_at < ? ORDER BY created_at, id LIMIT 10000"
+        "{MEMORY_SELECT} WHERE kind = ? AND created_at < ? AND COALESCE(tier, 't1') != 't3' ORDER BY created_at, id LIMIT 10000"
     ))
     .bind(crate::turns::TURN_KIND)
     .bind(before)
@@ -123,7 +142,7 @@ pub(crate) async fn matching_turn_rows(
     let as_json = |v: &[String]| serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
     let suffix_like = suffix.map(path_suffix_pattern);
     let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
-        "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND created_at >= ? \
+        "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND COALESCE(tier, 't1') != 't3' AND created_at >= ? \
          AND (id IN (SELECT value FROM json_each(?)) \
               OR EXISTS (SELECT 1 FROM json_each(memories.files) AS f \
                          WHERE f.value IN (SELECT value FROM json_each(?)) \
@@ -148,7 +167,7 @@ pub(crate) async fn recent_turn_rows(
     limit: usize,
 ) -> Result<Vec<MemoryRow>, AxError> {
     let rows = sqlx::query_as::<_, MemoryDbRow>(&format!(
-        "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 ORDER BY created_at DESC, id LIMIT ?"
+        "{MEMORY_SELECT} WHERE kind = ? AND enabled = 1 AND COALESCE(tier, 't1') != 't3' ORDER BY created_at DESC, id LIMIT ?"
     ))
     .bind(crate::turns::TURN_KIND)
     .bind(i64::try_from(limit).unwrap_or(i64::MAX))
@@ -200,13 +219,22 @@ pub(crate) async fn remember_with_id(
     let now = now_ms();
     let title = if input.title.trim().is_empty() {
         // First line of the body doubles as the title.
-        input.body.lines().next().unwrap_or("").chars().take(120).collect()
+        input
+            .body
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(120)
+            .collect()
     } else {
         input.title.trim().to_string()
     };
+    let kind = input.kind.unwrap_or_else(|| "note".into());
+    let tier = crate::brain::tier_for_kind(&kind);
     let row = MemoryRow {
         id,
-        kind: input.kind.unwrap_or_else(|| "note".into()),
+        kind,
         title,
         body: input.body,
         tags: input.tags,
@@ -216,13 +244,15 @@ pub(crate) async fn remember_with_id(
         enabled: true,
         created_at: now,
         updated_at: now,
+        tier: tier.into(),
     };
-    let embedding = crate::embed::embedding_to_blob(&crate::embed::embed_text(&format!(
+    let (vector, model) = crate::embed::embed_labeled(&format!(
         "{} {} {}",
         row.title,
         row.body,
         row.tags.join(" ")
-    )));
+    ));
+    let embedding = crate::embed::embedding_to_blob(&vector);
     sqlx::query(
         r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"#,
@@ -241,6 +271,8 @@ pub(crate) async fn remember_with_id(
     .execute(pool)
     .await
     .map_err(db_err)?;
+    crate::brain::stamp_memory(pool, &row.id, &row.kind, model).await?;
+    crate::brain::register_cues(pool, &row, &[]).await?;
     Ok(row)
 }
 
@@ -248,8 +280,8 @@ pub(crate) async fn remember_with_id(
 /// Returns `None` when there is nothing searchable.
 pub fn fts_query_from_text(text: &str) -> Option<String> {
     const STOP_WORDS: &[&str] = &[
-        "the", "a", "an", "and", "or", "of", "in", "on", "to", "for", "with", "is", "are",
-        "de", "het", "een", "en", "van", "voor", "met", "dat", "die", "je", "ik",
+        "the", "a", "an", "and", "or", "of", "in", "on", "to", "for", "with", "is", "are", "de",
+        "het", "een", "en", "van", "voor", "met", "dat", "die", "je", "ik",
     ];
     let mut tokens: Vec<String> = text
         .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
@@ -274,77 +306,114 @@ pub async fn recall(
     query: &str,
     limit: usize,
 ) -> Result<Vec<MemoryMatch>, AxError> {
+    recall_scoped(pool, query, limit, &[], false).await
+}
+
+/// Hot recall skips the archive and inactive rows. Archive recall uses FTS
+/// plus sqlite-vec KNN and never cosine-compares a different embedding model.
+pub(crate) async fn recall_scoped(
+    pool: &SqlitePool,
+    query: &str,
+    limit: usize,
+    files: &[String],
+    archive: bool,
+) -> Result<Vec<MemoryMatch>, AxError> {
     use std::collections::HashMap;
 
     let overfetch = (limit * 4).max(20);
+    let (_, model) = crate::embed::embed_labeled(query);
+    let tier_sql = if archive {
+        "m.tier = 't3'"
+    } else {
+        "COALESCE(m.tier, 't2') != 't3' AND COALESCE(m.status, 'active') = 'active'"
+    };
 
-    // Lexical leg: FTS5 with BM25 ranking.
     let mut fts_ranked: Vec<String> = Vec::new();
     if let Some(fts_query) = fts_query_from_text(query) {
-        let ids = sqlx::query_scalar::<_, String>(
+        let sql = format!(
             r#"SELECT m.id
                FROM memories_fts
                JOIN memories m ON m.rowid = memories_fts.rowid
-               WHERE memories_fts MATCH ? AND m.enabled = 1
+               WHERE memories_fts MATCH ? AND m.enabled = 1 AND {tier_sql}
+                 AND m.embedding_model = ?
                ORDER BY bm25(memories_fts)
-               LIMIT ?"#,
+               LIMIT ?"#
+        );
+        fts_ranked = sqlx::query_scalar::<_, String>(&sql)
+            .bind(&fts_query)
+            .bind(model)
+            .bind(overfetch as i64)
+            .fetch_all(pool)
+            .await
+            .map_err(db_err)?;
+    }
+
+    let vector_ranked: Vec<String> = if archive {
+        crate::brain::knn(pool, query, overfetch).await?
+    } else {
+        let (query_embedding, _) = crate::embed::embed_labeled(query);
+        let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(
+            "SELECT id, embedding FROM memories
+             WHERE embedding IS NOT NULL AND enabled = 1
+               AND COALESCE(tier, 't2') != 't3'
+               AND COALESCE(status, 'active') = 'active'
+               AND embedding_model = ?",
         )
-        .bind(&fts_query)
-        .bind(overfetch as i64)
+        .bind(model)
         .fetch_all(pool)
         .await
         .map_err(db_err)?;
-        fts_ranked = ids;
-    }
+        let mut vector_scored: Vec<(String, f32)> = embedding_rows
+            .into_iter()
+            .filter_map(|(id, blob)| {
+                let e = crate::embed::blob_to_embedding(&blob)?;
+                Some((id, crate::embed::cosine(&query_embedding, &e)))
+            })
+            .filter(|(_, sim)| *sim > 0.1)
+            .collect();
+        vector_scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        vector_scored.truncate(overfetch);
+        vector_scored.into_iter().map(|(id, _)| id).collect()
+    };
 
-    // Vector leg: cosine similarity over stored embeddings.
-    let query_embedding = crate::embed::embed_text(query);
-    let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL AND enabled = 1",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(db_err)?;
-    let mut vector_scored: Vec<(String, f32)> = embedding_rows
-        .into_iter()
-        .filter_map(|(id, blob)| {
-            let e = crate::embed::blob_to_embedding(&blob)?;
-            Some((id, crate::embed::cosine(&query_embedding, &e)))
-        })
-        .filter(|(_, sim)| *sim > 0.1)
-        .collect();
-    vector_scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-    vector_scored.truncate(overfetch);
-
-    if fts_ranked.is_empty() && vector_scored.is_empty() {
+    if fts_ranked.is_empty() && vector_ranked.is_empty() {
         return Ok(Vec::new());
     }
 
-    // Weighted Reciprocal Rank Fusion (vector / FTS). Graph proximity can be
-    // layered later via WEIGHT_GRAPH when entity links are available.
     let mut fused: HashMap<String, f64> = HashMap::new();
     for (rank, id) in fts_ranked.iter().enumerate() {
         *fused.entry(id.clone()).or_default() +=
             crate::embed::WEIGHT_FTS * crate::embed::rrf_score(rank);
     }
-    for (rank, (id, _)) in vector_scored.iter().enumerate() {
+    for (rank, id) in vector_ranked.iter().enumerate() {
         *fused.entry(id.clone()).or_default() +=
             crate::embed::WEIGHT_VECTOR * crate::embed::rrf_score(rank);
     }
-    let _ = crate::embed::WEIGHT_GRAPH; // reserved for entity-linked boost
 
     let ids: Vec<String> = fused.keys().cloned().collect();
+    let symbol_hits = if files.is_empty() {
+        std::collections::BTreeSet::new()
+    } else {
+        crate::brain::memory_ids_for_symbols(pool, files).await?
+    };
     let now = now_ms();
     let mut matches = Vec::with_capacity(ids.len());
     for id in &ids {
         if let Some(memory) = get(pool, id).await? {
             let decayed = effective_confidence(memory.confidence, memory.updated_at, now);
-            let score = fused.get(id).copied().unwrap_or(0.0) * decayed.max(0.05) * 100.0;
+            let mut score = fused.get(id).copied().unwrap_or(0.0) * decayed.max(0.05) * 100.0;
+            let file_hit = crate::brain::files_overlap(files, &memory.files);
+            let symbol_hit = memory.tier == crate::brain::TIER_SEMANTIC && symbol_hits.contains(id);
+            if file_hit || symbol_hit {
+                score += crate::embed::WEIGHT_GRAPH * 100.0;
+            }
             matches.push(MemoryMatch { memory, score });
         }
     }
     matches.sort_by(|a, b| b.score.total_cmp(&a.score));
-    drop_weak_term_matches(&mut matches, query);
+    if !archive {
+        drop_weak_term_matches(&mut matches, query);
+    }
     matches.truncate(limit);
     Ok(matches)
 }
@@ -385,7 +454,10 @@ fn drop_weak_term_matches(matches: &mut Vec<MemoryMatch>, query: &str) {
     if terms.is_empty() {
         return;
     }
-    let coverage: Vec<f64> = matches.iter().map(|m| term_coverage(&terms, &m.memory)).collect();
+    let coverage: Vec<f64> = matches
+        .iter()
+        .map(|m| term_coverage(&terms, &m.memory))
+        .collect();
     let best = coverage.iter().copied().fold(0.0, f64::max);
     if best == 0.0 {
         matches.clear();
@@ -423,13 +495,13 @@ pub async fn list(
 /// Lightweight title catalog for stable wiki-link disambiguation. Bodies, tags
 /// and file lists are fetched by ID only for selected targets.
 pub async fn link_catalog(pool: &SqlitePool) -> Result<Vec<MemoryRow>, AxError> {
-    let rows: Vec<(String, String, String, i64, i64, i64)> = sqlx::query_as(
-        "SELECT id, kind, title, created_at, updated_at, enabled FROM memories ORDER BY created_at, id"
+    let rows: Vec<(String, String, String, i64, i64, i64, String)> = sqlx::query_as(
+        "SELECT id, kind, title, created_at, updated_at, enabled, COALESCE(tier, 't2') FROM memories ORDER BY created_at, id"
     ).fetch_all(pool).await.map_err(db_err)?;
     Ok(rows
         .into_iter()
         .map(
-            |(id, kind, title, created_at, updated_at, enabled)| MemoryRow {
+            |(id, kind, title, created_at, updated_at, enabled, tier)| MemoryRow {
                 id,
                 kind,
                 title,
@@ -441,6 +513,7 @@ pub async fn link_catalog(pool: &SqlitePool) -> Result<Vec<MemoryRow>, AxError> 
                 enabled: enabled != 0,
                 created_at,
                 updated_at,
+                tier,
             },
         )
         .collect())
@@ -466,16 +539,18 @@ pub async fn set_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<b
 }
 
 pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result<bool, AxError> {
-    let embedding = crate::embed::embedding_to_blob(&crate::embed::embed_text(&format!(
+    let (vector, model) = crate::embed::embed_labeled(&format!(
         "{} {} {}",
         input.title,
         input.body,
         input.tags.join(" ")
-    )));
+    ));
+    let embedding = crate::embed::embedding_to_blob(&vector);
     let result = sqlx::query(
         r#"UPDATE memories
            SET title = ?, body = ?, kind = COALESCE(NULLIF(?, ''), kind),
-               tags = ?, files = ?, confidence = 1.0, updated_at = ?, embedding = ?
+               tags = ?, files = ?, confidence = 1.0, updated_at = ?,
+               embedding = ?, embedding_model = ?
            WHERE id = ?"#,
     )
     .bind(input.title.trim())
@@ -485,10 +560,16 @@ pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result
     .bind(serde_json::to_string(&input.files).unwrap_or_else(|_| "[]".into()))
     .bind(now_ms())
     .bind(embedding)
+    .bind(model)
     .bind(id)
     .execute(pool)
     .await
     .map_err(db_err)?;
+    if result.rows_affected() > 0 {
+        if let Some(row) = get(pool, id).await? {
+            crate::brain::register_cues(pool, &row, &[]).await?;
+        }
+    }
     Ok(result.rows_affected() > 0)
 }
 
@@ -501,10 +582,14 @@ pub async fn find_similar(
     threshold: f32,
     limit: usize,
 ) -> Result<Vec<MemoryMatch>, AxError> {
-    let query_embedding = crate::embed::embed_text(text);
+    let (query_embedding, model) = crate::embed::embed_labeled(text);
     let rows = sqlx::query_as::<_, (String, Vec<u8>)>(
-        "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL AND enabled = 1",
+        "SELECT id, embedding FROM memories
+         WHERE embedding IS NOT NULL AND enabled = 1
+           AND COALESCE(tier, 't2') != 't3'
+           AND embedding_model = ?",
     )
+    .bind(model)
     .fetch_all(pool)
     .await
     .map_err(db_err)?;

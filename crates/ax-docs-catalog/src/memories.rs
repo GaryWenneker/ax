@@ -204,6 +204,7 @@ fn catalog_memory(
         enabled: true,
         created_at: synced_at,
         updated_at: synced_at,
+        tier: "t2".into(),
     }
 }
 

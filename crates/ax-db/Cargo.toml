@@ -14,3 +14,5 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 blake3 = { workspace = true }
 tempfile = "3"
+sqlite-vec = "0.1.9"
+libsqlite3-sys = "0.30.1"

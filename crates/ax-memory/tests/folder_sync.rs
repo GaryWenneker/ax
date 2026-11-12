@@ -53,8 +53,16 @@ async fn s1_markdown_and_text_files_become_doc_memories() {
     assert_eq!(plan.source, "folder");
     assert_eq!(plan.title, "Release plan");
     assert_eq!(plan.tags, vec!["folder:notes".to_string()]);
-    assert!(plan.body.starts_with("# Release plan\n\nShip on Friday."), "{}", plan.body);
-    assert!(plan.body.ends_with("Source: folders/notes/plan.md"), "{}", plan.body);
+    assert!(
+        plan.body.starts_with("# Release plan\n\nShip on Friday."),
+        "{}",
+        plan.body
+    );
+    assert!(
+        plan.body.ends_with("Source: folders/notes/plan.md"),
+        "{}",
+        plan.body
+    );
 
     let todo = ax_memory::get(db.pool(), &doc_memory_id("notes", "sub/todo.txt"))
         .await
@@ -120,7 +128,11 @@ async fn s4_hidden_vendor_and_oversized_files_are_skipped() {
     write(&root, ".secret.md", "hidden");
     write(&root, "node_modules/pkg/README.md", "vendor");
     write(&root, "target-dev/out.md", "build");
-    write(&root, "big.md", &"x".repeat(MAX_FOLDER_FILE_BYTES as usize + 1));
+    write(
+        &root,
+        "big.md",
+        &"x".repeat(MAX_FOLDER_FILE_BYTES as usize + 1),
+    );
 
     let got = sync_folder(db.pool(), "notes", &root).await.unwrap();
     assert_eq!(got, report(1, 0, 0, 1));
@@ -185,13 +197,42 @@ async fn s6_doc_memories_are_recall_only() {
     let tmp = tempfile::tempdir().unwrap();
     let db = open_db(tmp.path()).await;
     let root = tmp.path().join("notes");
-    write(&root, "kafka.md", "# Kafka retention\n\nKafka retention is seven days.");
+    write(
+        &root,
+        "kafka.md",
+        "# Kafka retention\n\nKafka retention is seven days.",
+    );
     sync_folder(db.pool(), "notes", &root).await.unwrap();
 
-    let recalled = ax_memory::recall(db.pool(), "kafka retention", 5).await.unwrap();
-    assert!(recalled.iter().any(|m| m.memory.kind == DOC_KIND), "recall finds doc memories");
+    let recalled = ax_memory::search(
+        db.pool(),
+        &ax_memory::SearchRequest {
+            query: "kafka retention".into(),
+            depth: ax_memory::Depth::Archive,
+            limit: 5,
+            ..ax_memory::SearchRequest::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        recalled
+            .iter()
+            .any(|m| m.memory.kind == DOC_KIND && m.memory.tier == "t3"),
+        "archive recall finds folder docs"
+    );
+    let hot = ax_memory::recall(db.pool(), "kafka retention", 5)
+        .await
+        .unwrap();
+    assert!(
+        hot.iter().all(|m| m.memory.kind != DOC_KIND),
+        "hot recall skips the archive"
+    );
     let injected = ax_memory::recall_for_prompt(db.pool(), "kafka retention", 5)
         .await
         .unwrap();
-    assert!(injected.iter().all(|m| m.memory.kind != DOC_KIND), "preflight skips them");
+    assert!(
+        injected.iter().all(|m| m.memory.kind != DOC_KIND),
+        "preflight skips them"
+    );
 }

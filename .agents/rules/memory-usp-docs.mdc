@@ -1,0 +1,29 @@
+---
+id: memory-usp-docs
+level: CRITICAL
+alwaysApply: false
+globs: ["README.md","site/**"]
+triggers: ["memory","readme","docs","homepage","usp"]
+tags: ["memory","docs"]
+priority: 80
+enabled: true
+status: approved
+scope: project
+---
+
+# Memory is a primary public capability
+
+Brain-style memory (working notes, named cues, long-term vault, permanent archive bound to the code graph) is a primary reason to use ax, alongside the code graph and the policy engine.
+
+## Required
+
+1. The docs site and the GitHub README explain that system in full, in English, with the same mermaid diagrams in both places: tiers, write path and read path, MCP and CLI as two doors into one function, and demotion that stays fetchable.
+2. The minimal homepage names memory as a primary capability and links to the long guide. It does not become the long document.
+3. CLI and MCP reference pages list the flags in the same change as the flags.
+4. Public copy uses the product name ax. Describe behavior that already works. Do not add a What's new or per-version page.
+
+## Forbidden
+
+- Shipping the memory tiers while the README and the memory guide still describe only a short vault blurb.
+- Diagrams of a tier or flag the binary does not have yet.
+- A rename of ax as part of this documentation.

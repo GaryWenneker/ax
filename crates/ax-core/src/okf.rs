@@ -181,8 +181,7 @@ pub fn export_okf_bundle(
     let cfg = OkfConfig::load(project_root);
     if !cfg.enabled {
         return Err(
-            "Open Knowledge Format (OKF) export is disabled in ax.json (okf.enabled=false)"
-                .into(),
+            "Open Knowledge Format (OKF) export is disabled in ax.json (okf.enabled=false)".into(),
         );
     }
 
@@ -199,7 +198,10 @@ pub fn export_okf_bundle(
         if e.kind != EdgeKind::Calls {
             continue;
         }
-        calls.entry(e.source.as_str()).or_default().push(e.target.as_str());
+        calls
+            .entry(e.source.as_str())
+            .or_default()
+            .push(e.target.as_str());
         called_by
             .entry(e.target.as_str())
             .or_default()
@@ -233,9 +235,8 @@ pub fn export_okf_bundle(
         let rel = concept_rel_path(n);
         let dest = out_dir.join(&rel);
         if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                format!("create OKF dir {}: {e}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create OKF dir {}: {e}", parent.display()))?;
         }
         let body = render_concept(
             n,
@@ -243,9 +244,8 @@ pub fn export_okf_bundle(
             calls.get(n.id.as_str()),
             called_by.get(n.id.as_str()),
         );
-        std::fs::write(&dest, body).map_err(|e| {
-            format!("write OKF page {}: {e}", dest.display())
-        })?;
+        std::fs::write(&dest, body)
+            .map_err(|e| format!("write OKF page {}: {e}", dest.display()))?;
         *by_kind.entry(n.kind.as_str().to_string()).or_default() += 1;
         exported += 1;
     }
@@ -423,10 +423,7 @@ fn append_link_list(out: &mut String, ids: Option<&Vec<&str>>, by_id: &HashMap<&
             names.sort_by(|a, b| a.0.cmp(b.0));
             names.dedup_by(|a, b| a.0 == b.0);
             for (name, kind) in names {
-                out.push_str(&format!(
-                    "- [{name}](../{kind}/{}.md)\n",
-                    sanitize(name)
-                ));
+                out.push_str(&format!("- [{name}](../{kind}/{}.md)\n", sanitize(name)));
             }
         }
         _ => out.push_str("_none_\n"),
@@ -818,8 +815,7 @@ mod tests {
             confidence: None,
         }];
 
-        let report =
-            export_okf_bundle(root, &nodes, &edges, &OkfExportOptions::default()).unwrap();
+        let report = export_okf_bundle(root, &nodes, &edges, &OkfExportOptions::default()).unwrap();
         assert_eq!(report.exported, 2);
         assert!(report.out_dir.join("index.md").is_file());
 
@@ -893,8 +889,7 @@ mod tests {
             "  - checkout: self\n".repeat(30)
         );
         n.name = n.qualified_name.clone();
-        let report =
-            export_okf_bundle(root, &[n], &[], &OkfExportOptions::default()).unwrap();
+        let report = export_okf_bundle(root, &[n], &[], &OkfExportOptions::default()).unwrap();
         assert_eq!(report.exported, 1);
         let pages: Vec<_> = std::fs::read_dir(report.out_dir.join("variable"))
             .unwrap()

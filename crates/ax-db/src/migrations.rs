@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 23;
+pub const CURRENT_SCHEMA_VERSION: i32 = 26;
 
 struct Migration {
     version: i32,
@@ -360,6 +360,44 @@ const MIGRATIONS: &[Migration] = &[
                 graph_version TEXT
             );
         ",
+    },
+    Migration {
+        version: 24,
+        description: "Memory tiers, named cues, embedding model, and graph episode state",
+        sql: "
+            ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 't2';
+            ALTER TABLE memories ADD COLUMN embedding_model TEXT NOT NULL DEFAULT 'hash-v1';
+            ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+            CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories(tier);
+            CREATE TABLE IF NOT EXISTS memory_cues (
+                cue TEXT NOT NULL,
+                memory_id TEXT NOT NULL,
+                weight REAL NOT NULL DEFAULT 1.0,
+                source TEXT NOT NULL,
+                PRIMARY KEY (cue, memory_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_cues_cue ON memory_cues(cue);
+            CREATE TABLE IF NOT EXISTS memory_links (
+                from_id TEXT NOT NULL,
+                to_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                PRIMARY KEY (from_id, to_id, kind)
+            );
+            CREATE TABLE IF NOT EXISTS graph_symbol_state (
+                symbol_id TEXT PRIMARY KEY,
+                fingerprint TEXT NOT NULL
+            );
+        ",
+    },
+    Migration {
+        version: 25,
+        description: "Turns left on the column default are recent, not long-term",
+        sql: "UPDATE memories SET tier = 't1' WHERE kind = 'turn' AND tier = 't2';",
+    },
+    Migration {
+        version: 26,
+        description: "Git captures and folder docs belong in the archive",
+        sql: "UPDATE memories SET tier = 't3' WHERE kind IN ('git', 'doc') AND tier = 't2';",
     },
 ];
 

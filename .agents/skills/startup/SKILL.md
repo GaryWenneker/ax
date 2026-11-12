@@ -33,6 +33,10 @@ printf '%s' "$PROMPT" | ax preflight --prompt-stdin --session <id> --json
 - **Fallback:** If `inject` lacks `<ax_policy>` (some MCP clients filter it), this skill delivers the startup workflow — follow it.
 - `ax_rules` / `ax_skill` are for on-demand loads — preflight already returns full bodies in `inject` on turn start.
 
+## Memory
+
+Working notes for this chat stay in `ax_session` / `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax_remember` / `ax remember` with a trigger name (`triggers` / `--trigger`). Before re-deriving, fetch that name with `ax_recall` `cue` / `ax recall --cue`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `depth=archive` on `ax_recall` / `ax recall` and on `ax_history` / `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax_remember` `action=confirm` / `ax remember --confirm`. The old engram stays.
+
 ## SS-01b — Capture user directives (interview → confirm → save)
 
 When the user gives a **durable** instruction (`je moet`, `always`, `never`, `@rule`, `#rule`):

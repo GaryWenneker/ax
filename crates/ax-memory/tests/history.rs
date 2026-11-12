@@ -257,7 +257,10 @@ async fn recent_turns_are_included_when_nothing_matches() {
 
     let block = format_turn_history_block(&rows, 6_000);
     assert!(block.contains("Recent agent turns"), "{block}");
-    assert!(block.contains("The parser keeps the last token."), "{block}");
+    assert!(
+        block.contains("The parser keeps the last token."),
+        "{block}"
+    );
 }
 
 #[tokio::test]
@@ -288,10 +291,7 @@ async fn a_request_id_finds_that_turn() {
     assert_eq!(one.outcome.as_deref(), Some("Draft PR 451 is open."));
 
     let block = format_turn_history_block(
-        &[ax_memory::get(db.pool(), "turn-a")
-            .await
-            .unwrap()
-            .unwrap()],
+        &[ax_memory::get(db.pool(), "turn-a").await.unwrap().unwrap()],
         6_000,
     );
     assert!(block.contains(&format!("Request: {request}")), "{block}");
@@ -462,6 +462,7 @@ fn query(text: &str) -> HistoryQuery {
         query: text.into(),
         since_ms: None,
         limit: 20,
+        archive: false,
     }
 }
 

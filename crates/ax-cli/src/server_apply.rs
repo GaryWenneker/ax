@@ -34,6 +34,7 @@ fn stored_to_row(row: &sqlx::sqlite::SqliteRow) -> Result<MemoryRow, String> {
             != 0,
         created_at: row.try_get("created_at").map_err(|e| e.to_string())?,
         updated_at: row.try_get("updated_at").map_err(|e| e.to_string())?,
+        tier: row.try_get("tier").map_err(|e| e.to_string())?,
     })
 }
 
@@ -42,7 +43,7 @@ async fn current_memory(
     id: &str,
 ) -> Result<Option<MemoryRow>, String> {
     let row = sqlx::query(
-        "SELECT id, kind, title, body, tags, files, confidence, source, enabled, created_at, updated_at FROM memories WHERE id = ?",
+        "SELECT id, kind, title, body, tags, files, confidence, source, enabled, created_at, updated_at, COALESCE(tier, 't2') AS tier FROM memories WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(&mut **tx)
@@ -65,9 +66,9 @@ async fn write_memory(
         memory.tags.join(" ")
     )));
     let statement = if exists {
-        "UPDATE memories SET kind=?, title=?, body=?, tags=?, files=?, confidence=?, source=?, created_at=?, updated_at=?, embedding=?, enabled=? WHERE id=?"
+        "UPDATE memories SET kind=?, title=?, body=?, tags=?, files=?, confidence=?, source=?, created_at=?, updated_at=?, embedding=?, enabled=?, tier=? WHERE id=?"
     } else {
-        "INSERT INTO memories (kind,title,body,tags,files,confidence,source,created_at,updated_at,embedding,enabled,id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+        "INSERT INTO memories (kind,title,body,tags,files,confidence,source,created_at,updated_at,embedding,enabled,tier,id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
     };
     sqlx::query(statement)
         .bind(&memory.kind)
@@ -81,6 +82,7 @@ async fn write_memory(
         .bind(memory.updated_at)
         .bind(embedding)
         .bind(i64::from(memory.enabled))
+        .bind(&memory.tier)
         .bind(&memory.id)
         .execute(&mut **tx)
         .await

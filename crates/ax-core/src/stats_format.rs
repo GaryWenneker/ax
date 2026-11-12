@@ -6,8 +6,7 @@ use ax_extraction::markdown::{MARKDOWN_EXTENSIONS, OPAQUE_DOC_EXTENSIONS};
 use ax_types::{GraphStats, PendingFile};
 
 const OFFICE_EXTENSIONS: &[&str] = &[
-    "docx", "doc", "xlsx", "xls", "pptx", "ppt", "odt", "ods", "odp", "pages", "numbers",
-    "keynote",
+    "docx", "doc", "xlsx", "xls", "pptx", "ppt", "odt", "ods", "odp", "pages", "numbers", "keynote",
 ];
 
 /// Compact extension breakdown sorted by count descending (e.g. `43 md, 10 json, 2 html`).
@@ -56,8 +55,7 @@ fn format_category_line(label: &str, docs: &HashMap<String, i64>, extensions: &[
 /// output are indexed as file rows but never parsed, so counting them would nag
 /// forever about a gap `ax_index` cannot close.
 pub fn source_store_warning(stats: &GraphStats) -> Option<String> {
-    if stats.source_expected_files <= 0
-        || stats.source_stored_files >= stats.source_expected_files
+    if stats.source_expected_files <= 0 || stats.source_stored_files >= stats.source_expected_files
     {
         return None;
     }
@@ -87,7 +85,11 @@ pub fn format_index_inject_block(stats: &GraphStats, pending: &[PendingFile]) ->
     ));
     body.push_str(&format!(
         "{}\n",
-        format_category_line("Markdown (parsed)", &stats.docs_by_extension, MARKDOWN_EXTENSIONS)
+        format_category_line(
+            "Markdown (parsed)",
+            &stats.docs_by_extension,
+            MARKDOWN_EXTENSIONS
+        )
     ));
     body.push_str(&format!(
         "{}\n",
@@ -237,10 +239,7 @@ mod tests {
         docs.insert("md".to_string(), 43);
         docs.insert("json".to_string(), 10);
         docs.insert("html".to_string(), 2);
-        assert_eq!(
-            format_docs_by_extension(&docs),
-            "43 md, 10 json, 2 html"
-        );
+        assert_eq!(format_docs_by_extension(&docs), "43 md, 10 json, 2 html");
     }
 
     #[test]

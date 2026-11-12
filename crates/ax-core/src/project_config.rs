@@ -108,7 +108,11 @@ fn load_merged(project_root: &Path) -> ProjectConfig {
 
     let mut extensions = HashMap::new();
     for (ext, lang_str) in raw_extensions {
-        let ext = if ext.starts_with('.') { ext } else { format!(".{}", ext) };
+        let ext = if ext.starts_with('.') {
+            ext
+        } else {
+            format!(".{}", ext)
+        };
         if let Some(lang) = Language::parse(&lang_str.to_lowercase()) {
             if is_language_supported(lang) {
                 extensions.insert(ext, lang);
@@ -116,7 +120,11 @@ fn load_merged(project_root: &Path) -> ProjectConfig {
         }
     }
 
-    ProjectConfig { extensions, include_ignored, exclude }
+    ProjectConfig {
+        extensions,
+        include_ignored,
+        exclude,
+    }
 }
 
 fn dedup_union(base: Vec<String>, overrides: Vec<String>) -> Vec<String> {

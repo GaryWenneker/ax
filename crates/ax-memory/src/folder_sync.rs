@@ -97,7 +97,10 @@ fn body_of(folder: &str, rel: &str, text: &str) -> String {
     format!("{}\n\nSource: folders/{folder}/{rel}", text.trim_end())
 }
 
-async fn existing(pool: &SqlitePool, folder: &str) -> Result<BTreeMap<String, (String, String)>, AxError> {
+async fn existing(
+    pool: &SqlitePool,
+    folder: &str,
+) -> Result<BTreeMap<String, (String, String)>, AxError> {
     let prefix = id_prefix(folder);
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT id, title, body FROM memories WHERE kind = ? AND substr(id, 1, ?) = ?",

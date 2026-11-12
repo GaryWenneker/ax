@@ -1,9 +1,9 @@
 //! Per-turn memories (docs/specs/per-turn-memory.md): dedup, retention, recall-only, local-only, redaction.
 
 use ax_memory::{
-    export_shared, prune_turns, recall, recall_for_prompt, redact_secrets, remember, save_turn,
-    turn_outcome, RememberInput, TurnRecord, OUTCOME_MARKER, TURN_KIND, TURN_RETENTION_DAYS,
-    TURN_SOURCE,
+    export_shared, list, prune_turns, recall, recall_for_prompt, redact_secrets, remember,
+    save_turn, search, turn_outcome, Depth, RememberInput, SearchRequest, TurnRecord,
+    OUTCOME_MARKER, TURN_KIND, TURN_RETENTION_DAYS, TURN_SOURCE,
 };
 
 const DAY_MS: i64 = 86_400_000;
@@ -98,10 +98,16 @@ async fn prune_removes_only_old_turn_memories() {
 
     let backups = dir.path().join("backups");
     assert_eq!(prune_turns(db.pool(), NOW, 30, &backups).await.unwrap(), 1);
-    assert!(ax_memory::get(db.pool(), "turn-old")
+    let old = ax_memory::get(db.pool(), "turn-old")
         .await
         .unwrap()
-        .is_none());
+        .unwrap();
+    assert_eq!(old.id, "turn-old");
+    let tier: String = sqlx::query_scalar("SELECT tier FROM memories WHERE id = 'turn-old'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(tier, "t3");
     assert!(ax_memory::get(db.pool(), "turn-new")
         .await
         .unwrap()
@@ -187,10 +193,13 @@ async fn p1_p2_turn_older_than_retention_is_backed_up_then_deleted() {
             .unwrap(),
         1
     );
-    assert!(ax_memory::get(db.pool(), "turn-91")
+    let old = ax_memory::get(db.pool(), "turn-91").await.unwrap().unwrap();
+    assert_eq!(old.id, "turn-91");
+    let tier: String = sqlx::query_scalar("SELECT tier FROM memories WHERE id = 'turn-91'")
+        .fetch_one(db.pool())
         .await
-        .unwrap()
-        .is_none());
+        .unwrap();
+    assert_eq!(tier, "t3");
     assert!(ax_memory::get(db.pool(), "turn-89")
         .await
         .unwrap()
@@ -411,6 +420,112 @@ fn redacts_long_hex_and_base64_runs() {
         redact_secrets("b64 QWxhZGRpbjpvcGVuIHNlc2FtZVFXeGhaR1JwYmpwdmNHVnVJSE5sYzJGdFpR== end"),
         "b64 [redacted] end"
     );
+}
+
+#[tokio::test]
+async fn a_turn_left_on_the_old_default_tier_becomes_recent() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    save_turn(db.pool(), &turn("turn-default", "Still recent"), NOW)
+        .await
+        .unwrap();
+    save_turn(db.pool(), &turn("turn-archive", "Already archived"), NOW)
+        .await
+        .unwrap();
+    remember(
+        db.pool(),
+        RememberInput {
+            title: "A decision".into(),
+            body: "Keep the long-term tier".into(),
+            kind: Some("decision".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM schema_versions WHERE version >= 25")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE memories SET tier = 't2' WHERE id = 'turn-default'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE memories SET tier = 't3' WHERE id = 'turn-archive'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    ax_db::migrations::run_migrations(db.pool(), 24)
+        .await
+        .unwrap();
+
+    let recent = ax_memory::get(db.pool(), "turn-default")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recent.tier, "t1");
+    let archived = ax_memory::get(db.pool(), "turn-archive")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(archived.tier, "t3");
+    let (rows, _) = list(db.pool(), 20, 0).await.unwrap();
+    let decision = rows.iter().find(|m| m.kind == "decision").unwrap();
+    assert_eq!(decision.tier, "t2");
+}
+
+#[tokio::test]
+async fn list_and_archive_recall_show_the_demoted_tier() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    save_turn(
+        db.pool(),
+        &turn("turn-old", "Old tokenizer switch"),
+        NOW - 100 * DAY_MS,
+    )
+    .await
+    .unwrap();
+    let backups = dir.path().join("backups");
+    prune_turns(db.pool(), NOW, 90, &backups).await.unwrap();
+
+    let (rows, _) = list(db.pool(), 20, 0).await.unwrap();
+    let old = rows.iter().find(|m| m.id == "turn-old").expect("listed");
+    assert_eq!(old.tier, "t3");
+
+    let hot = search(
+        db.pool(),
+        &SearchRequest {
+            query: "tokenizer switch".into(),
+            cue: None,
+            id: None,
+            depth: Depth::Hot,
+            files: vec![],
+            limit: 10,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(hot.iter().all(|m| m.memory.id != "turn-old"));
+
+    let archive = search(
+        db.pool(),
+        &SearchRequest {
+            query: "tokenizer switch".into(),
+            cue: None,
+            id: None,
+            depth: Depth::Archive,
+            files: vec![],
+            limit: 10,
+        },
+    )
+    .await
+    .unwrap();
+    let hit = archive
+        .iter()
+        .find(|m| m.memory.id == "turn-old")
+        .expect("archive hit");
+    assert_eq!(hit.memory.tier, "t3");
 }
 
 #[test]

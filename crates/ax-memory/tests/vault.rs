@@ -36,7 +36,9 @@ async fn remember_then_recall_finds_memory() {
     .await
     .unwrap();
 
-    let hits = recall(db.pool(), "why do we use spawn_blocking for io?", 5).await.unwrap();
+    let hits = recall(db.pool(), "why do we use spawn_blocking for io?", 5)
+        .await
+        .unwrap();
     assert!(!hits.is_empty(), "expected at least one hit");
     assert_eq!(hits[0].memory.title, "Use tokio spawn_blocking for file IO");
     assert!(hits[0].score > 0.0);
@@ -80,7 +82,9 @@ async fn recall_without_a_real_match_returns_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     remember_fillers(&db).await;
-    let hits = recall(db.pool(), "zebra-quartz migration", 5).await.unwrap();
+    let hits = recall(db.pool(), "zebra-quartz migration", 5)
+        .await
+        .unwrap();
     let titles: Vec<_> = hits.iter().map(|h| h.memory.title.as_str()).collect();
     assert!(hits.is_empty(), "{titles:?}");
 }
@@ -134,6 +138,8 @@ async fn delete_removes_memory_from_recall() {
     .unwrap();
 
     assert!(ax_memory::delete(db.pool(), &row.id).await.unwrap());
-    let hits = recall(db.pool(), "caching decision policy", 5).await.unwrap();
+    let hits = recall(db.pool(), "caching decision policy", 5)
+        .await
+        .unwrap();
     assert!(hits.is_empty(), "deleted memory must not be recalled");
 }

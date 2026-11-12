@@ -13,6 +13,7 @@ ax-graph = { workspace = true }
 ax-context = { workspace = true }
 ax-sync = { workspace = true }
 ax-policy = { workspace = true }
+ax-memory = { workspace = true }
 ax-global-db = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }

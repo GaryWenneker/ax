@@ -15,7 +15,7 @@ Open source, MIT, native Rust. No cloud index and no API keys. The source stays 
 | Layer | What it does |
 |---|---|
 | **Knowledge graph** | Tree-sitter parsing into a SQLite index of symbols, calls, imports, and routes |
-| **Memory vault** | Durable decisions, fixes, and conventions, with hybrid recall and git auto-capture |
+| **Memory** | Working notes, named long-term memories, and a permanent archive bound to the code graph. [Memory](#memory) |
 | **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected each turn |
 | **Command Center** | Policy, memory, graph, quality gates, token savings, MCP Logging and Quality, draft PRs |
 | **CLI-only mode** | Same preflight/session/durable/turn engines without MCP, plugins, hooks, or daemons (`ax install --mode cli-only`) |
@@ -106,13 +106,74 @@ The site is the product guide. This README follows that map.
 - [Languages](https://getax.wenneker.io/reference/languages/)
 - [Troubleshooting](https://getax.wenneker.io/troubleshooting/)
 
+## Memory
+
+A name fetches the exact memory. The raw episode stays. Recall is bound to the code graph. It stays in local SQLite. MCP and the CLI do the same thing.
+
+```mermaid
+flowchart TD
+  prompt[Agent prompt] --> cues[Exact cue lookup]
+  cues --> hot[T0 working notes and T2 semantic vault]
+  hot --> inject[Preflight inject cap]
+  cues --> miss[Miss or explicit deep recall]
+  miss --> ann[T3 engram archive plus FTS]
+  ann --> spread[One hop over links, files, and symbols]
+  spread --> body[Load body by id]
+  sync[Session remember git turns graph diffs logs] --> engrams[Append-only T3 engrams]
+  replay[Idle consolidation] --> vault[T2 memories linked to engram ids]
+  engrams --> replay
+```
+
+```mermaid
+flowchart LR
+  subgraph write [Write]
+    session[ax session]
+    remember[ax remember with trigger]
+    git[git capture]
+    turns[turn end]
+    graph[graph diff on sync]
+    logs[selected activity]
+  end
+  db[(ax.db)]
+  session --> db
+  remember --> db
+  git --> db
+  turns --> db
+  graph --> db
+  logs --> db
+  db --> cue[Cue lookup]
+  cue --> preflight[Capped preflight]
+  cue --> archive[Archive recall]
+```
+
+```mermaid
+flowchart LR
+  mcp[ax_remember ax_recall ax_history ax_session ax_preflight]
+  cli[ax remember ax recall ax history ax session ax preflight]
+  mcp --> memory[ax-memory]
+  cli --> memory
+  memory --> db[(ax.db)]
+```
+
+```mermaid
+flowchart LR
+  hot[Hot turn younger than 90 days]
+  archive[T3 archive same id embedding and cues]
+  backup[JSONL crash copy]
+  hot --> archive
+  hot --> backup
+  archive --> fetch[Fetch by cue or by id]
+```
+
+Working notes stay in `ax session`. A durable decision is `ax remember --trigger NAME` (MCP: `triggers`). Fetch that name with `ax recall --cue` before exploring. Old graph changes, logs, and turns are `ax recall --depth archive` and `ax history --depth archive`. Preflight does not contain those hits. Confirm a candidate with `ax remember --confirm`. The long guide is [Memory](https://getax.wenneker.io/guides/memory/).
+
 ## What the site covers
 
 The [docs](https://getax.wenneker.io/) follow the same product. These are the parts worth knowing before you read a single page:
 
 - **Context.** A tree-sitter graph of symbols, calls, imports, and routes, queried through MCP instead of searching the tree. [How it works](https://getax.wenneker.io/core-concepts/how-it-works/), [architecture insights](https://getax.wenneker.io/guides/architecture-insights/), and [affected tests](https://getax.wenneker.io/guides/affected-tests/).
 - **Rules.** IDE-agnostic rules and skills in `.agents/`, injected each turn. Share them over git or OneDrive. [Policy engine](https://getax.wenneker.io/guides/policy-engine/), [remote policy share](https://getax.wenneker.io/guides/policy-sharing/).
-- **Memory.** Decisions, fixes, and conventions, recalled with the next turn and captured from git. [Memory vault](https://getax.wenneker.io/guides/memory/). The same notes open in Obsidian over WebDAV, with no note files on disk. [Obsidian vault](https://getax.wenneker.io/guides/obsidian-vault/).
+- **Memory.** Named cues, a capped preflight, and a permanent archive of turns, git captures, folder docs, graph diffs, and logs. [Memory](https://getax.wenneker.io/guides/memory/). The same notes open in Obsidian over WebDAV, with no note files on disk. [Obsidian vault](https://getax.wenneker.io/guides/obsidian-vault/).
 - **Command Center.** Local UI for policy, memory, the graph, MCP Logging and Quality, and savings. Optional sign-in, passkeys, and member roles. A native desktop client embeds the same UI. [Command Center](https://getax.wenneker.io/guides/command-center/), [walkthrough](https://getax.wenneker.io/guides/command-center-walkthrough/), [desktop](https://getax.wenneker.io/guides/desktop-client/).
 - **Reach.** Authenticated remote MCP for another IDE or ChatGPT, a primary and replicas across machines, a LAN share, or a Cloudflare tunnel onto the local server. [Remote MCP](https://getax.wenneker.io/guides/remote-mcp/), [replicas](https://getax.wenneker.io/guides/standalone-ax/), [Cloudflare](https://getax.wenneker.io/guides/cloudflare/).
 - **Cost.** Compact replies, a project token budget for optional context, and a local monthly agent budget that quotes usage without blocking the provider. [Smart Output](https://getax.wenneker.io/guides/smart-output/), [token savings](https://getax.wenneker.io/guides/token-savings/), [agent budget](https://getax.wenneker.io/guides/budget/).

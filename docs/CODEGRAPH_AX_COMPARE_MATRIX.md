@@ -633,4 +633,10 @@ Infrastructure and hosting that lives outside the Rust workspace but is required
 
 ---
 
+## Memory tiers (2026-11-12)
+
+| Behavior | CodeGraph | ax | Status |
+|---|---|---|---|
+| Named cues, tiered vault, permanent turn archive, sqlite-vec KNN, archive hop, local re-embed | No memory vault in the inspected product surface | `crates/ax-memory` | ➕ ax-only. No CodeGraph file to match. Git captures and folder docs are archive tier. The Windows matrix copy was not on this machine. |
+
 *End of document.*

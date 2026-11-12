@@ -744,7 +744,7 @@ async fn preflight(ax: &mut Ax, params: Value) -> Result<Value, String> {
     };
     // Durable memories ride along with the policy inject. Failures here must
     // never break preflight — memories are additive context.
-    let mut memories = ax_memory::recall_for_prompt(ax.db_pool(), &prompt, 3)
+    let mut memories = ax_memory::recall_for_prompt_near(ax.db_pool(), &prompt, &files, 3)
         .await
         .unwrap_or_default();
     if crate::links::has_links(&result, &memories) {
@@ -1367,6 +1367,16 @@ fn session_policy_inject(
 }
 
 async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    if params.get("action").and_then(Value::as_str) == Some("confirm") {
+        let id = params
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or("id required")?;
+        let confirmed = ax_memory::confirm_memory(ax.db_pool(), id)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(json!({ "ok": confirmed, "id": id, "confirmed": confirmed }));
+    }
     let body = params
         .get("body")
         .or_else(|| params.get("text"))
@@ -1388,7 +1398,8 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
         files: string_array(params.get("files")),
         source: Some("mcp".into()),
     };
-    let row = ax_memory::remember(ax.db_pool(), input)
+    let triggers = string_array(params.get("triggers"));
+    let row = ax_memory::remember_with_triggers(ax.db_pool(), input, &triggers)
         .await
         .map_err(|e| e.to_string())?;
     let similar = ax_memory::find_similar(
@@ -1417,35 +1428,74 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    if let Some(id) = params.get("id").and_then(Value::as_str) {
-        let memory = ax_memory::get(ax.db_pool(), id)
-            .await
-            .map_err(|e| e.to_string())?
-            .filter(|m| m.enabled)
-            .ok_or("memory ID not found in this project")?;
-        return Ok(
-            json!({ "text": format!("## {} [{}]\n\n{}\n\nFiles: {}", memory.title, memory.id, memory.body, memory.files.join(", ")), "matches": [{ "memory": memory }] }),
-        );
-    }
-    let query = params
-        .get("query")
-        .and_then(|v| v.as_str())
-        .ok_or("query required")?;
+    let depth = ax_memory::Depth::parse(
+        params
+            .get("depth")
+            .and_then(Value::as_str)
+            .unwrap_or("hot"),
+    )?;
     let limit = params
         .get("limit")
         .and_then(|v| v.as_u64())
         .unwrap_or(5)
         .min(25) as usize;
-    let matches = ax_memory::recall(ax.db_pool(), query, limit)
+    let request = ax_memory::SearchRequest {
+        query: params
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        cue: params
+            .get("cue")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        id: params.get("id").and_then(Value::as_str).map(str::to_string),
+        depth,
+        files: string_array(params.get("files")),
+        limit,
+    };
+    if request.id.as_deref().unwrap_or("").is_empty()
+        && request.cue.as_deref().unwrap_or("").is_empty()
+        && request.query.trim().is_empty()
+    {
+        return Err("query, cue, or id required".into());
+    }
+    let matches = ax_memory::search(ax.db_pool(), &request)
         .await
         .map_err(|e| e.to_string())?;
+    let cues = match request.id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => ax_memory::cues_for(ax.db_pool(), id)
+            .await
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let label = request
+        .cue
+        .clone()
+        .or(request.id.clone())
+        .unwrap_or(request.query.clone());
     let text = if matches.is_empty() {
-        format!("No memories match '{query}'.")
+        format!("No memories match '{label}'.")
+    } else if request.id.is_some() {
+        matches
+            .first()
+            .map(|hit| {
+                format!(
+                    "## {} [{}]\n\n{}\n\nFiles: {}\n\nCues: {}",
+                    hit.memory.title,
+                    hit.memory.id,
+                    hit.memory.body,
+                    hit.memory.files.join(", "),
+                    cues.join(", ")
+                )
+            })
+            .unwrap_or_else(|| format!("No memories match '{label}'."))
     } else {
         crate::smart_output::memory_results(&matches)
     };
     Ok(json!({
         "matches": matches,
+        "cues": cues,
         "inject": text,
     }))
 }
@@ -1477,10 +1527,17 @@ async fn history_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_u64())
         .unwrap_or(20)
         .clamp(1, 50) as usize;
+    let depth = ax_memory::Depth::parse(
+        params
+            .get("depth")
+            .and_then(Value::as_str)
+            .unwrap_or("hot"),
+    )?;
     let history_query = ax_memory::HistoryQuery {
         query: query.to_string(),
         since_ms,
         limit,
+        archive: depth == ax_memory::Depth::Archive,
     };
     let entries = ax_memory::history(ax.db_pool(), ax.project_root(), &history_query)
         .await
@@ -1488,6 +1545,7 @@ async fn history_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
     Ok(json!({
         "text": ax_memory::format_history(&entries, HISTORY_OUTCOME_CHARS),
         "count": entries.len(),
+        "entries": entries,
     }))
 }
 
@@ -2433,7 +2491,7 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({
             "name": "ax_session",
-            "description": "Read or update this conversation's working context: the small snapshot of objective, facts, files, symbols, decisions, and open questions. Preflight shows it every turn, or one unchanged line when you pass its hash as known_context. Raw tool results stay in the conversation cache. Actions: get (default), add, update, compact, clear, fork, handoff. fork copies the notes to a new session. handoff stores the note you send as a new session. The old session stays readable and the graph cache is not copied.",
+            "description": "Read or update this conversation's working context: the small snapshot of objective, facts, files, symbols, decisions, and open questions. Facts for this chat stay here; they do not go into the vault. CLI: ax session. Preflight shows it every turn, or one unchanged line when you pass its hash as known_context. Raw tool results stay in the conversation cache. Actions: get (default), add, update, compact, clear, fork, handoff. fork copies the notes to a new session. handoff stores the note you send as a new session. The old session stays readable and the graph cache is not copied.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2534,17 +2592,19 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({
             "name": "ax_remember",
-            "description": "Store a durable project memory (decision, bug fix, architecture choice, convention). Recalled automatically in future ax_preflight calls and searchable via ax_recall.",
+            "description": "Store a durable project memory (decision, bug fix, architecture choice, convention) with a trigger name. Pass triggers (CLI: ax remember --trigger NAME, repeatable). Confirm a candidate with action=confirm and id (CLI: ax remember --confirm ID). The old engram stays. Recalled by cue before explore, and by free text as a fallback.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "body": { "type": "string", "description": "The memory content — what to remember and why" },
+                    "body": { "type": "string", "description": "The memory content — what to remember and why. Omit when action is confirm." },
                     "title": { "type": "string", "description": "Short title (defaults to first line of body)" },
                     "kind": { "type": "string", "enum": ["decision", "bug_fix", "architecture", "convention", "note"] },
                     "tags": { "type": "array", "items": { "type": "string" } },
-                    "files": { "type": "array", "items": { "type": "string" }, "description": "Related project-relative file paths" }
-                },
-                "required": ["body"]
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "Related project-relative file paths" },
+                    "triggers": { "type": "array", "items": { "type": "string" }, "description": "Exact cue names. CLI: --trigger NAME" },
+                    "action": { "type": "string", "enum": ["confirm"], "description": "confirm enables a candidate long-term memory. CLI: ax remember --confirm ID" },
+                    "id": { "type": "string", "description": "Memory id to confirm" }
+                }
             }
         }),
         json!({
@@ -2584,14 +2644,15 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({
             "name": "ax_history",
-            "description": "When did I change X? Dated agent turns (prompt, outcome, files, commits) and git commits that touched a file, symbol, or topic, newest first. Pass id for one turn's full outcome.",
+            "description": "When did I change X? Dated agent turns (prompt, outcome, files, commits) and git commits that touched a file, symbol, or topic, newest first. Pass depth=archive for old graph changes, logs, and demoted turns (CLI: ax history --depth archive). Preflight does not contain those hits. Pass id for one turn's full outcome.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "File path, symbol name, or topic" },
                     "since": { "type": "string", "description": "YYYY-MM-DD" },
                     "limit": { "type": "number" },
-                    "id": { "type": "string", "description": "Turn memory id from an earlier listing" }
+                    "id": { "type": "string", "description": "Turn memory id from an earlier listing" },
+                    "depth": { "type": "string", "enum": ["hot", "archive"], "description": "archive searches the permanent engram tier. CLI: --depth archive" }
                 }
             }
         }),
@@ -2612,15 +2673,17 @@ fn extra_tools() -> Vec<Value> {
         }),
         json!({
             "name": "ax_recall",
-            "description": "Search durable project memories by free text; returns ranked IDs and summaries. Use id to retrieve the complete memory. Fresh memories outrank stale ones via confidence decay.",
+            "description": "Fetch a memory by exact cue before explore (cue, CLI: ax recall --cue NAME). Free text is the fallback (query, CLI: ax recall QUERY). depth=archive searches old turns and engrams and is not injected by preflight (CLI: --depth archive). id returns the full body and its cues (CLI: ax recall --id ID).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
-                    "id": { "type": "string", "description": "Stable memory ID for a complete body" },
-                    "limit": { "type": "number" }
-                },
-                "anyOf": [{ "required": ["query"] }, { "required": ["id"] }]
+                    "cue": { "type": "string", "description": "Exact trigger, title, or tag. CLI: --cue" },
+                    "id": { "type": "string", "description": "Stable memory ID for a complete body and its cues. CLI: --id" },
+                    "depth": { "type": "string", "enum": ["hot", "archive"], "description": "hot skips the archive. archive is only the archive. CLI: --depth" },
+                    "limit": { "type": "number" },
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "Open files that boost a memory naming them" }
+                }
             }
         }),
     ]

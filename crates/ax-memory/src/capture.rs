@@ -95,8 +95,7 @@ pub async fn capture_git_history(
     repo_root: &Path,
     limit: usize,
 ) -> Result<GitCaptureResult, AxError> {
-    let commits = run_git_log(repo_root, limit.clamp(1, 500))
-        .map_err(AxError::Other)?;
+    let commits = run_git_log(repo_root, limit.clamp(1, 500)).map_err(AxError::Other)?;
 
     let mut result = GitCaptureResult {
         scanned: commits.len(),
@@ -137,6 +136,11 @@ pub async fn capture_git_history(
         .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
 
         if outcome.rows_affected() > 0 {
+            let (_, model) = crate::embed::embed_labeled("ax");
+            crate::brain::stamp_memory(pool, &id, "git", model).await?;
+            if let Some(row) = crate::store::get(pool, &id).await? {
+                crate::brain::register_cues(pool, &row, &[]).await?;
+            }
             result.captured += 1;
         } else {
             result.skipped_existing += 1;
