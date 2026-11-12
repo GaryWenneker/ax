@@ -928,10 +928,11 @@ mod tests {
             .expect("saved");
         assert_eq!(row.kind, ax_memory::TURN_KIND);
         assert_eq!(row.files, vec!["src/a.rs".to_string()]);
-        assert!(ax_memory::get(ax.db_pool(), "turn-old")
+        let archived = ax_memory::get(ax.db_pool(), "turn-old")
             .await
             .unwrap()
-            .is_none());
+            .expect("old turns are archived");
+        assert_eq!(archived.tier, "t3");
         let backups: Vec<_> = std::fs::read_dir(root.join(".ax/backups"))
             .expect("pruned turns are backed up under .ax/backups")
             .collect();

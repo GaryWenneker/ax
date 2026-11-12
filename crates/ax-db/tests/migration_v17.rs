@@ -89,7 +89,7 @@ async fn v16_database_upgrades_to_v17_without_losing_data() {
             version, CURRENT_SCHEMA_VERSION,
             "upgrade must land on the current schema version"
         );
-        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 27);
 
         let has_table: Option<String> = sqlx::query_scalar(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='file_contents'",

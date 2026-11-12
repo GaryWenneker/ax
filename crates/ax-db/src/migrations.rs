@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 26;
+pub const CURRENT_SCHEMA_VERSION: i32 = 27;
 
 struct Migration {
     version: i32,
@@ -398,6 +398,40 @@ const MIGRATIONS: &[Migration] = &[
         version: 26,
         description: "Git captures and folder docs belong in the archive",
         sql: "UPDATE memories SET tier = 't3' WHERE kind IN ('git', 'doc') AND tier = 't2';",
+    },
+    Migration {
+        version: 27,
+        description: "Rebuild memory search after the tier columns changed the content table",
+        sql: "
+            DROP TRIGGER IF EXISTS memories_ai;
+            DROP TRIGGER IF EXISTS memories_ad;
+            DROP TRIGGER IF EXISTS memories_au;
+            DROP TABLE IF EXISTS memories_fts;
+            CREATE VIRTUAL TABLE memories_fts USING fts5(
+                id,
+                title,
+                body,
+                tags,
+                content='memories',
+                content_rowid='rowid'
+            );
+            INSERT INTO memories_fts(rowid, id, title, body, tags)
+            SELECT rowid, id, title, body, tags FROM memories;
+            CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+                INSERT INTO memories_fts(rowid, id, title, body, tags)
+                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.body, NEW.tags);
+            END;
+            CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, id, title, body, tags)
+                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.body, OLD.tags);
+            END;
+            CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, id, title, body, tags)
+                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.body, OLD.tags);
+                INSERT INTO memories_fts(rowid, id, title, body, tags)
+                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.body, NEW.tags);
+            END;
+        ",
     },
 ];
 

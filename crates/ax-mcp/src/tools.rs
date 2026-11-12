@@ -1474,6 +1474,9 @@ async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .clone()
         .or(request.id.clone())
         .unwrap_or(request.query.clone());
+    if matches.is_empty() && request.id.as_deref().is_some_and(|id| !id.is_empty()) {
+        return Err(format!("No memory with id '{label}'."));
+    }
     let text = if matches.is_empty() {
         format!("No memories match '{label}'.")
     } else if request.id.is_some() {

@@ -43,7 +43,7 @@ async fn v22_database_gains_agent_economics_tables() {
         let db = Database::open(&path).await.expect("reopen and migrate");
         let version = get_current_version(db.pool()).await.expect("version");
         assert_eq!(version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 27);
         sqlx::query(
             "INSERT INTO agent_sessions (id, project_id, created_at, updated_at, cache_namespace)
              VALUES ('s', 'p', 1, 1, 'p:s')",
