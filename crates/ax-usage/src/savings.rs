@@ -2785,10 +2785,17 @@ mod tests {
     #[tokio::test]
     async fn savings_insert_reports_a_database_that_cannot_be_opened() {
         let _guard = USAGE_ENV_LOCK.lock().await;
-        std::env::set_var("AX_USAGE_DB", "/dev/null/usage.db");
+        let parent = std::env::temp_dir().join(format!(
+            "ax-usage-not-a-dir-{}",
+            std::process::id()
+        ));
+        std::fs::write(&parent, b"not a directory").unwrap();
+        let db = parent.join("usage.db");
+        std::env::set_var("AX_USAGE_DB", &db);
         let result = record_mcp_call(sample_record()).await;
         std::env::remove_var("AX_USAGE_DB");
-        let err = result.expect_err("a device node is not a usage database");
+        std::fs::remove_file(&parent).ok();
+        let err = result.expect_err("a file is not a directory for the usage database");
         assert!(!err.is_empty(), "{err}");
     }
 }
