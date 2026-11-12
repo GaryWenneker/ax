@@ -920,7 +920,7 @@ async fn migration_26_moves_git_and_docs_into_the_archive() {
         .execute(db.pool())
         .await
         .unwrap();
-    sqlx::query("DELETE FROM schema_versions WHERE version = 26")
+    sqlx::query("DELETE FROM schema_versions WHERE version >= 26")
         .execute(db.pool())
         .await
         .unwrap();
