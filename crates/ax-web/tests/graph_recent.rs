@@ -50,26 +50,30 @@ async fn write_nodes(p: &Project, nodes: &[(&str, i64)], edges: &[(&str, &str)])
         .await
         .unwrap();
     for (id, updated_at) in nodes {
-        sqlx::query(
-            "INSERT OR REPLACE INTO nodes (id, kind, name, qualified_name, file_path, language, \
-             start_line, end_line, start_column, end_column, updated_at) \
-             VALUES (?, 'function', ?, ?, 'src/a.rs', 'rust', 1, 2, 0, 0, ?)",
-        )
-        .bind(id)
-        .bind(id)
-        .bind(id)
-        .bind(updated_at)
-        .execute(&pool)
+        ax_db::with_busy_retry(|| {
+            sqlx::query(
+                "INSERT OR REPLACE INTO nodes (id, kind, name, qualified_name, file_path, language, \
+                 start_line, end_line, start_column, end_column, updated_at) \
+                 VALUES (?, 'function', ?, ?, 'src/a.rs', 'rust', 1, 2, 0, 0, ?)",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(id)
+            .bind(updated_at)
+            .execute(&pool)
+        })
         .await
         .unwrap();
     }
     for (source, target) in edges {
-        sqlx::query("INSERT INTO edges (source, target, kind) VALUES (?, ?, 'calls')")
-            .bind(source)
-            .bind(target)
-            .execute(&pool)
-            .await
-            .unwrap();
+        ax_db::with_busy_retry(|| {
+            sqlx::query("INSERT INTO edges (source, target, kind) VALUES (?, ?, 'calls')")
+                .bind(source)
+                .bind(target)
+                .execute(&pool)
+        })
+        .await
+        .unwrap();
     }
     pool.close().await;
 }

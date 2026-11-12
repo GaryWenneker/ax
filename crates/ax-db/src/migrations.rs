@@ -402,36 +402,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 27,
         description: "Rebuild memory search after the tier columns changed the content table",
-        sql: "
-            DROP TRIGGER IF EXISTS memories_ai;
-            DROP TRIGGER IF EXISTS memories_ad;
-            DROP TRIGGER IF EXISTS memories_au;
-            DROP TABLE IF EXISTS memories_fts;
-            CREATE VIRTUAL TABLE memories_fts USING fts5(
-                id,
-                title,
-                body,
-                tags,
-                content='memories',
-                content_rowid='rowid'
-            );
-            INSERT INTO memories_fts(rowid, id, title, body, tags)
-            SELECT rowid, id, title, body, tags FROM memories;
-            CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, id, title, body, tags)
-                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.body, NEW.tags);
-            END;
-            CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, id, title, body, tags)
-                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.body, OLD.tags);
-            END;
-            CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, id, title, body, tags)
-                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.body, OLD.tags);
-                INSERT INTO memories_fts(rowid, id, title, body, tags)
-                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.body, NEW.tags);
-            END;
-        ",
+        sql: "INSERT INTO memories_fts(memories_fts) VALUES('rebuild');",
     },
 ];
 

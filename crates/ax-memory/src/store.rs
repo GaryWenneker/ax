@@ -24,6 +24,36 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Retry a locked database, and the one-shot SQLITE_SCHEMA error SQLite
+/// returns after an FTS rebuild. The next statement on that connection works.
+async fn retry_locked<T, F, Fut>(mut op: F) -> Result<T, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
+{
+    const MAX_ATTEMPTS: u32 = 12;
+    for attempt in 0..MAX_ATTEMPTS {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(err) if sqlite_retryable(&err) && attempt + 1 < MAX_ATTEMPTS => {
+                let backoff = std::time::Duration::from_millis(40 * (attempt as u64 + 1).min(25));
+                tokio::time::sleep(backoff).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    unreachable!("loop exits via return")
+}
+
+fn sqlite_retryable(err: &sqlx::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("database is locked")
+        || msg.contains("(code: 5)")
+        || msg.contains("SQLITE_BUSY")
+        || msg.contains("(code: 17)")
+        || msg.contains("vtable constructor failed")
+}
+
 type MemoryDbRow = (
     String,
     String,
@@ -253,22 +283,26 @@ pub(crate) async fn remember_with_id(
         row.tags.join(" ")
     ));
     let embedding = crate::embed::embedding_to_blob(&vector);
-    sqlx::query(
-        r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"#,
-    )
-    .bind(&row.id)
-    .bind(&row.kind)
-    .bind(&row.title)
-    .bind(&row.body)
-    .bind(serde_json::to_string(&row.tags).unwrap_or_else(|_| "[]".into()))
-    .bind(serde_json::to_string(&row.files).unwrap_or_else(|_| "[]".into()))
-    .bind(row.confidence)
-    .bind(&row.source)
-    .bind(row.created_at)
-    .bind(row.updated_at)
-    .bind(embedding)
-    .execute(pool)
+    let tags = serde_json::to_string(&row.tags).unwrap_or_else(|_| "[]".into());
+    let files = serde_json::to_string(&row.files).unwrap_or_else(|_| "[]".into());
+    retry_locked(|| {
+        sqlx::query(
+            r#"INSERT INTO memories (id, kind, title, body, tags, files, confidence, source, created_at, updated_at, embedding, enabled)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)"#,
+        )
+        .bind(&row.id)
+        .bind(&row.kind)
+        .bind(&row.title)
+        .bind(&row.body)
+        .bind(&tags)
+        .bind(&files)
+        .bind(row.confidence)
+        .bind(&row.source)
+        .bind(row.created_at)
+        .bind(row.updated_at)
+        .bind(embedding.clone())
+        .execute(pool)
+    })
     .await
     .map_err(db_err)?;
     crate::brain::stamp_memory(pool, &row.id, &row.kind, model).await?;
@@ -546,23 +580,30 @@ pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result
         input.tags.join(" ")
     ));
     let embedding = crate::embed::embedding_to_blob(&vector);
-    let result = sqlx::query(
-        r#"UPDATE memories
-           SET title = ?, body = ?, kind = COALESCE(NULLIF(?, ''), kind),
-               tags = ?, files = ?, confidence = 1.0, updated_at = ?,
-               embedding = ?, embedding_model = ?
-           WHERE id = ?"#,
-    )
-    .bind(input.title.trim())
-    .bind(&input.body)
-    .bind(input.kind.unwrap_or_default())
-    .bind(serde_json::to_string(&input.tags).unwrap_or_else(|_| "[]".into()))
-    .bind(serde_json::to_string(&input.files).unwrap_or_else(|_| "[]".into()))
-    .bind(now_ms())
-    .bind(embedding)
-    .bind(model)
-    .bind(id)
-    .execute(pool)
+    let title = input.title.trim().to_string();
+    let kind = input.kind.unwrap_or_default();
+    let tags = serde_json::to_string(&input.tags).unwrap_or_else(|_| "[]".into());
+    let files = serde_json::to_string(&input.files).unwrap_or_else(|_| "[]".into());
+    let updated_at = now_ms();
+    let result = retry_locked(|| {
+        sqlx::query(
+            r#"UPDATE memories
+               SET title = ?, body = ?, kind = COALESCE(NULLIF(?, ''), kind),
+                   tags = ?, files = ?, confidence = 1.0, updated_at = ?,
+                   embedding = ?, embedding_model = ?
+               WHERE id = ?"#,
+        )
+        .bind(&title)
+        .bind(&input.body)
+        .bind(&kind)
+        .bind(&tags)
+        .bind(&files)
+        .bind(updated_at)
+        .bind(embedding.clone())
+        .bind(&model)
+        .bind(id)
+        .execute(pool)
+    })
     .await
     .map_err(db_err)?;
     if result.rows_affected() > 0 {
@@ -619,11 +660,13 @@ pub async fn find_similar(
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<bool, AxError> {
-    let result = sqlx::query("DELETE FROM memories WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(db_err)?;
+    let result = retry_locked(|| {
+        sqlx::query("DELETE FROM memories WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+    })
+    .await
+    .map_err(db_err)?;
     Ok(result.rows_affected() > 0)
 }
 

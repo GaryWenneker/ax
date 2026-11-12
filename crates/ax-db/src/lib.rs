@@ -60,7 +60,14 @@ pub fn connect_options(path: &Path, create_if_missing: bool) -> SqliteConnectOpt
 /// True when SQLite reports SQLITE_BUSY / database is locked (code 5).
 pub fn is_sqlite_busy(err: &sqlx::Error) -> bool {
     let msg = err.to_string();
-    msg.contains("database is locked") || msg.contains("(code: 5)") || msg.contains("SQLITE_BUSY")
+    // Code 17 (SQLITE_SCHEMA / "vtable constructor failed") is the one-shot
+    // error SQLite returns after an FTS rebuild. The next statement on that
+    // connection sees the new schema, so it is retried like a lock.
+    msg.contains("database is locked")
+        || msg.contains("(code: 5)")
+        || msg.contains("SQLITE_BUSY")
+        || msg.contains("(code: 17)")
+        || msg.contains("vtable constructor failed")
 }
 
 /// Retry an async SQLite operation while the database is busy.
