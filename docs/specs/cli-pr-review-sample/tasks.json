@@ -1,0 +1,341 @@
+{
+  "version": 1,
+  "goldRule": "QUALITY_PLAN.md \u00a74.1",
+  "tasks": [
+    {
+      "id": "pr-251",
+      "class": "pr-review",
+      "prompt": "Review pull request #251: Release 8.4.6: Windows install resolve + park retry. Propose review comments; do not change code.",
+      "pr": 251,
+      "url": "https://github.com/GaryWenneker/ax/pull/251",
+      "title": "Release 8.4.6: Windows install resolve + park retry",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          "crates/ax-cli/src/commands/upgrade.rs",
+          "install.ps1",
+          "site/public/install.ps1",
+          "site/tests/install-script.test.js",
+          "site/tests/install-script.test.ts"
+        ],
+        "symbols": [
+          "upgrade_cmd_batch",
+          "activate_staged_install",
+          "Test-AxReleaseAsset",
+          "Disable-AxStaleGitHubTokens",
+          "Clear-AxPendingUpgradeState"
+        ],
+        "provenance": "auto-from-gh-code-files;+curated-symbols",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064134+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-250",
+      "class": "pr-review",
+      "prompt": "Review pull request #250: Release 8.4.5: preserve policy + CLI lifecycle. Propose review comments; do not change code.",
+      "pr": 250,
+      "url": "https://github.com/GaryWenneker/ax/pull/250",
+      "title": "Release 8.4.5: preserve policy + CLI lifecycle",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          ".agents/rules/author-skill-rule.mdc",
+          ".agents/rules/degraded-continue.mdc",
+          ".agents/rules/explore-before-grep.mdc",
+          ".agents/rules/policy-capture.mdc",
+          "crates/ax-cli/src/commands/init.rs",
+          "crates/ax-cli/src/commands/policy.rs",
+          "crates/ax-cli/src/main.rs",
+          "crates/ax-global-db/src/policy.rs",
+          "crates/ax-installer/src/templates/cli_only_cursor_rule.mdc",
+          "crates/ax-policy/src/ide_seed.rs",
+          "crates/ax-policy/src/lib.rs",
+          "crates/ax-policy/src/pack.rs",
+          "crates/ax-policy/src/seed.rs",
+          "crates/ax-policy/templates/ide/cursor/ax.mdc",
+          "crates/ax-policy/templates/rules/author-skill-rule.mdc",
+          "crates/ax-policy/templates/rules/degraded-continue.mdc",
+          "crates/ax-policy/templates/rules/english-only.mdc",
+          "crates/ax-policy/templates/rules/explore-before-grep.mdc",
+          "crates/ax-policy/templates/rules/policy-capture.mdc"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064282+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-248",
+      "class": "pr-review",
+      "prompt": "Review pull request #248: Release 8.4.3: installer self-heal. Propose review comments; do not change code.",
+      "pr": 248,
+      "url": "https://github.com/GaryWenneker/ax/pull/248",
+      "title": "Release 8.4.3: installer self-heal",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          ".agents/rules/install-auto-self-heal.mdc",
+          "install.ps1",
+          "install.sh",
+          "scripts/test_install_self_heal.py",
+          "site/public/install.ps1",
+          "site/public/install.sh"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064283+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-247",
+      "class": "pr-review",
+      "prompt": "Review pull request #247: Harden Windows install release resolution diagnostics. Propose review comments; do not change code.",
+      "pr": 247,
+      "url": "https://github.com/GaryWenneker/ax/pull/247",
+      "title": "Harden Windows install release resolution diagnostics",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          "install.ps1",
+          "site/public/install.ps1"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064284+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-245",
+      "class": "pr-review",
+      "prompt": "Review pull request #245: Release 8.4.2: CLI-only for all IDEs. Propose review comments; do not change code.",
+      "pr": 245,
+      "url": "https://github.com/GaryWenneker/ax/pull/245",
+      "title": "Release 8.4.2: CLI-only for all IDEs",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          ".agents/rules/cli-mcp-parity-ide-rules.mdc",
+          ".agents/rules/degraded-continue.mdc",
+          ".agents/rules/explore-before-grep.mdc",
+          ".agents/rules/mcp-callmcp-shape.mdc",
+          ".agents/rules/prefer-mcp-ops.mdc",
+          ".agents/rules/subagents.mdc",
+          "crates/ax-installer/src/cli_only.rs",
+          "crates/ax-policy/src/ide_seed.rs",
+          "crates/ax-policy/templates/ide/cursor/ax.mdc",
+          "crates/ax-policy/templates/rules/degraded-continue.mdc",
+          "crates/ax-policy/templates/rules/explore-before-grep.mdc",
+          "crates/ax-policy/templates/rules/mcp-callmcp-shape.mdc",
+          "crates/ax-policy/templates/rules/old-coder-mandatory.mdc",
+          "crates/ax-policy/templates/rules/prefer-mcp-ops.mdc",
+          "crates/ax-policy/templates/rules/subagents.mdc"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064285+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-243",
+      "class": "pr-review",
+      "prompt": "Review pull request #243: CLI-MCP parity, LCM audit fix, and 8.4.0. Propose review comments; do not change code.",
+      "pr": 243,
+      "url": "https://github.com/GaryWenneker/ax/pull/243",
+      "title": "CLI-MCP parity, LCM audit fix, and 8.4.0",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          "crates/ax-cli/src/commands/cache_cmd.rs",
+          "crates/ax-cli/src/commands/doctor.rs",
+          "crates/ax-cli/src/commands/durable_cmd.rs",
+          "crates/ax-cli/src/commands/init.rs",
+          "crates/ax-cli/src/commands/install.rs",
+          "crates/ax-cli/src/commands/mod.rs",
+          "crates/ax-cli/src/commands/preflight.rs",
+          "crates/ax-cli/src/commands/session_cmd.rs",
+          "crates/ax-cli/src/commands/turn_cmd.rs",
+          "crates/ax-cli/src/installer/mod.rs",
+          "crates/ax-cli/src/main.rs",
+          "crates/ax-cli/tests/cli_parity_gaps.rs",
+          "crates/ax-cli/tests/cli_parity_turn.rs",
+          "crates/ax-installer/src/cli_only.rs",
+          "crates/ax-installer/src/lib.rs",
+          "crates/ax-installer/src/templates/cli_only_cursor_rule.mdc",
+          "crates/ax-usage/src/activity.rs",
+          "crates/ax-usage/src/lib.rs",
+          "crates/ax-usage/src/store.rs",
+          "crates/ax-usage/src/turn_lifecycle.rs",
+          "crates/ax-web/web-ui/dist/assets/index-DzLcDlqd.js",
+          "crates/ax-web/web-ui/src/App.tsx",
+          "crates/ax-web/web-ui/src/components/McpTraceLive.tsx",
+          "crates/ax-web/web-ui/src/lib/loggingPresentation.test.ts",
+          "crates/ax-web/web-ui/src/lib/loggingPresentation.ts",
+          "crates/ax-web/web-ui/src/lib/mcpTrace.ts",
+          "crates/ax-web/web-ui/src/lib/mcpTraceEvents.ts",
+          "crates/ax-web/web-ui/src/lib/routes.test.ts",
+          "crates/ax-web/web-ui/src/lib/routes.ts",
+          "crates/ax-web/web-ui/src/pages/Logging.tsx",
+          "crates/ax-web/web-ui/src/pages/Memory.tsx",
+          "docs/specs/cli-mcp-parity/examples/cli-only-turn.ps1"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064286+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-121",
+      "class": "pr-review",
+      "prompt": "Review pull request #121: Fix legacy AX brand name to AgentXpansion. Propose review comments; do not change code.",
+      "pr": 121,
+      "url": "https://github.com/GaryWenneker/ax/pull/121",
+      "title": "Fix legacy AX brand name to AgentXpansion",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          "crates/ax-web/web-ui/src/lib/brand.ts",
+          "site/src/lib/brand.d.ts",
+          "site/src/lib/brand.ts"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064287+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-120",
+      "class": "pr-review",
+      "prompt": "Review pull request #120: Persist installer PATH for fresh macOS and Linux shells. Propose review comments; do not change code.",
+      "pr": 120,
+      "url": "https://github.com/GaryWenneker/ax/pull/120",
+      "title": "Persist installer PATH for fresh macOS and Linux shells",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          "install.sh",
+          "scripts/gauntlet-install-shell-path.sh",
+          "site/public/install.sh",
+          "site/tests/install-script.test.ts"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064287+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-119",
+      "class": "pr-review",
+      "prompt": "Review pull request #119: Withdraw the STE-inspired preflight experiment. Propose review comments; do not change code.",
+      "pr": 119,
+      "url": "https://github.com/GaryWenneker/ax/pull/119",
+      "title": "Withdraw the STE-inspired preflight experiment",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          "crates/ax-mcp/examples/evaluate_ste_output.rs",
+          "crates/ax-mcp/src/context_budget.rs",
+          "crates/ax-mcp/src/invoke.rs",
+          "crates/ax-mcp/src/lib.rs",
+          "crates/ax-mcp/src/server.rs",
+          "crates/ax-mcp/src/smart_output.rs",
+          "crates/ax-mcp/src/text_style.rs",
+          "crates/ax-mcp/src/tools.rs",
+          "crates/ax-mcp/tests/preflight_standard_contract.rs",
+          "crates/ax-mcp/tests/ste_output_contract.rs",
+          "tools/check_mcp_removal_coverage.py",
+          "tools/evaluate-ste-output.py",
+          "tools/gauntlet-ste-output.sh",
+          "tools/gauntlet-ste-removal.sh",
+          "tools/ste_output_mutants.py",
+          "tools/ste_removal_mutants.py",
+          "tools/test_evaluate_ste_output.py",
+          "tools/test_mcp_removal_coverage.py"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064288+00:00",
+        "signedBy": "user:sign gold"
+      }
+    },
+    {
+      "id": "pr-118",
+      "class": "pr-review",
+      "prompt": "Review pull request #118: Add opt-in STE-inspired preflight instructions. Propose review comments; do not change code.",
+      "pr": 118,
+      "url": "https://github.com/GaryWenneker/ax/pull/118",
+      "title": "Add opt-in STE-inspired preflight instructions",
+      "requiredSkills": [
+        "pr-review-comments",
+        "review-loop"
+      ],
+      "gold": {
+        "files": [
+          "crates/ax-mcp/examples/evaluate_ste_output.rs",
+          "crates/ax-mcp/src/context_budget.rs",
+          "crates/ax-mcp/src/invoke.rs",
+          "crates/ax-mcp/src/lib.rs",
+          "crates/ax-mcp/src/server.rs",
+          "crates/ax-mcp/src/smart_output.rs",
+          "crates/ax-mcp/src/text_style.rs",
+          "crates/ax-mcp/src/tools.rs",
+          "crates/ax-mcp/tests/ste_output_contract.rs",
+          "tools/check_ste_output_coverage.py",
+          "tools/evaluate-ste-output.py",
+          "tools/gauntlet-ste-output.sh",
+          "tools/ste_output_mutants.py",
+          "tools/test_evaluate_ste_output.py",
+          "tools/test_ste_output_coverage.py"
+        ],
+        "symbols": [],
+        "provenance": "auto-from-gh-code-files",
+        "signed": true,
+        "signedAt": "2026-11-12T10:47:12.064289+00:00",
+        "signedBy": "user:sign gold"
+      }
+    }
+  ]
+}

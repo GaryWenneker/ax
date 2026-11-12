@@ -1,0 +1,127 @@
+{
+  "title": "CLI-only PR review sample \u2014 all request/response traffic",
+  "fullReport": "/Users/gary/io/ax/docs/specs/cli-pr-review-sample/exchanges.json",
+  "generatedAt": "2026-11-09T17:49:20.799845+00:00",
+  "exchanges": [
+    {
+      "seq": 0,
+      "direction": "user_to_agent",
+      "channel": "chat",
+      "command": null,
+      "responseBytes": 174,
+      "exitCode": null
+    },
+    {
+      "seq": 1,
+      "direction": "agent_to_ax",
+      "channel": "cli",
+      "command": [
+        "ax",
+        "preflight",
+        "--prompt",
+        "Review pull request #251: Release 8.4.6 Windows install resolve and park Access denied. Focus on install.ps1, upgrade park retry, and site install-script tests.",
+        "--json"
+      ],
+      "responseBytes": 159323,
+      "exitCode": 0
+    },
+    {
+      "seq": 2,
+      "direction": "agent_to_github",
+      "channel": "gh",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "251",
+        "--json",
+        "number,title,body,baseRefName,headRefName,files,url,author,mergedAt,state"
+      ],
+      "responseBytes": 5391,
+      "exitCode": 0
+    },
+    {
+      "seq": 3,
+      "direction": "agent_to_ax",
+      "channel": "cli",
+      "command": [
+        "ax",
+        "explore",
+        "--json",
+        "upgrade_cmd_batch park Access denied Windows install"
+      ],
+      "responseBytes": 17359,
+      "exitCode": 0
+    },
+    {
+      "seq": 4,
+      "direction": "agent_to_ax",
+      "channel": "cli",
+      "command": [
+        "ax",
+        "impact",
+        "upgrade_cmd_batch"
+      ],
+      "responseBytes": 5147,
+      "exitCode": 0
+    },
+    {
+      "seq": 5,
+      "direction": "agent_to_ax",
+      "channel": "cli",
+      "command": [
+        "ax",
+        "node",
+        "upgrade_cmd_batch"
+      ],
+      "responseBytes": 862,
+      "exitCode": 0
+    },
+    {
+      "seq": 6,
+      "direction": "agent_to_ax",
+      "channel": "cli",
+      "command": [
+        "ax",
+        "callers",
+        "activate_staged_install"
+      ],
+      "responseBytes": 2684,
+      "exitCode": 0
+    },
+    {
+      "seq": 7,
+      "direction": "agent_to_ax",
+      "channel": "cli",
+      "command": [
+        "ax",
+        "policy",
+        "skill",
+        "review-loop"
+      ],
+      "responseBytes": 3758,
+      "exitCode": 0
+    },
+    {
+      "seq": 8,
+      "direction": "agent_to_ax",
+      "channel": "cli",
+      "command": [
+        "ax",
+        "policy",
+        "skill",
+        "rust-review"
+      ],
+      "responseBytes": 13186,
+      "exitCode": 0
+    },
+    {
+      "seq": 9,
+      "direction": "agent_to_user",
+      "channel": "chat",
+      "command": null,
+      "responseBytes": 646,
+      "exitCode": null
+    }
+  ]
+}

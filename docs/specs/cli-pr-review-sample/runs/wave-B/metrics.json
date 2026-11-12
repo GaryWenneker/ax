@@ -1,0 +1,359 @@
+{
+  "k": 5,
+  "n_tasks": 10,
+  "n_scored": 10,
+  "median_ucp_at_k": 1.0,
+  "median_recall_at_k": 0.256578947368421,
+  "s2_skill_inclusion_rate": 1.0,
+  "tasks": [
+    {
+      "id": "pr-251",
+      "pr": 251,
+      "ucp_at_k": 0.2,
+      "recall_at_k": 0.5,
+      "k": 5,
+      "gold_size": 10,
+      "ref_size": 25,
+      "intersection": 5,
+      "hit_files": [
+        "crates/ax-cli/src/commands/upgrade.rs",
+        "site/tests/install-script.test.js",
+        "site/tests/install-script.test.ts"
+      ],
+      "miss_files": [
+        "install.ps1",
+        "site/public/install.ps1"
+      ],
+      "hit_symbols": [
+        "activate_staged_install",
+        "upgrade_cmd_batch"
+      ],
+      "miss_symbols": [
+        "Clear-AxPendingUpgradeState",
+        "Disable-AxStaleGitHubTokens",
+        "Test-AxReleaseAsset"
+      ],
+      "noise_files": [
+        "docs/archive/specs/install-project-discovery-EVIDENCE.md",
+        "docs/specs/cli-pr-review-sample/GOLD_SIGN.md",
+        "docs/specs/cli-pr-review-sample/QUALITY_PLAN.md",
+        "docs/specs/windows-upgrade-activate.evidence.md"
+      ],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-250",
+      "pr": 250,
+      "ucp_at_k": 1.0,
+      "recall_at_k": 0.2631578947368421,
+      "k": 5,
+      "gold_size": 19,
+      "ref_size": 5,
+      "intersection": 5,
+      "hit_files": [
+        "crates/ax-cli/src/commands/init.rs",
+        "crates/ax-cli/src/commands/policy.rs",
+        "crates/ax-cli/src/main.rs",
+        "crates/ax-global-db/src/policy.rs",
+        "crates/ax-policy/src/ide_seed.rs"
+      ],
+      "miss_files": [
+        ".agents/rules/author-skill-rule.mdc",
+        ".agents/rules/degraded-continue.mdc",
+        ".agents/rules/explore-before-grep.mdc",
+        ".agents/rules/policy-capture.mdc",
+        "crates/ax-installer/src/templates/cli_only_cursor_rule.mdc",
+        "crates/ax-policy/src/lib.rs",
+        "crates/ax-policy/src/pack.rs",
+        "crates/ax-policy/src/seed.rs",
+        "crates/ax-policy/templates/ide/cursor/ax.mdc",
+        "crates/ax-policy/templates/rules/author-skill-rule.mdc",
+        "crates/ax-policy/templates/rules/degraded-continue.mdc",
+        "crates/ax-policy/templates/rules/english-only.mdc",
+        "crates/ax-policy/templates/rules/explore-before-grep.mdc",
+        "crates/ax-policy/templates/rules/policy-capture.mdc"
+      ],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-248",
+      "pr": 248,
+      "ucp_at_k": 1.0,
+      "recall_at_k": 0.16666666666666666,
+      "k": 5,
+      "gold_size": 6,
+      "ref_size": 1,
+      "intersection": 1,
+      "hit_files": [
+        "scripts/test_install_self_heal.py"
+      ],
+      "miss_files": [
+        ".agents/rules/install-auto-self-heal.mdc",
+        "install.ps1",
+        "install.sh",
+        "site/public/install.ps1",
+        "site/public/install.sh"
+      ],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-247",
+      "pr": 247,
+      "ucp_at_k": 0.0,
+      "recall_at_k": 0.0,
+      "k": 5,
+      "gold_size": 2,
+      "ref_size": 0,
+      "intersection": 0,
+      "hit_files": [],
+      "miss_files": [
+        "install.ps1",
+        "site/public/install.ps1"
+      ],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-245",
+      "pr": 245,
+      "ucp_at_k": 1.0,
+      "recall_at_k": 0.13333333333333333,
+      "k": 5,
+      "gold_size": 15,
+      "ref_size": 2,
+      "intersection": 2,
+      "hit_files": [
+        "crates/ax-installer/src/cli_only.rs",
+        "crates/ax-policy/src/ide_seed.rs"
+      ],
+      "miss_files": [
+        ".agents/rules/cli-mcp-parity-ide-rules.mdc",
+        ".agents/rules/degraded-continue.mdc",
+        ".agents/rules/explore-before-grep.mdc",
+        ".agents/rules/mcp-callmcp-shape.mdc",
+        ".agents/rules/prefer-mcp-ops.mdc",
+        ".agents/rules/subagents.mdc",
+        "crates/ax-policy/templates/ide/cursor/ax.mdc",
+        "crates/ax-policy/templates/rules/degraded-continue.mdc",
+        "crates/ax-policy/templates/rules/explore-before-grep.mdc",
+        "crates/ax-policy/templates/rules/mcp-callmcp-shape.mdc",
+        "crates/ax-policy/templates/rules/old-coder-mandatory.mdc",
+        "crates/ax-policy/templates/rules/prefer-mcp-ops.mdc",
+        "crates/ax-policy/templates/rules/subagents.mdc"
+      ],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-243",
+      "pr": 243,
+      "ucp_at_k": 1.0,
+      "recall_at_k": 0.15625,
+      "k": 5,
+      "gold_size": 32,
+      "ref_size": 5,
+      "intersection": 5,
+      "hit_files": [
+        "crates/ax-cli/src/commands/cache_cmd.rs",
+        "crates/ax-cli/src/commands/doctor.rs",
+        "crates/ax-cli/src/commands/durable_cmd.rs",
+        "crates/ax-cli/src/commands/init.rs",
+        "crates/ax-cli/src/commands/install.rs"
+      ],
+      "miss_files": [
+        "crates/ax-cli/src/commands/mod.rs",
+        "crates/ax-cli/src/commands/preflight.rs",
+        "crates/ax-cli/src/commands/session_cmd.rs",
+        "crates/ax-cli/src/commands/turn_cmd.rs",
+        "crates/ax-cli/src/installer/mod.rs",
+        "crates/ax-cli/src/main.rs",
+        "crates/ax-cli/tests/cli_parity_gaps.rs",
+        "crates/ax-cli/tests/cli_parity_turn.rs",
+        "crates/ax-installer/src/cli_only.rs",
+        "crates/ax-installer/src/lib.rs",
+        "crates/ax-installer/src/templates/cli_only_cursor_rule.mdc",
+        "crates/ax-usage/src/activity.rs",
+        "crates/ax-usage/src/lib.rs",
+        "crates/ax-usage/src/store.rs",
+        "crates/ax-usage/src/turn_lifecycle.rs",
+        "crates/ax-web/web-ui/dist/assets/index-DzLcDlqd.js",
+        "crates/ax-web/web-ui/src/App.tsx",
+        "crates/ax-web/web-ui/src/components/McpTraceLive.tsx",
+        "crates/ax-web/web-ui/src/lib/loggingPresentation.test.ts",
+        "crates/ax-web/web-ui/src/lib/loggingPresentation.ts",
+        "crates/ax-web/web-ui/src/lib/mcpTrace.ts",
+        "crates/ax-web/web-ui/src/lib/mcpTraceEvents.ts",
+        "crates/ax-web/web-ui/src/lib/routes.test.ts",
+        "crates/ax-web/web-ui/src/lib/routes.ts",
+        "crates/ax-web/web-ui/src/pages/Logging.tsx",
+        "crates/ax-web/web-ui/src/pages/Memory.tsx",
+        "docs/specs/cli-mcp-parity/examples/cli-only-turn.ps1"
+      ],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-121",
+      "pr": 121,
+      "ucp_at_k": 1.0,
+      "recall_at_k": 1.0,
+      "k": 5,
+      "gold_size": 3,
+      "ref_size": 3,
+      "intersection": 3,
+      "hit_files": [
+        "crates/ax-web/web-ui/src/lib/brand.ts",
+        "site/src/lib/brand.d.ts",
+        "site/src/lib/brand.ts"
+      ],
+      "miss_files": [],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-120",
+      "pr": 120,
+      "ucp_at_k": 1.0,
+      "recall_at_k": 0.25,
+      "k": 5,
+      "gold_size": 4,
+      "ref_size": 1,
+      "intersection": 1,
+      "hit_files": [
+        "site/tests/install-script.test.ts"
+      ],
+      "miss_files": [
+        "install.sh",
+        "scripts/gauntlet-install-shell-path.sh",
+        "site/public/install.sh"
+      ],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-119",
+      "pr": 119,
+      "ucp_at_k": 1.0,
+      "recall_at_k": 0.2777777777777778,
+      "k": 5,
+      "gold_size": 18,
+      "ref_size": 5,
+      "intersection": 5,
+      "hit_files": [
+        "crates/ax-mcp/src/context_budget.rs",
+        "crates/ax-mcp/src/invoke.rs",
+        "crates/ax-mcp/src/lib.rs",
+        "crates/ax-mcp/src/server.rs",
+        "crates/ax-mcp/src/smart_output.rs"
+      ],
+      "miss_files": [
+        "crates/ax-mcp/examples/evaluate_ste_output.rs",
+        "crates/ax-mcp/src/text_style.rs",
+        "crates/ax-mcp/src/tools.rs",
+        "crates/ax-mcp/tests/preflight_standard_contract.rs",
+        "crates/ax-mcp/tests/ste_output_contract.rs",
+        "tools/check_mcp_removal_coverage.py",
+        "tools/evaluate-ste-output.py",
+        "tools/gauntlet-ste-output.sh",
+        "tools/gauntlet-ste-removal.sh",
+        "tools/ste_output_mutants.py",
+        "tools/ste_removal_mutants.py",
+        "tools/test_evaluate_ste_output.py",
+        "tools/test_mcp_removal_coverage.py"
+      ],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    },
+    {
+      "id": "pr-118",
+      "pr": 118,
+      "ucp_at_k": 1.0,
+      "recall_at_k": 0.3333333333333333,
+      "k": 5,
+      "gold_size": 15,
+      "ref_size": 5,
+      "intersection": 5,
+      "hit_files": [
+        "crates/ax-mcp/src/context_budget.rs",
+        "crates/ax-mcp/src/invoke.rs",
+        "crates/ax-mcp/src/lib.rs",
+        "crates/ax-mcp/src/server.rs",
+        "crates/ax-mcp/src/smart_output.rs"
+      ],
+      "miss_files": [
+        "crates/ax-mcp/examples/evaluate_ste_output.rs",
+        "crates/ax-mcp/src/text_style.rs",
+        "crates/ax-mcp/src/tools.rs",
+        "crates/ax-mcp/tests/ste_output_contract.rs",
+        "tools/check_ste_output_coverage.py",
+        "tools/evaluate-ste-output.py",
+        "tools/gauntlet-ste-output.sh",
+        "tools/ste_output_mutants.py",
+        "tools/test_evaluate_ste_output.py",
+        "tools/test_ste_output_coverage.py"
+      ],
+      "hit_symbols": [],
+      "miss_symbols": [],
+      "noise_files": [],
+      "skills": {
+        "pr-review-comments": true,
+        "review-loop": true
+      },
+      "goldSigned": true
+    }
+  ]
+}
