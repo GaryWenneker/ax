@@ -304,6 +304,7 @@ mod tests {
                 enabled: true,
                 created_at: 1,
                 updated_at: 1,
+                tier: "t2".into(),
             })
             .collect();
         let mut s = Snapshot {

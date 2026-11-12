@@ -2066,8 +2066,17 @@ async fn async_main() {
             confirm,
             json,
         }) => {
-            commands::memory::run_remember(text, title, kind, tags, files, triggers, confirm, json)
-                .await
+            commands::memory::run_remember(commands::memory::RememberArgs {
+                text,
+                title,
+                kind,
+                tags,
+                files,
+                triggers,
+                confirm,
+                json,
+            })
+            .await
         }
         Some(Commands::Recall {
             query,

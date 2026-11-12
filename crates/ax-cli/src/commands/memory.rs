@@ -4,16 +4,28 @@ use std::path::PathBuf;
 
 use crate::commands::resolve_path;
 
-pub async fn run_remember(
-    text: Option<String>,
-    title: Option<String>,
-    kind: Option<String>,
-    tags: Vec<String>,
-    files: Vec<String>,
-    triggers: Vec<String>,
-    confirm: Option<String>,
-    json: bool,
-) -> Result<(), String> {
+pub struct RememberArgs {
+    pub text: Option<String>,
+    pub title: Option<String>,
+    pub kind: Option<String>,
+    pub tags: Vec<String>,
+    pub files: Vec<String>,
+    pub triggers: Vec<String>,
+    pub confirm: Option<String>,
+    pub json: bool,
+}
+
+pub async fn run_remember(args: RememberArgs) -> Result<(), String> {
+    let RememberArgs {
+        text,
+        title,
+        kind,
+        tags,
+        files,
+        triggers,
+        confirm,
+        json,
+    } = args;
     let root = resolve_path(None);
     let text = if confirm.is_none() {
         Some(text.ok_or("give the memory text, or --confirm ID")?)

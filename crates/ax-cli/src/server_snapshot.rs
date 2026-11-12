@@ -371,6 +371,7 @@ mod tests {
             enabled: false,
             created_at: 1,
             updated_at: 1,
+            tier: "t2".into(),
         }];
         item.files
             .insert(MEMORY_PATH.into(), serialize(&rows).unwrap());

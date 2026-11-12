@@ -478,6 +478,7 @@ mod tests {
             enabled: true,
             created_at,
             updated_at: created_at,
+            tier: "t2".into(),
         }
     }
 

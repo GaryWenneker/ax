@@ -688,8 +688,10 @@ pub async fn consolidate(pool: &SqlitePool) -> Result<usize, AxError> {
     Ok(created)
 }
 
+type GraphSymbolRow = (String, String, String, String, Option<String>, i64, i64);
+
 pub async fn capture_graph_episodes(pool: &SqlitePool) -> Result<usize, AxError> {
-    let nodes: Vec<(String, String, String, String, Option<String>, i64, i64)> = sqlx::query_as(
+    let nodes: Vec<GraphSymbolRow> = sqlx::query_as(
         "SELECT id, name, kind, file_path, signature, start_line, end_line FROM nodes",
     )
     .fetch_all(pool)
