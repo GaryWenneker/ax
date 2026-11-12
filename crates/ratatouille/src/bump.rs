@@ -231,10 +231,7 @@ fn commit_level(commit: &Commit) -> Level {
 
 fn product_path(path: &str) -> bool {
     let path = normalize(path);
-    if !ships(&path) || is_test_path(&path) {
-        return false;
-    }
-    true
+    ships(&path) && !is_test_path(&path)
 }
 
 fn ships(path: &str) -> bool {

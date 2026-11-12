@@ -600,7 +600,7 @@ pub async fn update(pool: &SqlitePool, id: &str, input: RememberInput) -> Result
         .bind(&files)
         .bind(updated_at)
         .bind(embedding.clone())
-        .bind(&model)
+        .bind(model)
         .bind(id)
         .execute(pool)
     })
