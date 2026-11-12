@@ -40,16 +40,15 @@ pub async fn run(from: String, to: String, json: bool) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
+    let payload = serde_json::json!({
+        "from": from_node.qualified_name,
+        "to": to_node.qualified_name,
+        "path": &path,
+    });
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "from": from_node.qualified_name,
-                "to": to_node.qualified_name,
-                "path": path,
-            }))
-            .unwrap_or_default()
-        );
+        let printed = serde_json::to_string_pretty(&payload).unwrap_or_default();
+        println!("{printed}");
+        crate::commands::stash_cli_graph("ax_path", &payload, &printed);
         return Ok(());
     }
 
@@ -68,14 +67,18 @@ pub async fn run(from: String, to: String, json: bool) -> Result<(), String> {
                 names.push(name);
             }
             ax_usage::log_cli(Some(&root), format!("cmd=path ok hops={}", names.len()));
-            println!("{}", names.join(" → "));
+            let printed = names.join(" → ");
+            println!("{printed}");
+            crate::commands::stash_cli_graph("ax_path", &payload, &printed);
         }
         _ => {
             ax_usage::log_cli(Some(&root), "cmd=path ok hops=0");
-            println!(
+            let printed = format!(
                 "No Calls/References path from '{}' to '{}'.",
                 from_node.qualified_name, to_node.qualified_name
             );
+            println!("{printed}");
+            crate::commands::stash_cli_graph("ax_path", &payload, &printed);
         }
     }
     Ok(())

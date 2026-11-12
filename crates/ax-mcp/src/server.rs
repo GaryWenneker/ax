@@ -394,6 +394,7 @@ async fn call_tool_and_wrap(
                 savings_eligible: true,
                 response_preview: Some(text),
                 counterfactual_preview: None,
+                transport: "mcp".into(),
             });
             return Ok(wrapped);
         }
@@ -598,6 +599,7 @@ async fn call_tool_and_wrap(
                 savings_eligible: est.savings_eligible,
                 response_preview: est.response_preview.clone(),
                 counterfactual_preview: est.counterfactual_preview.clone(),
+                transport: "mcp".into(),
             });
             Ok(wrapped)
         }
@@ -625,6 +627,7 @@ async fn call_tool_and_wrap(
                     Some(ax_usage::truncate_utf8(&text, ax_usage::PREVIEW_MAX_BYTES))
                 },
                 counterfactual_preview: None,
+                transport: "mcp".into(),
             });
             Ok(wrap_call_tool_result(err_val, true))
         }

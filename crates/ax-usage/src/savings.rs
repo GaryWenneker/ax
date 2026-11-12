@@ -43,6 +43,8 @@ const FILE_PATH_ARRAY_KEYS: &[&str] = &[
     "affected",
     "pendingFiles",
     "pending_files",
+    "test_files",
+    "testFiles",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,42 +438,156 @@ pub struct McpCallRecord {
     pub savings_eligible: bool,
     pub response_preview: Option<String>,
     pub counterfactual_preview: Option<String>,
+    /// `mcp` for MCP tool calls, `cli` for a command-line twin.
+    pub transport: String,
 }
 
-pub async fn record_mcp_call(record: McpCallRecord) {
-    if let Ok(pool) = open_pool().await {
-        let now = chrono::Utc::now().timestamp_millis();
-        let _ = sqlx::query(
-            "INSERT INTO mcp_call_log
-             (tool, project, response_chars, response_tokens_est, counterfactual_files,
-              counterfactual_exact_files, counterfactual_tokens_est, tokens_saved_est,
-              duration_ms, ok, savings_eligible, response_preview, counterfactual_preview,
-              created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&record.tool)
-        .bind(&record.project)
-        .bind(record.response_chars)
-        .bind(record.response_tokens_est)
-        .bind(record.counterfactual_files)
-        .bind(record.counterfactual_exact_files)
-        .bind(record.counterfactual_tokens_est)
-        .bind(record.tokens_saved_est)
-        .bind(record.duration_ms)
-        .bind(i64::from(record.ok))
-        .bind(i64::from(record.savings_eligible))
-        .bind(&record.response_preview)
-        .bind(&record.counterfactual_preview)
-        .bind(now)
-        .execute(&pool)
-        .await;
+fn insert_is_retryable(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("database is locked")
+        || lower.contains("database is busy")
+        || lower.contains("sqlite_busy")
+}
+
+async fn record_mcp_call_once(record: &McpCallRecord) -> Result<(), String> {
+    let pool = open_pool().await.map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().timestamp_millis();
+    sqlx::query(
+        "INSERT INTO mcp_call_log
+         (tool, project, response_chars, response_tokens_est, counterfactual_files,
+          counterfactual_exact_files, counterfactual_tokens_est, tokens_saved_est,
+          duration_ms, ok, savings_eligible, response_preview, counterfactual_preview,
+          created_at, transport)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&record.tool)
+    .bind(&record.project)
+    .bind(record.response_chars)
+    .bind(record.response_tokens_est)
+    .bind(record.counterfactual_files)
+    .bind(record.counterfactual_exact_files)
+    .bind(record.counterfactual_tokens_est)
+    .bind(record.tokens_saved_est)
+    .bind(record.duration_ms)
+    .bind(i64::from(record.ok))
+    .bind(i64::from(record.savings_eligible))
+    .bind(&record.response_preview)
+    .bind(&record.counterfactual_preview)
+    .bind(now)
+    .bind(&record.transport)
+    .execute(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn record_mcp_call(record: McpCallRecord) -> Result<(), String> {
+    let mut attempt = 0u64;
+    loop {
+        match record_mcp_call_once(&record).await {
+            Ok(()) => return Ok(()),
+            Err(err) if insert_is_retryable(&err) && attempt < 3 => {
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(20 * attempt)).await;
+            }
+            Err(err) => return Err(err),
+        }
     }
 }
 
 pub fn spawn_record_mcp_call(record: McpCallRecord) {
     tokio::spawn(async move {
-        record_mcp_call(record).await;
+        if let Err(err) = record_mcp_call(record).await {
+            tracing::warn!("savings log insert failed: {err}");
+        }
     });
+}
+
+struct CliStash {
+    tool: String,
+    structured: Value,
+    response_text: String,
+}
+
+static CLI_STASH: std::sync::Mutex<Option<CliStash>> = std::sync::Mutex::new(None);
+
+/// MCP tool name for a CLI command that should appear on the Savings page.
+/// Commands without a twin (`install`, `web`, `mcp`, …) return `None`.
+pub fn cli_mcp_tool(command: &str) -> Option<&'static str> {
+    match command {
+        "query" => Some("ax_search"),
+        "explore" => Some("ax_explore"),
+        "node" => Some("ax_node"),
+        "context" => Some("ax_context"),
+        "callers" => Some("ax_callers"),
+        "callees" => Some("ax_callees"),
+        "impact" => Some("ax_impact"),
+        "path" => Some("ax_path"),
+        "affected" => Some("ax_affected"),
+        "preflight" => Some("ax_preflight"),
+        "status" => Some("ax_status"),
+        "session" => Some("ax_session"),
+        "remember" => Some("ax_remember"),
+        "recall" => Some("ax_recall"),
+        "sync" => Some("ax_sync"),
+        "index" => Some("ax_index"),
+        _ => None,
+    }
+}
+
+/// Keep the structured result of a CLI graph command until [`flush_cli_call`].
+pub fn stash_cli_result(tool: &str, structured: &Value, response_text: &str) {
+    let mut slot = CLI_STASH.lock().unwrap_or_else(|e| e.into_inner());
+    *slot = Some(CliStash {
+        tool: tool.to_string(),
+        structured: structured.clone(),
+        response_text: response_text.to_string(),
+    });
+}
+
+fn take_cli_stash() -> Option<CliStash> {
+    CLI_STASH
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+}
+
+/// Write one Savings row for a CLI command and wait for the insert.
+/// A command with no MCP twin writes nothing. Graph commands should
+/// [`stash_cli_result`] first so the counterfactual uses their payload.
+pub async fn flush_cli_call(
+    command: &str,
+    project: Option<&Path>,
+    duration_ms: i64,
+    ok: bool,
+) -> Result<(), String> {
+    let stashed = take_cli_stash();
+    let (tool, structured, text) = if let Some(stashed) = stashed {
+        (stashed.tool, stashed.structured, stashed.response_text)
+    } else if let Some(twin) = cli_mcp_tool(command) {
+        (twin.to_string(), Value::Object(Default::default()), String::new())
+    } else {
+        return Ok(());
+    };
+    let est = estimate_savings(&tool, &structured, &text, project);
+    let eligible = ok && est.savings_eligible;
+    record_mcp_call(McpCallRecord {
+        tool,
+        project: project.map(|p| p.display().to_string()),
+        response_chars: text.len() as i64,
+        response_tokens_est: est.response_tokens_est,
+        counterfactual_files: eligible.then_some(est.counterfactual_files),
+        counterfactual_exact_files: eligible.then_some(est.counterfactual_exact_files),
+        counterfactual_tokens_est: eligible.then_some(est.counterfactual_tokens_est),
+        tokens_saved_est: eligible.then_some(est.tokens_saved_est),
+        duration_ms: Some(duration_ms),
+        ok,
+        savings_eligible: eligible,
+        response_preview: est.response_preview,
+        counterfactual_preview: eligible.then_some(est.counterfactual_preview).flatten(),
+        transport: "cli".into(),
+    })
+    .await
 }
 
 #[derive(Debug, Clone)]
@@ -796,7 +912,7 @@ pub struct SavingsSummary {
     pub to: String,
     pub from_ms: i64,
     pub to_ms: i64,
-    /// All logged MCP calls in the period (graph + policy tools, incl. failed calls).
+    /// All logged calls in the period (MCP and CLI, graph + policy, incl. failed calls).
     pub mcp_calls: i64,
     /// Graph-tool calls only — the subset that can produce savings.
     pub graph_calls: i64,
@@ -834,6 +950,10 @@ pub struct SavingsSummary {
     pub clamp_tokens_absorbed: i64,
     /// Graph calls where per-call savings were > 0.
     pub graph_calls_with_savings: i64,
+    /// CLI commands recorded in the period (graph and policy twins).
+    pub cli_calls: i64,
+    /// Tokens saved by CLI graph commands. Already included in `tokens_saved_est`.
+    pub cli_tokens_saved_est: i64,
     /// Pricing in effect (reference model, rates, config source).
     pub pricing: PricingInfo,
     /// Estimation constants in effect when this summary was computed.
@@ -963,24 +1083,44 @@ fn aggregate_sessions_by_model(sessions: &[AgentSessionRow]) -> Vec<ModelSavings
     rows
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct SavingsTotals {
+    mcp_calls: i64,
+    graph_calls: i64,
+    failed_calls: i64,
+    tokens_saved_est: i64,
+    counterfactual_files: i64,
+    counterfactual_tokens_est: i64,
+    graph_response_tokens_est: i64,
+    response_tokens_est: i64,
+    counterfactual_exact_files: i64,
+    projects_active: i64,
+    avg_duration_raw: f64,
+    graph_calls_with_savings: i64,
+    cli_calls: i64,
+    cli_tokens_saved_est: i64,
+}
+
 pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, String> {
     let range = resolve_period(q.period, q.from.as_deref(), q.to.as_deref())?;
     let pool = open_pool().await.map_err(|e| e.to_string())?;
     let _ = refresh_price_cache_from_db().await;
 
-    let totals: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, i64) = sqlx::query_as(
-        "SELECT COUNT(*),
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_files ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_tokens_est ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN response_tokens_est ELSE 0 END), 0),
-                COALESCE(SUM(response_tokens_est), 0),
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_exact_files ELSE 0 END), 0),
-                COUNT(DISTINCT CASE WHEN project IS NOT NULL AND project != '' THEN project END),
-                COALESCE(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END), 0.0),
-                COALESCE(SUM(CASE WHEN savings_eligible = 1 AND tokens_saved_est > 0 THEN 1 ELSE 0 END), 0)
+    let totals = sqlx::query_as::<_, SavingsTotals>(
+        "SELECT COUNT(*) AS mcp_calls,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN 1 ELSE 0 END), 0) AS graph_calls,
+                COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0) AS failed_calls,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0) AS tokens_saved_est,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_files ELSE 0 END), 0) AS counterfactual_files,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_tokens_est ELSE 0 END), 0) AS counterfactual_tokens_est,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN response_tokens_est ELSE 0 END), 0) AS graph_response_tokens_est,
+                COALESCE(SUM(response_tokens_est), 0) AS response_tokens_est,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 THEN counterfactual_exact_files ELSE 0 END), 0) AS counterfactual_exact_files,
+                COUNT(DISTINCT CASE WHEN project IS NOT NULL AND project != '' THEN project END) AS projects_active,
+                COALESCE(AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms END), 0.0) AS avg_duration_raw,
+                COALESCE(SUM(CASE WHEN savings_eligible = 1 AND tokens_saved_est > 0 THEN 1 ELSE 0 END), 0) AS graph_calls_with_savings,
+                COALESCE(SUM(CASE WHEN COALESCE(transport, 'mcp') = 'cli' THEN 1 ELSE 0 END), 0) AS cli_calls,
+                COALESCE(SUM(CASE WHEN COALESCE(transport, 'mcp') = 'cli' AND savings_eligible = 1 THEN tokens_saved_est ELSE 0 END), 0) AS cli_tokens_saved_est
          FROM mcp_call_log WHERE created_at >= ? AND created_at <= ?",
     )
     .bind(range.from_ms)
@@ -1306,7 +1446,7 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
     let by_model = aggregate_sessions_by_model(&session_rows);
     let agent_sessions: Vec<AgentSessionRow> = session_rows.into_iter().take(50).collect();
 
-    let (
+    let SavingsTotals {
         mcp_calls,
         graph_calls,
         failed_calls,
@@ -1319,7 +1459,9 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         projects_active,
         avg_duration_raw,
         graph_calls_with_savings,
-    ) = totals;
+        cli_calls,
+        cli_tokens_saved_est,
+    } = totals;
 
     let net_tokens_saved_est = counterfactual_tokens_est - graph_response_tokens_est;
     let clamp_tokens_absorbed = tokens_saved_est - net_tokens_saved_est;
@@ -1376,6 +1518,8 @@ pub async fn query_savings_summary(q: &SavingsQuery) -> Result<SavingsSummary, S
         projects_active,
         clamp_tokens_absorbed,
         graph_calls_with_savings,
+        cli_calls,
+        cli_tokens_saved_est,
         pricing: pricing_info(),
         assumptions: current_assumptions(),
         by_tool,
@@ -2017,7 +2161,7 @@ mod tests {
     use crate::tokenizer::count_file_tokens;
     use serde_json::json;
 
-    static DB_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    use crate::store::USAGE_ENV_LOCK;
 
     fn long_response(chars: usize) -> String {
         "response text ".repeat(chars / 14 + 1)
@@ -2364,7 +2508,7 @@ mod tests {
 
     #[tokio::test]
     async fn tag_session_model_merge() {
-        let _guard = DB_TEST_LOCK.lock().await;
+        let _guard = USAGE_ENV_LOCK.lock().await;
         let db = temp_usage_db_path("merge");
         let _ = std::fs::remove_file(&db);
         std::env::set_var("AX_USAGE_DB", &db);
@@ -2407,7 +2551,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcript_import_does_not_wipe_state_tokens() {
-        let _guard = DB_TEST_LOCK.lock().await;
+        let _guard = USAGE_ENV_LOCK.lock().await;
         let db = temp_usage_db_path("vscdb-merge");
         let _ = std::fs::remove_file(&db);
         std::env::set_var("AX_USAGE_DB", &db);
@@ -2448,5 +2592,203 @@ mod tests {
 
         std::env::remove_var("AX_USAGE_DB");
         let _ = std::fs::remove_file(db);
+    }
+
+    #[tokio::test]
+    async fn cli_flush_records_graph_savings_and_skips_install() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("cli-flush");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let _ = take_cli_stash();
+
+        stash_cli_result(
+            "ax_explore",
+            &json!({
+                "entries": [{
+                    "node": { "file_path": "src/a.rs", "end_line": 100 }
+                }]
+            }),
+            "short",
+        );
+        flush_cli_call("explore", Some(Path::new("/tmp/ax")), 12, true)
+            .await
+            .expect("explore flush");
+
+        flush_cli_call("preflight", Some(Path::new("/tmp/ax")), 4, true)
+            .await
+            .expect("preflight flush");
+
+        let pool = open_pool().await.expect("pool");
+        let before_install: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_call_log")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        flush_cli_call("install", Some(Path::new("/tmp/ax")), 3, true)
+            .await
+            .expect("install writes nothing");
+        let after_install: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_call_log")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(before_install, after_install, "install is not an MCP twin");
+
+        let explore: (String, i64, Option<i64>, i64) = sqlx::query_as(
+            "SELECT transport, savings_eligible, tokens_saved_est, ok
+             FROM mcp_call_log WHERE tool = 'ax_explore'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("explore row");
+        assert_eq!(explore.0, "cli");
+        assert_eq!(explore.1, 1);
+        assert!(explore.2.unwrap_or(0) > 0, "explore must save tokens");
+        assert_eq!(explore.3, 1);
+
+        let preflight: (String, i64) = sqlx::query_as(
+            "SELECT transport, savings_eligible FROM mcp_call_log WHERE tool = 'ax_preflight'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("preflight row");
+        assert_eq!(preflight.0, "cli");
+        assert_eq!(preflight.1, 0);
+
+        record_mcp_call(McpCallRecord {
+            tool: "ax_node".into(),
+            project: Some("/tmp/ax".into()),
+            response_chars: 4,
+            response_tokens_est: 1,
+            counterfactual_files: Some(1),
+            counterfactual_exact_files: None,
+            counterfactual_tokens_est: Some(10),
+            tokens_saved_est: Some(9),
+            duration_ms: Some(1),
+            ok: true,
+            savings_eligible: true,
+            response_preview: None,
+            counterfactual_preview: None,
+            transport: "mcp".into(),
+        })
+        .await
+        .expect("mcp insert");
+        let mcp_transport: String = sqlx::query_scalar(
+            "SELECT transport FROM mcp_call_log WHERE tool = 'ax_node'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("mcp row");
+        assert_eq!(mcp_transport, "mcp");
+
+        let summary = query_savings_summary(&SavingsQuery {
+            period: UsagePeriod::Week,
+            from: None,
+            to: None,
+        })
+        .await
+        .expect("summary");
+        assert_eq!(summary.cli_calls, 2);
+        assert_eq!(summary.cli_tokens_saved_est, explore.2.unwrap());
+        assert!(summary.tokens_saved_est >= summary.cli_tokens_saved_est);
+        assert_eq!(
+            summary.tokens_saved_est,
+            summary.cli_tokens_saved_est + 9,
+            "combined total includes the CLI explore row and the MCP row"
+        );
+
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[tokio::test]
+    async fn cli_flush_measures_a_markdown_file_exactly() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        let db = temp_usage_db_path("cli-md");
+        let _ = std::fs::remove_file(&db);
+        std::env::set_var("AX_USAGE_DB", &db);
+        let _ = take_cli_stash();
+
+        let dir = std::env::temp_dir().join(format!("ax-md-savings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("notes.md");
+        let body = "# Notes\n\nCLI savings count this Markdown file.\n";
+        std::fs::write(&file, body).unwrap();
+        let file_tokens = count_file_tokens(&file).expect("markdown is readable");
+
+        let response = "one line";
+        stash_cli_result(
+            "ax_explore",
+            &json!({
+                "entries": [{
+                    "node": {
+                        "kind": "doc",
+                        "file_path": "notes.md",
+                        "end_line": 3
+                    }
+                }]
+            }),
+            response,
+        );
+        flush_cli_call("explore", Some(&dir), 8, true)
+            .await
+            .expect("markdown flush");
+
+        let pool = open_pool().await.expect("pool");
+        let row: (i64, i64, i64) = sqlx::query_as(
+            "SELECT savings_eligible, counterfactual_exact_files, tokens_saved_est
+             FROM mcp_call_log WHERE tool = 'ax_explore'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("explore row");
+        let response_tokens = crate::tokenizer::count_tokens(response) as i64;
+        let saved = (file_tokens - response_tokens).max(0);
+        assert_eq!(row.0, 1);
+        assert_eq!(row.1, 1, "a Markdown file on disk is measured, not guessed");
+        assert_eq!(
+            row.2, saved,
+            "markdown file={file_tokens} response={response_tokens} saved={saved}"
+        );
+        assert!(saved > 0, "file tokens {file_tokens}, response {response_tokens}");
+
+        std::env::remove_var("AX_USAGE_DB");
+        let _ = std::fs::remove_file(&db);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn locked_database_is_retried_and_a_schema_error_is_not() {
+        assert!(insert_is_retryable("database is locked"));
+        assert!(insert_is_retryable("SqliteFailure: database is busy"));
+        assert!(!insert_is_retryable("no such column: transport"));
+    }
+
+    fn sample_record() -> McpCallRecord {
+        McpCallRecord {
+            tool: "ax_explore".into(),
+            project: None,
+            response_chars: 1,
+            response_tokens_est: 1,
+            counterfactual_files: None,
+            counterfactual_exact_files: None,
+            counterfactual_tokens_est: None,
+            tokens_saved_est: None,
+            duration_ms: Some(1),
+            ok: true,
+            savings_eligible: false,
+            response_preview: None,
+            counterfactual_preview: None,
+            transport: "cli".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn savings_insert_reports_a_database_that_cannot_be_opened() {
+        let _guard = USAGE_ENV_LOCK.lock().await;
+        std::env::set_var("AX_USAGE_DB", "/dev/null/usage.db");
+        let result = record_mcp_call(sample_record()).await;
+        std::env::remove_var("AX_USAGE_DB");
+        let err = result.expect_err("a device node is not a usage database");
+        assert!(!err.is_empty(), "{err}");
     }
 }

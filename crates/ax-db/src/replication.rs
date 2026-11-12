@@ -821,6 +821,40 @@ use sqlx::Acquire;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_incoming_allows_a_missing_non_key_column() {
+        let local = TableContract {
+            columns: vec![
+                ("id".into(), "INTEGER".into(), 1, 1, 0),
+                ("transport".into(), "TEXT".into(), 1, 0, 0),
+            ],
+            foreign_keys: vec![],
+            unique_indexes: vec![],
+        };
+        let older = TableContract {
+            columns: vec![("id".into(), "INTEGER".into(), 1, 1, 0)],
+            foreign_keys: vec![],
+            unique_indexes: vec![],
+        };
+        assert!(local.accepts_incoming(&older));
+        let extra = TableContract {
+            columns: vec![
+                ("id".into(), "INTEGER".into(), 1, 1, 0),
+                ("transport".into(), "TEXT".into(), 1, 0, 0),
+                ("extra".into(), "TEXT".into(), 0, 0, 0),
+            ],
+            foreign_keys: vec![],
+            unique_indexes: vec![],
+        };
+        assert!(!local.accepts_incoming(&extra));
+        let dropped_key = TableContract {
+            columns: vec![("transport".into(), "TEXT".into(), 1, 0, 0)],
+            foreign_keys: vec![],
+            unique_indexes: vec![],
+        };
+        assert!(!local.accepts_incoming(&dropped_key));
+    }
     async fn db(root: &Path) -> crate::Database {
         std::fs::create_dir_all(root.join(".ax")).unwrap();
         crate::Database::open(&root.join(".ax/ax.db"))
@@ -987,6 +1021,42 @@ pub struct TableContract {
     columns: Vec<(String, String, i64, i64, i64)>,
     foreign_keys: Vec<(String, String, String, String, String, String)>,
     unique_indexes: UniqueIndexes,
+}
+
+impl TableContract {
+    /// Older history may omit additive columns. It may not add a column,
+    /// change one, drop a primary key, or carry a constraint this schema lacks.
+    pub fn accepts_incoming(&self, incoming: &Self) -> bool {
+        let local: std::collections::HashMap<&str, &(String, String, i64, i64, i64)> = self
+            .columns
+            .iter()
+            .map(|column| (column.0.as_str(), column))
+            .collect();
+        if incoming
+            .columns
+            .iter()
+            .any(|column| local.get(column.0.as_str()).copied() != Some(column))
+        {
+            return false;
+        }
+        let incoming_names: std::collections::HashSet<&str> = incoming
+            .columns
+            .iter()
+            .map(|column| column.0.as_str())
+            .collect();
+        if self
+            .columns
+            .iter()
+            .any(|column| column.3 != 0 && !incoming_names.contains(column.0.as_str()))
+        {
+            return false;
+        }
+        incoming.foreign_keys == self.foreign_keys
+            && incoming
+                .unique_indexes
+                .iter()
+                .all(|index| self.unique_indexes.contains(index))
+    }
 }
 pub async fn table_contract(pool: &SqlitePool, table: &str) -> Result<TableContract> {
     ensure!(

@@ -27,7 +27,9 @@ pub async fn run(symbol: String) -> Result<(), String> {
             .await
             .map_err(|e| e.to_string())?;
         ax_usage::log_cli(Some(&root), "cmd=impact ok");
-        println!("{}", serde_json::to_string_pretty(&sg).unwrap_or_default());
+        let printed = serde_json::to_string_pretty(&sg).unwrap_or_default();
+        println!("{printed}");
+        crate::commands::stash_cli_graph("ax_impact", &sg, &printed);
     } else {
         ax_usage::log_cli(Some(&root), "cmd=impact ok hits=0");
     }

@@ -113,11 +113,11 @@ pub use reuse_cache::{
     HOOK_SESSION_MAX_AGE, SESSION_CONTEXT_TOKENS,
 };
 pub use savings::{
-    current_assumptions, estimate_savings, import_agent_logs, is_savings_eligible_tool,
-    parse_cursor_hook_model, parse_cursor_hook_session_id, query_call_token_detail,
-    query_savings_summary, record_mcp_call, record_session_model_tag, spawn_record_mcp_call,
-    CallTokenDetail, ImportResult, McpCallRecord, SavingsAssumptions, SavingsEstimate,
-    SavingsQuery, SavingsSummary, PREVIEW_MAX_BYTES,
+    cli_mcp_tool, current_assumptions, estimate_savings, flush_cli_call, import_agent_logs,
+    is_savings_eligible_tool, parse_cursor_hook_model, parse_cursor_hook_session_id,
+    query_call_token_detail, query_savings_summary, record_mcp_call, record_session_model_tag,
+    spawn_record_mcp_call, stash_cli_result, CallTokenDetail, ImportResult, McpCallRecord,
+    SavingsAssumptions, SavingsEstimate, SavingsQuery, SavingsSummary, PREVIEW_MAX_BYTES,
 };
 pub use store::{open_pool, usage_db_path};
 pub use tokenizer::{

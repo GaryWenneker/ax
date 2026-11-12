@@ -41,18 +41,20 @@ pub async fn run(
         }
     };
     drop(_spinner);
+    let structured = serde_json::to_value(&results).unwrap_or(json!({}));
     if json {
         let out = serde_json::to_string_pretty(&results).unwrap_or_default();
         println!("{out}");
         trace.finish_ok(&out);
+        crate::commands::stash_cli_graph("ax_search", &structured, &out);
+    } else if results.is_empty() {
+        let msg = "No matching symbols.";
+        println!("{}", dim(msg));
+        trace.finish_ok(msg);
+        crate::commands::stash_cli_graph("ax_search", &structured, msg);
     } else {
-        if results.is_empty() {
-            println!("{}", dim("No matching symbols."));
-            trace.finish_ok("No matching symbols.");
-            return Ok(());
-        }
         let mut lines = Vec::with_capacity(results.len());
-        for r in results {
+        for r in &results {
             let line = format!(
                 "{} {} {}:{}",
                 accent(r.node.kind.as_str()),
@@ -69,7 +71,9 @@ pub async fn run(
                 r.node.start_line
             ));
         }
-        trace.finish_ok(&lines.join("\n"));
+        let text = lines.join("\n");
+        trace.finish_ok(&text);
+        crate::commands::stash_cli_graph("ax_search", &structured, &text);
     }
     Ok(())
 }

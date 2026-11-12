@@ -38,6 +38,8 @@ saved(call) = max( counterfactual_tokens - response_tokens, 0 )
 
 Policy tools (`ax_preflight`, `ax_guard`) are logged but excluded from savings totals — they are not Read substitutes.
 
+The same log records CLI commands that have an MCP twin. `ax explore`, `ax query`, `ax node`, `ax context`, `ax callers`, `ax callees`, `ax impact`, `ax path`, and `ax affected` write one row before the process exits (`transport = cli`). Savings use the same graph-tool allowlist, so `ax explore` can save tokens and `ax preflight` is stored but not counted. Commands with no twin (`ax install`, `ax web`, `ax daemon`) write nothing. The Savings page **CLI share** stat is that slice. Hero totals include both transports.
+
 ### Lean responses by default
 
 Beyond replacing file reads, ax keeps its **own** responses lean so the returned context is small to begin with:

@@ -82,3 +82,8 @@ pub fn check_unsafe_root(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+pub(crate) fn stash_cli_graph(tool: &str, value: &impl serde::Serialize, text: &str) {
+    let structured = serde_json::to_value(value).unwrap_or_else(|_| serde_json::json!({}));
+    ax_usage::stash_cli_result(tool, &structured, text);
+}

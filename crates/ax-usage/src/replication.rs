@@ -144,12 +144,25 @@ async fn export_with(
         .map_err(err)?;
     let mut tx = conn.begin().await.map_err(err)?;
     for table in TABLES {
-        let into = names[table]
+        let remote: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT name FROM native.pragma_table_info('{table}')"
+        ))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(err)?;
+        let shared: Vec<&String> = names[table]
+            .iter()
+            .filter(|column| remote.iter().any(|name| name == *column))
+            .collect();
+        if shared.is_empty() {
+            return Err(format!("History table {table} shares no columns"));
+        }
+        let into = shared
             .iter()
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(",");
-        let select = names[table]
+        let select = shared
             .iter()
             .map(|c| portable(table, c))
             .collect::<Vec<_>>()
@@ -224,14 +237,16 @@ async fn verify_with(path: &Path, expected_rows: u64, expected: &SqlitePool) -> 
                 .fetch_optional(&incoming)
                 .await
                 .map_err(err)?;
-        if !kind.is_some_and(|(kind, page)| kind == "table" && page > 0)
-            || ax_db::replication::table_contract(&incoming, table)
-                .await
-                .map_err(err)?
-                != ax_db::replication::table_contract(expected, table)
-                    .await
-                    .map_err(err)?
-        {
+        if !kind.is_some_and(|(kind, page)| kind == "table" && page > 0) {
+            return Err(format!("Received history schema mismatch: {table}"));
+        }
+        let incoming_contract = ax_db::replication::table_contract(&incoming, table)
+            .await
+            .map_err(err)?;
+        let expected_contract = ax_db::replication::table_contract(expected, table)
+            .await
+            .map_err(err)?;
+        if !expected_contract.accepts_incoming(&incoming_contract) {
             return Err(format!("Received history schema mismatch: {table}"));
         }
         if columns(&incoming, table)
@@ -366,12 +381,26 @@ async fn project_with(
     let project = crate::context_cache::project_scope(root);
     let quote = |v: &str| v.replace('\'', "''");
     for table in TABLES {
-        let into = names[table]
+        let remote: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT name FROM received_history.pragma_table_info('{table}')"
+        ))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(err)?;
+        let shared: Vec<String> = names[table]
+            .iter()
+            .filter(|column| remote.iter().any(|name| name == *column))
+            .cloned()
+            .collect();
+        if shared.is_empty() {
+            return Err(format!("History table {table} shares no columns"));
+        }
+        let into = shared
             .iter()
             .map(|c| format!("\"{c}\""))
             .collect::<Vec<_>>()
             .join(",");
-        let select=names[table].iter().map(|c| {
+        let select=shared.iter().map(|c| {
             let column=format!("r.\"{c}\"");
             if c=="project" {return format!("'{}'",quote(&project));}
             if c=="replica_origin" {return format!("'{}'",quote(origin));}
@@ -445,11 +474,21 @@ pub async fn retain(
     let mut tx = conn.begin().await.map_err(err)?;
     for source in ["previous", "current"] {
         for table in TABLES {
+            let remote: Vec<String> = sqlx::query_scalar(&format!(
+                "SELECT name FROM {source}.pragma_table_info('{table}')"
+            ))
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(err)?;
             let fields = names[table]
                 .iter()
-                .map(|n| format!("\"{n}\""))
+                .filter(|column| remote.iter().any(|name| name == *column))
+                .map(|column| format!("\"{column}\""))
                 .collect::<Vec<_>>()
                 .join(",");
+            if fields.is_empty() {
+                return Err(format!("History table {table} shares no columns"));
+            }
             sqlx::query(&format!("INSERT OR REPLACE INTO main.\"{table}\" ({fields}) SELECT {fields} FROM {source}.\"{table}\" ORDER BY rowid")).execute(&mut *tx).await.map_err(err)?;
         }
     }

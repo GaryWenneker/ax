@@ -648,7 +648,7 @@ mod tests {
     };
     use serde_json::json;
 
-    static DB_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    use crate::store::USAGE_ENV_LOCK;
 
     fn temp_db(name: &str) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
@@ -658,7 +658,7 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_and_history() {
-        let _guard = DB_TEST_LOCK.lock().await;
+        let _guard = USAGE_ENV_LOCK.lock().await;
         let db = temp_db("hist");
         let _ = std::fs::remove_file(&db);
         std::env::set_var("AX_USAGE_DB", &db);

@@ -47,17 +47,18 @@ pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
         source: "cli_explore",
         project,
     });
-    if json {
+    let printed = if json {
         let _ = maybe_synthesize_explore(&query_text, &raw, meta).await;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap_or_default()
-        );
+        let printed = serde_json::to_string_pretty(&result).unwrap_or_default();
+        println!("{printed}");
         trace.finish_ok(&raw);
+        printed
     } else {
         let out = maybe_synthesize_explore(&query_text, &raw, meta).await;
-        println!("{}", out);
+        println!("{out}");
         trace.finish_ok(&out);
-    }
+        out
+    };
+    crate::commands::stash_cli_graph("ax_explore", &result, &printed);
     Ok(())
 }

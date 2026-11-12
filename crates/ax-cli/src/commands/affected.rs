@@ -47,30 +47,34 @@ pub async fn run(args: AffectedArgs) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
+    let printed = if args.quiet {
+        result.test_files.join("\n")
+    } else if args.json {
+        serde_json::to_string_pretty(&result).unwrap_or_default()
+    } else {
+        let mut lines = vec![format!(
+            "Affected test files ({}):",
+            result.test_files.len()
+        )];
+        for f in &result.test_files {
+            lines.push(format!("  {f}"));
+        }
+        if !result.tests.is_empty() {
+            lines.push(format!("\nTest functions ({}):", result.tests.len()));
+            for t in &result.tests {
+                lines.push(format!("  {} — {}", t.qualified_name, t.runner_hint));
+            }
+        }
+        lines.join("\n")
+    };
     if args.quiet {
         for f in &result.test_files {
             println!("{f}");
         }
-        return Ok(());
-    }
-
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap_or_default()
-        );
     } else {
-        println!("Affected test files ({}):", result.test_files.len());
-        for f in &result.test_files {
-            println!("  {f}");
-        }
-        if !result.tests.is_empty() {
-            println!("\nTest functions ({}):", result.tests.len());
-            for t in &result.tests {
-                println!("  {} — {}", t.qualified_name, t.runner_hint);
-            }
-        }
+        println!("{printed}");
     }
+    crate::commands::stash_cli_graph("ax_affected", &result, &printed);
     Ok(())
 }
 

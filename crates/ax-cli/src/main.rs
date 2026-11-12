@@ -2010,6 +2010,7 @@ async fn async_main() {
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let cmd_name = cli_command_name(&cli.command);
     let should_check_update = should_notify_update(&cli.command);
+    let started = std::time::Instant::now();
     let result = match cli.command {
         None | Some(Commands::Install { .. }) => {
             let (yes, all, targets, mode, path) = match &cli.command {
@@ -3196,6 +3197,16 @@ async fn async_main() {
                 &summary,
             )
             .await;
+            if let Err(err) = ax_usage::flush_cli_call(
+                &name,
+                Some(&root),
+                started.elapsed().as_millis() as i64,
+                result.is_ok(),
+            )
+            .await
+            {
+                ax_usage::log_cli(Some(&root), format!("savings log failed: {err}"));
+            }
         }
     }
 

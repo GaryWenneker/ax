@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS mcp_call_log (
   savings_eligible INTEGER NOT NULL DEFAULT 0,
   counterfactual_exact_files INTEGER,
   created_at INTEGER NOT NULL,
-  replica_origin TEXT
+  replica_origin TEXT,
+  transport TEXT NOT NULL DEFAULT 'mcp'
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_call_log_created_at ON mcp_call_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_mcp_call_log_tool ON mcp_call_log(tool);
@@ -217,6 +218,7 @@ const MIGRATION_ADD_COLUMNS: &[&str] = &[
     "ALTER TABLE model_price_daily ADD COLUMN cache_write_per_mtok REAL",
     "ALTER TABLE mcp_call_log ADD COLUMN replica_origin TEXT",
     "ALTER TABLE agent_usage_event ADD COLUMN replica_origin TEXT",
+    "ALTER TABLE mcp_call_log ADD COLUMN transport TEXT NOT NULL DEFAULT 'mcp'",
 ];
 
 const PRICING_SCHEMA: &str = "
@@ -347,3 +349,8 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
 
     Ok(pool)
 }
+
+/// Tests that point `AX_USAGE_DB` at a temp file must hold this for the whole test.
+/// The variable is process-global, so separate per-module locks still race.
+#[cfg(test)]
+pub(crate) static USAGE_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

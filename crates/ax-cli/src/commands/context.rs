@@ -22,6 +22,8 @@ pub async fn run(task: String) -> Result<(), String> {
         }
     };
     ax_usage::log_cli(Some(&root), "cmd=context ok");
-    println!("{}", ax_context::format_context_as_markdown(&ctx));
+    let text = ax_context::format_context_as_markdown(&ctx);
+    println!("{text}");
+    crate::commands::stash_cli_graph("ax_context", &ctx, &text);
     Ok(())
 }

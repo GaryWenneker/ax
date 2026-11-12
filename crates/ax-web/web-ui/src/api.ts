@@ -816,6 +816,8 @@ export interface SavingsSummary {
   projects_active: number;
   clamp_tokens_absorbed: number;
   graph_calls_with_savings: number;
+  cli_calls: number;
+  cli_tokens_saved_est: number;
   pricing: PricingInfo;
   assumptions: SavingsAssumptions;
   by_tool: ToolSavingsRow[];

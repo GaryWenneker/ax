@@ -18,7 +18,7 @@ import {
   type HourSavingsRow,
   type TokenizeResult,
 } from '../api';
-import { computeInsights, dailyReductionPct, fmtTs, splitTools, toolCategory, type SavingsInsight } from './savingsMetrics';
+import { cliShare, computeInsights, dailyReductionPct, fmtTs, splitTools, toolCategory, type SavingsInsight } from './savingsMetrics';
 import { InfoHover } from '../components/ui/InfoHover';
 import { AbstractTokenRibbon, TokenChips } from '../components/TokenChips';
 import { TokenPathGraph } from '../components/TokenPathGraph';
@@ -899,6 +899,7 @@ export default function SavingsPage() {
     ? Math.round((totalAxCalls / (totalAxCalls + totalReadCalls + totalGrepCalls)) * 100)
     : 0;
   const policyPct = data && data.mcp_calls > 0 ? Math.round((data.policy_calls / data.mcp_calls) * 100) : 0;
+  const cli = data ? cliShare(data) : { calls: 0, tokens: 0 };
   const insights = data ? computeInsights(data) : [];
   const toolGroups = data ? splitTools(data.by_tool) : { graph: [], policy: [], other: [] };
   const filteredTools = data
@@ -921,7 +922,7 @@ export default function SavingsPage() {
         subtitle={
           data
             ? `${data.from} → ${data.to} · ${fmt(data.graph_calls)} graph calls · priced at ${data.pricing?.reference_model ?? 'configured model'}`
-            : 'Measured token savings from ax graph MCP tools vs full file reads.'
+            : 'Measured token savings from ax graph tools, MCP and CLI, vs full file reads.'
         }
         actions={
           <MobileControls className="sv-period-bar" title="Time period" triggerLabel="Period" icon="calendar">
@@ -993,7 +994,13 @@ export default function SavingsPage() {
               value={fmtCompact(data.tokens_saved_est)}
               sub={`${fmt(data.tokens_saved_est)} clamped`}
               tone="ok"
-              tip={<>Sum of per-call savings, each clamped at zero. Unclamped net: <strong>{fmt(data.net_tokens_saved_est)}</strong>.</>}
+              tip={<>Sum of per-call savings, each clamped at zero. Unclamped net: <strong>{fmt(data.net_tokens_saved_est)}</strong>. Includes MCP and CLI.</>}
+            />
+            <HeroStat
+              label="CLI share"
+              value={fmt(cli.calls)}
+              sub={`${fmtCompact(cli.tokens)} tokens saved`}
+              tip={<>CLI commands with an MCP twin, such as explore, query, and node. Combined totals include this share.</>}
             />
             <HeroStat
               label="Cost saved"
@@ -1012,8 +1019,8 @@ export default function SavingsPage() {
             <HeroStat
               label="Graph calls"
               value={fmt(data.graph_calls)}
-              sub={`${graphRatio}% of ${fmt(data.mcp_calls)} MCP`}
-              tip={<>Only graph tools (explore, context, node, …) produce savings. Policy tools are logged but excluded.</>}
+              sub={`${graphRatio}% of ${fmt(data.mcp_calls)} calls`}
+              tip={<>Only graph tools (explore, context, node, …) produce savings. Policy tools are logged but excluded. The call total includes MCP and CLI.</>}
             />
             <HeroStat
               label="Files avoided"

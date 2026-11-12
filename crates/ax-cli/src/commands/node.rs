@@ -40,5 +40,6 @@ pub async fn run(name: Option<String>) -> Result<(), String> {
     let out = serde_json::to_string_pretty(&results).unwrap_or_default();
     println!("{out}");
     trace.finish_ok(&out);
+    crate::commands::stash_cli_graph("ax_node", &results, &out);
     Ok(())
 }

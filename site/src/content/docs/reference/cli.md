@@ -1006,7 +1006,7 @@ ax telemetry off
 
 ### `ax savings`
 
-Estimated context-token savings from MCP graph queries. Stored locally in `~/.ax/usage.db`. Each `ax_explore` / graph MCP call logs response size and a counterfactual file-read estimate.
+Estimated context-token savings from graph queries. Stored locally in `~/.ax/usage.db`. Each graph MCP call, and each CLI command with that MCP twin (`ax explore`, `ax query`, `ax node`, and the rest of the graph commands), logs response size and a counterfactual file-read estimate. Commands with no twin, such as `ax install` and `ax web`, are not logged. The combined total is what `ax savings` and the Savings page report.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

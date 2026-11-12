@@ -127,6 +127,16 @@ export function fmtTs(ms: number): string {
   });
 }
 
+export function cliShare(summary: {
+  cli_calls?: number;
+  cli_tokens_saved_est?: number;
+}): { calls: number; tokens: number } {
+  return {
+    calls: summary.cli_calls ?? 0,
+    tokens: summary.cli_tokens_saved_est ?? 0,
+  };
+}
+
 export function splitTools(tools: ToolSavingsRow[]) {
   const graph: ToolSavingsRow[] = [];
   const policy: ToolSavingsRow[] = [];

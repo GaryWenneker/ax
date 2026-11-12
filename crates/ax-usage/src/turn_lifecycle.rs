@@ -710,7 +710,12 @@ mod tests {
 
     static SEQ: AtomicUsize = AtomicUsize::new(0);
 
-    async fn fixture() -> (PathBuf, SqlitePool) {
+    async fn fixture() -> (
+        PathBuf,
+        SqlitePool,
+        tokio::sync::MutexGuard<'static, ()>,
+    ) {
+        let guard = crate::store::USAGE_ENV_LOCK.lock().await;
         let n = SEQ.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("ax-turn-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -736,12 +741,12 @@ mod tests {
             dir.join("usage.db").display().to_string(),
         );
         let _ = open_pool_at(&dir.join("usage.db")).await.unwrap();
-        (dir, pool)
+        (dir, pool, guard)
     }
 
     #[tokio::test]
     async fn research_turn_without_files_is_saved() {
-        let (root, pool) = fixture().await;
+        let (root, pool, _guard) = fixture().await;
         let begin = turn_begin(&root, "sess-a", "Why does auth fail after refresh?", None)
             .await
             .unwrap();
@@ -790,7 +795,7 @@ mod tests {
 
     #[tokio::test]
     async fn incomplete_turn_is_visible() {
-        let (root, _pool) = fixture().await;
+        let (root, _pool, _guard) = fixture().await;
         let begin = turn_begin(&root, "sess-b", "open question", None)
             .await
             .unwrap();

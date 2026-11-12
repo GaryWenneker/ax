@@ -22,10 +22,9 @@ pub async fn run(symbol: String) -> Result<(), String> {
             .get_callees(&n.node.id, 3)
             .await
             .map_err(|e| e.to_string())?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&callees).unwrap_or_default()
-        );
+        let printed = serde_json::to_string_pretty(&callees).unwrap_or_default();
+        println!("{printed}");
+        crate::commands::stash_cli_graph("ax_callees", &callees, &printed);
     }
     Ok(())
 }
