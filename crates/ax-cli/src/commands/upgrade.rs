@@ -966,7 +966,7 @@ fn upgrade_cmd_batch(
     let previous = previous_install_path(dest);
     format!(
         "@echo off\r\n\
-         setlocal EnableExtensions\r\n\
+         setlocal EnableExtensions EnableDelayedExpansion\r\n\
          set \"PARENT={parent_pid}\"\r\n\
          set \"STAGING={staging}\"\r\n\
          set \"DEST={dest}\"\r\n\
@@ -989,9 +989,12 @@ fn upgrade_cmd_batch(
            move /Y \"%DEST%\" \"%PREVIOUS%\" >nul\r\n\
            if errorlevel 1 (\r\n\
              set /a PARK_TRIES+=1\r\n\
-             if %PARK_TRIES% LSS 5 goto park_retry\r\n\
-             echo error> \"%STATUS%\"\r\n\
-             echo park current install failed>> \"%STATUS%\"\r\n\
+             if !PARK_TRIES! LSS 5 goto park_retry\r\n\
+             call :replace_locked\r\n\
+             if errorlevel 1 (\r\n\
+               echo error> \"%STATUS%\"\r\n\
+               echo park current install failed>> \"%STATUS%\"\r\n\
+             )\r\n\
              goto done\r\n\
            )\r\n\
          )\r\n\
@@ -1004,11 +1007,48 @@ fn upgrade_cmd_batch(
          )\r\n\
          if exist \"%PREVIOUS%\" rmdir /s /q \"%PREVIOUS%\"\r\n\
          if not exist \"%BINDIR%\" mkdir \"%BINDIR%\" >nul\r\n\
-         copy /Y \"%DEST%\\ax.exe\" \"%BINDIR%\\ax.new.exe\" >nul\r\n\
-         move /Y \"%BINDIR%\\ax.new.exe\" \"%BINDIR%\\ax.exe\" >nul 2>&1\r\n\
-         if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" copy /Y \"%DEST%\\ax.exe\" \"%CARGOAX%\" >nul\r\n\
+         call :swap_exe \"%DEST%\\ax.exe\" \"%BINDIR%\\ax.exe\"\r\n\
+         if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" call :swap_exe \"%DEST%\\ax.exe\" \"%CARGOAX%\"\r\n\
          if exist \"%BINDIR%\\ax.exe\" (\"%BINDIR%\\ax.exe\" init --all) else (\"%DEST%\\ax.exe\" init --all)\r\n\
          echo ok> \"%STATUS%\"\r\n\
+         goto done\r\n\
+         :replace_locked\r\n\
+         call :swap_exe \"%STAGING%\\ax.exe\" \"%DEST%\\ax.exe\"\r\n\
+         if errorlevel 1 exit /b 1\r\n\
+         if not exist \"%BINDIR%\" mkdir \"%BINDIR%\" >nul\r\n\
+         call :swap_exe \"%STAGING%\\ax.exe\" \"%BINDIR%\\ax.exe\"\r\n\
+         if errorlevel 1 exit /b 1\r\n\
+         if exist \"%CARGOAX%\" if not \"%AX_KEEP_CARGO_BIN%\"==\"1\" (\r\n\
+           call :swap_exe \"%STAGING%\\ax.exe\" \"%CARGOAX%\"\r\n\
+           if errorlevel 1 exit /b 1\r\n\
+         )\r\n\
+         robocopy \"%STAGING%\" \"%DEST%\" /E /XF ax.exe /NFL /NDL /NJH /NJS /NP >nul\r\n\
+         if errorlevel 8 exit /b 1\r\n\
+         echo ok> \"%STATUS%\"\r\n\
+         exit /b 0\r\n\
+         :swap_exe\r\n\
+         set \"SWAP_SRC=%~1\"\r\n\
+         set \"SWAP_DST=%~2\"\r\n\
+         set \"SWAP_TRIES=0\"\r\n\
+         :swap_retry\r\n\
+         copy /Y \"%SWAP_SRC%\" \"%SWAP_DST%.new\" >nul\r\n\
+         if errorlevel 1 exit /b 1\r\n\
+         if exist \"%SWAP_DST%\" (\r\n\
+           del /F /Q \"%SWAP_DST%.old\" >nul 2>&1\r\n\
+           ren \"%SWAP_DST%\" \"%~nx2.old\"\r\n\
+           if errorlevel 1 (\r\n\
+             set /a SWAP_TRIES+=1\r\n\
+             if !SWAP_TRIES! LSS 8 (\r\n\
+               taskkill /IM ax.exe /F >nul 2>&1\r\n\
+               timeout /t 1 /nobreak >nul\r\n\
+               goto swap_retry\r\n\
+             )\r\n\
+             exit /b 1\r\n\
+           )\r\n\
+         )\r\n\
+         move /Y \"%SWAP_DST%.new\" \"%SWAP_DST%\" >nul\r\n\
+         if errorlevel 1 exit /b 1\r\n\
+         exit /b 0\r\n\
          :done\r\n\
          del \"%~f0\" >nul 2>&1\r\n",
         staging = staging.display(),
@@ -1259,6 +1299,14 @@ mod tests {
         assert!(
             script.contains(":park_retry"),
             "park must retry after taskkill when Access is denied:\n{script}"
+        );
+        assert!(
+            script.contains("EnableDelayedExpansion") && script.contains("!PARK_TRIES!"),
+            "park retry must see the incremented counter:\n{script}"
+        );
+        assert!(
+            script.contains(":swap_exe") && script.contains(":replace_locked"),
+            "a locked ax.exe is renamed aside instead of failing the directory move:\n{script}"
         );
         assert!(script.contains("upgrade-status.txt"), "{script}");
     }

@@ -1,6 +1,6 @@
 {
   "name": "ax-web-ui",
-  "version": "8.4.6",
+  "version": "9.0.1",
   "private": true,
   "type": "module",
   "scripts": {
