@@ -119,7 +119,7 @@ async fn entries(hub: &WebHub) -> Result<Vec<Entry>, String> {
             if let Some(m) = memories.iter().find(|m| m.id == id) {
                 let mut entry =
                     Entry::project(LinkKind::Memory, &id, &stem, &m.title, m.body.clone());
-                entry.turn = m.kind == ax_memory::TURN_KIND;
+                entry.turn = m.kind == ax_memory::TURN_KIND || m.kind == "policy";
                 entry.tags = m.tags.clone();
                 out.push(entry);
             }
@@ -218,7 +218,7 @@ fn node_key(item: &LinkItem) -> String {
 }
 
 /// Resolved links as `(source, target)` indices into `entries`: no self-links, no duplicates,
-/// and nothing to or from a turn memory.
+/// and nothing to or from a turn memory or a policy-history note.
 fn graph_edges(entries: &[Entry]) -> Vec<(usize, usize)> {
     let index = LinkIndex::new(entries.iter().map(|e| e.item.clone()).collect());
     let mut seen = std::collections::HashSet::new();
