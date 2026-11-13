@@ -35,6 +35,7 @@ pub async fn index_policy(
     project_root: &Path,
     force: bool,
 ) -> Result<PolicyIndexResult, AxError> {
+    let _ = crate::history::mirror_project(pool, project_root).await;
     let config = load_policy_config(project_root);
     match config.storage {
         PolicyStorage::Database => {

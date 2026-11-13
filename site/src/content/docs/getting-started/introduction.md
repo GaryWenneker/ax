@@ -12,7 +12,7 @@ Four layers work together in every project:
 | Layer | What it does |
 |---|---|
 | **Knowledge graph** | Tree-sitter parsing → SQLite index of symbols, calls, imports, and routes |
-| **Memory** | Working notes, named long-term memories, and a permanent archive of turns, graph changes, and logs. A cue fetches the exact memory. MCP and the CLI do the same thing. |
+| **Memory** | Five tiers in one local database: this chat's notes, recent turns, named long-term decisions, a permanent archive, and the live code graph. A name fetches the exact memory. Preflight injects at most three current titles and never the archive. MCP and the CLI do the same thing. |
 | **Policy engine** | IDE-agnostic rules and skills in `.agents/`, matched and injected per turn |
 | **Command Center** | Policy editors, memory vault, graph, quality gates, token savings, Logging / Quality (MCP + CLI inbound/outbound/internal), SSE dashboard, draft PRs |
 
@@ -28,7 +28,7 @@ When an agent explores a codebase, most of its budget goes to *discovery* — fi
 
 Policy removes another class of waste: re-explaining team conventions every session. Rules load once per turn via `ax_preflight`.
 
-Memory removes a third: re-deriving past decisions. A name fetches the exact memory. The raw episode stays in a local archive, and recall is bound to the code graph. Preflight still injects only a few current memories. The long guide is [Memory](/guides/memory/).
+Memory removes a third: re-deriving past decisions. Store a durable decision with a trigger name (`ax remember --trigger`, or MCP `triggers`). Fetch that name before exploring (`ax recall --cue`, or MCP `cue`). An unknown name returns nothing. Old turns, commits, graph diffs, and logs stay in the archive and are fetched with `depth=archive`. A turn older than 90 days is demoted, not deleted. A decision spotted in a turn or a commit stays a candidate until you confirm it. The raw episode stays, and an open file raises a long-term memory that names that file or a symbol in it. The long guide is [Memory](/guides/memory/).
 
 ## What's in the graph
 

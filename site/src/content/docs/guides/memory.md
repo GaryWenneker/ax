@@ -1,11 +1,49 @@
 ---
-title: Memory Vault
-description: Durable project memory for agents — decisions, fixes, and conventions with hybrid recall and automatic preflight injection.
+title: Memory
+description: Brain-style memory for ax — working notes, named long-term decisions, and a permanent archive bound to the code graph.
 ---
 
-![Memory vault — browse, search, and inspect stored memories with hybrid recall](/screenshots/cc-memory-vault-dark.png)
-
 ax keeps a brain-style memory in the same local SQLite database as the code graph. A name fetches the exact memory. The raw episode stays. Recall is bound to the live graph. MCP and the CLI call one function, so neither surface is a subset.
+
+## What ax remembers
+
+There are five tiers. Forgetting moves a memory down. It does not erase it.
+
+**Working notes** are this chat only. `ax session` and `ax_session` hold the objective, the facts, and the open questions. They do not enter the vault.
+
+**Recent turns** are the last 90 days of agent work. Preflight can show related turn history. A turn is not a durable decision.
+
+**Long-term memory** is a decision, a bug fix, an architecture note, a convention, or a note. Store it with a trigger name. Preflight injects at most three titles, and that block stops at 6000 characters. If the prompt contains a registered name, that memory comes first. An unknown name returns nothing. Free text is only the fallback, for a paraphrase.
+
+**The archive** is permanent. These rows are never injected:
+
+- a turn older than 90 days, demoted with the same id, embedding, and cues
+- a git commit captured from history
+- a folder document synced into the vault
+- a graph diff written on sync: a symbol added, removed, or signature-changed, plus its file
+- selected activity for memory, policy, ship, and sync. High-volume token traces are skipped
+
+Fetch an archive row by name, by id, or with `depth=archive`. That search uses full text plus a local vector index, then takes one hop over a memory link, a shared file, or a shared symbol cue. A row with none of those stays out.
+
+**The code graph** stays the map. A memory stores file paths and symbol names. It does not copy the graph. When a file is open, a long-term memory scores higher if that file, or a symbol defined in it, is on the memory.
+
+A JSONL file written at demotion is a crash copy. Search uses the database.
+
+A turn or a commit that states a decision becomes a **candidate** long-term memory, linked to the source episode. Preflight skips the candidate until a second source agrees, or you confirm it. The original episode stays in the archive. A near-duplicate (cosine at least 0.80) gets a supersedes link. The old body stays.
+
+Embeddings stay on this machine. The default is a local hash (`hash-v1`). An optional ONNX MiniLM model (`minilm-256`) can replace it. There is no cloud embedding API. Recall never compares two models. After a model change, sync rewrites the old rows in the background.
+
+### How to use it
+
+1. Keep facts for this chat in `ax session` (MCP: `ax_session`). They do not go into the vault.
+2. Store a durable decision, fix, or convention with `ax remember --trigger NAME` (MCP: `triggers`). The name can be repeated.
+3. Before re-deriving it, fetch that name with `ax recall --cue NAME` (MCP: `cue`). If you name the trigger, that fetch comes before explore. Free-text recall is the fallback.
+4. For an old graph change, a log, or a past turn, use `ax recall --depth archive` and `ax history --depth archive` (MCP: `depth=archive` on both). Preflight will not contain those hits. `ax recall --id ID` returns the full body and its cues.
+5. Confirm a candidate with `ax remember --confirm ID` (MCP: `action=confirm` and `id`). The old episode stays.
+
+On the Command Center Memory page, every row shows its tier: working, recent, long-term, or archive. Turn on Archive to search the permanent tier. A hit from that search is also marked recalled from archive.
+
+![Memory vault — browse, search, and inspect stored memories with hybrid recall](/screenshots/cc-memory-vault-dark.png)
 
 ## Tiers
 
@@ -177,30 +215,18 @@ Updating or re-saving a memory resets its confidence to 1.0. This prevents stale
 This is the mechanism that makes memories useful without agent action:
 
 1. Every agent turn starts with `ax_preflight(prompt, files)` (mandatory per ax policy).
-2. Preflight calls `recall_for_prompt(prompt, 3)` — the full hybrid recall pipeline with a limit of 3.
+2. Preflight looks up a registered name first, then runs hybrid recall, and keeps at most 3 injectable memories. Archive rows and candidates are left out.
 3. Matches with score <= 0.0 are filtered out.
 4. Remaining matches are formatted as an `<ax_memories>` XML block (max 6,000 characters).
 5. The block is appended to the inject string alongside policy rules.
 6. Items that a delivered rule, skill, or memory links to with `[[...]]` are added too: one hop, at most five per turn (see [Linking rules, skills and memories](/guides/policy-engine/#linking-rules-skills-and-memories)). A linked memory joins the `<ax_memories>` block.
 
-The agent receives something like:
+The agent receives titles and ids, not the full bodies. A body is a later `ax_recall` / `ax recall --id`. The block looks like this:
 
 ```xml
-<ax_memories note="Durable project memories matched for this prompt
-— treat as established context.">
-### [decision] We use tiktoken o200k_base for token counts
-
-Switched from chars/4 because it was 30% off on real prompts.
-
-Files: crates/ax-usage/src/tokenizer.rs
-
-### [bug_fix] Sonar proxy strips Content-Encoding after decompression
-
-The proxy was sending compressed bodies with Content-Encoding removed,
-causing double-decompression in some clients.
-
-Files: crates/ax-web/src/sonar_proxy.rs
-
+<ax_memories note="Project memories matched for this prompt. Titles only; call ax_recall with the id or title for a body.">
+- mem_8f2a [decision] We use tiktoken o200k_base for token counts
+- mem_11c4 [bug_fix] Sonar proxy strips Content-Encoding after decompression
 </ax_memories>
 ```
 
@@ -210,9 +236,11 @@ The agent treats these as established context — it never has to ask "have we d
 
 Besides automatic injection, agents can explicitly search memories when they need deeper history:
 
-- **MCP tool:** `ax_recall` with a `query` string and optional `limit` (up to 25, default 5) returns ranked IDs and summaries. Pass `id` from a result to retrieve its complete content. Metadata keeps provenance without duplicating bodies; `AX_MCP_FULL=1` preserves full structured matches. See [Smart Output](/guides/smart-output/).
-- **CLI:** `ax recall "query"` for interactive use.
-- **Command Center:** The search box in the Memory page runs the same hybrid search.
+- **By name.** `ax_recall` with `cue`, or `ax recall --cue NAME`. Exact match, every tier, including a demoted turn. An unknown cue is empty.
+- **By id.** `ax_recall` with `id`, or `ax recall --id ID`. Returns that row and its cues.
+- **Free text.** `ax_recall` with `query` and `depth` (`hot` or `archive`), or `ax recall QUERY --depth hot|archive`. Hot skips the archive. Archive is only the archive, then one hop. Default depth is hot. `limit` defaults to 5.
+- **History.** `ax_history` and `ax history --depth archive` list old turns, graph changes, and selected logs.
+- **Command Center.** The Memory search box runs the same hot search. The Archive checkbox switches it to archive depth.
 
 Use explicit recall when you want to check "have we solved this before?" with more results than preflight delivers.
 
@@ -224,7 +252,7 @@ When a new memory is stored (via any path), ax runs `find_similar` with a cosine
 - **CLI:** Prints "Similar existing memories (possible duplicate/contradiction)" with similarity percentages.
 - **Command Center:** Shows a toast warning with the count of similar memories.
 
-This prevents the vault from accumulating contradictory knowledge — when a decision changes, the agent can delete or update the old memory instead of creating a conflicting one.
+A near-duplicate is not deleted. Consolidation links it with `supersedes` and leaves the old body in the archive. Confirm the new candidate, or update the long-term row, when the decision has actually changed.
 
 ## The embedding model
 
@@ -242,8 +270,11 @@ Everything is stored locally in `.ax/ax.db` (SQLite):
 
 | Table | Purpose |
 |---|---|
-| `memories` | Main table: id, kind, title, body, tags (JSON), files (JSON), confidence, source, timestamps, embedding (BLOB) |
-| `memories_fts` | FTS5 virtual table indexing id, title, body, tags — auto-synced via triggers |
+| `memories` | id, kind, title, body, tags, files, confidence, source, timestamps, embedding, `tier` (`t0`–`t3`), `embedding_model`, `status` (`active` or `candidate`) |
+| `memories_fts` | FTS5 index of id, title, body, and tags, kept in sync by triggers |
+| `memory_cues` | Normalized cue, memory id, weight, and source (`title`, `tag`, `trigger`, `symbol`, `file`) |
+| `memory_links` | `source` and `supersedes` links between a candidate and the episode it came from |
+| `memory_vec` | sqlite-vec index used only for archive search |
 
 Triggers keep the FTS5 index in sync automatically on INSERT, UPDATE, and DELETE — no manual reindexing needed.
 
@@ -270,7 +301,7 @@ The capture process:
 2. Parses each commit's hash, subject, body, timestamp, and touched files (up to 20 per commit)
 3. Skips trivial subjects: anything under 12 characters, or starting with "wip", "merge", "bump", "typo", "format", or "lint"
 4. Uses `INSERT OR IGNORE` with deterministic IDs (`git-{first 12 chars of hash}`), so re-running is idempotent
-5. Git memories start at confidence 0.8 (slightly lower than manual 1.0)
+5. Git memories start at confidence 0.8 and are stored in the archive. Preflight does not inject them. A commit that states a decision becomes a candidate until you confirm it.
 
 You can also run `ax capture-git` manually or click "Capture from git" in the Command Center to backfill history.
 

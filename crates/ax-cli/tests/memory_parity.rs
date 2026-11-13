@@ -29,12 +29,8 @@ fn run_ax(root: &std::path::Path, args: &[&str]) -> Value {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    serde_json::from_slice(&out.stdout).unwrap_or_else(|error| {
-        panic!(
-            "{error}: {}",
-            String::from_utf8_lossy(&out.stdout)
-        )
-    })
+    serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&out.stdout)))
 }
 
 #[tokio::test]

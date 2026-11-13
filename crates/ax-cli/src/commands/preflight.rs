@@ -55,7 +55,10 @@ pub async fn run(args: PreflightArgs) -> Result<(), String> {
     .await;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?
+        );
     } else {
         println!("{}", ax_mcp::format_tool_result(&result));
     }
@@ -74,11 +77,7 @@ fn read_stdin() -> Result<String, String> {
 ///
 /// Emits CLI-branded inbound/outbound lines so Logging shows the same
 /// directions as MCP without faking the `[ax-mcp]` brand.
-pub async fn invoke_shared_tool(
-    root: &Path,
-    name: &str,
-    args: Value,
-) -> Result<Value, String> {
+pub async fn invoke_shared_tool(root: &Path, name: &str, args: Value) -> Result<Value, String> {
     let trace = ax_usage::ToolTrace::begin(Some(root), name, &args);
     let mut engine = ax_mcp::McpEngine::with_project_root(root.to_path_buf());
     match ax_mcp::call_tool(&mut engine, name, args).await {

@@ -345,17 +345,131 @@ pub fn seed_default_policy(ax_dir: &Path) -> std::io::Result<SeedResult> {
     let policy = shareable_policy_root(ax_dir);
     std::fs::create_dir_all(policy.join("rules"))?;
     std::fs::create_dir_all(policy.join("skills"))?;
+    let history = crate::history::project_history_path(project);
+    record_template_catalog(&history, &policy, ax_dir)?;
     let mut result = SeedResult::default();
     for t in TEMPLATES {
         let dest = policy_path(&policy, t.rel);
+        let kind = kind_for_rel(t.rel);
         if dest.exists() {
             result.skipped.push(t.rel.to_string());
             continue;
         }
+        if crate::history::leave_absent(&history, kind, t.rel, false)? {
+            result.skipped.push(t.rel.to_string());
+            continue;
+        }
         write_template(&policy, t.rel)?;
+        crate::history::note_written(&history, kind, t.rel, false)?;
         result.created.push(t.rel.to_string());
     }
     Ok(result)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RestoredItem {
+    pub ok: bool,
+    pub id: String,
+    pub kind: String,
+    pub action: String,
+    pub path: String,
+}
+
+/// Write one removed bundled rule or skill back and record `restored`.
+pub fn restore_removed_item(project_root: &Path, id: &str) -> std::io::Result<RestoredItem> {
+    let ax_dir = project_root.join(".ax");
+    let policy = shareable_policy_root(&ax_dir);
+    let matches: Vec<&Template> = TEMPLATES
+        .iter()
+        .filter(|template| template.rel == id || template_stem(template.rel) == id)
+        .collect();
+    if matches.len() > 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("ambiguous policy id '{id}'"),
+        ));
+    }
+    if let Some(template) = matches.first() {
+        std::fs::create_dir_all(policy.join("rules"))?;
+        std::fs::create_dir_all(policy.join("skills"))?;
+        write_template(&policy, template.rel)?;
+        let kind = kind_for_rel(template.rel);
+        let dest = policy_path(&policy, template.rel);
+        crate::history::note_restored(
+            &crate::history::project_history_path(project_root),
+            kind,
+            template.rel,
+        )?;
+        return Ok(RestoredItem {
+            ok: true,
+            id: template.rel.to_string(),
+            kind: kind.to_string(),
+            action: "restored".into(),
+            path: dest.display().to_string(),
+        });
+    }
+    if let Some(home) = ax_utils::paths::home_dir() {
+        let rules = home.join(".ax").join("global_policy").join("rules");
+        if let Some(template) = GLOBAL_RULE_TEMPLATES
+            .iter()
+            .find(|template| template.rel == id || global_rule_id(template.rel) == id)
+        {
+            let rule_id = global_rule_id(template.rel);
+            std::fs::create_dir_all(&rules)?;
+            let dest = rules.join(format!("{rule_id}.mdc"));
+            std::fs::write(&dest, template.body.as_bytes())?;
+            crate::history::note_restored(
+                &crate::history::global_history_path(&home.join(".ax").join("global_policy")),
+                "global-rule",
+                rule_id,
+            )?;
+            return Ok(RestoredItem {
+                ok: true,
+                id: rule_id.to_string(),
+                kind: "global-rule".into(),
+                action: "restored".into(),
+                path: dest.display().to_string(),
+            });
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("no bundled rule or skill matches '{id}'"),
+    ))
+}
+
+fn template_stem(rel: &str) -> &str {
+    Path::new(rel)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(rel)
+}
+
+fn kind_for_rel(rel: &str) -> &'static str {
+    if rel.starts_with("skills/") {
+        "skill"
+    } else {
+        "rule"
+    }
+}
+
+fn record_template_catalog(history: &Path, policy: &Path, ax_dir: &Path) -> std::io::Result<()> {
+    let mut rules = Vec::new();
+    let mut skills = Vec::new();
+    for t in TEMPLATES {
+        let item = (t.rel.to_string(), policy_path(policy, t.rel).exists());
+        if kind_for_rel(t.rel) == "skill" {
+            skills.push(item);
+        } else {
+            rules.push(item);
+        }
+    }
+    let established = ax_dir.join("ax.db").exists()
+        || rules.iter().any(|(_, exists)| *exists)
+        || skills.iter().any(|(_, exists)| *exists);
+    crate::history::establish(history, "rule", &rules, established)?;
+    crate::history::establish(history, "skill", &skills, established)?;
+    Ok(())
 }
 
 fn write_skill_bundle(
@@ -442,7 +556,12 @@ fn seed_skill_bundles(
     label_prefix: &str,
     force: bool,
 ) -> std::io::Result<SeedResult> {
-    seed_bundles(skills_root, label_prefix, GLOBAL_SKILL_BUNDLES.iter(), force)
+    seed_bundles(
+        skills_root,
+        label_prefix,
+        GLOBAL_SKILL_BUNDLES.iter(),
+        force,
+    )
 }
 
 fn seed_bundles<'a>(
@@ -451,6 +570,23 @@ fn seed_bundles<'a>(
     bundles: impl Iterator<Item = &'a SkillBundle>,
     force: bool,
 ) -> std::io::Result<SeedResult> {
+    let bundles: Vec<&SkillBundle> = bundles.collect();
+    let history = history_for_skills(skills_root);
+    let kind = skill_history_kind(skills_root);
+    let items: Vec<(String, bool)> = bundles
+        .iter()
+        .map(|bundle| {
+            (
+                bundle.name.to_string(),
+                skills_root
+                    .join(bundle.name)
+                    .join(crate::paths::SKILL_FILENAME)
+                    .exists(),
+            )
+        })
+        .collect();
+    let established = items.iter().any(|(_, exists)| *exists);
+    crate::history::establish(&history, kind, &items, established)?;
     std::fs::create_dir_all(skills_root)?;
     let mut result = SeedResult::default();
     for bundle in bundles {
@@ -459,13 +595,61 @@ fn seed_bundles<'a>(
             bundle.name,
             crate::paths::SKILL_FILENAME
         );
+        let skill_md = skills_root
+            .join(bundle.name)
+            .join(crate::paths::SKILL_FILENAME);
+        if !skill_md.exists() && crate::history::leave_absent(&history, kind, bundle.name, force)? {
+            result.skipped.push(label);
+            continue;
+        }
         if write_skill_bundle(skills_root, bundle, force)? {
+            crate::history::note_written(&history, kind, bundle.name, force)?;
             result.created.push(label);
         } else {
             result.skipped.push(label);
         }
     }
     Ok(result)
+}
+
+fn skill_history_kind(skills_root: &Path) -> &'static str {
+    if let Some(home) = ax_utils::paths::home_dir() {
+        if skills_root.starts_with(home.join(".cursor")) {
+            return "cursor-skill";
+        }
+        if skills_root.starts_with(home.join(".ax")) {
+            return "global-skill";
+        }
+    }
+    "skill"
+}
+
+fn history_for_skills(skills_root: &Path) -> PathBuf {
+    if let Some(home) = ax_utils::paths::home_dir() {
+        if skills_root.starts_with(home.join(".cursor"))
+            || skills_root.starts_with(home.join(".ax").join("global_policy"))
+        {
+            return crate::history::global_history_path(&home.join(".ax").join("global_policy"));
+        }
+    }
+    if let Some(parent) = skills_root.parent() {
+        let name = parent.file_name().and_then(|s| s.to_str());
+        if name == Some(".agents") || name == Some(".cursor") {
+            if let Some(project) = parent.parent() {
+                return crate::history::project_history_path(project);
+            }
+        }
+    }
+    skills_root.join(".history.jsonl")
+}
+
+fn history_for_rules(rules_root: &Path) -> PathBuf {
+    if let Some(parent) = rules_root.parent() {
+        if parent.file_name().and_then(|s| s.to_str()) == Some("global_policy") {
+            return crate::history::global_history_path(parent);
+        }
+    }
+    rules_root.join(".history.jsonl")
 }
 
 /// Write machine-wide bundled skills to a Cursor skills directory.
@@ -489,16 +673,29 @@ fn seed_project_bundles(skills_root: &Path) -> std::io::Result<SeedResult> {
 }
 
 fn seed_global_policy_rules(rules_root: &Path, force: bool) -> std::io::Result<SeedResult> {
+    let history = history_for_rules(rules_root);
+    let items: Vec<(String, bool)> = GLOBAL_RULE_TEMPLATES
+        .iter()
+        .map(|t| {
+            let id = global_rule_id(t.rel);
+            (
+                id.to_string(),
+                rules_root.join(format!("{id}.mdc")).exists(),
+            )
+        })
+        .collect();
+    let established = items.iter().any(|(_, exists)| *exists);
+    crate::history::establish(&history, "global-rule", &items, established)?;
     std::fs::create_dir_all(rules_root)?;
     let mut result = SeedResult::default();
     for t in GLOBAL_RULE_TEMPLATES {
-        let id = t
-            .rel
-            .strip_prefix("rules/")
-            .and_then(|s| s.strip_suffix(".mdc"))
-            .unwrap_or("rule");
+        let id = global_rule_id(t.rel);
         let dest = rules_root.join(format!("{id}.mdc"));
         let label = format!("~/.ax/global_policy/rules/{id}.mdc");
+        if !dest.exists() && crate::history::leave_absent(&history, "global-rule", id, force)? {
+            result.skipped.push(label);
+            continue;
+        }
         if dest.exists() {
             if !force {
                 result.skipped.push(label);
@@ -511,9 +708,16 @@ fn seed_global_policy_rules(rules_root: &Path, force: bool) -> std::io::Result<S
             }
         }
         std::fs::write(&dest, t.body.as_bytes())?;
+        crate::history::note_written(&history, "global-rule", id, force)?;
         result.created.push(label);
     }
     Ok(result)
+}
+
+fn global_rule_id(rel: &str) -> &str {
+    rel.strip_prefix("rules/")
+        .and_then(|s| s.strip_suffix(".mdc"))
+        .unwrap_or("rule")
 }
 
 fn global_policy_root() -> Option<PathBuf> {
@@ -533,11 +737,7 @@ pub fn seed_global_policy_with_force(force: bool) -> std::io::Result<SeedResult>
     };
     std::fs::create_dir_all(&global)?;
     let mut result = seed_global_policy_rules(&global.join("rules"), force)?;
-    let skills = seed_skill_bundles(
-        &global.join("skills"),
-        "~/.ax/global_policy/skills",
-        force,
-    )?;
+    let skills = seed_skill_bundles(&global.join("skills"), "~/.ax/global_policy/skills", force)?;
     result.created.extend(skills.created);
     result.skipped.extend(skills.skipped);
     Ok(result)
@@ -630,11 +830,22 @@ pub fn verify_instructions(ax_dir: &Path) -> Vec<InstructionCheck> {
                 };
             }
             if !path.exists() {
+                let project = ax_dir.parent().unwrap_or(ax_dir);
+                let removed = crate::history::is_intentional_absence(
+                    &crate::history::project_history_path(project),
+                    kind_for_rel(rel),
+                    rel,
+                )
+                .unwrap_or(false);
                 return InstructionCheck {
                     label: (*label).to_string(),
                     path,
-                    ok: false,
-                    issues: vec!["missing".into()],
+                    ok: removed,
+                    issues: if removed {
+                        vec![]
+                    } else {
+                        vec!["missing".into()]
+                    },
                     optional: *optional,
                 };
             }
@@ -663,12 +874,30 @@ pub fn sync_instructions_with_force(
     fix: bool,
     force: bool,
 ) -> std::io::Result<SyncResult> {
+    let project = ax_dir.parent().unwrap_or(ax_dir);
     let policy = shareable_policy_root(ax_dir);
     std::fs::create_dir_all(policy.join("rules"))?;
     std::fs::create_dir_all(policy.join("skills"))?;
+    record_template_catalog(
+        &crate::history::project_history_path(project),
+        &policy,
+        ax_dir,
+    )?;
+    let history = crate::history::project_history_path(project);
     let mut result = SyncResult::default();
     for (label, rel, optional) in MANAGED {
         let path = policy_path(&policy, rel);
+        let kind = kind_for_rel(rel);
+        if !path.exists() && crate::history::leave_absent(&history, kind, rel, force)? {
+            result.checks.push(InstructionCheck {
+                label: (*label).to_string(),
+                path,
+                ok: true,
+                issues: vec![],
+                optional: *optional,
+            });
+            continue;
+        }
         if *optional && !path.exists() {
             continue;
         }
@@ -693,10 +922,11 @@ pub fn sync_instructions_with_force(
             continue;
         }
         let missing = !path.exists() || issues.iter().any(|i| i == "missing");
-        // `fix` alone restores missing files. Drifted content needs `force`.
+        // `fix` restores a file this history has never removed. Drift needs `force`.
         let may_write = fix && (force || missing);
         if may_write {
             write_template(&policy, rel)?;
+            crate::history::note_written(&history, kind, rel, force)?;
             result.fixed.push((*rel).to_string());
             result.checks.push(InstructionCheck {
                 label: (*label).to_string(),
@@ -851,15 +1081,71 @@ mod tests {
     }
 
     #[test]
-    fn sync_fix_restores_missing_startup() {
+    fn sync_fix_keeps_a_deleted_startup_skill() {
         let dir = tempdir().unwrap();
         let ax = dir.path().join(".ax");
         seed_default_policy(&ax).unwrap();
         let startup = dir.path().join(".agents/skills/startup/SKILL.md");
         std::fs::remove_file(&startup).unwrap();
         let synced = sync_instructions(&ax, true).unwrap();
-        assert!(!synced.fixed.is_empty());
+        assert!(
+            synced.fixed.is_empty(),
+            "a deleted skill must not be written back: {:?}",
+            synced.fixed
+        );
+        assert!(!startup.exists());
         assert_eq!(synced.fail_count, 0);
+        let forced = sync_instructions_with_force(&ax, true, true).unwrap();
+        assert!(
+            forced.fixed.iter().any(|rel| rel.contains("startup")),
+            "{:?}",
+            forced.fixed
+        );
+        assert!(startup.exists());
+    }
+
+    #[test]
+    fn an_existing_database_does_not_receive_missing_templates() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        std::fs::write(dir.path().join(".ax").join("ax.db"), b"already").unwrap();
+        let ax = dir.path().join(".ax");
+        let seeded = seed_default_policy(&ax).unwrap();
+        assert!(
+            seeded.created.is_empty(),
+            "existing project must keep deleted templates absent: {:?}",
+            seeded.created
+        );
+        assert!(!dir.path().join(".agents/skills/startup/SKILL.md").exists());
+    }
+
+    #[test]
+    fn a_global_rule_that_is_already_gone_stays_gone() {
+        let dir = tempdir().unwrap();
+        let rules = dir.path().join("global_policy").join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(rules.join("old-coder-mandatory.mdc"), "kept\n").unwrap();
+        let seeded = seed_global_policy_rules(&rules, false).unwrap();
+        assert!(
+            !rules.join("frontend-production-build.mdc").exists(),
+            "the absent sibling must stay absent: {seeded:?}"
+        );
+        assert!(rules.join("old-coder-mandatory.mdc").exists());
+    }
+
+    #[test]
+    fn restore_item_writes_one_deleted_rule_back() {
+        let dir = tempdir().unwrap();
+        let ax = dir.path().join(".ax");
+        seed_default_policy(&ax).unwrap();
+        let rule = dir.path().join(".agents/rules/utf8-no-bom.mdc");
+        std::fs::remove_file(&rule).unwrap();
+        sync_instructions(&ax, true).unwrap();
+        assert!(!rule.exists());
+        let restored = restore_removed_item(dir.path(), "utf8-no-bom").unwrap();
+        assert!(restored.ok);
+        assert_eq!(restored.action, "restored");
+        assert!(rule.exists());
     }
 
     #[test]
@@ -1133,11 +1419,17 @@ mod tests {
         std::fs::write(&dest, custom).unwrap();
         let result = seed_global_policy_rules(&rules, false).unwrap();
         assert!(
-            result.skipped.iter().any(|s| s.contains("old-coder-mandatory")),
+            result
+                .skipped
+                .iter()
+                .any(|s| s.contains("old-coder-mandatory")),
             "custom rule must be skipped, got {result:?}"
         );
         assert!(
-            !result.created.iter().any(|s| s.contains("old-coder-mandatory")),
+            !result
+                .created
+                .iter()
+                .any(|s| s.contains("old-coder-mandatory")),
             "custom rule must not be rewritten, got {result:?}"
         );
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), custom);

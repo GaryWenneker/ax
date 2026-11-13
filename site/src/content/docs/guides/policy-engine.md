@@ -12,7 +12,9 @@ Policy files live under `.agents/rules/` and `.agents/skills/`, are indexed into
 ```bash
 ax init                    # creates .agents/ and seeds default preflight rules/skills
 ax policy index            # index policy files into ax.db
-ax policy sync [--fix] [--force]  # verify; --fix restores missing only; --force also overwrites drifted templates
+ax policy sync [--fix] [--force]  # verify; --fix creates an unseen template; --force writes a removed or drifted one back
+ax policy history                 # removal record
+ax policy restore-item <id>       # put one removed rule or skill back
 ax policy match "deploy"   # test which rules/skills match
 ax policy capture "always use mobile-first CSS"   # propose rule from directive language
 ax policy storage status   # show effective files vs database mode
@@ -728,7 +730,7 @@ Do not duplicate team rules in `.cursor/rules/` — delivery is MCP-only.
 
 ## Preserve customized rules and skills
 
-Install, `ax init`, and `ax policy sync --fix` **create missing** rules/skills only. Hand-edited files in `.agents/`, `~/.ax/global_policy/`, and company skills in `global.db` are left alone. Use `ax policy sync --fix --force` only when you intentionally want embedded templates to replace local edits.
+Install, `ax init`, and `ax policy sync --fix` create a bundled rule or skill only when this project has never had it. A file you deleted stays deleted. The removal is kept in `.ax/policy-history.jsonl` (and `policy_history` in the project database) and, for machine-wide policy, in `~/.ax/global_policy/history.jsonl`. Hand-edited files that are still on disk are left alone. `ax policy history` lists those events. `ax policy restore-item <id>` or `ax policy sync --fix --force` writes one item back and records `restored`. A template added in a later ax version, which the history has never seen, is still created once. The graph, memories, and other rows in `.ax/ax.db` are not replaced by an upgrade.
 
 ## Related
 

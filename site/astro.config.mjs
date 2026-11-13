@@ -177,7 +177,7 @@ export default defineConfig({
 						{ label: 'Desktop Client', slug: 'guides/desktop-client' },
 						{ label: 'Share Command Center', slug: 'guides/share' },
 						{ label: 'MCP Logging & Quality', slug: 'guides/mcp-quality' },
-						{ label: 'Memory Vault', slug: 'guides/memory' },
+						{ label: 'Memory', slug: 'guides/memory' },
 						{ label: 'Obsidian Vault', slug: 'guides/obsidian-vault' },
 						{ label: 'Token Savings', slug: 'guides/token-savings' },
 						{ label: 'Smart Output', slug: 'guides/smart-output' },

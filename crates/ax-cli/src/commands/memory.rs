@@ -293,7 +293,9 @@ pub async fn run_recall(
 
     if json {
         let cues = match request.id.as_deref().filter(|id| !id.is_empty()) {
-            Some(id) => ax_memory::cues_for(ax.db_pool(), id).await.unwrap_or_default(),
+            Some(id) => ax_memory::cues_for(ax.db_pool(), id)
+                .await
+                .unwrap_or_default(),
             None => Vec::new(),
         };
         println!(

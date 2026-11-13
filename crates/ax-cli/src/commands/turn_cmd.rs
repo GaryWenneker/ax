@@ -77,7 +77,10 @@ pub async fn run(args: TurnArgs) -> Result<(), String> {
                     "state": "open",
                     "preflight": preflight,
                 }),
-                &format!("turn={} session={} state=open", snap.turn_id, snap.session_id),
+                &format!(
+                    "turn={} session={} state=open",
+                    snap.turn_id, snap.session_id
+                ),
             )?;
         }
         TurnAction::Event => {

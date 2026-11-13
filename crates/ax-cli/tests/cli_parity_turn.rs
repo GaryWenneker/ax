@@ -49,7 +49,10 @@ fn research_turn_without_file_changes_is_persisted() {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
     // Minimal git repo so snapshots work.
-    let _ = Command::new("git").args(["init"]).current_dir(root).status();
+    let _ = Command::new("git")
+        .args(["init"])
+        .current_dir(root)
+        .status();
     let _ = Command::new("git")
         .args(["config", "user.email", "ax@test"])
         .current_dir(root)
@@ -111,7 +114,9 @@ fn research_turn_without_file_changes_is_persisted() {
             &turn,
             "--input-stdin",
         ],
-        Some(r#"{"kind":"finding","body":"Cookie SameSite mismatch on soft reload","decisions":["Use Lax"]}"#),
+        Some(
+            r#"{"kind":"finding","body":"Cookie SameSite mismatch on soft reload","decisions":["Use Lax"]}"#,
+        ),
     );
     assert_eq!(code, 0, "turn event: {err}");
 
@@ -127,7 +132,9 @@ fn research_turn_without_file_changes_is_persisted() {
             "--outcome-stdin",
             "--json",
         ],
-        Some(r#"{"outcome":"Root cause confirmed without code changes.","decisions":["Use Lax SameSite"]}"#),
+        Some(
+            r#"{"outcome":"Root cause confirmed without code changes.","decisions":["Use Lax SameSite"]}"#,
+        ),
     );
     assert_eq!(code, 0, "turn finish: {err}\n{out}");
     let receipt: serde_json::Value = serde_json::from_str(&out).expect(&out);

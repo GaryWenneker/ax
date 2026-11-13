@@ -1071,7 +1071,8 @@ mod tests {
             let project_id = ax_global_db::policy::ensure_project(&pool, &machine)
                 .await
                 .unwrap();
-            let mut payload: serde_json::Value = serde_json::from_str(&skill_rows(&db, "review-loop").await[0].1).unwrap();
+            let mut payload: serde_json::Value =
+                serde_json::from_str(&skill_rows(&db, "review-loop").await[0].1).unwrap();
             payload["body"] = serde_json::json!("CUSTOM REVIEW LOOP BODY");
             ax_global_db::policy::upsert_policy_item(
                 &pool,

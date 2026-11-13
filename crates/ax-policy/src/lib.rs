@@ -8,6 +8,7 @@ pub mod format;
 pub mod global_level;
 pub mod guard;
 pub mod hierarchy;
+pub mod history;
 pub mod ide_loaded;
 pub mod ide_seed;
 pub mod index;
@@ -57,7 +58,8 @@ pub use hierarchy::{
     policy_layer_dirs, policy_layers, PolicyLayer,
 };
 pub use ide_seed::{
-    seed_ide_agent_workflow, seed_ide_agent_workflow_with_force, sync_ide_bootstrap, sync_ide_bootstrap_with_force, verify_ide_bootstrap, IdeSeedResult,
+    seed_ide_agent_workflow, seed_ide_agent_workflow_with_force, sync_ide_bootstrap,
+    sync_ide_bootstrap_with_force, verify_ide_bootstrap, IdeSeedResult,
     CONVERSATION_CACHE_SENTENCE, SESSION_ID_SENTENCE, WORKING_CONTEXT_SENTENCE,
 };
 pub use index::{
@@ -98,10 +100,11 @@ pub use revisions::{
     SOURCE_RESTORE, SOURCE_SAVE,
 };
 pub use seed::{
-    check_cursor_rule_duplicates, global_db_seed_skills, seed_cursor_skills, seed_default_policy,
-    seed_global_cursor_skills, seed_global_policy, seed_global_policy_with_force, seed_global_policy_skills,
-    seed_project_cursor_skills, sync_instructions, sync_instructions_with_force, verify_content, verify_instructions,
-    InstructionCheck, SeedResult, SyncResult,
+    check_cursor_rule_duplicates, global_db_seed_skills, restore_removed_item, seed_cursor_skills,
+    seed_default_policy, seed_global_cursor_skills, seed_global_policy, seed_global_policy_skills,
+    seed_global_policy_with_force, seed_project_cursor_skills, sync_instructions,
+    sync_instructions_with_force, verify_content, verify_instructions, InstructionCheck,
+    RestoredItem, SeedResult, SyncResult,
 };
 pub use skill_groups::{
     catalog as skill_group_catalog, catalog_json as skill_groups_json, resolve_skill_group,

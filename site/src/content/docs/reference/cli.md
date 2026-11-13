@@ -1461,6 +1461,8 @@ Verify managed policy instruction files (`.agents/skills/startup/SKILL.md`, …)
 ax policy sync
 ax policy sync --fix
 ax policy sync --fix --force
+ax policy history
+ax policy restore-item <id>
 ```
 
 After `--fix` restores `.ax/policy/` files in database mode, run `ax policy import` so `ax.db` picks up the updated skill bodies.

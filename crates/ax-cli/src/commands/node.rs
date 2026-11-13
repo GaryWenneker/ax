@@ -7,11 +7,7 @@ use crate::ui::SpinnerGuard;
 pub async fn run(name: Option<String>) -> Result<(), String> {
     let root = resolve_path(None);
     let label = name.clone().unwrap_or_else(|| "symbol".into());
-    let trace = ax_usage::ToolTrace::begin(
-        Some(&root),
-        "ax_node",
-        &json!({ "symbol": label }),
-    );
+    let trace = ax_usage::ToolTrace::begin(Some(&root), "ax_node", &json!({ "symbol": label }));
     let _spinner = SpinnerGuard::new(format!("Looking up \"{}\"...", label), false);
     let ax = match ax_core::Ax::open(&root).await {
         Ok(ax) => ax,

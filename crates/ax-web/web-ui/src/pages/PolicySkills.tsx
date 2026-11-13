@@ -62,6 +62,7 @@ import { menuTargets, nextRowSelection, toggleVisibleSelection } from '../lib/po
 import SettingsSelect from '../components/ui/SettingsSelect';
 import {
   POLICY_BLADE_DISMISS_MS,
+  pointerKeepsPolicyBlade,
   policyDetailOpen,
   policyWorkspaceHostClass,
   selectionHidden,
@@ -266,10 +267,7 @@ export default function PolicySkillsPage({ selectedName: selectedNameFromRoute, 
       if (!selectedName) return;
       const t = e.target as Node | null;
       if (!t) return;
-      if (editorRef.current?.contains(t)) return;
-      if ((t as HTMLElement).closest?.('.policy-context-menu')) return;
-      if ((t as HTMLElement).closest?.('.policy-calm-row')) return;
-      if ((t as HTMLElement).closest?.('.policy-list-resize-handle')) return;
+      if (pointerKeepsPolicyBlade(t, editorRef.current)) return;
       requestCloseBlade();
     }
     document.addEventListener('pointerdown', onPtr);

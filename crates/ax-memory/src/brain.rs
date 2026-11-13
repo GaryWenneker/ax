@@ -23,6 +23,7 @@ pub fn tier_for_kind(kind: &str) -> &'static str {
     } else if kind == "graph_diff"
         || kind == "activity"
         || kind == "git"
+        || kind == "policy"
         || kind == crate::folder_sync::DOC_KIND
     {
         TIER_ARCHIVE

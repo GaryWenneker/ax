@@ -9,11 +9,8 @@ use crate::ui::SpinnerGuard;
 pub async fn run(query: Vec<String>, json: bool) -> Result<(), String> {
     let query_text = query.join(" ");
     let root = resolve_path(None);
-    let trace = ax_usage::ToolTrace::begin(
-        Some(&root),
-        "ax_explore",
-        &json!({ "query": query_text }),
-    );
+    let trace =
+        ax_usage::ToolTrace::begin(Some(&root), "ax_explore", &json!({ "query": query_text }));
     ax_usage::log_cli(
         Some(&root),
         format!("cmd=explore start q_len={}", query_text.chars().count()),

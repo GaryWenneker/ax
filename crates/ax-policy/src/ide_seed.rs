@@ -251,7 +251,12 @@ fn seed_mcp_callmcp_shape_rule(
         return Ok(());
     }
 
+    if ide_removed(project_root, &rel, force)? {
+        result.record_skipped(rel);
+        return Ok(());
+    }
     std::fs::write(&target, MCP_CALLMCP_SHAPE_BODY.as_bytes())?;
+    note_ide(project_root, &rel, force)?;
     result.record_created(rel);
     Ok(())
 }
@@ -290,7 +295,12 @@ fn seed_cursor_rule(
         return Ok(());
     }
 
+    if ide_removed(project_root, &rel, force)? {
+        result.record_skipped(rel);
+        return Ok(());
+    }
     std::fs::write(&target, CURSOR_RULE_BODY.as_bytes())?;
+    note_ide(project_root, &rel, force)?;
     result.record_created(rel);
     Ok(())
 }
@@ -352,7 +362,12 @@ fn seed_continue_rule(
         return Ok(());
     }
 
+    if ide_removed(project_root, &rel, force)? {
+        result.record_skipped(rel);
+        return Ok(());
+    }
     std::fs::write(&target, CONTINUE_RULE_BODY.as_bytes())?;
+    note_ide(project_root, &rel, force)?;
     result.record_created(rel);
     Ok(())
 }
@@ -381,12 +396,18 @@ fn seed_continue_mcp(
         result.record_updated(rel);
         return Ok(());
     }
+    if ide_removed(project_root, &rel, force)? {
+        result.record_skipped(rel);
+        return Ok(());
+    }
     std::fs::write(&target, CONTINUE_MCP_BODY.as_bytes())?;
+    note_ide(project_root, &rel, force)?;
     result.record_created(rel);
     Ok(())
 }
 
 fn write_if_missing_or_stale(
+    project_root: &Path,
     path: &Path,
     body: &str,
     rel: &str,
@@ -409,10 +430,15 @@ fn write_if_missing_or_stale(
         result.record_updated(rel);
         return Ok(());
     }
+    if ide_removed(project_root, rel, force)? {
+        result.record_skipped(rel);
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, body.as_bytes())?;
+    note_ide(project_root, rel, force)?;
     result.record_created(rel);
     Ok(())
 }
@@ -427,65 +453,86 @@ fn seed_claude_bootstrap(
         .join("rules")
         .join(CLAUDE_RULE_FILE);
     let rule_rel = format!(".claude/rules/{CLAUDE_RULE_FILE}");
-    write_if_missing_or_stale(&rule_path, CLAUDE_RULE_BODY, &rule_rel, result, force)?;
-
-    let instructions_path = project_root.join(".claude").join("CLAUDE.md");
-    let instructions_rel = ".claude/CLAUDE.md";
-    let action = replace_or_append_marked_section(
-        &instructions_path,
-        CLAUDE_INSTRUCTIONS_BLOCK,
-        AX_SECTION_START,
-        AX_SECTION_END,
+    write_if_missing_or_stale(
+        project_root,
+        &rule_path,
+        CLAUDE_RULE_BODY,
+        &rule_rel,
+        result,
+        force,
     )?;
-    record_upsert(result, instructions_rel, action);
-    Ok(())
+
+    seed_marked_file(
+        project_root,
+        &project_root.join(".claude").join("CLAUDE.md"),
+        ".claude/CLAUDE.md",
+        CLAUDE_INSTRUCTIONS_BLOCK,
+        result,
+        force,
+    )
 }
 
 fn seed_agents_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
-    let path = project_root.join("AGENTS.md");
-    let action = replace_or_append_marked_section(
-        &path,
+    seed_marked_file(
+        project_root,
+        &project_root.join("AGENTS.md"),
+        "AGENTS.md",
         AGENTS_INSTRUCTIONS_BLOCK,
-        AX_SECTION_START,
-        AX_SECTION_END,
-    )?;
-    record_upsert(result, "AGENTS.md", action);
-    Ok(())
+        result,
+        false,
+    )
 }
 
 fn seed_gemini_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
-    let path = project_root.join("GEMINI.md");
-    let action = replace_or_append_marked_section(
-        &path,
+    seed_marked_file(
+        project_root,
+        &project_root.join("GEMINI.md"),
+        "GEMINI.md",
         GEMINI_INSTRUCTIONS_BLOCK,
-        AX_SECTION_START,
-        AX_SECTION_END,
-    )?;
-    record_upsert(result, "GEMINI.md", action);
-    Ok(())
+        result,
+        false,
+    )
 }
 
 fn seed_copilot_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
-    let path = project_root.join(".github").join("copilot-instructions.md");
-    let action = replace_or_append_marked_section(
-        &path,
+    seed_marked_file(
+        project_root,
+        &project_root.join(".github").join("copilot-instructions.md"),
+        ".github/copilot-instructions.md",
         COPILOT_INSTRUCTIONS_BLOCK,
-        AX_SECTION_START,
-        AX_SECTION_END,
-    )?;
-    record_upsert(result, ".github/copilot-instructions.md", action);
-    Ok(())
+        result,
+        false,
+    )
 }
 
 fn seed_windsurf_bootstrap(project_root: &Path, result: &mut IdeSeedResult) -> std::io::Result<()> {
-    let path = project_root.join(".windsurfrules");
-    let action = replace_or_append_marked_section(
-        &path,
+    seed_marked_file(
+        project_root,
+        &project_root.join(".windsurfrules"),
+        ".windsurfrules",
         WINDSURF_INSTRUCTIONS_BLOCK,
-        AX_SECTION_START,
-        AX_SECTION_END,
-    )?;
-    record_upsert(result, ".windsurfrules", action);
+        result,
+        false,
+    )
+}
+
+fn seed_marked_file(
+    project_root: &Path,
+    path: &Path,
+    rel: &str,
+    body: &str,
+    result: &mut IdeSeedResult,
+    force: bool,
+) -> std::io::Result<()> {
+    if !path.exists() && ide_removed(project_root, rel, force)? {
+        result.record_skipped(rel);
+        return Ok(());
+    }
+    let action = replace_or_append_marked_section(path, body, AX_SECTION_START, AX_SECTION_END)?;
+    if action == UpsertAction::Created {
+        note_ide(project_root, rel, force)?;
+    }
+    record_upsert(result, rel, action);
     Ok(())
 }
 
@@ -513,7 +560,12 @@ fn seed_cline_bootstrap(
     let rel = ".clinerules";
 
     if !path.exists() {
+        if ide_removed(project_root, rel, force)? {
+            result.record_skipped(rel);
+            return Ok(());
+        }
         std::fs::write(&path, format!("{CLINE_RULE_BODY}\n"))?;
+        note_ide(project_root, rel, force)?;
         record_upsert(result, rel, UpsertAction::Created);
         return Ok(());
     }
@@ -544,6 +596,88 @@ fn seed_cline_bootstrap(
     Ok(())
 }
 
+fn prepare_ide_history(project_root: &Path) -> std::io::Result<()> {
+    let items = vec![
+        (
+            format!(".cursor/rules/{CURSOR_RULE_FILE}"),
+            cursor_rule_path(project_root).exists(),
+        ),
+        (
+            format!(".cursor/rules/{MCP_CALLMCP_SHAPE_FILE}"),
+            mcp_callmcp_shape_rule_path(project_root).exists(),
+        ),
+        (
+            format!(".continue/rules/{CONTINUE_RULE_FILE}"),
+            continue_rule_path(project_root).exists(),
+        ),
+        (
+            format!(".continue/mcpServers/{CONTINUE_MCP_FILE}"),
+            continue_mcp_path(project_root).exists(),
+        ),
+        (
+            format!(".claude/rules/{CLAUDE_RULE_FILE}"),
+            project_root
+                .join(".claude")
+                .join("rules")
+                .join(CLAUDE_RULE_FILE)
+                .exists(),
+        ),
+        (
+            ".claude/CLAUDE.md".to_string(),
+            project_root.join(".claude").join("CLAUDE.md").exists(),
+        ),
+        (
+            "AGENTS.md".to_string(),
+            project_root.join("AGENTS.md").exists(),
+        ),
+        (
+            "GEMINI.md".to_string(),
+            project_root.join("GEMINI.md").exists(),
+        ),
+        (
+            ".github/copilot-instructions.md".to_string(),
+            project_root
+                .join(".github")
+                .join("copilot-instructions.md")
+                .exists(),
+        ),
+        (
+            ".windsurfrules".to_string(),
+            project_root.join(".windsurfrules").exists(),
+        ),
+        (
+            ".clinerules".to_string(),
+            project_root.join(".clinerules").exists(),
+        ),
+    ];
+    let established =
+        project_root.join(".ax").join("ax.db").exists() || items.iter().any(|(_, exists)| *exists);
+    crate::history::establish(
+        &crate::history::project_history_path(project_root),
+        "ide",
+        &items,
+        established,
+    )
+}
+
+fn ide_removed(project_root: &Path, rel: &str, force: bool) -> std::io::Result<bool> {
+    crate::history::leave_absent(
+        &crate::history::project_history_path(project_root),
+        "ide",
+        rel,
+        force,
+    )
+}
+
+fn note_ide(project_root: &Path, rel: &str, force: bool) -> std::io::Result<()> {
+    crate::history::note_written(
+        &crate::history::project_history_path(project_root),
+        "ide",
+        rel,
+        force,
+    )
+}
+
 /// Ensure IDE bootstrap files exist (create or repair on init).
 ///
 /// Seeds **all** agent surfaces (Cursor, Continue, Claude, …) so a teammate on a
@@ -558,6 +692,7 @@ pub fn seed_ide_agent_workflow_with_force(
     project_root: &Path,
     force: bool,
 ) -> std::io::Result<IdeSeedResult> {
+    prepare_ide_history(project_root)?;
     let mut result = IdeSeedResult::default();
     seed_cursor_rule(project_root, &mut result, force)?;
     seed_mcp_callmcp_shape_rule(project_root, &mut result, force)?;
@@ -794,7 +929,7 @@ pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
     let windsurf_rules = project_root.join(".windsurfrules");
     let cline_rules = project_root.join(".clinerules");
 
-    vec![
+    let mut checks = vec![
         verify_cursor_bootstrap(project_root),
         verify_mcp_callmcp_shape_bootstrap(project_root),
         verify_continue_bootstrap(project_root),
@@ -836,7 +971,23 @@ pub fn verify_ide_bootstrap(project_root: &Path) -> Vec<InstructionCheck> {
             verify_marked_instructions(&cline_rules, CLINE_INSTRUCTIONS_BLOCK),
             false,
         ),
-    ]
+    ];
+    forgive_removed_ide(project_root, &mut checks);
+    checks
+}
+
+fn forgive_removed_ide(project_root: &Path, checks: &mut [InstructionCheck]) {
+    let history = crate::history::project_history_path(project_root);
+    for check in checks {
+        let missing = check.issues.iter().any(|issue| issue == "missing");
+        if missing
+            && crate::history::is_intentional_absence(&history, "ide", &check.label)
+                .unwrap_or(false)
+        {
+            check.ok = true;
+            check.issues.clear();
+        }
+    }
 }
 
 /// Verify IDE bootstrap files; with `fix`, create or repair via `seed_ide_agent_workflow`.
@@ -1188,6 +1339,20 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join(".clinerules")).unwrap();
         assert!(content.contains("ax_preflight"));
         assert!(content.contains(AX_SECTION_START));
+    }
+
+    #[test]
+    fn an_existing_database_does_not_regrow_a_deleted_ide_file() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ax")).unwrap();
+        std::fs::write(dir.path().join(".ax").join("ax.db"), b"already").unwrap();
+        let seeded = seed_ide_agent_workflow(dir.path()).unwrap();
+        assert!(
+            seeded.created.is_empty(),
+            "deleted IDE files must stay gone: {:?}",
+            seeded.created
+        );
+        assert!(!dir.path().join(".cursor/rules/ax.mdc").exists());
     }
 
     #[test]

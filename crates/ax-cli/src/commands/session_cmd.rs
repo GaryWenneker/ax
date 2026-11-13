@@ -57,12 +57,7 @@ pub async fn run(args: SessionArgs) -> Result<(), String> {
     }
 
     // Ensure durable scope exists for this session.
-    let _ = ax_usage::durable_project_apply(
-        &root,
-        &session,
-        &json!({"action": "read"}),
-    )
-    .await;
+    let _ = ax_usage::durable_project_apply(&root, &session, &json!({"action": "read"})).await;
 
     let result = invoke_shared_tool(&root, "ax_session", params).await?;
     let _ = ax_usage::record_activity(
@@ -84,7 +79,10 @@ pub async fn run(args: SessionArgs) -> Result<(), String> {
         "result": result,
     });
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
     } else {
         println!("session={session}");
         println!("{}", ax_mcp::format_tool_result(&result));

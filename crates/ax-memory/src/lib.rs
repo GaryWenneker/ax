@@ -97,6 +97,32 @@ pub async fn recall_for_prompt_near(
     Ok(kept)
 }
 
+/// One archive row for a policy removal, restore, or first sighting. A repeat id is a no-op.
+pub async fn archive_policy_memory(
+    pool: &SqlitePool,
+    id: &str,
+    title: &str,
+    body: &str,
+) -> Result<(), AxError> {
+    if store::get(pool, id).await?.is_some() {
+        return Ok(());
+    }
+    store::remember_with_id(
+        pool,
+        id.to_string(),
+        RememberInput {
+            title: title.to_string(),
+            body: body.to_string(),
+            kind: Some("policy".into()),
+            tags: vec!["policy".into()],
+            files: Vec::new(),
+            source: Some("policy-history".into()),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 pub async fn remember_with_triggers(
     pool: &SqlitePool,
     input: RememberInput,

@@ -40,12 +40,7 @@ pub async fn run(mode: DoctorMode, path: Option<String>, json: bool) -> Result<(
 
     match ax_core::Ax::open(&root).await {
         Ok(ax) => {
-            checks.push(check(
-                "database",
-                "operational",
-                "ax.db open".into(),
-                None,
-            ));
+            checks.push(check("database", "operational", "ax.db open".into(), None));
             match ax.get_stats().await {
                 Ok(stats) => checks.push(check(
                     "index",
@@ -96,12 +91,7 @@ pub async fn run(mode: DoctorMode, path: Option<String>, json: bool) -> Result<(
             "usage.db readable".into(),
             None,
         )),
-        Some(err) => checks.push(check(
-            "usage_db",
-            "degraded",
-            err,
-            None,
-        )),
+        Some(err) => checks.push(check("usage_db", "degraded", err, None)),
     }
 
     // Activity write probe (idempotent).
@@ -124,12 +114,7 @@ pub async fn run(mode: DoctorMode, path: Option<String>, json: bool) -> Result<(
             "activity write ok".into(),
             None,
         )),
-        Err(e) => checks.push(check(
-            "activity",
-            "degraded",
-            e,
-            None,
-        )),
+        Err(e) => checks.push(check("activity", "degraded", e, None)),
     }
 
     // Incomplete turns across sessions under .ax/cli-turns

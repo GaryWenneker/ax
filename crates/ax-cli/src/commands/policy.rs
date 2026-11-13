@@ -566,8 +566,8 @@ pub async fn run_sync(path: Option<String>, fix: bool, force: bool) -> Result<()
     let mut fail_count = 0usize;
     let mut all_fixed: Vec<String> = Vec::new();
 
-    let policy = ax_policy::sync_instructions_with_force(&ax_dir, fix, force)
-        .map_err(|e| e.to_string())?;
+    let policy =
+        ax_policy::sync_instructions_with_force(&ax_dir, fix, force).map_err(|e| e.to_string())?;
     for check in &policy.checks {
         if check.optional && !check.path.exists() {
             continue;
@@ -581,7 +581,8 @@ pub async fn run_sync(path: Option<String>, fix: bool, force: bool) -> Result<()
     fail_count += policy.fail_count;
     all_fixed.extend(policy.fixed);
 
-    let ide = ax_policy::sync_ide_bootstrap_with_force(&root, fix, force).map_err(|e| e.to_string())?;
+    let ide =
+        ax_policy::sync_ide_bootstrap_with_force(&root, fix, force).map_err(|e| e.to_string())?;
     println!("IDE bootstrap:");
     for check in &ide.checks {
         if check.optional && !check.path.exists() {
@@ -611,6 +612,54 @@ pub async fn run_sync(path: Option<String>, fix: bool, force: bool) -> Result<()
     }
     if !dupes.is_empty() {
         eprintln!("Remove duplicate `.cursor/rules/` files — ax policy is MCP-only (`.ax/policy/` + ax_preflight).");
+    }
+    Ok(())
+}
+
+pub fn run_policy_history(path: Option<String>, json: bool) -> Result<(), String> {
+    let root = resolve_path(path);
+    let events = ax_policy::history::read_events(&ax_policy::history::project_history_path(&root))
+        .map_err(|err| err.to_string())?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "entries": events,
+                "count": events.len(),
+            })
+        );
+        return Ok(());
+    }
+    println!("{} policy history event(s)", events.len());
+    for event in &events {
+        println!(
+            "  {} {} {} {}",
+            event.at, event.action, event.kind, event.item_id
+        );
+    }
+    Ok(())
+}
+
+pub async fn run_policy_restore_item(
+    path: Option<String>,
+    id: String,
+    json: bool,
+) -> Result<(), String> {
+    let root = resolve_path(path);
+    let restored = ax_policy::restore_removed_item(&root, &id).map_err(|err| err.to_string())?;
+    if let Ok(ax) = ax_core::Ax::open(&root).await {
+        let _ = ax_policy::history::mirror_project(ax.db_pool(), &root).await;
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&restored).map_err(|err| err.to_string())?
+        );
+    } else {
+        println!(
+            "{}",
+            ok_line(format!("restored {} ({})", restored.id, restored.kind))
+        );
     }
     Ok(())
 }

@@ -17,7 +17,7 @@ You've got ax installed and a graph built. Here's where to go next.
 - [Workspaces (monorepo)](/guides/workspaces/) — `members`, `sync --all`, policy pull, shared memory.
 - [Extractor plugins](/guides/plugins/) — out-of-tree process / WASM extractors under `.ax/plugins`.
 - [LSP enrichment](/guides/lsp/) — Exact edges via rust-analyzer / tsserver / pyright / gopls.
-- [Memory Vault](/guides/memory/) — store decisions, hybrid recall, git auto-capture, MCP tools.
+- [Memory](/guides/memory/) — working notes, named long-term decisions, and a permanent archive. MCP and the CLI use the same commands.
 - [Framework Routes](/guides/framework-routes/) — link URL patterns to their handlers.
 - [Affected Tests in CI](/guides/affected-tests/) — run only the tests a change touches (`ax ship --ci`).
 - [Command Center](/guides/command-center/) — policy, graph, memory, logging, and the /ship quality-gate dashboard.

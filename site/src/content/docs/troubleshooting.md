@@ -250,6 +250,6 @@ Don't point both at the same `.ax/` lock and database — SQLite locking across 
 
 ## My rules/skills were overwritten after reinstall
 
-From **ax 8.4.5+** (preserve-user-policy), install/init/`ax policy sync --fix` only create **missing** files. Existing customized rules and skills are kept.
+Install, init, and `ax policy sync --fix` keep a deleted rule or skill deleted. A file that is still on disk is not rewritten. `ax policy restore-item <id>` or `ax policy sync --fix --force` puts one item back. `ax policy history` shows the record.
 
 If an older build rewrote your files, restore them from backup or git, then upgrade. Do **not** pass `--force` unless you want templates to replace local edits on purpose.

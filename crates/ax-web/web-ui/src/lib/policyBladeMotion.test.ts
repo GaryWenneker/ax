@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import {
   POLICY_BLADE_DISMISS_MS,
+  pointerKeepsPolicyBlade,
   policyDetailOpen,
   policyWorkspaceHostClass,
   selectionHidden,
@@ -33,6 +34,25 @@ describe('policy blade dismiss motion', () => {
   it('B2 host class marks closing', () => {
     assert.equal(policyWorkspaceHostClass(false), 'policy-inline-host');
     assert.equal(policyWorkspaceHostClass(true), 'policy-inline-host policy-inline-host--closing');
+  });
+
+  it('a click inside the properties dialog or its select menu keeps the blade open', () => {
+    const host = { contains: () => false };
+    const outside = { closest: () => null };
+    assert.equal(pointerKeepsPolicyBlade(outside, host), false);
+    assert.equal(pointerKeepsPolicyBlade(null, host), false);
+
+    const field = { closest: (sel: string) => (sel.includes('.ax-modal') ? field : null) };
+    assert.equal(pointerKeepsPolicyBlade(field, host), true);
+
+    const option = { closest: (sel: string) => (sel.includes('.settings-select-menu') ? option : null) };
+    assert.equal(pointerKeepsPolicyBlade(option, host), true);
+
+    const text = { parentElement: field };
+    assert.equal(pointerKeepsPolicyBlade(text, host), true);
+
+    const inside = { closest: () => null };
+    assert.equal(pointerKeepsPolicyBlade(inside, { contains: (node) => node === inside }), true);
   });
 
   it('B1 CSS defines slide-out matching slide-in duration', () => {

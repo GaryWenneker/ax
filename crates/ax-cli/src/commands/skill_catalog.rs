@@ -4,11 +4,10 @@ use std::process::Command;
 
 use ax_skill_catalog::{
     agent_brief, audit_directory, audit_directory_present, audit_rule_present, audit_skill_text,
-    find_rule_file, find_skill_dir,
-    install_report_url, install_tree, load_latest, load_settings, materialize_well_known,
-    parse_search_body, parse_source, parse_verdict, project_briefs, require_one_skill,
-    save_settings, stage_one_skill, store_report, LockEntry, LockFile, SkillAuditReport,
-    SkillSource, SkillPresence, SEARCH_URL,
+    find_rule_file, find_skill_dir, install_report_url, install_tree, load_latest, load_settings,
+    materialize_well_known, parse_search_body, parse_source, parse_verdict, project_briefs,
+    require_one_skill, save_settings, stage_one_skill, store_report, LockEntry, LockFile,
+    SkillAuditReport, SkillPresence, SkillSource, SEARCH_URL,
 };
 use clap::{Args, Subcommand};
 
@@ -176,7 +175,10 @@ fn search(query: &str, owner: Option<&str>, limit: u32, json: bool) -> Result<()
             .as_deref()
             .map(|label| format!("  ★ {label}"))
             .unwrap_or_default();
-        println!("{}  {}  {} installs{stars}", hit.name, hit.source, hit.installs);
+        println!(
+            "{}  {}  {} installs{stars}",
+            hit.name, hit.source, hit.installs
+        );
         if let Some(seen) = hit.first_seen.as_deref() {
             println!("  first seen {seen}");
         }

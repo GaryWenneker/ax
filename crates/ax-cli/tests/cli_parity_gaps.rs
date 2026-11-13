@@ -51,8 +51,15 @@ fn prepare_project() -> (tempfile::TempDir, MutexGuard<'static, ()>) {
     let dir = tempdir().unwrap();
     let root = dir.path();
     fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("src").join("lib.rs"), "pub fn ping() -> i32 { 1 }\n").unwrap();
-    let _ = Command::new("git").args(["init"]).current_dir(root).status();
+    fs::write(
+        root.join("src").join("lib.rs"),
+        "pub fn ping() -> i32 { 1 }\n",
+    )
+    .unwrap();
+    let _ = Command::new("git")
+        .args(["init"])
+        .current_dir(root)
+        .status();
     let _ = Command::new("git")
         .args(["config", "user.email", "ax@test"])
         .current_dir(root)
@@ -61,7 +68,10 @@ fn prepare_project() -> (tempfile::TempDir, MutexGuard<'static, ()>) {
         .args(["config", "user.name", "ax"])
         .current_dir(root)
         .status();
-    let _ = Command::new("git").args(["add", "."]).current_dir(root).status();
+    let _ = Command::new("git")
+        .args(["add", "."])
+        .current_dir(root)
+        .status();
     let _ = Command::new("git")
         .args(["commit", "-m", "init"])
         .current_dir(root)
@@ -74,10 +84,7 @@ fn prepare_project() -> (tempfile::TempDir, MutexGuard<'static, ()>) {
     );
     // Ensure graph fingerprint exists for ax_session add.
     let (code, out, err) = run_ax(root, &["sync", "--quiet"], None);
-    assert!(
-        code == 0,
-        "sync failed: code={code} out={out} err={err}"
-    );
+    assert!(code == 0, "sync failed: code={code} out={out} err={err}");
     (dir, guard)
 }
 
@@ -98,19 +105,41 @@ fn parallel_sessions_do_not_mix_working_context() {
 
     let (code, _, err) = run_ax(
         root,
-        &["session", "add", "--session", &sess_a, "--input-stdin", "--json"],
+        &[
+            "session",
+            "add",
+            "--session",
+            &sess_a,
+            "--input-stdin",
+            "--json",
+        ],
         Some(r#"{"facts":["only-session-a"]}"#),
     );
     assert_eq!(code, 0, "{err}");
     let (code, _, err) = run_ax(
         root,
-        &["session", "add", "--session", &sess_b, "--input-stdin", "--json"],
+        &[
+            "session",
+            "add",
+            "--session",
+            &sess_b,
+            "--input-stdin",
+            "--json",
+        ],
         Some(r#"{"facts":["only-session-b"]}"#),
     );
     assert_eq!(code, 0, "{err}");
 
-    let (_, out_a, _) = run_ax(root, &["session", "get", "--session", &sess_a, "--json"], None);
-    let (_, out_b, _) = run_ax(root, &["session", "get", "--session", &sess_b, "--json"], None);
+    let (_, out_a, _) = run_ax(
+        root,
+        &["session", "get", "--session", &sess_a, "--json"],
+        None,
+    );
+    let (_, out_b, _) = run_ax(
+        root,
+        &["session", "get", "--session", &sess_b, "--json"],
+        None,
+    );
     assert!(out_a.contains("only-session-a"), "{out_a}");
     assert!(!out_a.contains("only-session-b"), "{out_a}");
     assert!(out_b.contains("only-session-b"), "{out_b}");
@@ -169,59 +198,59 @@ fn cli_and_mcp_preflight_share_matched_policy_ids() {
         .build()
         .unwrap();
     rt.block_on(async {
-    let (dir, _guard) = prepare_project();
-    let root = dir.path().to_path_buf();
-    // Seed a CRITICAL always-apply rule so both paths must surface it.
-    let rules = root.join(".agents").join("rules");
-    fs::create_dir_all(&rules).unwrap();
-    fs::write(
+        let (dir, _guard) = prepare_project();
+        let root = dir.path().to_path_buf();
+        // Seed a CRITICAL always-apply rule so both paths must surface it.
+        let rules = root.join(".agents").join("rules");
+        fs::create_dir_all(&rules).unwrap();
+        fs::write(
         rules.join("parity-probe.mdc"),
         "---\nid: parity-probe\nlevel: CRITICAL\nalwaysApply: true\n---\nParity probe rule body.\n",
     )
     .unwrap();
-    let (code, _, err) = run_ax(root.as_path(), &["policy", "index"], None);
-    assert_eq!(code, 0, "policy index: {err}");
+        let (code, _, err) = run_ax(root.as_path(), &["policy", "index"], None);
+        assert_eq!(code, 0, "policy index: {err}");
 
-    let prompt = "parity probe please";
-    let (code, cli_out, err) = run_ax(
-        root.as_path(),
-        &[
-            "preflight",
-            "--prompt-stdin",
-            "--session",
-            "parity-sess",
-            "--json",
-        ],
-        Some(prompt),
-    );
-    assert_eq!(code, 0, "cli preflight: {err}\n{cli_out}");
-    let cli: Value = serde_json::from_str(&cli_out).unwrap_or_else(|_| {
-        // Some builds wrap text; fall back to structuredContent if present.
-        json_wrap(&cli_out)
-    });
+        let prompt = "parity probe please";
+        let (code, cli_out, err) = run_ax(
+            root.as_path(),
+            &[
+                "preflight",
+                "--prompt-stdin",
+                "--session",
+                "parity-sess",
+                "--json",
+            ],
+            Some(prompt),
+        );
+        assert_eq!(code, 0, "cli preflight: {err}\n{cli_out}");
+        let cli: Value = serde_json::from_str(&cli_out).unwrap_or_else(|_| {
+            // Some builds wrap text; fall back to structuredContent if present.
+            json_wrap(&cli_out)
+        });
 
-    let mut engine = ax_mcp::McpEngine::with_project_root(root.clone());
-    let mcp = ax_mcp::call_tool(
-        &mut engine,
-        "ax_preflight",
-        serde_json::json!({
-            "prompt": prompt,
-            "session": "parity-sess-mcp",
-        }),
-    )
-    .await
-    .expect("mcp preflight");
+        let mut engine = ax_mcp::McpEngine::with_project_root(root.clone());
+        let mcp = ax_mcp::call_tool(
+            &mut engine,
+            "ax_preflight",
+            serde_json::json!({
+                "prompt": prompt,
+                "session": "parity-sess-mcp",
+            }),
+        )
+        .await
+        .expect("mcp preflight");
 
-    let cli_text = flatten_text(&cli);
-    let mcp_text = flatten_text(&mcp);
-    assert!(
-        cli_text.contains("parity-probe") || cli_text.contains("Parity probe"),
-        "CLI missing rule: {cli_text}"
-    );
-    assert!(
-        mcp_text.contains("parity-probe") || mcp_text.contains("Parity probe"),
-        "MCP missing rule: {mcp_text}"
-    );
+        let cli_text = flatten_text(&cli);
+        let mcp_text = flatten_text(&mcp);
+        assert!(
+            cli_text.contains("parity-probe") || cli_text.contains("Parity probe"),
+            "CLI missing rule: {cli_text}"
+        );
+        assert!(
+            mcp_text.contains("parity-probe") || mcp_text.contains("Parity probe"),
+            "MCP missing rule: {mcp_text}"
+        );
     });
 }
 

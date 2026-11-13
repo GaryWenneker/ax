@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 ax-db = { workspace = true }
+ax-memory = { workspace = true }
 ax-utils = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }

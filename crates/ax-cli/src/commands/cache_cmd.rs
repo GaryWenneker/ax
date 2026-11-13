@@ -8,8 +8,14 @@ use crate::commands::resolve_path;
 
 #[derive(Debug, Clone)]
 pub enum CacheAction {
-    Stash { label: Option<String> },
-    Expand { id: String, offset: usize, limit: Option<usize> },
+    Stash {
+        label: Option<String>,
+    },
+    Expand {
+        id: String,
+        offset: usize,
+        limit: Option<usize>,
+    },
     Status,
 }
 

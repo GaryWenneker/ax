@@ -647,6 +647,35 @@ async fn ship_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn policy_index_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
+    match params.get("action").and_then(Value::as_str) {
+        Some("history") => {
+            let events = ax_policy::history::read_events(
+                &ax_policy::history::project_history_path(ax.project_root()),
+            )
+            .map_err(|err| err.to_string())?;
+            return Ok(json!({
+                "entries": events,
+                "count": events.len(),
+            }));
+        }
+        Some("restore") => {
+            let id = params
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or("id is required")?;
+            let restored = ax_policy::restore_removed_item(ax.project_root(), id)
+                .map_err(|err| err.to_string())?;
+            let _ = ax_policy::history::mirror_project(ax.db_pool(), ax.project_root()).await;
+            return Ok(json!({
+                "ok": restored.ok,
+                "id": restored.id,
+                "kind": restored.kind,
+                "action": restored.action,
+                "path": restored.path,
+            }));
+        }
+        _ => {}
+    }
     if params.get("action").and_then(Value::as_str) == Some("audit") {
         return ax_policy::audit::inventory(ax.db_pool(), ax.project_root())
             .await
@@ -1428,12 +1457,8 @@ async fn remember(ax: &mut Ax, params: Value) -> Result<Value, String> {
 }
 
 async fn recall(ax: &mut Ax, params: Value) -> Result<Value, String> {
-    let depth = ax_memory::Depth::parse(
-        params
-            .get("depth")
-            .and_then(Value::as_str)
-            .unwrap_or("hot"),
-    )?;
+    let depth =
+        ax_memory::Depth::parse(params.get("depth").and_then(Value::as_str).unwrap_or("hot"))?;
     let limit = params
         .get("limit")
         .and_then(|v| v.as_u64())
@@ -1530,12 +1555,8 @@ async fn history_tool(ax: &mut Ax, params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_u64())
         .unwrap_or(20)
         .clamp(1, 50) as usize;
-    let depth = ax_memory::Depth::parse(
-        params
-            .get("depth")
-            .and_then(Value::as_str)
-            .unwrap_or("hot"),
-    )?;
+    let depth =
+        ax_memory::Depth::parse(params.get("depth").and_then(Value::as_str).unwrap_or("hot"))?;
     let history_query = ax_memory::HistoryQuery {
         query: query.to_string(),
         since_ms,
@@ -2461,7 +2482,8 @@ fn extra_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "action": {"type":"string", "enum":["index","audit"], "description":"audit compares disk/SQLite hashes and provenance without changing either"},
+                    "action": {"type":"string", "enum":["index","audit","history","restore"], "description":"audit compares hashes. history lists removal events. restore writes one removed rule or skill back; pass id."},
+                    "id": {"type":"string", "description":"Rule id or template path for action=restore"},
                     "force": { "type": "boolean", "description": "Force re-import from filesystem into database mode" }
                 }
             }

@@ -153,9 +153,15 @@ enum Commands {
         tags: Vec<String>,
         #[arg(long = "file", help = "Related file path (repeatable)")]
         files: Vec<String>,
-        #[arg(long = "trigger", help = "Exact cue name (repeatable). Same as ax_remember triggers.")]
+        #[arg(
+            long = "trigger",
+            help = "Exact cue name (repeatable). Same as ax_remember triggers."
+        )]
         triggers: Vec<String>,
-        #[arg(long, help = "Confirm a candidate memory by id. Same as ax_remember action=confirm.")]
+        #[arg(
+            long,
+            help = "Confirm a candidate memory by id. Same as ax_remember action=confirm."
+        )]
         confirm: Option<String>,
         #[arg(long)]
         json: bool,
@@ -165,9 +171,16 @@ enum Commands {
         query: Option<String>,
         #[arg(long, help = "Exact cue. Same as ax_recall cue.")]
         cue: Option<String>,
-        #[arg(long, help = "Memory id, including an archived turn. Same as ax_recall id.")]
+        #[arg(
+            long,
+            help = "Memory id, including an archived turn. Same as ax_recall id."
+        )]
         id: Option<String>,
-        #[arg(long, default_value = "hot", help = "hot or archive. Same as ax_recall depth.")]
+        #[arg(
+            long,
+            default_value = "hot",
+            help = "hot or archive. Same as ax_recall depth."
+        )]
         depth: String,
         #[arg(long)]
         limit: Option<u32>,
@@ -183,7 +196,11 @@ enum Commands {
         limit: Option<u32>,
         #[arg(long, help = "Show one turn memory with its full outcome")]
         id: Option<String>,
-        #[arg(long, default_value = "hot", help = "hot or archive. Same as ax_history depth.")]
+        #[arg(
+            long,
+            default_value = "hot",
+            help = "hot or archive. Same as ax_history depth."
+        )]
         depth: String,
         #[arg(long)]
         json: bool,
@@ -662,7 +679,6 @@ enum Commands {
         path: Option<String>,
     },
 }
-
 
 #[derive(Subcommand)]
 enum SessionCliAction {
@@ -1614,7 +1630,7 @@ enum PolicyCommands {
         path: Option<String>,
         #[arg(
             long,
-            help = "Restore missing managed policy files from embedded templates"
+            help = "Create a bundled file the history has never seen. A removed file stays removed"
         )]
         fix: bool,
         #[arg(
@@ -1676,6 +1692,21 @@ enum PolicyCommands {
         /// Rule id or skill name
         id: String,
         path: Option<String>,
+    },
+    /// List the removal history for bundled rules, skills, and IDE files
+    History {
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Write one removed bundled rule or skill back
+    #[command(name = "restore-item")]
+    RestoreItem {
+        /// Rule id, skill name, or template path such as `rules/explore-before-grep.mdc`
+        id: String,
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
     /// Restore a portable `.ax-policy.zip` into `.agents/`
     Restore {
@@ -2901,6 +2932,12 @@ async fn async_main() {
             },
             PolicyCommands::Enable { id, path } => commands::policy::run_enable(path, id).await,
             PolicyCommands::Disable { id, path } => commands::policy::run_disable(path, id).await,
+            PolicyCommands::History { path, json } => {
+                commands::policy::run_policy_history(path, json)
+            }
+            PolicyCommands::RestoreItem { id, path, json } => {
+                commands::policy::run_policy_restore_item(path, id, json).await
+            }
             PolicyCommands::Restore {
                 zip,
                 path,
@@ -3191,7 +3228,9 @@ async fn async_main() {
             // Transport-agnostic activity: one central recorder for every CLI command.
             // Skips hooks (cmd_name is None for those). Session from AX_SESSION when set.
             let root = commands::resolve_path(None);
-            let session = std::env::var("AX_SESSION").ok().filter(|s| !s.trim().is_empty());
+            let session = std::env::var("AX_SESSION")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
             let summary = format!(
                 "cli cmd={name} status={}",
                 if result.is_ok() { "ok" } else { "fail" }

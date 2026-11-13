@@ -165,7 +165,13 @@ flowchart LR
   archive --> fetch[Fetch by cue or by id]
 ```
 
-Working notes stay in `ax session`. A durable decision is `ax remember --trigger NAME` (MCP: `triggers`). Fetch that name with `ax recall --cue` before exploring. Old graph changes, logs, and turns are `ax recall --depth archive` and `ax history --depth archive`. Preflight does not contain those hits. Confirm a candidate with `ax remember --confirm`. The long guide is [Memory](https://getax.wenneker.io/guides/memory/).
+Working notes stay in `ax session` (MCP: `ax_session`). They do not enter the vault. A durable decision is `ax remember --trigger NAME` (MCP: `triggers`). Fetch that name with `ax recall --cue` before exploring. An unknown name returns nothing. Free text is the fallback.
+
+Recent turns stay hot for 90 days, then move to the archive with the same id. Git commits, folder documents, graph diffs, and selected activity are written straight into that archive. Preflight injects at most three long-term titles and stops at 6000 characters. It never injects the archive. Old graph changes, logs, and turns are `ax recall --depth archive` and `ax history --depth archive`. That search takes one hop over a link, a shared file, or a shared symbol. An open file raises a long-term memory that names that file or a symbol in it.
+
+A turn or a commit that states a decision becomes a candidate. Confirm it with `ax remember --confirm` (MCP: `action=confirm`). The old episode stays. A near-duplicate is linked, not deleted. Embeddings stay local, two models are never mixed, and sync rewrites rows after a model change.
+
+The long guide is [Memory](https://getax.wenneker.io/guides/memory/).
 
 ## What the site covers
 

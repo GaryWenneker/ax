@@ -20,6 +20,7 @@ pub const MEMORY_KINDS: &[&str] = &[
     "git",
     "turn",
     "doc",
+    "policy",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

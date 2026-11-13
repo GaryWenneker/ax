@@ -21,7 +21,9 @@ pub fn install_sqlite_vec() {
                     *mut *mut std::ffi::c_char,
                     *const libsqlite3_sys::sqlite3_api_routines,
                 ) -> i32,
-            >(sqlite_vec::sqlite3_vec_init as *const ())));
+            >(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
         }
     });
 }

@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 27;
+pub const CURRENT_SCHEMA_VERSION: i32 = 28;
 
 struct Migration {
     version: i32,
@@ -403,6 +403,20 @@ const MIGRATIONS: &[Migration] = &[
         version: 27,
         description: "Rebuild memory search after the tier columns changed the content table",
         sql: "INSERT INTO memories_fts(memories_fts) VALUES('rebuild');",
+    },
+    Migration {
+        version: 28,
+        description: "Append-only history of rules, skills, and IDE files",
+        sql: "
+            CREATE TABLE IF NOT EXISTS policy_history (
+                kind TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                catalog_version INTEGER NOT NULL,
+                at INTEGER NOT NULL,
+                PRIMARY KEY (kind, item_id, action, at)
+            );
+        ",
     },
 ];
 
