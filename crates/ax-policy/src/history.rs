@@ -145,6 +145,15 @@ pub fn note_restored(path: &Path, kind: &str, item_id: &str) -> std::io::Result<
     Ok(())
 }
 
+pub fn note_removed(path: &Path, kind: &str, item_id: &str) -> std::io::Result<()> {
+    let events = read_events(path)?;
+    if latest(&events, kind, item_id) == Some("removed") {
+        return Ok(());
+    }
+    push(path, kind, item_id, "removed")?;
+    Ok(())
+}
+
 pub fn note_written(path: &Path, kind: &str, item_id: &str, force: bool) -> std::io::Result<()> {
     let events = read_events(path)?;
     let prev = latest(&events, kind, item_id);

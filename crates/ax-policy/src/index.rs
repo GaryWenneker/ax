@@ -164,7 +164,11 @@ async fn import_one_policy_dir(
             let mut doc = match parse_rule_file(path, &raw) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("[ax policy] skip rule {}: {}", path.display(), e.error);
+                    eprintln!(
+                        "[ax policy] skip rule {}: {}",
+                        path.display(),
+                        crate::parse::format_validation(&e)
+                    );
                     continue;
                 }
             };
@@ -215,7 +219,7 @@ async fn import_one_policy_dir(
                     eprintln!(
                         "[ax policy] skip skill {}: {}",
                         skill_path.display(),
-                        e.error
+                        crate::parse::format_validation(&e)
                     );
                     continue;
                 }

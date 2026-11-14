@@ -554,7 +554,7 @@ impl PolicyStore {
                 std::fs::remove_file(&fallback).map_err(|e| AxError::Other(e.to_string()))?;
             }
         }
-        Ok(())
+        self.note_removed("rule", &format!("rules/{}.mdc", doc.frontmatter.id))
     }
 
     pub async fn delete_skill(&self, name: &str) -> Result<bool, AxError> {
@@ -587,7 +587,19 @@ impl PolicyStore {
                 let _ = std::fs::remove_dir(parent);
             }
         }
-        Ok(())
+        self.note_removed(
+            "skill",
+            &format!("skills/{}/SKILL.md", doc.frontmatter.name),
+        )
+    }
+
+    fn note_removed(&self, kind: &str, rel: &str) -> Result<(), AxError> {
+        crate::history::note_removed(
+            &crate::history::project_history_path(&self.project_root),
+            kind,
+            rel,
+        )
+        .map_err(|e| AxError::Other(e.to_string()))
     }
 
     /// Migrate a single rule/skill between files and database storage.

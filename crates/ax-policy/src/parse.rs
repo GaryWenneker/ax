@@ -8,6 +8,7 @@ use crate::types::{
 };
 
 pub fn split_frontmatter(raw: &str) -> Result<(String, String), ValidationError> {
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let trimmed = raw.trim_start();
     if !trimmed.starts_with("---") {
         return Err(field_err(
@@ -498,6 +499,20 @@ fn get_str_list(map: &HashMap<String, Value>, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+pub fn format_validation(err: &ValidationError) -> String {
+    if err.fields.is_empty() {
+        return err.error.clone();
+    }
+    let mut keys: Vec<&String> = err.fields.keys().collect();
+    keys.sort();
+    let detail = keys
+        .into_iter()
+        .map(|key| format!("{key}: {}", err.fields[key]))
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!("{} ({detail})", err.error)
+}
+
 fn field_err(field: &str, msg: &str) -> ValidationError {
     let mut fields = HashMap::new();
     fields.insert(field.into(), msg.into());
@@ -510,6 +525,21 @@ fn field_err(field: &str, msg: &str) -> ValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_windows_bom_still_parses() {
+        let raw = "\u{feff}---\nid: utf8\nlevel: INFO\nalwaysApply: true\n---\n\nBody.";
+        let doc = parse_rule_file(Path::new("utf8.mdc"), raw).unwrap();
+        assert_eq!(doc.frontmatter.id, "utf8");
+    }
+
+    #[test]
+    fn validation_failure_names_the_field() {
+        let raw = "---\ndescription: Cursor only\nalwaysApply: true\n---\n\nBody.";
+        let err = parse_rule_file(Path::new("cursor.mdc"), raw).unwrap_err();
+        let detail = format_validation(&err);
+        assert!(detail.contains("id: required"), "{detail}");
+    }
 
     #[test]
     fn parse_minimal_rule() {

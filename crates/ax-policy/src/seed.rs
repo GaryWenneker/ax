@@ -585,7 +585,7 @@ fn seed_bundles<'a>(
             )
         })
         .collect();
-    let established = items.iter().any(|(_, exists)| *exists);
+    let established = catalog_is_established(skills_root, &history, &items);
     crate::history::establish(&history, kind, &items, established)?;
     std::fs::create_dir_all(skills_root)?;
     let mut result = SeedResult::default();
@@ -643,6 +643,12 @@ fn history_for_skills(skills_root: &Path) -> PathBuf {
     skills_root.join(".history.jsonl")
 }
 
+/// An empty directory, or a history file from an earlier run, is an existing install.
+/// A path that does not exist yet is a first seed and still receives the catalog.
+fn catalog_is_established(root: &Path, history: &Path, items: &[(String, bool)]) -> bool {
+    root.is_dir() || history.is_file() || items.iter().any(|(_, exists)| *exists)
+}
+
 fn history_for_rules(rules_root: &Path) -> PathBuf {
     if let Some(parent) = rules_root.parent() {
         if parent.file_name().and_then(|s| s.to_str()) == Some("global_policy") {
@@ -655,7 +661,6 @@ fn history_for_rules(rules_root: &Path) -> PathBuf {
 /// Write machine-wide bundled skills to a Cursor skills directory.
 /// Project-specific skills are installed only through stack packs.
 pub fn seed_cursor_skills(skills_root: &Path) -> std::io::Result<SeedResult> {
-    std::fs::create_dir_all(skills_root)?;
     let mut result = SeedResult::default();
     let bundles = seed_skill_bundles(skills_root, ".cursor/skills", false)?;
     result.created.extend(bundles.created);
@@ -684,7 +689,7 @@ fn seed_global_policy_rules(rules_root: &Path, force: bool) -> std::io::Result<S
             )
         })
         .collect();
-    let established = items.iter().any(|(_, exists)| *exists);
+    let established = catalog_is_established(rules_root, &history, &items);
     crate::history::establish(&history, "global-rule", &items, established)?;
     std::fs::create_dir_all(rules_root)?;
     let mut result = SeedResult::default();
@@ -1131,6 +1136,19 @@ mod tests {
             "the absent sibling must stay absent: {seeded:?}"
         );
         assert!(rules.join("old-coder-mandatory.mdc").exists());
+    }
+
+    #[test]
+    fn an_empty_global_rules_directory_is_not_refilled() {
+        let dir = tempdir().unwrap();
+        let rules = dir.path().join("global_policy").join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        let seeded = seed_global_policy_rules(&rules, false).unwrap();
+        assert!(
+            seeded.created.is_empty(),
+            "deleted rules must not be written back: {seeded:?}"
+        );
+        assert!(std::fs::read_dir(&rules).unwrap().next().is_none());
     }
 
     #[test]
