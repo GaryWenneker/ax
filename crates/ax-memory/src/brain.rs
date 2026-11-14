@@ -486,6 +486,10 @@ async fn ensure_vec_table(pool: &SqlitePool) -> Result<(), AxError> {
     .execute(pool)
     .await
     .map_err(db_err_pub)?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_memory_vec_map_rowid ON memory_vec_map(rowid)")
+        .execute(pool)
+        .await
+        .map_err(db_err_pub)?;
     Ok(())
 }
 
@@ -574,40 +578,52 @@ pub async fn index_archive_vector(pool: &SqlitePool, id: &str) -> Result<(), AxE
     Ok(())
 }
 
+/// Resolves vec0 rowids to archived memories, driven from the map so the tier index cannot
+/// turn every hit into a walk over the whole archive.
+#[doc(hidden)]
+pub const ARCHIVE_HIT_SQL: &str = "SELECT map.rowid, m.id, m.embedding_model, m.embedding
+     FROM json_each(?) hit
+     CROSS JOIN memory_vec_map map INDEXED BY idx_memory_vec_map_rowid ON map.rowid = hit.value
+     CROSS JOIN memories m ON m.id = map.memory_id
+     WHERE m.enabled = 1 AND m.tier = 't3' AND m.embedding IS NOT NULL";
+
 pub async fn knn(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<String>, AxError> {
     let (vector, active) = crate::embed::embed_labeled(query);
     if vector.iter().all(|v| *v == 0.0) {
         return Ok(Vec::new());
     }
     ensure_vec_table(pool).await?;
-    let rows: Vec<(i64,)> =
-        sqlx::query_as("SELECT rowid FROM memory_vec WHERE embedding MATCH ? AND k = ?")
+    let rowids: Vec<i64> =
+        sqlx::query_scalar("SELECT rowid FROM memory_vec WHERE embedding MATCH ? AND k = ?")
             .bind(embedding_json(&vector))
             .bind(limit.max(1) as i64)
             .fetch_all(pool)
             .await
             .map_err(db_err_pub)?;
-    let mut ids = Vec::new();
-    for (rowid,) in rows {
-        let memory_id: Option<(String, String, Vec<u8>)> = sqlx::query_as(
-            "SELECT m.id, m.embedding_model, m.embedding FROM memory_vec_map map
-             JOIN memories m ON m.id = map.memory_id
-             WHERE map.rowid = ? AND m.enabled = 1 AND m.tier = 't3' AND m.embedding IS NOT NULL",
-        )
-        .bind(rowid)
-        .fetch_optional(pool)
-        .await
-        .map_err(db_err_pub)?;
-        let Some((id, model, blob)) = memory_id else {
-            continue;
-        };
-        let similar = crate::embed::blob_to_embedding(&blob)
-            .is_some_and(|stored| crate::embed::cosine(&vector, &stored) > crate::embed::MIN_VECTOR_SIMILARITY);
-        if model == active && similar {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
+    let rowid_list = format!(
+        "[{}]",
+        rowids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+    );
+    let hits: std::collections::HashMap<i64, (String, String, Vec<u8>)> =
+        sqlx::query_as::<_, (i64, String, String, Vec<u8>)>(ARCHIVE_HIT_SQL)
+            .bind(rowid_list)
+            .fetch_all(pool)
+            .await
+            .map_err(db_err_pub)?
+            .into_iter()
+            .map(|(rowid, id, model, blob)| (rowid, (id, model, blob)))
+            .collect();
+    Ok(rowids
+        .iter()
+        .filter_map(|rowid| hits.get(rowid))
+        .filter(|(_, model, blob)| {
+            model == active
+                && crate::embed::blob_to_embedding(blob).is_some_and(|stored| {
+                    crate::embed::cosine(&vector, &stored) > crate::embed::MIN_VECTOR_SIMILARITY
+                })
+        })
+        .map(|(id, _, _)| id.clone())
+        .collect())
 }
 
 pub async fn demote_turn(pool: &SqlitePool, id: &str) -> Result<(), AxError> {

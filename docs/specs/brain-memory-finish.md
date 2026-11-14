@@ -59,3 +59,13 @@ Found while writing the tests, recorded and not changed: a fresh project's requi
 - Files added: `docs/specs/brain-memory-finish.md`, `docs/specs/brain-memory-finish-EVIDENCE.md`, `scripts/brain-memory-gauntlet.sh` (one entry point for every layer and the manual mutants).
 - Files changed: `crates/ax-cli/tests/memory_parity.rs`, `crates/ax-memory/tests/brain.rs`, `crates/ax-memory/src/brain.rs`, `crates/ax-policy/src/ide_seed.rs`, the IDE and startup templates, the nine CLI-only templates, the CLI-only verify in ax-installer, and the memory vault screenshots.
 - Release: 9.0.3 (patch) after the gauntlet is green.
+
+## Revision 2 (found while running the bootstrap and performance work)
+
+18. Archive vector hits resolve to memories in one query driven from `memory_vec_map` by an index on its `rowid` column (`INDEXED BY idx_memory_vec_map_rowid`). Before, each hit walked the tier index across the whole archive: 100,000 rows took 4.1 s for 80 hits.
+19. Hot and archive recall run the FTS ranking and the vector ranking concurrently. Ranking and fusion are unchanged.
+20. The Gemini and Windsurf CLI-only snippets keep their lifecycle line inside the `AX_CLI` markers, so a reinstall does not append another copy outside them.
+21. `ax doctor --mode cli` reports `cli_memory_procedure` as degraded, naming each CLI-only file that lacks the memory procedure, with repair `ax install --mode cli-only`. Files without CLI-only content are not checked.
+22. There are ten CLI-only templates (the Cursor rule is `.mdc`), not nine; all ten carry the CLI memory procedure.
+
+Found and not changed: a fresh `ax init` fails `ax policy sync` on `.agents/rules/prefer-mcp-ops.mdc` ("missing ax_preflight; missing once-per-turn dedup"). That check and template are outside this change.

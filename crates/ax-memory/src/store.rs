@@ -343,6 +343,73 @@ pub async fn recall(
     recall_scoped(pool, query, limit, &[], false).await
 }
 
+async fn fts_ranking(
+    pool: &SqlitePool,
+    query: &str,
+    overfetch: usize,
+    archive: bool,
+) -> Result<Vec<String>, AxError> {
+    let Some(fts_query) = fts_query_from_text(query) else {
+        return Ok(Vec::new());
+    };
+    let (_, model) = crate::embed::embed_labeled(query);
+    let tier_sql = if archive {
+        "m.tier = 't3'"
+    } else {
+        "COALESCE(m.tier, 't2') != 't3' AND COALESCE(m.status, 'active') = 'active'"
+    };
+    let sql = format!(
+        r#"SELECT m.id
+           FROM memories_fts
+           JOIN memories m ON m.rowid = memories_fts.rowid
+           WHERE memories_fts MATCH ? AND m.enabled = 1 AND {tier_sql}
+             AND m.embedding_model = ?
+           ORDER BY bm25(memories_fts)
+           LIMIT ?"#
+    );
+    sqlx::query_scalar::<_, String>(&sql)
+        .bind(&fts_query)
+        .bind(model)
+        .bind(overfetch as i64)
+        .fetch_all(pool)
+        .await
+        .map_err(db_err)
+}
+
+async fn vector_ranking(
+    pool: &SqlitePool,
+    query: &str,
+    overfetch: usize,
+    archive: bool,
+) -> Result<Vec<String>, AxError> {
+    if archive {
+        return crate::brain::knn(pool, query, overfetch).await;
+    }
+    let (query_embedding, model) = crate::embed::embed_labeled(query);
+    let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(
+        "SELECT id, embedding FROM memories
+         WHERE embedding IS NOT NULL AND enabled = 1
+           AND COALESCE(tier, 't2') != 't3'
+           AND COALESCE(status, 'active') = 'active'
+           AND embedding_model = ?",
+    )
+    .bind(model)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+    let mut vector_scored: Vec<(String, f32)> = embedding_rows
+        .into_iter()
+        .filter_map(|(id, blob)| {
+            let e = crate::embed::blob_to_embedding(&blob)?;
+            Some((id, crate::embed::cosine(&query_embedding, &e)))
+        })
+        .filter(|(_, sim)| *sim > crate::embed::MIN_VECTOR_SIMILARITY)
+        .collect();
+    vector_scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+    vector_scored.truncate(overfetch);
+    Ok(vector_scored.into_iter().map(|(id, _)| id).collect())
+}
+
 /// Hot recall skips the archive and inactive rows. Archive recall uses FTS
 /// plus sqlite-vec KNN and never cosine-compares a different embedding model.
 pub(crate) async fn recall_scoped(
@@ -355,60 +422,10 @@ pub(crate) async fn recall_scoped(
     use std::collections::HashMap;
 
     let overfetch = (limit * 4).max(20);
-    let (_, model) = crate::embed::embed_labeled(query);
-    let tier_sql = if archive {
-        "m.tier = 't3'"
-    } else {
-        "COALESCE(m.tier, 't2') != 't3' AND COALESCE(m.status, 'active') = 'active'"
-    };
-
-    let mut fts_ranked: Vec<String> = Vec::new();
-    if let Some(fts_query) = fts_query_from_text(query) {
-        let sql = format!(
-            r#"SELECT m.id
-               FROM memories_fts
-               JOIN memories m ON m.rowid = memories_fts.rowid
-               WHERE memories_fts MATCH ? AND m.enabled = 1 AND {tier_sql}
-                 AND m.embedding_model = ?
-               ORDER BY bm25(memories_fts)
-               LIMIT ?"#
-        );
-        fts_ranked = sqlx::query_scalar::<_, String>(&sql)
-            .bind(&fts_query)
-            .bind(model)
-            .bind(overfetch as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(db_err)?;
-    }
-
-    let vector_ranked: Vec<String> = if archive {
-        crate::brain::knn(pool, query, overfetch).await?
-    } else {
-        let (query_embedding, _) = crate::embed::embed_labeled(query);
-        let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(
-            "SELECT id, embedding FROM memories
-             WHERE embedding IS NOT NULL AND enabled = 1
-               AND COALESCE(tier, 't2') != 't3'
-               AND COALESCE(status, 'active') = 'active'
-               AND embedding_model = ?",
-        )
-        .bind(model)
-        .fetch_all(pool)
-        .await
-        .map_err(db_err)?;
-        let mut vector_scored: Vec<(String, f32)> = embedding_rows
-            .into_iter()
-            .filter_map(|(id, blob)| {
-                let e = crate::embed::blob_to_embedding(&blob)?;
-                Some((id, crate::embed::cosine(&query_embedding, &e)))
-            })
-            .filter(|(_, sim)| *sim > crate::embed::MIN_VECTOR_SIMILARITY)
-            .collect();
-        vector_scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-        vector_scored.truncate(overfetch);
-        vector_scored.into_iter().map(|(id, _)| id).collect()
-    };
+    let (fts_ranked, vector_ranked) = tokio::try_join!(
+        fts_ranking(pool, query, overfetch, archive),
+        vector_ranking(pool, query, overfetch, archive),
+    )?;
 
     if fts_ranked.is_empty() && vector_ranked.is_empty() {
         return Ok(Vec::new());

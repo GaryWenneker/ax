@@ -1181,3 +1181,30 @@ async fn migration_26_moves_git_and_docs_into_the_archive() {
     assert_eq!(tier_of(db.pool(), &doc.id).await, "t3");
     assert_eq!(tier_of(db.pool(), &decision.id).await, "t2");
 }
+
+#[tokio::test]
+async fn archive_hits_resolve_through_an_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let row = remember(db.pool(), note("Queue retention", "Retention notes.", vec![]))
+        .await
+        .unwrap();
+    ax_memory::brain::index_archive_vector(db.pool(), &row.id)
+        .await
+        .unwrap();
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(&format!(
+        "EXPLAIN QUERY PLAN {}",
+        ax_memory::brain::ARCHIVE_HIT_SQL
+    ))
+    .bind("[1]")
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    let steps: Vec<&str> = plan.iter().map(|(_, _, _, step)| step.as_str()).collect();
+    assert!(
+        steps.iter().all(|step| !step.starts_with("SCAN m")
+            && !step.starts_with("SCAN map")
+            && !step.contains("idx_memories_tier")),
+        "every hit must resolve from the map index, not the tier: {steps:?}"
+    );
+}
