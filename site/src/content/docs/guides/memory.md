@@ -45,6 +45,8 @@ On the Command Center Memory page, every row shows its tier: working, recent, lo
 
 ![Memory vault — browse, search, and inspect stored memories with hybrid recall](/screenshots/cc-memory-vault-dark.png)
 
+![Archive search on the Memory page: the hit carries the archive tier and is marked recalled from archive](/screenshots/cc-memory-archive-dark.png)
+
 ## Tiers
 
 ```mermaid

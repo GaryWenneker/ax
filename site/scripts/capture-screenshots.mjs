@@ -55,6 +55,17 @@ const SHOTS = [
 	{ name: 'cc-search.png', path: '/search', waitMs: 1200 },
 	{ name: 'cc-memory-vault.png', path: '/memory', waitMs: 1200 },
 	{
+		name: 'cc-memory-archive.png',
+		path: '/memory',
+		desktopOnly: true,
+		waitMs: 1200,
+		after: async (page) => {
+			await clickOrFail(page, '.memory-archive-toggle input[type="checkbox"]');
+			await page.type('input[type="search"]', 'queue retention');
+			await page.waitForFunction(() => document.querySelector('main')?.innerText.includes('recalled from archive'), { timeout: 10000 });
+		},
+	},
+	{
 		name: 'cc-savings-dashboard.png',
 		path: '/savings',
 		waitMs: 3500,
@@ -296,7 +307,9 @@ async function main() {
 		.filter(Boolean);
 	const unknown = only.filter((name) => !SHOTS.some((s) => s.name === name));
 	if (unknown.length) throw new Error(`unknown AX_SHOTS entries: ${unknown.join(', ')}`);
-	const selectedShots = only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS;
+	const selectedShots = (only.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS).filter(
+		(s) => !(s.desktopOnly && mobileSuffix),
+	);
   const shots = [...new Map(selectedShots.map(shot => [shot.name, shot])).values()];
 
 	mkdirSync(outDir, { recursive: true });

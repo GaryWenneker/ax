@@ -328,21 +328,6 @@
     "capturedAt": "2026-10-12T22:10:46.117Z"
   },
   {
-    "file": "cc-memory-vault-dark.png",
-    "imageHash": "a6a0da6dcb56c23b07869dd2e5207fa40c7764fca4345dc451feac095b3aa1d0",
-    "route": "/memory",
-    "state": {},
-    "theme": "azure-dark",
-    "viewport": {
-      "width": 1440,
-      "height": 900,
-      "deviceScaleFactor": 1
-    },
-    "data": "synthetic",
-    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
-    "capturedAt": "2026-10-12T22:10:47.841Z"
-  },
-  {
     "file": "cc-savings-dashboard-dark.png",
     "imageHash": "47ecf169bd410f719c5a05a7cb32d2941d9e78cb8510378e0e1657401c0635cb",
     "route": "/savings",
@@ -568,21 +553,6 @@
     "data": "synthetic",
     "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
     "capturedAt": "2026-10-12T22:13:10.703Z"
-  },
-  {
-    "file": "cc-memory-vault-dark-mobile.png",
-    "imageHash": "89d56a88638fe89abb27f184372a9fd360d76b57e3510ce85c5fed5a9dd02c8e",
-    "route": "/memory",
-    "state": {},
-    "theme": "azure-dark",
-    "viewport": {
-      "width": 393,
-      "height": 900,
-      "deviceScaleFactor": 1
-    },
-    "data": "synthetic",
-    "sourceHash": "884cb82cd53c8a449a67bec6ad698c656f40f75e0e790e788cb775795a8367d5",
-    "capturedAt": "2026-10-12T22:13:12.418Z"
   },
   {
     "file": "cc-accent-colors.png",
@@ -1469,5 +1439,80 @@
     },
     "data": "public synthetic fixtures",
     "capturedAt": "2026-10-13T08:03:18.407Z"
+  },
+  {
+    "file": "cc-memory-vault.png",
+    "imageHash": "63eb444163210bba34bfa4f9c1ea29c3b62eb3a72ee5d912937d6b3404b0ba11",
+    "route": "/memory",
+    "state": {},
+    "theme": "azure-light",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "1e34a84a3e1f248d6b27257e8debbc609c1aae05ec1d1074543a4f0c29e0f4dd",
+    "capturedAt": "2026-11-14T11:52:33.212Z"
+  },
+  {
+    "file": "cc-memory-archive.png",
+    "imageHash": "aee640ef0ee5967e6186ee968a65589255f8f1ba2d968ec3cae728275cafd3d1",
+    "route": "/memory",
+    "state": {},
+    "theme": "azure-light",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "1e34a84a3e1f248d6b27257e8debbc609c1aae05ec1d1074543a4f0c29e0f4dd",
+    "capturedAt": "2026-11-14T11:52:34.956Z"
+  },
+  {
+    "file": "cc-memory-vault-dark.png",
+    "imageHash": "942b2d9cb3522ad7ebb96fba899efa73186fd141dd326b4bced0de02f82bd6c0",
+    "route": "/memory",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "1e34a84a3e1f248d6b27257e8debbc609c1aae05ec1d1074543a4f0c29e0f4dd",
+    "capturedAt": "2026-11-14T11:52:42.065Z"
+  },
+  {
+    "file": "cc-memory-archive-dark.png",
+    "imageHash": "0652fa5734a51b73e4f31985aa7c9d086be78cd434c46cd23a9b42a28130bb9c",
+    "route": "/memory",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 1440,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "1e34a84a3e1f248d6b27257e8debbc609c1aae05ec1d1074543a4f0c29e0f4dd",
+    "capturedAt": "2026-11-14T11:52:43.792Z"
+  },
+  {
+    "file": "cc-memory-vault-dark-mobile.png",
+    "imageHash": "68ddb1a9ef53142206bf09e40e0b6b7f0fb47d65c46130ce31039c657722df4d",
+    "route": "/memory",
+    "state": {},
+    "theme": "azure-dark",
+    "viewport": {
+      "width": 390,
+      "height": 900,
+      "deviceScaleFactor": 1
+    },
+    "data": "synthetic",
+    "sourceHash": "1e34a84a3e1f248d6b27257e8debbc609c1aae05ec1d1074543a4f0c29e0f4dd",
+    "capturedAt": "2026-11-14T11:53:29.313Z"
   }
 ]

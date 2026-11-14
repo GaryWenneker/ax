@@ -16,9 +16,10 @@ const skills = ['review-changes', 'debug-workflow', 'write-documentation'].map((
   tags: ['workflow'], priority: 90, body: 'Use focused code context and verify the result.',
   sourcePath: `.agents/skills/${name}/SKILL.md`, enabled: true, scope: 'project', origin: 'project', effectiveStorage: 'files',
 }));
-const memories = ['Azure design system', 'Preserve workspace preferences', 'Improve code navigation'].map((title, i) => ({
-  id: `memory-${i}`, kind: ['decision', 'convention', 'note'][i], title, body: 'Example project knowledge for the public design walkthrough.',
+const memories = ['Azure design system', 'Preserve workspace preferences', 'Improve code navigation', 'Queue retention before the 9.0 upgrade'].map((title, i) => ({
+  id: `memory-${i}`, kind: ['decision', 'convention', 'note', 'decision'][i], title, body: 'Example project knowledge for the public design walkthrough.',
   tags: ['design'], files: [], confidence: 0.95, source: 'agent', enabled: true, created_at: now, updated_at: now,
+  tier: ['t2', 't1', 't0', 't3'][i],
 }));
 const graphNodes = Array.from({ length: 48 }, (_, i) => ({ id: `graph-${i}`, name: `${names[i % names.length]}${i}`,
   kind: 'function', file_path: `src/module${i % 4}.ts`, community_id: i % 4, community_label: ['Interface', 'Policy', 'Knowledge', 'Index'][i % 4], degree: 3 }));
@@ -71,6 +72,8 @@ const data = {
   '/api/remote-mcp/publications/host/authorizations': { workspaceId: 'ax-demo', requests: [] },
   '/api/access/nodes/local': { settings: { config: {node_id:'demo-primary',role:'primary',cluster_id:'demo-cluster',projects:[{id:'demo-project'}]},port:9070,advertise:null }, running:true,active_project:true,active_replicas:1,sync:{status:'full_data_synced'},safety:{mode:'preserve_and_exchange',memories:3,rules:3,skills:3} },
   '/api/access/nodes/local/interfaces': { interfaces: [{name:'Ethernet',address:'192.168.1.20',loopback:false}] },
+  '/api/web-auth/status': {enabled:false,origin:'http://127.0.0.1:7070'},
+  '/api/web-auth/session': {authenticated:false},
   '/api/memory/embed-status': {backend:'feature-hash',onnx_feature:false,model_path:null,tokenizer_path:null},
   '/api/plugins': { plugins: [], root: '/projects/ax-demo/.ax/plugins' },
   '/api/okf/config': {enabled:true,outDir:'.ax/knowledge',outDirAbs:'/projects/ax-demo/.ax/knowledge',kinds:['function','class'],autoExportOnSync:false,wikiEnabled:false,wikiRemoteConfigured:false,wikiSubdir:'ax',bundleExists:false,format:'okf'},
@@ -132,6 +135,11 @@ export function screenshotResponse(url) {
   const path = requested.pathname;
   if (/^\/api\/memory\/[^/]+\/file-(changes|links)$/.test(path)) return {json:{files:{}}};
   if (path === '/api/links') return {json:{links:[],outgoing:[],incoming:[]}};
+  if (path === '/api/memory/recall') {
+    const archive = requested.searchParams.get('depth') === 'archive';
+    const hits = memories.filter(memory => (memory.tier === 't3') === archive);
+    return {json:{matches:hits.map((memory, i) => ({...memory, score: 42 - i * 7}))}};
+  }
   if (path === '/api/nodes') {
     const q = (requested.searchParams.get('q') ?? '').toLowerCase();
     const kind = requested.searchParams.get('kind');
