@@ -532,7 +532,7 @@ dependencies = [
 
 [[package]]
 name = "ax-cli"
-version = "9.0.2"
+version = "9.0.3"
 dependencies = [
  "ax-agent",
  "ax-context",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "ax-web"
-version = "9.0.2"
+version = "9.0.3"
 dependencies = [
  "anyhow",
  "argon2",
