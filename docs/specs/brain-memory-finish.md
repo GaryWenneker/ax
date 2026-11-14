@@ -69,3 +69,8 @@ Found while writing the tests, recorded and not changed: a fresh project's requi
 22. There are ten CLI-only templates (the Cursor rule is `.mdc`), not nine; all ten carry the CLI memory procedure.
 
 Found and not changed: a fresh `ax init` fails `ax policy sync` on `.agents/rules/prefer-mcp-ops.mdc` ("missing ax_preflight; missing once-per-turn dedup"). That check and template are outside this change.
+
+## Revision 3 (found while implementing behaviors 6 and 8, and the gauntlet)
+
+23. `MEMORY_PROCEDURE_CLI_SENTENCE` lives in `crates/ax-installer/src/cli_only.rs`, not `ide_seed.rs`: ax-installer does not depend on ax-policy, and the CLI-only templates and their verify live there. `MEMORY_PROCEDURE_SENTENCE` stays in `ide_seed.rs` and is re-exported from ax-policy.
+24. Extra setup files: `crates/ax-memory/tests/brain_scale.rs` (the ignored benchmark) and `scripts/changed-line-coverage.py` (the changed-line coverage gate the gauntlet calls). Neither adds a dependency; `cargo-llvm-cov` and `cargo-mutants` were already installed.
