@@ -403,7 +403,7 @@ pub(crate) async fn recall_scoped(
                 let e = crate::embed::blob_to_embedding(&blob)?;
                 Some((id, crate::embed::cosine(&query_embedding, &e)))
             })
-            .filter(|(_, sim)| *sim > 0.1)
+            .filter(|(_, sim)| *sim > crate::embed::MIN_VECTOR_SIMILARITY)
             .collect();
         vector_scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         vector_scored.truncate(overfetch);
@@ -434,7 +434,12 @@ pub(crate) async fn recall_scoped(
     let mut matches = Vec::with_capacity(ids.len());
     for id in &ids {
         if let Some(memory) = get(pool, id).await? {
-            let decayed = effective_confidence(memory.confidence, memory.updated_at, now);
+            // The archive exists for old memories, so age must not rank them down there.
+            let decayed = if archive {
+                memory.confidence
+            } else {
+                effective_confidence(memory.confidence, memory.updated_at, now)
+            };
             let mut score = fused.get(id).copied().unwrap_or(0.0) * decayed.max(0.05) * 100.0;
             let file_hit = crate::brain::files_overlap(files, &memory.files);
             let symbol_hit = memory.tier == crate::brain::TIER_SEMANTIC && symbol_hits.contains(id);

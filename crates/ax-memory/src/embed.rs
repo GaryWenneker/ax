@@ -12,6 +12,9 @@ pub const WEIGHT_VECTOR: f64 = 0.5;
 pub const WEIGHT_FTS: f64 = 0.3;
 pub const WEIGHT_GRAPH: f64 = 0.2;
 
+/// A vector hit at or below this cosine is noise, on the hot set and the archive alike.
+pub const MIN_VECTOR_SIMILARITY: f32 = 0.1;
+
 /// FNV-1a — stable across platforms and runs (unlike `DefaultHasher`).
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;

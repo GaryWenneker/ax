@@ -200,8 +200,11 @@ pub async fn register_cues(
             rows.push((cue, "trigger"));
         }
     }
-    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(b.1)));
-    rows.dedup();
+    rows.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(cue_source_rank(a.1).cmp(&cue_source_rank(b.1)))
+    });
+    rows.dedup_by(|later, earlier| later.0 == earlier.0);
     for (cue, source) in rows {
         sqlx::query(
             "INSERT OR IGNORE INTO memory_cues (cue, memory_id, weight, source) VALUES (?, ?, 1.0, ?)",
@@ -215,6 +218,21 @@ pub async fn register_cues(
     }
     Ok(())
 }
+
+/// A named trigger is the user's own word for a memory, so it outranks cues
+/// derived from titles, tags, files, and symbols.
+fn cue_source_rank(source: &str) -> u8 {
+    match source {
+        "trigger" => 0,
+        "tag" => 1,
+        "title" => 2,
+        "file" => 3,
+        _ => 4,
+    }
+}
+
+const CUE_SOURCE_RANK_SQL: &str = "CASE source WHEN 'trigger' THEN 0 WHEN 'tag' THEN 1 \
+     WHEN 'title' THEN 2 WHEN 'file' THEN 3 ELSE 4 END";
 
 pub async fn cues_for(pool: &SqlitePool, memory_id: &str) -> Result<Vec<String>, AxError> {
     sqlx::query_scalar("SELECT cue FROM memory_cues WHERE memory_id = ? ORDER BY cue")
@@ -385,11 +403,13 @@ pub async fn prompt_cues(
         return Ok(Vec::new());
     }
     let json = serde_json::to_string(&tokens).unwrap_or_else(|_| "[]".into());
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT memory_id FROM memory_cues
+    let ids: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT memory_id FROM memory_cues
          WHERE cue IN (SELECT value FROM json_each(?))
-         LIMIT ?",
-    )
+         GROUP BY memory_id
+         ORDER BY MIN({CUE_SOURCE_RANK_SQL}), MAX(LENGTH(cue)) DESC, memory_id
+         LIMIT ?"
+    ))
     .bind(json)
     .bind((limit.saturating_mul(4).max(limit)) as i64)
     .fetch_all(pool)
@@ -518,26 +538,28 @@ pub async fn index_archive_vector(pool: &SqlitePool, id: &str) -> Result<(), AxE
         return Ok(());
     }
     ensure_vec_table(pool).await?;
+    // last_insert_rowid() is per connection, so the insert and the read share one.
+    let mut conn = pool.acquire().await.map_err(db_err_pub)?;
     let existing: Option<i64> =
         sqlx::query_scalar("SELECT rowid FROM memory_vec_map WHERE memory_id = ?")
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await
             .map_err(db_err_pub)?;
     if let Some(rowid) = existing {
         sqlx::query("DELETE FROM memory_vec WHERE rowid = ?")
             .bind(rowid)
-            .execute(pool)
+            .execute(&mut *conn)
             .await
             .map_err(db_err_pub)?;
     }
     sqlx::query("INSERT INTO memory_vec(embedding) VALUES (?)")
         .bind(embedding_json(&vector))
-        .execute(pool)
+        .execute(&mut *conn)
         .await
         .map_err(db_err_pub)?;
     let rowid: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await
         .map_err(db_err_pub)?;
     sqlx::query(
@@ -546,7 +568,7 @@ pub async fn index_archive_vector(pool: &SqlitePool, id: &str) -> Result<(), AxE
     )
     .bind(id)
     .bind(rowid)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .map_err(db_err_pub)?;
     Ok(())
@@ -567,19 +589,22 @@ pub async fn knn(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<Str
             .map_err(db_err_pub)?;
     let mut ids = Vec::new();
     for (rowid,) in rows {
-        let memory_id: Option<(String, String)> = sqlx::query_as(
-            "SELECT m.id, m.embedding_model FROM memory_vec_map map
+        let memory_id: Option<(String, String, Vec<u8>)> = sqlx::query_as(
+            "SELECT m.id, m.embedding_model, m.embedding FROM memory_vec_map map
              JOIN memories m ON m.id = map.memory_id
-             WHERE map.rowid = ? AND m.enabled = 1 AND m.tier = 't3'",
+             WHERE map.rowid = ? AND m.enabled = 1 AND m.tier = 't3' AND m.embedding IS NOT NULL",
         )
         .bind(rowid)
         .fetch_optional(pool)
         .await
         .map_err(db_err_pub)?;
-        if let Some((id, model)) = memory_id {
-            if model == active {
-                ids.push(id);
-            }
+        let Some((id, model, blob)) = memory_id else {
+            continue;
+        };
+        let similar = crate::embed::blob_to_embedding(&blob)
+            .is_some_and(|stored| crate::embed::cosine(&vector, &stored) > crate::embed::MIN_VECTOR_SIMILARITY);
+        if model == active && similar {
+            ids.push(id);
         }
     }
     Ok(ids)
@@ -769,10 +794,21 @@ async fn write_graph_episode(
     file_path: &str,
     fingerprint: &str,
 ) -> Result<(), AxError> {
-    let memory_id = format!(
+    let base = format!(
         "graph-{}",
         stable_id(&format!("{symbol_id}|{change}|{fingerprint}"))
     );
+    let earlier: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE id = ? OR id LIKE ?")
+        .bind(&base)
+        .bind(format!("{base}-%"))
+        .fetch_one(pool)
+        .await
+        .map_err(db_err_pub)?;
+    let memory_id = if earlier == 0 {
+        base
+    } else {
+        format!("{base}-{}", earlier + 1)
+    };
     store::remember_with_id(
         pool,
         memory_id,

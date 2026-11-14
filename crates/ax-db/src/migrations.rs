@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 
 use ax_utils::errors::{AxError, DatabaseError};
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 28;
+pub const CURRENT_SCHEMA_VERSION: i32 = 29;
 
 struct Migration {
     version: i32,
@@ -416,6 +416,14 @@ const MIGRATIONS: &[Migration] = &[
                 at INTEGER NOT NULL,
                 PRIMARY KEY (kind, item_id, action, at)
             );
+        ",
+    },
+    Migration {
+        version: 29,
+        description: "Rebuild the archive vector index; earlier rows could map to the wrong memory",
+        sql: "
+            DROP TABLE IF EXISTS memory_vec_map;
+            DROP TABLE IF EXISTS memory_vec;
         ",
     },
 ];

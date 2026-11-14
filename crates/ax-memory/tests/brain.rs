@@ -217,6 +217,256 @@ async fn graph_episode_is_idempotent() {
 }
 
 #[tokio::test]
+async fn a_hyphenated_cue_in_the_prompt_comes_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    remember(
+        db.pool(),
+        note(
+            "Cache eviction notes",
+            "The build cache is slow. Cache eviction keeps the build cache small.",
+            vec![],
+        ),
+    )
+    .await
+    .unwrap();
+    let cue = remember_with_triggers(
+        db.pool(),
+        note("Ship together", "Copy every ax binary after a build.", vec![]),
+        &["reinstall-all".to_string()],
+    )
+    .await
+    .unwrap();
+    let hits = recall_for_prompt(
+        db.pool(),
+        "reinstall-all after the build cache is slow and cache eviction",
+        3,
+    )
+    .await
+    .unwrap();
+    assert_eq!(hits.first().map(|hit| &hit.memory.id), Some(&cue.id));
+}
+
+#[tokio::test]
+async fn a_trigger_that_is_also_a_title_word_stays_a_trigger() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let row = remember_with_triggers(
+        db.pool(),
+        note("Cache rules", "Evict after a day.", vec![]),
+        &["cache".to_string()],
+    )
+    .await
+    .unwrap();
+    let source: String =
+        sqlx::query_scalar("SELECT source FROM memory_cues WHERE memory_id = ? AND cue = 'cache'")
+            .bind(&row.id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(source, "trigger");
+}
+
+#[tokio::test]
+async fn archive_vector_points_at_its_own_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let mut archived = Vec::new();
+    for title in ["Queue retention", "Cache warmup", "Ledger rounding"] {
+        let row = remember(db.pool(), note(title, &format!("{title} notes."), vec![]))
+            .await
+            .unwrap();
+        sqlx::query("UPDATE memories SET tier = 't3' WHERE id = ?")
+            .bind(&row.id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        ax_memory::brain::index_archive_vector(db.pool(), &row.id)
+            .await
+            .unwrap();
+        archived.push((title, row.id));
+    }
+    for (title, id) in &archived {
+        let nearest = ax_memory::brain::knn(db.pool(), &format!("{title} notes."), 1)
+            .await
+            .unwrap();
+        assert_eq!(nearest.first(), Some(id), "{title}");
+    }
+}
+
+#[tokio::test]
+async fn schema_29_rebuilds_a_misdirected_archive_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ids = Vec::new();
+    {
+        let db = open_db(dir.path()).await;
+        for title in ["Queue retention", "Cache warmup"] {
+            let row = remember(db.pool(), note(title, &format!("{title} notes."), vec![]))
+                .await
+                .unwrap();
+            sqlx::query("UPDATE memories SET tier = 't3' WHERE id = ?")
+                .bind(&row.id)
+                .execute(db.pool())
+                .await
+                .unwrap();
+            ax_memory::brain::index_archive_vector(db.pool(), &row.id)
+                .await
+                .unwrap();
+            ids.push(row.id);
+        }
+        sqlx::query("UPDATE memory_vec_map SET rowid = rowid + 100")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM schema_versions WHERE version = 29")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db.close().await;
+    }
+    let db = open_db(dir.path()).await;
+    ax_memory::reembed_stale(db.pool(), 32).await.unwrap();
+    let nearest = ax_memory::brain::knn(db.pool(), "Cache warmup notes.", 1)
+        .await
+        .unwrap();
+    assert_eq!(nearest.first(), Some(&ids[1]));
+}
+
+#[tokio::test]
+async fn archive_word_match_outranks_trigram_lookalikes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let mut lookalikes = Vec::new();
+    for rule in ["install-version-resolution", "codegraph-retention-parity", "subagents-attention"] {
+        let row = remember(
+            db.pool(),
+            note(&format!("present rule rules/{rule}.mdc"), &format!("present rule rules/{rule}.mdc at catalog 1"), vec![]),
+        )
+        .await
+        .unwrap();
+        lookalikes.push(row.id);
+    }
+    let wanted = remember(db.pool(), note("Retention policy", "Retention policy for the cache.", vec![]))
+        .await
+        .unwrap();
+    for id in lookalikes.iter().chain([&wanted.id]) {
+        sqlx::query("UPDATE memories SET tier = 't3' WHERE id = ?")
+            .bind(id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        ax_memory::brain::index_archive_vector(db.pool(), id).await.unwrap();
+    }
+
+    let found = search(
+        db.pool(),
+        &SearchRequest {
+            query: "Retention".into(),
+            depth: Depth::Archive,
+            limit: 2,
+            ..SearchRequest::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(found.first().map(|hit| &hit.memory.id), Some(&wanted.id));
+
+    let ninety_one_days_ago = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+        - 91 * DAY_MS;
+    sqlx::query("UPDATE memories SET updated_at = ?, created_at = ? WHERE id = ?")
+        .bind(ninety_one_days_ago)
+        .bind(ninety_one_days_ago)
+        .bind(&wanted.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let old = search(
+        db.pool(),
+        &SearchRequest {
+            query: "Retention".into(),
+            depth: Depth::Archive,
+            limit: 2,
+            ..SearchRequest::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        old.first().map(|hit| &hit.memory.id),
+        Some(&wanted.id),
+        "age must not sink an archive match: {:?}",
+        old.iter().map(|hit| (&hit.memory.title, hit.score)).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn archive_search_does_not_return_unrelated_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let unrelated = remember(
+        db.pool(),
+        note(
+            "Policy history",
+            "present rule utf8-no-bom in the project catalog.",
+            vec![],
+        ),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE memories SET tier = 't3' WHERE id = ?")
+        .bind(&unrelated.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    ax_memory::brain::index_archive_vector(db.pool(), &unrelated.id)
+        .await
+        .unwrap();
+
+    let found = search(
+        db.pool(),
+        &SearchRequest {
+            query: "kafka".into(),
+            depth: Depth::Archive,
+            limit: 5,
+            ..SearchRequest::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(found.is_empty(), "{:?}", found.iter().map(|hit| &hit.memory.title).collect::<Vec<_>>());
+}
+
+#[tokio::test]
+async fn a_symbol_that_changes_back_and_forth_keeps_recording() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    sqlx::query(
+        "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+         VALUES ('sym-1', 'function', 'save_turn', 'turns::save_turn', 'src/turns.rs', 'rust', 1, 4, 0, 1, 'fn save_turn()', 1)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
+    for signature in ["fn save_turn(now: i64)", "fn save_turn()", "fn save_turn(now: i64)", "fn save_turn()"] {
+        sqlx::query("UPDATE nodes SET signature = ? WHERE id = 'sym-1'")
+            .bind(signature)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 1);
+    }
+    let episodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE kind = 'graph_diff'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(episodes, 4);
+}
+
+#[tokio::test]
 async fn candidate_stays_out_of_preflight_until_confirm() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
