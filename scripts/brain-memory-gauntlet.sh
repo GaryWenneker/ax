@@ -112,6 +112,12 @@ step "Suite health: single-threaded order, then a repeat"
 cargo test "${CRATES[@]}" -- --test-threads=1
 cargo test -p ax-memory --test brain
 
+step "Changed-line coverage since d0dbe830^ (library crates; doctor.rs is covered by real execution only)"
+cargo llvm-cov "${CRATES[@]}" --lcov --output-path "$LOG_DIR/brain.lcov"
+python3 scripts/changed-line-coverage.py d0dbe830^ "$LOG_DIR/brain.lcov" --fail-under 99 \
+	--no-code crates/ax-policy/src/lib.rs \
+	crates/ax-memory/src crates/ax-policy/src crates/ax-installer/src crates/ax-db/src
+
 if [ "$run_bench" = 1 ]; then
 	step "100k-row benchmark (release)"
 	cargo test -p ax-memory --release --test brain_scale -- --ignored --nocapture
@@ -157,6 +163,14 @@ if [ "$run_mutants" = 1 ]; then
 		'let memory_id = if earlier == 0 {' \
 		'let memory_id = if earlier >= 0 {' \
 		-- cargo test -p ax-memory --test brain
+	mutate M10-reindex-keeps-stale-vector crates/ax-memory/src/brain.rs \
+		$'"DELETE FROM memory_vec WHERE rowid = ?")\n            .bind(rowid)\n            .execute(&mut *conn)' \
+		$'"DELETE FROM memory_vec WHERE rowid = -1 AND ? IS NOT NULL")\n            .bind(rowid)\n            .execute(&mut *conn)' \
+		-- cargo test -p ax-memory --test brain
+	mutate M11-drift-hides-memory-procedure crates/ax-policy/src/ide_seed.rs \
+		'    issues.extend(memory_procedure_issue(content));' \
+		'    let _ = content;' \
+		-- cargo test -p ax-policy
 	trap - EXIT
 fi
 

@@ -1436,6 +1436,31 @@ mod tests {
     }
 
     #[test]
+    fn verify_names_a_drifted_cursor_or_continue_rule_without_the_memory_procedure() {
+        let dir = tempdir().unwrap();
+        sync_ide_bootstrap(dir.path(), true).unwrap();
+        for (label, rel) in [
+            (format!(".cursor/rules/{CURSOR_RULE_FILE}"), ".cursor/rules/ax.mdc"),
+            (format!(".continue/rules/{CONTINUE_RULE_FILE}"), ".continue/rules/ax.md"),
+        ] {
+            let path = dir.path().join(rel);
+            let body = std::fs::read_to_string(&path).unwrap();
+            assert!(body.contains(MEMORY_PROCEDURE_SENTENCE), "{rel}");
+            std::fs::write(&path, body.replace(MEMORY_PROCEDURE_SENTENCE, "")).unwrap();
+            let check = verify_ide_bootstrap(dir.path())
+                .into_iter()
+                .find(|c| c.label == label)
+                .unwrap();
+            assert!(!check.ok, "{rel}");
+            assert!(
+                check.issues.iter().any(|i| i == MISSING_MEMORY_PROCEDURE),
+                "{rel}: {:?}",
+                check.issues
+            );
+        }
+    }
+
+    #[test]
     fn verify_names_a_dedicated_rule_that_lost_the_memory_procedure() {
         let dir = tempdir().unwrap();
         sync_ide_bootstrap(dir.path(), true).unwrap();

@@ -1247,3 +1247,31 @@ async fn archive_hits_resolve_through_an_index() {
         "every hit must resolve from the map index, not the tier: {steps:?}"
     );
 }
+
+#[tokio::test]
+async fn reindexing_an_archive_memory_keeps_one_vector_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let row = remember(db.pool(), note("Queue retention", "Retention notes.", vec![]))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE memories SET tier = 't3' WHERE id = ?")
+        .bind(&row.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        ax_memory::brain::index_archive_vector(db.pool(), &row.id)
+            .await
+            .unwrap();
+    }
+    let vectors: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memory_vec")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(vectors, 1);
+    let nearest = ax_memory::brain::knn(db.pool(), "Queue retention\nRetention notes.", 1)
+        .await
+        .unwrap();
+    assert_eq!(nearest, vec![row.id]);
+}
