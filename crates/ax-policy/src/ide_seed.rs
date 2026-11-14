@@ -1440,8 +1440,14 @@ mod tests {
         let dir = tempdir().unwrap();
         sync_ide_bootstrap(dir.path(), true).unwrap();
         for (label, rel) in [
-            (format!(".cursor/rules/{CURSOR_RULE_FILE}"), ".cursor/rules/ax.mdc"),
-            (format!(".continue/rules/{CONTINUE_RULE_FILE}"), ".continue/rules/ax.md"),
+            (
+                format!(".cursor/rules/{CURSOR_RULE_FILE}"),
+                ".cursor/rules/ax.mdc",
+            ),
+            (
+                format!(".continue/rules/{CONTINUE_RULE_FILE}"),
+                ".continue/rules/ax.md",
+            ),
         ] {
             let path = dir.path().join(rel);
             let body = std::fs::read_to_string(&path).unwrap();

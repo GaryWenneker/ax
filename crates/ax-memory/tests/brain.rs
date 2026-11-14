@@ -1252,9 +1252,12 @@ async fn archive_hits_resolve_through_an_index() {
 async fn reindexing_an_archive_memory_keeps_one_vector_row() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
-    let row = remember(db.pool(), note("Queue retention", "Retention notes.", vec![]))
-        .await
-        .unwrap();
+    let row = remember(
+        db.pool(),
+        note("Queue retention", "Retention notes.", vec![]),
+    )
+    .await
+    .unwrap();
     sqlx::query("UPDATE memories SET tier = 't3' WHERE id = ?")
         .bind(&row.id)
         .execute(db.pool())
