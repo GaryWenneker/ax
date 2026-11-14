@@ -1278,3 +1278,140 @@ async fn reindexing_an_archive_memory_keeps_one_vector_row() {
         .unwrap();
     assert_eq!(nearest, vec![row.id]);
 }
+
+#[tokio::test]
+async fn a_cue_from_two_sources_keeps_the_stronger_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    sqlx::query(
+        "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+         VALUES ('sym-3', 'struct', 'Ledger', 'Ledger', 'src/ledger.rs', 'rust', 1, 4, 0, 1, 'struct Ledger', 1)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let row = remember(
+        db.pool(),
+        RememberInput {
+            tags: vec!["retention".into()],
+            ..note(
+                "Queue retention",
+                "Retention for the queue and the ledger.",
+                vec!["src/queue.rs".into(), "src/ledger.rs".into()],
+            )
+        },
+    )
+    .await
+    .unwrap();
+    for (cue, expected) in [("retention", "tag"), ("queue", "title"), ("ledger", "file")] {
+        let source: Option<String> =
+            sqlx::query_scalar("SELECT source FROM memory_cues WHERE memory_id = ? AND cue = ?")
+                .bind(&row.id)
+                .bind(cue)
+                .fetch_optional(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(source.as_deref(), Some(expected), "{cue}");
+    }
+}
+
+#[tokio::test]
+async fn full_text_finds_a_rare_word_the_vector_misses() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    let filler: Vec<String> = (0..300).map(|i| format!("filler{i}")).collect();
+    let row = remember(
+        db.pool(),
+        note(
+            "Release checklist",
+            &format!("{} zephyrine", filler.join(" ")),
+            vec![],
+        ),
+    )
+    .await
+    .unwrap();
+    let (query, _) = ax_memory::embed::embed_labeled("zephyrine");
+    let (stored, _) = ax_memory::embed::embed_labeled(&format!(
+        "Release checklist\n{} zephyrine",
+        filler.join(" ")
+    ));
+    assert!(
+        ax_memory::embed::cosine(&query, &stored) <= ax_memory::embed::MIN_VECTOR_SIMILARITY,
+        "the vector must miss this row for the test to prove full text"
+    );
+    let hits = search(
+        db.pool(),
+        &SearchRequest {
+            query: "zephyrine".into(),
+            limit: 5,
+            ..SearchRequest::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        hits.iter()
+            .map(|h| h.memory.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![row.id.as_str()]
+    );
+}
+
+#[tokio::test]
+async fn a_recurring_change_keeps_the_first_id_and_suffixes_the_rest() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    sqlx::query(
+        "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
+         VALUES ('sym-4', 'function', 'flush', 'queue::flush', 'src/queue.rs', 'rust', 1, 4, 0, 1, 'fn flush()', 1)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    capture_graph_episodes(db.pool()).await.unwrap();
+    for signature in ["fn flush(now: i64)", "fn flush()", "fn flush(now: i64)"] {
+        sqlx::query("UPDATE nodes SET signature = ? WHERE id = 'sym-4'")
+            .bind(signature)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        capture_graph_episodes(db.pool()).await.unwrap();
+    }
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM memories WHERE kind = 'graph_diff' ORDER BY rowid")
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(ids.len(), 3);
+    assert!(!ids[0].ends_with("-1"), "{ids:?}");
+    assert_eq!(ids[2], format!("{}-2", ids[0]));
+}
+
+#[tokio::test]
+async fn a_wide_recall_returns_every_match_up_to_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open_db(dir.path()).await;
+    for i in 0..60 {
+        remember(
+            db.pool(),
+            note(
+                &format!("Retention note {i}"),
+                &format!("Retention rule number {i}."),
+                vec![],
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    let hits = search(
+        db.pool(),
+        &SearchRequest {
+            query: "retention".into(),
+            limit: 100,
+            ..SearchRequest::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(hits.len(), 60);
+}

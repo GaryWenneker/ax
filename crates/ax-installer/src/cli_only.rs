@@ -487,6 +487,44 @@ mod tests {
     }
 
     #[test]
+    fn only_the_managed_block_counts_for_the_procedure() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("AGENTS.md"),
+            format!(
+                "Team copy: {MEMORY_PROCEDURE_CLI_SENTENCE}\n\n{AX_CLI_START}\n## AX CLI-only\nold block\n{AX_CLI_END}\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            verify_cli_only(root),
+            vec![(
+                "AGENTS.md".to_string(),
+                MISSING_MEMORY_PROCEDURE.to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn reversed_markers_fall_back_to_the_whole_file() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("AGENTS.md"),
+            format!("{AX_CLI_END}\n## AX CLI-only\nold block\n{AX_CLI_START}\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            verify_cli_only(root),
+            vec![(
+                "AGENTS.md".to_string(),
+                MISSING_MEMORY_PROCEDURE.to_string()
+            )]
+        );
+    }
+
+    #[test]
     fn reinstall_restores_the_procedure_and_keeps_user_text() {
         let dir = tempdir().unwrap();
         let root = dir.path();
