@@ -31,7 +31,7 @@ ax-ship = { workspace = true }
 dirs = { workspace = true }
 async-trait = { workspace = true }
 sysinfo = "0.39"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 axum = "0.8"
 reqwest = { workspace = true }
