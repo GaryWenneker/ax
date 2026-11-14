@@ -158,6 +158,25 @@ pub async fn run(mode: DoctorMode, path: Option<String>, json: bool) -> Result<(
                 .into(),
             None,
         ));
+        let missing = ax_installer::cli_only::verify_cli_only(&root);
+        checks.push(check(
+            "cli_memory_procedure",
+            if missing.is_empty() {
+                "operational"
+            } else {
+                "degraded"
+            },
+            if missing.is_empty() {
+                "every CLI-only instruction file teaches the memory procedure".into()
+            } else {
+                missing
+                    .iter()
+                    .map(|(rel, issue)| format!("{rel}: {issue}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            },
+            (!missing.is_empty()).then(|| "ax install --mode cli-only".into()),
+        ));
         // Detect if something is listening is out of scope; we only assert CLI path independence.
         checks.push(check(
             "restricted_mode",

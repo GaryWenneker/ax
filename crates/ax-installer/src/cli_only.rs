@@ -20,6 +20,49 @@ const CLINE_RULES: &str = include_str!("templates/cli_only_cline_rules.md");
 const AX_CLI_START: &str = "<!-- AX_CLI_START -->";
 const AX_CLI_END: &str = "<!-- AX_CLI_END -->";
 
+/// The memory procedure every CLI-only surface teaches, verbatim.
+pub const MEMORY_PROCEDURE_CLI_SENTENCE: &str = "Working notes for this chat stay in `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax remember --trigger <name>`. Before re-deriving, fetch that name with `ax recall --cue <name>`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `--depth archive` on `ax recall` and `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax remember --confirm <id>`. The old engram stays.";
+
+/// Issue reported for a CLI-only surface that does not teach the memory procedure.
+pub const MISSING_MEMORY_PROCEDURE: &str = "missing memory procedure";
+
+/// Every file a CLI-only install can write, relative to the project root.
+const CLI_ONLY_FILES: &[&str] = &[
+    ".github/copilot-instructions.md",
+    ".github/skills/ax-cli/SKILL.md",
+    ".cursor/rules/ax-cli.mdc",
+    ".windsurfrules",
+    ".continue/rules/ax-cli.md",
+    ".claude/rules/ax-cli.md",
+    ".claude/CLAUDE.md",
+    "GEMINI.md",
+    ".clinerules",
+    ".agents/skills/ax-cli/SKILL.md",
+    "AGENTS.md",
+];
+
+/// CLI-only instruction files under `project_root` that do not teach the memory procedure,
+/// as `(relative path, issue)`. Files without CLI-only content are not checked.
+pub fn verify_cli_only(project_root: &Path) -> Vec<(String, String)> {
+    CLI_ONLY_FILES
+        .iter()
+        .filter_map(|rel| {
+            let content = fs::read_to_string(project_root.join(rel)).ok()?;
+            let section = cli_only_section(&content)?;
+            (!section.contains(MEMORY_PROCEDURE_CLI_SENTENCE))
+                .then(|| ((*rel).to_string(), MISSING_MEMORY_PROCEDURE.to_string()))
+        })
+        .collect()
+}
+
+fn cli_only_section(content: &str) -> Option<&str> {
+    let section = match (content.find(AX_CLI_START), content.find(AX_CLI_END)) {
+        (Some(start), Some(end)) if start < end => &content[start..end],
+        _ => content,
+    };
+    section.contains("AX CLI-only").then_some(section)
+}
+
 /// Distinct instruction surfaces installed when `--target` is omitted.
 const DEFAULT_CLI_ONLY_TARGETS: &[&str] = &[
     "vscode", "cursor", "windsurf", "continue", "claude", "gemini", "cline",
@@ -364,6 +407,94 @@ mod tests {
         install_cli_only(root, &["continue".into()]).unwrap();
         assert!(root.join(".continue").join("rules").join("ax-cli.md").is_file());
         assert!(!root.join(".continue").join("mcpServers").join("ax.json").exists());
+    }
+
+    #[test]
+    fn every_cli_only_template_teaches_the_cli_memory_procedure() {
+        for (name, body) in [
+            ("copilot instructions", COPILOT_INSTRUCTIONS),
+            ("copilot skill", COPILOT_SKILL),
+            ("cursor rule", CURSOR_RULE),
+            ("agents skill", AGENTS_SKILL),
+            ("agents snippet", AGENTS_SNIPPET),
+            ("windsurf snippet", WINDSURF_SNIPPET),
+            ("gemini snippet", GEMINI_SNIPPET),
+            ("continue rule", CONTINUE_RULE),
+            ("claude rule", CLAUDE_RULE),
+            ("cline rules", CLINE_RULES),
+        ] {
+            assert!(
+                body.contains(MEMORY_PROCEDURE_CLI_SENTENCE),
+                "{name}: missing the CLI memory procedure"
+            );
+            assert!(!body.contains("ax_recall"), "{name}: names an MCP tool");
+        }
+    }
+
+    #[test]
+    fn a_fresh_cli_only_install_verifies_clean() {
+        let dir = tempdir().unwrap();
+        install_cli_only(dir.path(), &[]).unwrap();
+        assert_eq!(verify_cli_only(dir.path()), Vec::<(String, String)>::new());
+    }
+
+    #[test]
+    fn verify_names_a_cli_only_file_that_lost_the_memory_procedure() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        install_cli_only(root, &[]).unwrap();
+        for rel in [".cursor/rules/ax-cli.mdc", "AGENTS.md"] {
+            let path = root.join(rel);
+            let body = fs::read_to_string(&path).unwrap();
+            fs::write(&path, body.replace(MEMORY_PROCEDURE_CLI_SENTENCE, "")).unwrap();
+        }
+        assert_eq!(
+            verify_cli_only(root),
+            vec![
+                (".cursor/rules/ax-cli.mdc".to_string(), MISSING_MEMORY_PROCEDURE.to_string()),
+                ("AGENTS.md".to_string(), MISSING_MEMORY_PROCEDURE.to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn verify_ignores_mcp_mode_files_at_cli_only_paths() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("AGENTS.md"), "<!-- AX_START -->\nuse ax_preflight\n<!-- AX_END -->\n").unwrap();
+        assert!(verify_cli_only(root).is_empty());
+    }
+
+    #[test]
+    fn reinstall_restores_the_procedure_and_keeps_user_text() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        install_cli_only(root, &[]).unwrap();
+        let path = root.join("AGENTS.md");
+        let body = fs::read_to_string(&path).unwrap();
+        let stripped = body.replace(MEMORY_PROCEDURE_CLI_SENTENCE, "");
+        fs::write(&path, format!("# Team\nkeep me\n\n{stripped}\n## After\nkeep me too\n")).unwrap();
+        install_cli_only(root, &[]).unwrap();
+        let repaired = fs::read_to_string(&path).unwrap();
+        assert!(repaired.contains(MEMORY_PROCEDURE_CLI_SENTENCE));
+        assert!(repaired.starts_with("# Team\nkeep me\n"));
+        assert!(repaired.contains("## After\nkeep me too\n"));
+        assert!(verify_cli_only(root).is_empty());
+    }
+
+    #[test]
+    fn reinstalling_marked_snippets_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        install_cli_only(root, &["gemini".into(), "windsurf".into()]).unwrap();
+        let first: Vec<String> = ["GEMINI.md", ".windsurfrules"]
+            .iter()
+            .map(|rel| fs::read_to_string(root.join(rel)).unwrap())
+            .collect();
+        install_cli_only(root, &["gemini".into(), "windsurf".into()]).unwrap();
+        for (rel, before) in ["GEMINI.md", ".windsurfrules"].iter().zip(first) {
+            assert_eq!(fs::read_to_string(root.join(rel)).unwrap(), before, "{rel}");
+        }
     }
 
     #[test]

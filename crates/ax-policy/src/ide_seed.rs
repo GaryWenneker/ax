@@ -16,6 +16,11 @@ pub const WORKING_CONTEXT_SENTENCE: &str =
 pub const SESSION_ID_SENTENCE: &str =
     "Pass the `session` id from `<ax_chat>` to every ax call in this chat";
 
+/// The memory procedure every MCP bootstrap surface teaches, verbatim.
+pub const MEMORY_PROCEDURE_SENTENCE: &str = "Working notes for this chat stay in `ax_session` / `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax_remember` / `ax remember` with a trigger name (`triggers` / `--trigger`). Before re-deriving, fetch that name with `ax_recall` `cue` / `ax recall --cue`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `depth=archive` on `ax_recall` / `ax recall` and on `ax_history` / `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax_remember` `action=confirm` / `ax remember --confirm`. The old engram stays.";
+
+const MISSING_MEMORY_PROCEDURE: &str = "missing memory procedure";
+
 const AX_SECTION_START: &str = "<!-- AX_START -->";
 const AX_SECTION_END: &str = "<!-- AX_END -->";
 
@@ -725,7 +730,19 @@ fn verify_marked_instructions(path: &Path, expected_block: &str) -> Vec<String> 
     if block == expected_block {
         return vec![];
     }
-    crate::seed::verify_content(block)
+    let mut issues = crate::seed::verify_content(block);
+    issues.extend(memory_procedure_issue(block));
+    issues
+}
+
+fn memory_procedure_issue(content: &str) -> Option<String> {
+    (!content.contains(MEMORY_PROCEDURE_SENTENCE)).then(|| MISSING_MEMORY_PROCEDURE.into())
+}
+
+fn drift_issues(content: &str) -> Vec<String> {
+    let mut issues = vec!["bootstrap content drifts from embedded template".to_string()];
+    issues.extend(memory_procedure_issue(content));
+    issues
 }
 
 fn verify_dedicated_file(path: &Path) -> Vec<String> {
@@ -757,7 +774,7 @@ fn verify_cursor_bootstrap(project_root: &Path) -> InstructionCheck {
                 label,
                 path,
                 ok: false,
-                issues: vec!["bootstrap content drifts from embedded template".into()],
+                issues: drift_issues(&content),
                 optional: false,
             };
         }
@@ -792,7 +809,7 @@ fn verify_continue_bootstrap(project_root: &Path) -> InstructionCheck {
                 label,
                 path,
                 ok: false,
-                issues: vec!["bootstrap content drifts from embedded template".into()],
+                issues: drift_issues(&content),
                 optional: false,
             };
         }
@@ -860,7 +877,7 @@ fn verify_claude_rule_bootstrap(project_root: &Path) -> InstructionCheck {
                 label,
                 path,
                 ok: false,
-                issues: vec!["bootstrap content drifts from embedded template".into()],
+                issues: drift_issues(&content),
                 optional: false,
             };
         }
@@ -1361,6 +1378,79 @@ mod tests {
         let checks = verify_ide_bootstrap(dir.path());
         let fails: Vec<_> = checks.iter().filter(|c| !c.ok && !c.optional).collect();
         assert!(fails.len() >= 9);
+    }
+
+    #[test]
+    fn every_seeded_surface_teaches_the_memory_procedure() {
+        for (name, body) in [
+            ("cursor", CURSOR_RULE_BODY),
+            ("claude rule", CLAUDE_RULE_BODY),
+            ("claude block", CLAUDE_INSTRUCTIONS_BLOCK),
+            ("continue", CONTINUE_RULE_BODY),
+            ("cline rules", CLINE_RULE_BODY),
+            ("cline block", CLINE_INSTRUCTIONS_BLOCK),
+            ("agents", AGENTS_INSTRUCTIONS_BLOCK),
+            (
+                "startup skill",
+                include_str!("../templates/skills/startup/SKILL.md"),
+            ),
+        ] {
+            assert!(
+                body.contains(MEMORY_PROCEDURE_SENTENCE),
+                "{name}: missing the memory procedure"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_names_a_managed_block_that_lost_the_memory_procedure() {
+        let dir = tempdir().unwrap();
+        sync_ide_bootstrap(dir.path(), true).unwrap();
+        let agents = dir.path().join("AGENTS.md");
+        let seeded = std::fs::read_to_string(&agents).unwrap();
+        let without = seeded.replace(MEMORY_PROCEDURE_SENTENCE, "");
+        assert_ne!(seeded, without);
+        std::fs::write(
+            &agents,
+            format!("# Team notes\nkeep me\n\n{without}\n## After\nkeep me too\n"),
+        )
+        .unwrap();
+
+        let check = verify_ide_bootstrap(dir.path())
+            .into_iter()
+            .find(|c| c.label == "AGENTS.md")
+            .unwrap();
+        assert!(!check.ok);
+        assert_eq!(check.issues, vec![MISSING_MEMORY_PROCEDURE.to_string()]);
+
+        sync_ide_bootstrap(dir.path(), true).unwrap();
+        let repaired = std::fs::read_to_string(&agents).unwrap();
+        assert!(repaired.contains(MEMORY_PROCEDURE_SENTENCE));
+        assert!(repaired.starts_with("# Team notes\nkeep me\n"));
+        assert!(repaired.contains("## After\nkeep me too\n"));
+        let check = verify_ide_bootstrap(dir.path())
+            .into_iter()
+            .find(|c| c.label == "AGENTS.md")
+            .unwrap();
+        assert!(check.ok, "{:?}", check.issues);
+    }
+
+    #[test]
+    fn verify_names_a_dedicated_rule_that_lost_the_memory_procedure() {
+        let dir = tempdir().unwrap();
+        sync_ide_bootstrap(dir.path(), true).unwrap();
+        let path = dir.path().join(".claude/rules/ax.md");
+        let body = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, body.replace(MEMORY_PROCEDURE_SENTENCE, "")).unwrap();
+        let check = verify_ide_bootstrap(dir.path())
+            .into_iter()
+            .find(|c| c.label == ".claude/rules/ax.md")
+            .unwrap();
+        assert!(
+            check.issues.iter().any(|i| i == MISSING_MEMORY_PROCEDURE),
+            "{:?}",
+            check.issues
+        );
     }
 
     #[test]

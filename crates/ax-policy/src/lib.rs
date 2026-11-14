@@ -60,7 +60,8 @@ pub use hierarchy::{
 pub use ide_seed::{
     seed_ide_agent_workflow, seed_ide_agent_workflow_with_force, sync_ide_bootstrap,
     sync_ide_bootstrap_with_force, verify_ide_bootstrap, IdeSeedResult,
-    CONVERSATION_CACHE_SENTENCE, SESSION_ID_SENTENCE, WORKING_CONTEXT_SENTENCE,
+    CONVERSATION_CACHE_SENTENCE, MEMORY_PROCEDURE_SENTENCE, SESSION_ID_SENTENCE,
+    WORKING_CONTEXT_SENTENCE,
 };
 pub use index::{
     enrich_rule_row, enrich_skill_row, ensure_policy_ready, export_policy_to_files,

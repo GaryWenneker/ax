@@ -23,3 +23,5 @@ Do not require MCP, plugins, IDE hooks, daemons, or network listeners.
 3. Verify the receipt (`memory_id`, `idempotent`) before the user-facing reply ends.
 
 Turns without file changes must still be finished when useful work occurred.
+
+**Memory:** Working notes for this chat stay in `ax session`. They do not go into the vault. A durable decision, fix, or convention is `ax remember --trigger <name>`. Before re-deriving, fetch that name with `ax recall --cue <name>`. If the user names a trigger, that fetch comes before explore. Free-text recall is the fallback. Questions about old graph changes, logs, or past turns use `--depth archive` on `ax recall` and `ax history`. Preflight will not contain those hits. A candidate long-term memory is confirmed with `ax remember --confirm <id>`. The old engram stays.
