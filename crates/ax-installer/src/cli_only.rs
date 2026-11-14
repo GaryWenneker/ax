@@ -69,14 +69,7 @@ const DEFAULT_CLI_ONLY_TARGETS: &[&str] = &[
 ];
 
 /// Targets that only get the shared `AGENTS.md` + `.agents/skills/ax-cli` skill.
-const SHARED_ONLY_TARGETS: &[&str] = &[
-    "zed",
-    "jetbrains",
-    "kiro",
-    "codex",
-    "hermes",
-    "opencode",
-];
+const SHARED_ONLY_TARGETS: &[&str] = &["zed", "jetbrains", "kiro", "codex", "hermes", "opencode"];
 
 /// Install CLI-only agent integration for the requested targets.
 ///
@@ -162,7 +155,10 @@ fn install_one(project_root: &Path, target: &str) -> Result<TargetReport, String
         "cursor" => {
             write_file(
                 &mut report,
-                project_root.join(".cursor").join("rules").join("ax-cli.mdc"),
+                project_root
+                    .join(".cursor")
+                    .join("rules")
+                    .join("ax-cli.mdc"),
                 CURSOR_RULE,
             )?;
         }
@@ -188,10 +184,7 @@ fn install_one(project_root: &Path, target: &str) -> Result<TargetReport, String
         "claude" => {
             write_file(
                 &mut report,
-                project_root
-                    .join(".claude")
-                    .join("rules")
-                    .join("ax-cli.md"),
+                project_root.join(".claude").join("rules").join("ax-cli.md"),
                 CLAUDE_RULE,
             )?;
             upsert_marked_file(
@@ -201,18 +194,10 @@ fn install_one(project_root: &Path, target: &str) -> Result<TargetReport, String
             )?;
         }
         "gemini" => {
-            upsert_marked_file(
-                project_root.join("GEMINI.md"),
-                GEMINI_SNIPPET,
-                &mut report,
-            )?;
+            upsert_marked_file(project_root.join("GEMINI.md"), GEMINI_SNIPPET, &mut report)?;
         }
         "cline" => {
-            write_file(
-                &mut report,
-                project_root.join(".clinerules"),
-                CLINE_RULES,
-            )?;
+            write_file(&mut report, project_root.join(".clinerules"), CLINE_RULES)?;
         }
         t if SHARED_ONLY_TARGETS.contains(&t) => {
             report.note(format!(
@@ -266,11 +251,7 @@ fn write_file(report: &mut TargetReport, path: PathBuf, body: &str) -> Result<()
     Ok(())
 }
 
-fn upsert_marked_file(
-    path: PathBuf,
-    block: &str,
-    report: &mut TargetReport,
-) -> Result<(), String> {
+fn upsert_marked_file(path: PathBuf, block: &str, report: &mut TargetReport) -> Result<(), String> {
     let block = if block.ends_with('\n') {
         block.to_string()
     } else {
@@ -312,11 +293,7 @@ mod tests {
 
     fn assert_cli_content(path: &Path) {
         let body = fs::read_to_string(path).unwrap_or_else(|_| String::new());
-        assert!(
-            !body.is_empty(),
-            "expected non-empty {}",
-            path.display()
-        );
+        assert!(!body.is_empty(), "expected non-empty {}", path.display());
         assert!(
             body.contains("ax turn")
                 || body.contains("ax preflight")
@@ -353,7 +330,11 @@ mod tests {
         }
 
         // Must not write MCP configs.
-        assert!(!root.join(".continue").join("mcpServers").join("ax.json").exists());
+        assert!(!root
+            .join(".continue")
+            .join("mcpServers")
+            .join("ax.json")
+            .exists());
         assert!(!root.join(".cursor").join("mcp.json").exists());
         assert!(!root.join(".vscode").join("mcp.json").exists());
         assert!(!root.join(".mcp.json").exists());
@@ -365,10 +346,23 @@ mod tests {
         let root = dir.path();
         install_cli_only(root, &["windsurf".into()]).unwrap();
         assert!(root.join(".windsurfrules").is_file());
-        assert!(root.join(".agents").join("skills").join("ax-cli").join("SKILL.md").is_file());
+        assert!(root
+            .join(".agents")
+            .join("skills")
+            .join("ax-cli")
+            .join("SKILL.md")
+            .is_file());
         assert!(root.join("AGENTS.md").is_file());
-        assert!(!root.join(".cursor").join("rules").join("ax-cli.mdc").exists());
-        assert!(!root.join(".continue").join("mcpServers").join("ax.json").exists());
+        assert!(!root
+            .join(".cursor")
+            .join("rules")
+            .join("ax-cli.mdc")
+            .exists());
+        assert!(!root
+            .join(".continue")
+            .join("mcpServers")
+            .join("ax.json")
+            .exists());
     }
 
     #[test]
@@ -377,8 +371,17 @@ mod tests {
         let root = dir.path();
         let summary = install_cli_only(root, &["zed".into()]).unwrap();
         assert!(root.join("AGENTS.md").is_file());
-        assert!(root.join(".agents").join("skills").join("ax-cli").join("SKILL.md").is_file());
-        assert!(!root.join(".cursor").join("rules").join("ax-cli.mdc").exists());
+        assert!(root
+            .join(".agents")
+            .join("skills")
+            .join("ax-cli")
+            .join("SKILL.md")
+            .is_file());
+        assert!(!root
+            .join(".cursor")
+            .join("rules")
+            .join("ax-cli.mdc")
+            .exists());
         let zed = summary
             .reports
             .iter()
@@ -405,8 +408,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path();
         install_cli_only(root, &["continue".into()]).unwrap();
-        assert!(root.join(".continue").join("rules").join("ax-cli.md").is_file());
-        assert!(!root.join(".continue").join("mcpServers").join("ax.json").exists());
+        assert!(root
+            .join(".continue")
+            .join("rules")
+            .join("ax-cli.md")
+            .is_file());
+        assert!(!root
+            .join(".continue")
+            .join("mcpServers")
+            .join("ax.json")
+            .exists());
     }
 
     #[test]
@@ -451,8 +462,14 @@ mod tests {
         assert_eq!(
             verify_cli_only(root),
             vec![
-                (".cursor/rules/ax-cli.mdc".to_string(), MISSING_MEMORY_PROCEDURE.to_string()),
-                ("AGENTS.md".to_string(), MISSING_MEMORY_PROCEDURE.to_string()),
+                (
+                    ".cursor/rules/ax-cli.mdc".to_string(),
+                    MISSING_MEMORY_PROCEDURE.to_string()
+                ),
+                (
+                    "AGENTS.md".to_string(),
+                    MISSING_MEMORY_PROCEDURE.to_string()
+                ),
             ]
         );
     }
@@ -461,7 +478,11 @@ mod tests {
     fn verify_ignores_mcp_mode_files_at_cli_only_paths() {
         let dir = tempdir().unwrap();
         let root = dir.path();
-        fs::write(root.join("AGENTS.md"), "<!-- AX_START -->\nuse ax_preflight\n<!-- AX_END -->\n").unwrap();
+        fs::write(
+            root.join("AGENTS.md"),
+            "<!-- AX_START -->\nuse ax_preflight\n<!-- AX_END -->\n",
+        )
+        .unwrap();
         assert!(verify_cli_only(root).is_empty());
     }
 
@@ -473,7 +494,11 @@ mod tests {
         let path = root.join("AGENTS.md");
         let body = fs::read_to_string(&path).unwrap();
         let stripped = body.replace(MEMORY_PROCEDURE_CLI_SENTENCE, "");
-        fs::write(&path, format!("# Team\nkeep me\n\n{stripped}\n## After\nkeep me too\n")).unwrap();
+        fs::write(
+            &path,
+            format!("# Team\nkeep me\n\n{stripped}\n## After\nkeep me too\n"),
+        )
+        .unwrap();
         install_cli_only(root, &[]).unwrap();
         let repaired = fs::read_to_string(&path).unwrap();
         assert!(repaired.contains(MEMORY_PROCEDURE_CLI_SENTENCE));

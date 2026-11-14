@@ -602,7 +602,11 @@ pub async fn knn(pool: &SqlitePool, query: &str, limit: usize) -> Result<Vec<Str
             .map_err(db_err_pub)?;
     let rowid_list = format!(
         "[{}]",
-        rowids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+        rowids
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
     );
     let hits: std::collections::HashMap<i64, (String, String, Vec<u8>)> =
         sqlx::query_as::<_, (i64, String, String, Vec<u8>)>(ARCHIVE_HIT_SQL)
@@ -814,12 +818,13 @@ async fn write_graph_episode(
         "graph-{}",
         stable_id(&format!("{symbol_id}|{change}|{fingerprint}"))
     );
-    let earlier: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE id = ? OR id LIKE ?")
-        .bind(&base)
-        .bind(format!("{base}-%"))
-        .fetch_one(pool)
-        .await
-        .map_err(db_err_pub)?;
+    let earlier: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE id = ? OR id LIKE ?")
+            .bind(&base)
+            .bind(format!("{base}-%"))
+            .fetch_one(pool)
+            .await
+            .map_err(db_err_pub)?;
     let memory_id = if earlier == 0 {
         base
     } else {

@@ -11,9 +11,26 @@ const RUNS: usize = 5;
 const CUE_BUDGET: Duration = Duration::from_millis(5);
 const ARCHIVE_BUDGET: Duration = Duration::from_millis(50);
 const WORDS: [&str; 20] = [
-    "retention", "ledger", "cache", "queue", "rounding", "billing", "session", "index", "upgrade",
-    "policy", "rollback", "latency", "webhook", "tenant", "invoice", "schema", "token", "replica",
-    "backup", "migration",
+    "retention",
+    "ledger",
+    "cache",
+    "queue",
+    "rounding",
+    "billing",
+    "session",
+    "index",
+    "upgrade",
+    "policy",
+    "rollback",
+    "latency",
+    "webhook",
+    "tenant",
+    "invoice",
+    "schema",
+    "token",
+    "replica",
+    "backup",
+    "migration",
 ];
 const REPLACED: [&str; 5] = ["id", "title", "body", "embedding", "tier"];
 
@@ -102,7 +119,10 @@ async fn seed(pool: &sqlx::SqlitePool) {
     tx.commit().await.unwrap();
 }
 
-async fn median_of_runs(pool: &sqlx::SqlitePool, request: &SearchRequest) -> (Duration, Vec<String>) {
+async fn median_of_runs(
+    pool: &sqlx::SqlitePool,
+    request: &SearchRequest,
+) -> (Duration, Vec<String>) {
     let mut times = Vec::with_capacity(RUNS);
     let mut ids = Vec::new();
     for _ in 0..RUNS {
@@ -119,7 +139,9 @@ async fn median_of_runs(pool: &sqlx::SqlitePool, request: &SearchRequest) -> (Du
 #[ignore = "seeds 100,000 rows; run in release with --ignored"]
 async fn cue_and_archive_search_stay_inside_budget_at_100k_rows() {
     let dir = tempfile::tempdir().unwrap();
-    let db = ax_db::Database::open(&dir.path().join("ax.db")).await.unwrap();
+    let db = ax_db::Database::open(&dir.path().join("ax.db"))
+        .await
+        .unwrap();
     let pool = db.pool();
     let seeding = Instant::now();
     seed(pool).await;
@@ -151,5 +173,8 @@ async fn cue_and_archive_search_stay_inside_budget_at_100k_rows() {
     println!("cue lookup median of {RUNS}: {cue_median:?} (budget {CUE_BUDGET:?})");
     println!("archive top-20 median of {RUNS}: {archive_median:?} (budget {ARCHIVE_BUDGET:?})");
     assert!(cue_median < CUE_BUDGET, "cue lookup {cue_median:?}");
-    assert!(archive_median < ARCHIVE_BUDGET, "archive top-20 {archive_median:?}");
+    assert!(
+        archive_median < ARCHIVE_BUDGET,
+        "archive top-20 {archive_median:?}"
+    );
 }

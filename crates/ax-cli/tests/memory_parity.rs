@@ -184,7 +184,12 @@ async fn a_demoted_turn_is_fetchable_by_id_and_cue_on_every_door() {
     demoted_turn(&db, root).await;
     room_for_memories(root);
 
-    let preflight = mcp(root, "ax_preflight", serde_json::json!({ "prompt": "Retention policy" })).await;
+    let preflight = mcp(
+        root,
+        "ax_preflight",
+        serde_json::json!({ "prompt": "Retention policy" }),
+    )
+    .await;
     let omitted = &preflight["contextBudget"]["omitted"];
     assert!(!omitted.to_string().contains("memories"), "{omitted}");
     assert!(!preflight.to_string().contains("turn-91"), "{preflight}");
@@ -210,7 +215,12 @@ async fn a_demoted_turn_is_fetchable_by_id_and_cue_on_every_door() {
     assert_eq!(cli["cues"], by_id["cues"]);
 
     let cli_cue = run_ax(root, &["recall", "--cue", "retention-policy", "--json"]);
-    let mcp_cue = mcp(root, "ax_recall", serde_json::json!({ "cue": "retention-policy" })).await;
+    let mcp_cue = mcp(
+        root,
+        "ax_recall",
+        serde_json::json!({ "cue": "retention-policy" }),
+    )
+    .await;
     assert_eq!(ids(&cli_cue, "matches"), vec!["turn-91"]);
     assert_eq!(ids(&mcp_cue, "matches"), vec!["turn-91"]);
 }
@@ -247,10 +257,16 @@ async fn archive_recall_returns_the_same_ids_and_scores_on_every_door() {
     .await
     .unwrap();
     let library_ids: Vec<String> = library.iter().map(|hit| hit.memory.id.clone()).collect();
-    assert!(library_ids.contains(&"turn-91".to_string()), "{library_ids:?}");
+    assert!(
+        library_ids.contains(&"turn-91".to_string()),
+        "{library_ids:?}"
+    );
     assert!(library.iter().all(|hit| hit.memory.tier == "t3"));
 
-    let cli = run_ax(root, &["recall", "Retention", "--depth", "archive", "--json"]);
+    let cli = run_ax(
+        root,
+        &["recall", "Retention", "--depth", "archive", "--json"],
+    );
     let archive = mcp(
         root,
         "ax_recall",
@@ -282,7 +298,10 @@ async fn archive_history_lists_the_same_graph_changes_on_every_door() {
         .execute(db.pool())
         .await
         .unwrap();
-    assert_eq!(ax_memory::capture_graph_episodes(db.pool()).await.unwrap(), 1);
+    assert_eq!(
+        ax_memory::capture_graph_episodes(db.pool()).await.unwrap(),
+        1
+    );
 
     let library = ax_memory::history(
         db.pool(),
@@ -297,9 +316,15 @@ async fn archive_history_lists_the_same_graph_changes_on_every_door() {
     .await
     .unwrap();
     let library_ids: Vec<String> = library.iter().map(|entry| entry.id.clone()).collect();
-    assert!(library_ids.iter().any(|id| id.starts_with("graph-")), "{library_ids:?}");
+    assert!(
+        library_ids.iter().any(|id| id.starts_with("graph-")),
+        "{library_ids:?}"
+    );
 
-    let cli = run_ax(root, &["history", "save_turn", "--depth", "archive", "--json"]);
+    let cli = run_ax(
+        root,
+        &["history", "save_turn", "--depth", "archive", "--json"],
+    );
     let tool = mcp(
         root,
         "ax_history",
@@ -310,7 +335,9 @@ async fn archive_history_lists_the_same_graph_changes_on_every_door() {
     assert_eq!(ids(&tool, "entries"), library_ids);
 
     let hot = run_ax(root, &["history", "save_turn", "--json"]);
-    assert!(ids(&hot, "entries").iter().all(|id| !id.starts_with("graph-")));
+    assert!(ids(&hot, "entries")
+        .iter()
+        .all(|id| !id.starts_with("graph-")));
 }
 
 async fn candidate(db: &ax_db::Database, turn: &str) -> String {
@@ -352,7 +379,10 @@ async fn confirm_activates_a_candidate_from_every_door() {
     let first = candidate(&db, "turn-cli").await;
     assert_eq!(status(&db, &first).await, "candidate");
     let cli = run_ax(root, &["remember", "--confirm", &first, "--json"]);
-    assert_eq!(cli, serde_json::json!({ "ok": true, "id": first, "confirmed": true }));
+    assert_eq!(
+        cli,
+        serde_json::json!({ "ok": true, "id": first, "confirmed": true })
+    );
     assert_eq!(status(&db, &first).await, "active");
 
     let second = candidate(&db, "turn-mcp").await;
@@ -363,7 +393,10 @@ async fn confirm_activates_a_candidate_from_every_door() {
         serde_json::json!({ "action": "confirm", "id": second }),
     )
     .await;
-    assert_eq!(tool, serde_json::json!({ "ok": true, "id": second, "confirmed": true }));
+    assert_eq!(
+        tool,
+        serde_json::json!({ "ok": true, "id": second, "confirmed": true })
+    );
     assert_eq!(status(&db, &second).await, "active");
 
     let third = candidate(&db, "turn-lib").await;
@@ -411,9 +444,13 @@ async fn preflight_lists_the_cue_hit_first_on_cli_and_mcp() {
     room_for_memories(root);
     let prompt = "reinstall-all after the build cache is slow and cache eviction";
     let cli = run_ax(root, &["preflight", "--prompt", prompt, "--json"]).to_string();
-    let tool = mcp(root, "ax_preflight", serde_json::json!({ "prompt": prompt }))
-        .await
-        .to_string();
+    let tool = mcp(
+        root,
+        "ax_preflight",
+        serde_json::json!({ "prompt": prompt }),
+    )
+    .await
+    .to_string();
     for text in [&cli, &tool] {
         let found = first_position(text, &["Ship together", "Cache eviction notes"]);
         let (Some(cue), Some(other)) = (found[0], found[1]) else {

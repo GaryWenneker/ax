@@ -232,7 +232,11 @@ async fn a_hyphenated_cue_in_the_prompt_comes_first() {
     .unwrap();
     let cue = remember_with_triggers(
         db.pool(),
-        note("Ship together", "Copy every ax binary after a build.", vec![]),
+        note(
+            "Ship together",
+            "Copy every ax binary after a build.",
+            vec![],
+        ),
         &["reinstall-all".to_string()],
     )
     .await
@@ -337,25 +341,42 @@ async fn archive_word_match_outranks_trigram_lookalikes() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
     let mut lookalikes = Vec::new();
-    for rule in ["install-version-resolution", "codegraph-retention-parity", "subagents-attention"] {
+    for rule in [
+        "install-version-resolution",
+        "codegraph-retention-parity",
+        "subagents-attention",
+    ] {
         let row = remember(
             db.pool(),
-            note(&format!("present rule rules/{rule}.mdc"), &format!("present rule rules/{rule}.mdc at catalog 1"), vec![]),
+            note(
+                &format!("present rule rules/{rule}.mdc"),
+                &format!("present rule rules/{rule}.mdc at catalog 1"),
+                vec![],
+            ),
         )
         .await
         .unwrap();
         lookalikes.push(row.id);
     }
-    let wanted = remember(db.pool(), note("Retention policy", "Retention policy for the cache.", vec![]))
-        .await
-        .unwrap();
+    let wanted = remember(
+        db.pool(),
+        note(
+            "Retention policy",
+            "Retention policy for the cache.",
+            vec![],
+        ),
+    )
+    .await
+    .unwrap();
     for id in lookalikes.iter().chain([&wanted.id]) {
         sqlx::query("UPDATE memories SET tier = 't3' WHERE id = ?")
             .bind(id)
             .execute(db.pool())
             .await
             .unwrap();
-        ax_memory::brain::index_archive_vector(db.pool(), id).await.unwrap();
+        ax_memory::brain::index_archive_vector(db.pool(), id)
+            .await
+            .unwrap();
     }
 
     let found = search(
@@ -398,7 +419,9 @@ async fn archive_word_match_outranks_trigram_lookalikes() {
         old.first().map(|hit| &hit.memory.id),
         Some(&wanted.id),
         "age must not sink an archive match: {:?}",
-        old.iter().map(|hit| (&hit.memory.title, hit.score)).collect::<Vec<_>>()
+        old.iter()
+            .map(|hit| (&hit.memory.title, hit.score))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -436,7 +459,14 @@ async fn archive_search_does_not_return_unrelated_rows() {
     )
     .await
     .unwrap();
-    assert!(found.is_empty(), "{:?}", found.iter().map(|hit| &hit.memory.title).collect::<Vec<_>>());
+    assert!(
+        found.is_empty(),
+        "{:?}",
+        found
+            .iter()
+            .map(|hit| &hit.memory.title)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -451,7 +481,12 @@ async fn a_symbol_that_changes_back_and_forth_keeps_recording() {
     .await
     .unwrap();
     assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 0);
-    for signature in ["fn save_turn(now: i64)", "fn save_turn()", "fn save_turn(now: i64)", "fn save_turn()"] {
+    for signature in [
+        "fn save_turn(now: i64)",
+        "fn save_turn()",
+        "fn save_turn(now: i64)",
+        "fn save_turn()",
+    ] {
         sqlx::query("UPDATE nodes SET signature = ? WHERE id = 'sym-1'")
             .bind(signature)
             .execute(db.pool())
@@ -459,10 +494,11 @@ async fn a_symbol_that_changes_back_and_forth_keeps_recording() {
             .unwrap();
         assert_eq!(capture_graph_episodes(db.pool()).await.unwrap(), 1);
     }
-    let episodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE kind = 'graph_diff'")
-        .fetch_one(db.pool())
-        .await
-        .unwrap();
+    let episodes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE kind = 'graph_diff'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
     assert_eq!(episodes, 4);
 }
 
@@ -1186,9 +1222,12 @@ async fn migration_26_moves_git_and_docs_into_the_archive() {
 async fn archive_hits_resolve_through_an_index() {
     let dir = tempfile::tempdir().unwrap();
     let db = open_db(dir.path()).await;
-    let row = remember(db.pool(), note("Queue retention", "Retention notes.", vec![]))
-        .await
-        .unwrap();
+    let row = remember(
+        db.pool(),
+        note("Queue retention", "Retention notes.", vec![]),
+    )
+    .await
+    .unwrap();
     ax_memory::brain::index_archive_vector(db.pool(), &row.id)
         .await
         .unwrap();
