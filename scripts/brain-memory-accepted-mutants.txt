@@ -1,0 +1,9 @@
+# Survivors of `brain-memory-gauntlet.sh --tool-mutants` that no test can or should kill.
+# Equivalent: two distinct markers never start at the same index.
+crates/ax-installer/src/cli_only.rs:60:43: replace < with <= in cli_only_section
+# Equivalent: differs only when a cosine is exactly MIN_VECTOR_SIMILARITY (0.1).
+crates/ax-memory/src/brain.rs:626:60: replace > with >= in knn
+crates/ax-memory/src/store.rs:406:33: replace > with >= in vector_ranking
+# Tuning: limit + 4 still overfetches at least 20 rows; recall depth is a ranking-quality choice
+# with no exact expected output.
+crates/ax-memory/src/store.rs:424:28: replace * with + in recall_scoped

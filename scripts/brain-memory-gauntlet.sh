@@ -5,6 +5,9 @@
 #   scripts/brain-memory-gauntlet.sh              # every layer, including the mutants
 #   scripts/brain-memory-gauntlet.sh --no-mutants # skip the manual mutants
 #   scripts/brain-memory-gauntlet.sh --bench      # also run the 100k-row release benchmark
+#   scripts/brain-memory-gauntlet.sh --tool-mutants # also run cargo-mutants on the change; every
+#                                                 # survivor must be listed in
+#                                                 # scripts/brain-memory-accepted-mutants.txt
 #   scripts/brain-memory-gauntlet.sh --control    # negative control: a comment-only mutant must
 #                                                 # be reported as SURVIVED (exit 1)
 #
@@ -16,11 +19,13 @@ cd "$(git rev-parse --show-toplevel)"
 run_mutants=1
 run_bench=0
 run_control=0
+run_tool_mutants=0
 for arg in "$@"; do
 	case "$arg" in
 	--no-mutants) run_mutants=0 ;;
 	--bench) run_bench=1 ;;
 	--control) run_control=1 ;;
+	--tool-mutants) run_tool_mutants=1 ;;
 	*) echo "unknown argument: $arg" >&2; exit 2 ;;
 	esac
 done
@@ -172,6 +177,38 @@ if [ "$run_mutants" = 1 ]; then
 		'    let _ = content;' \
 		-- cargo test -p ax-policy
 	trap - EXIT
+fi
+
+if [ "$run_tool_mutants" = 1 ]; then
+	step "cargo-mutants on the change"
+	out=$(mktemp -d)
+	git diff d0dbe830^ HEAD -- crates/ax-memory/src crates/ax-policy/src/ide_seed.rs \
+		crates/ax-installer/src/cli_only.rs >"$out/change.diff"
+	[ -s "$out/change.diff" ] || { echo "empty change diff" >&2; exit 1; }
+	set +e
+	cargo mutants --in-diff "$out/change.diff" -p ax-memory -p ax-policy -p ax-installer \
+		-j 3 --output "$out"
+	status=$?
+	set -e
+	case "$status" in
+	0 | 2) ;;
+	*) echo "cargo-mutants failed with exit $status" >&2; exit 1 ;;
+	esac
+	caught=$(wc -l <"$out/mutants.out/caught.txt")
+	[ "$caught" -gt 0 ] || { echo "cargo-mutants caught nothing" >&2; exit 1; }
+	grep -v '^#' scripts/brain-memory-accepted-mutants.txt >"$out/accepted.txt"
+	[ -s "$out/accepted.txt" ] || { echo "accepted-mutants list is empty" >&2; exit 1; }
+	set +e
+	unexpected=$(grep -vxF -f "$out/accepted.txt" "$out/mutants.out/missed.txt")
+	status=$?
+	set -e
+	[ "$status" -le 1 ] || { echo "survivor comparison failed" >&2; exit 1; }
+	if [ -n "$unexpected" ]; then
+		echo "survivors not in scripts/brain-memory-accepted-mutants.txt:" >&2
+		echo "$unexpected" >&2
+		exit 1
+	fi
+	echo "caught $caught; survivors all accepted: $(wc -l <"$out/mutants.out/missed.txt")"
 fi
 
 step "GAUNTLET PASSED"

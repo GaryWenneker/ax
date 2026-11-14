@@ -1285,7 +1285,7 @@ async fn a_cue_from_two_sources_keeps_the_stronger_source() {
     let db = open_db(dir.path()).await;
     sqlx::query(
         "INSERT INTO nodes (id, kind, name, qualified_name, file_path, language, start_line, end_line, start_column, end_column, signature, updated_at)
-         VALUES ('sym-3', 'struct', 'Ledger', 'Ledger', 'src/ledger.rs', 'rust', 1, 4, 0, 1, 'struct Ledger', 1)",
+         VALUES ('sym-3', 'struct', 'Ledger', 'Ledger', 'src/queue.rs', 'rust', 1, 4, 0, 1, 'struct Ledger', 1)",
     )
     .execute(db.pool())
     .await
