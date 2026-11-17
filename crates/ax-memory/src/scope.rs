@@ -29,7 +29,9 @@ fn path_is_in_project(project_root: &Path, path: &str) -> bool {
         return true;
     }
     let candidate = PathBuf::from(trimmed);
-    if candidate.is_absolute() {
+    // A leading slash is absolute on Unix and a drive-root path on Windows.
+    // Either way it is outside the project unless it sits under the root.
+    if candidate.is_absolute() || trimmed.starts_with('/') || trimmed.starts_with('\\') {
         return candidate.starts_with(project_root);
     }
     !candidate
