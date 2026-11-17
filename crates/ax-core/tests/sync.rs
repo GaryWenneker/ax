@@ -289,6 +289,8 @@ async fn index_names_each_maintenance_step() {
             "SQLite maintenance".to_string(),
             "graph episodes".to_string(),
             "activity engrams".to_string(),
+            "rename re-anchor".to_string(),
+            "anchor flags".to_string(),
             "memory consolidation".to_string(),
             "memory re-embed".to_string(),
         ]

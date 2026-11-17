@@ -1342,7 +1342,26 @@ mod hook_repair {
         repair_hooks_at_startup(&dir);
         let content = fs::read_to_string(hooks.join("post-commit")).unwrap();
         fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(content, "#!/bin/sh\nax sync --quiet\n");
+        let bin = std::env::current_exe().unwrap();
+        let raw = bin.to_string_lossy();
+        let normalized = if cfg!(windows) {
+            let stripped = if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
+                format!("//{unc}")
+            } else if let Some(rest) = raw.strip_prefix(r"\\?\") {
+                rest.to_string()
+            } else {
+                raw.into_owned()
+            };
+            stripped.replace('\\', "/")
+        } else {
+            raw.into_owned()
+        };
+        let shown = if normalized.contains(char::is_whitespace) {
+            format!("\"{normalized}\"")
+        } else {
+            normalized
+        };
+        assert_eq!(content, format!("#!/bin/sh\n{shown} sync --quiet\n"));
     }
 
     #[test]
