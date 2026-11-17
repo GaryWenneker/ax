@@ -19,21 +19,11 @@ pub struct VerifiedEdge {
     pub confidence: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CodeAwareConfig {
     pub enabled: bool,
     pub project_id: String,
     pub limit: usize,
-}
-
-impl Default for CodeAwareConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            project_id: String::new(),
-            limit: 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,7 +44,7 @@ pub fn exact_symbol(query: &str, name: &str) -> bool {
     if wanted.is_empty() {
         return false;
     }
-    query_tokens(query).any(|token| symbol_key(&token) == wanted)
+    query_tokens(query).any(|token| symbol_key(token) == wanted)
 }
 
 pub fn select(
@@ -255,11 +245,7 @@ mod tests {
         let selection = select("parse the parseXml path", &rows, &[], &config);
         assert_eq!(
             selection.ids,
-            vec![
-                "xml".to_string(),
-                "rows".to_string(),
-                "other".to_string()
-            ]
+            vec!["xml".to_string(), "rows".to_string(), "other".to_string()]
         );
     }
 
@@ -317,11 +303,7 @@ mod tests {
         let selection = select("parseXml", &rows, &[], &config);
         assert_eq!(
             selection.ids,
-            vec![
-                "exact".to_string(),
-                "first".to_string(),
-                "sib".to_string()
-            ]
+            vec!["exact".to_string(), "first".to_string(), "sib".to_string()]
         );
     }
 
@@ -342,7 +324,10 @@ mod tests {
         assert!(selection.trace.iter().any(|line| line == "rejected:other"));
         assert!(selection.trace.iter().any(|line| line == "mandatory:rule"));
         assert!(selection.trace.iter().any(|line| line == "exact:local"));
-        assert!(selection.trace.iter().all(|line| !line.starts_with("displaced:")));
+        assert!(selection
+            .trace
+            .iter()
+            .all(|line| !line.starts_with("displaced:")));
     }
 
     #[test]
@@ -365,7 +350,10 @@ mod tests {
 
     #[test]
     fn hybrid_rank_puts_an_exact_symbol_ahead_of_the_baseline_and_abstains_when_both_are_empty() {
-        let rows = vec![candidate("xml", "parse_xml"), candidate("rows", "policy_rows")];
+        let rows = vec![
+            candidate("xml", "parse_xml"),
+            candidate("rows", "policy_rows"),
+        ];
         let promoted = hybrid_rank("parseXml", &["rows".to_string()], &rows, &[], 2);
         assert_eq!(promoted.ids, vec!["xml".to_string(), "rows".to_string()]);
         let quiet = hybrid_rank("weather in Utrecht", &[], &rows, &[], 2);
@@ -397,7 +385,11 @@ mod tests {
         }
         let ndcg = if ideal == 0.0 { 0.0 } else { dcg / ideal };
         let precision = hits / 3.0;
-        let recall = if gold.is_empty() { 0.0 } else { hits / gold.len() as f64 };
+        let recall = if gold.is_empty() {
+            0.0
+        } else {
+            hits / gold.len() as f64
+        };
         (reciprocal, ndcg, precision, recall)
     }
 
@@ -417,7 +409,10 @@ mod tests {
             .join("../../benchmarks/memory/code-retrieval-frozen.json");
         let value: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(value["snapshot"], "85fa176a9b4b6ce5e33687bee268767d87731c60");
+        assert_eq!(
+            value["snapshot"],
+            "85fa176a9b4b6ce5e33687bee268767d87731c60"
+        );
         let candidates_json = value["candidates"].as_array().unwrap();
         let tasks = value["tasks"].as_array().unwrap();
         assert!(tasks.len() >= 60);
@@ -496,18 +491,15 @@ mod tests {
                 .map(|id| id.as_str().unwrap().to_string())
                 .collect();
             let started = std::time::Instant::now();
-            let production = ax_memory::recall_for_prompt(pool, query, 10)
-                .await
-                .unwrap();
+            let production = ax_memory::recall_for_prompt(pool, query, 10).await.unwrap();
             *millis.get_mut("production").unwrap() += started.elapsed().as_millis();
             std::env::set_var("AX_MEMORY_BENCH_IDENTIFIER_AFFIX", "1");
             let started = std::time::Instant::now();
-            let affix = ax_memory::recall_for_prompt(pool, query, 10)
-                .await
-                .unwrap();
+            let affix = ax_memory::recall_for_prompt(pool, query, 10).await.unwrap();
             *millis.get_mut("affix").unwrap() += started.elapsed().as_millis();
             std::env::remove_var("AX_MEMORY_BENCH_IDENTIFIER_AFFIX");
-            let baseline: Vec<String> = production.iter().map(|hit| hit.memory.id.clone()).collect();
+            let baseline: Vec<String> =
+                production.iter().map(|hit| hit.memory.id.clone()).collect();
             let started = std::time::Instant::now();
             let hybrid = hybrid_rank(query, &baseline, &rows, &edges, 10);
             *millis.get_mut("graph_hybrid").unwrap() += started.elapsed().as_millis();
@@ -522,7 +514,7 @@ mod tests {
             if gold.is_empty() {
                 negatives += 1.0;
                 for (arm, ids) in &lists {
-                let arm: &str = arm;
+                    let arm: &str = arm;
                     if ids.is_empty() {
                         *abstain.get_mut(arm).unwrap() += 1.0;
                     }
@@ -538,9 +530,7 @@ mod tests {
                 total[2] += scores.2;
                 total[3] += scores.3;
                 *counted.entry(arm).or_insert(0.0) += 1.0;
-                let by_kind = kind_sums
-                    .entry((arm, kind))
-                    .or_insert([0.0; 4]);
+                let by_kind = kind_sums.entry((arm, kind)).or_insert([0.0; 4]);
                 by_kind[0] += scores.0;
                 by_kind[1] += scores.1;
                 by_kind[2] += scores.2;

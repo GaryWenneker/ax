@@ -159,48 +159,6 @@ impl TokenVerifier {
     }
 }
 
-#[cfg(test)]
-mod mcp_auth {
-    use super::*;
-    use axum::http::HeaderValue;
-
-    #[test]
-    fn malformed_authorization_is_rejected_not_anonymous() {
-        let mut headers = HeaderMap::new();
-        assert_eq!(bearer_token(&headers), None);
-        for value in [
-            "Basic axc_test",
-            "Bearer",
-            "Bearer ",
-            "Bearer  ",
-            "Bearer \tsecret",
-            "bearer secret",
-            "Token secret",
-        ] {
-            headers.insert(
-                header::AUTHORIZATION,
-                HeaderValue::from_str(value).unwrap(),
-            );
-            assert_eq!(bearer_token(&headers), None, "value={value}");
-        }
-    }
-
-    #[test]
-    fn valid_bearer_still_accepted() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer test-ide-key"),
-        );
-        assert_eq!(bearer_token(&headers), Some("test-ide-key"));
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer axo_access-token"),
-        );
-        assert_eq!(bearer_token(&headers), Some("axo_access-token"));
-    }
-}
-
 async fn fetch_keys(client: &reqwest::Client, url: &str) -> Result<JwkSet, String> {
     let mut response = client
         .get(url)
@@ -224,4 +182,43 @@ async fn fetch_keys(client: &reqwest::Client, url: &str) -> Result<JwkSet, Strin
         bytes.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&bytes).map_err(|_| "Invalid OAuth signing keys".into())
+}
+
+#[cfg(test)]
+mod mcp_auth {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn malformed_authorization_is_rejected_not_anonymous() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(bearer_token(&headers), None);
+        for value in [
+            "Basic axc_test",
+            "Bearer",
+            "Bearer ",
+            "Bearer  ",
+            "Bearer \tsecret",
+            "bearer secret",
+            "Token secret",
+        ] {
+            headers.insert(header::AUTHORIZATION, HeaderValue::from_str(value).unwrap());
+            assert_eq!(bearer_token(&headers), None, "value={value}");
+        }
+    }
+
+    #[test]
+    fn valid_bearer_still_accepted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer test-ide-key"),
+        );
+        assert_eq!(bearer_token(&headers), Some("test-ide-key"));
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer axo_access-token"),
+        );
+        assert_eq!(bearer_token(&headers), Some("axo_access-token"));
+    }
 }

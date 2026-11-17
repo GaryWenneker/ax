@@ -29,8 +29,6 @@ fn db_err(e: impl std::fmt::Display) -> AxError {
     AxError::Database(DatabaseError::new(e.to_string()))
 }
 
-/// Insert `record` as a `turn` memory. Returns `false` when a memory with that id exists.
-
 /// Cap and zstd-compress a hunk for storage inside a file_change body (base64).
 pub const HUNK_CAP_BYTES: usize = 64 * 1024;
 
@@ -101,6 +99,7 @@ pub async fn save_file_changes(
 }
 
 /// Like `save_file_changes`, and stores a redacted capped zstd hunk in the body when provided.
+#[allow(clippy::too_many_arguments)]
 pub async fn save_file_change_with_hunk(
     pool: &SqlitePool,
     path: &str,
@@ -161,6 +160,7 @@ pub async fn save_file_change_with_hunk(
     Ok(0)
 }
 
+/// Insert `record` as a `turn` memory. Returns `false` when a memory with that id exists.
 pub async fn save_turn(
     pool: &SqlitePool,
     record: &TurnRecord,

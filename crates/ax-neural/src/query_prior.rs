@@ -46,14 +46,19 @@ pub fn measure(fixture_text: &str) -> Result<Value, String> {
         .collect();
     let leak = eval_ids.iter().any(|id| train_ids.contains(id));
     let weights = token_weights(&fixture, &train_ids);
-    let trained = train_ranking_prior(&pool, 0.25, 7, "query-prior-train", "query-prior-candidate")?;
+    let trained =
+        train_ranking_prior(&pool, 0.25, 7, "query-prior-train", "query-prior-candidate")?;
     let global = rank_from_frequency(trained.get("weights"));
 
     let mut baseline = Acc::default();
     let mut frequency = Acc::default();
     let mut query = Acc::default();
     let mut rows = Vec::new();
-    for question in fixture.questions.iter().filter(|q| eval_ids.contains(&q.id)) {
+    for question in fixture
+        .questions
+        .iter()
+        .filter(|q| eval_ids.contains(&q.id))
+    {
         let base = lexical_rank(&fixture, &question.prompt);
         let learned = query_rank(&fixture, &weights, &question.prompt);
         baseline.observe(LEARN_VALIDATE, None, &question.relevant, &base);
@@ -159,9 +164,16 @@ fn ids_from_rows(rows: &[Value]) -> HashSet<String> {
         .collect()
 }
 
-fn token_weights(fixture: &CodingFixture, train_ids: &HashSet<String>) -> BTreeMap<(String, String), f64> {
+fn token_weights(
+    fixture: &CodingFixture,
+    train_ids: &HashSet<String>,
+) -> BTreeMap<(String, String), f64> {
     let mut weights = BTreeMap::new();
-    for question in fixture.questions.iter().filter(|q| train_ids.contains(&q.id)) {
+    for question in fixture
+        .questions
+        .iter()
+        .filter(|q| train_ids.contains(&q.id))
+    {
         let relevant: BTreeSet<&str> = question.relevant.iter().map(String::as_str).collect();
         for token in tokens(&question.prompt) {
             for memory in fixture.memories.iter().filter(|m| m.insert) {
@@ -173,7 +185,9 @@ fn token_weights(fixture: &CodingFixture, train_ids: &HashSet<String>) -> BTreeM
                     0.0
                 };
                 if delta != 0.0 {
-                    *weights.entry((token.clone(), memory.key.clone())).or_insert(0.0) += delta;
+                    *weights
+                        .entry((token.clone(), memory.key.clone()))
+                        .or_insert(0.0) += delta;
                 }
             }
         }
@@ -181,7 +195,11 @@ fn token_weights(fixture: &CodingFixture, train_ids: &HashSet<String>) -> BTreeM
     weights
 }
 
-fn query_rank(fixture: &CodingFixture, weights: &BTreeMap<(String, String), f64>, prompt: &str) -> Vec<String> {
+fn query_rank(
+    fixture: &CodingFixture,
+    weights: &BTreeMap<(String, String), f64>,
+    prompt: &str,
+) -> Vec<String> {
     let lexical = lexical_scores(fixture, prompt);
     let prompt_tokens = tokens(prompt);
     let mut scored: Vec<(f64, f64, String)> = fixture
@@ -191,7 +209,12 @@ fn query_rank(fixture: &CodingFixture, weights: &BTreeMap<(String, String), f64>
         .map(|memory| {
             let learned = prompt_tokens
                 .iter()
-                .map(|token| weights.get(&(token.clone(), memory.key.clone())).copied().unwrap_or(0.0))
+                .map(|token| {
+                    weights
+                        .get(&(token.clone(), memory.key.clone()))
+                        .copied()
+                        .unwrap_or(0.0)
+                })
                 .sum();
             let overlap = lexical.get(&memory.key).copied().unwrap_or(0.0);
             (learned, overlap, memory.key.clone())
@@ -220,7 +243,12 @@ fn lexical_primary_rank(
         .map(|memory| {
             let learned = prompt_tokens
                 .iter()
-                .map(|token| weights.get(&(token.clone(), memory.key.clone())).copied().unwrap_or(0.0))
+                .map(|token| {
+                    weights
+                        .get(&(token.clone(), memory.key.clone()))
+                        .copied()
+                        .unwrap_or(0.0)
+                })
                 .sum();
             let overlap = lexical.get(&memory.key).copied().unwrap_or(0.0);
             (overlap, learned, memory.key.clone())
@@ -237,7 +265,8 @@ fn lexical_primary_rank(
 
 fn lexical_rank(fixture: &CodingFixture, prompt: &str) -> Vec<String> {
     let scores = lexical_scores(fixture, prompt);
-    let mut scored: Vec<(f64, String)> = scores.into_iter().map(|(id, score)| (score, id)).collect();
+    let mut scored: Vec<(f64, String)> =
+        scores.into_iter().map(|(id, score)| (score, id)).collect();
     scored.sort_by(|a, b| {
         b.0.partial_cmp(&a.0)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -254,7 +283,10 @@ fn lexical_scores(fixture: &CodingFixture, prompt: &str) -> BTreeMap<String, f64
         .filter(|m| m.insert)
         .map(|memory| {
             let text = memory_text(memory);
-            let score = prompt_tokens.iter().filter(|token| text.contains(token.as_str())).count() as f64;
+            let score = prompt_tokens
+                .iter()
+                .filter(|token| text.contains(token.as_str()))
+                .count() as f64;
             (memory.key.clone(), score)
         })
         .collect()
@@ -289,7 +321,13 @@ fn tokens(prompt: &str) -> Vec<String> {
 }
 
 fn memory_text(memory: &CodingMemory) -> String {
-    format!("{} {} {}", memory.title, memory.body, memory.triggers.join(" ")).to_ascii_lowercase()
+    format!(
+        "{} {} {}",
+        memory.title,
+        memory.body,
+        memory.triggers.join(" ")
+    )
+    .to_ascii_lowercase()
 }
 
 fn top3(ranked: &[String]) -> Vec<&str> {
@@ -304,7 +342,9 @@ pub fn measure_prediction_additions(fixture_text: &str) -> Result<Value, String>
     let unlocked: Vec<_> = fixture
         .questions
         .iter()
-        .filter(|question| !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty())
+        .filter(|question| {
+            !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
+        })
         .collect();
     let observations: Vec<crate::predict::Observation> = unlocked
         .iter()
@@ -384,7 +424,9 @@ pub fn measure_benefit_gate(fixture_text: &str) -> Result<Value, String> {
     let unlocked: Vec<_> = fixture
         .questions
         .iter()
-        .filter(|question| !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty())
+        .filter(|question| {
+            !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
+        })
         .collect();
     let observations: Vec<crate::predict::Observation> = unlocked
         .iter()
@@ -400,9 +442,11 @@ pub fn measure_benefit_gate(fixture_text: &str) -> Result<Value, String> {
         })
         .collect();
     let minimum_confidence = 0.8;
-    let mut config = crate::recovery::RecoveryConfig::default();
-    config.enabled = true;
-    config.minimum_confidence = minimum_confidence;
+    let config = crate::recovery::RecoveryConfig {
+        enabled: true,
+        minimum_confidence,
+        ..crate::recovery::RecoveryConfig::default()
+    };
     let mut uncalibrated_accepted = 0usize;
     let mut gated_accepted = 0usize;
     let mut gated_rejected_benefit = 0usize;
@@ -456,13 +500,8 @@ pub fn measure_benefit_gate(fixture_text: &str) -> Result<Value, String> {
             })
             .collect();
         memory_predictions += proposals.len();
-        let blocked = crate::recovery::select_context(
-            &config,
-            &baseline,
-            &[],
-            &proposals,
-            "coding-fixture",
-        );
+        let blocked =
+            crate::recovery::select_context(&config, &baseline, &[], &proposals, "coding-fixture");
         uncalibrated_accepted += blocked
             .selected
             .iter()
@@ -472,7 +511,8 @@ pub fn measure_benefit_gate(fixture_text: &str) -> Result<Value, String> {
         for proposal in &mut open {
             proposal.calibrated_on_independent_validation = true;
         }
-        let gated = crate::recovery::select_context(&config, &baseline, &[], &open, "coding-fixture");
+        let gated =
+            crate::recovery::select_context(&config, &baseline, &[], &open, "coding-fixture");
         let accepted: Vec<String> = gated
             .selected
             .iter()
@@ -525,17 +565,33 @@ pub fn measure_benefit_gate(fixture_text: &str) -> Result<Value, String> {
     }))
 }
 
-fn learned_score(weights: &BTreeMap<(String, String), f64>, prompt_tokens: &[String], id: &str) -> f64 {
+fn learned_score(
+    weights: &BTreeMap<(String, String), f64>,
+    prompt_tokens: &[String],
+    id: &str,
+) -> f64 {
     prompt_tokens
         .iter()
-        .map(|token| weights.get(&(token.clone(), id.to_string())).copied().unwrap_or(0.0))
+        .map(|token| {
+            weights
+                .get(&(token.clone(), id.to_string()))
+                .copied()
+                .unwrap_or(0.0)
+        })
         .sum()
 }
 
-fn pairwise_weights(fixture: &CodingFixture, train_ids: &HashSet<String>) -> (BTreeMap<(String, String), f64>, usize) {
+fn pairwise_weights(
+    fixture: &CodingFixture,
+    train_ids: &HashSet<String>,
+) -> (BTreeMap<(String, String), f64>, usize) {
     let mut weights = BTreeMap::new();
     let mut updates = 0usize;
-    for question in fixture.questions.iter().filter(|q| train_ids.contains(&q.id)) {
+    for question in fixture
+        .questions
+        .iter()
+        .filter(|q| train_ids.contains(&q.id))
+    {
         let prompt_tokens = tokens(&question.prompt);
         let relevant: BTreeSet<&str> = question.relevant.iter().map(String::as_str).collect();
         let hard_negatives: Vec<&CodingMemory> = fixture
@@ -544,7 +600,9 @@ fn pairwise_weights(fixture: &CodingFixture, train_ids: &HashSet<String>) -> (BT
             .filter(|memory| {
                 memory.insert
                     && !relevant.contains(memory.key.as_str())
-                    && prompt_tokens.iter().any(|token| memory_text(memory).contains(token.as_str()))
+                    && prompt_tokens
+                        .iter()
+                        .any(|token| memory_text(memory).contains(token.as_str()))
             })
             .collect();
         for relevant_id in &relevant {
@@ -556,8 +614,12 @@ fn pairwise_weights(fixture: &CodingFixture, train_ids: &HashSet<String>) -> (BT
                 }
                 updates += 1;
                 for token in &prompt_tokens {
-                    *weights.entry((token.clone(), (*relevant_id).to_string())).or_insert(0.0) += 1.0;
-                    *weights.entry((token.clone(), negative.key.clone())).or_insert(0.0) -= 1.0;
+                    *weights
+                        .entry((token.clone(), (*relevant_id).to_string()))
+                        .or_insert(0.0) += 1.0;
+                    *weights
+                        .entry((token.clone(), negative.key.clone()))
+                        .or_insert(0.0) -= 1.0;
                 }
             }
         }
@@ -604,9 +666,11 @@ pub fn measure_pairwise(fixture_text: &str) -> Result<Value, String> {
     let mut locked_baseline = Acc::default();
     let mut locked_pairwise = Acc::default();
     let mut locked_lexical_primary = Acc::default();
-    for question in fixture.questions.iter().filter(|q| {
-        locked_ids.contains(&q.id) && !q.relevant.is_empty()
-    }) {
+    for question in fixture
+        .questions
+        .iter()
+        .filter(|q| locked_ids.contains(&q.id) && !q.relevant.is_empty())
+    {
         let base = lexical_rank(&fixture, &question.prompt);
         let learned = query_rank(&fixture, &weights, &question.prompt);
         let guarded = lexical_primary_rank(&fixture, &weights, &question.prompt);
@@ -645,7 +709,11 @@ fn top_miss_weights(
     let mut weights = BTreeMap::new();
     let mut updates = 0usize;
     let mut misses = 0usize;
-    for question in fixture.questions.iter().filter(|q| train_ids.contains(&q.id)) {
+    for question in fixture
+        .questions
+        .iter()
+        .filter(|q| train_ids.contains(&q.id))
+    {
         let ranked = lexical_rank(fixture, &question.prompt);
         let Some(top) = ranked.first() else {
             continue;
@@ -663,7 +731,9 @@ fn top_miss_weights(
             }
             updates += 1;
             for token in &prompt_tokens {
-                *weights.entry((token.clone(), relevant_id.clone())).or_insert(0.0) += 1.0;
+                *weights
+                    .entry((token.clone(), relevant_id.clone()))
+                    .or_insert(0.0) += 1.0;
                 *weights.entry((token.clone(), top.clone())).or_insert(0.0) -= 1.0;
             }
         }
@@ -754,12 +824,16 @@ pub fn measure_locked_confirmation(fixture_text: &str) -> Result<Value, String> 
     let unlocked: Vec<_> = fixture
         .questions
         .iter()
-        .filter(|question| !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty())
+        .filter(|question| {
+            !LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
+        })
         .collect();
     let locked: Vec<_> = fixture
         .questions
         .iter()
-        .filter(|question| LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty())
+        .filter(|question| {
+            LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
+        })
         .collect();
     let training: Vec<crate::predict::Observation> = unlocked
         .iter()
@@ -829,7 +903,9 @@ pub fn measure_relationship_expansion(fixture_text: &str) -> Result<Value, Strin
     let locked: Vec<_> = fixture
         .questions
         .iter()
-        .filter(|question| LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty())
+        .filter(|question| {
+            LOCKED.contains(&question.family.as_str()) && !question.relevant.is_empty()
+        })
         .collect();
     let mut baseline_mrr = 0.0;
     let mut expanded_mrr = 0.0;
@@ -840,9 +916,10 @@ pub fn measure_relationship_expansion(fixture_text: &str) -> Result<Value, Strin
         let mut ranked = lexical.clone();
         if let Some(top) = lexical.first() {
             let top3: BTreeSet<&str> = lexical.iter().take(3).map(String::as_str).collect();
-            if let Some(neighbor) = edges.get(top).and_then(|neighbors| {
-                neighbors.iter().find(|id| !top3.contains(id.as_str()))
-            }) {
+            if let Some(neighbor) = edges
+                .get(top)
+                .and_then(|neighbors| neighbors.iter().find(|id| !top3.contains(id.as_str())))
+            {
                 if let Some(position) = ranked.iter().position(|id| id == neighbor) {
                     moved += 1;
                     if question.relevant.iter().any(|id| id == neighbor) {
@@ -875,29 +952,41 @@ pub fn measure_relationship_expansion(fixture_text: &str) -> Result<Value, Strin
 }
 
 fn relationship_edges(fixture: &CodingFixture) -> BTreeMap<String, Vec<String>> {
-    let memories: Vec<_> = fixture.memories.iter().filter(|memory| memory.insert).collect();
+    let memories: Vec<_> = fixture
+        .memories
+        .iter()
+        .filter(|memory| memory.insert)
+        .collect();
     let mut edges: BTreeMap<String, Vec<(usize, usize, String)>> = BTreeMap::new();
     for (left_index, left) in memories.iter().enumerate() {
         for right in memories.iter().skip(left_index + 1) {
-            let shared_files = left.files.iter().filter(|file| right.files.contains(file)).count();
+            let shared_files = left
+                .files
+                .iter()
+                .filter(|file| right.files.contains(file))
+                .count();
             let left_triggers = trigger_tokens(&left.triggers);
             let right_triggers = trigger_tokens(&right.triggers);
             let shared_triggers = left_triggers.intersection(&right_triggers).count();
             if shared_files == 0 && shared_triggers == 0 {
                 continue;
             }
-            edges.entry(left.key.clone()).or_default().push((shared_files, shared_triggers, right.key.clone()));
-            edges.entry(right.key.clone()).or_default().push((shared_files, shared_triggers, left.key.clone()));
+            edges.entry(left.key.clone()).or_default().push((
+                shared_files,
+                shared_triggers,
+                right.key.clone(),
+            ));
+            edges.entry(right.key.clone()).or_default().push((
+                shared_files,
+                shared_triggers,
+                left.key.clone(),
+            ));
         }
     }
     edges
         .into_iter()
         .map(|(key, mut neighbors)| {
-            neighbors.sort_by(|a, b| {
-                b.0.cmp(&a.0)
-                    .then(b.1.cmp(&a.1))
-                    .then(a.2.cmp(&b.2))
-            });
+            neighbors.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
             (key, neighbors.into_iter().map(|(_, _, id)| id).collect())
         })
         .collect()
@@ -1066,7 +1155,10 @@ mod tests {
     fn relationship_expansion_does_not_use_question_labels() {
         let report = super::measure_relationship_expansion(crate::CODING_FIXTURE).expect("fixture");
         assert_eq!(report["promoted"], serde_json::json!(false));
-        assert_eq!(report["usesQuestionLabelsToBuildGraph"], serde_json::json!(false));
+        assert_eq!(
+            report["usesQuestionLabelsToBuildGraph"],
+            serde_json::json!(false)
+        );
         assert_eq!(report["usesLiveHeldOutTasks"], serde_json::json!(false));
         assert_eq!(report["questions"], serde_json::json!(3));
         assert_eq!(report["edges"], serde_json::json!(2));

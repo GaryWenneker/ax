@@ -31,23 +31,12 @@ impl Default for DiscoveryBudget {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DiscoveryConfig {
     pub enabled: bool,
     pub project_id: String,
     pub limit: usize,
     pub budget: DiscoveryBudget,
-}
-
-impl Default for DiscoveryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            project_id: String::new(),
-            limit: 0,
-            budget: DiscoveryBudget::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -394,7 +383,13 @@ mod tests {
             link("pagesToRender", "capturePage", "calls", "extracted"),
             link("capturePage", "clipBox", "calls", "unique-cross-file"),
         ];
-        let one = discover_candidates(&[caller.clone()], &nodes, &links, "ax", &open_budget());
+        let one = discover_candidates(
+            std::slice::from_ref(&caller),
+            &nodes,
+            &links,
+            "ax",
+            &open_budget(),
+        );
         // open_budget depth is 2, so both hops are in range.
         assert_eq!(
             one.hits
@@ -430,7 +425,7 @@ mod tests {
         let mut budget = open_budget();
         budget.fan_out = 2;
         let found = discover_candidates(
-            &[caller.clone()],
+            std::slice::from_ref(&caller),
             &nodes,
             &[
                 link("seed", "c", "calls", "extracted"),
@@ -548,7 +543,8 @@ mod tests {
         ];
         let mut capped = open_budget();
         capped.max_added = 1;
-        let found = discover_candidates(&[caller.clone()], &nodes, &links, "ax", &capped);
+        let found =
+            discover_candidates(std::slice::from_ref(&caller), &nodes, &links, "ax", &capped);
         assert_eq!(found.hits.len(), 1);
         assert_eq!(found.hits[0].id, "a");
         assert!(found.trace.iter().any(|line| line == "stopped:candidates"));
@@ -563,7 +559,7 @@ mod tests {
     fn resolve_seeds_uses_one_name_and_refuses_two() {
         let baseline = node("mem", "clipBox", "query.rs");
         let unique = node("clipBox", "clipBox", "site/src/lib/og-card.mjs");
-        let (seeds, trace) = resolve_seeds(&[baseline.clone()], &[unique], "ax");
+        let (seeds, trace) = resolve_seeds(std::slice::from_ref(&baseline), &[unique], "ax");
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0].id, "clipBox");
         assert!(trace.iter().any(|line| line == "seed:clipBox:name"));
@@ -677,7 +673,10 @@ mod tests {
     }
 
     fn pool_recall(pool: &[String], gold: &[String]) -> f64 {
-        let hits = gold.iter().filter(|id| pool.iter().any(|item| item == *id)).count();
+        let hits = gold
+            .iter()
+            .filter(|id| pool.iter().any(|item| item == *id))
+            .count();
         hits as f64 / gold.len() as f64
     }
 
@@ -699,7 +698,10 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["protocol"], "graph-discovery-independent-1");
-        assert_eq!(value["snapshot"], "85fa176a9b4b6ce5e33687bee268767d87731c60");
+        assert_eq!(
+            value["snapshot"],
+            "85fa176a9b4b6ce5e33687bee268767d87731c60"
+        );
         let tasks = value["tasks"].as_array().unwrap();
         let gold_tasks = tasks
             .iter()
@@ -819,8 +821,18 @@ mod tests {
                 }
             }
             let lists = [
-                ("production", production_pool, baseline.clone(), Vec::<String>::new()),
-                ("graph_discovery", discovery_pool, ranked_discovery, discovered),
+                (
+                    "production",
+                    production_pool,
+                    baseline.clone(),
+                    Vec::<String>::new(),
+                ),
+                (
+                    "graph_discovery",
+                    discovery_pool,
+                    ranked_discovery,
+                    discovered,
+                ),
             ];
             *retrieval_ms.get_mut("production").unwrap() += recall_elapsed;
             *retrieval_ms.get_mut("graph_discovery").unwrap() += recall_elapsed;
@@ -850,7 +862,10 @@ mod tests {
                 by_kind[2] += scores.2;
                 by_kind[3] += scores.3;
                 *kind_counted.entry((*arm, kind)).or_insert(0.0) += 1.0;
-                let extras = added.iter().filter(|id| !gold.iter().any(|item| item == *id)).count();
+                let extras = added
+                    .iter()
+                    .filter(|id| !gold.iter().any(|item| item == *id))
+                    .count();
                 *false_positive.get_mut(*arm).unwrap() += extras as f64;
             }
         }
@@ -899,7 +914,9 @@ mod tests {
         }
         let production = arms_json["production"].as_object().unwrap();
         let discovery = arms_json["graph_discovery"].as_object().unwrap();
-        let metric = |arm: &serde_json::Map<String, serde_json::Value>, key: &str| arm[key].as_f64().unwrap();
+        let metric = |arm: &serde_json::Map<String, serde_json::Value>, key: &str| {
+            arm[key].as_f64().unwrap()
+        };
         let mut kind_ok = true;
         let discovery_kinds = discovery["kinds"].as_object().unwrap();
         let production_kinds = production["kinds"].as_object().unwrap();
@@ -907,7 +924,9 @@ mod tests {
             let Some(other) = production_kinds.get(kind) else {
                 continue;
             };
-            if metric(row.as_object().unwrap(), "mrr") + 0.05 + 1e-9 < metric(other.as_object().unwrap(), "mrr") {
+            if metric(row.as_object().unwrap(), "mrr") + 0.05 + 1e-9
+                < metric(other.as_object().unwrap(), "mrr")
+            {
                 kind_ok = false;
             }
         }

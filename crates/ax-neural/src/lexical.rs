@@ -131,9 +131,7 @@ pub fn score_locked_families(
             "paraphrase" => relevant
                 .iter()
                 .any(|want| keys.iter().take(3).any(|got| *got == want.as_str())),
-            "delivery_budget" => relevant
-                .iter()
-                .any(|want| keys.iter().any(|got| *got == want.as_str())),
+            "delivery_budget" => relevant.iter().any(|want| keys.contains(&want.as_str())),
             _ => false,
         };
         if hit {

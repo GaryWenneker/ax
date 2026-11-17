@@ -91,21 +91,39 @@ pub fn select_context(
 
     for extra in neural_optional {
         if extra.id.is_empty() || chosen.iter().any(|c| c.id == extra.id) {
-            trace.push(decision(&extra.id, "neural", "rejected", "already selected or empty"));
+            trace.push(decision(
+                &extra.id,
+                "neural",
+                "rejected",
+                "already selected or empty",
+            ));
             continue;
         }
         if extra.project_id != allowed_project {
-            trace.push(decision(&extra.id, "neural", "rejected", "project isolation"));
+            trace.push(decision(
+                &extra.id,
+                "neural",
+                "rejected",
+                "project isolation",
+            ));
             continue;
         }
         if extra.neural_score.is_none() {
-            trace.push(decision(&extra.id, "neural", "rejected", "missing neural score"));
+            trace.push(decision(
+                &extra.id,
+                "neural",
+                "rejected",
+                "missing neural score",
+            ));
             continue;
         }
         match fit_optional(&mut chosen, extra.clone(), budget, &mut displaced) {
-            Fit::Added => {
-                trace.push(decision(&extra.id, "neural", "accepted", "optional add within budget"))
-            }
+            Fit::Added => trace.push(decision(
+                &extra.id,
+                "neural",
+                "accepted",
+                "optional add within budget",
+            )),
             Fit::NoRoom(reason) => trace.push(decision(&extra.id, "neural", "rejected", reason)),
         }
     }
@@ -208,10 +226,16 @@ fn safety_breach(
     neural_optional: &[ContextCandidate],
     allowed_project: &str,
 ) -> Option<String> {
-    if baseline.iter().any(|c| (c.mandatory || c.protected) && c.project_id != allowed_project) {
+    if baseline
+        .iter()
+        .any(|c| (c.mandatory || c.protected) && c.project_id != allowed_project)
+    {
         return Some("baseline protected context failed project isolation".into());
     }
-    if neural_optional.iter().any(|c| c.protected && c.project_id != allowed_project) {
+    if neural_optional
+        .iter()
+        .any(|c| c.protected && c.project_id != allowed_project)
+    {
         return Some("neural proposal carried protected context from another project".into());
     }
     None
@@ -236,7 +260,10 @@ fn rerank_optional_slots(chosen: &mut [ContextCandidate]) {
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
-    for (slot, candidate) in slots.into_iter().zip(optional.into_iter().map(|(_, item)| item)) {
+    for (slot, candidate) in slots
+        .into_iter()
+        .zip(optional.into_iter().map(|(_, item)| item))
+    {
         chosen[slot] = candidate;
     }
 }
@@ -263,10 +290,7 @@ fn fit_optional(
     working.push(extra);
     while token_sum(&working) > budget {
         let victim = working.iter().enumerate().rev().find(|(_, c)| {
-            c.id != extra_id
-                && !c.mandatory
-                && !c.protected
-                && candidate_score(c) < extra_score
+            c.id != extra_id && !c.mandatory && !c.protected && candidate_score(c) < extra_score
         });
         let Some((index, _)) = victim else {
             let stronger_optional = working.iter().any(|c| {
@@ -351,12 +375,17 @@ mod tests {
     #[test]
     fn attribution_header_records_model_and_feedback_without_changing_selection() {
         let baseline = vec![item("rule", 1.0, true, 10), item("opt", 0.2, false, 5)];
-        let mut config = RecoveryConfig::default();
-        config.model_version = "recovery-experimental".into();
-        config.feedback_ids = vec!["fb-1".into()];
+        let config = RecoveryConfig {
+            model_version: "recovery-experimental".into(),
+            feedback_ids: vec!["fb-1".into()],
+            ..RecoveryConfig::default()
+        };
         let selection = select_context(&config, &baseline, &[], &[], "ax");
         assert!(selection.used_baseline);
-        assert_eq!(selection.selected, vec!["rule".to_string(), "opt".to_string()]);
+        assert_eq!(
+            selection.selected,
+            vec!["rule".to_string(), "opt".to_string()]
+        );
         let header = &selection.trace[0];
         assert_eq!(header["event"], "attribution");
         assert_eq!(header["modelVersion"], "recovery-experimental");
@@ -368,7 +397,10 @@ mod tests {
         let baseline = vec![item("rule", 1.0, true, 10), item("opt", 0.2, false, 5)];
         let selection = select_context(&RecoveryConfig::default(), &baseline, &[], &[], "ax");
         assert!(selection.used_baseline);
-        assert_eq!(selection.selected, vec!["rule".to_string(), "opt".to_string()]);
+        assert_eq!(
+            selection.selected,
+            vec!["rule".to_string(), "opt".to_string()]
+        );
         assert!(selection.displaced.is_empty());
         assert_eq!(
             selection.fallback_reason.as_deref(),
@@ -385,10 +417,15 @@ mod tests {
         let mut low = item("low", 0.1, false, 4);
         low.neural_score = Some(0.9);
         low.protected = false;
-        let mut config = RecoveryConfig::default();
-        config.enabled = true;
+        let config = RecoveryConfig {
+            enabled: true,
+            ..RecoveryConfig::default()
+        };
         let selection = select_context(&config, &[rule, high, low], &[], &[], "ax");
-        assert_eq!(selection.selected, vec!["rule".to_string(), "low".to_string(), "high".to_string()]);
+        assert_eq!(
+            selection.selected,
+            vec!["rule".to_string(), "low".to_string(), "high".to_string()]
+        );
     }
 
     #[test]
@@ -398,8 +435,10 @@ mod tests {
         foreign.source = "neural";
         foreign.protected = true;
         foreign.project_id = "other".into();
-        let mut config = RecoveryConfig::default();
-        config.enabled = true;
+        let config = RecoveryConfig {
+            enabled: true,
+            ..RecoveryConfig::default()
+        };
         let selection = select_context(&config, &baseline, &[foreign], &[], "ax");
         assert!(selection.used_baseline);
         assert_eq!(selection.selected, vec!["rule".to_string()]);
@@ -421,13 +460,16 @@ mod tests {
             project_id: "ax".into(),
             authorized: true,
         };
-        let mut config = RecoveryConfig::default();
-        config.enabled = true;
+        let config = RecoveryConfig {
+            enabled: true,
+            ..RecoveryConfig::default()
+        };
         let selection = select_context(&config, &baseline, &[], &[proposal], "ax");
         assert!(!selection.selected.iter().any(|id| id == "guess"));
-        assert!(selection.trace.iter().any(|row| {
-            row["id"] == "guess" && row["outcome"] == "rejected"
-        }));
+        assert!(selection
+            .trace
+            .iter()
+            .any(|row| { row["id"] == "guess" && row["outcome"] == "rejected" }));
     }
 
     #[test]
@@ -444,10 +486,15 @@ mod tests {
             project_id: "ax".into(),
             authorized: true,
         };
-        let mut config = RecoveryConfig::default();
-        config.enabled = true;
+        let config = RecoveryConfig {
+            enabled: true,
+            ..RecoveryConfig::default()
+        };
         let selection = select_context(&config, &baseline, &[], &[proposal], "ax");
-        assert_eq!(selection.selected, vec!["rule".to_string(), "extra".to_string()]);
+        assert_eq!(
+            selection.selected,
+            vec!["rule".to_string(), "extra".to_string()]
+        );
         assert_eq!(selection.displaced, vec!["opt".to_string()]);
         assert!(!selection.used_baseline);
     }
@@ -460,8 +507,10 @@ mod tests {
     }
 
     fn mean_mrr(questions: &[(&str, Vec<ContextCandidate>)], enabled: bool) -> f64 {
-        let mut config = RecoveryConfig::default();
-        config.enabled = enabled;
+        let config = RecoveryConfig {
+            enabled,
+            ..RecoveryConfig::default()
+        };
         let mut total = 0.0;
         for (relevant, baseline) in questions {
             let selection = select_context(&config, baseline, &[], &[], "ax");
@@ -479,14 +528,20 @@ mod tests {
         extra.source = "neural";
         extra.protected = false;
         extra.neural_score = Some(0.99);
-        let mut config = RecoveryConfig::default();
-        config.enabled = true;
+        let config = RecoveryConfig {
+            enabled: true,
+            ..RecoveryConfig::default()
+        };
         let selection = select_context(&config, &baseline, &[extra], &[], "ax");
-        assert_eq!(selection.selected, vec!["rule".to_string(), "opt".to_string()]);
+        assert_eq!(
+            selection.selected,
+            vec!["rule".to_string(), "opt".to_string()]
+        );
         assert!(selection.displaced.is_empty());
-        assert!(selection.trace.iter().any(|row| {
-            row["id"] == "wide" && row["outcome"] == "rejected"
-        }));
+        assert!(selection
+            .trace
+            .iter()
+            .any(|row| { row["id"] == "wide" && row["outcome"] == "rejected" }));
     }
 
     #[test]
@@ -503,10 +558,15 @@ mod tests {
             project_id: "ax".into(),
             authorized: true,
         };
-        let mut config = RecoveryConfig::default();
-        config.enabled = true;
+        let config = RecoveryConfig {
+            enabled: true,
+            ..RecoveryConfig::default()
+        };
         let selection = select_context(&config, &baseline, &[], &[proposal], "ax");
-        assert_eq!(selection.selected, vec!["rule".to_string(), "opt".to_string()]);
+        assert_eq!(
+            selection.selected,
+            vec!["rule".to_string(), "opt".to_string()]
+        );
         assert!(selection.displaced.is_empty());
         assert!(selection.trace.iter().any(|row| {
             row["id"] == "extra"
@@ -523,10 +583,15 @@ mod tests {
         let mut extra = item("wide", 0.0, false, 4);
         extra.source = "neural";
         extra.protected = false;
-        let mut config = RecoveryConfig::default();
-        config.enabled = true;
+        let config = RecoveryConfig {
+            enabled: true,
+            ..RecoveryConfig::default()
+        };
         let selection = select_context(&config, &baseline, &[extra], &[], "ax");
-        assert_eq!(selection.selected, vec!["rule".to_string(), "opt".to_string()]);
+        assert_eq!(
+            selection.selected,
+            vec!["rule".to_string(), "opt".to_string()]
+        );
         assert!(selection.displaced.is_empty());
         assert!(selection.trace.iter().any(|row| {
             row["id"] == "wide"
@@ -539,12 +604,24 @@ mod tests {
     fn independent_fixture_query_scores_raise_mrr_and_a_global_prior_does_not() {
         let rule = item("rule", 1.0, true, 4);
         let query_conditioned = [
-            ("mem-a", vec![rule.clone(), scored("mem-b", 0.1), scored("mem-a", 0.9)]),
-            ("mem-b", vec![rule.clone(), scored("mem-b", 0.9), scored("mem-a", 0.1)]),
+            (
+                "mem-a",
+                vec![rule.clone(), scored("mem-b", 0.1), scored("mem-a", 0.9)],
+            ),
+            (
+                "mem-b",
+                vec![rule.clone(), scored("mem-b", 0.9), scored("mem-a", 0.1)],
+            ),
         ];
         let global_prior = [
-            ("mem-a", vec![rule.clone(), scored("mem-b", 0.1), scored("mem-a", 0.9)]),
-            ("mem-b", vec![rule.clone(), scored("mem-b", 0.1), scored("mem-a", 0.9)]),
+            (
+                "mem-a",
+                vec![rule.clone(), scored("mem-b", 0.1), scored("mem-a", 0.9)],
+            ),
+            (
+                "mem-b",
+                vec![rule.clone(), scored("mem-b", 0.1), scored("mem-a", 0.9)],
+            ),
         ];
         let baseline_mrr = mean_mrr(&query_conditioned, false);
         let query_mrr = mean_mrr(&query_conditioned, true);

@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn fts_outweighs_vector_and_abstains_low() {
-        assert!(W_FTS > W_VECTOR);
+        const _: () = assert!(W_FTS > W_VECTOR);
         assert!(fuse_scores(1.0, 0.0, 0.0, 0.0, 0.0) > fuse_scores(0.0, 1.0, 0.0, 0.0, 0.0));
         assert!(should_abstain(0.01));
         assert!(!should_abstain(0.5));

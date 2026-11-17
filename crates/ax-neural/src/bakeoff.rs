@@ -1468,12 +1468,11 @@ mod tests {
                 let mut doc: Vec<String> = Vec::new();
                 for (index, line) in text.lines().enumerate() {
                     let trimmed = line.trim();
-                    if trimmed.starts_with("///") {
-                        doc.push(trimmed[3..].trim().to_string());
+                    if let Some(stripped) = trimmed.strip_prefix("///") {
+                        doc.push(stripped.trim().to_string());
                         continue;
                     }
-                    if trimmed.starts_with('#') || trimmed.starts_with("//") || trimmed.is_empty()
-                    {
+                    if trimmed.starts_with('#') || trimmed.starts_with("//") || trimmed.is_empty() {
                         if trimmed.starts_with("//") && !trimmed.starts_with("///") {
                             doc.clear();
                         }
@@ -1489,11 +1488,7 @@ mod tests {
                                 .unwrap_or(&path)
                                 .to_string_lossy()
                                 .replace('\\', "/");
-                            out.push((
-                                format!("{rel}:{}", index + 1),
-                                query,
-                                trimmed.to_string(),
-                            ));
+                            out.push((format!("{rel}:{}", index + 1), query, trimmed.to_string()));
                         }
                     }
                     doc.clear();

@@ -46,7 +46,6 @@ fn cap(status: &str, kind: &str, detail: &str) -> Value {
 }
 
 /// Honest capability matrix for Phase 1. Lexical ≠ neural inference.
-
 fn neural_embedding_capability() -> (&'static str, &'static str, String) {
     #[cfg(feature = "neural-ort")]
     {
@@ -57,7 +56,8 @@ fn neural_embedding_capability() -> (&'static str, &'static str, String) {
         (
             "not_built",
             "onnx-runtime-cpu",
-            "ONNX Runtime not linked (build with --features neural-ort); Candle still not_built".into(),
+            "ONNX Runtime not linked (build with --features neural-ort); Candle still not_built"
+                .into(),
         )
     }
 }
@@ -244,7 +244,9 @@ mod tests {
         );
         #[cfg(feature = "neural-ort")]
         {
-            let s = value["capabilities"]["neuralEmbeddingInference"]["status"].as_str().unwrap();
+            let s = value["capabilities"]["neuralEmbeddingInference"]["status"]
+                .as_str()
+                .unwrap();
             assert!(
                 s == "implemented" || s == "not_configured" || s == "active" || s == "not_built",
                 "{s}"
@@ -267,8 +269,14 @@ mod tests {
             value["capabilities"]["neuralEmbeddingInference"]["status"],
             "not_built"
         );
-        assert_eq!(value["capabilities"]["hashVectorRetrieval"]["status"], "active");
-        assert_eq!(value["capabilities"]["hashVectorRetrieval"]["kind"], "hash-v1");
+        assert_eq!(
+            value["capabilities"]["hashVectorRetrieval"]["status"],
+            "active"
+        );
+        assert_eq!(
+            value["capabilities"]["hashVectorRetrieval"]["kind"],
+            "hash-v1"
+        );
         assert_eq!(
             value["capabilities"]["graphNeuralNetwork"]["status"],
             "not_built"
@@ -290,7 +298,10 @@ mod tests {
     #[test]
     fn capabilities_hash_vector_and_ranking_are_active() {
         let value = report(&NeuralConfig::required());
-        assert_eq!(value["capabilities"]["hashVectorRetrieval"]["status"], "active");
+        assert_eq!(
+            value["capabilities"]["hashVectorRetrieval"]["status"],
+            "active"
+        );
         assert_eq!(value["capabilities"]["neuralRanking"]["status"], "active");
         assert_eq!(
             value["capabilities"]["neuralRanking"]["kind"],

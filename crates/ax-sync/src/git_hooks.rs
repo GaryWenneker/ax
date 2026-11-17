@@ -46,6 +46,7 @@ const SYNC_LINE: &str = "ax sync --quiet";
 #[allow(dead_code)]
 const SHIP_LINE: &str = "ax ship --evaluate --quiet";
 const LEGACY_SHIP_LINE: &str = "ax ship --evaluate";
+#[allow(dead_code)]
 const CAPTURE_COMMIT_LINE: &str = "ax capture-git --limit 1 --quiet";
 #[allow(dead_code)]
 const CAPTURE_MERGE_LINE: &str = "ax capture-git --limit 20 --quiet";
@@ -114,16 +115,8 @@ fn format_ax_line(bin: &str, rest: &str) -> String {
 fn hook_lines(name: &str, memory_sync: bool, policy_sync: bool, bin: &str) -> Vec<String> {
     let line = |rest: &str| format_ax_line(bin, rest);
     let mut lines: Vec<String> = match name {
-        "post-commit" => vec![
-            line(SYNC_REST),
-            line(SHIP_REST),
-            line(CAPTURE_COMMIT_REST),
-        ],
-        "post-merge" => vec![
-            line(SYNC_REST),
-            line(SHIP_REST),
-            line(CAPTURE_MERGE_REST),
-        ],
+        "post-commit" => vec![line(SYNC_REST), line(SHIP_REST), line(CAPTURE_COMMIT_REST)],
+        "post-merge" => vec![line(SYNC_REST), line(SHIP_REST), line(CAPTURE_MERGE_REST)],
         "post-checkout" => vec![line(SYNC_REST), line(SHIP_REST)],
         _ => vec![line(SYNC_REST), line(SHIP_REST)],
     };
@@ -177,7 +170,9 @@ fn line_is_ax_invoke(line: &str, rest: &str) -> bool {
         || prefix.ends_with("\\ax")
         || prefix.ends_with("/ax.exe")
         || prefix.ends_with("\\ax.exe")
-        || (prefix.starts_with('"') && prefix.ends_with('"') && prefix[1..prefix.len() - 1].ends_with("ax"))
+        || (prefix.starts_with('"')
+            && prefix.ends_with('"')
+            && prefix[1..prefix.len() - 1].ends_with("ax"))
 }
 
 fn rewrite_ax_binary_paths(content: &str, bin: &str) -> String {
@@ -319,7 +314,9 @@ pub fn repair_git_hooks(project_root: &Path) -> Result<(), AxError> {
 
 fn is_resolved_ax_command(line: &str) -> bool {
     MANAGED_RESTS.iter().any(|rest| {
-        line.ends_with(rest) && line.len() > rest.len() + 1 && line.as_bytes()[line.len() - rest.len() - 1] == b' '
+        line.ends_with(rest)
+            && line.len() > rest.len() + 1
+            && line.as_bytes()[line.len() - rest.len() - 1] == b' '
     })
 }
 
@@ -547,10 +544,7 @@ mod tests {
         write_hook(&dir, "post-commit", &post_commit_body(), 0o644);
         install_git_sync_hooks(dir.path()).unwrap();
         let path = hook(&dir, "post-commit");
-        assert_eq!(
-            read(&path),
-            format!("#!/bin/sh\n{}", post_commit_body())
-        );
+        assert_eq!(read(&path), format!("#!/bin/sh\n{}", post_commit_body()));
         assert_executable(&path);
     }
 
@@ -638,9 +632,7 @@ mod tests {
         write_hook(
             &dir,
             "post-commit",
-            &format!(
-                "#!/bin/sh\n{SYNC_LINE}\n{LEGACY_SHIP_LINE}\n{CAPTURE_COMMIT_LINE}\n"
-            ),
+            &format!("#!/bin/sh\n{SYNC_LINE}\n{LEGACY_SHIP_LINE}\n{CAPTURE_COMMIT_LINE}\n"),
             0o755,
         );
         install_git_sync_hooks(dir.path()).unwrap();

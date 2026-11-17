@@ -924,9 +924,8 @@ pub(crate) async fn recall_scoped(
             // The archive exists for old memories, so age must not rank them down there.
             // Same-day memories share one decay bucket so insert-order milliseconds
             // cannot reshuffle otherwise-equal hybrid ranks.
-            let decayed = if archive {
-                memory.confidence
-            } else if now.saturating_sub(memory.updated_at) < 86_400_000 {
+            let same_day = now.saturating_sub(memory.updated_at) < 86_400_000;
+            let decayed = if archive || same_day {
                 memory.confidence
             } else {
                 effective_confidence(memory.confidence, memory.updated_at, now)
@@ -1046,9 +1045,8 @@ fn singular(term: &str) -> Option<&str> {
 fn term_hit_count(terms: &[String], memory: &MemoryRow) -> usize {
     let stem = std::env::var_os("AX_MEMORY_BENCH_IDENTIFIER_STEM").is_some();
     let boundary = !stem && std::env::var_os("AX_MEMORY_BENCH_IDENTIFIER_BOUNDARY").is_some();
-    let affix = !stem
-        && !boundary
-        && std::env::var_os("AX_MEMORY_BENCH_IDENTIFIER_AFFIX").is_some();
+    let affix =
+        !stem && !boundary && std::env::var_os("AX_MEMORY_BENCH_IDENTIFIER_AFFIX").is_some();
     term_hits(terms, memory, stem, boundary, affix)
 }
 
@@ -1071,11 +1069,7 @@ fn term_hits(
     };
     let raw_tokens: Vec<String> = if boundary || affix {
         raw.split(|c: char| {
-            c.is_whitespace()
-                || matches!(
-                    c,
-                    '/' | '\\' | '.' | ':' | ',' | ';' | '|' | '(' | ')'
-                )
+            c.is_whitespace() || matches!(c, '/' | '\\' | '.' | ':' | ',' | ';' | '|' | '(' | ')')
         })
         .filter(|token| !token.is_empty())
         .map(str::to_string)
@@ -1732,7 +1726,10 @@ mod tests {
             "Turn persistence function",
             "save_turn writes one turn row.",
         );
-        assert!(rename >= 1, "loadturn should share a stem with save_turn, got {rename}");
+        assert!(
+            rename >= 1,
+            "loadturn should share a stem with save_turn, got {rename}"
+        );
         let lute = identifier_stem_hits(
             "medieval lute tablature for imaginary symphony #404",
             "Blossom Spotify OAuth HTTPS callback",
@@ -1744,7 +1741,10 @@ mod tests {
             "Music DNA deterministic replay contract",
             "Regression fixture locks hexadecimal fingerprints for arrangement analysis.",
         );
-        assert_eq!(cake, 1, "one hexadecimal token must stay one hit, got {cake}");
+        assert_eq!(
+            cake, 1,
+            "one hexadecimal token must stay one hit, got {cake}"
+        );
     }
 
     #[test]
@@ -1769,7 +1769,10 @@ mod tests {
             "Music DNA deterministic replay contract",
             "Regression fixture locks hexadecimal fingerprints for arrangement analysis.",
         );
-        assert_eq!(cake, 1, "one hexadecimal token must stay one hit, got {cake}");
+        assert_eq!(
+            cake, 1,
+            "one hexadecimal token must stay one hit, got {cake}"
+        );
         let plain = identifier_boundary_hits(
             "pudding",
             "Finish full ship pipeline including git push",
@@ -1802,7 +1805,10 @@ mod tests {
             "Music DNA deterministic replay contract",
             "Regression fixture locks hexadecimal fingerprints for arrangement analysis.",
         );
-        assert_eq!(cake, 1, "one hexadecimal token must stay one hit, got {cake}");
+        assert_eq!(
+            cake, 1,
+            "one hexadecimal token must stay one hit, got {cake}"
+        );
         let plain = identifier_affix_hits(
             "pudding",
             "Finish full ship pipeline including git push",
@@ -1976,10 +1982,12 @@ mod tests {
             ]
         );
         assert_eq!(delivery_cross.len(), 12);
-        assert!(identifier_stem_hits(
-            "pudding",
-            "Finish full ship pipeline including git push",
-            "",
-        ) >= 1);
+        assert!(
+            identifier_stem_hits(
+                "pudding",
+                "Finish full ship pipeline including git push",
+                "",
+            ) >= 1
+        );
     }
 }

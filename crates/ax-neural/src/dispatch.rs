@@ -555,7 +555,10 @@ mod tests {
         assert_eq!(normalize_dispatch_tool("embed-bakeoff"), "embed_bakeoff");
         assert_eq!(normalize_dispatch_tool("model-status"), "model_status");
         assert_eq!(normalize_dispatch_tool("ax_neural_rank"), "rank");
-        assert_eq!(normalize_dispatch_tool("ax-neural-model-list"), "model_list");
+        assert_eq!(
+            normalize_dispatch_tool("ax-neural-model-list"),
+            "model_list"
+        );
         assert_eq!(normalize_dispatch_tool("status"), "status");
     }
 
@@ -916,10 +919,12 @@ mod tests {
         assert_eq!(value["productionRankingUnchanged"], true);
         assert_eq!(value["semanticWeight"], 0.0);
         assert_eq!(value["arms"]["C_ax_neural"]["claimsNeuralInference"], false);
-        assert!(value["arms"]["A_ax_without_neural_ranking"]["locked"]["questionsScored"]
-            .as_u64()
-            .unwrap()
-            >= 1);
+        assert!(
+            value["arms"]["A_ax_without_neural_ranking"]["locked"]["questionsScored"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
         assert_eq!(value["openedLiveDatabase"], false);
     }
 
@@ -1245,8 +1250,8 @@ mod tests {
         let preds = value["predictions"].as_array().unwrap();
         for item in preds {
             assert_eq!(item["label"], "predicted");
-            assert!(item["explanation"].as_str().unwrap().len() > 0);
-            assert!(item["evidence"].as_array().unwrap().len() > 0);
+            assert!(!item["explanation"].as_str().unwrap().is_empty());
+            assert!(!item["evidence"].as_array().unwrap().is_empty());
             let rel = item["relationship"].as_str().unwrap();
             assert!(rel == "inferred" || rel == "verified");
         }
@@ -1310,9 +1315,7 @@ mod tests {
             stored["challengerAdmitted"],
             crate::bakeoff::challenger_admitted()
         );
-        let expected_model = if crate::runtime_built()
-            && crate::bakeoff::challenger_admitted()
-        {
+        let expected_model = if crate::runtime_built() && crate::bakeoff::challenger_admitted() {
             crate::runtime::semantic_search_model(true)
         } else {
             "hash-v1"
@@ -1360,9 +1363,7 @@ mod tests {
         let empty = json!({});
         let listed = handle(root, "model_list", &empty, None).await.unwrap();
         assert_eq!(listed["models"], json!([]));
-        assert!(
-            listed.get("bakeOffChallenger").is_some() || listed.get("admissionNote").is_some()
-        );
+        assert!(listed.get("bakeOffChallenger").is_some() || listed.get("admissionNote").is_some());
         assert!(listed["status"].as_str().is_some());
         assert_eq!(
             handle(root, "model_status", &empty, None).await.unwrap(),
@@ -1501,9 +1502,13 @@ mod tests {
         } else {
             assert!(list.get("admissionNote").is_some());
         }
-        assert!(list.get("bakeOffChallenger").is_none() || list["models"].as_array().unwrap().iter().all(|model| {
-            model.get("modelId").and_then(|v| v.as_str()) != Some(crate::lexical::CHALLENGER_ID)
-        }));
+        assert!(
+            list.get("bakeOffChallenger").is_none()
+                || list["models"].as_array().unwrap().iter().all(|model| {
+                    model.get("modelId").and_then(|v| v.as_str())
+                        != Some(crate::lexical::CHALLENGER_ID)
+                })
+        );
     }
 
     #[tokio::test]
