@@ -506,7 +506,7 @@ pub async fn recall(
     query: &str,
     limit: usize,
 ) -> Result<Vec<MemoryMatch>, AxError> {
-    recall_scoped(pool, query, limit, &[], false).await
+    recall_scoped(pool, query, limit, &[], false, true).await
 }
 
 pub async fn recall_filtered(
@@ -545,7 +545,7 @@ pub async fn recall_filtered(
     } else {
         limit
     };
-    let mut matches = recall_scoped(pool, effective, overfetch, graph, false).await?;
+    let mut matches = recall_scoped(pool, effective, overfetch, graph, false, true).await?;
     retain_filtered(pool, &mut matches, filter).await?;
     matches.truncate(limit);
     Ok(matches)
@@ -684,9 +684,17 @@ async fn fts_ranking(
     query: &str,
     overfetch: usize,
     archive: bool,
+    include_recall_only: bool,
 ) -> Result<Vec<String>, AxError> {
     let Some(fts_query) = fts_query_from_text_mode(query, archive) else {
         return Ok(Vec::new());
+    };
+    // Preflight keeps recall-only kinds out of its LIMIT. Explicit recall includes them.
+    let kind_gate = if include_recall_only {
+        "AND m.title NOT LIKE 'Candidate:%'"
+    } else {
+        "AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change') \
+         AND m.title NOT LIKE 'Candidate:%'"
     };
     // Hot path: constrain FTS5 to hot rowids first. Without that, MATCH walks
     // archive postings for common terms and only then drops every t3 hit.
@@ -722,8 +730,7 @@ async fn fts_ranking(
                    WHERE memories_fts MATCH ?
                      AND memories_fts.rowid IN ({list})
                      AND m.enabled = 1
-                     AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change')
-                     AND m.title NOT LIKE 'Candidate:%'
+                     {kind_gate}
                    ORDER BY bm25(memories_fts, 0.0, 3.0, 1.0, 1.5, 2.0), m.id
                    LIMIT ?"#
             );
@@ -742,20 +749,22 @@ async fn fts_ranking(
            WHERE memories_fts MATCH ? AND m.enabled = 1 AND m.tier = 't3'
            ORDER BY bm25(memories_fts, 0.0, 3.0, 1.0, 1.5, 2.0), m.id
            LIMIT ?"#
+            .to_string()
     } else {
-        r#"SELECT m.id
+        format!(
+            r#"SELECT m.id
            FROM memories_fts
            JOIN memories m ON m.rowid = memories_fts.rowid
            WHERE memories_fts MATCH ?
              AND m.enabled = 1
              AND m.tier IN ('t1', 't2')
              AND COALESCE(m.status, 'active') IN ('active', 'foreign')
-             AND m.kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change')
-             AND m.title NOT LIKE 'Candidate:%'
+             {kind_gate}
            ORDER BY bm25(memories_fts, 0.0, 3.0, 1.0, 1.5, 2.0), m.id
            LIMIT ?"#
+        )
     };
-    sqlx::query_scalar::<_, String>(sql)
+    sqlx::query_scalar::<_, String>(&sql)
         .bind(&fts_query)
         .bind(overfetch as i64)
         .fetch_all(pool)
@@ -768,6 +777,7 @@ async fn vector_ranking(
     query: &str,
     overfetch: usize,
     archive: bool,
+    include_recall_only: bool,
 ) -> Result<Vec<String>, AxError> {
     if archive {
         return crate::brain::knn(pool, query, overfetch).await;
@@ -775,14 +785,19 @@ async fn vector_ranking(
     let (query_embedding, _) = crate::embed::embed_labeled(query);
     // Match FTS: foreign rows stay searchable for explicit recall; preflight
     // still gates inject via `is_injectable` (active only).
-    let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(
+    let kind_gate = if include_recall_only {
+        "AND title NOT LIKE 'Candidate:%'"
+    } else {
+        "AND kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change') \
+         AND title NOT LIKE 'Candidate:%'"
+    };
+    let embedding_rows = sqlx::query_as::<_, (String, Vec<u8>)>(&format!(
         "SELECT id, embedding FROM memories
          WHERE embedding IS NOT NULL AND enabled = 1
            AND tier IN ('t1', 't2')
            AND COALESCE(status, 'active') IN ('active', 'foreign')
-           AND kind NOT IN ('turn', 'doc', 'graph_diff', 'activity', 'file_change')
-           AND title NOT LIKE 'Candidate:%'",
-    )
+           {kind_gate}"
+    ))
     .fetch_all(pool)
     .await
     .map_err(|e| db_err(pool, e))?;
@@ -808,6 +823,7 @@ pub(crate) async fn recall_scoped(
     limit: usize,
     files: &[String],
     archive: bool,
+    include_recall_only: bool,
 ) -> Result<Vec<MemoryMatch>, AxError> {
     use std::collections::HashMap;
 
@@ -837,21 +853,21 @@ pub(crate) async fn recall_scoped(
     // finds nothing — full-corpus vec0 MATCH is linear in archive size.
     let t1 = std::time::Instant::now();
     let (fts_ranked, vector_ranked) = if archive {
-        let fts = fts_ranking(pool, &expanded, overfetch, true).await?;
+        let fts = fts_ranking(pool, &expanded, overfetch, true, include_recall_only).await?;
         let vec = if fts.is_empty() {
-            vector_ranking(pool, query, overfetch, true).await?
+            vector_ranking(pool, query, overfetch, true, include_recall_only).await?
         } else {
             Vec::new()
         };
         (fts, vec)
     } else if std::env::var_os("AX_MEMORY_BENCH_FTS_ONLY").is_some() {
         // Public-set evidence compare: FTS/BM25F only, no vector RRF dilution.
-        let fts = fts_ranking(pool, &expanded, overfetch, false).await?;
+        let fts = fts_ranking(pool, &expanded, overfetch, false, include_recall_only).await?;
         (fts, Vec::new())
     } else {
         tokio::try_join!(
-            fts_ranking(pool, &expanded, overfetch, false),
-            vector_ranking(pool, query, overfetch, false),
+            fts_ranking(pool, &expanded, overfetch, false, include_recall_only),
+            vector_ranking(pool, query, overfetch, false, include_recall_only),
         )?
     };
     let t_rank = t1.elapsed();

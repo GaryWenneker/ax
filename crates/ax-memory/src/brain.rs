@@ -549,6 +549,7 @@ pub async fn search(
         limit,
         &request.files,
         request.depth == Depth::Archive,
+        false,
     )
     .await?;
     if request.depth == Depth::Archive {

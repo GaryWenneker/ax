@@ -124,16 +124,9 @@ async fn import_one_policy_dir(
     policy_dir: &Path,
     scope: crate::types::PolicyScope,
     preserve_item_scope: bool,
-    global: Option<&crate::global_level::GlobalLevel>,
+    // A longer global copy must not drop a project file of the same name.
+    _global: Option<&crate::global_level::GlobalLevel>,
 ) -> Result<(u32, u32, Vec<String>, Vec<String>), AxError> {
-    use crate::global_level::Kind;
-    let shadowed = |kind: Kind, name: &str, body: &str, _path: &Path| {
-        global.is_some_and(|g| {
-            g.leader(kind, name).is_some_and(|row| {
-                !crate::global_level::lower_copy_wins(body, 0, &row.body, row.changed_ms)
-            })
-        })
-    };
     let mut rules_indexed = 0u32;
     let mut skills_indexed = 0u32;
     let mut seen_rules = Vec::new();
@@ -173,9 +166,6 @@ async fn import_one_policy_dir(
                     continue;
                 }
             };
-            if shadowed(Kind::Rule, &doc.frontmatter.id, &doc.body, path) {
-                continue;
-            }
             if !preserve_item_scope {
                 doc.frontmatter.scope = scope_s.clone();
             }
@@ -225,9 +215,6 @@ async fn import_one_policy_dir(
                     continue;
                 }
             };
-            if shadowed(Kind::Skill, &doc.frontmatter.name, &doc.body, &skill_path) {
-                continue;
-            }
             if !preserve_item_scope {
                 doc.frontmatter.scope = scope_s.clone();
             }

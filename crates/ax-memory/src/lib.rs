@@ -128,7 +128,8 @@ pub async fn recall_for_prompt_near(
         }
     }
     let t1 = std::time::Instant::now();
-    let mut matches = store::recall_scoped(pool, prompt, (limit * 4).max(20), files, false).await?;
+    let mut matches =
+        store::recall_scoped(pool, prompt, (limit * 4).max(20), files, false, false).await?;
     let t_scoped = t1.elapsed();
     matches.retain(|m| m.score > 0.0 && !is_recall_only(&m.memory.kind));
     for hit in matches {
